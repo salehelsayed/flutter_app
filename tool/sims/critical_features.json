@@ -635,8 +635,8 @@
     {
       "id": "notifications.ios_payload_fast_path",
       "owner": "notifications",
-      "proofBoundary": "ios.apns-nse.notification-tap-payload-fast-path",
-      "assertions": ["ios.apns_delivered", "ios.nse_app_group_staged", "ios.airplane_tap_visible"],
+      "proofBoundary": "ios.apns-nse.notification-tap-and-exact-recovery",
+      "assertions": ["ios.apns_delivered", "ios.nse_app_group_staged", "ios.airplane_tap_visible", "ios.recovery_unique_badge_nil", "ios.absolute_badge_converged", "ios.exact_retirement_unrelated_survives"],
       "lane": "reliability",
       "modes": ["major", "full"],
       "families": ["notifications", "1to1"],

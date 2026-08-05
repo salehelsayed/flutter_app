@@ -136,6 +136,8 @@ void main() {
 
         expect(drainedGroups, ['group-1']);
         expect(result, ForegroundRemoteMessageResult.notificationNeeded);
+        expect(result.canonicalStateComplete, isTrue);
+        expect(result.needsNotification, isTrue);
       },
     );
 
@@ -393,38 +395,80 @@ void main() {
           'PUSH_FOREGROUND_MESSAGE_ROUTED',
           'PUSH_FOREGROUND_DRAIN_ERROR',
         ]);
-        expect(result, ForegroundRemoteMessageResult.notificationNeeded);
+        expect(
+          result,
+          ForegroundRemoteMessageResult.notificationNeededAfterDrainFailure,
+        );
         expect(events.last.details['kind'], 'group');
         expect(events.last.details['error'], contains('boom'));
       },
     );
 
-    test('1:1 drain failures are swallowed and logged', () async {
-      final drainedGroups = <String>[];
-      late ForegroundRemoteMessageResult result;
+    test(
+      '1:1 drain failures are logged and remain canonically incomplete',
+      () async {
+        final drainedGroups = <String>[];
+        late ForegroundRemoteMessageResult result;
 
-      final events = await _captureFlowEvents(() async {
-        result = await handleForegroundRemoteMessage(
-          data: newMessageData(),
-          messageId: 'fcm-10',
-          drainOfflineInbox: () async {
-            throw StateError('boom');
-          },
-          drainGroupOfflineInboxForGroup: (groupId) async {
-            drainedGroups.add(groupId);
-          },
-        );
-      });
+        final events = await _captureFlowEvents(() async {
+          result = await handleForegroundRemoteMessage(
+            data: newMessageData(),
+            messageId: 'fcm-10',
+            drainOfflineInbox: () async {
+              throw StateError('boom');
+            },
+            drainGroupOfflineInboxForGroup: (groupId) async {
+              drainedGroups.add(groupId);
+            },
+          );
+        });
 
-      expect(drainedGroups, isEmpty);
-      expect(events.map((event) => event.event), [
-        'PUSH_FOREGROUND_MESSAGE_ROUTED',
-        'PUSH_FOREGROUND_DRAIN_ERROR',
-      ]);
-      expect(result, ForegroundRemoteMessageResult.drained);
-      expect(events.last.details['kind'], 'conversation');
-      expect(events.last.details['error'], contains('boom'));
+        expect(drainedGroups, isEmpty);
+        expect(events.map((event) => event.event), [
+          'PUSH_FOREGROUND_MESSAGE_ROUTED',
+          'PUSH_FOREGROUND_DRAIN_ERROR',
+        ]);
+        expect(result, ForegroundRemoteMessageResult.drainFailed);
+        expect(events.last.details['kind'], 'conversation');
+        expect(events.last.details['error'], contains('boom'));
+      },
+    );
+
+    test('exact 1:1 drain outcome rejects retained pages', () async {
+      final result = await handleForegroundRemoteMessage(
+        data: newMessageData(),
+        messageId: 'fcm-incomplete-direct',
+        drainOfflineInbox: () async {
+          fail('the exact full-drain callback must own this path');
+        },
+        drainGroupOfflineInboxForGroup: (_) async {},
+        drainOfflineInboxCompletely: () async => false,
+      );
+
+      expect(result, ForegroundRemoteMessageResult.drainFailed);
     });
+
+    test(
+      'exact group drain outcome requests fallback when pages remain',
+      () async {
+        final result = await handleForegroundRemoteMessage(
+          data: groupMessageData(),
+          messageId: 'fcm-incomplete-group',
+          drainOfflineInbox: () async {},
+          drainGroupOfflineInboxForGroup: (_) async {
+            fail('the exact group callback must own this path');
+          },
+          drainGroupOfflineInboxForGroupCompletely: (_) async => false,
+        );
+
+        expect(
+          result,
+          ForegroundRemoteMessageResult.notificationNeededAfterDrainFailure,
+        );
+        expect(result.canonicalStateComplete, isFalse);
+        expect(result.needsNotification, isTrue);
+      },
+    );
 
     test(
       '191: plugin-canonical APNs data fixture routes to conversation drain',

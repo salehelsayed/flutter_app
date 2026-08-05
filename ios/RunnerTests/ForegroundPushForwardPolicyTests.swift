@@ -10,6 +10,34 @@ import XCTest
 // fail-safe) fails here. Manual-only: no automated gate runs xcodebuild
 // RunnerTests (house state — documented in the plan).
 final class ForegroundPushForwardPolicyTests: XCTestCase {
+  func testRecoveryDispositionUsesActualPresentationOptionsAndCompletesOnce() {
+    var suppressed: [String] = []
+    var completions: [UNNotificationPresentationOptions] = []
+    let suppressedGate = IosNotificationForegroundDispositionGate(
+      requestIdentifier: "suppressed-request",
+      onSuppressed: { suppressed.append($0) },
+      completion: { completions.append($0) }
+    )
+
+    suppressedGate.complete(with: [])
+    suppressedGate.complete(with: [.alert])
+
+    XCTAssertEqual(suppressed, ["suppressed-request"])
+    XCTAssertEqual(completions.count, 1)
+    XCTAssertTrue(completions[0].isEmpty)
+
+    let presentedGate = IosNotificationForegroundDispositionGate(
+      requestIdentifier: "presented-request",
+      onSuppressed: { suppressed.append($0) },
+      completion: { completions.append($0) }
+    )
+    presentedGate.complete(with: [.alert])
+
+    XCTAssertEqual(suppressed, ["suppressed-request"])
+    XCTAssertEqual(completions.count, 2)
+    XCTAssertEqual(completions[1], [.alert])
+  }
+
   private func fcmUserInfo() -> [AnyHashable: Any] {
     return [
       "gcm.message_id": "0:1720000000000000%aabbccdd",

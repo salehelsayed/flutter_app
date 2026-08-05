@@ -1947,6 +1947,65 @@ void main() {
       );
     });
 
+    test(
+      'invalidation refusal aborts attachment completion and send',
+      () async {
+        final pending = seedOldKeyPending();
+        final original = _makeMsg(
+          'msg-00001',
+          status: 'failed',
+        ).copyWith(wireEnvelope: '{"attempt":"old-key"}');
+        final crossedWinner = original.copyWith(
+          text: 'concurrent edited winner',
+          editedAt: '2026-08-05T12:20:00.000Z',
+          wireEnvelope: '{"attempt":"new-key"}',
+          transport: 'direct',
+          relayExpiresAt: 8005,
+          custodyCheckedAt: '2026-08-05T12:21:00.000Z',
+        );
+        messageRepo.seed([original]);
+        mediaRepo.seed([pending]);
+        fakeUploadFn.willReturn(_doneAttachment('att-00001', 'msg-00001'));
+        fakeUploadFn.beforeReturn = () {
+          messageRepo.seed([crossedWinner]);
+        };
+
+        final count = await retryIncompleteUploads(
+          mediaAttachmentRepo: mediaRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+        );
+
+        expect(count, 0);
+        expect(fakeUploadFn.callCount, 1);
+        expect(
+          (await messageRepo.getMessage('msg-00001'))!.toMap(),
+          crossedWinner.toMap(),
+        );
+        final durableAttachment = (await mediaRepo.getAttachmentsForMessage(
+          'msg-00001',
+          owner: MediaOwnerLane.direct,
+        )).single;
+        expect(
+          durableAttachment.toMap(),
+          pending.copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+        );
+        expect(mediaRepo.allSavedAttachments, isEmpty);
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(messageRepo.ordinaryMutationCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(p2pService.discoverPeerCallCount, 0);
+        expect(p2pService.dialPeerCallCount, 0);
+        expect(p2pService.sendLocalMediaCallCount, 0);
+      },
+    );
+
     test('re-sent message after media re-upload carries the attachment row\'s '
         'current key in its envelope', () async {
       // End-to-end KC-2 contract: the envelope persisted after the
@@ -1977,7 +2036,8 @@ void main() {
         owner: MediaOwnerLane.direct,
         'msg-00001',
       )).single;
-      final rebuiltEnvelope = messageRepo.lastWireEnvelopeValue;
+      final rebuiltEnvelope =
+          messageRepo.ordinaryAttemptStages.last.wireEnvelope;
       expect(rebuiltEnvelope, isNotNull);
       final envelope = jsonDecode(rebuiltEnvelope!) as Map<String, dynamic>;
       final inner =

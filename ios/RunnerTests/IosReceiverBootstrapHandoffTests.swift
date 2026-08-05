@@ -32,7 +32,8 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(
       handoff.recordNotificationSettings(
         authorization: "authorized",
-        alertSetting: "enabled"
+        alertSetting: "enabled",
+        badgeSetting: "enabled"
       ),
       .published
     )
@@ -44,12 +45,13 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       Set([
         "schema", "captureNonce", "receiverDeviceId", "peerDeviceId",
         "bundleId", "apnsEnvironment", "apnsDeviceToken", "mlKemPublicKey",
-        "notificationAuthorization", "notificationAlertSetting", "capturedAt",
+        "notificationAuthorization", "notificationAlertSetting",
+        "notificationBadgeSetting", "capturedAt",
       ])
     )
     XCTAssertEqual(
       response["schema"] as? String,
-      "mknoon.sims.ios-provider-receiver-handoff.v1"
+      "mknoon.sims.ios-provider-receiver-handoff.v2"
     )
     XCTAssertEqual(response["captureNonce"] as? String, nonce)
     XCTAssertEqual(response["receiverDeviceId"] as? String, receiver)
@@ -59,10 +61,11 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(response["mlKemPublicKey"] as? String, mlKem)
     XCTAssertEqual(response["notificationAuthorization"] as? String, "authorized")
     XCTAssertEqual(response["notificationAlertSetting"] as? String, "enabled")
+    XCTAssertEqual(response["notificationBadgeSetting"] as? String, "enabled")
 
     let attributes = try FileManager.default.attributesOfItem(atPath: handoff.responseURL.path)
     XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-    XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType, .complete)
+    assertCompleteFileProtection(attributes)
   }
 
   func testExpiredOrMismatchedCleanupFailsClosed() throws {
@@ -86,7 +89,8 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     _ = handoff.recordTransportIdentity(peerId: peer, mlKemPublicKey: mlKem)
     _ = handoff.recordNotificationSettings(
       authorization: "provisional",
-      alertSetting: "enabled"
+      alertSetting: "enabled",
+      badgeSetting: "enabled"
     )
     XCTAssertEqual(handoff.recordApnsDeviceToken(Data(repeating: 0xcd, count: 32)), .published)
     try writeRequest(
@@ -102,7 +106,7 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.responseURL.path))
   }
 
-  func testCaptureRejectsDeniedOrAlertDisabledNotificationSettings() throws {
+  func testCaptureRejectsDeniedOrPresentationDisabledNotificationSettings() throws {
     let root = try temporaryRoot()
     defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
     let handoff = IosReceiverBootstrapHandoff(
@@ -123,7 +127,8 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(
       handoff.recordNotificationSettings(
         authorization: "denied",
-        alertSetting: "enabled"
+        alertSetting: "enabled",
+        badgeSetting: "enabled"
       ),
       .rejected
     )
@@ -133,7 +138,19 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
     XCTAssertEqual(
       handoff.recordNotificationSettings(
         authorization: "authorized",
-        alertSetting: "disabled"
+        alertSetting: "disabled",
+        badgeSetting: "enabled"
+      ),
+      .rejected
+    )
+    XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.responseURL.path))
+
+    try writeRequest(handoff.requestURL, action: "capture")
+    XCTAssertEqual(
+      handoff.recordNotificationSettings(
+        authorization: "authorized",
+        alertSetting: "enabled",
+        badgeSetting: "disabled"
       ),
       .rejected
     )
@@ -191,7 +208,7 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       atPath: handoff.senderResultURL.path
     )
     XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
-    XCTAssertEqual(attributes[.protectionKey] as? FileProtectionType, .complete)
+    assertCompleteFileProtection(attributes)
 
     // Re-staging the same generation does not return raw sender data to Dart
     // again once its protected completion is present.
@@ -202,6 +219,94 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       payloadDigest: payloadDigest
     )
     XCTAssertNil(handoff.takeSenderProjectionRequest())
+  }
+
+  func testNotificationRecoveryCommandIsProtectedBoundAndSecretFreeOnCompletion() throws {
+    let root = try temporaryRoot()
+    defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+    let handoff = IosReceiverBootstrapHandoff(
+      enabled: true,
+      now: { self.now },
+      rootDirectory: root
+    )
+    XCTAssertEqual(handoff.prepareContainer(), .waiting)
+    let payloadDigest = String(repeating: "c", count: 64)
+    let sentinel = "mknoon-sims-recovery-" + String(repeating: "d", count: 24)
+    try writeRecoveryRequest(
+      handoff.recoveryRequestURL,
+      payloadDigest: payloadDigest,
+      sentinel: sentinel
+    )
+
+    let command = try XCTUnwrap(handoff.takeNotificationRecoveryRequest())
+    XCTAssertEqual(command["captureNonce"], nonce)
+    XCTAssertEqual(command["accountPeerId"], peer)
+    XCTAssertEqual(command["sentinelIdentifier"], sentinel)
+    XCTAssertTrue(
+      handoff.completeNotificationRecoveryRequest(
+        request: command,
+        status: "passed",
+        resultCode: "ok",
+        badgeBefore: 1,
+        badgeAfter: 0,
+        deliveredBefore: 1,
+        deliveredWithSentinel: 2,
+        deliveredAfter: 1,
+        deliveredNotificationBadgeWasNil: true,
+        sentinelSurvived: true,
+        removedExactOwnedNotification: true
+      )
+    )
+    XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.recoveryRequestURL.path))
+    let result = try json(handoff.recoveryResultURL)
+    XCTAssertEqual(
+      Set(result.keys),
+      Set([
+        "schema", "action", "captureNonce", "receiverDeviceId", "bundleId",
+        "apnsPayloadSha256", "status", "resultCode", "badgeBefore", "badgeAfter",
+        "deliveredBefore", "deliveredWithSentinel", "deliveredAfter",
+        "deliveredNotificationBadgeWasNil", "sentinelSurvived",
+        "removedExactOwnedNotification", "childBuildCount", "manualActionCount",
+        "completedAt",
+      ])
+    )
+    XCTAssertEqual(result["schema"] as? String, IosReceiverBootstrapHandoff.recoveryResultSchema)
+    XCTAssertEqual(result["badgeBefore"] as? Int, 1)
+    XCTAssertEqual(result["badgeAfter"] as? Int, 0)
+    XCTAssertEqual(result["deliveredWithSentinel"] as? Int, 2)
+    XCTAssertEqual(result["deliveredNotificationBadgeWasNil"] as? Bool, true)
+    XCTAssertNil(result["accountPeerId"])
+    XCTAssertNil(result["sentinelIdentifier"])
+    let encoded = try XCTUnwrap(String(data: Data(contentsOf: handoff.recoveryResultURL), encoding: .utf8))
+    XCTAssertFalse(encoded.contains(peer))
+    XCTAssertFalse(encoded.contains(sentinel))
+    let attributes = try FileManager.default.attributesOfItem(
+      atPath: handoff.recoveryResultURL.path
+    )
+    XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+    assertCompleteFileProtection(attributes)
+
+    try writeRequest(handoff.requestURL, action: "cleanup")
+    XCTAssertEqual(handoff.prepareContainer(), .cleaned)
+    XCTAssertFalse(FileManager.default.fileExists(atPath: handoff.recoveryResultURL.path))
+  }
+
+  private func assertCompleteFileProtection(
+    _ attributes: [FileAttributeKey: Any],
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    let protection = attributes[.protectionKey] as? FileProtectionType
+#if targetEnvironment(simulator)
+    XCTAssertTrue(
+      protection == nil || protection == .complete,
+      "The simulator may omit file-protection metadata, but must not report a weaker class.",
+      file: file,
+      line: line
+    )
+#else
+    XCTAssertEqual(protection, .complete, file: file, line: line)
+#endif
   }
 
   private func temporaryRoot() throws -> URL {
@@ -253,6 +358,33 @@ final class IosReceiverBootstrapHandoffTests: XCTestCase {
       "bundleId": "com.mknoon.app",
       "senderPeerId": sender,
       "senderUsername": "Encrypted fixture title",
+      "apnsPayloadSha256": payloadDigest,
+      "createdAt": formatter.string(from: now),
+      "expiresAt": formatter.string(from: now.addingTimeInterval(180)),
+    ]
+    let data = try JSONSerialization.data(withJSONObject: object)
+    FileManager.default.createFile(
+      atPath: url.path,
+      contents: data,
+      attributes: [.posixPermissions: 0o600]
+    )
+  }
+
+  private func writeRecoveryRequest(
+    _ url: URL,
+    payloadDigest: String,
+    sentinel: String
+  ) throws {
+    let formatter = ISO8601DateFormatter()
+    formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    let object: [String: Any] = [
+      "schema": IosReceiverBootstrapHandoff.recoveryRequestSchema,
+      "action": "prove_recovery",
+      "captureNonce": nonce,
+      "receiverDeviceId": receiver,
+      "bundleId": "com.mknoon.app",
+      "accountPeerId": peer,
+      "sentinelIdentifier": sentinel,
       "apnsPayloadSha256": payloadDigest,
       "createdAt": formatter.string(from: now),
       "expiresAt": formatter.string(from: now.addingTimeInterval(180)),

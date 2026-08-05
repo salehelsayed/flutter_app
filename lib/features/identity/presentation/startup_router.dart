@@ -9,6 +9,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
+import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
@@ -362,7 +363,14 @@ class StartupRouter extends StatefulWidget {
   final ContactRequestPresentationGate? contactRequestPresentationGate;
   final GetInitialRemoteMessageFn? getInitialRemoteMessage;
   final bool Function()? shouldHandleInitialPushOpen;
+  final Future<IosApnsInitialNotificationOpenDisposition> Function()?
+  consumeInitialIosApnsNotificationOpen;
   final Future<void> Function()? clearDeliveredNotifications;
+
+  /// Clears only the native iOS notification-recovery state owned by the
+  /// account being erased. This is intentionally distinct from the broad
+  /// delivered-notification clearing seam.
+  final Future<void> Function()? clearIosNotificationRecovery;
   final Future<void> Function()? ingestStagedPushEnvelopes;
   final NotificationOpenRouteContext Function(
     NotificationRouteTarget routeTarget,
@@ -385,6 +393,25 @@ class StartupRouter extends StatefulWidget {
   /// Invoked only after the P2P node reports successful startup.
   final Future<void> Function()? recoverDroppedPushes;
   final Future<bool> Function()? hasPendingDroppedPushRecovery;
+
+  /// Exact dropped-push recovery result for cold-start callers that must know
+  /// whether both canonical inboxes fully converged. When recovery owns the
+  /// inboxes this replaces [recoverDroppedPushes] for the exact settlement
+  /// path; the legacy callback remains the fire-and-forget fallback.
+  final Future<bool> Function()? recoverDroppedPushesCompletely;
+
+  /// Optional iOS-only settlement seam. Its presence enables an exact
+  /// cold-start barrier after node-start succeeds: the full direct inbox and
+  /// full group startup recovery are awaited before completeness is reported.
+  /// Null preserves the historical fire-and-forget startup behavior.
+  /// [onIosNotificationColdStartRecoveryStarted] is awaited first so native
+  /// recovery can capture its watermark before any exact inbox mutation.
+  final Future<Object?> Function()? onIosNotificationColdStartRecoveryStarted;
+  final Future<void> Function({
+    required Object? recoveryHandle,
+    required bool canonicalStateComplete,
+  })?
+  onIosNotificationColdStartRecoverySettled;
 
   /// FDC-09 §12 / CV-14 (217 §A1): once-per-cycle wake-token mint+register.
   /// Invoked EXACTLY ONCE with all active contact peerIds after a successful
@@ -448,7 +475,9 @@ class StartupRouter extends StatefulWidget {
     this.contactRequestPresentationGate,
     this.getInitialRemoteMessage,
     this.shouldHandleInitialPushOpen,
+    this.consumeInitialIosApnsNotificationOpen,
     this.clearDeliveredNotifications,
+    this.clearIosNotificationRecovery,
     this.ingestStagedPushEnvelopes,
     this.createNotificationRouteContext,
     this.onNotificationRouteContext,
@@ -461,6 +490,9 @@ class StartupRouter extends StatefulWidget {
     this.onStartupHomeReady,
     this.recoverDroppedPushes,
     this.hasPendingDroppedPushRecovery,
+    this.recoverDroppedPushesCompletely,
+    this.onIosNotificationColdStartRecoveryStarted,
+    this.onIosNotificationColdStartRecoverySettled,
     this.issueWakeTokensForContacts,
   });
 
@@ -916,7 +948,11 @@ class _StartupRouterState extends State<StartupRouter> {
           nearbyLocationService: widget.nearbyLocationService,
         ),
       );
-      unawaited(_handleInitialPushOpen());
+      final settleIosColdStartRecovery =
+          widget.onIosNotificationColdStartRecoverySettled;
+      if (settleIosColdStartRecovery == null) {
+        unawaited(_handleInitialPushOpen().then<void>((_) {}));
+      }
       final pushRegistrationCoordinator = widget.pushRegistrationCoordinator;
       if (pushRegistrationCoordinator != null) {
         unawaited(pushRegistrationCoordinator.ensureStarted());
@@ -961,14 +997,59 @@ class _StartupRouterState extends State<StartupRouter> {
         }
       }
 
+      var iosColdStartRecoveryStarted = settleIosColdStartRecovery == null;
+      Object? iosColdStartRecoveryHandle;
+      if (settleIosColdStartRecovery != null) {
+        final startIosColdStartRecovery =
+            widget.onIosNotificationColdStartRecoveryStarted;
+        if (startIosColdStartRecovery == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'IOS_NOTIFICATION_COLD_START_RECOVERY_BEGIN_ERROR',
+            details: {'error': 'missing_begin_boundary'},
+          );
+        }
+        try {
+          iosColdStartRecoveryHandle = await startIosColdStartRecovery?.call();
+          iosColdStartRecoveryStarted =
+              startIosColdStartRecovery != null &&
+              iosColdStartRecoveryHandle != null;
+        } catch (error) {
+          iosColdStartRecoveryStarted = false;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'IOS_NOTIFICATION_COLD_START_RECOVERY_BEGIN_ERROR',
+            details: {'error': error.runtimeType.toString()},
+          );
+        }
+      }
+
+      var initialIosApnsOpenComplete = true;
+      var initialPushOpenComplete = true;
+      if (settleIosColdStartRecovery != null) {
+        final initialIosApnsOpen =
+            await _consumeInitialIosApnsNotificationOpen();
+        initialIosApnsOpenComplete =
+            initialIosApnsOpen !=
+            IosApnsInitialNotificationOpenDisposition.failed;
+        if (initialIosApnsOpen !=
+            IosApnsInitialNotificationOpenDisposition.routed) {
+          // The native AppDelegate path is authoritative on iOS. Consult FCM
+          // only when native had no pending open (or its bridge failed), so one
+          // cold tap cannot be routed twice by both integrations.
+          initialPushOpenComplete = await _handleInitialPushOpen();
+        }
+      }
+
       // Now that the Go node is running (pubsub initialized), rejoin group
       // topics and drain offline inboxes. Fire-and-forget — errors are logged
       // inside each function and don't block startup.
       final groupRepo = widget.groupRepository;
       final groupMsgRepo = widget.groupMessageRepository;
-      Future<void>? startupGroupRecovery;
+      Future<bool>? startupGroupRecovery;
       if (groupRepo != null) {
         startupGroupRecovery = runWithGroupRecoveryGate(() async {
+          var canonicalGroupInboxComplete = false;
           IdentityModel? identity;
           try {
             identity = await widget.repository.loadIdentity();
@@ -993,7 +1074,7 @@ class _StartupRouterState extends State<StartupRouter> {
               );
             }
             if (groupMsgRepo != null && !droppedPushRecoveryOwnsInbox) {
-              await drainGroupOfflineInbox(
+              final drainResult = await drainGroupOfflineInbox(
                 bridge: widget.bridge,
                 groupRepo: groupRepo,
                 msgRepo: groupMsgRepo,
@@ -1007,6 +1088,8 @@ class _StartupRouterState extends State<StartupRouter> {
                     widget.requestGroupKeyRepair ?? emitGroupKeyRepairRequest,
                 selfPeerId: identity?.peerId,
               );
+              canonicalGroupInboxComplete =
+                  drainResult.isSuccessful && !drainResult.hasMorePages;
             } else if (droppedPushRecoveryOwnsInbox) {
               emitFlowEvent(
                 layer: 'FL',
@@ -1020,7 +1103,7 @@ class _StartupRouterState extends State<StartupRouter> {
               event: 'GROUP_STARTUP_NETWORK_RECOVERY_ERROR',
               details: {'error': error.toString()},
             );
-            return;
+            return false;
           } finally {
             // PB264-18: a fresh launch cannot depend on an initial resumed
             // callback. Recovery is independent of discovery/rejoin/drain
@@ -1038,6 +1121,7 @@ class _StartupRouterState extends State<StartupRouter> {
             identity: identity,
             transportPeerId: widget.p2pService.currentState.peerId,
           );
+          return canonicalGroupInboxComplete;
         });
         unawaited(startupGroupRecovery);
       } else {
@@ -1049,7 +1133,21 @@ class _StartupRouterState extends State<StartupRouter> {
           recoverDroppedPushes != null &&
           (hasPendingDroppedPushRecovery == null ||
               droppedPushRecoveryOwnsInbox);
-      if (shouldRecoverDroppedPushes) {
+      if (settleIosColdStartRecovery != null) {
+        unawaited(
+          _settleIosNotificationColdStartRecovery(
+            startupGroupRecovery: startupGroupRecovery,
+            groupRepositoriesAbsent: groupRepo == null && groupMsgRepo == null,
+            droppedPushRecoveryOwnsInbox: droppedPushRecoveryOwnsInbox,
+            shouldRecoverDroppedPushes: shouldRecoverDroppedPushes,
+            recoveryHandle: iosColdStartRecoveryHandle,
+            recoveryStartSucceeded:
+                iosColdStartRecoveryStarted &&
+                initialIosApnsOpenComplete &&
+                initialPushOpenComplete,
+          ),
+        );
+      } else if (shouldRecoverDroppedPushes) {
         unawaited(() async {
           try {
             final groupRecovery = startupGroupRecovery;
@@ -1070,6 +1168,144 @@ class _StartupRouterState extends State<StartupRouter> {
       // Node startup can fail while cleanup_pending work is entirely local.
       // Queue one isolated pass even though no network prerequisite is usable.
       unawaited(_recoverGroupExitIntentsAtStartup());
+      if (widget.onIosNotificationColdStartRecoverySettled != null) {
+        // Production keeps AppDelegate warm forwarding disabled until the
+        // initial APNs response is captured inside a native recovery scope.
+        // A failed node start cannot leave that launch response stranded:
+        // release it through the same boundary, but never claim canonical
+        // completeness or run network inbox drains.
+        unawaited(_releaseIosNotificationOpenAfterFailedNodeStart());
+      }
+    }
+  }
+
+  Future<void> _releaseIosNotificationOpenAfterFailedNodeStart() async {
+    Object? recoveryHandle;
+    final beginRecovery = widget.onIosNotificationColdStartRecoveryStarted;
+    if (beginRecovery == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_COLD_START_RECOVERY_BEGIN_ERROR',
+        details: {'error': 'missing_begin_boundary'},
+      );
+    } else {
+      try {
+        recoveryHandle = await beginRecovery();
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'IOS_NOTIFICATION_COLD_START_RECOVERY_BEGIN_ERROR',
+          details: {'error': error.runtimeType.toString()},
+        );
+      }
+    }
+
+    try {
+      final initialIosApnsOpen = await _consumeInitialIosApnsNotificationOpen();
+      if (initialIosApnsOpen !=
+          IosApnsInitialNotificationOpenDisposition.routed) {
+        await _handleInitialPushOpen();
+      }
+    } finally {
+      final settle = widget.onIosNotificationColdStartRecoverySettled;
+      if (settle != null) {
+        try {
+          await settle(
+            recoveryHandle: recoveryHandle,
+            canonicalStateComplete: false,
+          );
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'IOS_NOTIFICATION_COLD_START_SETTLEMENT_ERROR',
+            details: {'error': error.runtimeType.toString()},
+          );
+        }
+      }
+    }
+  }
+
+  Future<void> _settleIosNotificationColdStartRecovery({
+    required Future<bool>? startupGroupRecovery,
+    required bool groupRepositoriesAbsent,
+    required bool droppedPushRecoveryOwnsInbox,
+    required bool shouldRecoverDroppedPushes,
+    required Object? recoveryHandle,
+    required bool recoveryStartSucceeded,
+  }) async {
+    var canonicalStateComplete = false;
+    try {
+      if (droppedPushRecoveryOwnsInbox) {
+        // Preserve the existing ordering: group rejoin/recovery establishes its
+        // startup state before the dropped-push coordinator takes ownership of
+        // both inboxes. Its inbox result is deliberately ignored here because
+        // the dropped coordinator is the authoritative full-drain boundary.
+        final groupRecovery = startupGroupRecovery;
+        if (groupRecovery != null) {
+          await groupRecovery;
+        }
+
+        final recoverCompletely = widget.recoverDroppedPushesCompletely;
+        if (recoverCompletely != null) {
+          canonicalStateComplete = await recoverCompletely();
+        } else {
+          // Retain the legacy recovery side effect but never upgrade its void
+          // result to an exact completeness claim.
+          final recover = widget.recoverDroppedPushes;
+          if (shouldRecoverDroppedPushes && recover != null) {
+            await recover();
+          }
+        }
+      } else {
+        final p2pService = widget.p2pService;
+        final directInboxRecovery = p2pService is P2PFullInboxDrain
+            ? (p2pService as P2PFullInboxDrain).drainOfflineInboxFully().then(
+                (outcome) => outcome.isSuccessful && !outcome.hasMore,
+              )
+            : Future<bool>.value(false);
+        final groupInboxRecovery =
+            startupGroupRecovery ?? Future<bool>.value(groupRepositoriesAbsent);
+        final results = await Future.wait<bool>([
+          directInboxRecovery,
+          groupInboxRecovery,
+        ]);
+        canonicalStateComplete = results.every((result) => result);
+
+        // A legacy dropped-recovery callback without an ownership poll may
+        // still mutate both inboxes. Preserve that behavior, but its void
+        // result cannot support a complete reconciliation claim.
+        final recover = widget.recoverDroppedPushes;
+        if (shouldRecoverDroppedPushes && recover != null) {
+          await recover();
+          canonicalStateComplete = false;
+        }
+      }
+    } catch (error) {
+      canonicalStateComplete = false;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_COLD_START_RECOVERY_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
+    }
+
+    canonicalStateComplete = recoveryStartSucceeded && canonicalStateComplete;
+
+    final settle = widget.onIosNotificationColdStartRecoverySettled;
+    if (settle == null) return;
+    try {
+      await settle(
+        recoveryHandle: recoveryHandle,
+        canonicalStateComplete: canonicalStateComplete,
+      );
+    } catch (error) {
+      // This runs in a detached startup task. Keep the reporting boundary
+      // total so native-recovery failures cannot become unhandled UI errors.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_COLD_START_SETTLEMENT_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
     }
   }
 
@@ -1088,6 +1324,17 @@ class _StartupRouterState extends State<StartupRouter> {
   }
 
   Future<void> _eraseMigratedOutAccount() async {
+    try {
+      await widget.clearIosNotificationRecovery?.call();
+    } catch (error) {
+      // An unsupported future native sidecar must remain byte-preserved, but
+      // it cannot hold the authoritative secure-account erase hostage.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ACCOUNT_MIGRATION_IOS_NOTIFICATION_RECOVERY_CLEAR_FAILED',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
     final staging = MigrationSecureStorageStaging(
       primaryStore: widget.secureKeyStore,
       sharedStore: widget.secureKeyStore,
@@ -1101,21 +1348,21 @@ class _StartupRouterState extends State<StartupRouter> {
     ).clearAuthority();
   }
 
-  Future<void> _handleInitialPushOpen() async {
+  Future<bool> _handleInitialPushOpen() async {
     final shouldHandleInitialPushOpen = widget.shouldHandleInitialPushOpen;
     if (shouldHandleInitialPushOpen != null) {
       if (!shouldHandleInitialPushOpen()) {
-        return;
+        return true;
       }
     } else {
       if (kIsWeb ||
           Platform.isLinux ||
           Platform.isWindows ||
           Platform.isMacOS) {
-        return;
+        return true;
       }
 
-      if (Firebase.apps.isEmpty) return;
+      if (Firebase.apps.isEmpty) return true;
     }
 
     try {
@@ -1171,12 +1418,32 @@ class _StartupRouterState extends State<StartupRouter> {
           );
         },
       );
+      return true;
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'PUSH_INITIAL_MESSAGE_ERROR',
         details: {'error': e.toString()},
       );
+      return false;
+    }
+  }
+
+  Future<IosApnsInitialNotificationOpenDisposition>
+  _consumeInitialIosApnsNotificationOpen() async {
+    final consume = widget.consumeInitialIosApnsNotificationOpen;
+    if (consume == null) {
+      return IosApnsInitialNotificationOpenDisposition.empty;
+    }
+    try {
+      return await consume();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_APNS_INITIAL_NOTIFICATION_OPEN_ERROR',
+        details: {'error': error.runtimeType.toString()},
+      );
+      return IosApnsInitialNotificationOpenDisposition.failed;
     }
   }
 
@@ -1484,7 +1751,10 @@ class _StartupRouterState extends State<StartupRouter> {
       contactRequestPresentationGate: widget.contactRequestPresentationGate,
       getInitialRemoteMessage: widget.getInitialRemoteMessage,
       shouldHandleInitialPushOpen: widget.shouldHandleInitialPushOpen,
+      consumeInitialIosApnsNotificationOpen:
+          widget.consumeInitialIosApnsNotificationOpen,
       clearDeliveredNotifications: widget.clearDeliveredNotifications,
+      clearIosNotificationRecovery: widget.clearIosNotificationRecovery,
       ingestStagedPushEnvelopes: widget.ingestStagedPushEnvelopes,
       createNotificationRouteContext: widget.createNotificationRouteContext,
       onNotificationRouteContext: widget.onNotificationRouteContext,
@@ -1498,6 +1768,11 @@ class _StartupRouterState extends State<StartupRouter> {
       issueWakeTokensForContacts: widget.issueWakeTokensForContacts,
       recoverDroppedPushes: widget.recoverDroppedPushes,
       hasPendingDroppedPushRecovery: widget.hasPendingDroppedPushRecovery,
+      recoverDroppedPushesCompletely: widget.recoverDroppedPushesCompletely,
+      onIosNotificationColdStartRecoveryStarted:
+          widget.onIosNotificationColdStartRecoveryStarted,
+      onIosNotificationColdStartRecoverySettled:
+          widget.onIosNotificationColdStartRecoverySettled,
     );
   }
 

@@ -16,6 +16,10 @@ class FakeUploadMediaFn {
   String? _lastBlobId;
   List<String>? _lastAllowedPeers;
 
+  /// Optional race hook invoked after the upload call has captured its
+  /// arguments but before its configured outcome is returned.
+  void Function()? beforeReturn;
+
   int get callCount => _callCount;
   String? get lastLocalPath => _lastLocalPath;
   String? get lastMime => _lastMime;
@@ -65,6 +69,8 @@ class FakeUploadMediaFn {
     _lastAllowedPeers = allowedPeers == null
         ? null
         : List<String>.from(allowedPeers);
+
+    beforeReturn?.call();
 
     if (_resultsByPath.containsKey(localFilePath)) {
       return _outcomeFor(_resultsByPath[localFilePath]);

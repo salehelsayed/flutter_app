@@ -63,6 +63,42 @@ struct NotificationResponseDiagnostic: Equatable {
   }
 }
 
+/// Resolves foreground custody from the delegate's actual presentation result.
+/// The gate also protects Apple's completion from a misbehaving delegate that
+/// calls it more than once.
+final class IosNotificationForegroundDispositionGate {
+  private let lock = NSLock()
+  private var completed = false
+  private let requestIdentifier: String
+  private let onSuppressed: (String) -> Void
+  private let completion: (UNNotificationPresentationOptions) -> Void
+
+  init(
+    requestIdentifier: String,
+    onSuppressed: @escaping (String) -> Void,
+    completion: @escaping (UNNotificationPresentationOptions) -> Void
+  ) {
+    self.requestIdentifier = requestIdentifier
+    self.onSuppressed = onSuppressed
+    self.completion = completion
+  }
+
+  func complete(with options: UNNotificationPresentationOptions) {
+    lock.lock()
+    guard !completed else {
+      lock.unlock()
+      return
+    }
+    completed = true
+    lock.unlock()
+
+    if options.isEmpty {
+      onSuppressed(requestIdentifier)
+    }
+    completion(options)
+  }
+}
+
 @main
 @objc class AppDelegate: FlutterAppDelegate, FlutterImplicitEngineDelegate {
 #if canImport(GoMknoon)
@@ -70,11 +106,17 @@ struct NotificationResponseDiagnostic: Equatable {
 #endif
   private let iosNotificationOpenChannelName = "mknoon/ios_notification_open"
   private var iosNotificationOpenChannel: FlutterMethodChannel?
+  private let iosNotificationRecoveryChannelName =
+    "mknoon/ios_notification_recovery"
+  private var iosNotificationRecoveryChannel: FlutterMethodChannel?
+  private lazy var iosNotificationRecoveryCoordinator =
+    IosNotificationRecoveryCoordinator()
   private var pendingIosNotificationOpen: [String: Any]?
   private var iosNotificationOpenBridgeReady = false
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
   private let iosReceiverBootstrapHandoff = IosReceiverBootstrapHandoff(enabled: true)
   private var iosReceiverBootstrapChannel: FlutterMethodChannel?
+  private var iosNotificationRecoveryProofInFlight = false
 #endif
 
   // Move Account transfer keep-alive (audit gap G7, background half): while
@@ -161,6 +203,28 @@ struct NotificationResponseDiagnostic: Equatable {
     withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
   ) {
     let userInfo = notification.request.content.userInfo
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    if userInfo["mknoon_sims_recovery_sentinel"] as? Bool == true {
+      if #available(iOS 14.0, *) {
+        completionHandler([.banner, .list])
+      } else {
+        completionHandler([.alert])
+      }
+      return
+    }
+#endif
+    let dispositionGate = IosNotificationForegroundDispositionGate(
+      requestIdentifier: notification.request.identifier,
+      onSuppressed: { [weak self] requestIdentifier in
+        self?.iosNotificationRecoveryCoordinator?.markForegroundSuppressed(
+          requestIdentifier: requestIdentifier
+        )
+      },
+      completion: completionHandler
+    )
+    let recoveryCompletionHandler: (UNNotificationPresentationOptions) -> Void = {
+      options in dispositionGate.complete(with: options)
+    }
     logApnsProviderProbeNotification(context: "willPresent", userInfo: userInfo)
 
     // 191 (Fix N1): forward FCM-shaped foreground notifications to the FCM
@@ -186,7 +250,7 @@ struct NotificationResponseDiagnostic: Equatable {
       plugin.userNotificationCenter?(
         center,
         willPresent: notification,
-        withCompletionHandler: completionHandler
+        withCompletionHandler: recoveryCompletionHandler
       )
       return
     }
@@ -199,7 +263,7 @@ struct NotificationResponseDiagnostic: Equatable {
     super.userNotificationCenter(
       center,
       willPresent: notification,
-      withCompletionHandler: completionHandler
+      withCompletionHandler: recoveryCompletionHandler
     )
   }
 
@@ -289,6 +353,7 @@ struct NotificationResponseDiagnostic: Equatable {
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
     setupIosReceiverBootstrapBridge(messenger: messenger)
 #endif
+    setupIosNotificationRecoveryBridge(messenger: messenger)
     setupMigrationKeepAliveBridge(messenger: messenger)
     setupDiskSpaceBridge(messenger: messenger)
     setupAppGroupPathBridge(messenger: messenger)
@@ -329,6 +394,9 @@ struct NotificationResponseDiagnostic: Equatable {
     installNotificationCenterDelegate(context: "didBecomeActive")
     logNotificationSettings(context: "didBecomeActive")
     requestRemoteNotificationRegistration(reason: "didBecomeActive")
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    processPendingIosNotificationRecoveryProof()
+#endif
   }
 
   private func installNotificationCenterDelegate(context: String) {
@@ -484,6 +552,207 @@ struct NotificationResponseDiagnostic: Equatable {
       }
     }
     iosReceiverBootstrapChannel = channel
+    processPendingIosNotificationRecoveryProof()
+  }
+
+  private func processPendingIosNotificationRecoveryProof() {
+    guard
+      !iosNotificationRecoveryProofInFlight,
+      let request = iosReceiverBootstrapHandoff.takeNotificationRecoveryRequest()
+    else { return }
+    iosNotificationRecoveryProofInFlight = true
+    let center = UNUserNotificationCenter.current()
+    center.getDeliveredNotifications { [weak self] notifications in
+      guard let self else { return }
+      let before = Set(notifications.map(\.request.identifier))
+      let badgeBefore = UIApplication.shared.applicationIconBadgeNumber
+      let deliveredNotificationBadgeWasNil =
+        notifications.count == 1 && notifications[0].request.content.badge == nil
+      guard
+        before.count == 1,
+        badgeBefore == 1,
+        deliveredNotificationBadgeWasNil,
+        let sentinelIdentifier = request["sentinelIdentifier"],
+        let accountPeerId = request["accountPeerId"]
+      else {
+        self.finishIosNotificationRecoveryProof(
+          request: request,
+          status: "failed",
+          resultCode: "unexpected_initial_state",
+          badgeBefore: max(0, badgeBefore),
+          badgeAfter: max(0, badgeBefore),
+          deliveredBefore: before.count,
+          deliveredWithSentinel: before.count,
+          deliveredAfter: before.count,
+          deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+          sentinelSurvived: false,
+          removedExactOwnedNotification: false
+        )
+        return
+      }
+
+      let content = UNMutableNotificationContent()
+      content.title = "Mknoon recovery sentinel"
+      content.body = "Unrelated notification preservation"
+      content.badge = nil
+      content.userInfo = ["mknoon_sims_recovery_sentinel": true]
+      let sentinel = UNNotificationRequest(
+        identifier: sentinelIdentifier,
+        content: content,
+        trigger: nil
+      )
+      center.add(sentinel) { [weak self] error in
+        guard let self else { return }
+        guard error == nil else {
+          self.finishIosNotificationRecoveryProof(
+            request: request,
+            status: "failed",
+            resultCode: "sentinel_delivery_failed",
+            badgeBefore: badgeBefore,
+            badgeAfter: UIApplication.shared.applicationIconBadgeNumber,
+            deliveredBefore: before.count,
+            deliveredWithSentinel: before.count,
+            deliveredAfter: before.count,
+            deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+            sentinelSurvived: false,
+            removedExactOwnedNotification: false
+          )
+          return
+        }
+        self.waitForIosDeliveredIdentifiers(
+          deadline: Date().addingTimeInterval(10),
+          predicate: { identifiers in
+            identifiers.count == 2 && identifiers.contains(sentinelIdentifier)
+          }
+        ) { identifiersWithSentinel in
+          guard
+            identifiersWithSentinel.count == 2,
+            identifiersWithSentinel.contains(sentinelIdentifier),
+            let coordinator = self.iosNotificationRecoveryCoordinator,
+            let begin = coordinator.beginReconciliation(accountPeerId: accountPeerId)
+          else {
+            self.finishIosNotificationRecoveryProof(
+              request: request,
+              status: "failed",
+              resultCode: "sentinel_not_observed",
+              badgeBefore: badgeBefore,
+              badgeAfter: UIApplication.shared.applicationIconBadgeNumber,
+              deliveredBefore: before.count,
+              deliveredWithSentinel: identifiersWithSentinel.count,
+              deliveredAfter: identifiersWithSentinel.count,
+              deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+              sentinelSurvived: identifiersWithSentinel.contains(sentinelIdentifier),
+              removedExactOwnedNotification: false
+            )
+            return
+          }
+          coordinator.commitReconciliation(
+            token: begin.token,
+            watermark: begin.watermark,
+            accountPeerId: accountPeerId,
+            canonicalStateComplete: true,
+            canonicalBadgeCount: 0,
+            identities: []
+          ) { committed in
+            guard committed else {
+              self.finishIosNotificationRecoveryProof(
+                request: request,
+                status: "failed",
+                resultCode: "reconciliation_rejected",
+                badgeBefore: badgeBefore,
+                badgeAfter: UIApplication.shared.applicationIconBadgeNumber,
+                deliveredBefore: before.count,
+                deliveredWithSentinel: identifiersWithSentinel.count,
+                deliveredAfter: identifiersWithSentinel.count,
+                deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+                sentinelSurvived: identifiersWithSentinel.contains(sentinelIdentifier),
+                removedExactOwnedNotification: false
+              )
+              return
+            }
+            self.waitForIosDeliveredIdentifiers(
+              deadline: Date().addingTimeInterval(10),
+              predicate: { identifiers in
+                identifiers == Set([sentinelIdentifier])
+                  && UIApplication.shared.applicationIconBadgeNumber == 0
+              }
+            ) { remaining in
+              let sentinelSurvived = remaining == Set([sentinelIdentifier])
+              let badgeAfter = UIApplication.shared.applicationIconBadgeNumber
+              self.finishIosNotificationRecoveryProof(
+                request: request,
+                status: sentinelSurvived && badgeAfter == 0 ? "passed" : "failed",
+                resultCode: sentinelSurvived && badgeAfter == 0
+                  ? "ok"
+                  : "retirement_incomplete",
+                badgeBefore: badgeBefore,
+                badgeAfter: max(0, badgeAfter),
+                deliveredBefore: before.count,
+                deliveredWithSentinel: identifiersWithSentinel.count,
+                deliveredAfter: remaining.count,
+                deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+                sentinelSurvived: sentinelSurvived,
+                removedExactOwnedNotification:
+                  before.count == 1
+                    && identifiersWithSentinel.count == 2
+                    && remaining.count == 1
+              )
+            }
+          }
+        }
+      }
+    }
+  }
+
+  private func waitForIosDeliveredIdentifiers(
+    deadline: Date,
+    predicate: @escaping (Set<String>) -> Bool,
+    completion: @escaping (Set<String>) -> Void
+  ) {
+    UNUserNotificationCenter.current().getDeliveredNotifications { [weak self] notifications in
+      guard let self else { return }
+      let identifiers = Set(notifications.map(\.request.identifier))
+      guard !predicate(identifiers), Date() < deadline else {
+        completion(identifiers)
+        return
+      }
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+        self.waitForIosDeliveredIdentifiers(
+          deadline: deadline,
+          predicate: predicate,
+          completion: completion
+        )
+      }
+    }
+  }
+
+  private func finishIosNotificationRecoveryProof(
+    request: [String: String],
+    status: String,
+    resultCode: String,
+    badgeBefore: Int,
+    badgeAfter: Int,
+    deliveredBefore: Int,
+    deliveredWithSentinel: Int,
+    deliveredAfter: Int,
+    deliveredNotificationBadgeWasNil: Bool,
+    sentinelSurvived: Bool,
+    removedExactOwnedNotification: Bool
+  ) {
+    _ = iosReceiverBootstrapHandoff.completeNotificationRecoveryRequest(
+      request: request,
+      status: status,
+      resultCode: resultCode,
+      badgeBefore: badgeBefore,
+      badgeAfter: badgeAfter,
+      deliveredBefore: deliveredBefore,
+      deliveredWithSentinel: deliveredWithSentinel,
+      deliveredAfter: deliveredAfter,
+      deliveredNotificationBadgeWasNil: deliveredNotificationBadgeWasNil,
+      sentinelSurvived: sentinelSurvived,
+      removedExactOwnedNotification: removedExactOwnedNotification
+    )
+    iosNotificationRecoveryProofInFlight = false
   }
 #endif
 
@@ -516,10 +785,22 @@ struct NotificationResponseDiagnostic: Equatable {
       @unknown default:
         alertSetting = "not_supported"
       }
+      let badgeSetting: String
+      switch settings.badgeSetting {
+      case .enabled:
+        badgeSetting = "enabled"
+      case .disabled:
+        badgeSetting = "disabled"
+      case .notSupported:
+        badgeSetting = "not_supported"
+      @unknown default:
+        badgeSetting = "not_supported"
+      }
       DispatchQueue.main.async { [weak self] in
         self?.iosReceiverBootstrapHandoff.recordNotificationSettings(
           authorization: authorization,
-          alertSetting: alertSetting
+          alertSetting: alertSetting,
+          badgeSetting: badgeSetting
         )
       }
 #endif
@@ -539,6 +820,7 @@ struct NotificationResponseDiagnostic: Equatable {
       return
     }
     setupIosNotificationOpenBridge(messenger: controller.binaryMessenger)
+    setupIosNotificationRecoveryBridge(messenger: controller.binaryMessenger)
     setupMigrationKeepAliveBridge(messenger: controller.binaryMessenger)
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
@@ -742,6 +1024,241 @@ struct NotificationResponseDiagnostic: Equatable {
     NSLog("[PUSH_DIAG] ios_notification_open_bridge_setup")
   }
 
+  private func setupIosNotificationRecoveryBridge(
+    messenger: FlutterBinaryMessenger
+  ) {
+    if iosNotificationRecoveryChannel != nil { return }
+    let channel = FlutterMethodChannel(
+      name: iosNotificationRecoveryChannelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleIosNotificationRecoveryMethodCall(call, result: result)
+    }
+    iosNotificationRecoveryChannel = channel
+    NSLog("[PUSH_DIAG] ios_notification_recovery_bridge_setup")
+  }
+
+  private func handleIosNotificationRecoveryMethodCall(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+#if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
+    guard !iosNotificationRecoveryProofInFlight else {
+      result(
+        FlutterError(
+          code: "notification_recovery_proof_in_flight",
+          message: nil,
+          details: nil
+        )
+      )
+      return
+    }
+#endif
+    guard let coordinator = iosNotificationRecoveryCoordinator else {
+      result(FlutterError(
+        code: "notification_recovery_unavailable",
+        message: "shared notification recovery state is unavailable",
+        details: nil
+      ))
+      return
+    }
+
+    switch call.method {
+    case "beginReconciliation":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: ["accountPeerId"]
+            ),
+            let accountPeerId = nonEmptyRecoveryString(
+              arguments["accountPeerId"]
+            ),
+            let begin = coordinator.beginReconciliation(
+              accountPeerId: accountPeerId
+            ),
+            begin.watermark <= UInt64(Int64.max) else {
+        result(recoveryFlutterError(code: "begin_rejected"))
+        return
+      }
+      result([
+        "token": begin.token,
+        "watermark": Int64(begin.watermark),
+      ])
+
+    case "commitReconciliation":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: [
+                "token",
+                "watermark",
+                "accountPeerId",
+                "canonicalStateComplete",
+                "canonicalBadgeCount",
+                "identities",
+              ]
+            ),
+            let token = nonEmptyRecoveryString(arguments["token"]),
+            let accountPeerId = nonEmptyRecoveryString(
+              arguments["accountPeerId"]
+            ),
+            let watermark = recoveryUInt64(arguments["watermark"]),
+            let canonicalStateComplete = recoveryBool(
+              arguments["canonicalStateComplete"]
+            ),
+            let canonicalBadgeCount = recoveryNonnegativeInt(
+              arguments["canonicalBadgeCount"]
+            ),
+            let rawIdentities = arguments["identities"] as? [[String: Any]],
+            let identities = parseCanonicalRecoveryIdentities(rawIdentities)
+      else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.commitReconciliation(
+        token: token,
+        watermark: watermark,
+        accountPeerId: accountPeerId,
+        canonicalStateComplete: canonicalStateComplete,
+        canonicalBadgeCount: canonicalBadgeCount,
+        identities: identities
+      ) { ok in
+        DispatchQueue.main.async {
+          if ok {
+            result(["ok": true])
+          } else {
+            result(self.recoveryFlutterError(code: "commit_rejected"))
+          }
+        }
+      }
+
+    case "retireConversation":
+      guard let arguments = recoveryArguments(
+              call.arguments,
+              keys: ["accountPeerId", "lane", "conversationId"]
+            ),
+            let accountPeerId = nonEmptyRecoveryString(
+              arguments["accountPeerId"]
+            ),
+            let rawLane = nonEmptyRecoveryString(arguments["lane"]),
+            let lane = IosNotificationRecoveryLane(rawValue: rawLane),
+            let conversationId = nonEmptyRecoveryString(
+              arguments["conversationId"]
+            ) else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.retireConversation(
+        accountPeerId: accountPeerId,
+        lane: lane,
+        conversationId: conversationId
+      ) { ok in
+        DispatchQueue.main.async {
+          if ok {
+            result(["ok": true])
+          } else {
+            result(self.recoveryFlutterError(code: "retire_rejected"))
+          }
+        }
+      }
+
+    case "clearAccount":
+      guard let arguments = recoveryArguments(call.arguments, keys: []),
+            arguments.isEmpty else {
+        result(recoveryFlutterError(code: "bad_args"))
+        return
+      }
+      coordinator.clearAccount { ok in
+        DispatchQueue.main.async {
+          if ok {
+            result(["ok": true])
+          } else {
+            result(self.recoveryFlutterError(code: "clear_rejected"))
+          }
+        }
+      }
+
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func parseCanonicalRecoveryIdentities(
+    _ values: [[String: Any]]
+  ) -> [IosNotificationCanonicalIdentity]? {
+    var identities: [IosNotificationCanonicalIdentity] = []
+    identities.reserveCapacity(values.count)
+    for value in values {
+      guard Set(value.keys) == ["lane", "conversationId", "eventId"],
+            let rawLane = nonEmptyRecoveryString(value["lane"]),
+            let lane = IosNotificationRecoveryLane(rawValue: rawLane),
+            let conversationId = nonEmptyRecoveryString(
+              value["conversationId"]
+            ),
+            let eventId = nonEmptyRecoveryString(value["eventId"]) else {
+        return nil
+      }
+      identities.append(IosNotificationCanonicalIdentity(
+        lane: lane,
+        conversationId: conversationId,
+        eventId: eventId
+      ))
+    }
+    return identities
+  }
+
+  private func nonEmptyRecoveryString(_ value: Any?) -> String? {
+    guard let value = value as? String, !value.isEmpty else { return nil }
+    return value
+  }
+
+  private func recoveryArguments(
+    _ value: Any?,
+    keys: Set<String>
+  ) -> [String: Any]? {
+    guard let arguments = value as? [String: Any],
+          Set(arguments.keys) == keys else {
+      return nil
+    }
+    return arguments
+  }
+
+  private func recoveryBool(_ value: Any?) -> Bool? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) == CFBooleanGetTypeID() else {
+      return nil
+    }
+    return number.boolValue
+  }
+
+  private func recoveryInteger(_ value: Any?) -> NSNumber? {
+    guard let number = value as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID(),
+          !CFNumberIsFloatType(number) else {
+      return nil
+    }
+    return number
+  }
+
+  private func recoveryUInt64(_ value: Any?) -> UInt64? {
+    guard let number = recoveryInteger(value), number.int64Value >= 0 else {
+      return nil
+    }
+    return UInt64(number.int64Value)
+  }
+
+  private func recoveryNonnegativeInt(_ value: Any?) -> Int? {
+    guard let number = recoveryInteger(value),
+          number.int64Value >= 0,
+          number.int64Value <= Int64(Int.max) else {
+      return nil
+    }
+    return Int(number.int64Value)
+  }
+
+  private func recoveryFlutterError(code: String) -> FlutterError {
+    FlutterError(code: code, message: nil, details: nil)
+  }
+
   private func handleIosNotificationOpenMethodCall(
     _ call: FlutterMethodCall,
     result: @escaping FlutterResult
@@ -754,6 +1271,22 @@ struct NotificationResponseDiagnostic: Equatable {
     case "consumeInitialNotificationOpen":
       let payload = pendingIosNotificationOpen
       pendingIosNotificationOpen = nil
+      if payload == nil {
+        NSLog("[PUSH_DIAG] ios_notification_open_initial_empty")
+      } else {
+        NSLog("[PUSH_DIAG] ios_notification_open_initial_consumed")
+      }
+      result(payload)
+    case "consumeInitialNotificationOpenAndMarkReady":
+      // This MethodChannel handler runs on the main thread with notification
+      // delegate delivery. Capture and clear the launch response while warm
+      // forwarding is still disabled, then arm warm forwarding atomically.
+      // No didReceive(response) callback can be reclassified between these
+      // operations.
+      let payload = pendingIosNotificationOpen
+      pendingIosNotificationOpen = nil
+      iosNotificationOpenBridgeReady = true
+      NSLog("[PUSH_DIAG] ios_notification_open_bridge_ready")
       if payload == nil {
         NSLog("[PUSH_DIAG] ios_notification_open_initial_empty")
       } else {

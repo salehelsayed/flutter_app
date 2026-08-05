@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -12,22 +13,30 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
+const Set<String> _trustedDeliveryReceiptTransports = <String>{
+  'direct',
+  'relay',
+  'inbox',
+};
+
 /// Applies an incoming `'delivery_receipt'` envelope: flips matching
 /// outgoing `'inboxed'`, unconfirmed `'sent'`, or (185) `'failed'` rows to
 /// `'delivered'` and clears the retained wire envelope.
 ///
 /// This is G4 allowed minting site (a) — the ONLY place relay-inbox custody
-/// becomes 'delivered'. Every forward transition rides
-/// `conditionalTransitionStatus` (D-6) so a racing custody sweep can never be
-/// downgraded by a stale snapshot. Only `'delivered'` is terminal-settled (the
-/// idempotent early-out below); a receiver-authenticated receipt (guard at
-/// :55) MAY intentionally lift a `'failed'` row — a sender-offline send that
-/// still reached the peer is not "settled", it is a Retry that must clear.
+/// becomes 'delivered'. Every ordinary transition uses one atomic typed
+/// settlement so a racing custody sweep cannot downgrade it from a stale
+/// snapshot. Only `'delivered'` is terminal-settled (the idempotent early-out
+/// below); an authenticated-ingress, peer-bound receipt MAY intentionally lift
+/// a `'failed'` row. Ingress provenance and row-peer correlation are separate,
+/// fail-closed guards.
 Future<void> handleDeliveryReceipt({
   required ChatMessage message,
   required MessageRepository messageRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
 }) async {
+  if (!_trustedDeliveryReceiptTransports.contains(message.transport)) return;
+
   final fromPreview = message.from.length > 10
       ? message.from.substring(0, 10)
       : message.from;
@@ -132,35 +141,7 @@ Future<void> handleDeliveryReceipt({
       continue;
     }
 
-    var flipped = await messageRepo.conditionalTransitionStatus(
-      messageId,
-      fromStatus: 'inboxed',
-      toStatus: 'delivered',
-    );
-    if (flipped == 0) {
-      // An unconfirmed 'sent' row whose envelope reached the receiver via a
-      // path that lost the ack — the receipt is still receiver confirmation.
-      flipped = await messageRepo.conditionalTransitionStatus(
-        messageId,
-        fromStatus: 'sent',
-        toStatus: 'delivered',
-      );
-    }
-    if (flipped == 0) {
-      // 185: a row stamped terminal 'failed' during a sender-offline send whose
-      // envelope still reached the receiver (e.g. delivered on a later
-      // retryUnacked pass, or a relayReady TTL-lag window where the send was
-      // marked failed despite arriving). The receipt is peer-authenticated
-      // (guarded at :55) and receiver-minted, so it is valid confirmation —
-      // lift the row to 'delivered' instead of stranding it with a Retry that
-      // never clears. Belt-and-suspenders for the offline-send truthfulness fix.
-      flipped = await messageRepo.conditionalTransitionStatus(
-        messageId,
-        fromStatus: 'failed',
-        toStatus: 'delivered',
-      );
-    }
-    if (flipped == 0) {
+    if (messageRepo is! OutgoingTransportMutationRepository) {
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_NO_TRANSITION',
@@ -168,14 +149,33 @@ Future<void> handleDeliveryReceipt({
       );
       continue;
     }
-
-    final delivered = await messageRepo.getMessage(messageId);
-    if (delivered != null) {
-      await messageRepo.saveMessage(
-        normalizeOutgoingDeleteTombstoneVisibility(
-          delivered.copyWith(wireEnvelope: null),
-        ),
+    final mutationRepo = messageRepo as OutgoingTransportMutationRepository;
+    final settled = row.isDeleted
+        ? await mutationRepo.settleOutgoingOrdinaryDeleteTombstone(
+            messageId: row.id,
+            expectedContactPeerId: message.from,
+            expectedEnvelope: row.wireEnvelope,
+            status: 'delivered',
+            transport: row.transport,
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.receipt,
+          )
+        : await mutationRepo.settleOutgoingOrdinaryTransport(
+            messageId: row.id,
+            expectedContactPeerId: message.from,
+            expectedEnvelope: row.wireEnvelope,
+            status: 'delivered',
+            transport: row.transport,
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.receipt,
+          );
+    if (!settled.changed) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_NO_TRANSITION',
+        details: {'from': fromPreview, 'id': idPreview, 'status': row.status},
       );
+      continue;
     }
     emitFlowEvent(
       layer: 'FL',

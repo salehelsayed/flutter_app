@@ -45,6 +45,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   String? quotedMessageId,
   List<double>? waveform,
   String? messageId,
+  bool preassignedMessageIdIsFresh = false,
   String? timestamp,
   String? blobId,
   // 112 Phase 4 "encrypt once": the composer's LAN leg already streamed
@@ -199,6 +200,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     mediaAttachments: [uploaded],
     mediaAttachmentRepo: mediaAttachmentRepo,
     messageId: messageId,
+    preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
     timestamp: timestamp,
     emitTimingEvent: false,
   );

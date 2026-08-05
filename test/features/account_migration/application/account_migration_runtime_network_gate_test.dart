@@ -69,6 +69,7 @@ void main() {
     () async {
       final firstOutcome = Completer<bool>();
       var startCalls = 0;
+      var syncOnStartedCalls = 0;
 
       Future<bool> startRuntime() {
         startCalls += 1;
@@ -80,6 +81,9 @@ void main() {
 
       final latch = AccountMigrationRuntimeStartupLatch(
         startRuntime: startRuntime,
+        onStarted: () {
+          syncOnStartedCalls += 1;
+        },
       );
 
       final first = latch.ensureStarted();
@@ -108,6 +112,11 @@ void main() {
         2,
         reason: 'a successful start remains latched for later callers',
       );
+      expect(
+        syncOnStartedCalls,
+        1,
+        reason: 'existing synchronous startup callbacks remain supported',
+      );
 
       var failingStartCalls = 0;
       final errorLatch = AccountMigrationRuntimeStartupLatch(
@@ -132,6 +141,33 @@ void main() {
       );
     },
   );
+
+  test('runtime startup latch awaits async onStarted completion', () async {
+    final onStartedBarrier = Completer<void>();
+    var ensureStartedCompleted = false;
+
+    final latch = AccountMigrationRuntimeStartupLatch(
+      startRuntime: () async => true,
+      onStarted: () => onStartedBarrier.future,
+    );
+
+    final startup = latch.ensureStarted()
+      ..then((_) {
+        ensureStartedCompleted = true;
+      });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(
+      ensureStartedCompleted,
+      isFalse,
+      reason: 'runtime dependents must wait for post-start recovery work',
+    );
+
+    onStartedBarrier.complete();
+    await startup;
+
+    expect(ensureStartedCompleted, isTrue);
+  });
 
   group('AccountMigrationRuntimeNetworkGate', () {
     late _FakeAuthorityRepository repository;

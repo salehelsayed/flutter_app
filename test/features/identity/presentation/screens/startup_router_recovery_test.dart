@@ -1,10 +1,13 @@
 import 'dart:async';
 
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/config/startup_config.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
@@ -49,6 +52,20 @@ class _ThrowingStartupRejoinRepository extends InMemoryGroupRepository {
   @override
   Future<Map<String, GroupRejoinState>> loadGroupRejoinStates() async {
     throw StateError('rejoin discovery unavailable');
+  }
+}
+
+class _HoldingStartupGroupRepository extends InMemoryGroupRepository {
+  _HoldingStartupGroupRepository(this.release);
+
+  final Future<void> release;
+  int getAllGroupsCallCount = 0;
+
+  @override
+  Future<List<GroupModel>> getAllGroups() async {
+    getAllGroupsCallCount += 1;
+    await release;
+    return super.getAllGroups();
   }
 }
 
@@ -208,6 +225,21 @@ void main() {
     Future<bool> Function(String groupId)? canRejoinForExitIntent,
     Future<void> Function(String groupId)? processExitIntent,
     Future<void> Function()? groupExitIntentRecovery,
+    Future<void> Function()? clearDeliveredNotifications,
+    Future<void> Function()? clearIosNotificationRecovery,
+    Future<RemoteMessage?> Function()? getInitialRemoteMessage,
+    bool Function()? shouldHandleInitialPushOpen,
+    Future<IosApnsInitialNotificationOpenDisposition> Function()?
+    consumeInitialIosApnsNotificationOpen,
+    Future<void> Function()? recoverDroppedPushes,
+    Future<bool> Function()? hasPendingDroppedPushRecovery,
+    Future<bool> Function()? recoverDroppedPushesCompletely,
+    Future<Object?> Function()? onIosNotificationColdStartRecoveryStarted,
+    Future<void> Function({
+      required Object? recoveryHandle,
+      required bool canonicalStateComplete,
+    })?
+    onIosNotificationColdStartRecoverySettled,
   }) {
     return MaterialApp(
       locale: const Locale('en'),
@@ -242,6 +274,19 @@ void main() {
         accountMigrationReceiverEvents: accountMigrationReceiverEvents,
         onAccountMigrationReceiverActivated:
             onAccountMigrationReceiverActivated,
+        clearDeliveredNotifications: clearDeliveredNotifications,
+        clearIosNotificationRecovery: clearIosNotificationRecovery,
+        getInitialRemoteMessage: getInitialRemoteMessage,
+        shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
+        consumeInitialIosApnsNotificationOpen:
+            consumeInitialIosApnsNotificationOpen,
+        recoverDroppedPushes: recoverDroppedPushes,
+        hasPendingDroppedPushRecovery: hasPendingDroppedPushRecovery,
+        recoverDroppedPushesCompletely: recoverDroppedPushesCompletely,
+        onIosNotificationColdStartRecoveryStarted:
+            onIosNotificationColdStartRecoveryStarted,
+        onIosNotificationColdStartRecoverySettled:
+            onIosNotificationColdStartRecoverySettled,
       ),
     );
   }
@@ -257,6 +302,30 @@ void main() {
         state: state,
         accountPeerId: accountPeerId,
       ),
+    );
+  }
+
+  Future<void> seedActiveReturningAccount(String peerId) async {
+    identityRepository.seed(
+      FakeIdentityRepository.makeIdentity(
+        peerId: peerId,
+        mlKemPublicKey: 'existing-mlkem-public',
+        mlKemSecretKey: 'existing-mlkem-secret',
+      ),
+    );
+    contactRepository.seed([
+      ContactModel(
+        peerId: 'peer-existing',
+        publicKey: 'pk-existing',
+        rendezvous: '/dns4/rendezvous.example.com/tcp/4001/p2p/peer-existing',
+        username: 'Existing',
+        signature: 'sig-existing',
+        scannedAt: '2026-08-04T08:00:00.000Z',
+      ),
+    ]);
+    await saveAuthority(
+      AccountMigrationAuthorityState.active,
+      accountPeerId: peerId,
     );
   }
 
@@ -432,6 +501,103 @@ void main() {
   );
 
   testWidgets(
+    'migrated-out erase clears iOS recovery without clearing all delivered notifications',
+    (tester) async {
+      const peerId = '12D3KooWMigratedOutErase';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(peerId: peerId),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.migratedOut,
+        accountPeerId: peerId,
+      );
+      var iosRecoveryClearCount = 0;
+      var deliveredClearCount = 0;
+      var authorityExistedDuringRecoveryClear = false;
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          clearIosNotificationRecovery: () async {
+            iosRecoveryClearCount += 1;
+            authorityExistedDuringRecoveryClear =
+                await SecureKeyStoreAccountMigrationAuthorityRepository(
+                  secureKeyStore: secureKeyStore,
+                ).loadAuthority() !=
+                null;
+          },
+          clearDeliveredNotifications: () async {
+            deliveredClearCount += 1;
+          },
+        ),
+      );
+      await pumpFrames(tester);
+
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-action')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-confirm')),
+      );
+      await pumpFrames(tester);
+
+      expect(iosRecoveryClearCount, 1);
+      expect(authorityExistedDuringRecoveryClear, isTrue);
+      expect(
+        deliveredClearCount,
+        0,
+        reason:
+            'exact native recovery cleanup must not alias the broad local '
+            'notification clear seam',
+      );
+      expect(
+        await SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: secureKeyStore,
+        ).loadAuthority(),
+        isNull,
+      );
+    },
+  );
+
+  testWidgets(
+    'native recovery clear failure cannot block authoritative account erase',
+    (tester) async {
+      const peerId = '12D3KooWMigratedOutClearFailure';
+      identityRepository.seed(
+        FakeIdentityRepository.makeIdentity(peerId: peerId),
+      );
+      await saveAuthority(
+        AccountMigrationAuthorityState.migratedOut,
+        accountPeerId: peerId,
+      );
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          clearIosNotificationRecovery: () async {
+            throw StateError('unsupported future native schema');
+          },
+        ),
+      );
+      await pumpFrames(tester);
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-action')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('account-migration-erase-confirm')),
+      );
+      await pumpFrames(tester);
+
+      expect(
+        await SecureKeyStoreAccountMigrationAuthorityRepository(
+          secureKeyStore: secureKeyStore,
+        ).loadAuthority(),
+        isNull,
+      );
+    },
+  );
+
+  testWidgets(
     'active authority preserves returning-user startup and starts P2P',
     (tester) async {
       const peerId = '12D3KooWActive';
@@ -462,6 +628,429 @@ void main() {
 
       expect(find.byType(AccountMigrationBlockedScreen), findsNothing);
       expect(p2pService.startNodeCallCount, 1);
+    },
+  );
+
+  testWidgets(
+    'iOS cold-start settlement awaits exact direct and full group recovery',
+    (tester) async {
+      const peerId = '12D3KooWIosColdExact';
+      await seedActiveReturningAccount(peerId);
+      final releaseDirect = Completer<void>();
+      final releaseGroups = Completer<void>();
+      final groupRepository = _HoldingStartupGroupRepository(
+        releaseGroups.future,
+      );
+      final settlements = <bool>[];
+      var recoveryStarted = false;
+      final expectedRecoveryHandle = Object();
+      p2pService.onDrainOfflineInbox = () {
+        if (p2pService.drainOfflineInboxFullyCallCount > 0) {
+          expect(recoveryStarted, isTrue);
+          return releaseDirect.future;
+        }
+        return Future<void>.value();
+      };
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupRepository: groupRepository,
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          onIosNotificationColdStartRecoveryStarted: () async {
+            recoveryStarted = true;
+            return expectedRecoveryHandle;
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                expect(recoveryHandle, same(expectedRecoveryHandle));
+                settlements.add(canonicalStateComplete);
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(p2pService.drainOfflineInboxFullyCallCount, 1);
+      expect(groupRepository.getAllGroupsCallCount, greaterThanOrEqualTo(1));
+      expect(settlements, isEmpty);
+
+      releaseDirect.complete();
+      await pumpFrames(tester, count: 5);
+      expect(
+        settlements,
+        isEmpty,
+        reason: 'the direct result cannot overtake full group recovery',
+      );
+
+      releaseGroups.complete();
+      await pumpFrames(tester, count: 10);
+      expect(settlements, <bool>[true]);
+      expect(groupRepository.getAllGroupsCallCount, greaterThanOrEqualTo(2));
+    },
+  );
+
+  testWidgets(
+    'iOS cold-start settlement reports incomplete direct pagination truthfully',
+    (tester) async {
+      const peerId = '12D3KooWIosColdIncomplete';
+      await seedActiveReturningAccount(peerId);
+      p2pService.fullInboxDrainOutcome = const DirectInboxDrainOutcome(
+        isSuccessful: true,
+        hasMore: true,
+      );
+      final settlements = <bool>[];
+      final recoveryHandle = Object();
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          onIosNotificationColdStartRecoveryStarted: () async => recoveryHandle,
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required Object? recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                settlements.add(canonicalStateComplete);
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 30);
+
+      expect(p2pService.drainOfflineInboxFullyCallCount, 1);
+      expect(settlements, <bool>[false]);
+    },
+  );
+
+  testWidgets(
+    'native iOS initial open routes inside cold scope before exact drains settle',
+    (tester) async {
+      const peerId = '12D3KooWIosColdNativeOpen';
+      await seedActiveReturningAccount(peerId);
+      final releaseNativeRoute = Completer<void>();
+      final recoveryHandle = Object();
+      final trace = <String>[];
+      var nativeConsumeCalls = 0;
+      var fcmInitialCalls = 0;
+      p2pService.onDrainOfflineInbox = () async {
+        if (p2pService.drainOfflineInboxFullyCallCount > 0) {
+          trace.add('exact-direct');
+        }
+      };
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          shouldHandleInitialPushOpen: () => true,
+          getInitialRemoteMessage: () async {
+            fcmInitialCalls += 1;
+            trace.add('fcm-initial-open');
+            return null;
+          },
+          consumeInitialIosApnsNotificationOpen: () async {
+            nativeConsumeCalls += 1;
+            trace.add('native-consume-route-start');
+            await releaseNativeRoute.future;
+            trace.add('native-route-complete');
+            return IosApnsInitialNotificationOpenDisposition.routed;
+          },
+          onIosNotificationColdStartRecoveryStarted: () async {
+            trace.add('cold-begin-and-first-staged-pass');
+            return recoveryHandle;
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required Object? recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                trace.add('cold-settle:$canonicalStateComplete');
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(trace, <String>[
+        'cold-begin-and-first-staged-pass',
+        'native-consume-route-start',
+      ]);
+      expect(nativeConsumeCalls, 1);
+      expect(p2pService.drainOfflineInboxFullyCallCount, 0);
+
+      releaseNativeRoute.complete();
+      await pumpFrames(tester, count: 15);
+
+      expect(
+        nativeConsumeCalls,
+        1,
+        reason: 'the native cold open is consumed once',
+      );
+      expect(
+        fcmInitialCalls,
+        0,
+        reason: 'a native-owned cold open must not also route through FCM',
+      );
+      expect(p2pService.drainOfflineInboxFullyCallCount, 1);
+      expect(trace, <String>[
+        'cold-begin-and-first-staged-pass',
+        'native-consume-route-start',
+        'native-route-complete',
+        'exact-direct',
+        'cold-settle:true',
+      ]);
+    },
+  );
+
+  testWidgets(
+    'failed native initial consume falls back to FCM and settles incomplete',
+    (tester) async {
+      const peerId = '12D3KooWIosColdNativeFailure';
+      await seedActiveReturningAccount(peerId);
+      final recoveryHandle = Object();
+      final trace = <String>[];
+      p2pService.onDrainOfflineInbox = () async {
+        if (p2pService.drainOfflineInboxFullyCallCount > 0) {
+          trace.add('exact-direct');
+        }
+      };
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          shouldHandleInitialPushOpen: () => true,
+          getInitialRemoteMessage: () async {
+            trace.add('fcm-fallback');
+            return null;
+          },
+          consumeInitialIosApnsNotificationOpen: () async {
+            trace.add('native-failed');
+            return IosApnsInitialNotificationOpenDisposition.failed;
+          },
+          onIosNotificationColdStartRecoveryStarted: () async {
+            trace.add('cold-begin');
+            return recoveryHandle;
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required Object? recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                trace.add('cold-settle:$canonicalStateComplete');
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 30);
+
+      expect(trace, <String>[
+        'cold-begin',
+        'native-failed',
+        'fcm-fallback',
+        'exact-direct',
+        'cold-settle:false',
+      ]);
+    },
+  );
+
+  testWidgets(
+    'initial push opens after cold begin and completes before exact drains settle',
+    (tester) async {
+      const peerId = '12D3KooWIosColdInitialOpen';
+      await seedActiveReturningAccount(peerId);
+      final releaseInitialMessage = Completer<void>();
+      final recoveryHandle = Object();
+      final trace = <String>[];
+      p2pService.onDrainOfflineInbox = () async {
+        if (p2pService.drainOfflineInboxFullyCallCount > 0) {
+          trace.add('exact-direct');
+        }
+      };
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          shouldHandleInitialPushOpen: () => true,
+          getInitialRemoteMessage: () async {
+            trace.add('initial-open-start');
+            await releaseInitialMessage.future;
+            trace.add('initial-open-complete');
+            return null;
+          },
+          onIosNotificationColdStartRecoveryStarted: () async {
+            trace.add('cold-begin');
+            return recoveryHandle;
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required Object? recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                trace.add('cold-settle:$canonicalStateComplete');
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(trace, <String>['cold-begin', 'initial-open-start']);
+      expect(p2pService.drainOfflineInboxFullyCallCount, 0);
+
+      releaseInitialMessage.complete();
+      await pumpFrames(tester, count: 15);
+
+      expect(p2pService.drainOfflineInboxFullyCallCount, 1);
+      expect(trace, <String>[
+        'cold-begin',
+        'initial-open-start',
+        'initial-open-complete',
+        'exact-direct',
+        'cold-settle:true',
+      ]);
+    },
+  );
+
+  testWidgets(
+    'cold-start begin failure still settles false and isolates settlement failure',
+    (tester) async {
+      const peerId = '12D3KooWIosColdBeginFailure';
+      await seedActiveReturningAccount(peerId);
+      var beginCalls = 0;
+      final settlements = <bool>[];
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          onIosNotificationColdStartRecoveryStarted: () async {
+            beginCalls += 1;
+            throw StateError('native watermark unavailable');
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                settlements.add(canonicalStateComplete);
+                throw StateError('native settlement unavailable');
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 30);
+
+      expect(beginCalls, 1);
+      expect(p2pService.drainOfflineInboxFullyCallCount, 1);
+      expect(settlements, <bool>[false]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'dropped-push ownership uses its exact bool instead of duplicate inbox drains',
+    (tester) async {
+      const peerId = '12D3KooWIosColdDropped';
+      await seedActiveReturningAccount(peerId);
+      final groupRepository = InMemoryGroupRepository();
+      final groupMessageRepository = InMemoryGroupMessageRepository();
+      var legacyRecoveryCalls = 0;
+      var exactRecoveryCalls = 0;
+      var recoveryStarted = false;
+      final recoveryHandle = Object();
+      final settlements = <bool>[];
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupRepository: groupRepository,
+          groupMessageRepository: groupMessageRepository,
+          hasPendingDroppedPushRecovery: () async => true,
+          recoverDroppedPushes: () async {
+            legacyRecoveryCalls += 1;
+          },
+          onIosNotificationColdStartRecoveryStarted: () async {
+            recoveryStarted = true;
+            return recoveryHandle;
+          },
+          recoverDroppedPushesCompletely: () async {
+            expect(recoveryStarted, isTrue);
+            exactRecoveryCalls += 1;
+            return true;
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required Object? recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                settlements.add(canonicalStateComplete);
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 30);
+
+      expect(exactRecoveryCalls, 1);
+      expect(legacyRecoveryCalls, 0);
+      expect(p2pService.drainOfflineInboxFullyCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+      expect(settlements, <bool>[true]);
+    },
+  );
+
+  testWidgets(
+    'failed node start releases pending iOS open inside an incomplete scope',
+    (tester) async {
+      const peerId = '12D3KooWIosColdNodeFailure';
+      await seedActiveReturningAccount(peerId);
+      p2pService.startNodeResult = false;
+      final releaseNativeRoute = Completer<void>();
+      final recoveryHandle = Object();
+      final settledHandles = <Object?>[];
+      final trace = <String>[];
+      var nativeConsumeCalls = 0;
+      var fcmInitialCalls = 0;
+
+      await tester.pumpWidget(
+        buildRouterApp(
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          shouldHandleInitialPushOpen: () => true,
+          getInitialRemoteMessage: () async {
+            fcmInitialCalls += 1;
+            trace.add('fcm-initial-open');
+            return null;
+          },
+          consumeInitialIosApnsNotificationOpen: () async {
+            nativeConsumeCalls += 1;
+            trace.add('native-route-start');
+            await releaseNativeRoute.future;
+            trace.add('native-route-complete');
+            return IosApnsInitialNotificationOpenDisposition.routed;
+          },
+          onIosNotificationColdStartRecoveryStarted: () async {
+            trace.add('cold-begin');
+            return recoveryHandle;
+          },
+          onIosNotificationColdStartRecoverySettled:
+              ({
+                required recoveryHandle,
+                required canonicalStateComplete,
+              }) async {
+                settledHandles.add(recoveryHandle);
+                trace.add('cold-settle:$canonicalStateComplete');
+              },
+        ),
+      );
+      await pumpFrames(tester, count: 20);
+
+      expect(p2pService.startNodeCallCount, 1);
+      expect(trace, <String>['cold-begin', 'native-route-start']);
+      expect(settledHandles, isEmpty);
+      expect(p2pService.drainOfflineInboxFullyCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
+
+      releaseNativeRoute.complete();
+      await pumpFrames(tester, count: 15);
+
+      expect(trace, <String>[
+        'cold-begin',
+        'native-route-start',
+        'native-route-complete',
+        'cold-settle:false',
+      ]);
+      expect(settledHandles, <Object?>[recoveryHandle]);
+      expect(nativeConsumeCalls, 1);
+      expect(fcmInitialCalls, 0);
+      expect(p2pService.drainOfflineInboxFullyCallCount, 0);
+      expect(bridge.commandLog, isNot(contains('group:inboxRetrieveCursor')));
     },
   );
 

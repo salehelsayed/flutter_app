@@ -252,6 +252,7 @@ struct NotificationPreviewResult {
   var categoryIdentifier: String? = nil
   var targetContentIdentifier: String? = nil
   var toneReservation: PushToneReservation? = nil
+  var recoveryIdentity: IosNotificationRecoveryIdentity? = nil
 }
 
 /// Applies the resolver result at the real UserNotifications boundary. Relay
@@ -263,6 +264,9 @@ func applyNotificationPreviewResult(
   _ preview: NotificationPreviewResult,
   to content: UNMutableNotificationContent
 ) {
+  // Provider-supplied relative badge arithmetic is never authoritative. Both
+  // authorized and sanitized handoffs use the native absolute writer instead.
+  content.badge = nil
   content.title = preview.title
   content.body = preview.body
   if let threadIdentifier = preview.threadIdentifier {
@@ -459,7 +463,10 @@ final class NotificationPreviewResolver {
       return prepareOrdinaryDisplay(
         type: "new_message",
         messageId: messageId,
-        conversationId: senderPeerId,
+        accountPeerId: projection.localAccountPeerId,
+        lane: .direct,
+        recoveryConversationId: senderPeerId,
+        toneConversationId: senderPeerId,
         title: contact.username,
         body: "New message",
         threadIdentifier: senderPeerId,
@@ -529,7 +536,10 @@ final class NotificationPreviewResolver {
       return prepareOrdinaryDisplay(
         type: "new_message",
         messageId: messageId,
-        conversationId: senderPeerId,
+        accountPeerId: projection.localAccountPeerId,
+        lane: .direct,
+        recoveryConversationId: senderPeerId,
+        toneConversationId: senderPeerId,
         title: contact.username,
         body: previewBody,
         threadIdentifier: senderPeerId,
@@ -657,10 +667,10 @@ final class NotificationPreviewResolver {
         )
       }
 
-      let shouldAlert = toneLeaseStore?.acquire(
+      let tone = prepareReactionTone(
         conversationId: senderPeerId,
-        now: Date()
-      ) ?? true
+        eventKind: "reaction"
+      )
       emitDecryptOK(kind: "reaction")
       return NotificationPreviewResult(
         title: contact.username,
@@ -668,10 +678,18 @@ final class NotificationPreviewResolver {
         threadIdentifier: senderPeerId,
         didDecrypt: true,
         reason: "reaction",
-        suppress: !shouldAlert,
+        suppress: !tone.shouldAlert,
         markAsShown: true,
         categoryIdentifier: "MESSAGE_REACTION",
-        targetContentIdentifier: notificationIdentity
+        targetContentIdentifier: notificationIdentity,
+        toneReservation: tone.reservation,
+        recoveryIdentity: IosNotificationRecoveryIdentity(
+          accountPeerId: projection.localAccountPeerId,
+          lane: .direct,
+          conversationId: senderPeerId,
+          eventId: eventId,
+          kind: .reaction
+        )
       )
     } catch {
       return reactionFallback(
@@ -940,10 +958,10 @@ final class NotificationPreviewResolver {
         )
       }
 
-      let shouldAlert = toneLeaseStore?.acquire(
+      let tone = prepareReactionTone(
         conversationId: "group:\(groupId)",
-        now: Date()
-      ) ?? true
+        eventKind: "group_reaction"
+      )
       emitDecryptOK(kind: "group_reaction")
       return NotificationPreviewResult(
         title: group.name,
@@ -951,10 +969,18 @@ final class NotificationPreviewResolver {
         threadIdentifier: groupId,
         didDecrypt: true,
         reason: "group_reaction",
-        suppress: !shouldAlert,
+        suppress: !tone.shouldAlert,
         markAsShown: true,
         categoryIdentifier: "MESSAGE_REACTION",
-        targetContentIdentifier: notificationIdentity
+        targetContentIdentifier: notificationIdentity,
+        toneReservation: tone.reservation,
+        recoveryIdentity: IosNotificationRecoveryIdentity(
+          accountPeerId: projection.localAccountPeerId,
+          lane: .group,
+          conversationId: groupId,
+          eventId: eventId,
+          kind: .reaction
+        )
       )
     } catch {
       return groupReactionFallback(
@@ -1058,7 +1084,10 @@ final class NotificationPreviewResolver {
       return prepareOrdinaryDisplay(
         type: "group_message",
         messageId: messageId,
-        conversationId: "group:\(groupId)",
+        accountPeerId: projection.localAccountPeerId,
+        lane: .group,
+        recoveryConversationId: groupId,
+        toneConversationId: "group:\(groupId)",
         title: group.name,
         body: "\(sender.username): New message",
         threadIdentifier: groupId,
@@ -1150,7 +1179,10 @@ final class NotificationPreviewResolver {
         return prepareOrdinaryDisplay(
           type: "group_message",
           messageId: messageId,
-          conversationId: "group:\(groupId)",
+          accountPeerId: projection.localAccountPeerId,
+          lane: .group,
+          recoveryConversationId: groupId,
+          toneConversationId: "group:\(groupId)",
           title: "Mknoon",
           body: groupPrivateMediaNotificationBody(
             localeIdentifier: localeIdentifierProvider()
@@ -1175,7 +1207,10 @@ final class NotificationPreviewResolver {
       return prepareOrdinaryDisplay(
         type: "group_message",
         messageId: messageId,
-        conversationId: "group:\(groupId)",
+        accountPeerId: projection.localAccountPeerId,
+        lane: .group,
+        recoveryConversationId: groupId,
+        toneConversationId: "group:\(groupId)",
         title: group.name,
         body: body,
         threadIdentifier: groupId,
@@ -1196,7 +1231,10 @@ final class NotificationPreviewResolver {
   private func prepareOrdinaryDisplay(
     type: String,
     messageId: String?,
-    conversationId: String,
+    accountPeerId: String,
+    lane: IosNotificationRecoveryLane,
+    recoveryConversationId: String,
+    toneConversationId: String,
     title: String,
     body: String,
     threadIdentifier: String,
@@ -1218,7 +1256,7 @@ final class NotificationPreviewResolver {
     var toneReservation: PushToneReservation?
     if let reservationStore = toneLeaseStore as? PushToneReservationStoring {
       switch reservationStore.reserve(
-        conversationId: conversationId,
+        conversationId: toneConversationId,
         now: Date()
       ) {
       case let .reserved(reservation):
@@ -1246,7 +1284,42 @@ final class NotificationPreviewResolver {
       reason: reason,
       suppress: suppress,
       markAsShown: true,
-      toneReservation: toneReservation
+      toneReservation: toneReservation,
+      recoveryIdentity: IosNotificationRecoveryIdentity(
+        accountPeerId: accountPeerId,
+        lane: lane,
+        conversationId: recoveryConversationId,
+        eventId: messageId,
+        kind: .ordinary
+      )
+    )
+  }
+
+  private func prepareReactionTone(
+    conversationId: String,
+    eventKind: String
+  ) -> (shouldAlert: Bool, reservation: PushToneReservation?) {
+    guard let toneLeaseStore else { return (true, nil) }
+    if let reservationStore = toneLeaseStore as? PushToneReservationStoring {
+      switch reservationStore.reserve(
+        conversationId: conversationId,
+        now: Date()
+      ) {
+      case let .reserved(reservation):
+        return (true, reservation)
+      case .leaseHeld:
+        return (false, nil)
+      case .storageUnavailable:
+        eventEmitter.emit(
+          event: "PUSH_NSE_TONE_STORAGE_UNAVAILABLE",
+          details: ["kind": eventKind]
+        )
+        return (false, nil)
+      }
+    }
+    return (
+      toneLeaseStore.acquire(conversationId: conversationId, now: Date()),
+      nil
     )
   }
 

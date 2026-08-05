@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/services/p2p_service.dart'
+    show RelayProbeResult;
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
@@ -10,6 +12,8 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
+    as p2p_state;
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -84,6 +88,31 @@ class _BlockingDeleteP2PService extends FakeP2PService {
       acked: true,
       transport: 'direct',
     );
+  }
+}
+
+class _ControlledDeleteP2PService extends FakeP2PService {
+  _ControlledDeleteP2PService({
+    required super.peerId,
+    required super.network,
+    required this.sendResult,
+    this.sendGate,
+  });
+
+  final SendMessageResult sendResult;
+  final Completer<SendMessageResult>? sendGate;
+  final Completer<void> sendEntered = Completer<void>();
+  int sendWithReplyCallCount = 0;
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    sendWithReplyCallCount++;
+    if (!sendEntered.isCompleted) sendEntered.complete();
+    return sendGate?.future ?? sendResult;
   }
 }
 
@@ -850,7 +879,8 @@ void main() {
           tombstone!.privateMediaPolicy.mode,
           PrivateMediaMode.disappearing,
         );
-        expect(messageRepo.saveMessageCallCount, 2);
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(messageRepo.ordinaryMutationCallCount, 2);
         expect(
           await mediaAttachmentRepo.getAttachmentsForMessage(
             original.id,
@@ -931,6 +961,264 @@ void main() {
 
         p2pService.dispose();
         recipient.dispose();
+      },
+    );
+
+    test(
+      'R2 delete reuse race and relay require explicit authenticated commitment',
+      () async {
+        Future<void> runOrdinaryAdapter({
+          required String adapter,
+          required bool explicitlyAcked,
+        }) async {
+          final repository = FakeMessageRepository();
+          final original = makeMessage(
+            id: 'r2-delete-$adapter-${explicitlyAcked ? 'acked' : 'reply'}',
+          );
+          repository.seed([original]);
+
+          final network = FakeP2PNetwork()..inboxDisabled = true;
+          final sender = _ControlledDeleteP2PService(
+            peerId: 'peer-alice',
+            network: network,
+            sendResult: SendMessageResult(
+              sent: true,
+              acked: explicitlyAcked ? true : null,
+              reply: explicitlyAcked ? null : '{"ack":true}',
+              transport: adapter == 'relay' ? 'relay' : 'direct',
+            ),
+          );
+          final recipient = FakeP2PService(
+            peerId: 'peer-bob',
+            network: network,
+          );
+          addTearDown(sender.dispose);
+          addTearDown(recipient.dispose);
+
+          switch (adapter) {
+            case 'reuse':
+              sender.testConnections.add(
+                const p2p_state.ConnectionState(
+                  peerId: 'peer-bob',
+                  multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+                  direction: 'outbound',
+                  status: 'connected',
+                ),
+              );
+              break;
+            case 'race':
+              break;
+            case 'relay':
+              sender.discoverAlwaysFails = true;
+              sender.probeRelayResult = RelayProbeResult.connected;
+              break;
+            default:
+              fail('unknown adapter $adapter');
+          }
+
+          final (result, tombstone) = await deleteMessageForEveryone(
+            p2pService: sender,
+            messageRepo: repository,
+            originalMessage: original,
+            bridge: PassthroughCryptoBridge(),
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(sender.sendWithReplyCallCount, 1);
+          expect(tombstone, isNotNull);
+          if (explicitlyAcked) {
+            expect(tombstone!.status, 'delivered');
+            expect(tombstone.isHidden, isTrue);
+            expect(tombstone.wireEnvelope, isNull);
+          } else {
+            expect(tombstone!.status, 'sent');
+            expect(tombstone.isHidden, isFalse);
+            expect(tombstone.hiddenAt, isNull);
+            expect(
+              tombstone.wireEnvelope,
+              contains('"type":"message_deletion"'),
+            );
+          }
+        }
+
+        for (final adapter in const ['reuse', 'race', 'relay']) {
+          await runOrdinaryAdapter(adapter: adapter, explicitlyAcked: false);
+          await runOrdinaryAdapter(adapter: adapter, explicitlyAcked: true);
+        }
+
+        for (final adapter in const ['reuse', 'race', 'relay']) {
+          for (final explicitlyAcked in const [false, true]) {
+            final fixture = await MediaRepositoryRealDbFixture.create();
+            addTearDown(fixture.dispose);
+            final messageId =
+                'r2-private-delete-$adapter-${explicitlyAcked ? 'acked' : 'reply'}';
+            final original = await seedPrivateDeleteForEveryoneParent(
+              fixture,
+              messageId: messageId,
+              attachmentId: '$messageId-attachment',
+            );
+            final network = FakeP2PNetwork()..inboxDisabled = true;
+            final sender = _ControlledDeleteP2PService(
+              peerId: 'peer-alice',
+              network: network,
+              sendResult: SendMessageResult(
+                sent: true,
+                acked: explicitlyAcked ? true : null,
+                reply: explicitlyAcked ? null : '{"ack":true}',
+                transport: adapter == 'relay' ? 'relay' : 'direct',
+              ),
+            );
+            final recipient = FakeP2PService(
+              peerId: 'peer-bob',
+              network: network,
+            );
+            addTearDown(sender.dispose);
+            addTearDown(recipient.dispose);
+
+            switch (adapter) {
+              case 'reuse':
+                sender.testConnections.add(
+                  const p2p_state.ConnectionState(
+                    peerId: 'peer-bob',
+                    multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+                    direction: 'outbound',
+                    status: 'connected',
+                  ),
+                );
+                break;
+              case 'race':
+                break;
+              case 'relay':
+                sender.discoverAlwaysFails = true;
+                sender.probeRelayResult = RelayProbeResult.connected;
+                break;
+            }
+
+            final (result, tombstone) = await deleteMessageForEveryone(
+              p2pService: sender,
+              messageRepo: fixture.messageRepo,
+              originalMessage: original,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: mediaFileManager,
+              bridge: PassthroughCryptoBridge(),
+              recipientMlKemPublicKey: recipientMlKemPublicKey,
+            );
+
+            expect(result, SendChatMessageResult.success);
+            expect(sender.sendWithReplyCallCount, 1);
+            expect(tombstone, isNotNull);
+            if (explicitlyAcked) {
+              expect(tombstone!.status, 'delivered');
+              expect(tombstone.isHidden, isTrue);
+              expect(tombstone.wireEnvelope, isNull);
+            } else {
+              expect(tombstone!.status, 'sent');
+              expect(tombstone.isHidden, isFalse);
+              expect(tombstone.hiddenAt, isNull);
+              expect(tombstone.wireEnvelope, isNotNull);
+            }
+          }
+        }
+      },
+    );
+
+    test(
+      'R2 authenticated libp2p ACK may settle with local display label',
+      () async {
+        final original = makeMessage(id: 'r2-delete-local-label');
+        messageRepo.seed([original]);
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final sender = _ControlledDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+          sendResult: const SendMessageResult(sent: true, acked: true),
+        );
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+        addTearDown(sender.dispose);
+        addTearDown(recipient.dispose);
+        sender.localPeers.add('peer-bob');
+        sender.testConnections.add(
+          const p2p_state.ConnectionState(
+            peerId: 'peer-bob',
+            multiaddrs: ['/ip4/10.0.0.2/tcp/4001'],
+            direction: 'outbound',
+            status: 'connected',
+          ),
+        );
+
+        final (_, tombstone) = await deleteMessageForEveryone(
+          p2pService: sender,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(sender.sendWithReplyCallCount, 1);
+        expect(sender.localSendCallCount, 0);
+        expect(tombstone?.status, 'delivered');
+        expect(tombstone?.transport, 'local');
+        expect(tombstone?.isHidden, isTrue);
+        expect(tombstone?.wireEnvelope, isNull);
+      },
+    );
+
+    test(
+      'R2 local delete write waits for pending direct commitment or custody',
+      () async {
+        final original = makeMessage(id: 'r2-local-delete-waits');
+        messageRepo.seed([original]);
+        final directGate = Completer<SendMessageResult>();
+        final network = FakeP2PNetwork()..inboxDisabled = true;
+        final sender = _ControlledDeleteP2PService(
+          peerId: 'peer-alice',
+          network: network,
+          sendResult: const SendMessageResult(sent: false),
+          sendGate: directGate,
+        )..localPeers.add('peer-bob');
+        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+        addTearDown(sender.dispose);
+        addTearDown(recipient.dispose);
+
+        var completed = false;
+        final deletion = deleteMessageForEveryone(
+          p2pService: sender,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+        unawaited(deletion.then((_) => completed = true));
+
+        await sender.sendEntered.future.timeout(const Duration(seconds: 5));
+        await Future<void>.delayed(Duration.zero);
+        try {
+          expect(sender.localSendCallCount, 1);
+          expect(completed, isFalse);
+          final pending = await messageRepo.getMessage(original.id);
+          expect(pending?.status, 'sending');
+          expect(pending?.isHidden, isFalse);
+          expect(pending?.wireEnvelope, isNotNull);
+          expect(network.storeInInboxCallCount, 0);
+        } finally {
+          directGate.complete(
+            const SendMessageResult(
+              sent: true,
+              acked: true,
+              transport: 'direct',
+            ),
+          );
+        }
+
+        final (_, tombstone) = await deletion.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(tombstone?.status, 'delivered');
+        expect(tombstone?.transport, 'direct');
+        expect(tombstone?.isHidden, isTrue);
+        expect(tombstone?.wireEnvelope, isNull);
+        expect(network.storeInInboxCallCount, 0);
       },
     );
   });

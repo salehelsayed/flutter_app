@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_app/app/application_root.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -127,33 +128,120 @@ void main() {
     },
   );
 
+  test('typed initial consume reports empty and does not route', () async {
+    final routed = <Map<String, dynamic>>[];
+    final events = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(events.add);
+
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async => null);
+
+    final disposition = await bridge
+        .consumeInitialNotificationOpenWithDisposition((payload) async {
+          routed.add(payload);
+        });
+
+    expect(disposition, IosApnsInitialNotificationOpenDisposition.empty);
+    expect(routed, isEmpty);
+    expect(
+      events,
+      contains(
+        predicate<Map<String, dynamic>>(
+          (event) =>
+              event['event'] == 'IOS_APNS_NOTIFICATION_BRIDGE_CONSUME_EMPTY',
+        ),
+      ),
+    );
+  });
+
   test(
-    'consumeInitialNotificationOpen with null emits empty marker and does not route',
+    'atomic initial consume uses combined native handoff and awaits routing',
     () async {
+      final releaseRoute = Completer<void>();
+      final calls = <String>[];
       final routed = <Map<String, dynamic>>[];
-      final events = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(events.add);
+      final routeMap = <String, dynamic>{
+        'type': 'new_message',
+        'sender_id': 'peer-atomic-open',
+        'message_id': 'msg-atomic-open',
+      };
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
-          .setMockMethodCallHandler(channel, (call) async => null);
+          .setMockMethodCallHandler(channel, (call) async {
+            calls.add(call.method);
+            return routeMap;
+          });
 
-      final routedInitial = await bridge.consumeInitialNotificationOpen((
-        payload,
-      ) async {
-        routed.add(payload);
-      });
+      final consume = bridge
+          .consumeInitialNotificationOpenAndMarkReadyWithDisposition((
+            payload,
+          ) async {
+            routed.add(payload);
+            await releaseRoute.future;
+          });
+      await Future<void>.delayed(Duration.zero);
 
-      expect(routedInitial, isFalse);
-      expect(routed, isEmpty);
-      expect(
-        events,
-        contains(
-          predicate<Map<String, dynamic>>(
-            (event) =>
-                event['event'] == 'IOS_APNS_NOTIFICATION_BRIDGE_CONSUME_EMPTY',
-          ),
-        ),
+      expect(calls, <String>['consumeInitialNotificationOpenAndMarkReady']);
+      expect(routed, <Map<String, dynamic>>[routeMap]);
+
+      releaseRoute.complete();
+      expect(await consume, IosApnsInitialNotificationOpenDisposition.routed);
+    },
+  );
+
+  test(
+    'failed route retries retained atomic payload without consuming native twice',
+    () async {
+      const routeMap = <String, dynamic>{
+        'type': 'new_message',
+        'sender_id': 'peer-retained-open',
+        'message_id': 'msg-retained-open',
+      };
+      var nativeConsumeCalls = 0;
+      var routeAttempts = 0;
+      final routedPayloads = <Map<String, dynamic>>[];
+
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (call) async {
+            expect(
+              call.method,
+              IosApnsNotificationOpenBridge
+                  .consumeInitialNotificationOpenAndMarkReadyMethod,
+            );
+            nativeConsumeCalls += 1;
+            return routeMap;
+          });
+
+      final gate = IosApnsInitialNotificationOpenGate(
+        attempt: () =>
+            bridge.consumeInitialNotificationOpenAndMarkReadyWithDisposition((
+              payload,
+            ) async {
+              routeAttempts += 1;
+              routedPayloads.add(payload);
+              if (routeAttempts == 1) {
+                throw StateError('route preparation not ready');
+              }
+            }),
       );
+
+      expect(
+        await gate.consume(),
+        IosApnsInitialNotificationOpenDisposition.failed,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        await gate.consume(),
+        IosApnsInitialNotificationOpenDisposition.routed,
+      );
+      expect(
+        await gate.consume(),
+        IosApnsInitialNotificationOpenDisposition.routed,
+      );
+
+      expect(nativeConsumeCalls, 1);
+      expect(routeAttempts, 2);
+      expect(routedPayloads, <Map<String, dynamic>>[routeMap, routeMap]);
     },
   );
 
@@ -170,11 +258,10 @@ void main() {
       debugSetFlowEventSink(events.add);
 
       final firstReady = await bridge.markNotificationOpenBridgeReady();
-      final firstConsume = await bridge.consumeInitialNotificationOpen((
-        payload,
-      ) async {
-        routed.add(payload);
-      });
+      final firstConsume = await bridge
+          .consumeInitialNotificationOpenWithDisposition((payload) async {
+            routed.add(payload);
+          });
 
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, (call) async {
@@ -188,16 +275,15 @@ void main() {
           });
 
       final secondReady = await bridge.markNotificationOpenBridgeReady();
-      final secondConsume = await bridge.consumeInitialNotificationOpen((
-        payload,
-      ) async {
-        routed.add(payload);
-      });
+      final secondConsume = await bridge
+          .consumeInitialNotificationOpenWithDisposition((payload) async {
+            routed.add(payload);
+          });
 
       expect(firstReady, isFalse);
-      expect(firstConsume, isFalse);
+      expect(firstConsume, IosApnsInitialNotificationOpenDisposition.failed);
       expect(secondReady, isTrue);
-      expect(secondConsume, isTrue);
+      expect(secondConsume, IosApnsInitialNotificationOpenDisposition.routed);
       expect(routed, <Map<String, dynamic>>[routeMap]);
       expect(
         events
@@ -209,6 +295,16 @@ void main() {
       );
     },
   );
+
+  test('typed initial consume reports malformed payload as failed', () async {
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(channel, (call) async => 'not-a-map');
+
+    final disposition = await bridge
+        .consumeInitialNotificationOpenWithDisposition((_) async {});
+
+    expect(disposition, IosApnsInitialNotificationOpenDisposition.failed);
+  });
 
   test('malformed payloads emit an error and do not route', () async {
     final routed = <Map<String, dynamic>>[];

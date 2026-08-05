@@ -10,14 +10,18 @@ import Foundation
 /// complete-protection, owner-only file for `devicectl device copy from`.
 final class IosReceiverBootstrapHandoff {
   static let requestSchema = "mknoon.sims.ios-receiver-bootstrap-request.v1"
-  static let responseSchema = "mknoon.sims.ios-provider-receiver-handoff.v1"
+  static let responseSchema = "mknoon.sims.ios-provider-receiver-handoff.v2"
   static let senderRequestSchema = "mknoon.sims.ios-sender-projection-request.v1"
   static let senderResultSchema = "mknoon.sims.ios-sender-projection-result.v1"
+  static let recoveryRequestSchema = "mknoon.sims.ios-notification-recovery-request.v1"
+  static let recoveryResultSchema = "mknoon.sims.ios-notification-recovery-result.v1"
   static let relativeDirectory = "mknoon.sims.ios-receiver-bootstrap"
   static let requestFileName = "request.json"
   static let responseFileName = "response.json"
   static let senderRequestFileName = "sender-request.json"
   static let senderResultFileName = "sender-result.json"
+  static let recoveryRequestFileName = "recovery-request.json"
+  static let recoveryResultFileName = "recovery-result.json"
   static let apnsEnvironment = "development"
 
   enum Outcome: Equatable {
@@ -36,6 +40,7 @@ final class IosReceiverBootstrapHandoff {
   private var mlKemPublicKey: String?
   private var notificationAuthorization: String?
   private var notificationAlertSetting: String?
+  private var notificationBadgeSetting: String?
 
   init(
     enabled: Bool,
@@ -63,6 +68,14 @@ final class IosReceiverBootstrapHandoff {
 
   var senderResultURL: URL {
     rootDirectory.appendingPathComponent(Self.senderResultFileName, isDirectory: false)
+  }
+
+  var recoveryRequestURL: URL {
+    rootDirectory.appendingPathComponent(Self.recoveryRequestFileName, isDirectory: false)
+  }
+
+  var recoveryResultURL: URL {
+    rootDirectory.appendingPathComponent(Self.recoveryResultFileName, isDirectory: false)
   }
 
   @discardableResult
@@ -98,15 +111,18 @@ final class IosReceiverBootstrapHandoff {
   @discardableResult
   func recordNotificationSettings(
     authorization: String,
-    alertSetting: String
+    alertSetting: String,
+    badgeSetting: String
   ) -> Outcome {
     guard
       enabled,
       Self.isKnownNotificationAuthorization(authorization),
-      Self.isKnownNotificationAlertSetting(alertSetting)
+      Self.isKnownNotificationPresentationSetting(alertSetting),
+      Self.isKnownNotificationPresentationSetting(badgeSetting)
     else { return .rejected }
     notificationAuthorization = authorization
     notificationAlertSetting = alertSetting
+    notificationBadgeSetting = badgeSetting
     return prepareContainer()
   }
 
@@ -186,6 +202,97 @@ final class IosReceiverBootstrapHandoff {
     }
   }
 
+  /// Returns one nonce-bound recovery proof command from the protected SIMS
+  /// container. The account peer ID is consumed only in-process and never
+  /// copied into the redacted result.
+  func takeNotificationRecoveryRequest() -> [String: String]? {
+    guard enabled else { return nil }
+    do {
+      try createProtectedDirectory()
+      guard fileManager.fileExists(atPath: recoveryRequestURL.path) else {
+        return nil
+      }
+      guard try isNonSymlinkRegularFile(recoveryRequestURL) else {
+        try? fileManager.removeItem(at: recoveryRequestURL)
+        return nil
+      }
+      try protectFile(recoveryRequestURL)
+      guard let request = try validatedNotificationRecoveryRequest() else {
+        try? fileManager.removeItem(at: recoveryRequestURL)
+        return nil
+      }
+      if fileManager.fileExists(atPath: recoveryResultURL.path) {
+        try fileManager.removeItem(at: recoveryResultURL)
+      }
+      return request
+    } catch {
+      return nil
+    }
+  }
+
+  @discardableResult
+  func completeNotificationRecoveryRequest(
+    request: [String: String],
+    status: String,
+    resultCode: String,
+    badgeBefore: Int,
+    badgeAfter: Int,
+    deliveredBefore: Int,
+    deliveredWithSentinel: Int,
+    deliveredAfter: Int,
+    deliveredNotificationBadgeWasNil: Bool,
+    sentinelSurvived: Bool,
+    removedExactOwnedNotification: Bool
+  ) -> Bool {
+    guard
+      enabled,
+      status == "passed" || status == "failed",
+      Self.isResultCode(resultCode),
+      badgeBefore >= 0,
+      badgeAfter >= 0,
+      deliveredBefore >= 0,
+      deliveredWithSentinel >= 0,
+      deliveredAfter >= 0,
+      request["schema"] == Self.recoveryRequestSchema,
+      request["action"] == "prove_recovery",
+      let captureNonce = request["captureNonce"],
+      let receiverDeviceId = request["receiverDeviceId"],
+      let payloadSha256 = request["apnsPayloadSha256"]
+    else { return false }
+    do {
+      let result: [String: Any] = [
+        "schema": Self.recoveryResultSchema,
+        "action": "prove_recovery",
+        "captureNonce": captureNonce,
+        "receiverDeviceId": receiverDeviceId,
+        "bundleId": "com.mknoon.app",
+        "apnsPayloadSha256": payloadSha256,
+        "status": status,
+        "resultCode": resultCode,
+        "badgeBefore": badgeBefore,
+        "badgeAfter": badgeAfter,
+        "deliveredBefore": deliveredBefore,
+        "deliveredWithSentinel": deliveredWithSentinel,
+        "deliveredAfter": deliveredAfter,
+        "deliveredNotificationBadgeWasNil": deliveredNotificationBadgeWasNil,
+        "sentinelSurvived": sentinelSurvived,
+        "removedExactOwnedNotification": removedExactOwnedNotification,
+        "childBuildCount": 0,
+        "manualActionCount": 0,
+        "completedAt": Self.timestamp(now()),
+      ]
+      try publishAtomically(
+        result,
+        to: recoveryResultURL,
+        temporaryPrefix: ".recovery-result"
+      )
+      try? fileManager.removeItem(at: recoveryRequestURL)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   private func consumePendingRequest() throws -> Outcome {
     guard fileManager.fileExists(atPath: requestURL.path) else { return .waiting }
     guard try isNonSymlinkRegularFile(requestURL) else {
@@ -224,6 +331,8 @@ final class IosReceiverBootstrapHandoff {
       }
       try? fileManager.removeItem(at: senderRequestURL)
       try? fileManager.removeItem(at: senderResultURL)
+      try? fileManager.removeItem(at: recoveryRequestURL)
+      try? fileManager.removeItem(at: recoveryResultURL)
       try? fileManager.removeItem(at: requestURL)
       return .cleaned
     case "capture":
@@ -240,13 +349,15 @@ final class IosReceiverBootstrapHandoff {
         let transportPeerId,
         let mlKemPublicKey,
         let notificationAuthorization,
-        let notificationAlertSetting
+        let notificationAlertSetting,
+        let notificationBadgeSetting
       else {
         return .waiting
       }
       guard
         Self.isAcceptedNotificationAuthorization(notificationAuthorization),
-        notificationAlertSetting == "enabled"
+        notificationAlertSetting == "enabled",
+        notificationBadgeSetting == "enabled"
       else {
         try? fileManager.removeItem(at: requestURL)
         return .rejected
@@ -262,6 +373,7 @@ final class IosReceiverBootstrapHandoff {
         "mlKemPublicKey": mlKemPublicKey,
         "notificationAuthorization": notificationAuthorization,
         "notificationAlertSetting": notificationAlertSetting,
+        "notificationBadgeSetting": notificationBadgeSetting,
         "capturedAt": Self.timestamp(now()),
       ]
       try publishAtomically(
@@ -326,6 +438,60 @@ final class IosReceiverBootstrapHandoff {
       "bundleId": "com.mknoon.app",
       "senderPeerId": senderPeerId,
       "senderUsername": senderUsername,
+      "apnsPayloadSha256": apnsPayloadSha256,
+      "createdAt": createdAtText,
+      "expiresAt": expiresAtText,
+    ]
+  }
+
+  private func validatedNotificationRecoveryRequest() throws -> [String: String]? {
+    guard fileManager.fileExists(atPath: recoveryRequestURL.path) else {
+      return nil
+    }
+    guard try isNonSymlinkRegularFile(recoveryRequestURL) else { return nil }
+    try protectFile(recoveryRequestURL)
+    let decoded = try decodeObject(at: recoveryRequestURL)
+    let expectedKeys = Set([
+      "schema", "action", "captureNonce", "receiverDeviceId", "bundleId",
+      "accountPeerId", "sentinelIdentifier", "apnsPayloadSha256", "createdAt",
+      "expiresAt",
+    ])
+    guard
+      Set(decoded.keys) == expectedKeys,
+      decoded["schema"] as? String == Self.recoveryRequestSchema,
+      decoded["action"] as? String == "prove_recovery",
+      let captureNonce = decoded["captureNonce"] as? String,
+      Self.isNonce(captureNonce),
+      let receiverDeviceId = decoded["receiverDeviceId"] as? String,
+      Self.isReceiverDeviceId(receiverDeviceId),
+      decoded["bundleId"] as? String == "com.mknoon.app",
+      let accountPeerId = decoded["accountPeerId"] as? String,
+      Self.isTransportPeerId(accountPeerId),
+      let sentinelIdentifier = decoded["sentinelIdentifier"] as? String,
+      Self.isRecoverySentinelIdentifier(sentinelIdentifier),
+      let apnsPayloadSha256 = decoded["apnsPayloadSha256"] as? String,
+      Self.isSha256(apnsPayloadSha256),
+      let createdAtText = decoded["createdAt"] as? String,
+      let createdAt = Self.parseTimestamp(createdAtText),
+      let expiresAtText = decoded["expiresAt"] as? String,
+      let expiresAt = Self.parseTimestamp(expiresAtText)
+    else { return nil }
+    let current = now()
+    guard
+      createdAt <= current.addingTimeInterval(15),
+      current.timeIntervalSince(createdAt) <= 300,
+      expiresAt >= current,
+      expiresAt.timeIntervalSince(current) <= 300,
+      expiresAt >= createdAt
+    else { return nil }
+    return [
+      "schema": Self.recoveryRequestSchema,
+      "action": "prove_recovery",
+      "captureNonce": captureNonce,
+      "receiverDeviceId": receiverDeviceId,
+      "bundleId": "com.mknoon.app",
+      "accountPeerId": accountPeerId,
+      "sentinelIdentifier": sentinelIdentifier,
       "apnsPayloadSha256": apnsPayloadSha256,
       "createdAt": createdAtText,
       "expiresAt": expiresAtText,
@@ -508,6 +674,13 @@ final class IosReceiverBootstrapHandoff {
     value.range(of: "^[a-z_]{2,64}$", options: .regularExpression) != nil
   }
 
+  static func isRecoverySentinelIdentifier(_ value: String) -> Bool {
+    value.range(
+      of: "^mknoon-sims-recovery-[0-9a-f]{24}$",
+      options: .regularExpression
+    ) != nil
+  }
+
   static func isSenderProjectionStatus(_ value: String, action: String) -> Bool {
     value == "rejected"
       || (action == "seed_sender" && value == "seeded")
@@ -524,7 +697,7 @@ final class IosReceiverBootstrapHandoff {
       || value == "not_determined"
   }
 
-  static func isKnownNotificationAlertSetting(_ value: String) -> Bool {
+  static func isKnownNotificationPresentationSetting(_ value: String) -> Bool {
     value == "enabled" || value == "disabled" || value == "not_supported"
   }
 

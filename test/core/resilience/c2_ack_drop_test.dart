@@ -92,8 +92,11 @@ class _AckDropP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
-      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -130,8 +133,7 @@ class _AckDropP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -337,6 +339,7 @@ void main() {
         senderPeerId: alicePeerId,
         senderUsername: aliceUsername,
         messageId: 'fixed-uuid-1',
+        preassignedMessageIdIsFresh: true,
         timestamp: '2026-01-01T00:00:00.000Z',
         bridge: encryptBridge,
         recipientMlKemPublicKey: bobMlKemKey,
@@ -410,38 +413,35 @@ void main() {
       },
     );
 
-    test(
-      'relay-only peer with a dropped ACK takes concurrent-inbox custody '
-      '(FDC-03: no probe runs)',
-      () async {
-        final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
-        final probeP2P = _ProbeConnectedAckDropP2PService(innerAlice);
-        probeP2P.dropAcks = true;
+    test('relay-only peer with a dropped ACK takes concurrent-inbox custody '
+        '(FDC-03: no probe runs)', () async {
+      final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
+      final probeP2P = _ProbeConnectedAckDropP2PService(innerAlice);
+      probeP2P.dropAcks = true;
 
-        final (result, msg) = await sendChatMessage(
-          p2pService: probeP2P,
-          messageRepo: aliceRepo,
-          targetPeerId: bob.peerId,
-          text: 'probe path ack drop',
-          senderPeerId: alicePeerId,
-          senderUsername: aliceUsername,
-          bridge: encryptBridge,
-          recipientMlKemPublicKey: bobMlKemKey,
-        );
+      final (result, msg) = await sendChatMessage(
+        p2pService: probeP2P,
+        messageRepo: aliceRepo,
+        targetPeerId: bob.peerId,
+        text: 'probe path ack drop',
+        senderPeerId: alicePeerId,
+        senderUsername: aliceUsername,
+        bridge: encryptBridge,
+        recipientMlKemPublicKey: bobMlKemKey,
+      );
 
-        expect(result, SendChatMessageResult.success);
-        expect(msg, isNotNull);
-        expect(msg!.status, 'inboxed'); // 115 P1: custody, not delivery
-        expect(msg.transport, 'inbox');
-        expect(msg.wireEnvelope, isNotNull);
-        // FDC-03: the serial relay-probe tail was removed — custody is the
-        // concurrent durable inbox copy, and the probe never runs.
-        expect(probeP2P.probeRelayCallCount, 0);
-        expect(network.inboxCount(bob.peerId), 1);
+      expect(result, SendChatMessageResult.success);
+      expect(msg, isNotNull);
+      expect(msg!.status, 'inboxed'); // 115 P1: custody, not delivery
+      expect(msg.transport, 'inbox');
+      expect(msg.wireEnvelope, isNotNull);
+      // FDC-03: the serial relay-probe tail was removed — custody is the
+      // concurrent durable inbox copy, and the probe never runs.
+      expect(probeP2P.probeRelayCallCount, 0);
+      expect(network.inboxCount(bob.peerId), 1);
 
-        probeP2P.dispose();
-      },
-    );
+      probeP2P.dispose();
+    });
 
     test('3 total failures fall through to inbox fallback', () async {
       aliceP2P.totalFailure = true;

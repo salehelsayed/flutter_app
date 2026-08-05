@@ -19,6 +19,8 @@ const String iosNotificationProviderCleanupReceiptSchema =
     'mknoon.sims.ios-payload-fast-path-provider-cleanup-receipt.v1';
 const String iosNotificationAutomationReceiptSchema =
     'mknoon.sims.ios-payload-fast-path-automation-receipt.v1';
+const String iosNotificationRecoveryAutomationReceiptSchema =
+    'mknoon.sims.ios-notification-recovery-automation-receipt.v1';
 
 final RegExp _sha256Pattern = RegExp(r'^[0-9a-f]{64}$');
 
@@ -575,16 +577,284 @@ IosNotificationContractResult validateIosNotificationAutomationReceipt(
   );
 }
 
+IosNotificationContractResult validateIosNotificationRecoveryAutomationReceipt(
+  Map<String, Object?> receipt, {
+  required String runId,
+  required String nonce,
+  required String receiverDeviceId,
+  required String peerDeviceId,
+  required String preparedApplicationSha256,
+  required String providerRequestSha256,
+  required String payloadProducerSha256,
+  required String apnsPayloadSha256,
+}) {
+  final secret = findIosNotificationSecretBearingField(receipt);
+  if (secret != null) {
+    return IosNotificationContractResult.fail(
+      'recovery automation receipt contains forbidden secret-bearing field '
+      '$secret',
+    );
+  }
+  const requiredKeys = <String>{
+    'schema',
+    'scenario',
+    'phase',
+    'status',
+    'platform',
+    'receiverPhysical',
+    'runId',
+    'nonce',
+    'receiverDeviceId',
+    'peerDeviceId',
+    'preparedApplicationSha256',
+    'providerRequestSha256',
+    'payloadProducerSha256',
+    'apnsPayloadSha256',
+    'childBuildCount',
+    'manualActionCount',
+    'checks',
+    'counts',
+    'timestamps',
+    'evidenceSha256',
+  };
+  if (receipt.keys.toSet().difference(requiredKeys).isNotEmpty ||
+      requiredKeys.difference(receipt.keys.toSet()).isNotEmpty) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt fields must match the exact schema',
+    );
+  }
+  const exact = <String, Object?>{
+    'schema': iosNotificationRecoveryAutomationReceiptSchema,
+    'scenario': iosNotificationPayloadScenario,
+    'phase': 'recovery',
+    'status': 'passed',
+    'platform': 'ios',
+    'receiverPhysical': true,
+    'childBuildCount': 0,
+    'manualActionCount': 0,
+  };
+  for (final entry in exact.entries) {
+    if (receipt[entry.key] != entry.value) {
+      return IosNotificationContractResult.fail(
+        'recovery automation receipt ${entry.key} must equal ${entry.value}',
+      );
+    }
+  }
+  if (!_isSha256(preparedApplicationSha256) ||
+      !_isSha256(providerRequestSha256) ||
+      !_isSha256(payloadProducerSha256) ||
+      !_isSha256(apnsPayloadSha256) ||
+      receipt['runId'] != runId ||
+      receipt['nonce'] != nonce ||
+      receipt['receiverDeviceId'] != receiverDeviceId ||
+      receipt['peerDeviceId'] != peerDeviceId ||
+      receipt['preparedApplicationSha256'] != preparedApplicationSha256 ||
+      receipt['providerRequestSha256'] != providerRequestSha256 ||
+      receipt['payloadProducerSha256'] != payloadProducerSha256 ||
+      receipt['apnsPayloadSha256'] != apnsPayloadSha256) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt is not bound to the exact run, targets, '
+      'app, request, producer, and APNs payload',
+    );
+  }
+
+  final checksValue = receipt['checks'];
+  if (checksValue is! Map) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt checks must be an object',
+    );
+  }
+  const requiredChecks = <String>{
+    'notificationPermissionAutomated',
+    'badgePermissionEnabled',
+    'providerPayloadBadgeAbsent',
+    'deliveredNotificationBadgeWasNil',
+    'apnsDelivered',
+    'nseProcessObserved',
+    'recoveryClaimUnique',
+    'runnerAbsoluteBadgeConverged',
+    'exactOwnedNotificationRetired',
+    'unrelatedSentinelSurvived',
+    'zeroBadgePublished',
+    'providerCleanupAutomated',
+    'testStateCleared',
+  };
+  if (checksValue.keys.toSet().difference(requiredChecks).isNotEmpty ||
+      requiredChecks.difference(checksValue.keys.toSet()).isNotEmpty) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt checks fields must match the exact schema',
+    );
+  }
+  final failedChecks = requiredChecks
+      .where((key) => checksValue[key] != true)
+      .toList(growable: false);
+  if (failedChecks.isNotEmpty) {
+    return IosNotificationContractResult.fail(
+      'recovery automation receipt is missing checks: '
+      '${failedChecks.join(', ')}',
+    );
+  }
+
+  final countsValue = receipt['counts'];
+  if (countsValue is! Map) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt counts must be an object',
+    );
+  }
+  const exactCounts = <String, int>{
+    'badgeBefore': 1,
+    'badgeAfter': 0,
+    'deliveredBefore': 1,
+    'deliveredWithSentinel': 2,
+    'deliveredAfter': 1,
+  };
+  if (countsValue.keys
+          .toSet()
+          .difference(exactCounts.keys.toSet())
+          .isNotEmpty ||
+      exactCounts.keys
+          .toSet()
+          .difference(countsValue.keys.toSet())
+          .isNotEmpty) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt count fields must match the exact schema',
+    );
+  }
+  for (final entry in exactCounts.entries) {
+    if (countsValue[entry.key] != entry.value) {
+      return IosNotificationContractResult.fail(
+        'recovery automation receipt count ${entry.key} must equal '
+        '${entry.value}',
+      );
+    }
+  }
+
+  final timestampsValue = receipt['timestamps'];
+  if (timestampsValue is! Map) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt timestamps must be an object',
+    );
+  }
+  const timestampKeys = <String>{
+    'providerAcceptedAt',
+    'nseObservedAt',
+    'cardObservedAt',
+    'badgeObservedAt',
+    'recoveryCompletedAt',
+    'retirementObservedAt',
+    'zeroBadgeObservedAt',
+  };
+  if (timestampsValue.keys.toSet().difference(timestampKeys).isNotEmpty ||
+      timestampKeys.difference(timestampsValue.keys.toSet()).isNotEmpty) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt timestamp fields must match the exact schema',
+    );
+  }
+  final providerAcceptedAt = _utcTimestamp(
+    timestampsValue['providerAcceptedAt'],
+  );
+  final nseObservedAt = _utcTimestamp(timestampsValue['nseObservedAt']);
+  final deviceTimestamps = <DateTime?>[
+    _utcTimestamp(timestampsValue['cardObservedAt']),
+    _utcTimestamp(timestampsValue['badgeObservedAt']),
+    _utcTimestamp(timestampsValue['recoveryCompletedAt']),
+    _utcTimestamp(timestampsValue['retirementObservedAt']),
+    _utcTimestamp(timestampsValue['zeroBadgeObservedAt']),
+  ];
+  if (providerAcceptedAt == null ||
+      nseObservedAt == null ||
+      deviceTimestamps.any((value) => value == null)) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt requires seven UTC lifecycle timestamps',
+    );
+  }
+  // Provider and NSE timestamps use the host clock. Recovery observation and
+  // mutation timestamps use the iPhone clock. Preserve causality within each
+  // domain without rejecting a valid run because the two devices are skewed.
+  if (nseObservedAt.isBefore(providerAcceptedAt)) {
+    return const IosNotificationContractResult.fail(
+      'host provider acceptance and NSE observation timestamps are out of order',
+    );
+  }
+  for (var index = 1; index < deviceTimestamps.length; index += 1) {
+    if (deviceTimestamps[index]!.isBefore(deviceTimestamps[index - 1]!)) {
+      return const IosNotificationContractResult.fail(
+        'iPhone recovery observation, convergence, retirement, and zero-badge '
+        'timestamps are out of order',
+      );
+    }
+  }
+
+  final evidenceValue = receipt['evidenceSha256'];
+  if (evidenceValue is! Map) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt evidenceSha256 must be an object',
+    );
+  }
+  const requiredEvidence = <String>{
+    'preparedApplication',
+    'payloadProducer',
+    'apnsPayload',
+    'providerReceipt',
+    'providerCleanupReceipt',
+    'notificationRecoveryReceipt',
+    'relayLog',
+    'nseLog',
+    'recipientLog',
+    'uiAutomationLog',
+    'stagedEnvelope',
+  };
+  if (evidenceValue.keys.toSet().difference(requiredEvidence).isNotEmpty ||
+      requiredEvidence.difference(evidenceValue.keys.toSet()).isNotEmpty) {
+    return const IosNotificationContractResult.fail(
+      'recovery automation receipt evidenceSha256 fields are not exact',
+    );
+  }
+  for (final key in requiredEvidence) {
+    if (!_isSha256(evidenceValue[key])) {
+      return IosNotificationContractResult.fail(
+        'recovery automation receipt evidenceSha256.$key is invalid',
+      );
+    }
+  }
+  if (evidenceValue['preparedApplication'] != preparedApplicationSha256 ||
+      evidenceValue['payloadProducer'] != payloadProducerSha256 ||
+      evidenceValue['apnsPayload'] != apnsPayloadSha256) {
+    return const IosNotificationContractResult.fail(
+      'recovery evidence hashes do not match the executed app, producer, and '
+      'APNs payload',
+    );
+  }
+  return const IosNotificationContractResult.pass(
+    'physical APNs recovery retired only its exact notification and converged '
+    'the absolute badge while preserving unrelated delivery',
+  );
+}
+
 Map<String, Object?> buildIosNotificationArtifact({
   required Map<String, Object?> automationReceipt,
+  required Map<String, Object?> recoveryAutomationReceipt,
   required String capturedAt,
 }) {
   final checks = Map<String, Object?>.from(automationReceipt['checks']! as Map);
+  final recoveryChecks = Map<String, Object?>.from(
+    recoveryAutomationReceipt['checks']! as Map,
+  );
   final timestamps = Map<String, Object?>.from(
     automationReceipt['timestamps']! as Map,
   );
+  final recoveryTimestamps = Map<String, Object?>.from(
+    recoveryAutomationReceipt['timestamps']! as Map,
+  );
+  final fastEvidence = Map<String, Object?>.from(
+    automationReceipt['evidenceSha256']! as Map,
+  );
+  final recoveryEvidence = Map<String, Object?>.from(
+    recoveryAutomationReceipt['evidenceSha256']! as Map,
+  );
   final artifact = <String, Object?>{
     'testCase': 'TC-B12',
+    'recoveryTestCase': 'TC-333-08',
     'scenario': iosNotificationPayloadScenario,
     'status': 'passed',
     'platform': 'ios',
@@ -605,18 +875,53 @@ Map<String, Object?> buildIosNotificationArtifact({
           checks['relayDrainCountBeforeVisibility'] == 0,
       'networkRestored': checks['networkRestored'] == true,
       'appTerminatedAfterCapture': checks['appTerminatedAfterCapture'] == true,
+      'badgePermissionEnabled':
+          recoveryChecks['badgePermissionEnabled'] == true,
+      'providerPayloadBadgeAbsent':
+          recoveryChecks['providerPayloadBadgeAbsent'] == true,
+      'deliveredNotificationBadgeWasNil':
+          recoveryChecks['deliveredNotificationBadgeWasNil'] == true,
+      'recoveryClaimUnique': recoveryChecks['recoveryClaimUnique'] == true,
+      'runnerAbsoluteBadgeConverged':
+          recoveryChecks['runnerAbsoluteBadgeConverged'] == true,
+      'exactOwnedNotificationRetired':
+          recoveryChecks['exactOwnedNotificationRetired'] == true,
+      'unrelatedSentinelSurvived':
+          recoveryChecks['unrelatedSentinelSurvived'] == true,
+      'zeroBadgePublished': recoveryChecks['zeroBadgePublished'] == true,
     },
     'messageVisibleAt': timestamps['messageVisibleAt'],
     'networkRestoredAt': timestamps['networkRestoredAt'],
+    'recoveryCompletedAt': recoveryTimestamps['recoveryCompletedAt'],
+    'recoveryZeroBadgeObservedAt': recoveryTimestamps['zeroBadgeObservedAt'],
     'preparedApplicationSha256': automationReceipt['preparedApplicationSha256'],
     'runId': automationReceipt['runId'],
     'nonce': automationReceipt['nonce'],
+    'recoveryRunId': recoveryAutomationReceipt['runId'],
+    'recoveryNonce': recoveryAutomationReceipt['nonce'],
     'providerRequestSha256': automationReceipt['providerRequestSha256'],
     'payloadProducerSha256': automationReceipt['payloadProducerSha256'],
     'apnsPayloadSha256': automationReceipt['apnsPayloadSha256'],
+    'recoveryApnsPayloadSha256': recoveryAutomationReceipt['apnsPayloadSha256'],
     'childBuildCount': automationReceipt['childBuildCount'],
     'manualActionCount': automationReceipt['manualActionCount'],
-    'evidenceSha256': automationReceipt['evidenceSha256'],
+    'recoveryCounts': recoveryAutomationReceipt['counts'],
+    'evidenceSha256': <String, Object?>{
+      ...fastEvidence,
+      'recoveryPreparedApplication': recoveryEvidence['preparedApplication'],
+      'recoveryPayloadProducer': recoveryEvidence['payloadProducer'],
+      'recoveryApnsPayload': recoveryEvidence['apnsPayload'],
+      'recoveryProviderReceipt': recoveryEvidence['providerReceipt'],
+      'recoveryProviderCleanupReceipt':
+          recoveryEvidence['providerCleanupReceipt'],
+      'notificationRecoveryReceipt':
+          recoveryEvidence['notificationRecoveryReceipt'],
+      'recoveryRelayLog': recoveryEvidence['relayLog'],
+      'recoveryNseLog': recoveryEvidence['nseLog'],
+      'recoveryRecipientLog': recoveryEvidence['recipientLog'],
+      'recoveryUiAutomationLog': recoveryEvidence['uiAutomationLog'],
+      'recoveryStagedEnvelope': recoveryEvidence['stagedEnvelope'],
+    },
   };
   return artifact;
 }

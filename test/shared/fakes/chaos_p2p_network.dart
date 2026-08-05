@@ -1,6 +1,5 @@
 import 'dart:math';
 
-
 import 'fake_p2p_network.dart';
 
 /// Configuration for chaos injection.
@@ -34,8 +33,14 @@ class _PendingDelivery {
   final String fromPeerId;
   final String toPeerId;
   final String content;
+  final String transport;
 
-  _PendingDelivery(this.fromPeerId, this.toPeerId, this.content);
+  _PendingDelivery(
+    this.fromPeerId,
+    this.toPeerId,
+    this.content,
+    this.transport,
+  );
 }
 
 /// Network layer that injects chaos: drops, duplicates, reorders, delays.
@@ -69,7 +74,11 @@ class ChaosP2PNetwork extends FakeP2PNetwork {
 
   @override
   Future<bool> deliver(
-      String fromPeerId, String toPeerId, String content) async {
+    String fromPeerId,
+    String toPeerId,
+    String content, {
+    String transport = 'direct',
+  }) async {
     totalAttempted++;
 
     // 0. Force-drop override
@@ -93,7 +102,9 @@ class ChaosP2PNetwork extends FakeP2PNetwork {
 
     // 3. Reorder buffer
     if (config.reorderBufferSize > 1) {
-      _reorderBuffer.add(_PendingDelivery(fromPeerId, toPeerId, content));
+      _reorderBuffer.add(
+        _PendingDelivery(fromPeerId, toPeerId, content, transport),
+      );
 
       if (_reorderBuffer.length >= config.reorderBufferSize) {
         // Shuffle and deliver the batch
@@ -104,7 +115,11 @@ class ChaosP2PNetwork extends FakeP2PNetwork {
         bool anyDelivered = false;
         for (final entry in batch) {
           final delivered = await _deliverWithDuplicate(
-              entry.fromPeerId, entry.toPeerId, entry.content);
+            entry.fromPeerId,
+            entry.toPeerId,
+            entry.content,
+            transport: entry.transport,
+          );
           if (delivered) anyDelivered = true;
         }
         return anyDelivered;
@@ -114,13 +129,27 @@ class ChaosP2PNetwork extends FakeP2PNetwork {
     }
 
     // 4. No reorder — deliver immediately (with possible duplicate)
-    return _deliverWithDuplicate(fromPeerId, toPeerId, content);
+    return _deliverWithDuplicate(
+      fromPeerId,
+      toPeerId,
+      content,
+      transport: transport,
+    );
   }
 
   /// Delivers a message and optionally duplicates it.
   Future<bool> _deliverWithDuplicate(
-      String fromPeerId, String toPeerId, String content) async {
-    final delivered = await super.deliver(fromPeerId, toPeerId, content);
+    String fromPeerId,
+    String toPeerId,
+    String content, {
+    required String transport,
+  }) async {
+    final delivered = await super.deliver(
+      fromPeerId,
+      toPeerId,
+      content,
+      transport: transport,
+    );
 
     if (delivered) {
       deliveredCount++;
@@ -129,7 +158,7 @@ class ChaosP2PNetwork extends FakeP2PNetwork {
     // Duplicate check — send the same message again
     if (config.duplicateRate > 0 &&
         _random.nextDouble() < config.duplicateRate) {
-      await super.deliver(fromPeerId, toPeerId, content);
+      await super.deliver(fromPeerId, toPeerId, content, transport: transport);
     }
 
     return delivered;
@@ -143,7 +172,11 @@ class ChaosP2PNetwork extends FakeP2PNetwork {
     batch.shuffle(_random);
     for (final entry in batch) {
       await _deliverWithDuplicate(
-          entry.fromPeerId, entry.toPeerId, entry.content);
+        entry.fromPeerId,
+        entry.toPeerId,
+        entry.content,
+        transport: entry.transport,
+      );
     }
   }
 

@@ -7,7 +7,6 @@ import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
     as chat_use_case;
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -15,6 +14,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../bridge/fake_bridge.dart';
+import '../../features/conversation/domain/repositories/fake_message_repository.dart';
 
 /// U1 — exact-count transport census across the SEND arm.
 ///
@@ -82,8 +82,7 @@ class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -158,7 +157,8 @@ class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
   @override
   Future<bool> sendMessage(String peerId, String message) async => _sendOk;
   @override
-  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async => [];
+  Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
+      [];
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
@@ -198,81 +198,7 @@ class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
   void dispose() {}
 }
 
-class _FakeMessageRepository implements MessageRepository {
-  @override
-  Future<void> saveMessage(ConversationMessage message) async {}
-  @override
-  Future<void> updateWireEnvelope(String id, String envelope) async {}
-  @override
-  Future<void> updateMessageStatus(String id, String status) async {}
-  @override
-  Future<ConversationMessage?> getMessage(String id) async => null;
-  @override
-  Future<bool> messageExists(String id) async => false;
-  @override
-  Future<bool> existsByContent(
-    String contactPeerId,
-    String senderPeerId,
-    String text,
-    String timestamp,
-  ) async => false;
-
-  @override
-  Future<bool> existsByDedupKey(
-    String contactPeerId,
-    String senderPeerId,
-    String dedupKey,
-  ) async => false;
-  @override
-  Future<List<ConversationMessage>> getMessagesForContact(
-    String contactPeerId,
-  ) async => [];
-  @override
-  Future<ConversationMessage?> getLatestMessageForContact(
-    String contactPeerId,
-  ) async => null;
-  @override
-  Future<int> getMessageCountForContact(String contactPeerId) async => 0;
-  @override
-  Future<int> markConversationAsRead(String contactPeerId) async => 0;
-  @override
-  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
-  @override
-  Future<int> getTotalUnreadCount() async => 0;
-  @override
-  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
-  @override
-  Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
-  @override
-  Future<int> deleteMessage(String id) async => 0;
-  @override
-  Future<List<ConversationMessage>> getMessagesPage(
-    String contactPeerId, {
-    int limit = 50,
-    String? beforeTimestamp,
-  }) async => [];
-  @override
-  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
-  @override
-  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
-    required Duration olderThan,
-  }) async => [];
-  @override
-  Future<int> recoverStuckSendingMessages({required Duration olderThan}) async =>
-      0;
-  @override
-  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
-    required Duration olderThan,
-  }) async => [];
-  @override
-  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
-  @override
-  Future<int> conditionalTransitionStatus(
-    String id, {
-    required String fromStatus,
-    required String toStatus,
-  }) async => 0;
-}
+class _FakeMessageRepository extends FakeMessageRepository {}
 
 Future<(chat_use_case.SendChatMessageResult, ConversationMessage?)> _send(
   P2PService p2p,
@@ -289,6 +215,7 @@ Future<(chat_use_case.SendChatMessageResult, ConversationMessage?)> _send(
     // Production logging does resolvedMessageId.substring(0, 8); use a long,
     // UUID-shaped id so that slice is always valid.
     messageId: 'census-message-id-$id',
+    preassignedMessageIdIsFresh: true,
     timestamp: '2026-04-01T00:00:00.000Z',
     // A real crypto bridge + recipient key so the send reaches the transport
     // race/inbox terminals (a null bridge exits early at encryption_required).
@@ -350,41 +277,48 @@ void main() {
     },
   );
 
-  test('U1: rung distribution is exact for the forced terminal exits', () async {
-    final metrics = TransportMetrics();
+  test(
+    'U1: rung distribution is exact for the forced terminal exits',
+    () async {
+      final metrics = TransportMetrics();
 
-    // 3 reuse-path sends → rung 'reuse'.
-    await _send(
-      _CensusFakeP2PService(connected: true, forcedTransport: 'direct'),
-      metrics,
-      id: 'a',
-    );
-    await _send(
-      _CensusFakeP2PService(connected: true, forcedTransport: 'direct'),
-      metrics,
-      id: 'b',
-    );
-    await _send(
-      _CensusFakeP2PService(connected: true, forcedTransport: 'relay'),
-      metrics,
-      id: 'c',
-    );
-    // 1 inbox-fallback send → rung 'inbox_fallback'.
-    await _send(
-      _CensusFakeP2PService(connected: false, discovered: null, inboxOk: true),
-      metrics,
-      id: 'd',
-    );
+      // 3 reuse-path sends → rung 'reuse'.
+      await _send(
+        _CensusFakeP2PService(connected: true, forcedTransport: 'direct'),
+        metrics,
+        id: 'a',
+      );
+      await _send(
+        _CensusFakeP2PService(connected: true, forcedTransport: 'direct'),
+        metrics,
+        id: 'b',
+      );
+      await _send(
+        _CensusFakeP2PService(connected: true, forcedTransport: 'relay'),
+        metrics,
+        id: 'c',
+      );
+      // 1 inbox-fallback send → rung 'inbox_fallback'.
+      await _send(
+        _CensusFakeP2PService(
+          connected: false,
+          discovered: null,
+          inboxOk: true,
+        ),
+        metrics,
+        id: 'd',
+      );
 
-    expect(metrics.rungDistribution(), {
-      'reuse': 3,
-      'local_race': 0,
-      'direct_race': 0,
-      'relay_probe': 0,
-      'inbox_fallback': 1,
-      'failed': 0,
-    });
-  });
+      expect(metrics.rungDistribution(), {
+        'reuse': 3,
+        'local_race': 0,
+        'direct_race': 0,
+        'relay_probe': 0,
+        'inbox_fallback': 1,
+        'failed': 0,
+      });
+    },
+  );
 
   test(
     'U1: a non-delivered send does NOT increment any transport-mix bucket',

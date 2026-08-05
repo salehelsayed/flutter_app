@@ -145,6 +145,8 @@ void main() {
 
 const String _digest =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+const String _digestB =
+    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 
 Map<String, Object?> _iosNotificationArtifact() {
   return <String, Object?>{
@@ -152,6 +154,7 @@ Map<String, Object?> _iosNotificationArtifact() {
     'capabilityId': 'notifications.ios_payload_fast_path',
     'validatorIds': <String>['validateNotificationArtifact'],
     'testCase': 'TC-B12',
+    'recoveryTestCase': 'TC-333-08',
     'scenario': 'payload_fast_path_ios_receiver',
     'status': 'passed',
     'platform': 'ios',
@@ -159,6 +162,8 @@ Map<String, Object?> _iosNotificationArtifact() {
     'capturedAt': '2026-07-14T12:00:00Z',
     'messageVisibleAt': '2026-07-14T11:59:58Z',
     'networkRestoredAt': '2026-07-14T11:59:59Z',
+    'recoveryCompletedAt': '2026-07-14T12:00:01Z',
+    'recoveryZeroBadgeObservedAt': '2026-07-14T12:00:02Z',
     'checks': <String, bool>{
       'iosReceiver': true,
       'apnsDelivered': true,
@@ -169,15 +174,33 @@ Map<String, Object?> _iosNotificationArtifact() {
       'noRelayDrainBeforeVisibility': true,
       'networkRestored': true,
       'appTerminatedAfterCapture': true,
+      'badgePermissionEnabled': true,
+      'providerPayloadBadgeAbsent': true,
+      'deliveredNotificationBadgeWasNil': true,
+      'recoveryClaimUnique': true,
+      'runnerAbsoluteBadgeConverged': true,
+      'exactOwnedNotificationRetired': true,
+      'unrelatedSentinelSurvived': true,
+      'zeroBadgePublished': true,
     },
     'runId': 'ios-payload-1234',
     'nonce': 'nonce-1234',
+    'recoveryRunId': 'ios-payload-recovery-1234',
+    'recoveryNonce': 'nonce-recovery-1234',
     'preparedApplicationSha256': _digest,
     'providerRequestSha256': _digest,
     'payloadProducerSha256': _digest,
     'apnsPayloadSha256': _digest,
+    'recoveryApnsPayloadSha256': _digestB,
     'childBuildCount': 0,
     'manualActionCount': 0,
+    'recoveryCounts': <String, int>{
+      'badgeBefore': 1,
+      'badgeAfter': 0,
+      'deliveredBefore': 1,
+      'deliveredWithSentinel': 2,
+      'deliveredAfter': 1,
+    },
     'evidenceSha256': <String, Object?>{
       'preparedApplication': _digest,
       'payloadProducer': _digest,
@@ -189,6 +212,17 @@ Map<String, Object?> _iosNotificationArtifact() {
       'recipientLog': _digest,
       'uiAutomationLog': _digest,
       'stagedEnvelope': _digest,
+      'recoveryPreparedApplication': _digest,
+      'recoveryPayloadProducer': _digest,
+      'recoveryApnsPayload': _digestB,
+      'recoveryProviderReceipt': _digest,
+      'recoveryProviderCleanupReceipt': _digest,
+      'notificationRecoveryReceipt': _digest,
+      'recoveryRelayLog': _digest,
+      'recoveryNseLog': _digest,
+      'recoveryRecipientLog': _digest,
+      'recoveryUiAutomationLog': _digest,
+      'recoveryStagedEnvelope': _digest,
     },
     'buildProfile': 'ios.device.production',
     'stagingEnvironment': 'staging',
@@ -196,6 +230,7 @@ Map<String, Object?> _iosNotificationArtifact() {
     'candidateRelayRevision': 'v1.6.0',
     'candidateRelaySha256': _digest,
     'automationReceiptSha256': _digest,
+    'recoveryAutomationReceiptSha256': _digestB,
   };
 }
 

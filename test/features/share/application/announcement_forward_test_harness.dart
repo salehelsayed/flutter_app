@@ -2,13 +2,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -40,6 +44,8 @@ class RecordingOwnerMediaRepository extends InMemoryMediaAttachmentRepository {
   final List<({String messageId, MediaOwnerLane owner})> reads = [];
   final List<({String attachmentId, String messageId, MediaOwnerLane owner})>
   saves = [];
+  final List<({String attachmentId, String messageId, MediaOwnerLane owner})>
+  atomicStages = [];
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
@@ -61,6 +67,35 @@ class RecordingOwnerMediaRepository extends InMemoryMediaAttachmentRepository {
       owner: owner,
     ));
     return super.saveAttachment(attachment, owner: owner);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttemptWithMedia({
+    required OutgoingTransportMutationRepository messageMutationRepository,
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final result = await super.stageOutgoingOrdinaryAttemptWithMedia(
+      messageMutationRepository: messageMutationRepository,
+      expected: expected,
+      staged: staged,
+      attachments: attachments,
+      kind: kind,
+    );
+    if (result.authorizesTransport) {
+      atomicStages.addAll(
+        attachments.map(
+          (attachment) => (
+            attachmentId: attachment.id,
+            messageId: attachment.messageId,
+            owner: MediaOwnerLane.direct,
+          ),
+        ),
+      );
+    }
+    return result;
   }
 }
 
@@ -213,6 +248,7 @@ class AnnouncementForwardHarness {
     );
     media.reads.clear();
     media.saves.clear();
+    media.atomicStages.clear();
     bridge.responses['group:publish'] = {
       'ok': true,
       'messageId': 'announcement-forward-live',

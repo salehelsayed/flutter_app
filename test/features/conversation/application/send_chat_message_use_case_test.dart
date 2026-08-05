@@ -1,10 +1,12 @@
 import 'dart:convert';
 import 'dart:async';
 
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
@@ -28,6 +30,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -55,6 +58,7 @@ class FakeP2PService
   String? sendMessageReply;
   bool? sendMessageAcked;
   String? sendMessageTransport;
+  final List<Future<SendMessageResult>> queuedSendMessageResults = [];
   bool shouldThrow;
   bool storeInInboxResult;
   RelayProbeResult probeRelayResult;
@@ -113,7 +117,7 @@ class FakeP2PService
     NodeState? currentState,
     this.sendMessageResult = true,
     this.sendMessageReply = 'received: ok',
-    this.sendMessageAcked,
+    this.sendMessageAcked = true,
     this.sendMessageTransport,
     this.shouldThrow = false,
     this.storeInInboxResult = false,
@@ -167,6 +171,9 @@ class FakeP2PService
     // in between), so the flag belongs to exactly this invocation.
     final isRelayLive = _relayLiveSendActive;
     _relayLiveSendActive = false;
+    final queuedResult = queuedSendMessageResults.isEmpty
+        ? null
+        : queuedSendMessageResults.removeAt(0);
     if (shouldThrow) throw Exception('Send failed');
     if (sendDelay > Duration.zero) {
       await Future<void>.delayed(sendDelay);
@@ -176,6 +183,7 @@ class FakeP2PService
     lastSentPayload = message;
     sendCallCount++;
     onSendMessage?.call();
+    if (queuedResult != null) return queuedResult;
     return SendMessageResult(
       sent: sendMessageResult,
       acked: sendMessageAcked,
@@ -256,8 +264,8 @@ class FakeP2PService
   Duration discoverLocalPeerDelay = Duration.zero;
 
   /// NET-REL-05 U-P3 (sticky): seeds the learned-per-peer transport read at the
-  /// top of the race. Null (default) means a cold send — full race, no
-  /// head-start (matches today). When set, the matching leg gets a head-start.
+  /// top of the race. Learned direct/relay may attempt authenticated reuse;
+  /// learned local remains routing metadata and enters the normal proof race.
   String? lastKnownGoodTransportResult;
 
   /// NET-REL-05 U-P3: records of `recordSuccessfulTransport` writes so a test
@@ -425,6 +433,7 @@ class FakeP2PService
 class DurableLanFakeP2PService extends FakeP2PService
     implements DurableLanSender {
   LanSendAck localSendAck;
+  Future<LanSendAck>? controlledLocalSendAck;
 
   DurableLanFakeP2PService({
     this.localSendAck = LanSendAck.committed,
@@ -456,6 +465,9 @@ class DurableLanFakeP2PService extends FakeP2PService
     lastSentPeerId = peerId;
     lastSentMessage = message;
     if (!localSendResult) return LanSendAck.failed;
+    if (controlledLocalSendAck case final controlled?) {
+      return controlled;
+    }
     return localSendAck;
   }
 
@@ -476,7 +488,8 @@ class DurableLanFakeP2PService extends FakeP2PService
 }
 
 // -- Fake Message Repository --
-class FakeMessageRepository implements MessageRepository {
+class FakeMessageRepository
+    implements MessageRepository, OutgoingTransportMutationRepository {
   final List<ConversationMessage> saved = [];
 
   // Section 4: wireEnvelope tracking
@@ -494,6 +507,7 @@ class FakeMessageRepository implements MessageRepository {
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     saved.add(message);
+    existingMessages[message.id] = message;
   }
 
   @override
@@ -523,6 +537,10 @@ class FakeMessageRepository implements MessageRepository {
   @override
   Future<void> updateMessageStatus(String id, String status) async {
     statusUpdates.add((id, status));
+    final current = existingMessages[id];
+    if (current != null) {
+      _remember(current.copyWith(status: status));
+    }
   }
 
   /// 116 P2: seedable rows for the no-downgrade writer gate's
@@ -534,7 +552,8 @@ class FakeMessageRepository implements MessageRepository {
       existingMessages[id];
 
   @override
-  Future<bool> messageExists(String id) async => false;
+  Future<bool> messageExists(String id) async =>
+      existingMessages.containsKey(id);
 
   @override
   Future<bool> existsByContent(
@@ -605,7 +624,242 @@ class FakeMessageRepository implements MessageRepository {
     String id, {
     required String fromStatus,
     required String toStatus,
-  }) async => 0;
+  }) async {
+    final current = existingMessages[id];
+    if (current == null || current.status != fromStatus) return 0;
+    _remember(current.copyWith(status: toStatus));
+    return 1;
+  }
+
+  final List<
+    ({
+      ConversationMessage? expected,
+      ConversationMessage staged,
+      OutgoingOrdinaryAttemptKind kind,
+    })
+  >
+  ordinaryStageCalls = [];
+  final List<
+    ({
+      String messageId,
+      String expectedContactPeerId,
+      String? expectedEnvelope,
+      String status,
+      String? transport,
+      int? relayExpiresAt,
+      OutgoingOrdinarySettlementMode mode,
+      bool tombstone,
+    })
+  >
+  ordinarySettlementCalls = [];
+  OutgoingOrdinaryMutationOutcome? forcedStageOutcome;
+  VoidCallback? onOrdinaryStage;
+  ConversationMessage Function(ConversationMessage staged)?
+  authoritativeStageProjection;
+
+  void forceCurrent(ConversationMessage message) => _remember(message);
+
+  void _remember(ConversationMessage message) {
+    existingMessages[message.id] = message;
+    final index = saved.indexWhere((candidate) => candidate.id == message.id);
+    if (index < 0) {
+      saved.add(message);
+    } else {
+      saved[index] = message;
+    }
+  }
+
+  OutgoingOrdinaryMutationResult _ordinaryResult(
+    OutgoingOrdinaryMutationOutcome outcome,
+    ConversationMessage? message,
+  ) => OutgoingOrdinaryMutationResult(outcome: outcome, message: message);
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    ordinaryStageCalls.add((expected: expected, staged: staged, kind: kind));
+    onOrdinaryStage?.call();
+    final current = existingMessages[staged.id];
+    final forced = forcedStageOutcome;
+    if (forced != null && forced != OutgoingOrdinaryMutationOutcome.applied) {
+      return _ordinaryResult(forced, current);
+    }
+    if (kind == OutgoingOrdinaryAttemptKind.fresh) {
+      if (expected != null || current != null) {
+        return _ordinaryResult(
+          OutgoingOrdinaryMutationOutcome.refused,
+          current,
+        );
+      }
+    } else {
+      if (expected == null) {
+        return _ordinaryResult(
+          OutgoingOrdinaryMutationOutcome.refused,
+          current,
+        );
+      }
+      if (current == null) {
+        return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+      }
+      if (current.toMap().toString() != expected.toMap().toString()) {
+        return _ordinaryResult(
+          OutgoingOrdinaryMutationOutcome.preserved,
+          current,
+        );
+      }
+    }
+    final authoritative = authoritativeStageProjection?.call(staged) ?? staged;
+    _remember(authoritative);
+    return _ordinaryResult(
+      OutgoingOrdinaryMutationOutcome.applied,
+      authoritative,
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: false,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: true,
+  );
+
+  Future<OutgoingOrdinaryMutationResult> _settleOrdinary({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool tombstone,
+  }) async {
+    ordinarySettlementCalls.add((
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+      tombstone: tombstone,
+    ));
+    final current = existingMessages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.isIncoming ||
+        current.contactPeerId != expectedContactPeerId ||
+        current.isDeleted != tombstone) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.status == 'delivered') {
+      return _ordinaryResult(
+        status == 'delivered'
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
+        ? const <String>{'inboxed', 'sent', 'failed'}
+        : switch (status) {
+            'delivered' => const <String>{
+              'sending',
+              'sent',
+              'inboxed',
+              'failed',
+            },
+            'inboxed' => const <String>{'sending', 'sent', 'failed'},
+            'sent' => const <String>{'sending', 'failed'},
+            'failed' => const <String>{'sending'},
+            _ => const <String>{},
+          };
+    if (!predecessors.contains(current.status)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final settled = current.copyWith(
+      status: status,
+      transport: transport,
+      wireEnvelope: status == 'delivered' ? null : expectedEnvelope,
+      relayExpiresAt: relayExpiresAt,
+      custodyCheckedAt: null,
+      hiddenAt: tombstone && status == 'delivered' ? current.deletedAt : null,
+    );
+    _remember(settled);
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, settled);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  }) async => _ordinaryResult(
+    OutgoingOrdinaryMutationOutcome.refused,
+    existingMessages[messageId],
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  }) async => _ordinaryResult(
+    OutgoingOrdinaryMutationOutcome.refused,
+    existingMessages[messageId],
+  );
+}
+
+class _MessageRepositoryWithoutOrdinaryCapability implements MessageRepository {
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 class _BlockedPrivateSettlementP2PService extends FakeP2PService {
@@ -874,6 +1128,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
+  bool? preassignedMessageIdIsFresh,
 }) {
   return chat_use_case.sendChatMessage(
     p2pService: p2pService,
@@ -885,6 +1140,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     action: action,
     editedAt: editedAt,
     messageId: messageId,
+    preassignedMessageIdIsFresh:
+        preassignedMessageIdIsFresh ?? messageId != null,
     timestamp: timestamp,
     createdAt: createdAt,
     bridge: bridge ?? PassthroughCryptoBridge(),
@@ -893,7 +1150,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     quotedMessageId: quotedMessageId,
     mediaAttachments: mediaAttachments,
     privateMediaPolicy: privateMediaPolicy,
-    mediaAttachmentRepo: mediaAttachmentRepo,
+    mediaAttachmentRepo:
+        mediaAttachmentRepo ??
+        ((mediaAttachments?.isNotEmpty ?? false)
+            ? FakeMediaAttachmentRepository()
+            : null),
     emitTimingEvent: emitTimingEvent,
     transportMetrics: transportMetrics,
   );
@@ -910,6 +1171,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
 }) {
+  if (messageRepo is FakeMessageRepository) {
+    messageRepo.existingMessages[originalMessage.id] = originalMessage;
+  }
   return chat_use_case.editChatMessage(
     p2pService: p2pService,
     messageRepo: messageRepo,
@@ -951,6 +1215,265 @@ void main() {
   );
 
   group('sendChatMessage', () {
+    test(
+      'attempt staging is authoritative before transport and late terminal work cannot replace delivery',
+      () async {
+        const attachment = MediaAttachment(
+          id: 'atomic-send-attachment',
+          messageId: '',
+          mime: 'image/png',
+          size: 12,
+          mediaType: 'image',
+          localPath: 'pending_uploads/source.png',
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-08-05T11:00:00.000Z',
+          contentHash: 'atomic-send-content-hash',
+          encryptionKeyBase64: 'atomic-send-key',
+          encryptionNonce: 'atomic-send-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final mediaRepo = FakeMediaAttachmentRepository();
+        final stagedBeforeTransport = <bool>[];
+        p2pService
+          ..isConnectedToPeerResult = true
+          ..sendMessageAcked = true
+          ..sendMessageTransport = 'direct'
+          ..onSendMessage = () {
+            stagedBeforeTransport.add(
+              messageRepo.ordinaryStageCalls.length == 1,
+            );
+            final staged = messageRepo.existingMessages.values.single;
+            expect(staged.status, 'sending');
+            expect(staged.wireEnvelope, isNotEmpty);
+            expect(staged.media.single.id, 'atomic-send-attachment');
+          };
+        messageRepo.authoritativeStageProjection = (staged) =>
+            staged.copyWith(text: 'authoritative staged parent');
+
+        final (generatedResult, generatedMessage) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'candidate parent',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const <MediaAttachment>[attachment],
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(generatedResult, SendChatMessageResult.success);
+        expect(stagedBeforeTransport, <bool>[true]);
+        expect(
+          messageRepo.ordinaryStageCalls.single.kind,
+          OutgoingOrdinaryAttemptKind.fresh,
+        );
+        expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+        expect(messageRepo.statusUpdates, isEmpty);
+        expect(messageRepo.ordinarySettlementCalls, isNotEmpty);
+        expect(
+          messageRepo.ordinarySettlementCalls.last.mode,
+          OutgoingOrdinarySettlementMode.live,
+        );
+        expect(generatedMessage!.text, 'authoritative staged parent');
+        expect(generatedMessage.status, 'delivered');
+        expect(generatedMessage.media.single.id, 'atomic-send-attachment');
+        expect(
+          mediaRepo.allSavedAttachments,
+          isEmpty,
+          reason:
+              'combined staging is the only attachment writer; terminal work '
+              'must not call saveAttachment',
+        );
+
+        const existingId = 'successful-existing-attempt';
+        const existingTimestamp = '2026-08-05T11:10:00.000Z';
+        final existingParent = ConversationMessage(
+          id: existingId,
+          contactPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          text: 'retry existing payload',
+          timestamp: existingTimestamp,
+          status: 'failed',
+          isIncoming: false,
+          createdAt: existingTimestamp,
+          dedupKey: 'successful-existing-dedup',
+        );
+        final existingRepo = FakeMessageRepository()
+          ..forceCurrent(existingParent);
+        var existingTransportEntries = 0;
+        final existingP2P = FakeP2PService()
+          ..isConnectedToPeerResult = true
+          ..sendMessageAcked = true
+          ..sendMessageTransport = 'direct';
+        existingP2P.onSendMessage = () {
+          existingTransportEntries++;
+          expect(existingRepo.ordinaryStageCalls, hasLength(1));
+          expect(
+            existingRepo.ordinaryStageCalls.single.kind,
+            OutgoingOrdinaryAttemptKind.existing,
+          );
+          final staged = existingRepo.existingMessages[existingId];
+          expect(staged, isNotNull);
+          expect(staged!.status, 'sending');
+          expect(staged.wireEnvelope, isNotEmpty);
+          expect(staged.wireEnvelope, existingP2P.lastSentMessage);
+        };
+        final (existingResult, existingMessage) = await sendChatMessage(
+          p2pService: existingP2P,
+          messageRepo: existingRepo,
+          targetPeerId: 'target-peer',
+          text: existingParent.text,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: existingId,
+          timestamp: existingTimestamp,
+          createdAt: existingTimestamp,
+          preassignedMessageIdIsFresh: false,
+        );
+        expect(existingResult, SendChatMessageResult.success);
+        expect(existingMessage!.status, 'delivered');
+        expect(existingTransportEntries, 1);
+
+        const editId = 'successful-edit-attempt';
+        const editTimestamp = '2026-08-05T11:20:00.000Z';
+        final originalForEdit = ConversationMessage(
+          id: editId,
+          contactPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          text: 'before authoritative edit',
+          timestamp: editTimestamp,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: editTimestamp,
+          transport: 'direct',
+          dedupKey: 'successful-edit-dedup',
+        );
+        final editRepo = FakeMessageRepository();
+        var editTransportEntries = 0;
+        final editP2P = FakeP2PService()
+          ..isConnectedToPeerResult = true
+          ..sendMessageAcked = true
+          ..sendMessageTransport = 'direct';
+        editP2P.onSendMessage = () {
+          editTransportEntries++;
+          expect(editRepo.ordinaryStageCalls, hasLength(1));
+          expect(
+            editRepo.ordinaryStageCalls.single.kind,
+            OutgoingOrdinaryAttemptKind.edit,
+          );
+          final staged = editRepo.existingMessages[editId];
+          expect(staged, isNotNull);
+          expect(staged!.status, 'sending');
+          expect(staged.text, 'after authoritative edit');
+          expect(staged.editedAt, isNotNull);
+          expect(staged.wireEnvelope, isNotEmpty);
+          expect(staged.wireEnvelope, editP2P.lastSentMessage);
+        };
+        final (editResult, editedMessage) = await editChatMessage(
+          p2pService: editP2P,
+          messageRepo: editRepo,
+          originalMessage: originalForEdit,
+          updatedText: 'after authoritative edit',
+          senderUsername: 'Me',
+        );
+        expect(editResult, SendChatMessageResult.success);
+        expect(editedMessage!.status, 'delivered');
+        expect(editedMessage.text, 'after authoritative edit');
+        expect(editTransportEntries, 1);
+
+        final missingExistingP2P = FakeP2PService();
+        final missingExistingRepo = FakeMessageRepository();
+        final (
+          missingExistingResult,
+          missingExistingMessage,
+        ) = await sendChatMessage(
+          p2pService: missingExistingP2P,
+          messageRepo: missingExistingRepo,
+          targetPeerId: 'target-peer',
+          text: 'missing existing row',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: 'missing-existing-id',
+          preassignedMessageIdIsFresh: false,
+        );
+        expect(missingExistingResult, SendChatMessageResult.sendFailed);
+        expect(missingExistingMessage, isNull);
+        expect(
+          missingExistingRepo.ordinaryStageCalls.single.kind,
+          OutgoingOrdinaryAttemptKind.existing,
+        );
+        expect(missingExistingP2P.sendCallCount, 0);
+        expect(missingExistingP2P.localSendCallCount, 0);
+        expect(missingExistingP2P.storeInInboxCallCount, 0);
+
+        final missingCapabilityP2P = FakeP2PService();
+        final (
+          missingCapabilityResult,
+          missingCapabilityMessage,
+        ) = await sendChatMessage(
+          p2pService: missingCapabilityP2P,
+          messageRepo: _MessageRepositoryWithoutOrdinaryCapability(),
+          targetPeerId: 'target-peer',
+          text: 'missing capability',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(missingCapabilityResult, SendChatMessageResult.sendFailed);
+        expect(missingCapabilityMessage, isNull);
+        expect(missingCapabilityP2P.sendCallCount, 0);
+        expect(missingCapabilityP2P.localSendCallCount, 0);
+        expect(missingCapabilityP2P.storeInInboxCallCount, 0);
+
+        final refusedP2P = FakeP2PService();
+        final refusedRepo = FakeMessageRepository()
+          ..forcedStageOutcome = OutgoingOrdinaryMutationOutcome.refused;
+        final (refusedResult, refusedMessage) = await sendChatMessage(
+          p2pService: refusedP2P,
+          messageRepo: refusedRepo,
+          targetPeerId: 'target-peer',
+          text: 'refused stage',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(refusedResult, SendChatMessageResult.sendFailed);
+        expect(refusedMessage, isNull);
+        expect(refusedP2P.sendCallCount, 0);
+        expect(refusedP2P.localSendCallCount, 0);
+        expect(refusedP2P.storeInInboxCallCount, 0);
+
+        final concurrentP2P = FakeP2PService()
+          ..isConnectedToPeerResult = true
+          ..sendMessageAcked = true
+          ..sendMessageTransport = 'direct';
+        final concurrentRepo = FakeMessageRepository();
+        concurrentP2P.onSendMessage = () {
+          final staged = concurrentRepo.existingMessages.values.single;
+          concurrentRepo.forceCurrent(
+            staged.copyWith(
+              text: 'concurrent durable delivery',
+              status: 'delivered',
+              transport: 'direct',
+              wireEnvelope: null,
+            ),
+          );
+        };
+        final (concurrentResult, concurrentMessage) = await sendChatMessage(
+          p2pService: concurrentP2P,
+          messageRepo: concurrentRepo,
+          targetPeerId: 'target-peer',
+          text: 'stale terminal candidate',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(concurrentResult, SendChatMessageResult.success);
+        expect(concurrentMessage!.status, 'delivered');
+        expect(concurrentMessage.text, 'concurrent durable delivery');
+        expect(concurrentMessage.wireEnvelope, isNull);
+        expect(concurrentRepo.ordinarySettlementCalls.last.status, 'delivered');
+        expect(concurrentRepo.saved.single.text, 'concurrent durable delivery');
+      },
+    );
+
     test(
       'valid private policy is encrypted-inner-only and persists on parent',
       () async {
@@ -1459,6 +1982,7 @@ void main() {
             senderPeerId: 'my-peer',
             senderUsername: 'Me',
             messageId: messageId,
+            preassignedMessageIdIsFresh: true,
             bridge: PassthroughCryptoBridge(),
             recipientMlKemPublicKey: testRecipientMlKemPublicKey,
             mediaAttachments: const [attachment],
@@ -1723,7 +2247,7 @@ void main() {
     });
 
     test(
-      'removes stale upload_pending placeholder rows before saving final attachments',
+      'replaces a stale upload placeholder for an explicitly fresh media attempt',
       () async {
         final mediaAttachmentRepo = FakeMediaAttachmentRepository();
         const messageId = 'msg-stable-cleanup-001';
@@ -1750,6 +2274,7 @@ void main() {
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
           messageId: messageId,
+          preassignedMessageIdIsFresh: true,
           timestamp: '2026-01-01T00:00:00.000Z',
           mediaAttachments: const [
             MediaAttachment(
@@ -1772,6 +2297,8 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           owner: MediaOwnerLane.direct,
           messageId,
@@ -1828,15 +2355,15 @@ void main() {
         reason:
             'the returned live projection must match the direct-owned DB row',
       );
-      expect(mediaAttachmentRepo.savedOwnerLanes, isNotEmpty);
       expect(
-        mediaAttachmentRepo.savedOwnerLanes.toSet(),
-        {MediaOwnerLane.direct},
-        reason: 'every 1:1 outgoing media save must pass the direct lane',
+        messageRepo.ordinaryStageCalls.single.kind,
+        OutgoingOrdinaryAttemptKind.fresh,
       );
-      for (final saved in mediaAttachmentRepo.allSavedAttachments) {
-        expect(saved.ownerLane, MediaOwnerLane.direct);
-      }
+      expect(
+        mediaAttachmentRepo.savedOwnerLanes,
+        isEmpty,
+        reason: 'the combined staging transaction replaces split row saves',
+      );
       // Lane-scoped read-back: the group lane must never see this attachment.
       expect(
         await mediaAttachmentRepo.getAttachmentsForMessage(
@@ -2457,7 +2984,10 @@ void main() {
     });
 
     test('success without ack keeps sent when inbox handoff fails', () async {
-      p2pService = FakeP2PService(sendMessageReply: null);
+      p2pService = FakeP2PService(
+        sendMessageAcked: false,
+        sendMessageReply: null,
+      );
 
       final (result, message) = await sendChatMessage(
         p2pService: p2pService,
@@ -2480,7 +3010,10 @@ void main() {
     test(
       'success with empty reply keeps sent when inbox handoff fails',
       () async {
-        p2pService = FakeP2PService(sendMessageReply: '');
+        p2pService = FakeP2PService(
+          sendMessageAcked: false,
+          sendMessageReply: '',
+        );
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
@@ -2505,6 +3038,7 @@ void main() {
       'unacked direct send hands off to inbox immediately when available',
       () async {
         p2pService = FakeP2PService(
+          sendMessageAcked: false,
           sendMessageReply: null,
           storeInInboxResult: true,
         );
@@ -2529,29 +3063,32 @@ void main() {
       },
     );
 
-    test('sends locally when peer is on local WiFi', () async {
-      p2pService = DurableLanFakeP2PService(useNullDiscover: true)
-        ..localPeers.add('target-peer');
+    test(
+      'writes locally but keeps a retryable envelope without libp2p proof',
+      () async {
+        p2pService = DurableLanFakeP2PService(useNullDiscover: true)
+          ..localPeers.add('target-peer');
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Hello local!',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello local!',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      expect(message!.status, 'delivered');
-      // Local send was attempted (race includes local + direct)
-      expect(p2pService.localSendCallCount, 1);
-      expect(p2pService.probeRelayCallCount, 0);
-      expect(p2pService.recordSuccessfulSendProofCallCount, 1);
-      expect(p2pService.lastReadinessProofSource, 'chat_send_local');
-      expect(p2pService.lastReadinessSendPath, 'local');
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.status, 'sent');
+        expect(message.transport, 'local');
+        expect(message.wireEnvelope, isNotNull);
+        // Local send was attempted (race includes local + direct)
+        expect(p2pService.localSendCallCount, 1);
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.recordSuccessfulSendProofCallCount, 0);
+      },
+    );
 
     test('falls through to relay when local send fails', () async {
       p2pService.localPeers.add('target-peer');
@@ -2802,7 +3339,7 @@ void main() {
 
   group('Doc 114 S3 durable LAN ack policy', () {
     test(
-      'committed LAN ack persists delivered local and trains sticky local',
+      'committed LAN ack remains written-only and keeps retryable custody',
       () async {
         p2pService = DurableLanFakeP2PService(useNullDiscover: true)
           ..localPeers.add('target-peer');
@@ -2818,12 +3355,12 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'delivered');
+        expect(message!.status, 'sent');
         expect(message.transport, 'local');
-        expect(message.wireEnvelope, isNull);
-        expect(p2pService.storeInInboxCallCount, 0);
-        expect(p2pService.recordSuccessfulTransportCallCount, 1);
-        expect(p2pService.lastRecordedTransport, 'local');
+        expect(message.wireEnvelope, isNotNull);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.recordSuccessfulTransportCallCount, 0);
+        expect(p2pService.lastRecordedTransport, isNull);
       },
     );
 
@@ -2912,7 +3449,7 @@ void main() {
     );
 
     test(
-      'sticky local short-circuit still backstops a legacy LAN ack',
+      'learned local does not short-circuit authenticated direct proof',
       () async {
         p2pService =
             DurableLanFakeP2PService(
@@ -2933,13 +3470,399 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.status, 'inboxed');
-        expect(message.transport, 'inbox');
-        expect(message.wireEnvelope, isNotNull);
+        expect(message!.status, 'delivered');
+        expect(message.transport, 'direct');
+        expect(message.wireEnvelope, isNull);
         expect(p2pService.localSendCallCount, 1);
-        expect(p2pService.discoverCallCount, 0);
-        expect(p2pService.dialCallCount, 0);
-        expect(p2pService.recordSuccessfulTransportCallCount, 0);
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 1);
+        expect(p2pService.recordSuccessfulTransportCallCount, 1);
+      },
+    );
+  });
+
+  group('R2 authenticated committed live settlement', () {
+    test(
+      'R2 claimed committed LAN ACK cannot settle suppress authenticated work or train sticky',
+      () async {
+        final directProof = Completer<SendMessageResult>();
+        final provingService = DurableLanFakeP2PService(
+          localSendAck: LanSendAck.committed,
+        )..localPeers.add('target-peer');
+        provingService.queuedSendMessageResults.add(directProof.future);
+        final provingRepo = FakeMessageRepository();
+        var settled = false;
+        final provingSend =
+            sendChatMessage(
+              p2pService: provingService,
+              messageRepo: provingRepo,
+              targetPeerId: 'target-peer',
+              text: 'LAN write waits for authenticated proof',
+              senderPeerId: 'my-peer',
+              senderUsername: 'Me',
+            ).then((value) {
+              settled = true;
+              return value;
+            });
+
+        for (var i = 0; i < 20 && provingService.sendCallCount == 0; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(provingService.localSendCallCount, 1);
+        expect(provingService.sendCallCount, 1);
+        expect(settled, isFalse);
+        expect(provingService.recordSuccessfulTransportCallCount, 0);
+
+        directProof.complete(
+          const SendMessageResult(sent: true, acked: true, transport: 'direct'),
+        );
+        final (provingResult, provingMessage) = await provingSend;
+        expect(provingResult, SendChatMessageResult.success);
+        expect(provingMessage!.status, 'delivered');
+        expect(provingMessage.transport, 'direct');
+        expect(provingService.lastRecordedTransport, 'direct');
+
+        final custodyService = DurableLanFakeP2PService(
+          localSendAck: LanSendAck.committed,
+          sendMessageAcked: null,
+          sendMessageReply: 'legacy reply is not proof',
+          storeInInboxResult: true,
+        )..localPeers.add('target-peer');
+        final (custodyResult, custodyMessage) = await sendChatMessage(
+          p2pService: custodyService,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'LAN write needs custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(custodyResult, SendChatMessageResult.success);
+        expect(custodyMessage!.status, 'inboxed');
+        expect(custodyMessage.transport, 'inbox');
+        expect(custodyMessage.wireEnvelope, isNotNull);
+        expect(custodyService.sendCallCount, 1);
+        expect(custodyService.storeInInboxCallCount, 1);
+        expect(custodyService.recordSuccessfulTransportCallCount, 0);
+      },
+    );
+
+    test(
+      'R2 first authenticated committed ACK settles before virtual transport grace',
+      () {
+        fakeAsync((async) {
+          final losingLocal = Completer<LanSendAck>();
+          final service = DurableLanFakeP2PService()
+            ..localPeers.add('target-peer')
+            ..controlledLocalSendAck = losingLocal.future;
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+
+          sendChatMessage(
+            p2pService: service,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: 'target-peer',
+            text: 'direct proof has zero settlement grace',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
+
+          expect(async.elapsed, Duration.zero);
+          expect(outcome, isNotNull);
+          expect(outcome!.$2!.status, 'delivered');
+          expect(outcome!.$2!.transport, 'direct');
+          expect(losingLocal.isCompleted, isFalse);
+        });
+
+        fakeAsync((async) {
+          final losingLocal = Completer<LanSendAck>();
+          final losingDirect = Completer<SendMessageResult>();
+          final service =
+              DurableLanFakeP2PService(
+                  currentState: const NodeState(
+                    isStarted: true,
+                    connections: [
+                      p2p.ConnectionState(
+                        peerId: 'target-peer',
+                        multiaddrs: [
+                          '/ip4/10.0.0.8/tcp/4001/p2p/relay/p2p-circuit',
+                        ],
+                        direction: 'outbound',
+                        status: 'connected',
+                      ),
+                    ],
+                  ),
+                )
+                ..localPeers.add('target-peer')
+                ..controlledLocalSendAck = losingLocal.future
+                ..queuedSendMessageResults.addAll([
+                  losingDirect.future,
+                  Future<SendMessageResult>.value(
+                    const SendMessageResult(
+                      sent: true,
+                      acked: true,
+                      transport: 'relay',
+                    ),
+                  ),
+                ]);
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+
+          sendChatMessage(
+            p2pService: service,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: 'target-peer',
+            text: 'relay proof has scheduling stagger only',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
+          expect(outcome, isNull);
+          expect(service.relayLiveSendCount, 0);
+
+          async.elapse(kRelayLegStagger);
+          async.flushMicrotasks();
+          expect(async.elapsed, kRelayLegStagger);
+          expect(service.relayLiveSendCount, 1);
+          expect(outcome, isNotNull);
+          expect(outcome!.$2!.status, 'delivered');
+          expect(outcome!.$2!.transport, 'relay');
+          expect(losingLocal.isCompleted, isFalse);
+          expect(losingDirect.isCompleted, isFalse);
+        });
+
+        fakeAsync((async) {
+          final service = FakeP2PService()
+            ..lastKnownGoodTransportResult = 'local'
+            ..localPeers.add('target-peer')
+            ..localSendResult = false;
+          (SendChatMessageResult, ConversationMessage?)? outcome;
+
+          sendChatMessage(
+            p2pService: service,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: 'target-peer',
+            text: 'failed learned local cannot delay direct proof',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          ).then((value) => outcome = value);
+          async.flushMicrotasks();
+
+          expect(async.elapsed, Duration.zero);
+          expect(outcome, isNotNull);
+          expect(outcome!.$2!.status, 'delivered');
+          expect(outcome!.$2!.transport, 'direct');
+        });
+      },
+    );
+
+    test(
+      'R2 uncommitted reuse and learned routes fall through to authenticated race',
+      () async {
+        const directConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        final reuseService = FakeP2PService(
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [directConnection],
+          ),
+        )..discoverLocalPeerResult = false;
+        reuseService.queuedSendMessageResults.addAll([
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: null,
+              reply: 'forged compatibility reply',
+              transport: 'direct',
+            ),
+          ),
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: true,
+              transport: 'direct',
+            ),
+          ),
+        ]);
+        final (_, reuseMessage) = await sendChatMessage(
+          p2pService: reuseService,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'uncommitted reuse falls through',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(reuseMessage!.status, 'delivered');
+        expect(reuseService.sendCallCount, 2);
+        expect(reuseService.discoverCallCount, 1);
+
+        final learnedService = FakeP2PService()
+          ..lastKnownGoodTransportResult = 'direct'
+          ..discoverLocalPeerResult = false;
+        learnedService.queuedSendMessageResults.addAll([
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: null,
+              reply: 'legacy reply is not proof',
+              transport: 'direct',
+            ),
+          ),
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: true,
+              transport: 'direct',
+            ),
+          ),
+        ]);
+        final (_, learnedMessage) = await sendChatMessage(
+          p2pService: learnedService,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'uncommitted learned route falls through',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(learnedMessage!.status, 'delivered');
+        expect(learnedService.sendCallCount, 2);
+        expect(learnedService.discoverCallCount, 1);
+
+        final provingReuse = FakeP2PService(
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [directConnection],
+          ),
+          sendMessageAcked: true,
+        );
+        final (_, provingReuseMessage) = await sendChatMessage(
+          p2pService: provingReuse,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'positive reuse remains fast',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(provingReuseMessage!.status, 'delivered');
+        expect(provingReuse.sendCallCount, 1);
+        expect(provingReuse.discoverCallCount, 0);
+
+        final reuseWithoutCustody = FakeP2PService(
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [directConnection],
+          ),
+          storeInInboxResult: false,
+        )..discoverLocalPeerResult = false;
+        reuseWithoutCustody.queuedSendMessageResults.addAll([
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: null,
+              reply: 'reuse wrote but did not commit',
+              transport: 'direct',
+            ),
+          ),
+          Future<SendMessageResult>.value(const SendMessageResult(sent: false)),
+        ]);
+        final (reusePendingResult, reusePendingMessage) = await sendChatMessage(
+          p2pService: reuseWithoutCustody,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'reuse write remains retryable without later proof or custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(reusePendingResult, SendChatMessageResult.success);
+        expect(reusePendingMessage!.status, 'sent');
+        expect(reusePendingMessage.transport, 'direct');
+        expect(reusePendingMessage.wireEnvelope, isNotNull);
+        expect(reuseWithoutCustody.sendCallCount, 2);
+
+        final learnedWithoutCustody = FakeP2PService(storeInInboxResult: false)
+          ..lastKnownGoodTransportResult = 'direct'
+          ..discoverLocalPeerResult = false;
+        learnedWithoutCustody.queuedSendMessageResults.addAll([
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: null,
+              reply: 'learned route wrote but did not commit',
+              transport: 'direct',
+            ),
+          ),
+          Future<SendMessageResult>.value(const SendMessageResult(sent: false)),
+        ]);
+        final (
+          learnedPendingResult,
+          learnedPendingMessage,
+        ) = await sendChatMessage(
+          p2pService: learnedWithoutCustody,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text:
+              'learned write remains retryable without later proof or custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(learnedPendingResult, SendChatMessageResult.success);
+        expect(learnedPendingMessage!.status, 'sent');
+        expect(learnedPendingMessage.transport, 'direct');
+        expect(learnedPendingMessage.wireEnvelope, isNotNull);
+        expect(learnedWithoutCustody.sendCallCount, 2);
+      },
+    );
+
+    test(
+      'R2 LAN-visible authenticated reuse wins and learned local cannot short-circuit proof',
+      () async {
+        final reuseService = FakeP2PService(
+          currentState: const NodeState(
+            isStarted: true,
+            connections: [
+              p2p.ConnectionState(
+                peerId: 'target-peer',
+                multiaddrs: ['/ip4/192.168.1.20/tcp/4001'],
+                direction: 'outbound',
+                status: 'connected',
+              ),
+            ],
+          ),
+          sendMessageAcked: true,
+          sendMessageTransport: 'local',
+        )..localPeers.add('target-peer');
+        final (_, reuseMessage) = await sendChatMessage(
+          p2pService: reuseService,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'authenticated private-address reuse',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(reuseMessage!.status, 'delivered');
+        expect(reuseMessage.transport, 'local');
+        expect(reuseService.sendCallCount, 1);
+        expect(reuseService.localSendCallCount, 0);
+        expect(reuseService.discoverCallCount, 0);
+
+        final learnedLocalService = DurableLanFakeP2PService()
+          ..localPeers.add('target-peer')
+          ..lastKnownGoodTransportResult = 'local'
+          ..localSendDelay = const Duration(milliseconds: 40);
+        final (_, learnedLocalMessage) = await sendChatMessage(
+          p2pService: learnedLocalService,
+          messageRepo: FakeMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'learned local still races proof',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+        expect(learnedLocalMessage!.status, 'delivered');
+        expect(learnedLocalMessage.transport, 'direct');
+        expect(learnedLocalService.sendCallCount, 1);
+        expect(learnedLocalService.discoverCallCount, 1);
       },
     );
   });
@@ -3083,6 +4006,7 @@ void main() {
         // FDC-03: formerly "probe-connected send with lost ACK." With the probe
         // gone, the unacked custody is the concurrent inbox copy.
         p2pService = FakeP2PService(
+          sendMessageAcked: false,
           sendMessageReply: null,
           storeInInboxResult: true,
         );
@@ -3201,18 +4125,17 @@ void main() {
     );
 
     test(
-      'FDC-02: a circuit-only connection no longer reuse-short-circuits — it '
-      'races (direct leg still labels relay) so a LAN/direct hop can win',
+      'FDC-02: a circuit-only connection enters the full authenticated proof race',
       () async {
         // FDC-02 resolution A (C1): a peer whose ONLY live connection is a
         // `/p2p-circuit` must NOT take the reuse fast-path (which would carry a
-        // warmed relay even when a 30ms LAN hop is available, the §6.1 bug).
-        // It now falls into the ranked race. Here there is no LAN and the direct
-        // dial succeeds, so the direct leg delivers — and because a circuit conn
+        // warmed relay before the independently scheduled live legs can run.
+        // It now falls into the full race. Here there is no LAN and the direct
+        // dial succeeds with proof — and because a circuit conn
         // exists with no explicit Go transport, `_resolveGoSendTransport` still
         // infers 'relay'. So transport stays 'relay', but discover/dial now run
         // (proof the reuse short-circuit was skipped), and the staggered
-        // relay-live leg is suppressed by the early direct win.
+        // relay-live leg is suppressed by the early direct proof.
         p2pService = FakeP2PService(
           currentState: NodeState(
             isStarted: true,
@@ -3245,23 +4168,19 @@ void main() {
         expect(p2pService.discoverCallCount, 1);
         expect(p2pService.dialCallCount, 1);
         // One live send (the direct leg). The staggered relay-live leg was
-        // suppressed by the early direct win, so it never sent.
+        // suppressed by the early direct proof, so it never sent.
         expect(p2pService.sendCallCount, 1);
         expect(p2pService.relayLiveSendCount, 0);
       },
     );
 
-    // ───────── FDC-04: LAN-aware reuse/sticky gate (RC2 / INV-2) ─────────
-    // TC-04-12: a same-WiFi peer with a DIRECT connection no longer takes the
-    // reuse fast-path — it races so the LAN leg can win. (FDC-02 already carved
-    // out relay-only circuits; the isLocalPeer gate adds the orthogonal
-    // direct-conn-to-a-LAN-peer case.) Mutation: drop `&& !isLocalPeer` from the
-    // reuse condition → reuse fires for a local peer → re-red.
+    // R2: LAN visibility is route metadata. An existing target-Peer-ID stream
+    // remains authenticated and therefore retains reuse authority.
     test(
-      'TC-04-12: LAN-visible peer with a direct conn does not reuse — LAN wins',
+      'TC-04-12: LAN-visible peer with a direct conn reuses authenticated proof',
       () async {
         p2pService = FakeP2PService(
-          useNullDiscover: true, // direct race leg misses → only LAN can win
+          useNullDiscover: true, // any fallback discovery would miss
           currentState: NodeState(
             isStarted: true,
             connections: [
@@ -3287,18 +4206,17 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(message!.transport, 'local'); // raced LAN, not the reused conn
-        expect(p2pService.localSendCallCount, 1); // the LAN leg fired
-        expect(p2pService.sendCallCount, 0); // reuse short-circuit NOT taken
+        expect(message!.transport, 'direct');
+        expect(p2pService.localSendCallCount, 0);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.discoverCallCount, 0);
       },
     );
 
-    // TC-04-13: a learned 'relay'/'direct' sticky transport must NOT short-
-    // circuit a LAN-visible peer — only a learned 'local' may. Mutation: drop
-    // the isLocalPeer guard from the sticky condition → sticky relay fires →
-    // re-red.
+    // A learned direct/relay route reuses an authenticated stream even when the
+    // peer is also LAN-visible. Only learned WebSocket-local is ineligible.
     test(
-      'TC-04-13: learned relay sticky does not short-circuit a LAN peer',
+      'TC-04-13: learned relay sticky may prove delivery for a LAN peer',
       () async {
         p2pService = FakeP2PService(useNullDiscover: true)
           ..localPeers.add('target-peer') // isLocalPeer → true
@@ -3314,12 +4232,10 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(message!.transport, 'local'); // sticky skipped → LAN raced + won
-        expect(p2pService.localSendCallCount, 1);
-        expect(
-          p2pService.sendCallCount,
-          0,
-        ); // the learned-relay sticky NOT taken
+        expect(message!.transport, 'direct');
+        expect(p2pService.localSendCallCount, 0);
+        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.discoverCallCount, 0);
       },
     );
 
@@ -3400,10 +4316,8 @@ void main() {
     );
 
     test(
-      // FDC-04 (RC2/INV-2 / TC-04-12): a LAN-visible peer with a direct conn no
-      // longer takes the reuse fast path — it races so the LAN leg can win (see
-      // TC-04-12). This test therefore covers the recording-on-reuse path for a
-      // NON-LOCAL connected peer (the case that still reuses).
+      // FDC-04 (RC2/INV-2 / TC-04-12): this non-local connected control proves
+      // the authenticated reuse path records the actual Go transport label.
       'existing non-local connected peer records actual Go transport on the reuse fast path',
       () async {
         p2pService = FakeP2PService(
@@ -3441,7 +4355,7 @@ void main() {
     );
 
     test(
-      'existing connected peer hands off an unacked send to inbox on the same attempt',
+      'existing connected unacked write falls through the authenticated race to inbox',
       () async {
         p2pService = FakeP2PService(
           currentState: NodeState(
@@ -3455,6 +4369,7 @@ void main() {
               ),
             ],
           ),
+          sendMessageAcked: false,
           sendMessageReply: null,
           storeInInboxResult: true,
         );
@@ -3474,10 +4389,10 @@ void main() {
         expect(message!.status, 'inboxed');
         expect(message.transport, 'inbox');
         expect(message.wireEnvelope, isNotNull);
-        expect(p2pService.sendCallCount, 1);
+        expect(p2pService.sendCallCount, 2);
         expect(p2pService.storeInInboxCallCount, 1);
-        expect(p2pService.discoverCallCount, 0);
-        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 1);
       },
     );
 
@@ -3614,8 +4529,8 @@ void main() {
         () async {
           // Track cross-component ordering via a shared list
           final callOrder = <String>[];
-          messageRepo.onUpdateWireEnvelope = () =>
-              callOrder.add('updateWireEnvelope');
+          messageRepo.onOrdinaryStage = () =>
+              callOrder.add('stageOutgoingOrdinaryAttempt');
           p2pService.onDiscover = () => callOrder.add('discover');
           p2pService.onSendMessage = () => callOrder.add('sendMessage');
 
@@ -3631,14 +4546,17 @@ void main() {
 
           expect(result, SendChatMessageResult.success);
           // wireEnvelope must be persisted
-          expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-001'));
+          expect(
+            messageRepo.ordinaryStageCalls.single.staged.id,
+            'msg-wire-001',
+          );
           // wireEnvelope persist must happen before any P2P operation
-          final wireIdx = callOrder.indexOf('updateWireEnvelope');
+          final wireIdx = callOrder.indexOf('stageOutgoingOrdinaryAttempt');
           final discoverIdx = callOrder.indexOf('discover');
           expect(
             wireIdx,
             isNot(-1),
-            reason: 'updateWireEnvelope must be called',
+            reason: 'the typed attempt stage must be called',
           );
           expect(
             wireIdx < discoverIdx,
@@ -3676,7 +4594,10 @@ void main() {
           );
 
           expect(result, SendChatMessageResult.success);
-          expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-002'));
+          expect(
+            messageRepo.ordinaryStageCalls.single.staged.id,
+            'msg-wire-002',
+          );
           expect(p2pService.discoverCallCount, 0); // reuse path skips discover
         },
       );
@@ -3696,7 +4617,7 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-003'));
+        expect(messageRepo.ordinaryStageCalls.single.staged.id, 'msg-wire-003');
       });
 
       test(
@@ -3714,16 +4635,12 @@ void main() {
 
           expect(result, SendChatMessageResult.success);
           // Verify the persisted wireEnvelope matches what was sent over P2P
-          expect(messageRepo.lastWireEnvelopeValue, isNotNull);
+          final stagedEnvelope =
+              messageRepo.ordinaryStageCalls.single.staged.wireEnvelope;
+          expect(stagedEnvelope, isNotNull);
           expect(p2pService.lastSentPayload, isNotNull);
-          expect(
-            messageRepo.lastWireEnvelopeValue,
-            equals(p2pService.lastSentPayload),
-          );
-          expect(
-            messageRepo.lastWireEnvelopeValue,
-            contains('"id":"fixed-id-001"'),
-          );
+          expect(stagedEnvelope, equals(p2pService.lastSentPayload));
+          expect(stagedEnvelope, contains('"id":"fixed-id-001"'));
         },
       );
 
@@ -3749,7 +4666,10 @@ void main() {
           expect(result, SendChatMessageResult.peerNotFound);
           expect(message!.status, 'failed');
           // wireEnvelope was still persisted before the transport race
-          expect(messageRepo.wireEnvelopeUpdates, contains('msg-wire-fail'));
+          expect(
+            messageRepo.ordinaryStageCalls.single.staged.id,
+            'msg-wire-fail',
+          );
         },
       );
     },
@@ -3789,6 +4709,7 @@ void main() {
     test('storeInInbox is called when P2P succeeds without ACK', () async {
       p2pService = FakeP2PService(
         sendMessageResult: true,
+        sendMessageAcked: false,
         sendMessageReply: '',
         storeInInboxResult: true,
       );
@@ -3914,7 +4835,7 @@ void main() {
       expect(result, SendChatMessageResult.peerNotFound);
       expect(message!.status, 'failed');
       // wireEnvelope was still persisted, so Section 1 retrier can recover
-      expect(messageRepo.wireEnvelopeUpdates, contains('msg-edge-001'));
+      expect(messageRepo.ordinaryStageCalls.single.staged.id, 'msg-edge-001');
     });
 
     test(
@@ -4079,80 +5000,68 @@ void main() {
     );
   });
 
-  // ─── NET-REL-05 — send orchestration (grace, sticky, concurrent, dedup) ──
+  // ─── NET-REL-05/R2 — send orchestration, sticky, concurrent, dedup ───────
   //
   // Each happy case is paired with the negative control the doc names so a weak
-  // test cannot pass falsely. U1/U-N1 prove the grace window prefers the better
-  // transport WITHOUT hanging on a failed leg. U2/U-N2 prove the learned-sticky
-  // head-start saves discovery work WITHOUT trapping the send on a dead path or
-  // honoring a stale preference. U3/U-N3 prove the concurrent inbox fires for a
+  // test cannot pass falsely. U1/U-N1 now prove authenticated commitment beats
+  // unauthenticated route rank without hanging on a failed leg. U2/U-N2 prove
+  // authenticated learned reuse saves discovery work WITHOUT trapping the send
+  // on a dead path or trusting learned WebSocket-local. U3/U-N3 prove the concurrent inbox fires for a
   // low-confidence send only, NOT a blanket dual-write. U4/U-N4 prove send-side
   // single-row dedup (same id → 1, different ids → 2). U5 + its budget control
   // prove the offline tail is bounded and a budget is actually ENFORCED.
   group('NET-REL-05 send orchestration', () {
-    // U1 — grace window (happy): local and direct BOTH succeed; direct lands
-    // first (local is delayed slightly, but well within the 150ms grace), yet
-    // the better-ranked 'local' transport is preferred. Proves the grace
-    // window honors local > direct, not pure first-wins.
+    // R2 replacement for U1: direct proves delivery immediately; a later LAN
+    // committed claim is written-only and cannot replace that proof.
     test(
-      'U1 grace: local lands within grace of direct → transport == local',
+      'U1 R2: first authenticated direct proof ignores later LAN evidence',
       () async {
         p2pService = DurableLanFakeP2PService()
           ..localPeers.add('target-peer')
-          // Direct resolves immediately; local lands ~40ms later — inside the
-          // 150ms grace window, so it must still preempt the worse direct leg.
+          // Direct resolves immediately; unauthenticated LAN lands ~40ms later.
           ..localSendDelay = const Duration(milliseconds: 40);
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Grace prefers local',
+          text: 'Direct proof settles immediately',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
-
-        expect(result, SendChatMessageResult.success);
-        expect(message, isNotNull);
-        // Direct succeeded first but local won the grace → local is committed.
-        expect(message!.transport, 'local');
-        expect(p2pService.localSendCallCount, 1);
-        expect(p2pService.sendCallCount, 1);
-      },
-    );
-
-    // U-N1 — grace NEGATIVE control: local FAILS, direct succeeds. The grace
-    // timer must NOT be armed to wait out the (now impossible) local win — the
-    // send commits 'direct' promptly with no hung wait. Proves U1's preference
-    // logic does not block on a leg that can never land.
-    test(
-      'U-N1 grace neg: local fails → direct chosen with no hung wait',
-      () async {
-        p2pService = FakeP2PService()
-          ..localPeers.add('target-peer')
-          ..localSendResult = false; // local leg fails outright
-
-        final sw = Stopwatch()..start();
-        final (result, message) = await sendChatMessage(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          targetPeerId: 'target-peer',
-          text: 'Local fails, direct carries',
-          senderPeerId: 'my-peer',
-          senderUsername: 'Me',
-        );
-        sw.stop();
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
         expect(message!.transport, 'direct');
         expect(p2pService.localSendCallCount, 1);
-        // No grace wait: the resolved/failed local leg clears the only leg that
-        // could outrank direct, so the completer settles immediately. Far under
-        // the grace window (150ms) — proves it is not parked on a timer.
-        expect(sw.elapsedMilliseconds, lessThan(120));
+        expect(p2pService.sendCallCount, 1);
       },
     );
+
+    // U-N1 — local failure cannot delay a direct authenticated commitment.
+    test('U-N1 R2: local failure does not delay direct proof', () async {
+      p2pService = FakeP2PService()
+        ..localPeers.add('target-peer')
+        ..localSendResult = false; // local leg fails outright
+
+      final sw = Stopwatch()..start();
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: 'target-peer',
+        text: 'Local fails, direct carries',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+      );
+      sw.stop();
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(message!.transport, 'direct');
+      expect(p2pService.localSendCallCount, 1);
+      // The direct proof is not parked on a winner-selection timer.
+      expect(sw.elapsedMilliseconds, lessThan(120));
+    });
 
     // U2 — sticky SHORT-CIRCUIT (the real latency win, R3). A learned+valid
     // transport REUSES the known-good path and SKIPS discover/dial entirely.
@@ -4191,11 +5100,10 @@ void main() {
       },
     );
 
-    // U2 — sticky SHORT-CIRCUIT for 'local': a learned+valid local transport
-    // sends straight over LAN with NO discover-on-send and NO direct
-    // discover/dial. Pairs the direct case above for the other live transport.
+    // R2 replacement: a learned local label cannot establish authentication and
+    // therefore joins the ordinary race instead of short-circuiting direct.
     test(
-      'U2 sticky short-circuit: learned local skips local discover + direct',
+      'U2 R2: learned local cannot skip authenticated direct proof',
       () async {
         p2pService = DurableLanFakeP2PService()
           ..localPeers.add('target-peer')
@@ -4211,12 +5119,11 @@ void main() {
         );
 
         expect(result, SendChatMessageResult.success);
-        expect(message!.transport, 'local');
+        expect(message!.transport, 'direct');
         expect(p2pService.localSendCallCount, 1);
-        // No re-resolve on the LAN, and the direct race never started.
         expect(p2pService.discoverLocalPeerCallCount, 0);
-        expect(p2pService.discoverCallCount, 0);
-        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.discoverCallCount, 1);
+        expect(p2pService.dialCallCount, 1);
       },
     );
 
@@ -4669,6 +5576,7 @@ void main() {
         // concurrent inbox already holds custody, so the unacked branch settles
         // 'inboxed' WITHOUT a second sequential store.
         p2pService = FakeP2PService(
+          sendMessageAcked: false,
           sendMessageReply: null,
           storeInInboxResult: true,
         );
@@ -4747,8 +5655,10 @@ void main() {
       test(
         'FDC-03-P2 LAN-local send does NOT fire the concurrent inbox',
         () async {
-          // A LAN-local peer has the nonce ack — single-path. Mutation: drop the
-          // !isLocalPeer guard → the concurrent inbox fires → count 1 → RED.
+          // LAN visibility still keeps the eager concurrent inbox off; the
+          // authenticated direct race leg proves delivery and LAN remains
+          // written-only. The sequential inbox backstop remains available if no
+          // proof arrives.
           p2pService = DurableLanFakeP2PService()
             ..localPeers.add('target-peer');
 
@@ -4762,7 +5672,7 @@ void main() {
           );
 
           expect(result, SendChatMessageResult.success);
-          expect(message!.transport, 'local');
+          expect(message!.transport, 'direct');
           expect(p2pService.storeInInboxCallCount, 0);
         },
       );
@@ -5270,15 +6180,14 @@ void main() {
     });
   });
 
-  // ─── FDC-02 — staggered relay-penalized ranked race + LAN-by-priority ──────
+  // ─── FDC-02/R2 — staggered relay scheduling + proof-first settlement ─────
   // Proposal §6.2: relay is no longer folded (penalty-free) into the direct leg.
   // A live `/p2p-circuit` peer no longer reuse-short-circuits (C1 resolution A) —
   // it RACES, with a staggered relay-LIVE leg that (a) is started kRelayLegStagger
-  // behind the LAN/direct legs, (b) is suppressed if a better leg already
-  // committed, (c) never carries media/large payloads, and (d) reuses the
-  // 'relay' rank (1 < direct < local). Leg-attributable proof via
+  // behind the LAN/direct legs, (b) is suppressed only if authenticated proof
+  // already committed, and (c) never carries media/large payloads. Leg-attributable proof via
   // relayLiveSendCount (delivery alone is masked by receiver dedup — FDC-00).
-  group('FDC-02 — staggered relay-penalty ranked race', () {
+  group('FDC-02 — staggered relay proof race', () {
     const circuitMultiaddr =
         '/ip4/10.0.0.8/tcp/4001/p2p/12D3KooWRelay/p2p-circuit';
     NodeState circuitOnlyState() => const NodeState(
@@ -5293,55 +6202,48 @@ void main() {
       ],
     );
 
-    // TC-02-01 — §6.2a: a LAN ack landing before the relay stagger wins and the
-    // staggered relay-live leg never starts (suppress-on-early-win).
-    test('FDC-02 relay penalty: LAN ack before the relay stagger wins and the '
-        'relay-live leg never starts', () async {
-      // dialPeerResult:false fails the direct leg so the ONLY thing keeping the
-      // relay-live leg from firing is the stagger vs the 40ms LAN win — i.e.
-      // the stagger is the load-bearing mechanism this test locks (a fast
-      // direct leg would otherwise mask it).
-      p2pService =
-          DurableLanFakeP2PService(
-              currentState: circuitOnlyState(),
-              dialPeerResult: false,
-            )
-            ..localPeers.add('target-peer')
-            // LAN acks at ~40ms — far inside kRelayLegStagger (500ms).
-            ..localSendDelay = const Duration(milliseconds: 40);
+    // R2 replacement for TC-02-01: a LAN committed claim before the stagger is
+    // written-only, so the authenticated relay leg still starts and proves.
+    test(
+      'FDC-02 relay penalty: LAN write before the relay stagger cannot suppress '
+      'the relay-live proof',
+      () async {
+        p2pService =
+            DurableLanFakeP2PService(
+                currentState: circuitOnlyState(),
+                dialPeerResult: false,
+              )
+              ..localPeers.add('target-peer')
+              // LAN acks at ~40ms — far inside kRelayLegStagger (500ms).
+              ..localSendDelay = const Duration(milliseconds: 40);
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'LAN beats the warmed relay',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'LAN write precedes relay proof',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      expect(message!.transport, 'local');
-      // Wait out the full stagger window: the relay-live leg reaches its delay,
-      // sees `best` already committed, and is suppressed — never sending.
-      await Future<void>.delayed(const Duration(milliseconds: 700));
-      expect(p2pService.relayLiveSendCount, 0);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
+        expect(p2pService.localSendCallCount, 1);
+        expect(p2pService.relayLiveSendCount, 1);
+      },
+    );
 
-    // TC-02-01b — C3: a DIRECT win landing WITHIN the stagger window suppresses
-    // the relay-live leg. A direct (rank 2) success only sets `best` and arms a
-    // grace timer — the completer is NOT yet settled when the stagger fires — so
-    // the suppress guard must be `best != null`, NOT `completer.isCompleted`
-    // (which would still be false and let the leg fire spuriously). The local leg
-    // is held slow so its grace window keeps the completer open across t=500ms.
+    // TC-02-01b — an authenticated direct proof before the stagger completes the
+    // selector, so the later relay timer observes completion and suppresses its
+    // send. Written-only evidence would not satisfy this guard.
     test(
       'FDC-02 relay penalty: a direct win within the stagger window suppresses '
-      'the relay-live leg (guard is best!=null, not completer settled)',
+      'the relay-live leg after authenticated settlement',
       () async {
         p2pService = DurableLanFakeP2PService(currentState: circuitOnlyState())
           ..localPeers.add('target-peer')
-          // Local leg stays in flight well past the 500ms stagger, so its grace
-          // keeps the completer UNsettled while `best` is already 'direct'.
+          // Local leg stays in flight; it cannot delay the direct proof.
           ..localSendDelay = const Duration(milliseconds: 2000)
           // Direct ack lands at ~400ms (inside the 500ms stagger) and is labeled
           // 'direct' by Go.
@@ -5361,7 +6263,7 @@ void main() {
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
         expect(message!.transport, 'direct');
-        // The relay-live leg saw `best` already committed at t=500ms → suppressed.
+        await Future<void>.delayed(const Duration(milliseconds: 700));
         expect(p2pService.relayLiveSendCount, 0);
       },
     );
@@ -5533,12 +6435,10 @@ void main() {
       expect(sw.elapsedMilliseconds, lessThan(3000));
     });
 
-    // TC-02-07 — §6.2/§12 rank: a relay-live ack within grace of a direct ack
-    // loses to direct (rank 2 > relay rank 1). The direct ack lands AFTER the
-    // stagger (C7) so the relay-live leg is actually in-flight and rank — not
-    // suppression — adjudicates.
+    // R2 replacement for TC-02-07: once scheduled, the first authenticated
+    // explicit ACK settles. A later transport label cannot replace it.
     test(
-      'FDC-02 rank: relay-live ack within grace of a direct ack loses to direct',
+      'FDC-02 proof: relay-live ACK settles before a later direct ACK',
       () async {
         p2pService = FakeP2PService(
           currentState: circuitOnlyState(),
@@ -5547,76 +6447,65 @@ void main() {
           // relayLiveSendTransport's default.
           sendMessageTransport: 'direct',
           sendMessageAcked: true,
-          // Slow discover delays the DIRECT ack to ~600ms — after the 500ms
-          // stagger (so relay-live actually starts ~500ms) and within the 150ms
-          // grace of it.
+          // Slow discover delays the direct ACK until after the existing 500ms
+          // relay scheduling stagger, so relay proof arrives first.
         )..discoverDelay = const Duration(milliseconds: 600);
 
         final (result, message) = await sendChatMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'Direct out-ranks an in-flight relay-live',
+          text: 'First relay proof settles while direct remains in flight',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
         );
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.transport, 'direct');
-        // The relay-live leg DID start (it was racing, not suppressed) — it just
-        // lost the rank tie.
+        expect(message!.transport, 'relay');
         expect(p2pService.relayLiveSendCount, 1);
       },
     );
 
-    // TC-02-07b — rank under the sticky HEAD-START buffer: when `learned` is set
-    // and is neither 'direct' nor 'relay', BOTH the direct and relay-live
-    // successes are buffered behind kStickyHeadStart. The buffered rank-2 direct
-    // win must still beat the buffered rank-1 relay-live win even when the
-    // relay-live offer fires first. Locks the directLegPending-on-OFFER fix
-    // (clearing it at resolution lets the relay-live buffered offer commit
-    // 'relay' over a buffered 'direct' milliseconds behind).
-    test('FDC-02 rank under head-start: a buffered direct win still beats a '
-        'buffered relay-live win (learned=local, circuit warm)', () async {
-      p2pService =
-          FakeP2PService(
-              currentState: circuitOnlyState(),
-              sendMessageTransport: 'direct', // direct leg labels 'direct'
-              sendMessageAcked: true,
-            )
-            // Learned 'local' makes BOTH non-local legs buffer behind the
-            // head-start; the sticky short-circuit fails (LAN down) and falls into
-            // the race.
-            ..lastKnownGoodTransportResult = 'local'
-            ..localSendResult = false
-            // Slow discover delays the direct ack to ~600ms (> the 500ms stagger),
-            // so the relay-live leg resolves first and its buffered offer fires
-            // first — the exact ordering the fix must survive.
-            ..discoverDelay = const Duration(milliseconds: 600);
+    // Learned WebSocket-local adds no winner delay: the first authenticated
+    // relay proof still settles while the slower direct attempt is in flight.
+    test(
+      'FDC-02 proof with learned local: relay ACK settles before direct',
+      () async {
+        p2pService =
+            FakeP2PService(
+                currentState: circuitOnlyState(),
+                sendMessageTransport: 'direct', // direct leg labels 'direct'
+                sendMessageAcked: true,
+              )
+              // Learned local is ineligible for an authority short-circuit.
+              ..lastKnownGoodTransportResult = 'local'
+              ..localSendResult = false
+              // Slow discover delays the direct ack to ~600ms (> the 500ms stagger),
+              // so the relay-live explicit ACK resolves first.
+              ..discoverDelay = const Duration(milliseconds: 600);
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Buffered direct out-ranks buffered relay-live',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Relay proof settles while direct remains in flight',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      // Direct (rank 2) wins over the relay-live (rank 1) buffered offer.
-      expect(message!.transport, 'direct');
-      // The relay-live leg DID race (not suppressed) — it just lost on rank.
-      expect(p2pService.relayLiveSendCount, 1);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
+        expect(p2pService.relayLiveSendCount, 1);
+      },
+    );
 
     // TC-02-08 — §12 constant alignment: the stagger/tail ordering and the
-    // per-leg budgets bounded by the aggregate ceiling. (Rank ordering is locked
-    // behaviorally by TC-02-07/TC-02-01/TC-02-10; `_transportRank` is private.)
+    // per-leg budgets remain bounded by the aggregate ceiling. Settlement
+    // behavior is locked by TC-02-07/TC-02-01/TC-02-10.
     test(
-      'FDC-02 rank invariant: stagger/tail ordering + bounded per-leg budgets',
+      'FDC-02 scheduling invariant: stagger/tail ordering + bounded per-leg budgets',
       () {
         expect(kRelayLegStagger > kPublicAddrTail, isTrue);
         expect(kPublicAddrTail > kPrivateAddrTail, isTrue);
@@ -5631,12 +6520,10 @@ void main() {
       },
     );
 
-    // TC-02-09 — §6.2a migrate-onto-winner: a LAN win persists exactly one row
-    // and the relay-live leg never fires. Receiver dedup masks the row count, so
-    // relayLiveSendCount is the load-bearing discriminator (C10 reframing).
+    // R2 replacement for TC-02-09: LAN writes and relay proof share one message
+    // ID; the authenticated relay settles and sender persistence remains one row.
     test(
-      'FDC-02 migrate-onto-winner: LAN win persists one row and the relay-live '
-      'leg never fires',
+      'FDC-02 proof migration: LAN write plus relay proof persists one row',
       () async {
         // dialPeerResult:false isolates the stagger as the load-bearing guard
         // (see TC-02-01) so the kRelayLegStagger=0 mutation re-reds this lock.
@@ -5653,7 +6540,7 @@ void main() {
           p2pService: p2pService,
           messageRepo: messageRepo,
           targetPeerId: 'target-peer',
-          text: 'One row, LAN wins',
+          text: 'One row, relay proves delivery',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
           messageId: fixedId,
@@ -5661,37 +6548,39 @@ void main() {
 
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.transport, 'local');
-        await Future<void>.delayed(const Duration(milliseconds: 700));
+        expect(message!.transport, 'relay');
         expect(messageRepo.saved, hasLength(1));
         expect(messageRepo.saved.single.id, fixedId);
-        expect(p2pService.relayLiveSendCount, 0);
+        expect(p2pService.relayLiveSendCount, 1);
       },
     );
 
-    // TC-02-10 — preservation: U1 grace (local within grace of direct → local)
-    // still holds with the relay-live leg present (the third race participant
-    // must not disturb the local>direct grace order).
-    test('FDC-02 preservation: U1 grace local-within-grace still yields '
-        'transport==local with a relay-live leg present', () async {
-      p2pService = DurableLanFakeP2PService(currentState: circuitOnlyState())
-        ..localPeers.add('target-peer')
-        ..localSendDelay = const Duration(milliseconds: 40);
+    // R2: an unauthenticated LAN claim cannot replace an authenticated libp2p
+    // proof. Here Go labels the ordinary circuit send as relay before the
+    // separate staggered relay-live leg needs to start.
+    test(
+      'FDC-02 R2: LAN claim with a live circuit yields libp2p proof',
+      () async {
+        p2pService = DurableLanFakeP2PService(currentState: circuitOnlyState())
+          ..localPeers.add('target-peer')
+          ..localSendDelay = const Duration(milliseconds: 40);
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Grace still prefers local',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Authenticated circuit proves delivery',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
 
-      expect(result, SendChatMessageResult.success);
-      expect(message, isNotNull);
-      expect(message!.transport, 'local');
-      expect(p2pService.localSendCallCount, 1);
-    });
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.transport, 'relay');
+        expect(p2pService.localSendCallCount, 1);
+        expect(p2pService.relayLiveSendCount, 0);
+      },
+    );
   });
 
   // ─── 187 — keepalive-informed send: skip the doomed direct dial ───────────
@@ -5699,7 +6588,7 @@ void main() {
   // When the 183 keepalive has latched the ACTIVE 1:1 peer as dropped, a send to
   // that peer must NOT burn the direct discover/dial WAN leg — the concurrent
   // durable inbox has already secured custody. The direct leg stays PRESENT in
-  // raceFutures[1] (Option A: index/directLegPending/pendingCount untouched) but
+  // direct race slot (Option A: leg ordering/count untouched) but
   // short-circuits at its top, emitting SEND_DIRECT_LEG_SKIPPED_KEEPALIVE_DROP.
   // At the unit tier the discover/dial spy counts (discoverCallCount /
   // dialCallCount) are the leg-ran discriminator (the fake doesn't emit the
@@ -5778,7 +6667,9 @@ void main() {
       expect(hasEvent(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isTrue);
       expect(p2pService.storeInInboxCallCount, greaterThanOrEqualTo(1));
       expect(
-        messageRepo.statusUpdates.any((u) => u.$2 == 'inboxed'),
+        messageRepo.ordinarySettlementCalls.any(
+          (settlement) => settlement.status == 'inboxed',
+        ),
         isTrue,
         reason:
             'the mid-send custody bump must still advance the row to inboxed',
@@ -6050,6 +6941,7 @@ class _ThrowOnInboxP2PService implements P2PService {
     int? timeoutMs,
   }) async => SendMessageResult(
     sent: p2pSucceeds,
+    acked: p2pSucceeds,
     reply: p2pSucceeds ? 'received: ok' : null,
   );
 
@@ -6308,7 +7200,8 @@ class _FlakyDiscoverP2PService implements P2PService {
     String peerId,
     String message, {
     int? timeoutMs,
-  }) async => const SendMessageResult(sent: true, reply: 'received: ok');
+  }) async =>
+      const SendMessageResult(sent: true, acked: true, reply: 'received: ok');
 
   @override
   Future<DiscoveredPeer?> discoverPeer(String peerId, {int? timeoutMs}) async {

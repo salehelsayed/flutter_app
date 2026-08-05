@@ -49,7 +49,7 @@ RECOVERY_RECEIPT_SCHEMA = (
 RELAY_FIXTURE_RECEIPT_SCHEMA = (
     "mknoon.sims.ios-payload-relay-fixture-receipt.v1"
 )
-RECEIVER_HANDOFF_SCHEMA = "mknoon.sims.ios-provider-receiver-handoff.v1"
+RECEIVER_HANDOFF_SCHEMA = "mknoon.sims.ios-provider-receiver-handoff.v2"
 LIFECYCLE_SCHEMA = "mknoon.sims.ios-provider-lifecycle.v1"
 APNS_HOSTS = {
     "development": "https://api.sandbox.push.apple.com",
@@ -602,6 +602,7 @@ def _validate_handoff(args: argparse.Namespace) -> ReceiverHandoff:
         "mlKemPublicKey",
         "notificationAuthorization",
         "notificationAlertSetting",
+        "notificationBadgeSetting",
         "capturedAt",
     }
     if set(value.keys()) != required:
@@ -620,8 +621,12 @@ def _validate_handoff(args: argparse.Namespace) -> ReceiverHandoff:
         "authorized",
         "provisional",
         "ephemeral",
-    } or value.get("notificationAlertSetting") != "enabled":
-        raise AdapterBlocked("receiver handoff does not prove authorized alerts")
+    } or value.get("notificationAlertSetting") != "enabled" or value.get(
+        "notificationBadgeSetting"
+    ) != "enabled":
+        raise AdapterBlocked(
+            "receiver handoff does not prove authorized alerts and badges"
+        )
     token = str(value.get("apnsDeviceToken", ""))
     if _DEVICE_TOKEN.fullmatch(token) is None:
         raise AdapterBlocked("receiver handoff APNs token is invalid")

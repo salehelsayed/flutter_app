@@ -1585,6 +1585,24 @@ type SendMessageResult struct {
 	AckWaitMs    int64
 }
 
+func isAffirmativeAckFrame(reply []byte) bool {
+	var frame map[string]json.RawMessage
+	if err := json.Unmarshal(reply, &frame); err != nil {
+		return false
+	}
+
+	rawAck, ok := frame["ack"]
+	if !ok {
+		return false
+	}
+
+	var ack bool
+	if err := json.Unmarshal(rawAck, &ack); err != nil {
+		return false
+	}
+	return ack
+}
+
 func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeoutMs int) (SendMessageResult, error) {
 	n.mu.RLock()
 	h := n.host
@@ -1635,7 +1653,7 @@ func (n *Node) SendMessageWithTransport(peerIdStr string, message string, timeou
 
 	return SendMessageResult{
 		Reply:        string(replyBytes),
-		Acked:        true,
+		Acked:        isAffirmativeAckFrame(replyBytes),
 		Transport:    transport,
 		StreamOpenMs: streamOpenMs,
 		WriteMs:      writeMs,

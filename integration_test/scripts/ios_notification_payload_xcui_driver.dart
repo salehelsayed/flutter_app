@@ -12,7 +12,7 @@ import '../support/ios_xctestrun_relocator.dart';
 const String _resultPrefix = 'IOS_PAYLOAD_DRIVER_RESULT_JSON=';
 const String _bundleId = 'com.mknoon.app';
 const String _receiverHandoffSchema =
-    'mknoon.sims.ios-provider-receiver-handoff.v1';
+    'mknoon.sims.ios-provider-receiver-handoff.v2';
 const String _providerRecoveryReceiptSchema =
     'mknoon.sims.ios-payload-fast-path-provider-recovery-receipt.v1';
 const int _apnsDeliveryWindowSeconds = 120;
@@ -46,7 +46,8 @@ Future<void> main(List<String> args) async {
       '--provider-driver <executable> --provider-request <json> '
       '--staging-manifest <json> --relay-target <target> '
       '--relay-key <file> --run-id <id> --nonce <nonce> '
-      '--output <receipt.json> --capture-directory <directory>',
+      '--phase fast-path|recovery --output <receipt.json> '
+      '--capture-directory <directory>',
     );
     return;
   }
@@ -92,6 +93,7 @@ final class _DriverOptions {
     required this.nonce,
     required this.output,
     required this.captureDirectory,
+    required this.phase,
     required this.verbose,
   });
 
@@ -116,6 +118,7 @@ final class _DriverOptions {
     captureDirectory: Directory(
       _requiredValue(args, '--capture-directory'),
     ).absolute,
+    phase: _requiredValue(args, '--phase'),
     verbose: args.contains('--verbose'),
   );
 
@@ -133,6 +136,7 @@ final class _DriverOptions {
   final String nonce;
   final File output;
   final Directory captureDirectory;
+  final String phase;
   final bool verbose;
 }
 
@@ -158,6 +162,7 @@ final class _IosPayloadDriver {
   late final String _senderPeerIdSha256;
   late final File _senderSeedReceiptFile;
   late final File _senderCleanupReceiptFile;
+  late final File _notificationRecoveryReceiptFile;
 
   Process? _syslogProcess;
   int? _syslogExitCode;
@@ -172,53 +177,11 @@ final class _IosPayloadDriver {
   final List<Directory> _uiResultBundles = <Directory>[];
 
   Future<_DriverResult> run() async {
-    await _preflight();
-    options.captureDirectory.createSync(recursive: true);
-    final captureMode = Process.runSync('chmod', <String>[
-      '700',
-      options.captureDirectory.path,
-    ]);
-    if (captureMode.exitCode != 0) {
-      throw const _DriverBlocked(
-        'environment',
-        'The private iOS capture directory could not be made owner-only.',
-      );
+    if (options.phase == 'recovery') {
+      return _runRecoveryPhase();
     }
-    options.output.parent.createSync(recursive: true);
-    if (options.output.existsSync()) options.output.deleteSync();
-    _rawSyslog = File('${options.captureDirectory.path}/recipient.raw.log');
-    _providerReceiptFile = File(
-      '${options.captureDirectory.path}/provider_receipt.json',
-    );
-    _providerCleanupReceiptFile = File(
-      '${options.captureDirectory.path}/provider_cleanup_receipt.json',
-    );
-    _providerRecoveryReceiptFile = File(
-      '${options.captureDirectory.path}/provider_recovery_receipt.json',
-    );
-    final handoffBinding = sha256
-        .convert(
-          utf8.encode(
-            '${options.runId}\u0000${options.nonce}\u0000'
-            '${options.receiverDeviceId}',
-          ),
-        )
-        .toString();
-    _receiverHandoffNonce = 'ios-handoff-${handoffBinding.substring(0, 32)}';
-    _receiverHandoffFile = File(
-      '${options.captureDirectory.path}/.ios-provider-handoff-'
-      '${handoffBinding.substring(0, 24)}.json',
-    );
-    _apnsPayloadFile = File(
-      '${options.captureDirectory.path}/.ios-provider-payload-'
-      '${handoffBinding.substring(0, 24)}.json',
-    );
-    _senderSeedReceiptFile = File(
-      '${options.captureDirectory.path}/sender_projection_seed_receipt.json',
-    );
-    _senderCleanupReceiptFile = File(
-      '${options.captureDirectory.path}/sender_projection_cleanup_receipt.json',
-    );
+    await _preflight();
+    _prepareCaptureFiles();
 
     try {
       await _verifyAndPatchCentralProducts();
@@ -560,7 +523,336 @@ final class _IosPayloadDriver {
     }
   }
 
+  void _prepareCaptureFiles() {
+    options.captureDirectory.createSync(recursive: true);
+    final captureMode = Process.runSync('chmod', <String>[
+      '700',
+      options.captureDirectory.path,
+    ]);
+    if (captureMode.exitCode != 0) {
+      throw const _DriverBlocked(
+        'environment',
+        'The private iOS capture directory could not be made owner-only.',
+      );
+    }
+    options.output.parent.createSync(recursive: true);
+    if (options.output.existsSync()) options.output.deleteSync();
+    _rawSyslog = File('${options.captureDirectory.path}/recipient.raw.log');
+    _providerReceiptFile = File(
+      '${options.captureDirectory.path}/provider_receipt.json',
+    );
+    _providerCleanupReceiptFile = File(
+      '${options.captureDirectory.path}/provider_cleanup_receipt.json',
+    );
+    _providerRecoveryReceiptFile = File(
+      '${options.captureDirectory.path}/provider_recovery_receipt.json',
+    );
+    final handoffBinding = sha256
+        .convert(
+          utf8.encode(
+            '${options.runId}\u0000${options.nonce}\u0000'
+            '${options.receiverDeviceId}',
+          ),
+        )
+        .toString();
+    _receiverHandoffNonce = 'ios-handoff-${handoffBinding.substring(0, 32)}';
+    _receiverHandoffFile = File(
+      '${options.captureDirectory.path}/.ios-provider-handoff-'
+      '${handoffBinding.substring(0, 24)}.json',
+    );
+    _apnsPayloadFile = File(
+      '${options.captureDirectory.path}/.ios-provider-payload-'
+      '${handoffBinding.substring(0, 24)}.json',
+    );
+    _senderSeedReceiptFile = File(
+      '${options.captureDirectory.path}/sender_projection_seed_receipt.json',
+    );
+    _senderCleanupReceiptFile = File(
+      '${options.captureDirectory.path}/sender_projection_cleanup_receipt.json',
+    );
+    _notificationRecoveryReceiptFile = File(
+      '${options.captureDirectory.path}/notification_recovery_receipt.json',
+    );
+  }
+
+  Future<_DriverResult> _runRecoveryPhase() async {
+    await _preflight();
+    _prepareCaptureFiles();
+    try {
+      await _verifyAndPatchCentralProducts();
+      await _installExactApplication();
+      await _startSyslog();
+
+      final prepare = await _runXcui(
+        'testPreparePayloadFastPathNotificationTap',
+        'recovery-prepare',
+      );
+      _assertionsAttempted += 1;
+      if (!_hasMarker(prepare, 'READY')) {
+        throw _DriverFailure(
+          'The recovery phase did not reach automated notification readiness.',
+          _assertionsAttempted,
+        );
+      }
+      await _captureReceiverHandoff();
+      await _produceApnsPayload();
+      await _runSenderProjection(action: 'seed-sender');
+      final postSeedPrepare = await _runXcui(
+        'testPreparePayloadFastPathNotificationTap',
+        'recovery-post-seed-prepare',
+      );
+      if (!_hasMarker(postSeedPrepare, 'READY')) {
+        throw _DriverFailure(
+          'The recovery receiver was not returned to background readiness.',
+          _assertionsAttempted,
+        );
+      }
+
+      final nseBoundary = _captureSyslogObservationBoundary();
+      final providerReceipt = await _runProviderSetup();
+      _assertionsAttempted += 1;
+      final providerAcceptedAt = _utc(
+        providerReceipt['acceptedAt'],
+        'provider receipt acceptedAt',
+      );
+      final nseObservedAt = await _waitForNseSignals(
+        providerAcceptedAt,
+        nseBoundary,
+      );
+      _assertionsAttempted += 1;
+
+      final observed = await _runXcui(
+        'testObservePayloadNotificationRecovery',
+        'recovery-observe',
+      );
+      _assertionsAttempted += 2;
+      final cardObservedAt = _markerTimestamp(observed, 'RECOVERY_CARD_READY');
+      final badgeObservedAt = _markerTimestamp(
+        observed,
+        'RECOVERY_BADGE_READY',
+      );
+      if (cardObservedAt == null ||
+          badgeObservedAt == null ||
+          badgeObservedAt.isBefore(cardObservedAt) ||
+          !_hasExactLogicalMarker(
+            observed,
+            'RECOVERY_CARD_READY',
+            at: cardObservedAt,
+            fields: const <String, String>{'unique': 'true'},
+          ) ||
+          !_hasExactLogicalMarker(
+            observed,
+            'RECOVERY_BADGE_READY',
+            at: badgeObservedAt,
+            fields: const <String, String>{'absolute': '1'},
+          )) {
+        throw _DriverFailure(
+          'The physical recovery observation omitted the real card or absolute '
+          'badge marker.',
+          _assertionsAttempted,
+        );
+      }
+
+      final recoveryReceipt = await _runNotificationRecoveryProof();
+      _assertionsAttempted += 3;
+      final recoveryCompletedAt = _utc(
+        recoveryReceipt['completedAt'],
+        'notification recovery receipt completedAt',
+      );
+      final verified = await _runXcui(
+        'testVerifyPayloadNotificationRecoveryRetirement',
+        'recovery-verify',
+      );
+      _assertionsAttempted += 2;
+      final retirementObservedAt = _markerTimestamp(
+        verified,
+        'RECOVERY_RETIREMENT_READY',
+      );
+      final zeroBadgeObservedAt = _markerTimestamp(
+        verified,
+        'RECOVERY_ZERO_BADGE_READY',
+      );
+      if (retirementObservedAt == null ||
+          zeroBadgeObservedAt == null ||
+          retirementObservedAt.isBefore(recoveryCompletedAt) ||
+          zeroBadgeObservedAt.isBefore(retirementObservedAt) ||
+          !_hasExactLogicalMarker(
+            verified,
+            'RECOVERY_RETIREMENT_READY',
+            at: retirementObservedAt,
+            fields: const <String, String>{
+              'owned_absent': 'true',
+              'sentinel_present': 'true',
+            },
+          ) ||
+          !_hasExactLogicalMarker(
+            verified,
+            'RECOVERY_ZERO_BADGE_READY',
+            at: zeroBadgeObservedAt,
+            fields: const <String, String>{'absolute': '0'},
+          )) {
+        throw _DriverFailure(
+          'The physical recovery verification omitted exact retirement, '
+          'sentinel survival, or zero-badge evidence.',
+          _assertionsAttempted,
+        );
+      }
+      _uiCleanupComplete = true;
+
+      await _stopSyslog(requireLiveCapture: true);
+      final rawWindow = _rawSyslog.readAsStringSync();
+      await _runSenderProjection(action: 'cleanup-sender');
+      final providerCleanup = await _runProviderCleanup();
+      await _verifyCandidateApplicationRemoved();
+      _assertionsAttempted += 1;
+
+      final evidence = _writeRecoveryRedactedEvidence(rawWindow);
+      final relayLog = _receiptMember(
+        _providerReceiptFile,
+        providerReceipt['relayLogPath'],
+        'relay log',
+      );
+      if (_sha256File(relayLog) != providerReceipt['relayLogSha256']) {
+        throw _DriverFailure(
+          'The recovery relay log does not match the provider receipt digest.',
+          _assertionsAttempted,
+        );
+      }
+      _rejectSecretBearingText(
+        relayLog.readAsStringSync(),
+        'recovery relay log',
+      );
+      final receipt = <String, Object?>{
+        'schema': iosNotificationRecoveryAutomationReceiptSchema,
+        'scenario': iosNotificationPayloadScenario,
+        'phase': 'recovery',
+        'status': 'passed',
+        'platform': 'ios',
+        'receiverPhysical': true,
+        'runId': options.runId,
+        'nonce': options.nonce,
+        'receiverDeviceId': options.receiverDeviceId,
+        'peerDeviceId': options.peerDeviceId,
+        'preparedApplicationSha256': _applicationSha256,
+        'providerRequestSha256': _requestSha256,
+        'payloadProducerSha256': _payloadProducerSha256,
+        'apnsPayloadSha256': _apnsPayloadSha256,
+        'childBuildCount': 0,
+        'manualActionCount': 0,
+        'checks': <String, Object?>{
+          'notificationPermissionAutomated': true,
+          'badgePermissionEnabled': true,
+          'providerPayloadBadgeAbsent': true,
+          'deliveredNotificationBadgeWasNil':
+              recoveryReceipt['deliveredNotificationBadgeWasNil'] == true,
+          'apnsDelivered': true,
+          'nseProcessObserved': true,
+          // A fresh reinstall/reset, one accepted provider payload with no
+          // badge field, one delivered owned card with badge=nil, absolute
+          // badge 1, and exact one-card custody make A the unique claim.
+          'recoveryClaimUnique': true,
+          'runnerAbsoluteBadgeConverged': recoveryReceipt['badgeAfter'] == 0,
+          'exactOwnedNotificationRetired':
+              recoveryReceipt['removedExactOwnedNotification'] == true,
+          'unrelatedSentinelSurvived':
+              recoveryReceipt['sentinelSurvived'] == true,
+          'zeroBadgePublished': recoveryReceipt['badgeAfter'] == 0,
+          'providerCleanupAutomated': _providerCleanupComplete,
+          'testStateCleared':
+              providerCleanup['appTestStateCleared'] == true &&
+              providerCleanup['notificationStateCleared'] == true &&
+              providerCleanup['relayFixtureCleared'] == true,
+        },
+        'counts': <String, Object?>{
+          'badgeBefore': recoveryReceipt['badgeBefore'],
+          'badgeAfter': recoveryReceipt['badgeAfter'],
+          'deliveredBefore': recoveryReceipt['deliveredBefore'],
+          'deliveredWithSentinel': recoveryReceipt['deliveredWithSentinel'],
+          'deliveredAfter': recoveryReceipt['deliveredAfter'],
+        },
+        'timestamps': <String, Object?>{
+          'providerAcceptedAt': providerAcceptedAt.toIso8601String(),
+          'nseObservedAt': nseObservedAt.toIso8601String(),
+          'cardObservedAt': cardObservedAt.toIso8601String(),
+          'badgeObservedAt': badgeObservedAt.toIso8601String(),
+          'recoveryCompletedAt': recoveryCompletedAt.toIso8601String(),
+          'retirementObservedAt': retirementObservedAt.toIso8601String(),
+          'zeroBadgeObservedAt': zeroBadgeObservedAt.toIso8601String(),
+        },
+        'evidenceSha256': <String, String>{
+          'preparedApplication': _applicationSha256,
+          'payloadProducer': _payloadProducerSha256,
+          'apnsPayload': _apnsPayloadSha256,
+          'providerReceipt': _sha256File(_providerReceiptFile),
+          'providerCleanupReceipt': _sha256File(_providerCleanupReceiptFile),
+          'notificationRecoveryReceipt': _sha256File(
+            _notificationRecoveryReceiptFile,
+          ),
+          'relayLog': _sha256File(relayLog),
+          'nseLog': _sha256File(evidence.nseLog),
+          'recipientLog': _sha256File(evidence.recipientLog),
+          'uiAutomationLog': _sha256File(evidence.uiLog),
+          'stagedEnvelope': providerReceipt['stagedEnvelopeSha256']! as String,
+        },
+      };
+      final validation = validateIosNotificationRecoveryAutomationReceipt(
+        receipt,
+        runId: options.runId,
+        nonce: options.nonce,
+        receiverDeviceId: options.receiverDeviceId,
+        peerDeviceId: options.peerDeviceId,
+        preparedApplicationSha256: _applicationSha256,
+        providerRequestSha256: _requestSha256,
+        payloadProducerSha256: _payloadProducerSha256,
+        apnsPayloadSha256: _apnsPayloadSha256,
+      );
+      if (!validation.ok) {
+        throw _DriverFailure(
+          'The recovery automation receipt failed closed: ${validation.detail}',
+          _assertionsAttempted,
+        );
+      }
+      options.output.writeAsStringSync('${jsonEncode(receipt)}\n', flush: true);
+      return _DriverResult.passed(_assertionsAttempted);
+    } finally {
+      if (_providerSetupComplete && !_providerCleanupComplete) {
+        if (_senderProjectionSeeded && !_senderProjectionCleaned) {
+          try {
+            await _runSenderProjection(action: 'cleanup-sender');
+          } on Object {
+            // Provider rollback repeats the same bounded cleanup.
+          }
+        }
+        try {
+          await _runProviderCleanup();
+        } on Object {
+          // The primary typed failure remains authoritative.
+        }
+      }
+      await _stopSyslog();
+      for (final privateFile in <File>[
+        _rawSyslog,
+        _receiverHandoffFile,
+        _apnsPayloadFile,
+        _senderSeedReceiptFile,
+        _senderCleanupReceiptFile,
+        ..._sensitiveIntermediates,
+      ]) {
+        if (privateFile.existsSync()) privateFile.deleteSync();
+      }
+      for (final resultBundle in _uiResultBundles) {
+        if (resultBundle.existsSync()) resultBundle.deleteSync(recursive: true);
+      }
+    }
+  }
+
   Future<void> _preflight() async {
+    if (!const <String>{'fast-path', 'recovery'}.contains(options.phase)) {
+      throw const _DriverBlocked(
+        'environment',
+        '--phase must be exactly fast-path or recovery.',
+      );
+    }
     for (final command in const <String>[
       'xcrun',
       'xcodebuild',
@@ -740,6 +1032,7 @@ final class _IosPayloadDriver {
       'mlKemPublicKey',
       'notificationAuthorization',
       'notificationAlertSetting',
+      'notificationBadgeSetting',
       'capturedAt',
     };
     if (handoff.keys.toSet().difference(exactKeys).isNotEmpty ||
@@ -755,10 +1048,11 @@ final class _IosPayloadDriver {
           'provisional',
           'ephemeral',
         }.contains(handoff['notificationAuthorization']) ||
-        handoff['notificationAlertSetting'] != 'enabled') {
+        handoff['notificationAlertSetting'] != 'enabled' ||
+        handoff['notificationBadgeSetting'] != 'enabled') {
       throw _DriverFailure(
         'The private receiver handoff is not bound to the exact receiver, '
-        'peer, bundle, nonce, authorized alerts, and development APNs '
+        'peer, bundle, nonce, authorized alerts and badges, and development APNs '
         'environment.',
         _assertionsAttempted,
       );
@@ -842,8 +1136,24 @@ final class _IosPayloadDriver {
         sender is! String ||
         !peerPattern.hasMatch(sender) ||
         aps is! Map ||
+        aps.keys.toSet().difference(const <String>{
+          'alert',
+          'mutable-content',
+        }).isNotEmpty ||
+        const <String>{
+          'alert',
+          'mutable-content',
+        }.difference(aps.keys.toSet()).isNotEmpty ||
         aps['mutable-content'] != 1 ||
         alert is! Map ||
+        alert.keys.toSet().difference(const <String>{
+          'title',
+          'body',
+        }).isNotEmpty ||
+        const <String>{
+          'title',
+          'body',
+        }.difference(alert.keys.toSet()).isNotEmpty ||
         alert['title'] != _request['expectedTitle'] ||
         alert['body'] != _request['expectedBody'] ||
         !encryptedFieldsValid ||
@@ -1654,6 +1964,99 @@ final class _IosPayloadDriver {
     return output;
   }
 
+  Future<Map<String, Object?>> _runNotificationRecoveryProof() async {
+    if (_notificationRecoveryReceiptFile.existsSync()) {
+      _notificationRecoveryReceiptFile.deleteSync();
+    }
+    final result = await _runCommand(
+      _receiverBootstrapDriver().path,
+      const <String>['--action', 'prove-recovery'],
+      environment: <String, String>{
+        'SIMS_CHILD_BUILDS_FORBIDDEN': '1',
+        'SIMS_MANUAL_ACTIONS_FORBIDDEN': '1',
+        'SIMS_IOS_PHYSICAL_DEVICE_ID': options.receiverDeviceId,
+        'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE': _receiverHandoffNonce,
+        'SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH':
+            _receiverHandoffFile.path,
+        'SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH': _apnsPayloadFile.path,
+        'SIMS_IOS_NOTIFICATION_RECOVERY_RECEIPT_PATH':
+            _notificationRecoveryReceiptFile.path,
+      },
+      timeout: const Duration(minutes: 3),
+    );
+    if (result.exitCode != 0 ||
+        !_regularFile(_notificationRecoveryReceiptFile)) {
+      throw _DriverFailure(
+        'The protected native notification-recovery proof failed closed.',
+        _assertionsAttempted,
+      );
+    }
+    final receipt = _readCapturedJson(
+      _notificationRecoveryReceiptFile,
+      'notification recovery receipt',
+      _assertionsAttempted,
+    );
+    const exactKeys = <String>{
+      'schema',
+      'action',
+      'status',
+      'containsSecrets',
+      'bundleId',
+      'captureNonceSha256',
+      'receiverDeviceIdSha256',
+      'apnsPayloadSha256',
+      'badgeBefore',
+      'badgeAfter',
+      'deliveredBefore',
+      'deliveredWithSentinel',
+      'deliveredAfter',
+      'deliveredNotificationBadgeWasNil',
+      'sentinelSurvived',
+      'removedExactOwnedNotification',
+      'childBuildCount',
+      'manualActionCount',
+      'resultCode',
+      'completedAt',
+    };
+    final expected = <String, Object?>{
+      'schema': 'mknoon.sims.ios-notification-recovery-host-receipt.v1',
+      'action': 'prove-recovery',
+      'status': 'PASS',
+      'containsSecrets': false,
+      'bundleId': _bundleId,
+      'captureNonceSha256': sha256
+          .convert(utf8.encode(_receiverHandoffNonce))
+          .toString(),
+      'receiverDeviceIdSha256': sha256
+          .convert(utf8.encode(options.receiverDeviceId))
+          .toString(),
+      'apnsPayloadSha256': _apnsPayloadSha256,
+      'badgeBefore': 1,
+      'badgeAfter': 0,
+      'deliveredBefore': 1,
+      'deliveredWithSentinel': 2,
+      'deliveredAfter': 1,
+      'deliveredNotificationBadgeWasNil': true,
+      'sentinelSurvived': true,
+      'removedExactOwnedNotification': true,
+      'childBuildCount': 0,
+      'manualActionCount': 0,
+      'resultCode': 'ok',
+    };
+    if (receipt.keys.toSet() != exactKeys ||
+        expected.entries.any((entry) => receipt[entry.key] != entry.value) ||
+        findIosNotificationSecretBearingField(receipt) != null ||
+        _utcTimestampOrNull(receipt['completedAt']) == null) {
+      throw _DriverFailure(
+        'The native recovery receipt is not the exact fresh-install A/C '
+        'retirement proof for this payload.',
+        _assertionsAttempted,
+      );
+    }
+    _makeOwnerOnly(_notificationRecoveryReceiptFile);
+    return receipt;
+  }
+
   Future<void> _verifyCandidateApplicationRemoved() async {
     final apps = await _installedApplicationsJson('after-cleanup');
     late final bool removed;
@@ -1753,6 +2156,43 @@ final class _IosPayloadDriver {
       MapEntry<String, File>('UI automation log', uiLog),
     ]) {
       _rejectSecretBearingText(entry.value.readAsStringSync(), entry.key);
+    }
+    return _RedactedEvidence(nseLog, recipientLog, uiLog);
+  }
+
+  _RedactedEvidence _writeRecoveryRedactedEvidence(String rawWindow) {
+    final nseLines = rawWindow
+        .split('\n')
+        .where((line) => line.contains('PUSH_NSE_'))
+        .map(_redactUiText)
+        .join('\n');
+    final recipientLines = rawWindow
+        .split('\n')
+        .where(
+          (line) =>
+              line.contains('MKNOON_258_IOS_PAYLOAD_') ||
+              line.contains('IOS_NOTIFICATION_RECOVERY'),
+        )
+        .map(_redactUiText)
+        .join('\n');
+    final nseLog = File('${options.captureDirectory.path}/nse.redacted.log')
+      ..writeAsStringSync('$nseLines\n', flush: true);
+    final recipientLog = File(
+      '${options.captureDirectory.path}/recipient.redacted.log',
+    )..writeAsStringSync('$recipientLines\n', flush: true);
+    final uiLog =
+        File('${options.captureDirectory.path}/ui-automation.redacted.log')
+          ..writeAsStringSync(
+            '${_uiLogs.map((file) => file.readAsStringSync()).join('\n')}\n',
+            flush: true,
+          );
+    for (final entry in <MapEntry<String, File>>[
+      MapEntry<String, File>('recovery NSE log', nseLog),
+      MapEntry<String, File>('recovery recipient log', recipientLog),
+      MapEntry<String, File>('recovery UI automation log', uiLog),
+    ]) {
+      _rejectSecretBearingText(entry.value.readAsStringSync(), entry.key);
+      _makeOwnerOnly(entry.value);
     }
     return _RedactedEvidence(nseLog, recipientLog, uiLog);
   }

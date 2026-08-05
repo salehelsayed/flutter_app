@@ -11,6 +11,7 @@ import '../../media/upload_retry_projection.dart';
 import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import '../outgoing_transport_mutation.dart';
 import 'group_messages_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 import 'messages_db_helpers.dart';
@@ -806,6 +807,267 @@ Future<void> dbSaveMediaAttachmentPreservingLocalState(
       details: {'error': e.toString()},
     );
     rethrow;
+  }
+}
+
+const _ordinaryOutgoingAttachmentAttemptColumns = <String>[
+  'id',
+  'message_id',
+  'owner_lane',
+  'mime',
+  'size',
+  'media_type',
+  'width',
+  'height',
+  'duration_ms',
+  'local_path',
+  'download_status',
+  'created_at',
+  'waveform',
+  'upload_retry_count',
+  'download_retry_count',
+  'content_hash',
+  'thumbnail_hash',
+  'encryption_key_base64',
+  'encryption_nonce',
+  'encryption_scheme',
+];
+
+bool _sameOrdinaryOutgoingAttachmentAttempt(
+  Map<String, Object?> current,
+  Map<String, Object?> candidate,
+) => _ordinaryOutgoingAttachmentAttemptColumns.every((column) {
+  if (column == 'upload_retry_count' || column == 'download_retry_count') {
+    final currentCount = (current[column] as num?)?.toInt() ?? 0;
+    final candidateCount = (candidate[column] as num?)?.toInt() ?? 0;
+    return currentCount == candidateCount;
+  }
+  return current[column] == candidate[column];
+});
+
+bool _isReplaceableLegacyOrdinaryUploadPlaceholder(
+  Map<String, Object?> row, {
+  required String messageId,
+  required Set<String> candidateIds,
+}) =>
+    row['message_id'] == messageId &&
+    row['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+    !candidateIds.contains(row['id']) &&
+    row['download_status'] == kMediaDownloadStatusUploadPending &&
+    ((row['size'] as num?)?.toInt() ?? -1) == 0 &&
+    row['content_hash'] == null &&
+    row['thumbnail_hash'] == null &&
+    row['encryption_key_base64'] == null &&
+    row['encryption_nonce'] == null &&
+    row['encryption_scheme'] == null;
+
+final class _OrdinaryOutgoingProjectionRefused implements Exception {
+  const _OrdinaryOutgoingProjectionRefused();
+}
+
+/// Atomically stages one media-bearing ordinary outgoing attempt.
+///
+/// The parent/envelope CAS and the exact direct-owned attachment projection
+/// share one SQLite transaction. Secure-key preparation and compensation stay
+/// in [MediaAttachmentRepositoryImpl]; this helper accepts storage-reference
+/// rows only and never crosses a bridge or secure store while the transaction
+/// is open.
+Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingOrdinaryAttemptWithMedia(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required List<Map<String, Object?>> attachmentRows,
+  required OutgoingOrdinaryAttemptKind kind,
+}) {
+  final messageId = stagedRow['id'] as String? ?? '';
+  final attachmentIds = attachmentRows
+      .map((row) => row['id'] as String? ?? '')
+      .toList(growable: false);
+  final uniqueAttachmentIds = attachmentIds.toSet();
+  final validShape =
+      messageId.isNotEmpty &&
+      attachmentRows.isNotEmpty &&
+      uniqueAttachmentIds.length == attachmentRows.length &&
+      !uniqueAttachmentIds.contains('') &&
+      kind != OutgoingOrdinaryAttemptKind.tombstoneInitial &&
+      kind != OutgoingOrdinaryAttemptKind.tombstoneRetry &&
+      attachmentRows.every(
+        (row) =>
+            row['message_id'] == messageId &&
+            row['owner_lane'] == MediaOwnerLane.direct.dbValue,
+      );
+  if (!validShape) {
+    return Future<OutgoingOrdinaryMutationOutcome>.value(
+      OutgoingOrdinaryMutationOutcome.refused,
+    );
+  }
+
+  return _stageOutgoingOrdinaryAttemptWithMediaTransaction(
+    db,
+    expectedRow: expectedRow,
+    stagedRow: stagedRow,
+    attachmentRows: attachmentRows,
+    kind: kind,
+    messageId: messageId,
+    uniqueAttachmentIds: uniqueAttachmentIds,
+  );
+}
+
+Future<OutgoingOrdinaryMutationOutcome>
+_stageOutgoingOrdinaryAttemptWithMediaTransaction(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required List<Map<String, Object?>> attachmentRows,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String messageId,
+  required Set<String> uniqueAttachmentIds,
+}) async {
+  try {
+    return await dbWriteTransaction(db, (txn) async {
+      final currentProjection = await txn.query(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      final staleProjection = currentProjection
+          .where((row) => !uniqueAttachmentIds.contains(row['id']))
+          .toList(growable: false);
+      if (staleProjection.any(
+            (row) =>
+                kind != OutgoingOrdinaryAttemptKind.fresh ||
+                !_isReplaceableLegacyOrdinaryUploadPlaceholder(
+                  row,
+                  messageId: messageId,
+                  candidateIds: uniqueAttachmentIds,
+                ),
+          ) ||
+          (kind == OutgoingOrdinaryAttemptKind.fresh &&
+              currentProjection.any(
+                (row) => uniqueAttachmentIds.contains(row['id']),
+              ))) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+      for (final row in attachmentRows) {
+        final existing = await txn.query(
+          'media_attachments',
+          columns: const <String>['message_id', 'owner_lane'],
+          where: 'id = ?',
+          whereArgs: <Object?>[row['id']],
+          limit: 1,
+        );
+        if (existing.isNotEmpty &&
+            (existing.single['message_id'] != messageId ||
+                existing.single['owner_lane'] !=
+                    MediaOwnerLane.direct.dbValue)) {
+          return OutgoingOrdinaryMutationOutcome.refused;
+        }
+      }
+
+      final parentOutcome =
+          await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+            txn,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            allowDirectAttachments: true,
+          );
+      if (!parentOutcome.authorizesTransport) return parentOutcome;
+
+      if (parentOutcome == OutgoingOrdinaryMutationOutcome.idempotent) {
+        for (final row in attachmentRows) {
+          final existing = await txn.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[row['id']],
+            limit: 1,
+          );
+          if (existing.isEmpty ||
+              !_sameOrdinaryOutgoingAttachmentAttempt(existing.single, row)) {
+            return OutgoingOrdinaryMutationOutcome.refused;
+          }
+        }
+      }
+
+      var removedLegacyPlaceholder = false;
+      for (final stale in staleProjection) {
+        final changed = await txn.delete(
+          'media_attachments',
+          where:
+              'id = ? AND message_id = ? AND owner_lane = ? '
+              'AND download_status = ? AND size = 0 '
+              'AND content_hash IS NULL AND thumbnail_hash IS NULL '
+              'AND encryption_key_base64 IS NULL '
+              'AND encryption_nonce IS NULL AND encryption_scheme IS NULL',
+          whereArgs: <Object?>[
+            stale['id'],
+            messageId,
+            MediaOwnerLane.direct.dbValue,
+            kMediaDownloadStatusUploadPending,
+          ],
+        );
+        if (changed != 1) {
+          throw const _OrdinaryOutgoingProjectionRefused();
+        }
+        removedLegacyPlaceholder = true;
+      }
+
+      if (parentOutcome == OutgoingOrdinaryMutationOutcome.idempotent) {
+        final finalProjection = await txn.query(
+          'media_attachments',
+          where: 'message_id = ? AND owner_lane = ?',
+          whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+        );
+        final candidatesById = <String, Map<String, Object?>>{
+          for (final row in attachmentRows) row['id']! as String: row,
+        };
+        final exactProjection =
+            finalProjection.length == uniqueAttachmentIds.length &&
+            finalProjection.every((current) {
+              final candidate = candidatesById[current['id']];
+              return candidate != null &&
+                  _sameOrdinaryOutgoingAttachmentAttempt(current, candidate);
+            });
+        if (!exactProjection) {
+          throw const _OrdinaryOutgoingProjectionRefused();
+        }
+        return removedLegacyPlaceholder
+            ? OutgoingOrdinaryMutationOutcome.applied
+            : OutgoingOrdinaryMutationOutcome.idempotent;
+      }
+
+      for (final row in attachmentRows) {
+        await _applyMediaAttachmentPreservingSave(
+          txn,
+          row,
+          row['id'] as String,
+        );
+      }
+      final finalProjection = await txn.query(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      final candidatesById = <String, Map<String, Object?>>{
+        for (final row in attachmentRows) row['id']! as String: row,
+      };
+      final exactProjection =
+          finalProjection.length == uniqueAttachmentIds.length &&
+          finalProjection.every((current) {
+            final candidate = candidatesById[current['id']];
+            return candidate != null &&
+                _sameOrdinaryOutgoingAttachmentAttempt(current, candidate);
+          });
+      if (!exactProjection) {
+        // Throwing is intentional: a plain refused return would commit the
+        // already-staged parent. The wrapper converts this rollback sentinel
+        // into the stable refusal outcome after SQLite has undone both sides.
+        throw const _OrdinaryOutgoingProjectionRefused();
+      }
+      return parentOutcome;
+    });
+  } on _OrdinaryOutgoingProjectionRefused {
+    return OutgoingOrdinaryMutationOutcome.refused;
   }
 }
 

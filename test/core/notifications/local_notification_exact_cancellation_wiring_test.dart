@@ -271,7 +271,7 @@ void main() {
       ).readAsStringSync();
       final initialRemote = _between(
         source,
-        'Future<void> _handleInitialPushOpen() async {',
+        'Future<bool> _handleInitialPushOpen() async {',
         'Future<void> _withContactRequestPresentationSuppressed({',
       );
       final slot = initialRemote.indexOf(

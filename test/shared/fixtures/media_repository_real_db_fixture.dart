@@ -6,6 +6,8 @@ import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart'
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
@@ -79,8 +81,15 @@ class MediaRepositoryRealDbFixture {
       ),
     );
     final effectiveSecureKeyStore = secureKeyStore ?? RecordingSecureKeyStore();
-    final messageRepo = _buildMessageRepository(db);
-    final repo = MediaAttachmentRepositoryImpl(
+    late final MediaAttachmentRepositoryImpl repo;
+    final messageRepo = _buildMessageRepository(
+      db,
+      loadOutgoingOrdinaryMedia: (messageId) => repo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      ),
+    );
+    repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState:
           dbSaveMediaAttachmentOverride ??
           (row) => dbSaveMediaAttachmentAround == null
@@ -89,6 +98,26 @@ class MediaRepositoryRealDbFixture {
                   row,
                   () => dbSaveMediaAttachmentPreservingLocalState(db, row),
                 ),
+      dbStageOutgoingOrdinaryAttemptWithMedia:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required kind,
+          }) => dbStageOutgoingOrdinaryAttemptWithMedia(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            kind: kind,
+          ),
+      publishOutgoingOrdinaryMutation:
+          ({required messageId, required outcome, required committedMedia}) =>
+              messageRepo.publishOutgoingOrdinaryMutation(
+                messageId: messageId,
+                outcome: outcome,
+                committedMedia: committedMedia,
+              ),
       dbLoadMediaForMessage: (messageId, ownerLane) =>
           dbLoadMediaForMessageAround == null
           ? dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane)
@@ -654,7 +683,11 @@ class MediaRepositoryRealDbFixture {
   Future<void> dispose() => db.close();
 }
 
-MessageRepositoryImpl _buildMessageRepository(Database db) {
+MessageRepositoryImpl _buildMessageRepository(
+  Database db, {
+  required Future<List<MediaAttachment>> Function(String messageId)
+  loadOutgoingOrdinaryMedia,
+}) {
   return MessageRepositoryImpl(
     dbInsertMessage: (row) => dbInsertMessage(db, row),
     dbLoadMessagesForContact: (contactPeerId) =>
@@ -702,6 +735,77 @@ MessageRepositoryImpl _buildMessageRepository(Database db) {
         dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
     dbUpdateWireEnvelope: (id, wireEnvelope) =>
         dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbStageOutgoingOrdinaryAttempt:
+        ({required expectedRow, required stagedRow, required kind}) =>
+            dbStageOutgoingOrdinaryAttempt(
+              db,
+              expectedRow: expectedRow,
+              stagedRow: stagedRow,
+              kind: kind,
+            ),
+    dbSettleOutgoingOrdinaryTransport:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbSettleOutgoingOrdinaryDeleteTombstone:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbInvalidateOutgoingOrdinaryEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+        }) => dbInvalidateOutgoingOrdinaryEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+        ),
+    dbQuarantineUnsafeLegacyOutgoingEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required isDeleteTombstone,
+        }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          isDeleteTombstone: isDeleteTombstone,
+        ),
+    loadOutgoingOrdinaryMedia: loadOutgoingOrdinaryMedia,
     dbInvalidateWireEnvelopeBeforePrivateUpload:
         ({
           required messageId,

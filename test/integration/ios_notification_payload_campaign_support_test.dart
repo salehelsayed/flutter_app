@@ -13,6 +13,8 @@ const String _receiver = '00008150-001C3C6A3684401C';
 const String _peer = 'android-peer-1234';
 const String _runId = 'ios-payload-run-1234';
 const String _nonce = 'nonce-123456789';
+const String _recoveryRunId = 'ios-payload-recovery-1234';
+const String _recoveryNonce = 'nonce-recovery-123456789';
 
 Map<String, Object?> _staging() => <String, Object?>{
   'schema': iosNotificationStagingManifestSchema,
@@ -148,6 +150,82 @@ Map<String, Object?> _automationReceipt() => <String, Object?>{
     'stagedEnvelope': _digestA,
   },
 };
+
+Map<String, Object?> _recoveryAutomationReceipt() => <String, Object?>{
+  'schema': iosNotificationRecoveryAutomationReceiptSchema,
+  'scenario': iosNotificationPayloadScenario,
+  'phase': 'recovery',
+  'status': 'passed',
+  'platform': 'ios',
+  'receiverPhysical': true,
+  'runId': _recoveryRunId,
+  'nonce': _recoveryNonce,
+  'receiverDeviceId': _receiver,
+  'peerDeviceId': _peer,
+  'preparedApplicationSha256': _digestA,
+  'providerRequestSha256': _digestB,
+  'payloadProducerSha256': _digestA,
+  'apnsPayloadSha256': _digestB,
+  'childBuildCount': 0,
+  'manualActionCount': 0,
+  'checks': <String, Object?>{
+    'notificationPermissionAutomated': true,
+    'badgePermissionEnabled': true,
+    'providerPayloadBadgeAbsent': true,
+    'deliveredNotificationBadgeWasNil': true,
+    'apnsDelivered': true,
+    'nseProcessObserved': true,
+    'recoveryClaimUnique': true,
+    'runnerAbsoluteBadgeConverged': true,
+    'exactOwnedNotificationRetired': true,
+    'unrelatedSentinelSurvived': true,
+    'zeroBadgePublished': true,
+    'providerCleanupAutomated': true,
+    'testStateCleared': true,
+  },
+  'counts': <String, Object?>{
+    'badgeBefore': 1,
+    'badgeAfter': 0,
+    'deliveredBefore': 1,
+    'deliveredWithSentinel': 2,
+    'deliveredAfter': 1,
+  },
+  'timestamps': <String, Object?>{
+    'providerAcceptedAt': '2026-07-15T10:00:00.000Z',
+    'nseObservedAt': '2026-07-15T10:00:01.000Z',
+    'cardObservedAt': '2026-07-15T10:00:02.000Z',
+    'badgeObservedAt': '2026-07-15T10:00:03.000Z',
+    'recoveryCompletedAt': '2026-07-15T10:00:04.000Z',
+    'retirementObservedAt': '2026-07-15T10:00:05.000Z',
+    'zeroBadgeObservedAt': '2026-07-15T10:00:06.000Z',
+  },
+  'evidenceSha256': <String, Object?>{
+    'preparedApplication': _digestA,
+    'payloadProducer': _digestA,
+    'apnsPayload': _digestB,
+    'providerReceipt': _digestA,
+    'providerCleanupReceipt': _digestA,
+    'notificationRecoveryReceipt': _digestB,
+    'relayLog': _digestA,
+    'nseLog': _digestA,
+    'recipientLog': _digestA,
+    'uiAutomationLog': _digestA,
+    'stagedEnvelope': _digestA,
+  },
+};
+
+IosNotificationContractResult _validateRecovery(Map<String, Object?> receipt) =>
+    validateIosNotificationRecoveryAutomationReceipt(
+      receipt,
+      runId: _recoveryRunId,
+      nonce: _recoveryNonce,
+      receiverDeviceId: _receiver,
+      peerDeviceId: _peer,
+      preparedApplicationSha256: _digestA,
+      providerRequestSha256: _digestB,
+      payloadProducerSha256: _digestA,
+      apnsPayloadSha256: _digestB,
+    );
 
 void main() {
   test('accepts secret-free dedicated staging and provider contracts', () {
@@ -363,12 +441,97 @@ void main() {
     expect(validate(skewed).ok, isFalse);
   });
 
+  test('recovery automation receipt accepts the exact physical proof', () {
+    expect(_validateRecovery(_recoveryAutomationReceipt()).ok, isTrue);
+  });
+
+  test('recovery automation receipt fails closed on schema drift', () {
+    final extraTopLevel = _recoveryAutomationReceipt()..['unexpected'] = true;
+    expect(_validateRecovery(extraTopLevel).ok, isFalse);
+
+    final missingTopLevel = _recoveryAutomationReceipt()
+      ..remove('receiverPhysical');
+    expect(_validateRecovery(missingTopLevel).ok, isFalse);
+
+    final extraCheck = _recoveryAutomationReceipt();
+    (extraCheck['checks']! as Map)['uncontractedCheck'] = true;
+    expect(_validateRecovery(extraCheck).ok, isFalse);
+
+    final extraCount = _recoveryAutomationReceipt();
+    (extraCount['counts']! as Map)['otherDelivery'] = 0;
+    expect(_validateRecovery(extraCount).ok, isFalse);
+
+    final extraEvidence = _recoveryAutomationReceipt();
+    (extraEvidence['evidenceSha256']! as Map)['debugLog'] = _digestA;
+    expect(_validateRecovery(extraEvidence).ok, isFalse);
+  });
+
+  test('recovery automation receipt requires exact outcomes and bindings', () {
+    final missingPermission = _recoveryAutomationReceipt();
+    (missingPermission['checks']! as Map)['badgePermissionEnabled'] = false;
+    expect(_validateRecovery(missingPermission).ok, isFalse);
+
+    final badgeBearingDelivery = _recoveryAutomationReceipt();
+    (badgeBearingDelivery['checks']!
+            as Map)['deliveredNotificationBadgeWasNil'] =
+        false;
+    expect(_validateRecovery(badgeBearingDelivery).ok, isFalse);
+
+    final wrongDeliveredCount = _recoveryAutomationReceipt();
+    (wrongDeliveredCount['counts']! as Map)['deliveredAfter'] = 0;
+    expect(_validateRecovery(wrongDeliveredCount).ok, isFalse);
+
+    final unboundApp = _recoveryAutomationReceipt()
+      ..['preparedApplicationSha256'] = _digestB;
+    expect(_validateRecovery(unboundApp).ok, isFalse);
+
+    final unboundEvidence = _recoveryAutomationReceipt();
+    (unboundEvidence['evidenceSha256']! as Map)['apnsPayload'] = _digestA;
+    expect(_validateRecovery(unboundEvidence).ok, isFalse);
+
+    final secret = _recoveryAutomationReceipt()
+      ..['checks'] = <String, Object?>{
+        ...(_recoveryAutomationReceipt()['checks']! as Map)
+            .cast<String, Object?>(),
+        'privateKey': 'BEGIN PRIVATE KEY',
+      };
+    expect(_validateRecovery(secret).ok, isFalse);
+  });
+
+  test('recovery timestamps preserve host and iPhone causal order', () {
+    final hostSkew = _recoveryAutomationReceipt();
+    final hostSkewTimestamps = hostSkew['timestamps']! as Map;
+    hostSkewTimestamps
+      ..['cardObservedAt'] = '2026-07-15T09:00:00.000Z'
+      ..['badgeObservedAt'] = '2026-07-15T09:00:01.000Z'
+      ..['recoveryCompletedAt'] = '2026-07-15T09:00:02.000Z'
+      ..['retirementObservedAt'] = '2026-07-15T09:00:03.000Z'
+      ..['zeroBadgeObservedAt'] = '2026-07-15T09:00:04.000Z';
+    expect(_validateRecovery(hostSkew).ok, isTrue);
+
+    final reversedHost = _recoveryAutomationReceipt();
+    (reversedHost['timestamps']! as Map)['nseObservedAt'] =
+        '2026-07-15T09:59:59.000Z';
+    expect(_validateRecovery(reversedHost).ok, isFalse);
+
+    final reversedDevice = _recoveryAutomationReceipt();
+    (reversedDevice['timestamps']! as Map)['recoveryCompletedAt'] =
+        '2026-07-15T10:00:02.000Z';
+    expect(_validateRecovery(reversedDevice).ok, isFalse);
+
+    final nonUtc = _recoveryAutomationReceipt();
+    (nonUtc['timestamps']! as Map)['zeroBadgeObservedAt'] =
+        '2026-07-15T10:00:06.000';
+    expect(_validateRecovery(nonUtc).ok, isFalse);
+  });
+
   test(
     'exact automation receipt produces validator-compatible TC-B12 proof',
     () {
       final artifact =
           buildIosNotificationArtifact(
             automationReceipt: _automationReceipt(),
+            recoveryAutomationReceipt: _recoveryAutomationReceipt(),
             capturedAt: '2026-07-15T10:00:06.000Z',
           )..addAll(<String, Object?>{
             'schema': 'mknoon.sims.proof.v1',
@@ -380,6 +543,7 @@ void main() {
             'candidateRelayRevision': 'v1.6.0',
             'candidateRelaySha256': _digestA,
             'automationReceiptSha256': _digestB,
+            'recoveryAutomationReceiptSha256': _digestA,
           });
       expect(validateNotificationArtifact(artifact).ok, isTrue);
       expect(artifact['childBuildCount'], 0);

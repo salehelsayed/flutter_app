@@ -2155,18 +2155,25 @@ class _FeedWiredState extends State<FeedWired>
       }
       // Persist the failure so the optimistic bubble survives a rebuild.
       if (message == null) {
-        await widget.messageRepository.updateMessageStatus(
+        await widget.messageRepository.conditionalTransitionStatus(
           optimisticMessage.id,
-          'failed',
+          fromStatus: 'sending',
+          toStatus: 'failed',
         );
       }
       return false;
     } catch (e) {
       if (optimisticMessage != null) {
-        await widget.messageRepository.updateMessageStatus(
-          optimisticMessage.id,
-          'failed',
-        );
+        try {
+          await widget.messageRepository.conditionalTransitionStatus(
+            optimisticMessage.id,
+            fromStatus: 'sending',
+            toStatus: 'failed',
+          );
+        } catch (_) {
+          // A persistence failure remains retryable through the next recovery
+          // pass; never replace a stronger concurrent status here.
+        }
       }
       emitFlowEvent(
         layer: 'FL',

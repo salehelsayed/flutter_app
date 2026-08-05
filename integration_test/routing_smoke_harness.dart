@@ -23,7 +23,10 @@ import 'package:sqflite_sqlcipher/sqflite.dart' as sqlcipher;
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -35,6 +38,7 @@ import 'package:flutter_app/features/conversation/application/delete_message_use
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
+import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
@@ -78,7 +82,7 @@ final SignalDir _signals = SignalDir(
 // ---------------------------------------------------------------------------
 
 Future<sqlcipher.Database> _openDb(SecureKeyStore keyStore) =>
-    openE2EDatabase(secureKeyStore: keyStore, dbName: _dbName, version: 79);
+    openCurrentProductionE2EDatabase(secureKeyStore: keyStore, dbName: _dbName);
 
 // ---------------------------------------------------------------------------
 // Flow event capture
@@ -219,10 +223,9 @@ void _runAlice() {
 
     // ── Stack setup ──
     final keyStore = FakeSecureKeyStore();
-    final db = await openE2EDatabase(
+    final db = await openCurrentProductionE2EDatabase(
       secureKeyStore: keyStore,
       dbName: _dbName,
-      version: 79,
     );
     final bridge = GoBridgeClient();
     await bridge.initialize();
@@ -243,6 +246,7 @@ void _runAlice() {
       dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
       dbSetIntrosSentAt: (peerId, ts) => dbSetIntrosSentAt(db, peerId, ts),
     );
+    late final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(db, p),
@@ -287,6 +291,78 @@ void _runAlice() {
                 limit: limit,
               ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(db, id, we),
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) =>
+              dbStageOutgoingOrdinaryAttempt(
+                db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+              ),
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbInvalidateOutgoingOrdinaryEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+          }) => dbInvalidateOutgoingOrdinaryEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          ),
+      dbQuarantineUnsafeLegacyOutgoingEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required isDeleteTombstone,
+          }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          ),
+      loadOutgoingOrdinaryMedia: (messageId) => mediaAttachmentRepo
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct),
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(
@@ -303,6 +379,86 @@ void _runAlice() {
                 fromStatus: fromStatus,
                 toStatus: toStatus,
               ),
+    );
+
+    mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
+      dbSaveMediaAttachmentPreservingLocalState: (row) =>
+          dbSaveMediaAttachmentPreservingLocalState(db, row),
+      dbStageOutgoingOrdinaryAttemptWithMedia:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required kind,
+          }) => dbStageOutgoingOrdinaryAttemptWithMedia(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            kind: kind,
+          ),
+      publishOutgoingOrdinaryMutation:
+          ({required messageId, required outcome, required committedMedia}) =>
+              messageRepo.publishOutgoingOrdinaryMutation(
+                messageId: messageId,
+                outcome: outcome,
+                committedMedia: committedMedia,
+              ),
+      dbLoadMediaForMessage: (messageId, ownerLane) =>
+          dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
+      dbLoadMediaById: (id) => dbLoadMediaById(db, id),
+      dbLoadMediaForMessages: (messageIds, ownerLane) =>
+          dbLoadMediaForMessages(db, messageIds, ownerLane: ownerLane),
+      dbUpdateMediaLocalPath: (id, localPath, downloadStatus) =>
+          dbUpdateMediaLocalPath(db, id, localPath, downloadStatus),
+      dbUpdateMediaDownloadStatus: (id, downloadStatus) =>
+          dbUpdateMediaDownloadStatus(db, id, downloadStatus),
+      dbDeleteMediaForMessage: (messageId, ownerLane) =>
+          dbDeleteMediaForMessage(db, messageId, ownerLane: ownerLane),
+      dbDeleteMediaForContact: (contactPeerId) =>
+          dbDeleteMediaForContact(db, contactPeerId),
+      dbMarkUploadPendingAttachmentsFailedForMessage: (messageId, ownerLane) =>
+          dbMarkUploadPendingAttachmentsFailedForMessage(
+            db,
+            messageId,
+            ownerLane: ownerLane,
+          ),
+      dbLoadPendingMediaDownloads: () => dbLoadPendingMediaDownloads(db),
+      dbLoadUploadPendingAttachments:
+          ({int limit = 50, required String ownerLane}) =>
+              dbLoadUploadPendingAttachments(
+                db,
+                limit: limit,
+                ownerLane: ownerLane,
+              ),
+      dbSetMediaBookmarked: (id, bookmarked) =>
+          dbSetMediaBookmarked(db, id, bookmarked: bookmarked),
+      dbUpdateMediaPlaybackPosition: (id, positionMs) =>
+          dbUpdateMediaPlaybackPosition(db, id, positionMs),
+      dbLoadMediaLibraryPage:
+          ({
+            required String scopeKind,
+            required String scopeId,
+            required List<String> mediaTypes,
+            required bool bookmarkedOnly,
+            required bool incomingOnly,
+            required int limit,
+            String? afterTimestamp,
+            String? afterMessageId,
+            String? afterAttachmentId,
+          }) => dbLoadMediaLibraryPage(
+            db,
+            scopeKind: scopeKind,
+            scopeId: scopeId,
+            mediaTypes: mediaTypes,
+            bookmarkedOnly: bookmarkedOnly,
+            incomingOnly: incomingOnly,
+            limit: limit,
+            afterTimestamp: afterTimestamp,
+            afterMessageId: afterMessageId,
+            afterAttachmentId: afterAttachmentId,
+          ),
+      secureKeyStore: keyStore,
     );
 
     // Generate identity
@@ -676,6 +832,7 @@ void _runAlice() {
           ),
           bridge: bridge,
           recipientMlKemPublicKey: bobMlKemPk,
+          mediaAttachmentRepo: mediaAttachmentRepo,
           waveform: [0.1, 0.5, 0.8, 0.3, 0.6],
         );
       });
@@ -1019,6 +1176,76 @@ void _runBob() {
                 limit: limit,
               ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(db, id, we),
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) =>
+              dbStageOutgoingOrdinaryAttempt(
+                db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+              ),
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbInvalidateOutgoingOrdinaryEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+          }) => dbInvalidateOutgoingOrdinaryEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          ),
+      dbQuarantineUnsafeLegacyOutgoingEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required isDeleteTombstone,
+          }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          ),
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(

@@ -6,14 +6,44 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 typedef DrainOfflineInboxFn = Future<void> Function();
 typedef DrainGroupOfflineInboxForGroupFn =
     Future<void> Function(String groupId);
+typedef DrainOfflineInboxCompletelyFn = Future<bool> Function();
+typedef DrainGroupOfflineInboxForGroupCompletelyFn =
+    Future<bool> Function(String groupId);
 
-enum ForegroundRemoteMessageResult { drained, unroutable, notificationNeeded }
+enum ForegroundRemoteMessageResult {
+  drained(canonicalStateComplete: true, needsNotification: false),
+  drainFailed(canonicalStateComplete: false, needsNotification: false),
+  unroutable(canonicalStateComplete: false, needsNotification: false),
+
+  /// Canonical inbox replay completed, but this event still requires a local
+  /// foreground presentation (for example, a group reaction).
+  notificationNeeded(canonicalStateComplete: true, needsNotification: true),
+
+  /// Presentation is still useful, but the authoritative inbox replay did not
+  /// converge. Keeping this distinct prevents presentation policy from
+  /// falsely certifying native recovery completeness.
+  notificationNeededAfterDrainFailure(
+    canonicalStateComplete: false,
+    needsNotification: true,
+  );
+
+  const ForegroundRemoteMessageResult({
+    required this.canonicalStateComplete,
+    required this.needsNotification,
+  });
+
+  final bool canonicalStateComplete;
+  final bool needsNotification;
+}
 
 Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
   required Map<String, dynamic> data,
   required String? messageId,
   required DrainOfflineInboxFn drainOfflineInbox,
   required DrainGroupOfflineInboxForGroupFn drainGroupOfflineInboxForGroup,
+  DrainOfflineInboxCompletelyFn? drainOfflineInboxCompletely,
+  DrainGroupOfflineInboxForGroupCompletelyFn?
+  drainGroupOfflineInboxForGroupCompletely,
   RecentRemoteNotificationGate? recentRemoteGate,
 }) async {
   final routeTarget = NotificationRouteTarget.fromRemoteMessageData(data);
@@ -79,10 +109,28 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
       case NotificationRouteTargetKind.conversation:
       case NotificationRouteTargetKind.contactRequest:
       case NotificationRouteTargetKind.intros:
-        await drainOfflineInbox();
-        return ForegroundRemoteMessageResult.drained;
+        final complete = drainOfflineInboxCompletely == null
+            ? await (() async {
+                await drainOfflineInbox();
+                return true;
+              })()
+            : await drainOfflineInboxCompletely();
+        return complete
+            ? ForegroundRemoteMessageResult.drained
+            : ForegroundRemoteMessageResult.drainFailed;
       case NotificationRouteTargetKind.group:
-        await drainGroupOfflineInboxForGroup(routeTarget.groupId!);
+        final complete = drainGroupOfflineInboxForGroupCompletely == null
+            ? await (() async {
+                await drainGroupOfflineInboxForGroup(routeTarget.groupId!);
+                return true;
+              })()
+            : await drainGroupOfflineInboxForGroupCompletely(
+                routeTarget.groupId!,
+              );
+        if (!complete) {
+          return ForegroundRemoteMessageResult
+              .notificationNeededAfterDrainFailure;
+        }
         return data['type']?.toString().trim() == 'group_reaction'
             ? ForegroundRemoteMessageResult.notificationNeeded
             : ForegroundRemoteMessageResult.drained;
@@ -98,9 +146,9 @@ Future<ForegroundRemoteMessageResult> handleForegroundRemoteMessage({
       details: {'kind': routeTarget.kind.name, 'error': e.toString()},
     );
     if (routeTarget.kind == NotificationRouteTargetKind.group) {
-      return ForegroundRemoteMessageResult.notificationNeeded;
+      return ForegroundRemoteMessageResult.notificationNeededAfterDrainFailure;
     }
-    return ForegroundRemoteMessageResult.drained;
+    return ForegroundRemoteMessageResult.drainFailed;
   }
 }
 

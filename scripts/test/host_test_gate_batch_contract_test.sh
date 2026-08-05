@@ -228,6 +228,9 @@ for sentinel in \
   PartialFeatureFlags \
   WakeToken \
   TestGoLibp2pProductionShapeBudget \
+  TestSendMessageWithTransport_AckFrameValidation \
+  TestHandleIncomingMessage_BindsAuthenticatedRemotePeerAndClassifiedTransport \
+  TestHandleIncomingMessage_DeferredDirectAck_FalseConfirmDoesNotAck \
   TestBridgeExportedHandlersUseSharedEntrypoint; do
   grep -Fq "$sentinel" "$go_log" ||
     fail "batch mode omitted Go sentinel: $sentinel"

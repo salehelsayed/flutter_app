@@ -15,6 +15,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -28,6 +29,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -165,6 +167,7 @@ class FakeP2PService implements P2PService {
     final delivered = network.deliver(peerId, targetPeerId, message);
     return SendMessageResult(
       sent: delivered,
+      acked: delivered,
       reply: delivered ? 'received: $message' : null,
     );
   }
@@ -280,7 +283,8 @@ class FakeP2PService implements P2PService {
 }
 
 // ─── In-memory Message Repository ───────────────────────────────────
-class InMemoryMessageRepository implements MessageRepository {
+class InMemoryMessageRepository
+    implements MessageRepository, OutgoingTransportMutationRepository {
   final Map<String, ConversationMessage> _messages = {};
 
   @override
@@ -443,7 +447,235 @@ class InMemoryMessageRepository implements MessageRepository {
     required String toStatus,
   }) async => 0;
 
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final current = _messages[staged.id];
+    if (kind == OutgoingOrdinaryAttemptKind.fresh) {
+      if (expected != null || current != null) {
+        return _ordinaryResult(
+          OutgoingOrdinaryMutationOutcome.refused,
+          current,
+        );
+      }
+      _messages[staged.id] = staged;
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, staged);
+    }
+    if (expected == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (_sameMessageSnapshot(current, staged)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        current,
+      );
+    }
+    if (!_sameMessageSnapshot(current, expected)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final applied = staged.copyWith(
+      transport: null,
+      relayExpiresAt: null,
+      custodyCheckedAt: null,
+    );
+    _messages[staged.id] = applied;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, applied);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOutgoingOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: false,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOutgoingOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: true,
+  );
+
+  Future<OutgoingOrdinaryMutationResult> _settleOutgoingOrdinary({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool tombstone,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.isIncoming ||
+        current.contactPeerId != expectedContactPeerId ||
+        current.isDeleted != tombstone) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.status == 'delivered') {
+      return _ordinaryResult(
+        status == 'delivered'
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.status == status) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        current,
+      );
+    }
+    final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
+        ? const <String>{'inboxed', 'sent', 'failed'}
+        : switch (status) {
+            'delivered' => const <String>{
+              'sending',
+              'sent',
+              'inboxed',
+              'failed',
+            },
+            'inboxed' => const <String>{'sending', 'sent', 'failed'},
+            'sent' => const <String>{'sending', 'failed'},
+            'failed' => const <String>{'sending'},
+            _ => const <String>{},
+          };
+    if (!predecessors.contains(current.status)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final applied = current.copyWith(
+      status: status,
+      transport: transport,
+      wireEnvelope: status == 'delivered' ? null : expectedEnvelope,
+      relayExpiresAt: relayExpiresAt,
+      custodyCheckedAt: null,
+      hiddenAt: tombstone && status == 'delivered' ? current.deletedAt : null,
+    );
+    _messages[messageId] = applied;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, applied);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.contactPeerId != expectedContactPeerId ||
+        current.isIncoming ||
+        current.isDeleted ||
+        !const <String>{'sending', 'failed'}.contains(current.status)) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final applied = current.copyWith(wireEnvelope: null);
+    _messages[messageId] = applied;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, applied);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.contactPeerId != expectedContactPeerId ||
+        current.isIncoming ||
+        current.isDeleted != isDeleteTombstone ||
+        current.status != 'sent') {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final applied = current.copyWith(
+      status: 'failed',
+      transport: null,
+      relayExpiresAt: null,
+      custodyCheckedAt: null,
+    );
+    _messages[messageId] = applied;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, applied);
+  }
+
+  OutgoingOrdinaryMutationResult _ordinaryResult(
+    OutgoingOrdinaryMutationOutcome outcome,
+    ConversationMessage? message,
+  ) => OutgoingOrdinaryMutationResult(outcome: outcome, message: message);
+
   int get count => _messages.length;
+}
+
+bool _sameMessageSnapshot(ConversationMessage left, ConversationMessage right) {
+  final leftMap = left.toMap();
+  final rightMap = right.toMap();
+  return leftMap.length == rightMap.length &&
+      leftMap.entries.every((entry) => rightMap[entry.key] == entry.value);
 }
 
 // ─── In-memory Contact Repository ───────────────────────────────────
@@ -1343,9 +1575,11 @@ void main() {
         recipientMlKemPublicKey: contact?.mlKemPublicKey,
         dedupKey: dedupKey,
         messageId: messageId,
+        preassignedMessageIdIsFresh: true,
         timestamp: timestamp,
         isForwarded: true,
         mediaAttachments: attachments,
+        mediaAttachmentRepo: alice.mediaAttachmentRepo,
       );
     }
 
@@ -1420,7 +1654,10 @@ void main() {
           dedupKey: 'forward-operation-a',
           messageId: 'forward-a-redelivery',
           timestamp: '2099-01-01T00:00:01.000Z',
-          attachments: forwardedVisuals('forward-a-redelivery', 'operation-a'),
+          attachments: forwardedVisuals(
+            'forward-a-redelivery',
+            'operation-a-redelivery',
+          ),
         );
         await waitUntil(
           () async => flow.any(
@@ -1462,7 +1699,10 @@ void main() {
           dedupKey: 'forward-operation-b',
           messageId: 'forward-b-redelivery',
           timestamp: '2099-01-01T00:00:03.000Z',
-          attachments: forwardedVisuals('forward-b-redelivery', 'operation-b'),
+          attachments: forwardedVisuals(
+            'forward-b-redelivery',
+            'operation-b-redelivery',
+          ),
         );
         await waitUntil(
           () async => flow.any(

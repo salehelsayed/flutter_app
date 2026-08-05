@@ -23,6 +23,7 @@ import 'package:integration_test/integration_test.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -403,15 +404,23 @@ void _runAlice() {
     print('${'═' * 60}\n');
 
     // ── Stack (reuse the group-capable setup; all repos we need) ──
+    late final MessageRepositoryImpl messageRepo;
     final stack = await setupGroupMultiDeviceStack(
       dbName: _dbName,
       username: 'AliceNotif',
       cliPeerFixture: null,
+      publishOutgoingOrdinaryMutation:
+          ({required messageId, required outcome, required committedMedia}) =>
+              messageRepo.publishOutgoingOrdinaryMutation(
+                messageId: messageId,
+                outcome: outcome,
+                committedMedia: committedMedia,
+              ),
     );
     await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
     // ── 1:1 message repo (not created by setupGroupMultiDeviceStack) ──
-    final messageRepo = MessageRepositoryImpl(
+    messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
       dbLoadLatestMessageForContact: (p) =>
@@ -461,6 +470,78 @@ void _runAlice() {
                 limit: limit,
               ),
       dbUpdateWireEnvelope: (id, we) => dbUpdateWireEnvelope(stack.db, id, we),
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) =>
+              dbStageOutgoingOrdinaryAttempt(
+                stack.db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+              ),
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryTransport(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbInvalidateOutgoingOrdinaryEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+          }) => dbInvalidateOutgoingOrdinaryEnvelope(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          ),
+      dbQuarantineUnsafeLegacyOutgoingEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required isDeleteTombstone,
+          }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+            stack.db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          ),
+      loadOutgoingOrdinaryMedia: (messageId) => stack.mediaAttachmentRepo
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct),
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(
@@ -727,6 +808,7 @@ void _runAlice() {
             senderPeerId: stack.identity.peerId,
             senderUsername: stack.identity.username,
             messageId: messageId,
+            preassignedMessageIdIsFresh: true,
             bridge: stack.bridge,
             recipientMlKemPublicKey: bobMlKemPk,
             mediaAttachments: <MediaAttachment>[attachment],

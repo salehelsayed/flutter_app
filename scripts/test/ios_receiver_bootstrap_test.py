@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import datetime
 import json
 import hashlib
 import os
@@ -67,17 +68,19 @@ class IosReceiverBootstrapTest(unittest.TestCase):
                     "mlKemPublicKey",
                     "notificationAuthorization",
                     "notificationAlertSetting",
+                    "notificationBadgeSetting",
                     "capturedAt",
                 },
             )
             self.assertEqual(
                 handoff["schema"],
-                "mknoon.sims.ios-provider-receiver-handoff.v1",
+                "mknoon.sims.ios-provider-receiver-handoff.v2",
             )
             self.assertEqual(handoff["apnsDeviceToken"], token)
             self.assertEqual(handoff["peerDeviceId"], peer)
             self.assertEqual(handoff["notificationAuthorization"], "authorized")
             self.assertEqual(handoff["notificationAlertSetting"], "enabled")
+            self.assertEqual(handoff["notificationBadgeSetting"], "enabled")
 
             state = json.loads((root / "state.json").read_text(encoding="utf-8"))
             self.assertEqual(state["lastAction"], "cleanup")
@@ -138,13 +141,15 @@ class IosReceiverBootstrapTest(unittest.TestCase):
         self.assertNotIn("'token': fcmToken", probe_harness)
 
     def test_unsafe_notification_settings_reject_private_handoff(self) -> None:
-        for authorization, alert_setting in (
-            ("denied", "enabled"),
-            ("authorized", "disabled"),
+        for authorization, alert_setting, badge_setting in (
+            ("denied", "enabled", "enabled"),
+            ("authorized", "disabled", "enabled"),
+            ("authorized", "enabled", "disabled"),
         ):
             with self.subTest(
                 authorization=authorization,
                 alert_setting=alert_setting,
+                badge_setting=badge_setting,
             ), tempfile.TemporaryDirectory() as raw:
                 root = Path(raw)
                 fake = self._fake_xcrun(root)
@@ -160,6 +165,7 @@ class IosReceiverBootstrapTest(unittest.TestCase):
                     ).decode(),
                     "FAKE_NOTIFICATION_AUTHORIZATION": authorization,
                     "FAKE_NOTIFICATION_ALERT_SETTING": alert_setting,
+                    "FAKE_NOTIFICATION_BADGE_SETTING": badge_setting,
                     "SIMS_IOS_PHYSICAL_DEVICE_ID": "00008110-001A123E0E91801E",
                     "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE":
                         "nonce-bootstrap-settings-1",
@@ -291,6 +297,127 @@ class IosReceiverBootstrapTest(unittest.TestCase):
             self.assertEqual(over_bound.returncode, 78)
             self.assertFalse(receipt.exists())
 
+    def test_notification_recovery_is_exact_bound_redacted_and_cleaned(self) -> None:
+        with tempfile.TemporaryDirectory() as raw:
+            root = Path(raw)
+            fake = self._fake_xcrun(root)
+            receiver = "00008110-001A123E0E91801E"
+            nonce = "nonce-bootstrap-recovery-contract-1"
+            peer = "12D3KooW" + "5" * 44
+            sender = "12D3KooW" + "6" * 44
+            payload = {
+                "fixture_schema": "mknoon.sims.ios-payload-private-fixture.v1",
+                "aps": {
+                    "alert": {"title": "Encrypted title", "body": "Encrypted body"},
+                    "mutable-content": 1,
+                },
+                "type": "new_message",
+                "sender_id": sender,
+                "message_id": "message-private-recovery-1",
+                "kem": "opaque-kem",
+                "ciphertext": "opaque-ciphertext",
+                "nonce": "opaque-nonce",
+            }
+            payload_path = root / "payload.json"
+            payload_path.write_text(
+                json.dumps(payload, separators=(",", ":"), sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+            payload_path.chmod(0o600)
+            now = datetime.datetime.now(datetime.timezone.utc).isoformat(
+                timespec="milliseconds"
+            ).replace("+00:00", "Z")
+            handoff = root / "handoff.json"
+            handoff.write_text(
+                json.dumps(
+                    {
+                        "schema": "mknoon.sims.ios-provider-receiver-handoff.v2",
+                        "captureNonce": nonce,
+                        "receiverDeviceId": receiver,
+                        "peerDeviceId": peer,
+                        "bundleId": "com.mknoon.app",
+                        "apnsEnvironment": "development",
+                        "apnsDeviceToken": "ab" * 32,
+                        "mlKemPublicKey": base64.b64encode(b"D" * 1184).decode(),
+                        "notificationAuthorization": "authorized",
+                        "notificationAlertSetting": "enabled",
+                        "notificationBadgeSetting": "enabled",
+                        "capturedAt": now,
+                    },
+                    separators=(",", ":"),
+                    sort_keys=True,
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            handoff.chmod(0o600)
+            receipt = root / "recovery-receipt.json"
+            environment = {
+                **os.environ,
+                "SIMS_IOS_RECEIVER_BOOTSTRAP_XCRUN": str(fake),
+                "FAKE_DEVICECTL_STATE": str(root / "state.json"),
+                "SIMS_IOS_PHYSICAL_DEVICE_ID": receiver,
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE": nonce,
+                "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH": str(handoff),
+                "SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH": str(payload_path),
+                "SIMS_IOS_NOTIFICATION_RECOVERY_RECEIPT_PATH": str(receipt),
+            }
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(DRIVER),
+                    "--action",
+                    "prove-recovery",
+                    "--timeout-seconds",
+                    "5",
+                ],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(receipt.is_file())
+            self.assertEqual(stat.S_IMODE(receipt.stat().st_mode), 0o600)
+            value = json.loads(receipt.read_text(encoding="utf-8"))
+            self.assertEqual(
+                value,
+                {
+                    "schema": "mknoon.sims.ios-notification-recovery-host-receipt.v1",
+                    "action": "prove-recovery",
+                    "status": "PASS",
+                    "containsSecrets": False,
+                    "bundleId": "com.mknoon.app",
+                    "captureNonceSha256": hashlib.sha256(nonce.encode()).hexdigest(),
+                    "receiverDeviceIdSha256": hashlib.sha256(
+                        receiver.encode()
+                    ).hexdigest(),
+                    "apnsPayloadSha256": hashlib.sha256(
+                        payload_path.read_bytes()
+                    ).hexdigest(),
+                    "badgeBefore": 1,
+                    "badgeAfter": 0,
+                    "deliveredBefore": 1,
+                    "deliveredWithSentinel": 2,
+                    "deliveredAfter": 1,
+                    "deliveredNotificationBadgeWasNil": True,
+                    "sentinelSurvived": True,
+                    "removedExactOwnedNotification": True,
+                    "childBuildCount": 0,
+                    "manualActionCount": 0,
+                    "resultCode": "ok",
+                    "completedAt": value["completedAt"],
+                },
+            )
+            self.assertNotIn(peer, result.stdout + result.stderr)
+            self.assertNotIn(sender, result.stdout + result.stderr)
+            state = json.loads((root / "state.json").read_text(encoding="utf-8"))
+            self.assertEqual(state["lastAction"], "cleanup")
+            self.assertIn("stage-recovery-command", " ".join(state["commands"]))
+
     def _fake_xcrun(self, root: Path) -> Path:
         script = root / "fake-xcrun.py"
         script.write_text(
@@ -314,7 +441,30 @@ elif args[:4] == ['devicectl','device','copy','from']:
   request=state.get('request',{})
   source=value('--source')
   sender_result=source.endswith('/sender-result.json')
-  if sender_result and request.get('action') in ('seed_sender','cleanup_sender'):
+  recovery_result=source.endswith('/recovery-result.json')
+  if recovery_result and request.get('action') == 'prove_recovery':
+    response={
+      'schema':'mknoon.sims.ios-notification-recovery-result.v1',
+      'action':'prove_recovery',
+      'captureNonce':request['captureNonce'],
+      'receiverDeviceId':request['receiverDeviceId'],
+      'bundleId':'com.mknoon.app',
+      'apnsPayloadSha256':request['apnsPayloadSha256'],
+      'status':'passed',
+      'resultCode':'ok',
+      'badgeBefore':1,
+      'badgeAfter':0,
+      'deliveredBefore':1,
+      'deliveredWithSentinel':2,
+      'deliveredAfter':1,
+      'deliveredNotificationBadgeWasNil':True,
+      'sentinelSurvived':True,
+      'removedExactOwnedNotification':True,
+      'childBuildCount':0,
+      'manualActionCount':0,
+      'completedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z'),
+    }
+  elif sender_result and request.get('action') in ('seed_sender','cleanup_sender'):
     fields={
       'schema':'mknoon.sims.ios-sender-projection-request.v1',
       'captureNonce':request['captureNonce'],
@@ -340,7 +490,7 @@ elif args[:4] == ['devicectl','device','copy','from']:
   elif request.get('action') == 'capture' and not sender_result:
     nonce=os.environ.get('FAKE_NONCE_OVERRIDE',request['captureNonce'])
     response={
-      'schema':'mknoon.sims.ios-provider-receiver-handoff.v1',
+      'schema':'mknoon.sims.ios-provider-receiver-handoff.v2',
       'captureNonce':nonce,
       'receiverDeviceId':request['receiverDeviceId'],
       'peerDeviceId':os.environ['FAKE_PEER_ID'],
@@ -350,6 +500,7 @@ elif args[:4] == ['devicectl','device','copy','from']:
       'mlKemPublicKey':os.environ['FAKE_ML_KEM_PUBLIC'],
       'notificationAuthorization':os.environ.get('FAKE_NOTIFICATION_AUTHORIZATION','authorized'),
       'notificationAlertSetting':os.environ.get('FAKE_NOTIFICATION_ALERT_SETTING','enabled'),
+      'notificationBadgeSetting':os.environ.get('FAKE_NOTIFICATION_BADGE_SETTING','enabled'),
       'capturedAt':datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='milliseconds').replace('+00:00','Z'),
     }
   else:

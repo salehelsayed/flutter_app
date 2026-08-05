@@ -103,7 +103,26 @@ abstract class PushEnvelopeStagingStore {
   Future<void> prune();
 }
 
-class FilePushEnvelopeStagingStore implements PushEnvelopeStagingStore {
+/// One staging-directory scan, including final files that are intentionally
+/// retained for a later parse retry.
+final class PushEnvelopeStagingReadResult {
+  const PushEnvelopeStagingReadResult({
+    required this.entries,
+    this.retainedUnreadableFinalFiles = 0,
+  });
+
+  final List<StagedPushEnvelope> entries;
+  final int retainedUnreadableFinalFiles;
+}
+
+/// Optional richer read contract used by canonical recovery. Existing
+/// in-memory/debug stores remain source-compatible through [readAll].
+abstract interface class PushEnvelopeStagingReadStatusStore {
+  Future<PushEnvelopeStagingReadResult> readAllWithStatus();
+}
+
+class FilePushEnvelopeStagingStore
+    implements PushEnvelopeStagingStore, PushEnvelopeStagingReadStatusStore {
   final Directory directory;
   final DateTime Function() now;
   final Duration ttl;
@@ -158,8 +177,13 @@ class FilePushEnvelopeStagingStore implements PushEnvelopeStagingStore {
 
   @override
   Future<List<StagedPushEnvelope>> readAll() async {
+    return (await readAllWithStatus()).entries;
+  }
+
+  @override
+  Future<PushEnvelopeStagingReadResult> readAllWithStatus() async {
     await prune();
-    return _readEntries();
+    return _readEntriesWithStatus();
   }
 
   @override
@@ -173,7 +197,7 @@ class FilePushEnvelopeStagingStore implements PushEnvelopeStagingStore {
   @override
   Future<void> prune() async {
     await directory.create(recursive: true);
-    final entries = await _readEntries();
+    final entries = (await _readEntriesWithStatus()).entries;
     final nowMs = now().millisecondsSinceEpoch;
     final expired = entries
         .where((entry) {
@@ -194,9 +218,9 @@ class FilePushEnvelopeStagingStore implements PushEnvelopeStagingStore {
     }
   }
 
-  Future<List<StagedPushEnvelope>> _readEntries() async {
+  Future<PushEnvelopeStagingReadResult> _readEntriesWithStatus() async {
     if (!await directory.exists()) {
-      return const [];
+      return const PushEnvelopeStagingReadResult(entries: []);
     }
     final files = await directory
         .list()
@@ -204,6 +228,7 @@ class FilePushEnvelopeStagingStore implements PushEnvelopeStagingStore {
         .cast<File>()
         .toList();
     final entries = <StagedPushEnvelope>[];
+    var retainedUnreadableFinalFiles = 0;
     for (final file in files) {
       try {
         final decoded = jsonDecode(await file.readAsString());
@@ -212,22 +237,31 @@ class FilePushEnvelopeStagingStore implements PushEnvelopeStagingStore {
         }
         entries.add(StagedPushEnvelope.fromJson(decoded));
       } catch (_) {
-        await _clearMalformedIfAged(file);
+        if (await _retainMalformedForRetry(file)) {
+          retainedUnreadableFinalFiles++;
+        }
       }
     }
     entries.sort(_compareEntry);
-    return entries;
+    return PushEnvelopeStagingReadResult(
+      entries: entries,
+      retainedUnreadableFinalFiles: retainedUnreadableFinalFiles,
+    );
   }
 
-  Future<void> _clearMalformedIfAged(File file) async {
+  Future<bool> _retainMalformedForRetry(File file) async {
     try {
       final modifiedAt = await file.lastModified();
       final age = now().difference(modifiedAt);
       if (age > malformedRetryWindow) {
         await file.delete();
+        return false;
       }
+      return true;
     } catch (_) {
-      // Best effort cleanup only; a later read/prune pass will retry.
+      // If status or cleanup cannot be proven, conservatively report retained
+      // custody so canonical recovery cannot publish an absolute lower value.
+      return true;
     }
   }
 

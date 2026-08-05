@@ -13,6 +13,7 @@ import 'package:flutter_app/features/conversation/application/send_voice_message
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
 import '../test/shared/fakes/in_memory_message_repository.dart';
+import '../test/shared/fakes/in_memory_media_attachment_repository.dart';
 
 import 'benchmark_helpers.dart';
 
@@ -41,12 +42,14 @@ Future<void> runVoiceBenchmark(WidgetTester tester) async {
   );
 
   final messageRepo = InMemoryMessageRepository();
+  final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
   final targetPeerId = '12D3KooWOfflinePeerForVoiceBenchmark00000';
 
   final events = await captureFlowEvents(() async {
     await sendVoiceMessage(
       p2pService: node.service,
       messageRepo: messageRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
       targetPeerId: targetPeerId,
       senderPeerId: node.peerId,
       senderUsername: 'BenchmarkUser',
@@ -69,8 +72,9 @@ Future<void> runVoiceBenchmark(WidgetTester tester) async {
     if (d.containsKey('uploadMs') && d.containsKey('elapsedMs')) {
       final uploadMs = d['uploadMs'] as int;
       final totalMs = d['elapsedMs'] as int;
-      final uploadSharePct =
-          totalMs > 0 ? (uploadMs / totalMs * 100).round() : 0;
+      final uploadSharePct = totalMs > 0
+          ? (uploadMs / totalMs * 100).round()
+          : 0;
       print('[BENCHMARK] sim_voice_upload_share_pct = $uploadSharePct%');
     }
     print('[BENCHMARK] sim_voice_outcome = ${d['outcome']}');

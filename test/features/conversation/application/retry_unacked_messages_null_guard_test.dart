@@ -24,6 +24,13 @@ void main() {
   });
 
   group('retryUnackedMessages -- null wireEnvelope guard', () {
+    void seedUnacked(List<ConversationMessage> messages) {
+      // The query override models a defensive SQL-boundary leak, while the
+      // seed keeps the atomic settlement fake backed by the same durable rows.
+      messageRepo.seed(messages);
+      messageRepo.unackedOutgoingOverride = messages;
+    }
+
     // ------------------------------------------------------------------
     // C.2-TEST-1: null wireEnvelope is skipped, not dereferenced
     // ------------------------------------------------------------------
@@ -42,7 +49,7 @@ void main() {
         createdAt: _testTs,
         wireEnvelope: null, // <-- null despite being 'sent'
       );
-      messageRepo.unackedOutgoingOverride = [badMsg];
+      seedUnacked([badMsg]);
 
       // Must NOT throw a null dereference error
       final count = await retryUnackedMessages(
@@ -70,7 +77,7 @@ void main() {
         createdAt: _testTs,
         wireEnvelope: '', // <-- empty string
       );
-      messageRepo.unackedOutgoingOverride = [badMsg];
+      seedUnacked([badMsg]);
 
       final count = await retryUnackedMessages(
         messageRepo: messageRepo,
@@ -96,7 +103,7 @@ void main() {
         createdAt: _testTs,
         wireEnvelope: _validV2Envelope,
       );
-      messageRepo.unackedOutgoingOverride = [goodMsg];
+      seedUnacked([goodMsg]);
 
       final count = await retryUnackedMessages(
         messageRepo: messageRepo,
@@ -122,7 +129,7 @@ void main() {
           createdAt: _testTs,
           wireEnvelope: _legacyV1Envelope,
         );
-        messageRepo.unackedOutgoingOverride = [legacyMsg];
+        seedUnacked([legacyMsg]);
 
         final count = await retryUnackedMessages(
           messageRepo: messageRepo,
@@ -164,7 +171,7 @@ void main() {
           createdAt: _testTs,
           wireEnvelope: _validV2Envelope,
         );
-        messageRepo.unackedOutgoingOverride = [nullMsg, goodMsg];
+        seedUnacked([nullMsg, goodMsg]);
 
         final count = await retryUnackedMessages(
           messageRepo: messageRepo,

@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	handoffSchema = "mknoon.sims.ios-provider-receiver-handoff.v1"
+	handoffSchema = "mknoon.sims.ios-provider-receiver-handoff.v2"
 	requestSchema = "mknoon.sims.ios-payload-fast-path-provider-request.v1"
 	payloadSchema = "mknoon.sims.ios-payload-private-fixture.v1"
 	bundleID      = "com.mknoon.app"
@@ -55,6 +55,7 @@ type receiverHandoff struct {
 	MLKemPublicKey            string `json:"mlKemPublicKey"`
 	NotificationAuthorization string `json:"notificationAuthorization"`
 	NotificationAlertSetting  string `json:"notificationAlertSetting"`
+	NotificationBadgeSetting  string `json:"notificationBadgeSetting"`
 	CapturedAt                string `json:"capturedAt"`
 }
 
@@ -307,6 +308,7 @@ func producePayload(request providerRequest, handoff receiverHandoff, runID, non
 		handoff.PeerDeviceID != request.PeerDeviceID ||
 		!map[string]bool{"authorized": true, "provisional": true, "ephemeral": true}[handoff.NotificationAuthorization] ||
 		handoff.NotificationAlertSetting != "enabled" ||
+		handoff.NotificationBadgeSetting != "enabled" ||
 		!bounded(handoff.CaptureNonce, 256) {
 		return nil, errors.New("receiver handoff is not bound to the sandbox request")
 	}

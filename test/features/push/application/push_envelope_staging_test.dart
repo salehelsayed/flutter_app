@@ -88,9 +88,21 @@ void main() {
       await old.writeAsString('{"kind":"chat",');
       await old.setLastModified(now.subtract(const Duration(minutes: 1)));
 
-      expect(await store.readAll(), isEmpty);
+      final retained = await store.readAllWithStatus();
+      expect(retained.entries, isEmpty);
+      expect(retained.retainedUnreadableFinalFiles, 1);
       expect(await young.exists(), isTrue);
       expect(await old.exists(), isFalse);
+
+      await young.setLastModified(now.subtract(const Duration(minutes: 1)));
+      final afterAgedCleanup = await store.readAllWithStatus();
+      expect(afterAgedCleanup.entries, isEmpty);
+      expect(afterAgedCleanup.retainedUnreadableFinalFiles, 0);
+      expect(await young.exists(), isFalse);
+
+      final normalEmpty = await store.readAllWithStatus();
+      expect(normalEmpty.entries, isEmpty);
+      expect(normalEmpty.retainedUnreadableFinalFiles, 0);
     },
   );
 

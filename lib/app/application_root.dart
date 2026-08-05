@@ -86,6 +86,7 @@ import 'package:flutter_app/core/notifications/group_notification_presentation_c
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
@@ -115,6 +116,7 @@ import 'package:flutter_app/features/feed/application/app_shell_controller.dart'
 import 'package:flutter_app/features/feed/domain/models/app_shell_tab.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
+import 'package:flutter_app/features/push/application/foreground_group_message_notification_resolver.dart';
 import 'package:flutter_app/features/push/application/push_decrypt_preview.dart';
 import 'package:flutter_app/features/push/application/firebase_readiness.dart';
 import 'package:flutter_app/features/push/application/group_missing_notification_feedback.dart';
@@ -197,6 +199,153 @@ Future<void> activateAccountMigrationReceiverNotificationState({
   }
 }
 
+typedef IosNotificationColdStartBeginMutation<T extends Object> =
+    Future<T?> Function();
+typedef IosNotificationColdStartIngestStaged =
+    Future<bool> Function({required String source});
+typedef IosNotificationColdStartEndMutation<T extends Object> =
+    Future<void> Function(
+      T? scope, {
+      required bool canonicalStateComplete,
+      required String source,
+    });
+
+final class _IosNotificationColdStartRecoveryFlow<T extends Object> {
+  _IosNotificationColdStartRecoveryFlow({
+    required this.scope,
+    required this.beginSucceeded,
+  });
+
+  final T? scope;
+  final bool beginSucceeded;
+  bool stagedIngressAfterBeginComplete = false;
+}
+
+/// Owns one native reconciliation scope per cold-start flow.
+///
+/// StartupRouter instances can overlap briefly during an account-migration
+/// route replacement. The opaque handle keeps each settlement paired with its
+/// own native watermark instead of letting an older flow close a newer scope.
+final class IosNotificationColdStartRecoveryBoundary<T extends Object> {
+  IosNotificationColdStartRecoveryBoundary({
+    required IosNotificationColdStartBeginMutation<T> beginMutation,
+    required IosNotificationColdStartIngestStaged ingestStaged,
+    required IosNotificationColdStartEndMutation<T> endMutation,
+  }) : _beginMutation = beginMutation,
+       _ingestStaged = ingestStaged,
+       _endMutation = endMutation;
+
+  final IosNotificationColdStartBeginMutation<T> _beginMutation;
+  final IosNotificationColdStartIngestStaged _ingestStaged;
+  final IosNotificationColdStartEndMutation<T> _endMutation;
+  final Set<_IosNotificationColdStartRecoveryFlow<T>> _activeFlows = {};
+
+  Future<Object> begin() async {
+    T? scope;
+    try {
+      scope = await _beginMutation();
+    } catch (_) {
+      scope = null;
+    }
+    final flow = _IosNotificationColdStartRecoveryFlow<T>(
+      scope: scope,
+      beginSucceeded: scope != null,
+    );
+    _activeFlows.add(flow);
+    if (flow.beginSucceeded) {
+      flow.stagedIngressAfterBeginComplete = await _tryIngest(
+        source: 'cold_start_after_begin',
+      );
+    }
+    return flow;
+  }
+
+  Future<void> settle({
+    required Object? recoveryHandle,
+    required bool canonicalStateComplete,
+  }) async {
+    if (recoveryHandle is! _IosNotificationColdStartRecoveryFlow<T> ||
+        !_activeFlows.remove(recoveryHandle)) {
+      await _endMutation(
+        null,
+        canonicalStateComplete: false,
+        source: 'cold_start_invalid_handle',
+      );
+      return;
+    }
+
+    final stagedIngressBeforeSettleComplete = recoveryHandle.beginSucceeded
+        ? await _tryIngest(source: 'cold_start_before_settle')
+        : false;
+    await _endMutation(
+      recoveryHandle.scope,
+      canonicalStateComplete:
+          recoveryHandle.beginSucceeded &&
+          recoveryHandle.stagedIngressAfterBeginComplete &&
+          stagedIngressBeforeSettleComplete &&
+          canonicalStateComplete,
+      source: 'cold_start',
+    );
+  }
+
+  Future<bool> _tryIngest({required String source}) async {
+    try {
+      return await _ingestStaged(source: source);
+    } catch (_) {
+      return false;
+    }
+  }
+}
+
+typedef IosApnsInitialNotificationOpenAttempt =
+    Future<IosApnsInitialNotificationOpenDisposition> Function();
+
+/// Adapts the app root's total warm-open router to the strict initial APNs
+/// custody contract. A false result must surface as a failed bridge attempt so
+/// the transferred launch payload remains available for an in-process retry.
+Future<void> ensureIosInitialNotificationOpenRouted(
+  Future<bool> Function() route,
+) async {
+  if (!await route()) {
+    throw StateError('Initial APNs notification route did not complete.');
+  }
+}
+
+/// Coalesces concurrent native initial-open consumers without poisoning later
+/// retries. Empty and routed are terminal; failed remains retryable.
+final class IosApnsInitialNotificationOpenGate {
+  IosApnsInitialNotificationOpenGate({
+    required IosApnsInitialNotificationOpenAttempt attempt,
+  }) : _attempt = attempt;
+
+  final IosApnsInitialNotificationOpenAttempt _attempt;
+  Future<IosApnsInitialNotificationOpenDisposition>? _inFlightOrTerminal;
+
+  Future<IosApnsInitialNotificationOpenDisposition> consume() {
+    final existing = _inFlightOrTerminal;
+    if (existing != null) return existing;
+    final attempt = _runAttempt();
+    _inFlightOrTerminal = attempt;
+    unawaited(
+      attempt.then<void>((disposition) {
+        if (disposition == IosApnsInitialNotificationOpenDisposition.failed &&
+            identical(_inFlightOrTerminal, attempt)) {
+          _inFlightOrTerminal = null;
+        }
+      }),
+    );
+    return attempt;
+  }
+
+  Future<IosApnsInitialNotificationOpenDisposition> _runAttempt() async {
+    try {
+      return await _attempt();
+    } catch (_) {
+      return IosApnsInitialNotificationOpenDisposition.failed;
+    }
+  }
+}
+
 class MyApp extends StatefulWidget {
   final IdentityRepositoryImpl repository;
   final ContactRepositoryImpl contactRepository;
@@ -257,6 +406,7 @@ class MyApp extends StatefulWidget {
   final bool isDesktop;
   final ReactionRepositoryImpl reactionRepository;
   final NotificationService notificationService;
+  final IosNotificationRecoveryCoordinator? iosNotificationRecoveryCoordinator;
   final Future<void> Function()? retryDirectNotificationProjection;
   final GroupNotificationPresentationCoordinator?
   groupNotificationPresentationCoordinator;
@@ -307,7 +457,7 @@ class MyApp extends StatefulWidget {
   /// pause is stale (no export run in flight). See handleAppResumed.
   final Future<bool> Function()? accountMigrationRecoverExportPause;
   final Future<bool> Function()? deferredRuntimeStartup;
-  final Future<void> Function({required String source})?
+  final Future<bool> Function({required String source})?
   ingestStagedPushEnvelopes;
 
   /// 191 (Fix D2): the shared Firebase-readiness latch. _MyAppState registers
@@ -378,6 +528,7 @@ class MyApp extends StatefulWidget {
     required this.reactionRepository,
     required this.isDesktop,
     required this.notificationService,
+    this.iosNotificationRecoveryCoordinator,
     this.retryDirectNotificationProjection,
     this.groupNotificationPresentationCoordinator,
     this.groupNotificationPendingReadAcknowledgementResolver,
@@ -463,10 +614,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   late final ContactRequestNotificationMaterializer
   _contactRequestNotificationMaterializer;
   late final IosApnsNotificationOpenBridge _iosApnsNotificationOpenBridge;
+  Future<bool>? _iosApnsNotificationOpenBridgeReady;
+  late final IosApnsInitialNotificationOpenGate
+  _initialIosApnsNotificationOpenGate;
   final NotificationOpenDedupeGate _remoteNotificationOpenDedupeGate =
       NotificationOpenDedupeGate();
   late final Future<void> _initialShareIntentCapture;
   late final AccountMigrationRuntimeStartupLatch runtimeStartupLatch;
+  late final IosNotificationColdStartRecoveryBoundary<
+    IosNotificationRecoveryMutationScope
+  >
+  _iosNotificationColdStartRecoveryBoundary;
   // 181: FDC-09 §6.3 presence self-publish lifecycle driver. Announces
   // `foreground` on resume (+ arms a 60s heartbeat) and `background` on pause so
   // the relay can report this peer reachable/unreachable to senders — activating
@@ -497,14 +655,53 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _iosNotificationColdStartRecoveryBoundary =
+        IosNotificationColdStartRecoveryBoundary<
+          IosNotificationRecoveryMutationScope
+        >(
+          beginMutation: () => _beginIosNotificationCanonicalMutation(
+            source: 'cold_start',
+            globallyExhaustive: true,
+            canReactivateAfterAccountClear: true,
+            allowClearedAccountPeerReactivation: true,
+          ),
+          ingestStaged: ({required source}) =>
+              _tryIngestStagedPushEnvelopes(source: source),
+          endMutation:
+              (scope, {required canonicalStateComplete, required source}) =>
+                  _endIosNotificationCanonicalMutation(
+                    scope,
+                    canonicalStateComplete: canonicalStateComplete,
+                    source: source,
+                  ),
+        );
     runtimeStartupLatch = AccountMigrationRuntimeStartupLatch(
       startRuntime: widget.deferredRuntimeStartup,
       onAttemptStarted: () {
         StartupTiming.instance.mark('deferred_runtime_start_begin');
       },
-      onStarted: () {
+      onStarted: () async {
         StartupTiming.instance.mark('deferred_runtime_start_complete');
-        unawaited(_ingestStagedPushEnvelopes(source: 'runtime_ready'));
+        if (widget.iosNotificationRecoveryCoordinator == null) {
+          unawaited(_ingestStagedPushEnvelopes(source: 'runtime_ready'));
+          return;
+        }
+        final scope = await _beginIosNotificationCanonicalMutation(
+          source: 'runtime_ready',
+          canReactivateAfterAccountClear: true,
+        );
+        try {
+          await _tryIngestStagedPushEnvelopes(source: 'runtime_ready');
+        } finally {
+          // Listener readiness and staged direct ingress do not prove that the
+          // cold-start direct + group relay drains have exhausted. The
+          // StartupRouter success boundary performs the later global pass.
+          await _endIosNotificationCanonicalMutation(
+            scope,
+            canonicalStateComplete: false,
+            source: 'runtime_ready',
+          );
+        }
       },
     );
     _setPresenceUseCase = SetPresenceUseCase(presenceSetter: widget.p2pService);
@@ -699,11 +896,17 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _recoverDroppedPushes() async {
+    await _tryRecoverDroppedPushes();
+  }
+
+  Future<bool> _tryRecoverDroppedPushes() async {
     final coordinator = widget.droppedPushRecoveryCoordinator;
-    if (coordinator == null) return;
+    if (coordinator == null) return true;
     try {
       await _ensureRuntimeServicesReady();
-      await coordinator.recoverIfPending();
+      final result = await coordinator.recoverIfPending();
+      return result.disposition == DroppedPushRecoveryDisposition.noPending ||
+          result.disposition == DroppedPushRecoveryDisposition.recovered;
     } catch (error) {
       // The coordinator is deliberately total, but retain an application-root
       // boundary so lifecycle delivery can never surface an uncaught error.
@@ -712,6 +915,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         event: 'DROPPED_PUSH_RECOVERY_ROOT_ERROR',
         details: {'error': error.runtimeType.toString()},
       );
+      return false;
     }
   }
 
@@ -732,20 +936,109 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _ingestStagedPushEnvelopes({required String source}) async {
+    await _tryIngestStagedPushEnvelopes(source: source);
+  }
+
+  Future<bool> _tryIngestStagedPushEnvelopes({required String source}) async {
     final ingest = widget.ingestStagedPushEnvelopes;
     if (ingest == null) {
-      return;
+      return true;
     }
     try {
-      await ingest(source: source);
+      return await ingest(source: source);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'STAGED_PUSH_ENVELOPE_INGEST_ERROR',
         details: {'source': source, 'error': e.toString()},
       );
+      return false;
     }
   }
+
+  Future<void> _reconcileIosNotificationRecovery({
+    required bool canonicalStateComplete,
+    required String source,
+  }) async {
+    final coordinator = widget.iosNotificationRecoveryCoordinator;
+    if (coordinator == null) return;
+    try {
+      await coordinator.reconcile(
+        canonicalStateComplete: canonicalStateComplete,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_RECOVERY_ERROR',
+        details: {'source': source, 'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<IosNotificationRecoveryMutationScope?>
+  _beginIosNotificationCanonicalMutation({
+    required String source,
+    bool globallyExhaustive = false,
+    bool canReactivateAfterAccountClear = false,
+    bool allowClearedAccountPeerReactivation = false,
+  }) async {
+    final coordinator = widget.iosNotificationRecoveryCoordinator;
+    if (coordinator == null) return null;
+    try {
+      return await coordinator.beginCanonicalMutation(
+        globallyExhaustive: globallyExhaustive,
+        canReactivateAfterAccountClear: canReactivateAfterAccountClear,
+        allowClearedAccountPeerReactivation:
+            allowClearedAccountPeerReactivation,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_RECOVERY_SCOPE_BEGIN_ERROR',
+        details: {'source': source, 'errorType': error.runtimeType.toString()},
+      );
+      return null;
+    }
+  }
+
+  Future<void> _endIosNotificationCanonicalMutation(
+    IosNotificationRecoveryMutationScope? scope, {
+    required bool canonicalStateComplete,
+    required String source,
+  }) async {
+    final coordinator = widget.iosNotificationRecoveryCoordinator;
+    if (coordinator == null) return;
+    if (scope == null) {
+      await _reconcileIosNotificationRecovery(
+        canonicalStateComplete: false,
+        source: source,
+      );
+      return;
+    }
+    try {
+      await coordinator.endCanonicalMutation(
+        scope,
+        canonicalStateComplete: canonicalStateComplete,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_RECOVERY_SCOPE_END_ERROR',
+        details: {'source': source, 'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<Object> _beginIosNotificationColdStartRecovery() =>
+      _iosNotificationColdStartRecoveryBoundary.begin();
+
+  Future<void> _settleIosNotificationColdStartRecovery({
+    required Object? recoveryHandle,
+    required bool canonicalStateComplete,
+  }) => _iosNotificationColdStartRecoveryBoundary.settle(
+    recoveryHandle: recoveryHandle,
+    canonicalStateComplete: canonicalStateComplete,
+  );
 
   void _setupShareIntentHandling() {
     // Warm-start: share arrives while app is running
@@ -827,49 +1120,121 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   void _setupIosApnsNotificationOpenBridge() {
     _iosApnsNotificationOpenBridge = IosApnsNotificationOpenBridge();
+    _initialIosApnsNotificationOpenGate = IosApnsInitialNotificationOpenGate(
+      attempt: widget.iosNotificationRecoveryCoordinator == null
+          ? _consumeInitialIosApnsNotificationOpenAfterLegacyReady
+          : _consumeInitialIosApnsNotificationOpenAndMarkReady,
+    );
     // 133: the `mknoon/ios_notification_open` MethodChannel only exists on iOS;
     // invoking it on Android throws MissingPluginException (log noise on every
     // cold start). Keep the field assigned (dispose references it) but only wire
     // the channel + readiness probe on iOS.
     if (!Platform.isIOS) return;
     _iosApnsNotificationOpenBridge.register(_routeRemoteNotificationOpen);
-    unawaited(_prepareIosApnsNotificationOpenBridgeWhenReady());
+    if (widget.iosNotificationRecoveryCoordinator == null) {
+      // Preserve the legacy best-effort path when no exact native recovery
+      // boundary exists. Production iOS cold starts instead consume through
+      // StartupRouter after its native scope and first staged pass begin.
+      unawaited(_ensureIosApnsNotificationOpenBridgeReady().then<void>((_) {}));
+      unawaited(() async {
+        try {
+          await _consumeInitialIosApnsNotificationOpenOnce();
+        } catch (_) {
+          // Legacy behavior is best-effort; the bridge already emits its
+          // native readiness/consume diagnostics.
+        }
+      }());
+    }
   }
 
-  Future<void> _prepareIosApnsNotificationOpenBridgeWhenReady({
+  Future<bool> _ensureIosApnsNotificationOpenBridgeReady() {
+    final existing = _iosApnsNotificationOpenBridgeReady;
+    if (existing != null) return existing;
+    final attempt = _prepareIosApnsNotificationOpenBridgeWhenReady();
+    _iosApnsNotificationOpenBridgeReady = attempt;
+    unawaited(
+      attempt.then<void>((isReady) {
+        if (!isReady &&
+            identical(_iosApnsNotificationOpenBridgeReady, attempt)) {
+          _iosApnsNotificationOpenBridgeReady = null;
+        }
+      }),
+    );
+    return attempt;
+  }
+
+  Future<bool> _prepareIosApnsNotificationOpenBridgeWhenReady({
     bool allowRetry = true,
   }) async {
-    await _ensureRuntimeServicesReady();
+    try {
+      await _ensureRuntimeServicesReady();
+    } catch (_) {
+      return false;
+    }
     if (!mounted) {
-      return;
+      return false;
     }
     final isReady = await _iosApnsNotificationOpenBridge
         .markNotificationOpenBridgeReady();
     if (!mounted) {
-      return;
+      return false;
     }
     if (!isReady) {
       if (allowRetry) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          Future<void>.delayed(const Duration(milliseconds: 500), () {
-            if (mounted) {
-              unawaited(
-                _prepareIosApnsNotificationOpenBridgeWhenReady(
-                  allowRetry: false,
-                ),
-              );
-            }
-          });
-        });
+        await Future<void>.delayed(const Duration(milliseconds: 500));
+        if (mounted) {
+          return _prepareIosApnsNotificationOpenBridgeWhenReady(
+            allowRetry: false,
+          );
+        }
       }
-      return;
+      return false;
     }
-    await _iosApnsNotificationOpenBridge.consumeInitialNotificationOpen(
-      _routeRemoteNotificationOpen,
-    );
+    return true;
+  }
+
+  Future<IosApnsInitialNotificationOpenDisposition>
+  _consumeInitialIosApnsNotificationOpenOnce() =>
+      _initialIosApnsNotificationOpenGate.consume();
+
+  Future<IosApnsInitialNotificationOpenDisposition>
+  _consumeInitialIosApnsNotificationOpenAfterLegacyReady() async {
+    final isReady = await _ensureIosApnsNotificationOpenBridgeReady();
+    if (!isReady || !mounted) {
+      return IosApnsInitialNotificationOpenDisposition.failed;
+    }
+    return _iosApnsNotificationOpenBridge
+        .consumeInitialNotificationOpenWithDisposition(
+          _routeInitialIosApnsNotificationOpen,
+        );
+  }
+
+  Future<IosApnsInitialNotificationOpenDisposition>
+  _consumeInitialIosApnsNotificationOpenAndMarkReady() async {
+    if (!mounted) {
+      return IosApnsInitialNotificationOpenDisposition.failed;
+    }
+    return _iosApnsNotificationOpenBridge
+        .consumeInitialNotificationOpenAndMarkReadyWithDisposition(
+          _routeInitialIosApnsNotificationOpen,
+        );
   }
 
   Future<void> _routeRemoteNotificationOpen(Map<String, dynamic> data) async {
+    await _tryRouteRemoteNotificationOpen(data);
+  }
+
+  Future<void> _routeInitialIosApnsNotificationOpen(
+    Map<String, dynamic> data,
+  ) async {
+    await ensureIosInitialNotificationOpenRouted(
+      () => _tryRouteRemoteNotificationOpen(data),
+    );
+  }
+
+  Future<bool> _tryRouteRemoteNotificationOpen(
+    Map<String, dynamic> data,
+  ) async {
     if (!_remoteNotificationOpenDedupeGate.tryBegin(data)) {
       emitFlowEvent(
         layer: 'FL',
@@ -879,7 +1244,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           'dedupeKey': NotificationOpenDedupeGate.dedupeKeyFor(data) ?? '',
         },
       );
-      return;
+      return true;
     }
 
     var routeSucceeded = false;
@@ -953,6 +1318,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     } finally {
       _remoteNotificationOpenDedupeGate.finish(data, success: routeSucceeded);
     }
+    return routeSucceeded;
   }
 
   Future<T> _withContactRequestPresentationSuppressed<T>({
@@ -1859,8 +2225,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     _isResuming = true;
     debugPrint('[LIFECYCLE] _onResumed() starting handleAppResumed...');
     var droppedPushRecoveryOwnsInbox = false;
+    var canonicalStateComplete = false;
+    var resumeCanonicalInboxDrainsComplete = false;
+    IosNotificationRecoveryMutationScope? iosRecoveryMutationScope;
 
     try {
+      iosRecoveryMutationScope = await _beginIosNotificationCanonicalMutation(
+        source: 'app_resumed',
+        globallyExhaustive: true,
+        canReactivateAfterAccountClear: true,
+      );
       widget.p2pService.markResumeStarted();
       // 181: announce `foreground` (+ arm the 60s presence heartbeat) on resume.
       // Unawaited — best-effort hint, must add no latency to the resume path.
@@ -1868,9 +2242,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // 183: arm the active-chat keepalive loop on resume (foreground-only — it
       // can never fire while suspended).
       _keepAliveUseCase.onForegrounded();
-      unawaited(_ingestStagedPushEnvelopes(source: 'app_resumed'));
+      final awaitIosCanonicalDrains =
+          widget.iosNotificationRecoveryCoordinator != null;
+      final bool stagedIngestComplete;
+      if (awaitIosCanonicalDrains) {
+        stagedIngestComplete = await _tryIngestStagedPushEnvelopes(
+          source: 'app_resumed',
+        );
+      } else {
+        stagedIngestComplete = true;
+        unawaited(_ingestStagedPushEnvelopes(source: 'app_resumed'));
+      }
       droppedPushRecoveryOwnsInbox = await _hasPendingDroppedPushRecovery();
-      await handleAppResumed(
+      final resumeResult = await handleAppResumed(
         bridge: widget.bridge,
         p2pService: widget.p2pService,
         // FDC-04 (SRC-1): the 1:1 active-peer source for resume eager-warm
@@ -1886,6 +2270,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         skipDirectInboxDrain: droppedPushRecoveryOwnsInbox,
         skipGroupInboxDrain: droppedPushRecoveryOwnsInbox,
+        awaitCanonicalInboxDrains: awaitIosCanonicalDrains,
+        onCanonicalInboxDrainsSettled: awaitIosCanonicalDrains
+            ? (complete) {
+                resumeCanonicalInboxDrainsComplete = complete;
+              }
+            : null,
         contactRepo: widget.contactRepository,
         identityRepo: widget.repository,
         retryIncompleteKeyExchangesFn: () =>
@@ -2005,6 +2395,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       // are projected. Ready rows and reconciliation jobs therefore retry from
       // current state, never from a pre-drain snapshot.
       await widget.retryDirectNotificationProjection?.call();
+      canonicalStateComplete =
+          stagedIngestComplete &&
+          resumeResult != null &&
+          (droppedPushRecoveryOwnsInbox || resumeCanonicalInboxDrainsComplete);
       // PB264-18: only start the global role/exit pass after the awaited resume
       // pipeline has rejoined each eligible topic and run its exact per-group
       // drain/exit continuation. Starting this before handleAppResumed lets a
@@ -2028,14 +2422,27 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
       widget.p2pService.checkResumeAlreadyOnline();
     } finally {
+      var droppedPushRecoveryComplete = !droppedPushRecoveryOwnsInbox;
       if (droppedPushRecoveryOwnsInbox) {
         // The ownership preflight suppressed both ordinary inbox legs, so this
         // is the only canonical full direct+group drain for the pending wake.
-        await _recoverDroppedPushes();
+        droppedPushRecoveryComplete = await _tryRecoverDroppedPushes();
       }
       await _droppedPushRecoveryRepollLatch.drain(
         hasPendingRecovery: _hasPendingDroppedPushRecovery,
         recoverIfPending: _recoverDroppedPushes,
+      );
+      if (droppedPushRecoveryOwnsInbox) {
+        droppedPushRecoveryComplete =
+            droppedPushRecoveryComplete &&
+            !await _hasPendingDroppedPushRecovery();
+        canonicalStateComplete =
+            canonicalStateComplete && droppedPushRecoveryComplete;
+      }
+      await _endIosNotificationCanonicalMutation(
+        iosRecoveryMutationScope,
+        canonicalStateComplete: canonicalStateComplete,
+        source: 'app_resumed',
       );
       widget.p2pService.clearResumeStarted();
       _isResuming = false;
@@ -2058,21 +2465,25 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleForegroundRemotePush(RemoteMessage message) async {
-    final result = await handleForegroundRemoteMessage(
-      data: message.data,
-      messageId: message.messageId,
-      // Off-iOS the gate has no sidecar dir provider, so the discard is a
-      // no-op; passing unconditionally keeps the wiring platform-free.
-      recentRemoteGate: recentRemoteNotificationGate,
-      drainOfflineInbox: () => _runAccountRuntimeNetworkVoidAction(
-        operation: 'push_foreground_inbox_drain',
-        action: widget.p2pService.drainOfflineInbox,
-      ),
-      drainGroupOfflineInboxForGroup: (groupId) async {
+    final iosRecoveryMutationScope =
+        await _beginIosNotificationCanonicalMutation(source: 'foreground_push');
+    var result = ForegroundRemoteMessageResult.drainFailed;
+    try {
+      Future<bool> drainDirectInboxCompletely() async {
+        if (!await _allowsAccountRuntimeNetworkSideEffects(
+          'push_foreground_inbox_drain',
+        )) {
+          return false;
+        }
+        final outcome = await widget.p2pService.drainOfflineInboxFully();
+        return outcome.isSuccessful && !outcome.hasMore;
+      }
+
+      Future<bool> drainGroupInboxCompletely(String groupId) async {
         if (!await _allowsAccountRuntimeNetworkSideEffects(
           'push_foreground_group_drain',
         )) {
-          return;
+          return false;
         }
         final identity = await widget.repository.loadIdentity();
         return drainGroupOfflineInboxForGroup(
@@ -2089,25 +2500,46 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           requestGroupKeyRepair: widget.requestGroupKeyRepair,
           selfPeerId: identity?.peerId,
         );
-      },
-    );
+      }
 
-    DurableNotificationToneLease? groupReactionCoordinator;
-    DurableNotificationToneLease? groupMessageCoordinator;
-    Future<DurableNotificationToneLease>
-    resolveGroupReactionCoordinator() async {
-      return groupReactionCoordinator ??=
-          await DurableNotificationToneLease.openDefault();
-    }
+      result = await handleForegroundRemoteMessage(
+        data: message.data,
+        messageId: message.messageId,
+        // Off-iOS the gate has no sidecar dir provider, so the discard is a
+        // no-op; passing unconditionally keeps the wiring platform-free.
+        recentRemoteGate: recentRemoteNotificationGate,
+        drainOfflineInbox: () => _runAccountRuntimeNetworkVoidAction(
+          operation: 'push_foreground_inbox_drain',
+          action: widget.p2pService.drainOfflineInbox,
+        ),
+        drainGroupOfflineInboxForGroup: (groupId) async {
+          await drainGroupInboxCompletely(groupId);
+        },
+        drainOfflineInboxCompletely:
+            widget.iosNotificationRecoveryCoordinator == null
+            ? null
+            : drainDirectInboxCompletely,
+        drainGroupOfflineInboxForGroupCompletely:
+            widget.iosNotificationRecoveryCoordinator == null
+            ? null
+            : drainGroupInboxCompletely,
+      );
 
-    Future<DurableNotificationToneLease>
-    resolveGroupMessageCoordinator() async {
-      return groupMessageCoordinator ??=
-          await DurableNotificationToneLease.openMobileDefault();
-    }
+      DurableNotificationToneLease? groupReactionCoordinator;
+      DurableNotificationToneLease? groupMessageCoordinator;
+      Future<DurableNotificationToneLease>
+      resolveGroupReactionCoordinator() async {
+        return groupReactionCoordinator ??=
+            await DurableNotificationToneLease.openDefault();
+      }
 
-    try {
-      if (result == ForegroundRemoteMessageResult.notificationNeeded &&
+      Future<DurableNotificationToneLease>
+      resolveGroupMessageCoordinator() async {
+        return groupMessageCoordinator ??=
+            await DurableNotificationToneLease.openMobileDefault();
+      }
+
+      if (result.needsNotification &&
           !await _allowsAccountRuntimeNetworkSideEffects(
             'push_foreground_notification_display',
           )) {
@@ -2126,6 +2558,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             localPeerId: identity?.peerId,
           );
         },
+        groupMessageNotificationResolver:
+            _resolveForegroundGroupMessageNotification,
         groupReactionNotificationResolver:
             _resolveForegroundGroupReactionNotification,
         durableReactionNotificationCoordinatorResolver:
@@ -2147,6 +2581,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         layer: 'FL',
         event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_ERROR',
         details: {'error': e.toString()},
+      );
+    } finally {
+      await _endIosNotificationCanonicalMutation(
+        iosRecoveryMutationScope,
+        canonicalStateComplete: result.canonicalStateComplete,
+        source: 'foreground_push',
       );
     }
   }
@@ -2246,6 +2686,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       );
       return false;
     }
+  }
+
+  Future<BackgroundPushNotificationFallback?>
+  _resolveForegroundGroupMessageNotification(RemoteMessage message) async {
+    final identity = await widget.repository.loadIdentity();
+    return resolveForegroundGroupMessageNotification(
+      message: message,
+      localPeerId: identity?.peerId,
+      groupRepository: widget.groupRepository,
+      locale: WidgetsBinding.instance.platformDispatcher.locale,
+      decryptGroup:
+          ({required groupKey, required ciphertext, required nonce}) =>
+              callGroupDecrypt(widget.bridge, groupKey, ciphertext, nonce),
+    );
   }
 
   Future<BackgroundPushNotificationFallback?>
@@ -2444,6 +2898,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleAccountMigrationReceiverActivated() async {
+    final iosRecoveryMutationScope =
+        await _beginIosNotificationCanonicalMutation(
+          source: 'account_migration_receiver_activated',
+          globallyExhaustive: true,
+          canReactivateAfterAccountClear: true,
+          allowClearedAccountPeerReactivation: true,
+        );
     final pushRegistration = widget.pushRegistrationCoordinator;
     pushRegistration?.beginAccountBindingCutover();
     var bindingCutoverCompleted = false;
@@ -2473,8 +2934,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         endCanonicalNotificationRecovery:
             widget.groupMessageListener.endCanonicalNotificationRecovery,
       );
+      await _endIosNotificationCanonicalMutation(
+        iosRecoveryMutationScope,
+        canonicalStateComplete: true,
+        source: 'account_migration_receiver_activated',
+      );
       bindingCutoverCompleted = true;
     } finally {
+      if (!bindingCutoverCompleted) {
+        await _endIosNotificationCanonicalMutation(
+          iosRecoveryMutationScope,
+          canonicalStateComplete: false,
+          source: 'account_migration_receiver_activated_failed',
+        );
+      }
       if (bindingCutoverCompleted) {
         await pushRegistration?.completeAccountBindingCutover();
       }
@@ -2587,6 +3060,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               _handleAccountMigrationReceiverActivated,
           clearDeliveredNotifications:
               widget.notificationService.clearDeliveredNotifications,
+          clearIosNotificationRecovery:
+              widget.iosNotificationRecoveryCoordinator?.clearAccount,
           ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
             source: 'startup_router_notification_tap',
           ),
@@ -2595,6 +3070,23 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           onStartupHomeReady: _onStartupHomeReady,
           recoverDroppedPushes: _recoverDroppedPushes,
           hasPendingDroppedPushRecovery: _hasPendingDroppedPushRecovery,
+          recoverDroppedPushesCompletely:
+              widget.iosNotificationRecoveryCoordinator == null
+              ? null
+              : _tryRecoverDroppedPushes,
+          onIosNotificationColdStartRecoveryStarted:
+              widget.iosNotificationRecoveryCoordinator == null
+              ? null
+              : _beginIosNotificationColdStartRecovery,
+          consumeInitialIosApnsNotificationOpen:
+              !Platform.isIOS ||
+                  widget.iosNotificationRecoveryCoordinator == null
+              ? null
+              : _consumeInitialIosApnsNotificationOpenOnce,
+          onIosNotificationColdStartRecoverySettled:
+              widget.iosNotificationRecoveryCoordinator == null
+              ? null
+              : _settleIosNotificationColdStartRecovery,
         ),
         debugShowCheckedModeBanner: false,
       ),

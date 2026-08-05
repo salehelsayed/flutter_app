@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -253,6 +254,25 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
+  final requiresPrivateTerminalCleanup =
+      !currentMessage.isIncoming &&
+      currentMessage.privateMediaPolicy.version == 1 &&
+      (currentMessage.privateMediaMode == PrivateMediaMode.protected ||
+          currentMessage.privateMediaMode == PrivateMediaMode.viewOnce);
+  final ordinaryTransportRepository =
+      messageRepo is OutgoingTransportMutationRepository
+      ? messageRepo as OutgoingTransportMutationRepository
+      : null;
+  if (!requiresPrivateTerminalCleanup && ordinaryTransportRepository == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ORDINARY_AUTHORITY_UNAVAILABLE',
+      details: {'id': _messageIdPreview(originalMessage.id)},
+    );
+    emitDeleteTiming(outcome: 'ordinary_authority_unavailable');
+    return (SendChatMessageResult.invalidMessage, null);
+  }
+
   if (!p2pService.currentState.isStarted) {
     emitFlowEvent(
       layer: 'FL',
@@ -283,11 +303,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
 
   final deletedAt = DateTime.now().toUtc().toIso8601String();
 
-  final requiresPrivateTerminalCleanup =
-      !currentMessage.isIncoming &&
-      currentMessage.privateMediaPolicy.version == 1 &&
-      (currentMessage.privateMediaMode == PrivateMediaMode.protected ||
-          currentMessage.privateMediaMode == PrivateMediaMode.viewOnce);
   final privateLifecycleRepository =
       messageRepo is DirectPrivateMediaLifecycleRepository
       ? messageRepo as DirectPrivateMediaLifecycleRepository
@@ -318,7 +333,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     emitDeleteTiming(outcome: 'private_cleanup_unavailable');
     return (SendChatMessageResult.sendFailed, null);
   }
-
   String jsonString;
   try {
     jsonString = await buildDeletionWireEnvelope(
@@ -361,9 +375,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   // envelope, never for this newly minted deletion envelope. Clear it before
   // the private update-only commit; transport is restored only by an actual
   // deletion send or inbox deposit below.
-  final pendingTombstoneCandidate = requiresPrivateTerminalCleanup
-      ? builtPendingTombstone.copyWith(transport: null)
-      : builtPendingTombstone;
+  final pendingTombstoneCandidate = builtPendingTombstone.copyWith(
+    transport: null,
+    relayExpiresAt: null,
+    custodyCheckedAt: null,
+  );
   late final ConversationMessage pendingTombstone;
   if (requiresPrivateTerminalCleanup) {
     final committed = await privateDeleteRepository!
@@ -382,8 +398,22 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     }
     pendingTombstone = committed;
   } else {
-    await messageRepo.saveMessage(pendingTombstoneCandidate);
-    pendingTombstone = pendingTombstoneCandidate;
+    final staged = await ordinaryTransportRepository!
+        .stageOutgoingOrdinaryAttempt(
+          expected: currentMessage,
+          staged: pendingTombstoneCandidate,
+          kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        );
+    if (!staged.authorizesTransport) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ORDINARY_COMMIT_PRESERVED',
+        details: {'id': _messageIdPreview(currentMessage.id)},
+      );
+      emitDeleteTiming(outcome: 'ordinary_commit_preserved');
+      return (SendChatMessageResult.invalidMessage, null);
+    }
+    pendingTombstone = staged.message!;
   }
   if (requiresPrivateTerminalCleanup) {
     await reactionRepo?.deleteReactionsForMessage(pendingTombstone.id);
@@ -437,7 +467,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           tombstone: pendingTombstone,
           targetPeerId: targetPeerId,
           jsonString: jsonString,
-          acknowledged: sendResult.acknowledged,
+          provesDeviceDelivery: sendResult.acked == true,
           via: _resolveDeleteTransport(
             p2pService,
             targetPeerId,
@@ -477,33 +507,57 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   final completer = Completer<_DeleteRaceResult>();
   var pendingCount = raceFutures.length;
   final failures = <_DeleteRaceResult>[];
+  final writtenResults = <_DeleteRaceResult>[];
+
+  void completeWithoutProof() {
+    if (completer.isCompleted) return;
+    var failureReason = failures.isNotEmpty
+        ? failures.first.reason ?? 'unknown'
+        : 'unknown';
+    var relayProbeEligible = false;
+    for (final failure in failures) {
+      if (failure.relayProbeEligible) {
+        failureReason = failure.reason ?? failureReason;
+        relayProbeEligible = true;
+        break;
+      }
+    }
+    if (writtenResults.isNotEmpty) {
+      final written = writtenResults.first;
+      completer.complete(
+        _DeleteRaceResult.succeeded(
+          via: written.via!,
+          authenticated: written.authenticated,
+          explicitlyAcked: written.explicitlyAcked,
+          reason: failureReason,
+          relayProbeEligible: relayProbeEligible,
+        ),
+      );
+      return;
+    }
+    completer.complete(
+      _DeleteRaceResult.failed(
+        failureReason,
+        relayProbeEligible: relayProbeEligible,
+      ),
+    );
+  }
 
   for (final future in raceFutures) {
     future
         .then((result) {
-          if (result.success && !completer.isCompleted) {
+          if (result.provesDeviceDeliveryForCurrentProtocol &&
+              !completer.isCompleted) {
             completer.complete(result);
           } else {
-            failures.add(result);
+            if (result.success) {
+              writtenResults.add(result);
+            } else {
+              failures.add(result);
+            }
             pendingCount--;
             if (pendingCount <= 0 && !completer.isCompleted) {
-              var failureReason = failures.isNotEmpty
-                  ? failures.first.reason ?? 'unknown'
-                  : 'unknown';
-              var relayProbeEligible = false;
-              for (final failure in failures) {
-                if (failure.relayProbeEligible) {
-                  failureReason = failure.reason ?? failureReason;
-                  relayProbeEligible = true;
-                  break;
-                }
-              }
-              completer.complete(
-                _DeleteRaceResult.failed(
-                  failureReason,
-                  relayProbeEligible: relayProbeEligible,
-                ),
-              );
+              completeWithoutProof();
             }
           }
         })
@@ -511,22 +565,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           failures.add(_DeleteRaceResult.failed(e.toString()));
           pendingCount--;
           if (pendingCount <= 0 && !completer.isCompleted) {
-            completer.complete(
-              _DeleteRaceResult.failed(failures.first.reason ?? 'unknown'),
-            );
+            completeWithoutProof();
           }
         });
   }
 
   final raceResult = await completer.future;
-  if (raceResult.success) {
+  if (raceResult.provesDeviceDeliveryForCurrentProtocol) {
     return _completeSuccessfulDeleteSend(
       p2pService: p2pService,
       messageRepo: messageRepo,
       tombstone: pendingTombstone,
       targetPeerId: targetPeerId,
       jsonString: jsonString,
-      acknowledged: raceResult.acknowledged,
+      provesDeviceDelivery: true,
       via: raceResult.via!,
       isOutgoingPrivate: requiresPrivateTerminalCleanup,
       emitTimingEvent: emitTimingEvent,
@@ -535,6 +587,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   }
 
   var failureReason = raceResult.reason ?? 'unknown';
+  var writtenResult = raceResult.success ? raceResult : null;
   if (raceResult.relayProbeEligible) {
     final relayProbeResult = await _tryRelayProbeDeleteSend(
       p2pService,
@@ -542,21 +595,37 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       jsonString,
       failureReason: failureReason,
     );
-    if (relayProbeResult.success) {
+    if (relayProbeResult.provesDeviceDeliveryForCurrentProtocol) {
       return _completeSuccessfulDeleteSend(
         p2pService: p2pService,
         messageRepo: messageRepo,
         tombstone: pendingTombstone,
         targetPeerId: targetPeerId,
         jsonString: jsonString,
-        acknowledged: relayProbeResult.acknowledged,
+        provesDeviceDelivery: true,
         via: relayProbeResult.via!,
         isOutgoingPrivate: requiresPrivateTerminalCleanup,
         emitTimingEvent: emitTimingEvent,
         deleteStopwatch: deleteStopwatch,
       );
     }
+    if (relayProbeResult.success) writtenResult = relayProbeResult;
     failureReason = relayProbeResult.reason ?? failureReason;
+  }
+
+  if (writtenResult != null) {
+    return _completeSuccessfulDeleteSend(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      tombstone: pendingTombstone,
+      targetPeerId: targetPeerId,
+      jsonString: jsonString,
+      provesDeviceDelivery: false,
+      via: writtenResult.via!,
+      isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      emitTimingEvent: emitTimingEvent,
+      deleteStopwatch: deleteStopwatch,
+    );
   }
 
   try {
@@ -749,14 +818,19 @@ Future<void> _bestEffortCleanup({
 
 class _DeleteRaceResult {
   final bool success;
-  final bool acknowledged;
+  final bool authenticated;
+  final bool explicitlyAcked;
   final String? via;
   final String? reason;
   final bool relayProbeEligible;
 
+  bool get provesDeviceDeliveryForCurrentProtocol =>
+      success && authenticated && explicitlyAcked;
+
   const _DeleteRaceResult._({
     required this.success,
-    this.acknowledged = false,
+    this.authenticated = false,
+    this.explicitlyAcked = false,
     this.via,
     this.reason,
     this.relayProbeEligible = false,
@@ -764,9 +838,18 @@ class _DeleteRaceResult {
 
   factory _DeleteRaceResult.succeeded({
     required String via,
-    bool acknowledged = false,
-  }) =>
-      _DeleteRaceResult._(success: true, acknowledged: acknowledged, via: via);
+    required bool authenticated,
+    bool explicitlyAcked = false,
+    String? reason,
+    bool relayProbeEligible = false,
+  }) => _DeleteRaceResult._(
+    success: true,
+    authenticated: authenticated,
+    explicitlyAcked: explicitlyAcked,
+    via: via,
+    reason: reason,
+    relayProbeEligible: relayProbeEligible,
+  );
 
   factory _DeleteRaceResult.failed(
     String reason, {
@@ -785,7 +868,7 @@ _completeSuccessfulDeleteSend({
   required ConversationMessage tombstone,
   required String targetPeerId,
   required String jsonString,
-  required bool acknowledged,
+  required bool provesDeviceDelivery,
   required String via,
   required bool isOutgoingPrivate,
   required bool emitTimingEvent,
@@ -795,7 +878,7 @@ _completeSuccessfulDeleteSend({
     p2pService: p2pService,
     targetPeerId: targetPeerId,
     jsonString: jsonString,
-    acknowledged: acknowledged,
+    provesDeviceDelivery: provesDeviceDelivery,
     tombstone: tombstone,
     via: via,
   );
@@ -845,19 +928,35 @@ Future<ConversationMessage?> _persistOutgoingDeleteTombstoneResult({
           expectedEnvelope: expectedEnvelope,
         );
   }
-  await messageRepo.saveMessage(tombstone);
-  return tombstone;
+  if (messageRepo is! OutgoingTransportMutationRepository) return null;
+  final result = await (messageRepo as OutgoingTransportMutationRepository)
+      .settleOutgoingOrdinaryDeleteTombstone(
+        messageId: tombstone.id,
+        expectedContactPeerId: tombstone.contactPeerId,
+        expectedEnvelope: expectedEnvelope,
+        status: tombstone.status,
+        transport: tombstone.transport,
+        relayExpiresAt: tombstone.relayExpiresAt,
+        mode: OutgoingOrdinarySettlementMode.live,
+      );
+  return switch (result.outcome) {
+    OutgoingOrdinaryMutationOutcome.applied ||
+    OutgoingOrdinaryMutationOutcome.idempotent ||
+    OutgoingOrdinaryMutationOutcome.preserved => result.message,
+    OutgoingOrdinaryMutationOutcome.removed ||
+    OutgoingOrdinaryMutationOutcome.refused => null,
+  };
 }
 
 Future<ConversationMessage> _persistOutgoingDeleteResult({
   required P2PService p2pService,
   required String targetPeerId,
   required String jsonString,
-  required bool acknowledged,
+  required bool provesDeviceDelivery,
   required ConversationMessage tombstone,
   required String via,
 }) async {
-  if (acknowledged) {
+  if (provesDeviceDelivery) {
     return normalizeOutgoingDeleteTombstoneVisibility(
       tombstone.copyWith(
         status: 'delivered',
@@ -943,7 +1042,10 @@ Future<_DeleteRaceResult> _tryLocalDeleteSend(
     timeoutMs: timeoutMs,
   );
   if (sent) {
-    return _DeleteRaceResult.succeeded(via: 'local', acknowledged: true);
+    // WebSocket ownership is unauthenticated even when its receiver reports a
+    // durable write. Keep it only as written evidence while libp2p can prove
+    // target-peer delivery independently.
+    return _DeleteRaceResult.succeeded(via: 'local', authenticated: false);
   }
   return _DeleteRaceResult.failed('local_send_failed');
 }
@@ -979,7 +1081,8 @@ Future<_DeleteRaceResult> _tryDirectDeleteSend(
 
   return _DeleteRaceResult.succeeded(
     via: _resolveDeleteTransport(p2pService, targetPeerId, sendResult),
-    acknowledged: sendResult.acknowledged,
+    authenticated: true,
+    explicitlyAcked: sendResult.acked == true,
   );
 }
 
@@ -1018,7 +1121,8 @@ Future<_DeleteRaceResult> _tryRelayProbeDeleteSend(
                 targetPeerId,
                 sendResult,
               ),
-              acknowledged: sendResult.acknowledged,
+              authenticated: true,
+              explicitlyAcked: sendResult.acked == true,
             );
           }
         } catch (_) {}

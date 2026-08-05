@@ -24,13 +24,14 @@ integration_test/scripts/ios_receiver_bootstrap.py
 ```
 
 The output schema is
-`mknoon.sims.ios-provider-receiver-handoff.v1`. It binds the nonce, receiver
+`mknoon.sims.ios-provider-receiver-handoff.v2`. It binds the nonce, receiver
 device ID, observed libp2p transport peer ID, bundle ID, `development` APNs
 environment, raw APNs device token, receiver ML-KEM public key, and capture
 time. It also binds native `notificationAuthorization`
 (`authorized`/`provisional`/`ephemeral`) and `notificationAlertSetting`
-(`enabled` only); capture remains gated until settings are known and fails
-closed for denied, undetermined, or alert-disabled installations. The APNs
+(`enabled` only), plus `notificationBadgeSetting` (`enabled` only); capture
+remains gated until settings are known and fails closed for denied,
+undetermined, alert-disabled, or badge-disabled installations. The APNs
 token appears only in this 0600 private input and the transient protected
 app-container response. It is never printed or passed as a process argument.
 The provider adapter consumes the file through
@@ -71,3 +72,19 @@ action/status, bundle ID, nonce/receiver/sender/payload hashes, fixture digest,
 native status/result code, and completion time. Cleanup also removes the
 transient protected app-container command/result files. Both actions use the
 same receiver ID and handoff nonce environment variables as receiver capture.
+
+## Exact notification-recovery proof
+
+The same helper accepts `--action prove-recovery` after one real APNs card has
+been observed on a fresh dedicated install. It privately stages a nonce-,
+receiver-, account-, and payload-bound command. The bootstrap-enabled Runner
+adds one unrelated local sentinel, executes the production exact-recovery
+coordinator, and returns only counts and booleans: the sole delivered APNs
+content had `badge == nil`, the absolute badge changed from one to zero, the
+owned card was removed, and the unrelated sentinel survived. Raw account,
+notification, token, and sentinel identities never enter the host receipt.
+
+Set `SIMS_IOS_NOTIFICATION_RECOVERY_RECEIPT_PATH` to an owner-only output path.
+The result schema is
+`mknoon.sims.ios-notification-recovery-host-receipt.v1`; protected command and
+result files are removed before the action reports PASS.

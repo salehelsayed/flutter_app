@@ -35,7 +35,8 @@ void main() {
             limit: limit,
             entryIds: entryIds,
           ),
-      dbLoadInboxStagingEntry: (entryId) => dbLoadInboxStagingEntry(db, entryId),
+      dbLoadInboxStagingEntry: (entryId) =>
+          dbLoadInboxStagingEntry(db, entryId),
       dbDeleteInboxStagingEntry: (entryId) =>
           dbDeleteInboxStagingEntry(db, entryId),
       dbMarkInboxStagingEntryRetryable:
@@ -112,16 +113,19 @@ void main() {
       expect(rows.single['envelope'], 'first');
     });
 
-    test('mixed batch reports only the newly-inserted ids as ackable', () async {
-      await repo.stageEntries([makeEntry(entryId: 'entry-A')]);
+    test(
+      'mixed batch reports only the newly-inserted ids as ackable',
+      () async {
+        await repo.stageEntries([makeEntry(entryId: 'entry-A')]);
 
-      final ackable = await repo.stageEntries([
-        makeEntry(entryId: 'entry-A'), // already staged → not ackable
-        makeEntry(entryId: 'entry-B'), // fresh → ackable
-      ]);
+        final ackable = await repo.stageEntries([
+          makeEntry(entryId: 'entry-A'), // already staged → not ackable
+          makeEntry(entryId: 'entry-B'), // fresh → ackable
+        ]);
 
-      expect(ackable, ['entry-B']);
-    });
+        expect(ackable, ['entry-B']);
+      },
+    );
 
     test(
       'a re-staged still-pending entry remains recoverable by id (safety net intact)',

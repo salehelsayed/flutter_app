@@ -37,6 +37,7 @@ func TestProducePayloadUsesRealV2EncryptionAndOmitsHandoffSecrets(t *testing.T) 
 		MLKemPublicKey:            keys.PublicKey,
 		NotificationAuthorization: "authorized",
 		NotificationAlertSetting:  "enabled",
+		NotificationBadgeSetting:  "enabled",
 		CapturedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
@@ -109,6 +110,7 @@ func TestProducePayloadRequiresExactly32DecodedAPNSTokenBytes(t *testing.T) {
 		MLKemPublicKey:            keys.PublicKey,
 		NotificationAuthorization: "authorized",
 		NotificationAlertSetting:  "enabled",
+		NotificationBadgeSetting:  "enabled",
 		CapturedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	for name, token := range map[string]string{
@@ -132,6 +134,11 @@ func TestProducePayloadRequiresExactly32DecodedAPNSTokenBytes(t *testing.T) {
 	handoff.NotificationAlertSetting = "disabled"
 	if _, err := producePayload(request, handoff, "major-ios-run", "major-ios-nonce"); err == nil {
 		t.Fatal("disabled notification alerts were accepted")
+	}
+	handoff.NotificationAlertSetting = "enabled"
+	handoff.NotificationBadgeSetting = "disabled"
+	if _, err := producePayload(request, handoff, "major-ios-run", "major-ios-nonce"); err == nil {
+		t.Fatal("disabled notification badges were accepted")
 	}
 }
 
@@ -160,6 +167,7 @@ func TestProducePayloadRejectsTitleOutsideContactUsernameBound(t *testing.T) {
 		MLKemPublicKey:            keys.PublicKey,
 		NotificationAuthorization: "authorized",
 		NotificationAlertSetting:  "enabled",
+		NotificationBadgeSetting:  "enabled",
 		CapturedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 	}
 
@@ -219,6 +227,7 @@ func TestExecuteWritesOwnerOnlyPayloadAndRejectsLooseHandoff(t *testing.T) {
 		MLKemPublicKey:            keys.PublicKey,
 		NotificationAuthorization: "authorized",
 		NotificationAlertSetting:  "enabled",
+		NotificationBadgeSetting:  "enabled",
 		CapturedAt:                time.Now().UTC().Format(time.RFC3339Nano),
 	}
 	writeJSON := func(path string, value any, mode os.FileMode) {

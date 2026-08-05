@@ -1,18 +1,118 @@
 // 115 Phase 2.2 — receipt apply: 'inboxed' → 'delivered' flips ONLY here
 // (G4 allowed minting site (a)). All forward transitions ride
-// conditionalTransitionStatus (D-6) so a late receipt can never downgrade
-// and a racing sweep can never resurrect.
+// one typed receipt settlement so a late receipt can never downgrade and a
+// racing sweep can never resurrect.
 
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
+import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
+
+class _ReceiptMutationSpy extends FakeMessageRepository {
+  int getMessageCallCount = 0;
+
+  final List<
+    ({
+      String messageId,
+      String expectedContactPeerId,
+      String? expectedEnvelope,
+      String status,
+      String? transport,
+      int? relayExpiresAt,
+      OutgoingOrdinarySettlementMode mode,
+    })
+  >
+  normalCalls = [];
+  final List<
+    ({
+      String messageId,
+      String expectedContactPeerId,
+      String? expectedEnvelope,
+      String status,
+      String? transport,
+      int? relayExpiresAt,
+      OutgoingOrdinarySettlementMode mode,
+    })
+  >
+  tombstoneCalls = [];
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) {
+    getMessageCallCount++;
+    return super.getMessage(id);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) {
+    normalCalls.add((
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+    ));
+    return super.settleOutgoingOrdinaryTransport(
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) {
+    tombstoneCalls.add((
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+    ));
+    return super.settleOutgoingOrdinaryDeleteTombstone(
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+    );
+  }
+}
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -46,6 +146,7 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
 ChatMessage buildReceipt({
   String from = 'peer-x',
   required List<String> messageIds,
+  String? transport = 'direct',
 }) {
   return ChatMessage(
     from: from,
@@ -53,13 +154,11 @@ ChatMessage buildReceipt({
     content: jsonEncode({
       'type': 'delivery_receipt',
       'version': '1',
-      'payload': {
-        'messageIds': messageIds,
-        'ts': '2026-06-13T12:00:00.000Z',
-      },
+      'payload': {'messageIds': messageIds, 'ts': '2026-06-13T12:00:00.000Z'},
     }),
     timestamp: '2026-06-13T12:00:00.000Z',
     isIncoming: true,
+    transport: transport,
   );
 }
 
@@ -92,6 +191,237 @@ void main() {
 
   group('handleDeliveryReceipt', () {
     test(
+      'R2 receipt provenance accepts direct relay inbox and rejects wifi null unknown',
+      () async {
+        for (final transport in const <String>['direct', 'relay', 'inbox']) {
+          final repo = _ReceiptMutationSpy();
+          final messageId = 'trusted-$transport';
+          repo.seed(<ConversationMessage>[makeInboxedOutgoing(id: messageId)]);
+
+          final liveReceipt = buildReceipt(
+            messageIds: <String>[messageId],
+            transport: transport,
+          );
+          final receipt = transport == 'inbox'
+              ? InboxStagingEntry(
+                  entryId: 'receipt-entry',
+                  ownerPeerId: 'my-peer',
+                  senderPeerId: 'peer-x',
+                  messageType: 'delivery_receipt',
+                  relayTimestamp: liveReceipt.timestamp,
+                  envelope: liveReceipt.content,
+                  stagedAt: '2026-06-13T12:00:01.000Z',
+                ).toChatMessage()
+              : liveReceipt;
+
+          await handleDeliveryReceipt(message: receipt, messageRepo: repo);
+
+          expect(repo.getMessageCallCount, 1, reason: transport);
+          expect(repo.normalCalls, hasLength(1), reason: transport);
+          expect(repo.normalCalls.single.messageId, messageId);
+          expect(
+            repo.normalCalls.single.mode,
+            OutgoingOrdinarySettlementMode.receipt,
+          );
+          final settled = await repo.getMessage(messageId);
+          expect(settled!.status, 'delivered', reason: transport);
+          expect(settled.wireEnvelope, isNull, reason: transport);
+        }
+
+        for (final transport in <String?>['wifi', null, 'unknown']) {
+          final repo = _ReceiptMutationSpy();
+          final mediaRepo = FakeMediaAttachmentRepository();
+          final ordinary = makeInboxedOutgoing(id: 'untrusted-ordinary');
+          final protected = makeInboxedOutgoing(id: 'untrusted-protected')
+              .copyWith(
+                privateMediaPolicy: const PrivateMediaPolicy.protected(),
+                privateMediaState: PrivateMediaLifecycleState.available,
+              );
+          final viewOnce = makeInboxedOutgoing(id: 'untrusted-view-once')
+              .copyWith(
+                privateMediaPolicy: const PrivateMediaPolicy.viewOnce(),
+                privateMediaState: PrivateMediaLifecycleState.available,
+              );
+          final tombstone = makeInboxedOutgoing(id: 'untrusted-tombstone')
+              .copyWith(
+                text: '',
+                deletedAt: '2026-06-13T11:30:00.000Z',
+                deletedByPeerId: 'my-peer',
+                wireEnvelope: 'delete-envelope',
+              );
+          final originalRows = <ConversationMessage>[
+            ordinary,
+            protected,
+            viewOnce,
+            tombstone,
+          ];
+          repo.seed(originalRows);
+
+          await handleDeliveryReceipt(
+            message: buildReceipt(
+              messageIds: originalRows
+                  .map((message) => message.id)
+                  .toList(growable: false),
+              transport: transport,
+            ),
+            messageRepo: repo,
+            mediaAttachmentRepo: mediaRepo,
+          );
+
+          expect(repo.getMessageCallCount, 0, reason: 'transport=$transport');
+          expect(repo.normalCalls, isEmpty, reason: 'transport=$transport');
+          expect(repo.tombstoneCalls, isEmpty, reason: 'transport=$transport');
+          expect(
+            repo.ordinaryMutationCallCount,
+            0,
+            reason: 'transport=$transport',
+          );
+          expect(
+            mediaRepo.getAttachmentsForMessageCallCount,
+            0,
+            reason: 'transport=$transport',
+          );
+          expect(repo.saveMessageCallCount, 0, reason: 'transport=$transport');
+          for (final original in originalRows) {
+            final preserved = await repo.getMessage(original.id);
+            expect(preserved!.status, original.status, reason: original.id);
+            expect(
+              preserved.wireEnvelope,
+              original.wireEnvelope,
+              reason: original.id,
+            );
+            expect(preserved.hiddenAt, original.hiddenAt, reason: original.id);
+          }
+        }
+
+        final malformedRepo = _ReceiptMutationSpy();
+        final malformedEvents = await captureFlowEvents(() async {
+          await handleDeliveryReceipt(
+            message: const ChatMessage(
+              from: 'peer-x',
+              to: 'my-peer',
+              content: 'not-json',
+              timestamp: '2026-06-13T12:00:00.000Z',
+              isIncoming: true,
+              transport: 'wifi',
+            ),
+            messageRepo: malformedRepo,
+          );
+        });
+        expect(malformedRepo.getMessageCallCount, 0);
+        expect(
+          malformedEvents.any(
+            (event) => event['event'] == 'DELIVERY_RECEIPT_PARSE_ERROR',
+          ),
+          isFalse,
+          reason: 'untrusted provenance must return before parsing content',
+        );
+      },
+    );
+
+    test(
+      'peer-bound ordinary receipt uses one atomic settlement without widening authority',
+      () async {
+        final repo = _ReceiptMutationSpy();
+        final tombstone = makeInboxedOutgoing(id: 'receipt-tombstone').copyWith(
+          text: '',
+          deletedAt: '2026-06-13T11:30:00.000Z',
+          deletedByPeerId: 'my-peer',
+          wireEnvelope: 'delete-envelope',
+        );
+        repo.seed(<ConversationMessage>[
+          makeInboxedOutgoing(id: 'receipt-inboxed'),
+          makeInboxedOutgoing(
+            id: 'receipt-legacy-null-envelope',
+            status: 'sent',
+          ).copyWith(wireEnvelope: null),
+          makeInboxedOutgoing(id: 'receipt-failed', status: 'failed'),
+          makeInboxedOutgoing(id: 'receipt-sending', status: 'sending'),
+          makeInboxedOutgoing(id: 'receipt-foreign', contactPeerId: 'peer-y'),
+          tombstone,
+        ]);
+
+        await handleDeliveryReceipt(
+          message: buildReceipt(
+            messageIds: const <String>[
+              'receipt-inboxed',
+              'receipt-legacy-null-envelope',
+              'receipt-failed',
+              'receipt-sending',
+              'receipt-foreign',
+              'receipt-tombstone',
+            ],
+          ),
+          messageRepo: repo,
+        );
+
+        expect(repo.normalCalls.map((call) => call.messageId), <String>[
+          'receipt-inboxed',
+          'receipt-legacy-null-envelope',
+          'receipt-failed',
+          'receipt-sending',
+        ]);
+        expect(repo.tombstoneCalls.map((call) => call.messageId), <String>[
+          'receipt-tombstone',
+        ]);
+        expect(
+          repo.normalCalls.every(
+            (call) =>
+                call.expectedContactPeerId == 'peer-x' &&
+                call.status == 'delivered' &&
+                call.mode == OutgoingOrdinarySettlementMode.receipt,
+          ),
+          isTrue,
+        );
+        expect(
+          repo.normalCalls
+              .singleWhere(
+                (call) => call.messageId == 'receipt-legacy-null-envelope',
+              )
+              .expectedEnvelope,
+          isNull,
+        );
+        expect(
+          repo.tombstoneCalls.single.mode,
+          OutgoingOrdinarySettlementMode.receipt,
+        );
+        expect(repo.saveMessageCallCount, 0);
+        expect(repo.conditionalTransitionCallCount, 0);
+        expect(repo.wireEnvelopeUpdates, isEmpty);
+
+        for (final id in const <String>[
+          'receipt-inboxed',
+          'receipt-legacy-null-envelope',
+          'receipt-failed',
+        ]) {
+          final settled = await repo.getMessage(id);
+          expect(settled!.status, 'delivered', reason: id);
+          expect(settled.wireEnvelope, isNull, reason: id);
+        }
+        expect((await repo.getMessage('receipt-sending'))!.status, 'sending');
+        expect((await repo.getMessage('receipt-foreign'))!.status, 'inboxed');
+        final settledTombstone = await repo.getMessage('receipt-tombstone');
+        expect(settledTombstone!.status, 'delivered');
+        expect(settledTombstone.wireEnvelope, isNull);
+        expect(settledTombstone.hiddenAt, settledTombstone.deletedAt);
+
+        final typedCallsAfterFirst =
+            repo.normalCalls.length + repo.tombstoneCalls.length;
+        await handleDeliveryReceipt(
+          message: buildReceipt(
+            messageIds: const <String>['receipt-inboxed', 'receipt-tombstone'],
+          ),
+          messageRepo: repo,
+        );
+        expect(
+          repo.normalCalls.length + repo.tombstoneCalls.length,
+          typedCallsAfterFirst,
+          reason: 'duplicate delivered receipts are field-freezing no-ops',
+        );
+      },
+    );
+
+    test(
       "flips matching outgoing 'inboxed' rows to 'delivered' and clears wire_envelope",
       () async {
         messageRepo.seed([makeInboxedOutgoing()]);
@@ -106,9 +436,9 @@ void main() {
         final row = await messageRepo.getMessage('msg-rcpt-001');
         expect(row!.status, 'delivered');
         expect(row.wireEnvelope, isNull);
-        // D-6: the flip must ride the conditional transition, never a blind
-        // INSERT OR REPLACE persist.
-        expect(messageRepo.conditionalTransitionCallCount, greaterThan(0));
+        expect(messageRepo.ordinaryMutationCallCount, 1);
+        expect(messageRepo.conditionalTransitionCallCount, 0);
+        expect(messageRepo.saveMessageCallCount, 0);
         expect(
           events.any((e) => e['event'] == 'DELIVERY_RECEIPT_APPLIED'),
           isTrue,
@@ -116,59 +446,65 @@ void main() {
       },
     );
 
-    test('ignores receipts for foreign-peer, incoming, or unknown message ids', () async {
-      messageRepo.seed([
-        // Outgoing 'inboxed' row that belongs to peer Y, not the receipt
-        // sender X.
-        makeInboxedOutgoing(id: 'msg-foreign-001', contactPeerId: 'peer-y'),
-        // Incoming row with a matching id.
-        makeInboxedOutgoing(id: 'msg-incoming-001', isIncoming: true),
-      ]);
+    test(
+      'ignores receipts for foreign-peer, incoming, or unknown message ids',
+      () async {
+        messageRepo.seed([
+          // Outgoing 'inboxed' row that belongs to peer Y, not the receipt
+          // sender X.
+          makeInboxedOutgoing(id: 'msg-foreign-001', contactPeerId: 'peer-y'),
+          // Incoming row with a matching id.
+          makeInboxedOutgoing(id: 'msg-incoming-001', isIncoming: true),
+        ]);
 
-      await handleDeliveryReceipt(
-        message: buildReceipt(
-          from: 'peer-x',
-          messageIds: ['msg-foreign-001', 'msg-incoming-001', 'msg-unknown'],
-        ),
-        messageRepo: messageRepo,
-      );
+        await handleDeliveryReceipt(
+          message: buildReceipt(
+            from: 'peer-x',
+            messageIds: ['msg-foreign-001', 'msg-incoming-001', 'msg-unknown'],
+          ),
+          messageRepo: messageRepo,
+        );
 
-      expect(
-        (await messageRepo.getMessage('msg-foreign-001'))!.status,
-        'inboxed',
-      );
-      expect(
-        (await messageRepo.getMessage('msg-foreign-001'))!.wireEnvelope,
-        isNotNull,
-      );
-      expect(
-        (await messageRepo.getMessage('msg-incoming-001'))!.status,
-        'inboxed',
-      );
-    });
+        expect(
+          (await messageRepo.getMessage('msg-foreign-001'))!.status,
+          'inboxed',
+        );
+        expect(
+          (await messageRepo.getMessage('msg-foreign-001'))!.wireEnvelope,
+          isNotNull,
+        );
+        expect(
+          (await messageRepo.getMessage('msg-incoming-001'))!.status,
+          'inboxed',
+        );
+      },
+    );
 
-    test("re-applying a receipt to an already-delivered row is a no-op", () async {
-      messageRepo.seed([makeInboxedOutgoing()]);
+    test(
+      "re-applying a receipt to an already-delivered row is a no-op",
+      () async {
+        messageRepo.seed([makeInboxedOutgoing()]);
 
-      await handleDeliveryReceipt(
-        message: buildReceipt(messageIds: ['msg-rcpt-001']),
-        messageRepo: messageRepo,
-      );
-      final savesAfterFirst = messageRepo.saveMessageCallCount;
+        await handleDeliveryReceipt(
+          message: buildReceipt(messageIds: ['msg-rcpt-001']),
+          messageRepo: messageRepo,
+        );
+        final savesAfterFirst = messageRepo.saveMessageCallCount;
 
-      await handleDeliveryReceipt(
-        message: buildReceipt(messageIds: ['msg-rcpt-001']),
-        messageRepo: messageRepo,
-      );
+        await handleDeliveryReceipt(
+          message: buildReceipt(messageIds: ['msg-rcpt-001']),
+          messageRepo: messageRepo,
+        );
 
-      final row = await messageRepo.getMessage('msg-rcpt-001');
-      expect(row!.status, 'delivered');
-      expect(
-        messageRepo.saveMessageCallCount,
-        savesAfterFirst,
-        reason: 'idempotent re-apply must not persist again',
-      );
-    });
+        final row = await messageRepo.getMessage('msg-rcpt-001');
+        expect(row!.status, 'delivered');
+        expect(
+          messageRepo.saveMessageCallCount,
+          savesAfterFirst,
+          reason: 'idempotent re-apply must not persist again',
+        );
+      },
+    );
 
     test('unmatched or foreign receipt emits telemetry', () async {
       messageRepo.seed([
@@ -199,13 +535,13 @@ void main() {
     // -----------------------------------------------------------------------
     // 185 — defensive receipt arm: a row that reached terminal 'failed' during
     // a sender-offline send (whose envelope still reached the receiver) is
-    // lifted to 'delivered' by the peer-authenticated receipt. Belt-and-
-    // suspenders for the relayReady TTL-lag window where a just-went-offline
-    // send is still stamped 'failed'.
+    // lifted to 'delivered' by an authenticated-ingress, peer-bound receipt.
+    // Belt-and-suspenders for the relayReady TTL-lag window where a just-went-
+    // offline send is still stamped 'failed'.
     // -----------------------------------------------------------------------
 
     test(
-      "TC-185-10 a valid peer-authenticated receipt lifts a 'failed' row to 'delivered'",
+      "TC-185-10 a valid peer-bound receipt lifts a 'failed' row to 'delivered'",
       () async {
         messageRepo.seed([makeInboxedOutgoing(status: 'failed')]);
 
@@ -250,13 +586,20 @@ void main() {
         final events = await captureFlowEvents(() async {
           await handleDeliveryReceipt(
             // Receipt is from peer-x, but the row belongs to peer-y.
-            message: buildReceipt(from: 'peer-x', messageIds: ['msg-failed-foreign']),
+            message: buildReceipt(
+              from: 'peer-x',
+              messageIds: ['msg-failed-foreign'],
+            ),
             messageRepo: messageRepo,
           );
         });
 
         final row = await messageRepo.getMessage('msg-failed-foreign');
-        expect(row!.status, 'failed', reason: 'receiver-auth guard (:55) holds');
+        expect(
+          row!.status,
+          'failed',
+          reason: 'authenticated-ingress and row-peer guards both hold',
+        );
         expect(row.wireEnvelope, isNotNull);
         expect(
           events.any((e) => e['event'] == 'DELIVERY_RECEIPT_FOREIGN_PEER'),
@@ -280,7 +623,8 @@ void main() {
         expect(
           row!.status,
           'failed',
-          reason: 'only a receiver confirmation for THIS id may lift a failed row',
+          reason:
+              'only a receiver confirmation for THIS id may lift a failed row',
         );
       },
     );
@@ -299,7 +643,10 @@ void main() {
           messageRepo: messageRepo,
         );
 
-        expect((await messageRepo.getMessage('msg-sent-unconf'))!.status, 'sent');
+        expect(
+          (await messageRepo.getMessage('msg-sent-unconf'))!.status,
+          'sent',
+        );
         expect(
           (await messageRepo.getMessage('msg-failed-unconf'))!.status,
           'failed',
@@ -308,7 +655,7 @@ void main() {
     );
 
     test(
-      'TC-185-32 the failed→delivered flip rides conditionalTransitionStatus '
+      'TC-185-32 the failed→delivered flip rides typed atomic settlement '
       'and a stale duplicate receipt cannot downgrade or double-apply',
       () async {
         messageRepo.seed([makeInboxedOutgoing(status: 'failed')]);
@@ -317,12 +664,13 @@ void main() {
           message: buildReceipt(messageIds: ['msg-rcpt-001']),
           messageRepo: messageRepo,
         );
+        expect(messageRepo.ordinaryMutationCallCount, 1);
+        expect(messageRepo.conditionalTransitionCallCount, 0);
+        expect(messageRepo.saveMessageCallCount, 0);
         expect(
-          messageRepo.conditionalTransitionCallCount,
-          greaterThan(0),
-          reason: 'D-6: the flip must be a CAS transition, not a blind save',
+          (await messageRepo.getMessage('msg-rcpt-001'))!.status,
+          'delivered',
         );
-        expect((await messageRepo.getMessage('msg-rcpt-001'))!.status, 'delivered');
         final savesAfterFirst = messageRepo.saveMessageCallCount;
 
         // A late/duplicate receipt for the already-delivered row is a no-op.

@@ -30,18 +30,26 @@ from typing import Any, NoReturn
 
 BUNDLE_ID = "com.mknoon.app"
 REQUEST_SCHEMA = "mknoon.sims.ios-receiver-bootstrap-request.v1"
-HANDOFF_SCHEMA = "mknoon.sims.ios-provider-receiver-handoff.v1"
+HANDOFF_SCHEMA = "mknoon.sims.ios-provider-receiver-handoff.v2"
 DEVICE_DIRECTORY = "Library/Application Support/mknoon.sims.ios-receiver-bootstrap"
 DEVICE_REQUEST = f"{DEVICE_DIRECTORY}/request.json"
 DEVICE_RESPONSE = f"{DEVICE_DIRECTORY}/response.json"
 DEVICE_SENDER_REQUEST = f"{DEVICE_DIRECTORY}/sender-request.json"
 DEVICE_SENDER_RESULT = f"{DEVICE_DIRECTORY}/sender-result.json"
+DEVICE_RECOVERY_REQUEST = f"{DEVICE_DIRECTORY}/recovery-request.json"
+DEVICE_RECOVERY_RESULT = f"{DEVICE_DIRECTORY}/recovery-result.json"
 SENDER_REQUEST_SCHEMA = "mknoon.sims.ios-sender-projection-request.v1"
 SENDER_RESULT_SCHEMA = "mknoon.sims.ios-sender-projection-result.v1"
 SENDER_HOST_RECEIPT_SCHEMA = "mknoon.sims.ios-sender-projection-host-receipt.v1"
+RECOVERY_REQUEST_SCHEMA = "mknoon.sims.ios-notification-recovery-request.v1"
+RECOVERY_RESULT_SCHEMA = "mknoon.sims.ios-notification-recovery-result.v1"
+RECOVERY_HOST_RECEIPT_SCHEMA = (
+    "mknoon.sims.ios-notification-recovery-host-receipt.v1"
+)
 PRIVATE_PAYLOAD_SCHEMA = "mknoon.sims.ios-payload-private-fixture.v1"
 RESULT_PREFIX = "IOS_RECEIVER_BOOTSTRAP_RESULT_JSON="
 SENDER_RESULT_PREFIX = "IOS_SENDER_PROJECTION_RESULT_JSON="
+RECOVERY_RESULT_PREFIX = "IOS_NOTIFICATION_RECOVERY_RESULT_JSON="
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9._:-]{4,160}$")
 _SAFE_NONCE = re.compile(r"^[A-Za-z0-9._:-]{12,160}$")
@@ -51,6 +59,7 @@ _APNS_TOKEN = re.compile(r"^[0-9a-f]{64}$")
 _ML_KEM_PUBLIC = re.compile(r"^[A-Za-z0-9_+/=-]{100,4096}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _RESULT_CODE = re.compile(r"^[a-z_]{2,64}$")
+_RECOVERY_SENTINEL = re.compile(r"^mknoon-sims-recovery-[0-9a-f]{24}$")
 
 
 def _is_exact_ml_kem_public(value: object) -> bool:
@@ -152,6 +161,7 @@ def _read_handoff(path: Path, *, nonce: str, receiver: str) -> dict[str, Any]:
         "mlKemPublicKey",
         "notificationAuthorization",
         "notificationAlertSetting",
+        "notificationBadgeSetting",
         "capturedAt",
     }
     captured_at = _parse_utc(decoded.get("capturedAt"))
@@ -169,6 +179,7 @@ def _read_handoff(path: Path, *, nonce: str, receiver: str) -> dict[str, Any]:
         or decoded.get("notificationAuthorization")
         not in {"authorized", "provisional", "ephemeral"}
         or decoded.get("notificationAlertSetting") != "enabled"
+        or decoded.get("notificationBadgeSetting") != "enabled"
         or captured_at is None
         or captured_at > now + datetime.timedelta(seconds=15)
         or now - captured_at > datetime.timedelta(minutes=5)
@@ -597,6 +608,233 @@ def _sender_projection_action(args: argparse.Namespace) -> dict[str, Any]:
     return host_receipt
 
 
+def _read_recovery_result(
+    path: Path,
+    *,
+    nonce: str,
+    receiver: str,
+    payload_sha: str,
+) -> dict[str, Any]:
+    try:
+        metadata = path.lstat()
+        raw = path.read_bytes()
+        result = json.loads(raw)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise BootstrapFailure("the notification recovery result is unreadable") from error
+    exact_keys = {
+        "schema",
+        "action",
+        "captureNonce",
+        "receiverDeviceId",
+        "bundleId",
+        "apnsPayloadSha256",
+        "status",
+        "resultCode",
+        "badgeBefore",
+        "badgeAfter",
+        "deliveredBefore",
+        "deliveredWithSentinel",
+        "deliveredAfter",
+        "deliveredNotificationBadgeWasNil",
+        "sentinelSurvived",
+        "removedExactOwnedNotification",
+        "childBuildCount",
+        "manualActionCount",
+        "completedAt",
+    }
+    completed_at = _parse_utc(result.get("completedAt") if isinstance(result, dict) else None)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    if (
+        not stat.S_ISREG(metadata.st_mode)
+        or path.is_symlink()
+        or metadata.st_mode & 0o077
+        or not isinstance(result, dict)
+        or len(raw) > 4096
+        or set(result) != exact_keys
+        or result.get("schema") != RECOVERY_RESULT_SCHEMA
+        or result.get("action") != "prove_recovery"
+        or result.get("captureNonce") != nonce
+        or result.get("receiverDeviceId") != receiver
+        or result.get("bundleId") != BUNDLE_ID
+        or result.get("apnsPayloadSha256") != payload_sha
+        or result.get("status") not in {"passed", "failed"}
+        or _RESULT_CODE.fullmatch(str(result.get("resultCode", ""))) is None
+        or any(
+            not isinstance(result.get(key), int)
+            or isinstance(result.get(key), bool)
+            or int(result[key]) < 0
+            for key in (
+                "badgeBefore",
+                "badgeAfter",
+                "deliveredBefore",
+                "deliveredWithSentinel",
+                "deliveredAfter",
+                "childBuildCount",
+                "manualActionCount",
+            )
+        )
+        or not isinstance(result.get("sentinelSurvived"), bool)
+        or not isinstance(result.get("deliveredNotificationBadgeWasNil"), bool)
+        or not isinstance(result.get("removedExactOwnedNotification"), bool)
+        or completed_at is None
+        or completed_at > now + datetime.timedelta(seconds=15)
+        or now - completed_at > datetime.timedelta(minutes=5)
+    ):
+        raise BootstrapFailure("the notification recovery result failed exact validation")
+    if result["status"] == "passed" and (
+        result["resultCode"] != "ok"
+        or result["badgeBefore"] != 1
+        or result["badgeAfter"] != 0
+        or result["deliveredBefore"] != 1
+        or result["deliveredWithSentinel"] != 2
+        or result["deliveredAfter"] != 1
+        or result["deliveredNotificationBadgeWasNil"] is not True
+        or result["sentinelSurvived"] is not True
+        or result["removedExactOwnedNotification"] is not True
+        or result["childBuildCount"] != 0
+        or result["manualActionCount"] != 0
+    ):
+        raise BootstrapFailure("the notification recovery pass result is incomplete")
+    return result
+
+
+def _notification_recovery_action(args: argparse.Namespace) -> dict[str, Any]:
+    receiver = args.receiver.strip()
+    nonce = args.nonce.strip()
+    if _SAFE_ID.fullmatch(receiver) is None or _SAFE_NONCE.fullmatch(nonce) is None:
+        raise BootstrapBlocked("receiver or capture nonce is invalid")
+    payload_path = Path(args.payload).expanduser().absolute()
+    _, payload_raw = _read_private_sender_payload(payload_path)
+    payload_sha = hashlib.sha256(payload_raw).hexdigest()
+    handoff = _read_handoff(
+        Path(args.handoff).expanduser().absolute(),
+        nonce=nonce,
+        receiver=receiver,
+    )
+    receipt_path = Path(args.recovery_receipt).expanduser().absolute()
+    try:
+        receipt_path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as error:
+        raise BootstrapBlocked("the recovery receipt cannot be replaced") from error
+    sentinel = "mknoon-sims-recovery-" + hashlib.sha256(
+        f"{nonce}\0{payload_sha}".encode("utf-8")
+    ).hexdigest()[:24]
+    assert _RECOVERY_SENTINEL.fullmatch(sentinel) is not None
+    now = datetime.datetime.now(datetime.timezone.utc)
+    request = {
+        "schema": RECOVERY_REQUEST_SCHEMA,
+        "action": "prove_recovery",
+        "captureNonce": nonce,
+        "receiverDeviceId": receiver,
+        "bundleId": BUNDLE_ID,
+        "accountPeerId": handoff["peerDeviceId"],
+        "sentinelIdentifier": sentinel,
+        "apnsPayloadSha256": payload_sha,
+        "createdAt": _utc(now),
+        "expiresAt": _utc(now + datetime.timedelta(minutes=3)),
+    }
+    timeout = max(5, min(args.timeout_seconds, 180))
+    native_result: dict[str, Any] | None = None
+    with tempfile.TemporaryDirectory(prefix="mknoon-ios-recovery-proof-") as raw:
+        temporary = Path(raw)
+        os.chmod(temporary, 0o700)
+        control = _DeviceControl(receiver=receiver, temporary=temporary)
+        request_path = temporary / "recovery-request.json"
+        pulled_result = temporary / "recovery-result.json"
+        cleanup_request = temporary / "cleanup-request.json"
+        cleanup_probe = temporary / "recovery-cleanup-probe.json"
+        _write_json_private(request_path, request)
+        if not control.copy_to(
+            request_path,
+            "stage-recovery-command",
+            DEVICE_RECOVERY_REQUEST,
+        ):
+            raise BootstrapFailure("the protected recovery command could not be staged")
+        if not control.launch("process-recovery-command"):
+            raise BootstrapFailure("the app could not process the recovery command")
+        deadline = time.monotonic() + timeout
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            pulled_result.unlink(missing_ok=True)
+            if control.copy_from(
+                pulled_result,
+                f"pull-recovery-result-{attempt}",
+                DEVICE_RECOVERY_RESULT,
+            ):
+                try:
+                    os.chmod(pulled_result, 0o600)
+                except OSError:
+                    pass
+                native_result = _read_recovery_result(
+                    pulled_result,
+                    nonce=nonce,
+                    receiver=receiver,
+                    payload_sha=payload_sha,
+                )
+                break
+            time.sleep(0.5)
+        if native_result is None:
+            raise BootstrapFailure("the app did not finish notification recovery in time")
+        _write_json_private(
+            cleanup_request,
+            _request(
+                action="cleanup",
+                nonce=nonce,
+                receiver=receiver,
+                now=datetime.datetime.now(datetime.timezone.utc),
+            ),
+        )
+        if not (
+            control.copy_to(cleanup_request, "stage-recovery-cleanup")
+            and control.launch("finish-recovery-cleanup")
+        ):
+            raise BootstrapFailure("the recovery result cleanup could not be staged")
+        time.sleep(0.25)
+        if control.copy_from(
+            cleanup_probe,
+            "verify-recovery-result-cleanup",
+            DEVICE_RECOVERY_RESULT,
+        ):
+            raise BootstrapFailure("the recovery result cleanup did not complete")
+
+    assert native_result is not None
+    if native_result["status"] != "passed":
+        raise BootstrapFailure(
+            f"native recovery proof failed closed: {native_result['resultCode']}"
+        )
+    host_receipt = {
+        "schema": RECOVERY_HOST_RECEIPT_SCHEMA,
+        "action": "prove-recovery",
+        "status": "PASS",
+        "containsSecrets": False,
+        "bundleId": BUNDLE_ID,
+        "captureNonceSha256": hashlib.sha256(nonce.encode()).hexdigest(),
+        "receiverDeviceIdSha256": hashlib.sha256(receiver.encode()).hexdigest(),
+        "apnsPayloadSha256": payload_sha,
+        "badgeBefore": native_result["badgeBefore"],
+        "badgeAfter": native_result["badgeAfter"],
+        "deliveredBefore": native_result["deliveredBefore"],
+        "deliveredWithSentinel": native_result["deliveredWithSentinel"],
+        "deliveredAfter": native_result["deliveredAfter"],
+        "deliveredNotificationBadgeWasNil": native_result[
+            "deliveredNotificationBadgeWasNil"
+        ],
+        "sentinelSurvived": native_result["sentinelSurvived"],
+        "removedExactOwnedNotification": native_result[
+            "removedExactOwnedNotification"
+        ],
+        "childBuildCount": native_result["childBuildCount"],
+        "manualActionCount": native_result["manualActionCount"],
+        "resultCode": native_result["resultCode"],
+        "completedAt": native_result["completedAt"],
+    }
+    _write_json_private(receipt_path, host_receipt)
+    return host_receipt
+
+
 def _capture(args: argparse.Namespace) -> dict[str, Any]:
     receiver = args.receiver.strip()
     nonce = args.nonce.strip()
@@ -746,13 +984,35 @@ def _sender_die(status: str, detail: str, code: int) -> NoReturn:
     raise SystemExit(code)
 
 
+def _recovery_die(status: str, detail: str, code: int) -> NoReturn:
+    print(
+        RECOVERY_RESULT_PREFIX
+        + json.dumps(
+            {
+                "schema": RECOVERY_HOST_RECEIPT_SCHEMA,
+                "status": status,
+                "containsSecrets": False,
+                "detail": detail,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+    )
+    raise SystemExit(code)
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Capture a protected iOS APNs/provider receiver handoff"
     )
     parser.add_argument(
         "--action",
-        choices=("capture-receiver", "seed-sender", "cleanup-sender"),
+        choices=(
+            "capture-receiver",
+            "seed-sender",
+            "cleanup-sender",
+            "prove-recovery",
+        ),
         default="capture-receiver",
     )
     parser.add_argument("--receiver")
@@ -760,9 +1020,12 @@ def main() -> None:
     parser.add_argument("--output")
     parser.add_argument("--payload")
     parser.add_argument("--sender-receipt")
+    parser.add_argument("--handoff")
+    parser.add_argument("--recovery-receipt")
     parser.add_argument("--timeout-seconds", type=int, default=120)
     options = parser.parse_args()
     sender_action = options.action in {"seed-sender", "cleanup-sender"}
+    recovery_action = options.action == "prove-recovery"
     try:
         options.receiver = _required(options.receiver, "SIMS_IOS_PHYSICAL_DEVICE_ID")
         options.nonce = _required(
@@ -777,20 +1040,42 @@ def main() -> None:
                 "SIMS_IOS_NOTIFICATION_SENDER_PROJECTION_RECEIPT_PATH",
             )
             receipt = _sender_projection_action(options)
+        elif recovery_action:
+            options.payload = _required(
+                options.payload, "SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH"
+            )
+            options.handoff = _required(
+                options.handoff, "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH"
+            )
+            options.recovery_receipt = _required(
+                options.recovery_receipt,
+                "SIMS_IOS_NOTIFICATION_RECOVERY_RECEIPT_PATH",
+            )
+            receipt = _notification_recovery_action(options)
         else:
             options.output = _required(
                 options.output, "SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_PATH"
             )
             handoff = _capture(options)
     except BootstrapBlocked as error:
+        if recovery_action:
+            _recovery_die("BLOCKED", str(error), 78)
         if sender_action:
             _sender_die("BLOCKED", str(error), 78)
         _die("BLOCKED", str(error), 78)
     except BootstrapFailure as error:
+        if recovery_action:
+            _recovery_die("FAIL", str(error), 1)
         if sender_action:
             _sender_die("FAIL", str(error), 1)
         _die("FAIL", str(error), 1)
     except BaseException as error:
+        if recovery_action:
+            _recovery_die(
+                "FAIL",
+                f"notification recovery stopped: {error.__class__.__name__}",
+                1,
+            )
         if sender_action:
             _sender_die(
                 "FAIL",
@@ -802,6 +1087,12 @@ def main() -> None:
     if sender_action:
         print(
             SENDER_RESULT_PREFIX
+            + json.dumps(receipt, separators=(",", ":"), sort_keys=True)
+        )
+        return
+    if recovery_action:
+        print(
+            RECOVERY_RESULT_PREFIX
             + json.dumps(receipt, separators=(",", ":"), sort_keys=True)
         )
         return

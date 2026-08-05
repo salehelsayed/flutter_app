@@ -91,8 +91,10 @@ final class _IosNotificationPayloadCampaign {
   Future<IosNotificationPayloadCampaignResult> run() async {
     final staging = await _preflight();
     proofDirectory.createSync(recursive: true);
-    final runId = _safeRunToken('ios-payload');
-    final nonce = _safeRunToken('nonce');
+    final fastRunId = _safeRunToken('ios-payload-fast');
+    final fastNonce = _safeRunToken('nonce-fast');
+    final recoveryRunId = _safeRunToken('ios-payload-recovery');
+    final recoveryNonce = _safeRunToken('nonce-recovery');
     final captureDirectory = Directory(
       '${proofDirectory.path}${Platform.pathSeparator}'
       'capture-${DateTime.now().toUtc().microsecondsSinceEpoch}-$pid',
@@ -107,11 +109,139 @@ final class _IosNotificationPayloadCampaign {
         attempts: 0,
       );
     }
-    final receipt = File(
-      '${captureDirectory.path}${Platform.pathSeparator}'
-      'automation_receipt.json',
+    final fastPhase = await _runAutomationPhase(
+      phase: 'fast-path',
+      runId: fastRunId,
+      nonce: fastNonce,
+      directory: Directory(
+        '${captureDirectory.path}${Platform.pathSeparator}fast-path',
+      ),
     );
+    final automationReceipt = fastPhase.receipt;
+    final validation = validateIosNotificationAutomationReceipt(
+      automationReceipt,
+      runId: fastRunId,
+      nonce: fastNonce,
+      receiverDeviceId: receiverDeviceId,
+      peerDeviceId: peerDeviceId,
+      preparedApplicationSha256: applicationSha256,
+      providerRequestSha256: providerRequestSha256,
+      payloadProducerSha256: staging['payloadProducerSha256']! as String,
+      apnsPayloadSha256: automationReceipt['apnsPayloadSha256']! as String,
+    );
+    if (!validation.ok) {
+      throw _CampaignFailure(
+        'The physical iOS receipt was rejected: ${validation.detail}',
+        attempts: 7,
+      );
+    }
+    // The fast-path driver performs full provider/app/notification cleanup.
+    // The second leg therefore starts from a fresh dedicated install while
+    // reusing the same signed products and exact provider/producer stack.
+    final recoveryPhase = await _runAutomationPhase(
+      phase: 'recovery',
+      runId: recoveryRunId,
+      nonce: recoveryNonce,
+      directory: Directory(
+        '${captureDirectory.path}${Platform.pathSeparator}recovery',
+      ),
+    );
+    final recoveryAutomationReceipt = recoveryPhase.receipt;
+    final recoveryValidation = validateIosNotificationRecoveryAutomationReceipt(
+      recoveryAutomationReceipt,
+      runId: recoveryRunId,
+      nonce: recoveryNonce,
+      receiverDeviceId: receiverDeviceId,
+      peerDeviceId: peerDeviceId,
+      preparedApplicationSha256: applicationSha256,
+      providerRequestSha256: providerRequestSha256,
+      payloadProducerSha256: staging['payloadProducerSha256']! as String,
+      apnsPayloadSha256:
+          recoveryAutomationReceipt['apnsPayloadSha256']! as String,
+    );
+    final totalAssertions =
+        fastPhase.assertionsAttempted + recoveryPhase.assertionsAttempted;
+    if (!recoveryValidation.ok) {
+      throw _CampaignFailure(
+        'The physical iOS recovery receipt was rejected: '
+        '${recoveryValidation.detail}',
+        attempts: totalAssertions,
+      );
+    }
+    final capturedAt = DateTime.now().toUtc().toIso8601String();
+    final exactArtifact = buildIosNotificationArtifact(
+      automationReceipt: automationReceipt,
+      recoveryAutomationReceipt: recoveryAutomationReceipt,
+      capturedAt: capturedAt,
+    );
+    final evidence = writeSimsArtifactEvidenceSync(
+      directory: proofDirectory,
+      capabilityId: iosNotificationPayloadCapabilityId,
+      validatorIds: const <String>[iosNotificationPayloadValidator],
+      payload: <String, Object?>{
+        ...exactArtifact,
+        'buildProfile': iosNotificationPayloadBuildProfile,
+        'stagingEnvironment': staging['environment'],
+        'candidateAppRevision': staging['candidateAppRevision'],
+        'candidateRelayRevision': staging['candidateRelayRevision'],
+        'candidateRelaySha256': staging['candidateRelaySha256'],
+        'automationReceiptSha256': sha256
+            .convert(fastPhase.receiptFile.readAsBytesSync())
+            .toString(),
+        'recoveryAutomationReceiptSha256': sha256
+            .convert(recoveryPhase.receiptFile.readAsBytesSync())
+            .toString(),
+      },
+    );
+    final audit = auditSimsArtifactEvidence(
+      evidence: evidence,
+      expectedValidatorIds: const <String>[iosNotificationPayloadValidator],
+    );
+    if (!audit.isValid) {
+      throw _CampaignFailure(
+        'The durable iOS evidence audit failed: ${audit.detail}',
+        attempts: totalAssertions,
+      );
+    }
+    final durableArtifact = _readCapturedJson(
+      File(evidence.path),
+      'durable proof artifact',
+    );
+    final durableValidation = validateNotificationArtifact(durableArtifact);
+    if (!durableValidation.ok) {
+      throw _CampaignFailure(
+        'The durable iOS proof failed semantic validation: '
+        '${durableValidation.detail}',
+        attempts: totalAssertions,
+      );
+    }
+    return IosNotificationPayloadCampaignResult(0, <String, Object?>{
+      'status': 'PASS',
+      'assertionsAttempted': totalAssertions,
+      'artifactPresent': true,
+      'printOnly': false,
+      'exitCode': 0,
+      'detail':
+          'Physical iPhone APNs/NSE staging and an automated airplane-mode '
+          'tap rendered the message with zero relay drain before visibility. '
+          'A fresh second APNs leg then proved delivered badge=nil, absolute '
+          'badge convergence, exact owned-card retirement, and unrelated-card '
+          'survival; both legs reused the central ios.device.production '
+          'signed app/XCUITest bundle with zero child builds.',
+      'artifactEvidence': evidence.toJson(),
+    });
+  }
 
+  Future<_AutomationPhaseResult> _runAutomationPhase({
+    required String phase,
+    required String runId,
+    required String nonce,
+    required Directory directory,
+  }) async {
+    directory.createSync(recursive: true);
+    final receiptFile = File(
+      '${directory.path}${Platform.pathSeparator}automation_receipt.json',
+    );
     final child = await Process.start(Platform.resolvedExecutable, <String>[
       'run',
       automationDriver.path,
@@ -137,10 +267,12 @@ final class _IosNotificationPayloadCampaign {
       runId,
       '--nonce',
       nonce,
+      '--phase',
+      phase,
       '--output',
-      receipt.path,
+      receiptFile.path,
       '--capture-directory',
-      captureDirectory.path,
+      directory.path,
       if (options.verbose) '--verbose',
     ], includeParentEnvironment: true);
     final stdoutText = await child.stdout.transform(utf8.decoder).join();
@@ -150,103 +282,32 @@ final class _IosNotificationPayloadCampaign {
       stdout.write(stdoutText);
       stderr.write(stderrText);
     }
+    final result = _driverResult(stdoutText);
     if (childExit == 78) {
-      final result = _driverResult(stdoutText);
       throw _Blocked(
         result?['blocker'] as String? ?? 'environment',
         result?['detail'] as String? ??
-            'The iOS automation rig reported an unavailable prerequisite.',
+            'The iOS $phase automation rig reported an unavailable prerequisite.',
       );
     }
     if (childExit != 0) {
-      final result = _driverResult(stdoutText);
       throw _CampaignFailure(
         result?['detail'] as String? ??
             _bounded(stderrText.isNotEmpty ? stderrText : stdoutText),
         attempts: result?['assertionsAttempted'] as int? ?? 1,
       );
     }
-    if (!_regularFile(receipt)) {
-      throw const _CampaignFailure(
-        'The iOS automation driver exited zero without a receipt.',
-        attempts: 0,
-      );
-    }
-
-    final automationReceipt = _readCapturedJson(receipt, 'automation receipt');
-    final validation = validateIosNotificationAutomationReceipt(
-      automationReceipt,
-      runId: runId,
-      nonce: nonce,
-      receiverDeviceId: receiverDeviceId,
-      peerDeviceId: peerDeviceId,
-      preparedApplicationSha256: applicationSha256,
-      providerRequestSha256: providerRequestSha256,
-      payloadProducerSha256: staging['payloadProducerSha256']! as String,
-      apnsPayloadSha256: automationReceipt['apnsPayloadSha256']! as String,
-    );
-    if (!validation.ok) {
+    if (!_regularFile(receiptFile)) {
       throw _CampaignFailure(
-        'The physical iOS receipt was rejected: ${validation.detail}',
-        attempts: 7,
+        'The iOS $phase automation driver exited zero without a receipt.',
+        attempts: result?['assertionsAttempted'] as int? ?? 0,
       );
     }
-    final capturedAt = DateTime.now().toUtc().toIso8601String();
-    final exactArtifact = buildIosNotificationArtifact(
-      automationReceipt: automationReceipt,
-      capturedAt: capturedAt,
+    return _AutomationPhaseResult(
+      receiptFile: receiptFile,
+      receipt: _readCapturedJson(receiptFile, '$phase automation receipt'),
+      assertionsAttempted: result?['assertionsAttempted'] as int? ?? 0,
     );
-    final evidence = writeSimsArtifactEvidenceSync(
-      directory: proofDirectory,
-      capabilityId: iosNotificationPayloadCapabilityId,
-      validatorIds: const <String>[iosNotificationPayloadValidator],
-      payload: <String, Object?>{
-        ...exactArtifact,
-        'buildProfile': iosNotificationPayloadBuildProfile,
-        'stagingEnvironment': staging['environment'],
-        'candidateAppRevision': staging['candidateAppRevision'],
-        'candidateRelayRevision': staging['candidateRelayRevision'],
-        'candidateRelaySha256': staging['candidateRelaySha256'],
-        'automationReceiptSha256': sha256
-            .convert(receipt.readAsBytesSync())
-            .toString(),
-      },
-    );
-    final audit = auditSimsArtifactEvidence(
-      evidence: evidence,
-      expectedValidatorIds: const <String>[iosNotificationPayloadValidator],
-    );
-    if (!audit.isValid) {
-      throw _CampaignFailure(
-        'The durable iOS evidence audit failed: ${audit.detail}',
-        attempts: 7,
-      );
-    }
-    final durableArtifact = _readCapturedJson(
-      File(evidence.path),
-      'durable proof artifact',
-    );
-    final durableValidation = validateNotificationArtifact(durableArtifact);
-    if (!durableValidation.ok) {
-      throw _CampaignFailure(
-        'The durable iOS proof failed semantic validation: '
-        '${durableValidation.detail}',
-        attempts: 7,
-      );
-    }
-    return IosNotificationPayloadCampaignResult(0, <String, Object?>{
-      'status': 'PASS',
-      'assertionsAttempted': 7,
-      'artifactPresent': true,
-      'printOnly': false,
-      'exitCode': 0,
-      'detail':
-          'Physical iPhone APNs/NSE staging and an automated airplane-mode '
-          'tap rendered the message with zero relay drain before visibility; '
-          'the central ios.device.production signed app/XCUITest bundle was '
-          'reused with zero child builds.',
-      'artifactEvidence': evidence.toJson(),
-    });
   }
 
   Future<Map<String, Object?>> _preflight() async {
@@ -496,6 +557,18 @@ final class _IosNotificationPayloadCampaign {
     return '$prefix-${DateTime.now().toUtc().microsecondsSinceEpoch}-'
         '${base64Url.encode(random).replaceAll('=', '')}';
   }
+}
+
+final class _AutomationPhaseResult {
+  const _AutomationPhaseResult({
+    required this.receiptFile,
+    required this.receipt,
+    required this.assertionsAttempted,
+  });
+
+  final File receiptFile;
+  final Map<String, Object?> receipt;
+  final int assertionsAttempted;
 }
 
 Map<String, Object?> _readJson(File file, String label) {

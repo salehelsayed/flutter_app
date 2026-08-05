@@ -185,6 +185,7 @@ void main() {
           senderPeerId: alice.peerId,
           senderUsername: alice.username,
           messageId: messageId,
+          preassignedMessageIdIsFresh: true,
           timestamp: DateTime.now().toUtc().toIso8601String(),
           bridge: alice.bridge,
           recipientMlKemPublicKey: 'test-mlkem-pk-${bob.peerId}',

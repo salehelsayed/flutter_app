@@ -1,6 +1,7 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import '../outgoing_transport_mutation.dart';
 import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
@@ -1103,6 +1104,752 @@ Future<void> dbUpdateWireEnvelope(
     );
     rethrow;
   }
+}
+
+const _ordinaryAttemptSnapshotColumns = <String>[
+  'id',
+  'contact_peer_id',
+  'sender_peer_id',
+  'text',
+  'timestamp',
+  'status',
+  'is_incoming',
+  'created_at',
+  'edited_at',
+  'read_at',
+  'quoted_message_id',
+  'deleted_at',
+  'deleted_by_peer_id',
+  'hidden_at',
+  'transport',
+  'wire_envelope',
+  'relay_expires_at',
+  'custody_checked_at',
+  'dedup_key',
+  'is_forwarded',
+  'private_media_policy_version',
+  'private_media_mode',
+  'private_media_duration_seconds',
+  'private_media_state',
+  'private_media_received_at_ms',
+  'private_media_expires_at_ms',
+  'private_media_revealed_at_ms',
+  'private_media_terminal_at_ms',
+  'private_media_clock_high_water_ms',
+];
+
+const _ordinaryStablePayloadColumns = <String>[
+  'id',
+  'contact_peer_id',
+  'sender_peer_id',
+  'text',
+  'timestamp',
+  'is_incoming',
+  'created_at',
+  'edited_at',
+  'read_at',
+  'quoted_message_id',
+  'deleted_at',
+  'deleted_by_peer_id',
+  'hidden_at',
+  'dedup_key',
+  'is_forwarded',
+  'private_media_policy_version',
+  'private_media_mode',
+  'private_media_duration_seconds',
+  'private_media_state',
+  'private_media_received_at_ms',
+  'private_media_expires_at_ms',
+  'private_media_revealed_at_ms',
+  'private_media_terminal_at_ms',
+  'private_media_clock_high_water_ms',
+];
+
+bool _sameOrdinaryColumns(
+  Map<String, Object?> left,
+  Map<String, Object?> right,
+  Iterable<String> columns,
+) => columns.every(
+  (column) =>
+      _ordinaryComparableColumnValue(left, column) ==
+      _ordinaryComparableColumnValue(right, column),
+);
+
+Object? _ordinaryComparableColumnValue(
+  Map<String, Object?> row,
+  String column,
+) {
+  switch (column) {
+    case 'private_media_policy_version':
+      return (row[column] as num?)?.toInt() ?? 0;
+    case 'private_media_mode':
+      return row[column] ?? 'ordinary';
+    case 'private_media_state':
+      final raw = row[column];
+      if (raw != null) return raw;
+      final version =
+          (row['private_media_policy_version'] as num?)?.toInt() ?? 0;
+      final mode = row['private_media_mode'] as String? ?? 'ordinary';
+      return version == 1 && mode == 'disappearing' ? 'available' : 'none';
+    default:
+      return row[column];
+  }
+}
+
+({String clause, List<Object?> arguments}) _exactOrdinarySnapshotPredicate(
+  Map<String, Object?> row,
+  Iterable<String> columns,
+) {
+  final predicates = <String>[];
+  final arguments = <Object?>[];
+  for (final column in columns) {
+    final value = row[column];
+    if (value == null) {
+      predicates.add('$column IS NULL');
+    } else {
+      predicates.add('$column = ?');
+      arguments.add(value);
+    }
+  }
+  return (clause: predicates.join(' AND '), arguments: arguments);
+}
+
+const _supportedOutgoingOrdinaryPolicySql =
+    '((private_media_policy_version IS NULL AND private_media_mode IS NULL) '
+    'OR (private_media_policy_version = 0 AND '
+    "(private_media_mode IS NULL OR private_media_mode = 'ordinary')) "
+    'OR (private_media_policy_version = 1 AND '
+    "private_media_mode = 'disappearing'))";
+
+bool _isSupportedOutgoingOrdinaryPolicy(Map<String, Object?> row) {
+  final version = (row['private_media_policy_version'] as num?)?.toInt();
+  final mode = row['private_media_mode'] as String?;
+  return (version == null && mode == null) ||
+      (version == 0 && (mode == null || mode == 'ordinary')) ||
+      (version == 1 && mode == 'disappearing');
+}
+
+bool _hasBaseOutgoingOrdinaryAttemptShape(Map<String, Object?> row) {
+  final id = row['id'] as String? ?? '';
+  final contactPeerId = row['contact_peer_id'] as String? ?? '';
+  final senderPeerId = row['sender_peer_id'] as String? ?? '';
+  return id.isNotEmpty &&
+      contactPeerId.isNotEmpty &&
+      senderPeerId.isNotEmpty &&
+      ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+      _isSupportedOutgoingOrdinaryPolicy(row);
+}
+
+bool _isNonEmptyEnvelope(Object? value) => value is String && value.isNotEmpty;
+
+/// Guarded first persistence for an ordinary outgoing attempt.
+///
+/// Fresh attempts are insert-only. Existing, edit, and tombstone attempts are
+/// update-only and bind the complete caller-observed predecessor inside the
+/// same transaction as the narrow attempt-owned update.
+Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingOrdinaryAttempt(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+}) => dbWriteTransaction(
+  db,
+  (txn) => dbStageOutgoingOrdinaryAttemptWithinTransaction(
+    txn,
+    expectedRow: expectedRow,
+    stagedRow: stagedRow,
+    kind: kind,
+  ),
+);
+
+/// Transaction-body variant shared by atomic parent-plus-media staging.
+Future<OutgoingOrdinaryMutationOutcome>
+dbStageOutgoingOrdinaryAttemptWithinTransaction(
+  DatabaseExecutor txn, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+  bool allowDirectAttachments = false,
+}) async {
+  final messageId = stagedRow['id'] as String? ?? '';
+  final validStagedBase =
+      _hasBaseOutgoingOrdinaryAttemptShape(stagedRow) &&
+      stagedRow['status'] == 'sending' &&
+      stagedRow['hidden_at'] == null &&
+      _isNonEmptyEnvelope(stagedRow['wire_envelope']);
+  if (!validStagedBase) {
+    return OutgoingOrdinaryMutationOutcome.refused;
+  }
+
+  final currentRows = await txn.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+
+  if (!allowDirectAttachments &&
+      (kind == OutgoingOrdinaryAttemptKind.fresh ||
+          kind == OutgoingOrdinaryAttemptKind.existing ||
+          kind == OutgoingOrdinaryAttemptKind.edit)) {
+    final hasMediaTable = (await txn.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'media_attachments' LIMIT 1",
+    )).isNotEmpty;
+    if (hasMediaTable) {
+      final directMedia = await txn.rawQuery(
+        'SELECT 1 FROM media_attachments '
+        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+        <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      if (directMedia.isNotEmpty) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+    }
+  }
+
+  if (kind == OutgoingOrdinaryAttemptKind.fresh) {
+    if (expectedRow != null ||
+        stagedRow['deleted_at'] != null ||
+        stagedRow['deleted_by_peer_id'] != null ||
+        stagedRow['transport'] != null ||
+        stagedRow['relay_expires_at'] != null ||
+        stagedRow['custody_checked_at'] != null) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+    if (currentRows.isNotEmpty) {
+      // Fresh authority never becomes an upsert, even when the collision is
+      // byte-identical.
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+    await txn.insert(
+      'messages',
+      stagedRow,
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    return OutgoingOrdinaryMutationOutcome.applied;
+  }
+
+  if (expectedRow == null || expectedRow['id'] != messageId) {
+    return OutgoingOrdinaryMutationOutcome.refused;
+  }
+  if (currentRows.isEmpty) return OutgoingOrdinaryMutationOutcome.removed;
+  final current = currentRows.single;
+  if (!_hasBaseOutgoingOrdinaryAttemptShape(expectedRow) ||
+      !_hasBaseOutgoingOrdinaryAttemptShape(current)) {
+    return OutgoingOrdinaryMutationOutcome.refused;
+  }
+
+  final values = <String, Object?>{
+    'status': 'sending',
+    'transport': null,
+    'wire_envelope': stagedRow['wire_envelope'],
+    'relay_expires_at': null,
+    'custody_checked_at': null,
+  };
+  switch (kind) {
+    case OutgoingOrdinaryAttemptKind.existing:
+      if (expectedRow['hidden_at'] != null ||
+          expectedRow['deleted_at'] != null ||
+          expectedRow['deleted_by_peer_id'] != null ||
+          !const <String>{
+            'sending',
+            'failed',
+          }.contains(expectedRow['status']) ||
+          !_sameOrdinaryColumns(
+            expectedRow,
+            stagedRow,
+            _ordinaryStablePayloadColumns,
+          )) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+      break;
+    case OutgoingOrdinaryAttemptKind.edit:
+      final editStableColumns = _ordinaryStablePayloadColumns.where(
+        (column) => column != 'text' && column != 'edited_at',
+      );
+      if (expectedRow['hidden_at'] != null ||
+          expectedRow['deleted_at'] != null ||
+          expectedRow['deleted_by_peer_id'] != null ||
+          !const <String>{
+            'sending',
+            'failed',
+            'sent',
+            'inboxed',
+            'delivered',
+          }.contains(expectedRow['status']) ||
+          stagedRow['deleted_at'] != null ||
+          (stagedRow['edited_at'] as String? ?? '').isEmpty ||
+          !_sameOrdinaryColumns(expectedRow, stagedRow, editStableColumns)) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+      values['text'] = stagedRow['text'];
+      values['edited_at'] = stagedRow['edited_at'];
+      break;
+    case OutgoingOrdinaryAttemptKind.tombstoneInitial:
+      final tombstoneStableColumns = _ordinaryStablePayloadColumns.where(
+        (column) =>
+            column != 'text' &&
+            column != 'deleted_at' &&
+            column != 'deleted_by_peer_id' &&
+            column != 'hidden_at',
+      );
+      if (expectedRow['hidden_at'] != null ||
+          expectedRow['deleted_at'] != null ||
+          expectedRow['deleted_by_peer_id'] != null ||
+          !const <String>{
+            'delivered',
+            'inboxed',
+          }.contains(expectedRow['status']) ||
+          stagedRow['text'] != '' ||
+          (stagedRow['deleted_at'] as String? ?? '').isEmpty ||
+          (stagedRow['deleted_by_peer_id'] as String? ?? '').isEmpty ||
+          stagedRow['deleted_by_peer_id'] != stagedRow['sender_peer_id'] ||
+          stagedRow['hidden_at'] != null ||
+          !_sameOrdinaryColumns(
+            expectedRow,
+            stagedRow,
+            tombstoneStableColumns,
+          )) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+      values['text'] = '';
+      values['deleted_at'] = stagedRow['deleted_at'];
+      values['deleted_by_peer_id'] = stagedRow['deleted_by_peer_id'];
+      values['hidden_at'] = null;
+      break;
+    case OutgoingOrdinaryAttemptKind.tombstoneRetry:
+      if (expectedRow['hidden_at'] != null ||
+          (expectedRow['deleted_at'] as String? ?? '').isEmpty ||
+          (expectedRow['deleted_by_peer_id'] as String? ?? '').isEmpty ||
+          expectedRow['deleted_by_peer_id'] != expectedRow['sender_peer_id'] ||
+          expectedRow['text'] != '' ||
+          expectedRow['status'] != 'failed' ||
+          !_sameOrdinaryColumns(
+            expectedRow,
+            stagedRow,
+            _ordinaryStablePayloadColumns,
+          )) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+      break;
+    case OutgoingOrdinaryAttemptKind.fresh:
+      return OutgoingOrdinaryMutationOutcome.refused;
+  }
+
+  // An uncertain caller may repeat the same fully validated stage after its
+  // first commit. Authorize only the byte-identical durable attempt; a fresh
+  // collision was already refused above and never acquires upsert semantics.
+  if (_sameOrdinaryColumns(
+    current,
+    stagedRow,
+    _ordinaryAttemptSnapshotColumns,
+  )) {
+    return OutgoingOrdinaryMutationOutcome.idempotent;
+  }
+  if (!_sameOrdinaryColumns(
+    current,
+    expectedRow,
+    _ordinaryAttemptSnapshotColumns,
+  )) {
+    return OutgoingOrdinaryMutationOutcome.preserved;
+  }
+
+  final exactCurrent = _exactOrdinarySnapshotPredicate(
+    current,
+    _ordinaryAttemptSnapshotColumns,
+  );
+  final changed = await txn.update(
+    'messages',
+    values,
+    where: exactCurrent.clause,
+    whereArgs: exactCurrent.arguments,
+  );
+  return changed == 1
+      ? OutgoingOrdinaryMutationOutcome.applied
+      : OutgoingOrdinaryMutationOutcome.preserved;
+}
+
+const _supportedOutgoingTransportLabels = <String>{
+  'wifi',
+  'local',
+  'direct',
+  'reuse',
+  'relay',
+  'inbox',
+};
+
+bool _validOrdinarySettlementCandidate({
+  required String messageId,
+  required String expectedContactPeerId,
+  required String? expectedEnvelope,
+  required String status,
+  required String? transport,
+  required int? relayExpiresAt,
+  required OutgoingOrdinarySettlementMode mode,
+}) {
+  if (messageId.isEmpty ||
+      expectedContactPeerId.isEmpty ||
+      !const <String>{
+        'delivered',
+        'inboxed',
+        'sent',
+        'failed',
+      }.contains(status) ||
+      (transport != null &&
+          !_supportedOutgoingTransportLabels.contains(transport)) ||
+      (expectedEnvelope != null && expectedEnvelope.isEmpty) ||
+      (mode == OutgoingOrdinarySettlementMode.live &&
+          !_isNonEmptyEnvelope(expectedEnvelope)) ||
+      (mode == OutgoingOrdinarySettlementMode.receipt &&
+          status != 'delivered')) {
+    return false;
+  }
+  return switch (status) {
+    'delivered' =>
+      relayExpiresAt == null &&
+          (transport != null || mode == OutgoingOrdinarySettlementMode.receipt),
+    'inboxed' =>
+      transport == 'inbox' && (relayExpiresAt == null || relayExpiresAt > 0),
+    'sent' => transport != null && relayExpiresAt == null,
+    'failed' => transport == null && relayExpiresAt == null,
+    _ => false,
+  };
+}
+
+/// Atomically settles transport-owned columns for one ordinary outgoing row.
+/// This helper never inserts and never rewrites payload, edit, or deletion
+/// identity. Tombstones derive `hidden_at = deleted_at` only on first delivery.
+Future<OutgoingOrdinaryMutationOutcome> dbSettleOutgoingOrdinaryTransport(
+  Database db, {
+  required String messageId,
+  required String expectedContactPeerId,
+  required String? expectedEnvelope,
+  required String status,
+  required String? transport,
+  required int? relayExpiresAt,
+  required OutgoingOrdinarySettlementMode mode,
+}) => _dbSettleOutgoingOrdinaryTransport(
+  db,
+  messageId: messageId,
+  expectedContactPeerId: expectedContactPeerId,
+  expectedEnvelope: expectedEnvelope,
+  status: status,
+  transport: transport,
+  relayExpiresAt: relayExpiresAt,
+  mode: mode,
+  isDeleteTombstone: false,
+);
+
+/// Tombstone-specific ordinary settlement. Delivery atomically derives
+/// `hidden_at = deleted_at`; every non-delivered state remains visible.
+Future<OutgoingOrdinaryMutationOutcome> dbSettleOutgoingOrdinaryDeleteTombstone(
+  Database db, {
+  required String messageId,
+  required String expectedContactPeerId,
+  required String? expectedEnvelope,
+  required String status,
+  required String? transport,
+  required int? relayExpiresAt,
+  required OutgoingOrdinarySettlementMode mode,
+}) => _dbSettleOutgoingOrdinaryTransport(
+  db,
+  messageId: messageId,
+  expectedContactPeerId: expectedContactPeerId,
+  expectedEnvelope: expectedEnvelope,
+  status: status,
+  transport: transport,
+  relayExpiresAt: relayExpiresAt,
+  mode: mode,
+  isDeleteTombstone: true,
+);
+
+Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
+  Database db, {
+  required String messageId,
+  required String expectedContactPeerId,
+  required String? expectedEnvelope,
+  required String status,
+  required String? transport,
+  required int? relayExpiresAt,
+  required OutgoingOrdinarySettlementMode mode,
+  required bool isDeleteTombstone,
+}) {
+  if (!_validOrdinarySettlementCandidate(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+  )) {
+    return Future<OutgoingOrdinaryMutationOutcome>.value(
+      OutgoingOrdinaryMutationOutcome.refused,
+    );
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return OutgoingOrdinaryMutationOutcome.removed;
+    final current = rows.single;
+    if (((current['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
+        current['contact_peer_id'] != expectedContactPeerId ||
+        !_isSupportedOutgoingOrdinaryPolicy(current)) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+
+    final deletedAt = current['deleted_at'] as String?;
+    final hiddenAt = current['hidden_at'] as String?;
+    if (isDeleteTombstone) {
+      final currentStatus = current['status'] as String?;
+      final hasValidVisibility = currentStatus == 'delivered'
+          ? hiddenAt == deletedAt
+          : hiddenAt == null;
+      if ((deletedAt ?? '').isEmpty ||
+          (current['deleted_by_peer_id'] as String? ?? '').isEmpty ||
+          current['deleted_by_peer_id'] != current['sender_peer_id'] ||
+          current['text'] != '' ||
+          !hasValidVisibility) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+    } else if (deletedAt != null || current['deleted_by_peer_id'] != null) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    } else if (hiddenAt != null) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+
+    // Delivery is terminal. Its first result freezes every settlement field;
+    // duplicate delivery is the one deliberate envelope-free idempotent case.
+    if (current['status'] == 'delivered') {
+      final currentTransport = current['transport'] as String?;
+      final validDeliveredShape =
+          current['wire_envelope'] == null &&
+          current['relay_expires_at'] == null &&
+          current['custody_checked_at'] == null &&
+          (currentTransport == null ||
+              _supportedOutgoingTransportLabels.contains(currentTransport));
+      if (status != 'delivered') {
+        return OutgoingOrdinaryMutationOutcome.preserved;
+      }
+      return validDeliveredShape
+          ? OutgoingOrdinaryMutationOutcome.idempotent
+          : OutgoingOrdinaryMutationOutcome.refused;
+    }
+    if (current['wire_envelope'] != expectedEnvelope) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+    if (current['status'] == status) {
+      return OutgoingOrdinaryMutationOutcome.idempotent;
+    }
+
+    final allowedPredecessors = mode == OutgoingOrdinarySettlementMode.receipt
+        ? const <String>{'inboxed', 'sent', 'failed'}
+        : switch (status) {
+            'delivered' => const <String>{
+              'sending',
+              'sent',
+              'inboxed',
+              'failed',
+            },
+            'inboxed' => const <String>{'sending', 'sent', 'failed'},
+            'sent' => const <String>{'sending', 'failed'},
+            'failed' => const <String>{'sending'},
+            _ => const <String>{},
+          };
+    if (!allowedPredecessors.contains(current['status'])) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+
+    final targetEnvelope = status == 'delivered' ? null : expectedEnvelope;
+    final values = <String, Object?>{
+      'status': status,
+      'transport': transport,
+      'wire_envelope': targetEnvelope,
+      'relay_expires_at': relayExpiresAt,
+      'custody_checked_at': null,
+      if (isDeleteTombstone && status == 'delivered') 'hidden_at': deletedAt,
+    };
+    final envelopePredicate = expectedEnvelope == null
+        ? 'wire_envelope IS NULL'
+        : 'wire_envelope = ?';
+    final deletionPredicate = isDeleteTombstone
+        ? 'deleted_at = ? AND deleted_by_peer_id = ? AND text = ? '
+              'AND hidden_at IS NULL'
+        : 'deleted_at IS NULL AND deleted_by_peer_id IS NULL '
+              'AND hidden_at IS NULL';
+    final whereArguments = <Object?>[
+      messageId,
+      expectedContactPeerId,
+      current['status'],
+      if (isDeleteTombstone) ...<Object?>[
+        deletedAt,
+        current['deleted_by_peer_id'],
+        '',
+      ],
+    ];
+    if (expectedEnvelope != null) whereArguments.add(expectedEnvelope);
+    final changed = await txn.update(
+      'messages',
+      values,
+      where:
+          'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+          'AND status = ? AND $deletionPredicate '
+          'AND $_supportedOutgoingOrdinaryPolicySql '
+          'AND $envelopePredicate',
+      whereArgs: whereArguments,
+    );
+    return changed == 1
+        ? OutgoingOrdinaryMutationOutcome.applied
+        : OutgoingOrdinaryMutationOutcome.preserved;
+  });
+}
+
+/// Clears only the exact retryable ordinary envelope invalidated by a media-key
+/// rotation. The caller must abort attachment completion/send on every result
+/// other than [OutgoingOrdinaryMutationOutcome.applied].
+Future<OutgoingOrdinaryMutationOutcome> dbInvalidateOutgoingOrdinaryEnvelope(
+  Database db, {
+  required String messageId,
+  required String expectedContactPeerId,
+  required String expectedEnvelope,
+}) {
+  if (messageId.isEmpty ||
+      expectedContactPeerId.isEmpty ||
+      expectedEnvelope.isEmpty) {
+    return Future<OutgoingOrdinaryMutationOutcome>.value(
+      OutgoingOrdinaryMutationOutcome.refused,
+    );
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return OutgoingOrdinaryMutationOutcome.removed;
+    final current = rows.single;
+    if (current['hidden_at'] != null ||
+        current['deleted_at'] != null ||
+        current['deleted_by_peer_id'] != null) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+    if (((current['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
+        current['contact_peer_id'] != expectedContactPeerId ||
+        !_isSupportedOutgoingOrdinaryPolicy(current) ||
+        !const <String>{'sending', 'failed'}.contains(current['status'])) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+    if (current['wire_envelope'] != expectedEnvelope) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+    final changed = await txn.update(
+      'messages',
+      const <String, Object?>{'wire_envelope': null},
+      where:
+          'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+          'AND hidden_at IS NULL AND deleted_at IS NULL '
+          'AND deleted_by_peer_id IS NULL '
+          'AND $_supportedOutgoingOrdinaryPolicySql '
+          'AND wire_envelope = ? AND status IN (?, ?)',
+      whereArgs: <Object?>[
+        messageId,
+        expectedContactPeerId,
+        expectedEnvelope,
+        'sending',
+        'failed',
+      ],
+    );
+    return changed == 1
+        ? OutgoingOrdinaryMutationOutcome.applied
+        : OutgoingOrdinaryMutationOutcome.preserved;
+  });
+}
+
+/// Exact sent -> failed quarantine for an unsafe legacy ordinary envelope.
+Future<OutgoingOrdinaryMutationOutcome>
+dbQuarantineUnsafeLegacyOutgoingEnvelope(
+  Database db, {
+  required String messageId,
+  required String expectedContactPeerId,
+  required String expectedEnvelope,
+  required bool isDeleteTombstone,
+}) {
+  if (messageId.isEmpty ||
+      expectedContactPeerId.isEmpty ||
+      expectedEnvelope.isEmpty) {
+    return Future<OutgoingOrdinaryMutationOutcome>.value(
+      OutgoingOrdinaryMutationOutcome.refused,
+    );
+  }
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) return OutgoingOrdinaryMutationOutcome.removed;
+    final current = rows.single;
+    final deletionShapeMatches = isDeleteTombstone
+        ? (current['deleted_at'] as String? ?? '').isNotEmpty &&
+              (current['deleted_by_peer_id'] as String? ?? '').isNotEmpty &&
+              current['deleted_by_peer_id'] == current['sender_peer_id'] &&
+              current['hidden_at'] == null &&
+              current['text'] == ''
+        : current['deleted_at'] == null &&
+              current['deleted_by_peer_id'] == null &&
+              current['hidden_at'] == null;
+    if (!deletionShapeMatches ||
+        ((current['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
+        current['contact_peer_id'] != expectedContactPeerId ||
+        !_isSupportedOutgoingOrdinaryPolicy(current) ||
+        current['status'] != 'sent') {
+      return current['status'] == 'delivered' || current['hidden_at'] != null
+          ? OutgoingOrdinaryMutationOutcome.preserved
+          : OutgoingOrdinaryMutationOutcome.refused;
+    }
+    if (current['wire_envelope'] != expectedEnvelope) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+    final deletionPredicate = isDeleteTombstone
+        ? 'deleted_at = ? AND deleted_by_peer_id = ? AND text = ? '
+              'AND hidden_at IS NULL'
+        : 'deleted_at IS NULL AND deleted_by_peer_id IS NULL '
+              'AND hidden_at IS NULL';
+    final changed = await txn.update(
+      'messages',
+      const <String, Object?>{
+        'status': 'failed',
+        'transport': null,
+        'relay_expires_at': null,
+        'custody_checked_at': null,
+      },
+      where:
+          'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+          "AND status = 'sent' AND $deletionPredicate "
+          'AND $_supportedOutgoingOrdinaryPolicySql '
+          'AND wire_envelope = ?',
+      whereArgs: <Object?>[
+        messageId,
+        expectedContactPeerId,
+        if (isDeleteTombstone) ...<Object?>[
+          current['deleted_at'],
+          current['deleted_by_peer_id'],
+          '',
+        ],
+        expectedEnvelope,
+      ],
+    );
+    return changed == 1
+        ? OutgoingOrdinaryMutationOutcome.applied
+        : OutgoingOrdinaryMutationOutcome.preserved;
+  });
 }
 
 /// Update-only first persistence for an outgoing protected/View-Once

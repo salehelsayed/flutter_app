@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
@@ -8,22 +9,29 @@ import 'package:flutter_app/features/conversation/application/send_voice_message
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 import 'send_chat_message_use_case_test.dart'
     show FakeP2PService, FakeMessageRepository;
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 
-class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+class _FakeMediaAttachmentRepository
+    implements
+        MediaAttachmentRepository,
+        OutgoingOrdinaryAttemptStagingRepository {
   final List<MediaAttachment> saved = [];
+  final List<OutgoingOrdinaryAttemptKind> stagedKinds = [];
 
   @override
   Future<void> saveAttachment(
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
   }) async {
-    saved.add(attachment);
+    saved.add(attachment.copyWith(ownerLane: owner));
   }
 
   @override
@@ -47,7 +55,11 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     required MediaOwnerLane owner,
   }) async {
     return saved
-        .where((attachment) => attachment.messageId == messageId)
+        .where(
+          (attachment) =>
+              attachment.messageId == messageId &&
+              attachment.ownerLane == owner,
+        )
         .toList();
   }
 
@@ -82,6 +94,95 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
 
   @override
   Future<void> updateLocalPath(String id, String localPath) async {}
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttemptWithMedia({
+    required OutgoingTransportMutationRepository messageMutationRepository,
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    stagedKinds.add(kind);
+    if (attachments.isEmpty ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneRetry ||
+        attachments.any(
+          (attachment) =>
+              attachment.id.isEmpty || attachment.messageId != staged.id,
+        )) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    final parent = await messageMutationRepository.stageOutgoingOrdinaryAttempt(
+      expected: expected,
+      staged: staged,
+      kind: kind,
+    );
+    if (!parent.authorizesTransport) return parent;
+    if (parent.outcome == OutgoingOrdinaryMutationOutcome.idempotent &&
+        attachments.any((attachment) {
+          final index = saved.indexWhere(
+            (candidate) => candidate.id == attachment.id,
+          );
+          return index < 0 ||
+              !_sameOrdinaryOutgoingAttachmentAttempt(
+                saved[index],
+                attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+              );
+        })) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    for (final attachment in attachments) {
+      final direct = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+      final index = saved.indexWhere((candidate) => candidate.id == direct.id);
+      if (index < 0) {
+        saved.add(direct);
+      } else {
+        final current = saved[index];
+        saved[index] = direct.copyWith(
+          isBookmarked: current.isBookmarked,
+          lastPlaybackPositionMs: current.lastPlaybackPositionMs,
+        );
+      }
+    }
+    final committed = saved
+        .where(
+          (attachment) =>
+              attachment.messageId == staged.id &&
+              attachment.ownerLane == MediaOwnerLane.direct,
+        )
+        .toList(growable: false);
+    return OutgoingOrdinaryMutationResult(
+      outcome: parent.outcome,
+      message: parent.message?.copyWith(media: committed),
+    );
+  }
+}
+
+bool _sameOrdinaryOutgoingAttachmentAttempt(
+  MediaAttachment current,
+  MediaAttachment candidate,
+) {
+  final currentMap = current.toMap()
+    ..remove('is_bookmarked')
+    ..remove('last_playback_position_ms')
+    ..['upload_retry_count'] = current.uploadRetryCount ?? 0
+    ..['download_retry_count'] = current.downloadRetryCount ?? 0;
+  final candidateMap = candidate.toMap()
+    ..remove('is_bookmarked')
+    ..remove('last_playback_position_ms')
+    ..['upload_retry_count'] = candidate.uploadRetryCount ?? 0
+    ..['download_retry_count'] = candidate.downloadRetryCount ?? 0;
+  return currentMap.length == candidateMap.length &&
+      currentMap.entries.every(
+        (entry) => candidateMap[entry.key] == entry.value,
+      );
 }
 
 class _RecordingVoiceUploadProjection
@@ -230,6 +331,7 @@ void main() {
             recording: recording,
             bridge: bridge,
             recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
           );
 
           expect(result, SendVoiceMessageResult.invalidRecording);
@@ -263,6 +365,80 @@ void main() {
     });
 
     group('upload and send', () {
+      test(
+        'caller-owned fresh voice ID is insert-only before transport',
+        () async {
+          const messageId = 'caller-owned-fresh-voice';
+          const blobId = 'caller-owned-fresh-voice-blob';
+          final recording = createRecording();
+          var observedCommittedPair = false;
+          p2pService
+            ..isConnectedToPeerResult = true
+            ..sendMessageAcked = true
+            ..sendMessageTransport = 'direct'
+            ..onSendMessage = () {
+              final parent = messageRepo.existingMessages[messageId];
+              observedCommittedPair =
+                  parent != null &&
+                  parent.status == 'sending' &&
+                  parent.wireEnvelope != null &&
+                  mediaAttachmentRepo.saved.length == 1 &&
+                  mediaAttachmentRepo.saved.single.messageId == messageId &&
+                  mediaAttachmentRepo.saved.single.id == blobId;
+            };
+
+          final (result, message) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            messageId: messageId,
+            preassignedMessageIdIsFresh: true,
+            timestamp: '2026-08-05T12:00:00.000Z',
+            blobId: blobId,
+          );
+
+          expect(result, SendVoiceMessageResult.success);
+          expect(observedCommittedPair, isTrue);
+          expect(mediaAttachmentRepo.stagedKinds, <OutgoingOrdinaryAttemptKind>[
+            OutgoingOrdinaryAttemptKind.fresh,
+          ]);
+          expect(message!.id, messageId);
+          expect(message.media.single.id, blobId);
+          expect(messageRepo.ordinaryStageCalls.single.expected, isNull);
+          expect(messageRepo.wireEnvelopeUpdates, isEmpty);
+
+          final transportCallsBeforeCollision = p2pService.sendCallCount;
+          final inboxCallsBeforeCollision = p2pService.storeInInboxCallCount;
+          final collisionRecording = createRecording();
+          final (collisionResult, collisionMessage) = await sendVoiceMessage(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: collisionRecording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            messageId: messageId,
+            preassignedMessageIdIsFresh: true,
+            timestamp: '2026-08-05T12:01:00.000Z',
+            blobId: blobId,
+          );
+          expect(collisionResult, SendVoiceMessageResult.sendFailed);
+          expect(collisionMessage, isNull);
+          expect(p2pService.sendCallCount, transportCallsBeforeCollision);
+          expect(p2pService.storeInInboxCallCount, inboxCallsBeforeCollision);
+          expect(messageRepo.existingMessages[messageId]!.status, 'delivered');
+        },
+      );
+
       test('calls sendChatMessage with audio MediaAttachment', () async {
         final recording = createRecording();
 
@@ -275,6 +451,7 @@ void main() {
           recording: recording,
           bridge: bridge,
           recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
         expect(result, SendVoiceMessageResult.success);
@@ -294,6 +471,7 @@ void main() {
           recording: recording,
           bridge: bridge,
           recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
         // sendChatMessage persists the message
@@ -337,6 +515,7 @@ void main() {
           recording: recording,
           bridge: bridge,
           recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
         expect(result, SendVoiceMessageResult.success);
@@ -354,6 +533,7 @@ void main() {
           recording: recording,
           bridge: bridge,
           recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
           text: 'Listen to this!',
         );
 
@@ -372,6 +552,7 @@ void main() {
           recording: recording,
           bridge: bridge,
           recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
           quotedMessageId: 'parent-voice-1',
         );
 
@@ -396,6 +577,7 @@ void main() {
           recording: recording,
           bridge: bridge,
           recipientMlKemPublicKey: mlKemKey,
+          mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
         expect(result, SendVoiceMessageResult.uploadFailed);
@@ -474,6 +656,7 @@ void main() {
             recording: recording,
             bridge: bridge,
             recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: mediaAttachmentRepo,
           );
 
           expect(result, SendVoiceMessageResult.sendFailed);

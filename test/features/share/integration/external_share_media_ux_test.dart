@@ -34,22 +34,6 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
-class _AttachmentSaveGate {
-  final Completer<void> saveStarted = Completer<void>();
-  final Completer<void> allowSave = Completer<void>();
-
-  Future<void> around(
-    Map<String, Object?> _,
-    Future<void> Function() persist,
-  ) async {
-    if (!saveStarted.isCompleted) {
-      saveStarted.complete();
-    }
-    await allowSave.future;
-    await persist();
-  }
-}
-
 void main() {
   setUp(() {
     final previousFlowEventLogging = flowEventLoggingEnabled;
@@ -159,11 +143,8 @@ Future<void> _runExternalShareCardCase(
   final identityRepository = FakeIdentityRepository()..seed(identity);
   final contactRepository = InMemoryContactRepository()
     ..addTestContact(contact);
-  final saveGate = _AttachmentSaveGate();
   final repositoryFixture = (await tester.runAsync(
-    () => MediaRepositoryRealDbFixture.create(
-      dbSaveMediaAttachmentAround: saveGate.around,
-    ),
+    MediaRepositoryRealDbFixture.create,
   ))!;
   addTearDown(() => tester.runAsync(repositoryFixture.dispose));
   final messageRepository = repositoryFixture.messageRepo;
@@ -275,6 +256,7 @@ Future<void> _runExternalShareCardCase(
             senderPeerId: identity.peerId,
             senderUsername: identity.username,
             messageId: messageId,
+            preassignedMessageIdIsFresh: true,
             timestamp: timestamp,
             createdAt: timestamp,
             bridge: bridge,
@@ -303,6 +285,9 @@ Future<void> _runExternalShareCardCase(
   Object? deliveryError;
   StackTrace? deliveryStackTrace;
   var deliveryCompleted = false;
+  final firstOutgoingPublication = messageRepository.messageChanges.firstWhere(
+    (message) => message.id == messageId && !message.isIncoming,
+  );
   unawaited(
     delivery.then<void>(
       (result) {
@@ -316,62 +301,41 @@ Future<void> _runExternalShareCardCase(
       },
     ),
   );
-  for (var i = 0; i < 100 && !saveGate.saveStarted.isCompleted; i++) {
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 5)),
-    );
-    await tester.pump();
-  }
-
-  final attachmentSaveStarted = saveGate.saveStarted.isCompleted;
-  var renderedCardCountBeforeAttachmentSave = 0;
-  String? renderedMediaTypeBeforeAttachmentSave;
-  String? renderedMediaPathBeforeAttachmentSave;
-  if (attachmentSaveStarted) {
-    await tester.pump();
-    await tester.pump(const Duration(milliseconds: 1));
-
-    final renderedCards = find.byType(MediaThumbnailImage);
-    renderedCardCountBeforeAttachmentSave = renderedCards.evaluate().length;
-    if (renderedCardCountBeforeAttachmentSave == 1) {
-      final renderedCard = tester.widget<MediaThumbnailImage>(renderedCards);
-      renderedMediaTypeBeforeAttachmentSave = renderedCard.mediaType;
-      renderedMediaPathBeforeAttachmentSave = renderedCard.mediaPath;
-    }
-  }
-
-  // Always release the production DB boundary before asserting so a RED run
-  // cannot strand the coordinator future or leak work into the next case.
-  if (!saveGate.allowSave.isCompleted) {
-    saveGate.allowSave.complete();
-  }
   for (var i = 0; i < 100 && !deliveryCompleted; i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 5)),
     );
     await tester.pump();
   }
-  await tester.pump(const Duration(milliseconds: 500));
+  final firstPublished = await tester.runAsync(() => firstOutgoingPublication);
+  for (var i = 0; i < 100; i++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 5)),
+    );
+    await tester.pump();
+    if (find.byType(MediaThumbnailImage).evaluate().isNotEmpty) break;
+  }
+  await tester.pump(const Duration(milliseconds: 1));
 
   if (deliveryError != null) {
     Error.throwWithStackTrace(deliveryError!, deliveryStackTrace!);
   }
   expect(deliveryCompleted, isTrue);
   expect(deliveryResult?.sentCount, 1);
+  expect(firstPublished, isNotNull);
+  expect(firstPublished!.media, hasLength(1));
+  expect(firstPublished.media.single.id, attachmentId);
 
+  final renderedCards = find.byType(MediaThumbnailImage);
   expect(
-    attachmentSaveStarted,
-    isTrue,
-    reason: 'the test must observe the attachment row before it is committed',
-  );
-  expect(
-    renderedCardCountBeforeAttachmentSave,
-    1,
+    renderedCards,
+    findsOneWidget,
     reason:
-        'the production repository change must retain inline ${mediaCase.label} media before the separately persisted attachment row is committed',
+        'the first atomic parent/media publication must render the ${mediaCase.label} card',
   );
-  expect(renderedMediaTypeBeforeAttachmentSave, mediaCase.mediaType);
-  expect(renderedMediaPathBeforeAttachmentSave, mediaFile.path);
+  final renderedCard = tester.widget<MediaThumbnailImage>(renderedCards);
+  expect(renderedCard.mediaType, mediaCase.mediaType);
+  expect(renderedCard.mediaPath, mediaFile.path);
 
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pump();

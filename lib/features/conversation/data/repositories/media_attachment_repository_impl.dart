@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
     show mediaLocalPathIsTransient;
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -18,10 +19,13 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 
 import '../../domain/models/media_attachment.dart';
+import '../../domain/models/conversation_message.dart';
 import '../../domain/models/media_library.dart';
 import '../../domain/models/media_preview_descriptor.dart';
 import '../../domain/models/media_storage.dart';
+import '../../domain/models/outgoing_ordinary_mutation_result.dart';
 import '../../domain/repositories/media_attachment_repository.dart';
+import '../../domain/repositories/message_repository.dart';
 
 /// Implementation of MediaAttachmentRepository using database helper functions.
 ///
@@ -67,9 +71,23 @@ class MediaAttachmentRepositoryImpl
         GroupPrivateMediaCleanupRuntime,
         MediaStorageInventoryRepository,
         GroupGuardedMediaAttachmentSave,
+        OutgoingOrdinaryAttemptStagingRepository,
         NewMessageMediaPersistenceRollback {
   final Future<void> Function(Map<String, Object?> row)
   dbSaveMediaAttachmentPreservingLocalState;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required List<Map<String, Object?>> attachmentRows,
+    required OutgoingOrdinaryAttemptKind kind,
+  })?
+  dbStageOutgoingOrdinaryAttemptWithMedia;
+  final Future<OutgoingOrdinaryMutationResult> Function({
+    required String messageId,
+    required OutgoingOrdinaryMutationOutcome outcome,
+    required List<MediaAttachment> committedMedia,
+  })?
+  publishOutgoingOrdinaryMutation;
   final Future<List<Map<String, Object?>>> Function(
     String messageId,
     String ownerLane,
@@ -392,6 +410,8 @@ class MediaAttachmentRepositoryImpl
 
   MediaAttachmentRepositoryImpl({
     required this.dbSaveMediaAttachmentPreservingLocalState,
+    this.dbStageOutgoingOrdinaryAttemptWithMedia,
+    this.publishOutgoingOrdinaryMutation,
     required this.dbLoadMediaForMessage,
     required this.dbLoadMediaById,
     required this.dbLoadMediaForMessages,
@@ -584,6 +604,7 @@ class MediaAttachmentRepositoryImpl
       keyName: keyName,
       existed: existed,
       previousValue: previousValue,
+      replacementValue: rawKey,
     );
   }
 
@@ -1874,6 +1895,110 @@ class MediaAttachmentRepositoryImpl
     }
   });
 
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttemptWithMedia({
+    required OutgoingTransportMutationRepository messageMutationRepository,
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final stage = dbStageOutgoingOrdinaryAttemptWithMedia;
+    final publish = publishOutgoingOrdinaryMutation;
+    if (stage == null || publish == null || attachments.isEmpty) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    if (attachments.any(
+      (attachment) =>
+          attachment.id.isEmpty ||
+          attachment.messageId != staged.id ||
+          (attachment.ownerLane != null &&
+              attachment.ownerLane != MediaOwnerLane.direct),
+    )) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+
+    final outcome = await lifecycleLock.synchronizedAll(() async {
+      final stamped = attachments
+          .map(
+            (attachment) =>
+                attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+          )
+          .toList(growable: false);
+      final snapshots = <_MediaEncryptionKeyWriteSnapshot>[];
+      var restoreAttempted = false;
+      Future<void> restoreSnapshots() async {
+        if (restoreAttempted) return;
+        restoreAttempted = true;
+        Object? firstError;
+        for (final snapshot in snapshots.reversed) {
+          try {
+            await snapshot.restore();
+          } catch (error) {
+            firstError ??= error;
+          }
+        }
+        if (firstError != null) {
+          throw StateError(
+            'ordinary media attempt secure-key compensation failed: '
+            '$firstError',
+          );
+        }
+      }
+
+      try {
+        for (final attachment in stamped) {
+          snapshots.add(await _captureEncryptionKeyWriteSnapshot(attachment));
+        }
+        final rows = <Map<String, Object?>>[];
+        for (final attachment in stamped) {
+          rows.add(await _toStorageRow(attachment));
+        }
+        final result = await stage(
+          expectedRow: expected?.toMap(),
+          stagedRow: staged.toMap(),
+          attachmentRows: rows,
+          kind: kind,
+        );
+        if (result == OutgoingOrdinaryMutationOutcome.idempotent) {
+          // Storage-reference rows deliberately keep a stable key name, so
+          // SQL cannot distinguish a repeated raw key from a crossed one. An
+          // idempotent parent/projection belongs to the already-durable
+          // envelope: retain its existing key while leaving a genuinely
+          // missing key repaired by this retry.
+          for (final snapshot in snapshots.reversed) {
+            if (snapshot.overwroteDifferentExistingValue) {
+              await snapshot.restore();
+            }
+          }
+        }
+        if (!result.authorizesTransport) {
+          await restoreSnapshots();
+        }
+        return result;
+      } catch (_) {
+        await restoreSnapshots();
+        rethrow;
+      }
+    });
+
+    final committedMedia = await getAttachmentsForMessage(
+      staged.id,
+      owner: MediaOwnerLane.direct,
+    );
+    return publish(
+      messageId: staged.id,
+      outcome: outcome,
+      committedMedia: committedMedia,
+    );
+  }
+
   // Legacy saveAttachment callers have no parent-policy argument. Enter the
   // typed first-preparation seam only for its exact convention-owned shape;
   // the DB seam then remains the authority for ordinary/private parent policy.
@@ -2716,19 +2841,25 @@ class _MediaEncryptionKeyWriteSnapshot {
     required this.keyName,
     required this.existed,
     required this.previousValue,
+    required this.replacementValue,
   });
 
   _MediaEncryptionKeyWriteSnapshot.inactive()
     : store = null,
       keyName = null,
       existed = false,
-      previousValue = null;
+      previousValue = null,
+      replacementValue = null;
 
   final SecureKeyStore? store;
   final String? keyName;
   final bool existed;
   final String? previousValue;
+  final String? replacementValue;
   var _restored = false;
+
+  bool get overwroteDifferentExistingValue =>
+      store != null && existed && previousValue != replacementValue;
 
   Future<void> restore() async {
     final effectiveStore = store;

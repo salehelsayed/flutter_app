@@ -64,28 +64,28 @@ void main() {
       const expected = <String, int>{
         // (a) the delivery-receipt apply — receiver-confirmed by definition
         // (the receipt is emitted after the receiver's durable persist).
-        // Three conditionalTransitionStatus calls: 'inboxed'→'delivered', the
-        // lost-ack 'sent'→'delivered' repair, and (185) the defensive
-        // 'failed'→'delivered' arm for a sender-offline send that still reached
-        // the receiver. The two protected-media expressions settle the live
-        // parent or delete-for-everyone tombstone through their exact CAS after
-        // the same peer-authenticated receipt. All five ride the receipt guard.
+        // One typed ordinary settlement handles inboxed/sent/failed without a
+        // split status/write sequence; the protected-media expressions retain
+        // their live-parent and tombstone exact CAS branches. All four ride the
+        // fail-closed authenticated-ingress allowlist plus the existing row-peer
+        // guard; only direct, relay, and inbox provenance may reach settlement.
         'lib/features/conversation/application/handle_delivery_receipt_use_case.dart':
-            5,
+            4,
         // (b) the live deferred-ack branch of _persistOutgoingSendResult —
         // Go withholds the wire ack until the receiver durably stages
         // (node.go deferred direct ack), so this IS receiver confirmation.
-        // Site (c) the LAN committed-ack branch joins when doc 114 P1-3 land.
+        // Local WebSocket ACKs remain staging telemetry and cannot reach this
+        // delivered writer.
         'lib/features/conversation/application/send_chat_message_use_case.dart':
             1,
         // (b′) the live deferred-ack acked branch of
         // _persistOutgoingDeleteResult — same durable-staging bar as (b).
         'lib/features/conversation/application/delete_message_use_case.dart': 1,
-        // (removed by 125, F6-residue): retry_failed_messages_use_case.dart no
-        // longer mints terminal 'delivered' on relay custody — both the
-        // store-success and already-inbox outcomes now write 'inboxed' (envelope
-        // retained), riding the custody sweep + DeliveryReceiptListener for the
-        // receiver-confirmed 'delivered'. Count is now 0 (entry dropped).
+        // (removed by 125, F6-residue): relay custody in
+        // retry_failed_messages_use_case.dart no longer mints terminal
+        // 'delivered'. Its custom delete retry may still select delivered only
+        // from an explicit authenticated ACK; that dynamic settlement value is
+        // separately audited by the R2 failed-delete retry test.
         // Receiver-side writers marking INCOMING rows 'delivered' — not
         // sender-side custody minting; G4 scopes to outgoing truthfulness.
         'lib/features/conversation/application/handle_incoming_chat_message_use_case.dart':

@@ -10,11 +10,16 @@ void main() {
       final resolver = File(
         'ios/NotificationService/NotificationPreviewResolver.swift',
       );
+      final recovery = File(
+        'ios/NotificationService/IosNotificationRecovery.swift',
+      );
       expect(service.existsSync(), isTrue);
       expect(resolver.existsSync(), isTrue);
+      expect(recovery.existsSync(), isTrue);
 
       final source = service.readAsStringSync();
       final gateSource = resolver.readAsStringSync();
+      final recoverySource = recovery.readAsStringSync();
       final publish = source.indexOf(
         'completionGate.publish(generation: generation)',
       );
@@ -22,18 +27,37 @@ void main() {
         'completionGate.claim(generation: generation)',
       );
       final guard = source.indexOf('guard claimed, let handler, let content');
+      final recoveryHandoff = source.indexOf(
+        'notificationRecoveryHandoff.handoff(',
+      );
       final apply = source.indexOf('applyOrSanitizeNotificationPreviewResult(');
       final marker = source.indexOf('recentRemoteShownMarkerStore?.mark(');
-      final handoff = source.indexOf('handler(content)');
+      final handlerArgument = source.indexOf('contentHandler: handler');
       final commit = source.indexOf('toneReservation.commit(now: Date())');
 
       expect(publish, greaterThanOrEqualTo(0));
       expect(claim, greaterThan(publish));
       expect(guard, greaterThan(claim));
-      expect(apply, greaterThan(guard));
+      expect(recoveryHandoff, greaterThan(guard));
+      expect(apply, greaterThan(recoveryHandoff));
       expect(marker, greaterThan(apply));
-      expect(handoff, greaterThan(marker));
-      expect(commit, greaterThan(handoff));
+      expect(handlerArgument, greaterThan(marker));
+      expect(commit, greaterThan(handlerArgument));
+
+      final recoveryPrepare = recoverySource.indexOf(
+        'prepareContent(disposition)',
+      );
+      final recoveryBeforeHandler = recoverySource.indexOf(
+        'beforeContentHandler(disposition)',
+      );
+      final recoveryHandler = recoverySource.indexOf('contentHandler(content)');
+      final recoveryCommit = recoverySource.indexOf(
+        'store?.markCommitted(requestIdentifier: requestIdentifier)',
+      );
+      expect(recoveryPrepare, greaterThanOrEqualTo(0));
+      expect(recoveryBeforeHandler, greaterThan(recoveryPrepare));
+      expect(recoveryHandler, greaterThan(recoveryBeforeHandler));
+      expect(recoveryCommit, greaterThan(recoveryHandler));
       expect(
         source,
         contains('finish(generation: generation, expiry: true)'),

@@ -1,17 +1,19 @@
-// FDC-02 Tier-2 integration: staggered relay-penalty ranked race, end-to-end
+// FDC-02/R2 Tier-2 integration: staggered relay scheduling and proof authority
 // across a SENDER and a RECEIVER (two fakes).
 //
-// The host fake cannot prove "the LAN/direct leg actually won on the wire"
-// (FDC-00 closure caveat: a ranked-race test can pass via the parallel
+// The host fake cannot prove which live write arrived first on the wire
+// (FDC-00 closure caveat: a race test can pass via the parallel
 // inbox/dedup copy even when the live leg never fired). So the LOAD-BEARING
 // discriminator here is the SENDER's relayLiveSendCount — the thing receiver
 // messageId dedup masks. The receiver is modeled as a messageId-deduping store:
-// no matter how many times a message is transmitted (LAN win + an un-cancellable
-// in-flight relay-live loser), the receiver holds exactly ONE row; only
+// no matter how many times a message is transmitted (LAN write plus an
+// un-cancellable in-flight relay-live send), the receiver holds exactly ONE row; only
 // relayLiveSendCount reveals whether the staggered relay-live leg actually fired.
 //
 // Real-wire "live-wins" proof is deferred to /sims + a two-device smoke
 // (Device/Relay Proof Profile).
+
+import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -23,6 +25,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 // Reuse the host fakes + the sendChatMessage wrapper from the unit suite (DRY).
 import '../application/send_chat_message_use_case_test.dart'
@@ -65,49 +68,158 @@ void main() {
     senderRepo = FakeMessageRepository();
   });
 
-  group('FDC-02 e2e — staggered relay-penalty ranked race', () {
-    // TC-02-11 — sender LAN-wins; the staggered relay-live leg never fires; the
-    // receiver persists exactly one decrypted row (dedup masks the transmission
-    // count — relayLiveSendCount is the discriminator that does not).
+  group('FDC-02 e2e — staggered relay proof race', () {
+    // R2 replacement for TC-02-11: LAN writes remain operational, but only the
+    // later authenticated relay ACK settles. Receiver message-ID dedup still
+    // collapses every live transmission to one row.
     test(
-      'FDC-02 e2e: sender LAN-wins, relay-live leg never fires, receiver '
+      'FDC-02 e2e R2: sender LAN write cannot suppress relay proof, receiver '
       'persists one row',
       () async {
-        final sender = DurableLanFakeP2PService(currentState: circuitOnlyState())
-          ..localPeers.add(receiverPeerId)
-          ..localSendDelay = const Duration(milliseconds: 40);
+        final sender =
+            DurableLanFakeP2PService(currentState: circuitOnlyState())
+              ..localPeers.add(receiverPeerId)
+              ..localSendDelay = const Duration(milliseconds: 40);
+        sender.queuedSendMessageResults.addAll([
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: false,
+              transport: 'relay',
+            ),
+          ),
+          Future<SendMessageResult>.value(
+            const SendMessageResult(
+              sent: true,
+              acked: true,
+              transport: 'relay',
+            ),
+          ),
+        ]);
         const fixedId = 'msg-fdc02-e2e-lan-001';
 
         final (result, message) = await sendChatMessage(
           p2pService: sender,
           messageRepo: senderRepo,
           targetPeerId: receiverPeerId,
-          text: 'LAN beats the warmed relay, e2e',
+          text: 'LAN write precedes relay proof, e2e',
           senderPeerId: 'my-peer',
           senderUsername: 'Me',
           messageId: fixedId,
         );
 
-        // Sender side: LAN carried it; the relay-live leg was suppressed.
+        // Sender side: LAN wrote first, but authenticated relay proof settled.
         expect(result, SendChatMessageResult.success);
         expect(message, isNotNull);
-        expect(message!.transport, 'local');
-        // Wait out the full stagger window — the relay-live leg reaches its
-        // delay, sees `best` committed, and never sends.
-        await Future<void>.delayed(const Duration(milliseconds: 700));
-        expect(sender.relayLiveSendCount, 0);
+        expect(message!.transport, 'relay');
+        expect(sender.localSendCallCount, 1);
+        expect(sender.relayLiveSendCount, 1);
         expect(senderRepo.saved, hasLength(1));
         expect(senderRepo.saved.single.id, fixedId);
 
         // Receiver side: deliver every actual transmission (LAN send + any
         // relay-live send). Receiver dedup collapses them to one row.
-        final transmissions =
-            sender.localSendCallCount + sender.relayLiveSendCount;
+        final transmissions = sender.localSendCallCount + sender.sendCallCount;
         for (var i = 0; i < transmissions; i++) {
           deliverToReceiver(fixedId);
         }
         expect(receiverRows, hasLength(1));
         expect(receiverRows.single, fixedId);
+      },
+    );
+
+    test(
+      'R2 written direct or relay result cannot suppress later committed live proof',
+      () async {
+        for (final uncommittedAck in <bool?>[false, null]) {
+          final sender = FakeP2PService(currentState: circuitOnlyState());
+          sender.queuedSendMessageResults.addAll([
+            Future<SendMessageResult>.value(
+              SendMessageResult(
+                sent: true,
+                acked: uncommittedAck,
+                reply: 'written direct diagnostic',
+                transport: 'direct',
+              ),
+            ),
+            Future<SendMessageResult>.value(
+              const SendMessageResult(
+                sent: true,
+                acked: true,
+                transport: 'relay',
+              ),
+            ),
+          ]);
+
+          final (result, message) = await sendChatMessage(
+            p2pService: sender,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: receiverPeerId,
+            text: 'written direct then relay proof $uncommittedAck',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(message!.status, 'delivered');
+          expect(message.transport, 'relay');
+          expect(sender.sendCallCount, 2);
+          expect(sender.relayLiveSendCount, 1);
+          expect(sender.storeInInboxCallCount, 0);
+        }
+
+        for (final uncommittedAck in <bool?>[false, null]) {
+          final directProof = Completer<SendMessageResult>();
+          final relayWrittenFirst = FakeP2PService(
+            currentState: circuitOnlyState(),
+          );
+          relayWrittenFirst.queuedSendMessageResults.addAll([
+            directProof.future,
+            Future<SendMessageResult>.value(
+              SendMessageResult(
+                sent: true,
+                acked: uncommittedAck,
+                reply: 'relay wrote without commitment',
+                transport: 'relay',
+              ),
+            ),
+          ]);
+          var settled = false;
+          final send =
+              sendChatMessage(
+                p2pService: relayWrittenFirst,
+                messageRepo: FakeMessageRepository(),
+                targetPeerId: receiverPeerId,
+                text: 'written relay then direct proof $uncommittedAck',
+                senderPeerId: 'my-peer',
+                senderUsername: 'Me',
+              ).then((value) {
+                settled = true;
+                return value;
+              });
+
+          for (
+            var i = 0;
+            i < 100 && relayWrittenFirst.relayLiveSendCount == 0;
+            i++
+          ) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+          expect(relayWrittenFirst.relayLiveSendCount, 1);
+          expect(settled, isFalse);
+          directProof.complete(
+            const SendMessageResult(
+              sent: true,
+              acked: true,
+              transport: 'direct',
+            ),
+          );
+          final (result, message) = await send;
+          expect(result, SendChatMessageResult.success);
+          expect(message!.status, 'delivered');
+          expect(message.transport, 'direct');
+          expect(relayWrittenFirst.storeInInboxCallCount, 0);
+        }
       },
     );
 

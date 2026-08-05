@@ -298,6 +298,64 @@ void main() {
   });
 
   test(
+    'Plan 333 recovery reuses one-payload legs and proves device badge nil',
+    () {
+      final driver = File(
+        'integration_test/scripts/ios_notification_payload_xcui_driver.dart',
+      ).readAsStringSync();
+      final campaign = File(
+        'integration_test/scripts/notification_ios_payload_campaign.dart',
+      ).readAsStringSync();
+      final bootstrap = File(
+        'integration_test/scripts/ios_receiver_bootstrap.py',
+      ).readAsStringSync();
+      final appDelegate = File(
+        'ios/Runner/AppDelegate.swift',
+      ).readAsStringSync();
+      final uiTests = File(
+        'ios/RunnerUITests/NotificationTapUITests.swift',
+      ).readAsStringSync();
+
+      expect(campaign, contains("phase: 'fast-path'"));
+      expect(campaign, contains("phase: 'recovery'"));
+      expect(campaign, contains("'--phase',\n      phase"));
+      expect(
+        campaign,
+        contains(
+          'The fast-path driver performs full provider/app/notification cleanup.',
+        ),
+      );
+      expect(driver, contains("options.phase == 'recovery'"));
+      expect(driver, contains('testObservePayloadNotificationRecovery'));
+      expect(
+        driver,
+        contains('testVerifyPayloadNotificationRecoveryRetirement'),
+      );
+      expect(driver, contains("'deliveredNotificationBadgeWasNil': true"));
+      expect(driver, contains("'providerPayloadBadgeAbsent': true"));
+      expect(driver, contains("aps.keys.toSet().difference(const <String>{"));
+      expect(bootstrap, contains('"deliveredNotificationBadgeWasNil"'));
+      expect(
+        appDelegate,
+        contains('notifications[0].request.content.badge == nil'),
+      );
+      expect(appDelegate, contains('content.badge = nil'));
+      expect(appDelegate, contains('identities: []'));
+      expect(
+        uiTests,
+        contains('func testObservePayloadNotificationRecovery()'),
+      );
+      expect(
+        uiTests,
+        contains('func testVerifyPayloadNotificationRecoveryRetirement()'),
+      );
+      expect(uiTests, contains('waitForApplicationBadge(1'));
+      expect(uiTests, contains('waitForApplicationBadge(0'));
+      expect(uiTests, contains('Mknoon recovery sentinel'));
+    },
+  );
+
+  test(
     'cleanup verifies devicectl result apps rather than echoed arguments',
     () {
       expect(
@@ -440,7 +498,7 @@ void main() {
       expect(nse, contains('"success": envelopeStaged ? "true" : "false"'));
       expect(
         nse.indexOf('PUSH_NSE_CONTENT_HANDOFF'),
-        lessThan(nse.indexOf('handler(content)')),
+        lessThan(nse.indexOf('contentHandler: handler')),
         reason: 'the proof must be emitted before NSE completion can suspend',
       );
       expect(resolver, contains('func nsePublicProofPayload('));

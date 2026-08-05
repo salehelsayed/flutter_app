@@ -25,7 +25,7 @@ readonly BASELINE_TESTS=(
 readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/integration/two_user_message_exchange_test.dart"
   "test/features/conversation/integration/offline_inbox_roundtrip_test.dart"
-  # FDC-02: staggered relay-penalty ranked race — e2e dedup-masking discriminator
+  # FDC-02: staggered relay proof race — e2e dedup-masking discriminator
   # (sender relayLiveSendCount) across sender+receiver fakes.
   "test/features/conversation/integration/ranked_race_relay_penalty_test.dart"
   "test/features/conversation/integration/media_attachment_flow_test.dart"
@@ -238,6 +238,11 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/push/application/push_decrypt_preview_test.dart"
   "test/features/push/application/background_push_notification_fallback_test.dart"
   "test/core/notifications/flutter_notification_service_test.dart"
+  # 333: iOS native recovery reconciles one canonical direct/group unread
+  # aggregate through a strict two-phase owner wired after ingress settles.
+  "test/core/database/helpers/canonical_notification_badge_state_db_helpers_test.dart"
+  "test/core/notifications/ios_notification_recovery_bridge_test.dart"
+  "test/core/notifications/ios_notification_recovery_wiring_test.dart"
   # 234 Session 03: direct private-media SQL/CAS, reveal lease, monotonic
   # expiry scheduler, restart/cleanup convergence, and resume ordering.
   "test/core/database/helpers/messages_db_helpers_private_media_lifecycle_test.dart"
@@ -324,6 +329,10 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/direct_media_library_batch_actions_test.dart"
   "test/features/conversation/application/direct_media_library_batch_delete_test.dart"
   "test/features/conversation/application/direct_media_library_boundary_test.dart"
+  # 336: atomic ordinary outgoing attempt/transport settlement policy and
+  # bounded application-writer census.
+  "test/core/database/helpers/outgoing_transport_settlement_test.dart"
+  "test/features/conversation/application/outgoing_transport_settlement_writers_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -629,6 +638,9 @@ readonly GROUP_TESTS=(
   "test/features/push/application/group_reaction_notification_copy_test.dart"
   "test/features/push/application/resolve_group_notification_route_target_use_case_test.dart"
   "test/features/push/application/background_push_notification_fallback_test.dart"
+  # 335: recipient-owned group/sender/key resolution for typed foreground
+  # drain-error previews; provider/decrypted display names remain untrusted.
+  "test/features/push/application/foreground_group_message_notification_resolver_test.dart"
   # 269 W3: durable ordinary-group media failure transitions, recoverable
   # paging/coalesced retry, resume/ready recovery, and production wiring.
   "test/features/conversation/application/download_media_use_case_test.dart"
@@ -661,6 +673,10 @@ readonly GROUP_TESTS=(
   # 330: exact per-group read cancellation shares one keyed operation queue
   # with final presentation, while typed pending claims remain retryable.
   "test/core/notifications/flutter_notification_service_test.dart"
+  # 333: shared iOS canonical badge/recovery ownership belongs to both lanes.
+  "test/core/database/helpers/canonical_notification_badge_state_db_helpers_test.dart"
+  "test/core/notifications/ios_notification_recovery_bridge_test.dart"
+  "test/core/notifications/ios_notification_recovery_wiring_test.dart"
   "test/core/notifications/group_notification_read_projector_test.dart"
   "test/core/notifications/account_migration_receiver_display_custody_test.dart"
   "test/core/notifications/group_notification_runtime_wiring_test.dart"
@@ -781,7 +797,7 @@ readonly TRANSPORT_TESTS=(
   "integration_test/transport_e2e_test.dart"
   "integration_test/media_stable_id_smoke_test.dart"
   # FDC-04 LAN-aware warm-peer overlap smoke (host-green proves label wiring;
-  # the real LAN win is device-proof).
+  # real LAN route behavior is device-proof).
   "integration_test/warm_peer_lan_aware_smoke_test.dart"
   # FDC-15: 1:1 media over a libp2p LAN stream — host-side send-leg/predicate/
   # routing locks (the live two-phone media transfer is device-only, D1). A

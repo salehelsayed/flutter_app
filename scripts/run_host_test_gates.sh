@@ -161,6 +161,10 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/database/helpers/outgoing_direct_private_writer_guard_test.dart"
   "test/features/conversation/integration/private_media_committed_pending_cleanup_recovery_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_sender_finalize_canonical_path_test.dart"
+  # 336: atomic ordinary outgoing attempt/transport settlement policy and
+  # bounded application-writer census.
+  "test/core/database/helpers/outgoing_transport_settlement_test.dart"
+  "test/features/conversation/application/outgoing_transport_settlement_writers_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"
@@ -196,12 +200,12 @@ readonly GO_BRIDGE_FEATUREFLAGS_RUN='PartialFeatureFlags'
 # (Go 1.26.x quic-go panic — see go.mod).
 readonly GO_NODE_WAKETOKEN_TEST="go-mknoon/node/inbox_wake_token_test.go"
 readonly GO_NODE_WAKETOKEN_RUN='WakeToken'
-# 220 (Go libp2p cleanup / fast-path refactor): host-only source-shape,
-# startup lifecycle, bounded group/relay fan-out, dispatcher queue shape, and
-# bridge entrypoint helper contracts. GOTOOLCHAIN-pinned for the documented
-# Go 1.26.x quic-go incompatibility.
+# 220/337 (Go libp2p cleanup + authenticated committed ACK contracts):
+# host-only source-shape, lifecycle/fan-out, semantic sender ACK parsing, and
+# authenticated receiver identity/deferred-ordering proofs. GOTOOLCHAIN-pinned
+# for the documented Go 1.26.x quic-go incompatibility.
 readonly GO_NODE_LIBP2P_REFACTOR_TEST="go-mknoon/node/libp2p_refactor_contract_test.go"
-readonly GO_NODE_LIBP2P_REFACTOR_RUN='TestGoLibp2pProductionShapeBudget|TestStartDoesNotHoldNodeLockAcrossHostCreation|TestStartRejectsConcurrentStartWhileHostCreationInProgress|TestStartHostCreationFailureRollsBackPublishedState|TestStartHostCreationPanicClearsInProgressAndAllowsRetry|TestStopDuringStartInProgressIsExplicitAndNonMutating|TestReconnectRelaysDuringStartInProgressFailsFast|TestGroupDialKnownMembersRunsBoundedParallel|TestDiscoverAndConnectGroupPeersRunsBoundedParallel|TestRunGroupDiscoveryCycleBoundsGlobalGroupDialConcurrency|TestRelaySelectorFanOutRunsDistinctRelaysInParallel|TestRelaySelectorFanOutAllFailPreservesAggregateError'
+readonly GO_NODE_LIBP2P_REFACTOR_RUN='TestGoLibp2pProductionShapeBudget|TestStartDoesNotHoldNodeLockAcrossHostCreation|TestStartRejectsConcurrentStartWhileHostCreationInProgress|TestStartHostCreationFailureRollsBackPublishedState|TestStartHostCreationPanicClearsInProgressAndAllowsRetry|TestStopDuringStartInProgressIsExplicitAndNonMutating|TestReconnectRelaysDuringStartInProgressFailsFast|TestGroupDialKnownMembersRunsBoundedParallel|TestDiscoverAndConnectGroupPeersRunsBoundedParallel|TestRunGroupDiscoveryCycleBoundsGlobalGroupDialConcurrency|TestRelaySelectorFanOutRunsDistinctRelaysInParallel|TestRelaySelectorFanOutAllFailPreservesAggregateError|TestSendMessageWithTransport_AckFrameValidation|TestHandleIncomingMessage_BindsAuthenticatedRemotePeerAndClassifiedTransport|TestHandleIncomingMessage_DeferredDirectAck_WritesAckAfterConfirm|TestHandleIncomingMessage_DeferredDirectAck_FalseConfirmDoesNotAck|TestHandleIncomingMessage_DeferredDirectAck_TimesOutWithoutConfirm|TestHandleIncomingMessage_DirectAckContract_AttachesConfirmNonce|TestShouldDeferDirectAck_ReactionAndDeletion'
 readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_TEST="go-mknoon/bridge/bridge_entrypoint_contract_test.go"
 readonly GO_BRIDGE_ENTRYPOINT_REFACTOR_RUN='TestBridgeExportedHandlersUseSharedEntrypoint|TestBridgeGroupPublishContractsPreservedAfterHelperExtraction'
 # Exact Android build-boundary proof. Keep it as one synthetic core-host item:

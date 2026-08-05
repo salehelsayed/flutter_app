@@ -266,6 +266,71 @@ func TestHandleIncomingMessage_EmitsRelayTransportForCircuitStream(t *testing.T)
 	}
 }
 
+func TestHandleIncomingMessage_BindsAuthenticatedRemotePeerAndClassifiedTransport(t *testing.T) {
+	tests := []struct {
+		name          string
+		circuit       bool
+		wantTransport string
+	}{
+		{
+			name:          "direct stream",
+			wantTransport: "direct",
+		},
+		{
+			name:          "relay stream",
+			circuit:       true,
+			wantTransport: "relay",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			collector := &testEventCollector{}
+			n := New(collector)
+			n.peerId = "authenticated-recipient"
+			remotePeerID := generatePeerIDStr(t)
+			remoteMultiaddr := "/ip4/192.168.1.55/tcp/4001"
+			if tc.circuit {
+				remoteMultiaddr = fmt.Sprintf(
+					"/ip4/203.0.113.10/tcp/4001/p2p/%s/p2p-circuit/p2p/%s",
+					generatePeerIDStr(t),
+					remotePeerID,
+				)
+			}
+			forgedEnvelope := []byte(
+				`{"type":"introduction","from":"forged-peer","transport":"wifi","payload":{"senderPeerId":"forged-peer"}}`,
+			)
+			stream := newStubTransportStream(
+				t,
+				forgedEnvelope,
+				remotePeerID,
+				remoteMultiaddr,
+			)
+
+			n.handleIncomingMessage(stream)
+
+			data := waitForCollectedEvent(
+				t,
+				collector,
+				"message:received",
+				time.Second,
+			)
+			if got := data["from"]; got != remotePeerID {
+				t.Fatalf("event from = %v, want authenticated remote peer %q", got, remotePeerID)
+			}
+			if got := data["transport"]; got != tc.wantTransport {
+				t.Fatalf("event transport = %v, want stream classification %q", got, tc.wantTransport)
+			}
+			if got := data["content"]; got != string(forgedEnvelope) {
+				t.Fatalf("event content = %v, want original forged envelope diagnostics", got)
+			}
+			if got := data["to"]; got != "authenticated-recipient" {
+				t.Fatalf("event to = %v, want receiver-owned peer id", got)
+			}
+		})
+	}
+}
+
 func TestHandleIncomingMessage_DeferredDirectAck_WritesAckAfterConfirm(t *testing.T) {
 	cb := &directConfirmCallback{confirmResults: []bool{true}}
 	n := newDeferredAckTestNode(t, cb, 50*time.Millisecond)

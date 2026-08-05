@@ -96,6 +96,8 @@ Future<bool?> handleAppResumed({
   Future<void> Function()? retryPushRegistrationFn,
   bool skipDirectInboxDrain = false,
   bool skipGroupInboxDrain = false,
+  bool awaitCanonicalInboxDrains = false,
+  void Function(bool complete)? onCanonicalInboxDrainsSettled,
   AccountMigrationNetworkGate accountMigrationNetworkGate =
       allowAccountMigrationNetworkSideEffects,
 
@@ -128,6 +130,7 @@ Future<bool?> handleAppResumed({
   String? Function()? activeConversationPeerId,
 }) async {
   final resumeStart = DateTime.now();
+  var canonicalInboxDrainsComplete = true;
   final readinessProofRecorder = p2pService is ReadinessProofRecorder
       ? p2pService as ReadinessProofRecorder
       : null;
@@ -212,6 +215,7 @@ Future<bool?> handleAppResumed({
       details: {'peerId': p2pService.currentState.peerId},
     );
     debugPrint('[RESUME] skipped by account migration runtime network gate');
+    onCanonicalInboxDrainsSettled?.call(false);
     return false;
   }
 
@@ -290,33 +294,48 @@ Future<bool?> handleAppResumed({
       unawaited(p2pService.warmPeer(activeWarmPeerId));
     }
 
-    // 3. Drain offline inbox (messages queued while backgrounded) — fire-and-
-    // forget so the resume future no longer couples recovery latency onto the
-    // first send. Its own catchError isolates a drain failure from the resume:
-    // it emits a dedicated APP_LIFECYCLE_RESUME_DRAIN_ERROR (never the
-    // whole-resume APP_LIFECYCLE_RESUME_ERROR) and never aborts the Step-8
-    // sweep. The drain keeps its 141 defer-when-!isStarted guard and single-
-    // in-flight coalescing internally; streamed delivery + the conversation
-    // surface's own 'catching up…' affordance cover the now-background drain.
+    // 3. Drain offline inbox. Normal callers retain the latency-neutral
+    // fire-and-forget path. An absolute notification reconciliation requests
+    // the existing full-drain capability and waits for its truthful outcome.
     if (skipDirectInboxDrain) {
+      canonicalInboxDrainsComplete = false;
       emitFlowEvent(
         layer: 'FL',
         event: 'APP_LIFECYCLE_RESUME_DIRECT_DRAIN_REPLACED',
         details: {'owner': 'dropped_push_recovery'},
       );
     } else {
-      debugPrint(
-        '[RESUME] Step 3: drainOfflineInbox() starting (unawaited)...',
-      );
-      unawaited(
-        p2pService.drainOfflineInbox().catchError((Object e) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'APP_LIFECYCLE_RESUME_DRAIN_ERROR',
-            details: {'error': e.toString()},
-          );
-        }),
-      );
+      debugPrint('[RESUME] Step 3: drainOfflineInbox() starting...');
+      if (awaitCanonicalInboxDrains) {
+        if (p2pService case final P2PFullInboxDrain fullDrain) {
+          try {
+            final outcome = await fullDrain.drainOfflineInboxFully();
+            canonicalInboxDrainsComplete =
+                outcome.isSuccessful && !outcome.hasMore;
+          } catch (e) {
+            canonicalInboxDrainsComplete = false;
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'APP_LIFECYCLE_RESUME_DRAIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }
+        } else {
+          // A void-only drain cannot prove cursor exhaustion.
+          await p2pService.drainOfflineInbox();
+          canonicalInboxDrainsComplete = false;
+        }
+      } else {
+        unawaited(
+          p2pService.drainOfflineInbox().catchError((Object e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'APP_LIFECYCLE_RESUME_DRAIN_ERROR',
+              details: {'error': e.toString()},
+            );
+          }),
+        );
+      }
     }
 
     // Observable discriminator that the parallel shape ran (vs HEAD's serial
@@ -362,6 +381,7 @@ Future<bool?> handleAppResumed({
     // Phase 2: captured out of the recovery gate so the background drain
     // continuation can be scheduled after the gate closes.
     var drainHasMorePages = false;
+    var firstGroupDrainSuccessful = true;
     String? continuationSelfPeerId;
 
     if (resumeGroupRecoveryEnabled &&
@@ -416,6 +436,8 @@ Future<bool?> handleAppResumed({
 
         final GroupOfflineInboxDrainResult groupDrainResult;
         if (skipGroupInboxDrain) {
+          firstGroupDrainSuccessful = false;
+          canonicalInboxDrainsComplete = false;
           groupDrainResult = const GroupOfflineInboxDrainResult(
             groupCount: 0,
             errorCount: 1,
@@ -445,6 +467,7 @@ Future<bool?> handleAppResumed({
             // eligibility. Remaining pages drain after the recovery gate.
             drainAllPages: false,
           );
+          firstGroupDrainSuccessful = groupDrainResult.isSuccessful;
           drainHasMorePages = groupDrainResult.hasMorePages;
           final groupDrainMs = DateTime.now()
               .difference(groupDrainStart)
@@ -509,21 +532,31 @@ Future<bool?> handleAppResumed({
       // behind the gate. Pages it does not reach are drained by a later
       // resume/retrier pass via the same persisted cursor.
       if (drainHasMorePages) {
-        unawaited(
-          drainGroupOfflineInboxContinuation(
-            bridge: bridge,
-            groupRepo: groupRepo,
-            msgRepo: groupMsgRepo,
-            groupMessageListener: groupMessageListener,
-            mediaAttachmentRepo: mediaAttachmentRepo,
-            reactionRepo: reactionRepo,
-            pendingReactionRepo: pendingReactionRepo,
-            pendingKeyRepairRepo: pendingKeyRepairRepo,
-            historyGapRepairRepo: historyGapRepairRepo,
-            requestGroupKeyRepair: requestGroupKeyRepair,
-            selfPeerId: continuationSelfPeerId,
-          ),
+        final continuation = drainGroupOfflineInboxContinuation(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: groupMsgRepo,
+          groupMessageListener: groupMessageListener,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          reactionRepo: reactionRepo,
+          pendingReactionRepo: pendingReactionRepo,
+          pendingKeyRepairRepo: pendingKeyRepairRepo,
+          historyGapRepairRepo: historyGapRepairRepo,
+          requestGroupKeyRepair: requestGroupKeyRepair,
+          selfPeerId: continuationSelfPeerId,
         );
+        if (awaitCanonicalInboxDrains) {
+          final result = await continuation;
+          canonicalInboxDrainsComplete =
+              canonicalInboxDrainsComplete &&
+              result.isSuccessful &&
+              !result.hasMorePages;
+        } else {
+          unawaited(continuation);
+        }
+      } else {
+        canonicalInboxDrainsComplete =
+            canonicalInboxDrainsComplete && firstGroupDrainSuccessful;
       }
     } else if (groupRepo != null && resumeGroupRecoveryEnabled) {
       final needsGroupRecovery =
@@ -944,6 +977,7 @@ Future<bool?> handleAppResumed({
       },
     );
 
+    onCanonicalInboxDrainsSettled?.call(canonicalInboxDrainsComplete);
     return bridgeOk;
   } catch (e) {
     final totalMs = DateTime.now().difference(resumeStart).inMilliseconds;
@@ -956,6 +990,7 @@ Future<bool?> handleAppResumed({
       event: 'APP_LIFECYCLE_RESUME_ERROR',
       details: {'error': e.toString()},
     );
+    onCanonicalInboxDrainsSettled?.call(false);
     return null;
   } finally {
     if (!hadPendingResumeStarted) {

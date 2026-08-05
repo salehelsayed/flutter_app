@@ -79,16 +79,17 @@ group/world permission:
 The non-secret
 `SIMS_IOS_NOTIFICATION_RECEIVER_HANDOFF_NONCE` binds the handoff to this run.
 The handoff schema is
-`mknoon.sims.ios-provider-receiver-handoff.v1` with exactly:
+`mknoon.sims.ios-provider-receiver-handoff.v2` with exactly:
 
 ```text
 schema, captureNonce, receiverDeviceId, peerDeviceId, bundleId,
 apnsEnvironment, apnsDeviceToken, mlKemPublicKey, notificationAuthorization,
-notificationAlertSetting, capturedAt
+notificationAlertSetting, notificationBadgeSetting, capturedAt
 ```
 
 The adapter validates the exact receiver, observed transport peer, bundle,
-nonce, freshness, and `development` environment. The raw APNs device token is
+nonce, freshness, enabled alert and badge settings, and `development`
+environment. The raw APNs device token is
 read only from this structured handoff. There is no standalone device-token
 path or relay token input.
 
@@ -98,6 +99,14 @@ and nonce. Its `0600` output becomes
 `SIMS_IOS_NOTIFICATION_APNS_PAYLOAD_PATH`; it is never expected to exist before
 the post-install handoff. The driver validates its bounded encrypted route and
 deletes it in `finally`.
+
+One outer campaign runs two isolated legs through this same stack. The first
+retains the airplane-mode staged-envelope tap proof. After its full
+relay/app/notification cleanup, the recovery leg reinstalls the same signed
+app, sends one fresh real APNs payload, and uses the protected Runner proof to
+observe delivered `badge == nil`, absolute badge convergence, exact owned-card
+retirement, and unrelated local-card survival. This is not a generic
+multi-payload provider API; each leg keeps the existing one-payload lifecycle.
 
 The three expected display strings are canonical, trimmed printable ASCII so
 Go, Python, Dart, Swift, and XCUITest count and compare identical bytes.

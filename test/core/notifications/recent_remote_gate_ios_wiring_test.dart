@@ -89,10 +89,6 @@ void main() {
     'configured gate retries App Group resolution without pinning systemTemp',
     () async {
       var appGroupReady = false;
-      final tempFallback = File(
-        '${Directory.systemTemp.path}/mknoon_recent_remote_notifications.json',
-      );
-      if (tempFallback.existsSync()) tempFallback.deleteSync();
 
       configureRecentRemoteNotificationGateForIos(
         channel: AppGroupPathChannel(
@@ -101,11 +97,14 @@ void main() {
         supportDirectory: () async => support,
       );
 
+      await expectLater(
+        recentRemoteNotificationGate.resolveFilePath(),
+        throwsA(isA<StateError>()),
+      );
       await recentRemoteNotificationGate.markAnnouncement(
         payload: 'peer-race',
         messageId: 'event-race',
       );
-      expect(tempFallback.existsSync(), isFalse);
 
       appGroupReady = true;
       await recentRemoteNotificationGate.markAnnouncement(

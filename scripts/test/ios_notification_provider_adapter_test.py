@@ -132,6 +132,7 @@ class _Fixture:
             "mlKemPublicKey": base64.b64encode(b"R" * 1184).decode(),
             "notificationAuthorization": "authorized",
             "notificationAlertSetting": "enabled",
+            "notificationBadgeSetting": "enabled",
             "capturedAt": (
                 datetime.datetime.now(datetime.timezone.utc)
                 .isoformat(timespec="milliseconds")
@@ -828,6 +829,14 @@ time.sleep(30)
             self.assertFalse(fixture.relay_actions.exists())
 
             fixture.handoff["notificationAuthorization"] = "authorized"
+            fixture.handoff["notificationBadgeSetting"] = "disabled"
+            fixture._persist_inputs()
+            result = fixture.run("setup", fixture.capture / "disabled-badges.json")
+            self.assertEqual(result.returncode, 78)
+            self.assertIn("authorized alerts and badges", result.stderr)
+            self.assertFalse(fixture.relay_actions.exists())
+
+            fixture.handoff["notificationBadgeSetting"] = "enabled"
             fixture.staging["signingIdentitySha256"] = "e" * 64
             fixture.staging["signingCertificateSha256"] = "e" * 64
             fixture._persist_inputs()

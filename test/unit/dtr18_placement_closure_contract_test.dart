@@ -28,12 +28,12 @@ const _relocations = <String, List<String>>{
       'media_attachment_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/'
         'media_attachment_repository_impl.dart',
-    '25c2edae75c47de771504dea387c838f518e269341566cf8d32c64aa9bd53d3c',
+    '1e8487cc33b0e6edf63022cef8a82bc3da52579bd0e63e1e966f13772a259fd9',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/message_repository_impl.dart',
-    'c2dd1326de933cff4bb8f3cfe9c44ac09eb9dd66bf433fdbe5fd0f07ef136313',
+    '23db20fa4733869ad545dd48a3672dbac761da11105ca1732b74ec43281fb9c9',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

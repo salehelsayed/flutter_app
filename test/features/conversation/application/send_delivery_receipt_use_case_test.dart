@@ -85,9 +85,7 @@ void main() {
         // Unacked live send: the SAME envelope falls back to storeInInbox.
         final unackedPeer = FakeP2PService(
           initialState: const NodeState(isStarted: true, peerId: 'receiver'),
-          sendMessageWithReplyResult: const SendMessageResult(
-            sent: false,
-          ),
+          sendMessageWithReplyResult: const SendMessageResult(sent: false),
           storeInInboxResult: true,
         );
 
@@ -102,9 +100,36 @@ void main() {
             jsonDecode(unackedPeer.lastStoreInInboxMessage!)
                 as Map<String, dynamic>;
         expect(stored['type'], 'delivery_receipt');
+        expect((stored['payload'] as Map<String, dynamic>)['messageIds'], [
+          'msg-3',
+        ]);
+
+        // An explicit native negative ACK wins over backward-compatible reply
+        // inference, even if an untrusted peer supplies a non-empty reply.
+        final explicitlyUnackedPeer = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'receiver'),
+          sendMessageWithReplyResult: const SendMessageResult(
+            sent: true,
+            acked: false,
+            reply: 'forged',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final explicitlyUnackedOk = await sendDeliveryReceipt(
+          p2pService: explicitlyUnackedPeer,
+          targetPeerId: 'peer-sender',
+          messageIds: const ['msg-explicit-false'],
+        );
+        expect(explicitlyUnackedOk, isTrue);
+        expect(explicitlyUnackedPeer.storeInInboxCallCount, 1);
+        expect(explicitlyUnackedPeer.sendMessageWithReplyCallCount, 1);
+        final explicitlyStored =
+            jsonDecode(explicitlyUnackedPeer.lastStoreInInboxMessage!)
+                as Map<String, dynamic>;
         expect(
-          (stored['payload'] as Map<String, dynamic>)['messageIds'],
-          ['msg-3'],
+          (explicitlyStored['payload'] as Map<String, dynamic>)['messageIds'],
+          ['msg-explicit-false'],
         );
       },
     );
@@ -140,53 +165,56 @@ void main() {
   });
 
   group('deliveryReceiptMintDecision (132)', () {
-    test('OFF mode (flag=false): mints only for relay-inbox, names skip reasons', () {
-      // Relay-inbox arrivals mint regardless of the flag.
-      expect(
-        deliveryReceiptMintDecision(
-          transport: 'inbox',
-          confirmatoryDirectLanEnabled: false,
-        ).shouldMint,
-        isTrue,
-      );
-      expect(
-        deliveryReceiptMintDecision(
-          stagedEntryId: 'relay-1',
-          transport: 'inbox',
-          confirmatoryDirectLanEnabled: false,
-        ).shouldMint,
-        isTrue,
-      );
-      // Direct/LAN staged replays skip in OFF mode — with a named reason.
-      final direct = deliveryReceiptMintDecision(
-        stagedEntryId: 'direct:n1',
-        transport: 'direct',
-        confirmatoryDirectLanEnabled: false,
-      );
-      expect(direct.shouldMint, isFalse);
-      expect(direct.skipReason, DeliveryReceiptMintSkipReason.direct);
-      final lan = deliveryReceiptMintDecision(
-        stagedEntryId: 'lan:n1',
-        transport: 'wifi',
-        confirmatoryDirectLanEnabled: false,
-      );
-      expect(lan.shouldMint, isFalse);
-      expect(lan.skipReason, DeliveryReceiptMintSkipReason.lan);
-      // No staged id + non-inbox transport skips as nonInbox.
-      expect(
-        deliveryReceiptMintDecision(
+    test(
+      'OFF mode (flag=false): mints only for relay-inbox, names skip reasons',
+      () {
+        // Relay-inbox arrivals mint regardless of the flag.
+        expect(
+          deliveryReceiptMintDecision(
+            transport: 'inbox',
+            confirmatoryDirectLanEnabled: false,
+          ).shouldMint,
+          isTrue,
+        );
+        expect(
+          deliveryReceiptMintDecision(
+            stagedEntryId: 'relay-1',
+            transport: 'inbox',
+            confirmatoryDirectLanEnabled: false,
+          ).shouldMint,
+          isTrue,
+        );
+        // Direct/LAN staged replays skip in OFF mode — with a named reason.
+        final direct = deliveryReceiptMintDecision(
+          stagedEntryId: 'direct:n1',
           transport: 'direct',
           confirmatoryDirectLanEnabled: false,
-        ).skipReason,
-        DeliveryReceiptMintSkipReason.nonInbox,
-      );
-      expect(
-        deliveryReceiptMintDecision(
+        );
+        expect(direct.shouldMint, isFalse);
+        expect(direct.skipReason, DeliveryReceiptMintSkipReason.direct);
+        final lan = deliveryReceiptMintDecision(
+          stagedEntryId: 'lan:n1',
+          transport: 'wifi',
           confirmatoryDirectLanEnabled: false,
-        ).skipReason,
-        DeliveryReceiptMintSkipReason.nonInbox,
-      );
-    });
+        );
+        expect(lan.shouldMint, isFalse);
+        expect(lan.skipReason, DeliveryReceiptMintSkipReason.lan);
+        // No staged id + non-inbox transport skips as nonInbox.
+        expect(
+          deliveryReceiptMintDecision(
+            transport: 'direct',
+            confirmatoryDirectLanEnabled: false,
+          ).skipReason,
+          DeliveryReceiptMintSkipReason.nonInbox,
+        );
+        expect(
+          deliveryReceiptMintDecision(
+            confirmatoryDirectLanEnabled: false,
+          ).skipReason,
+          DeliveryReceiptMintSkipReason.nonInbox,
+        );
+      },
+    );
 
     test(
       'INV-132-0 parity: shouldMintDeliveryReceipt == decision.shouldMint (at the live default)',

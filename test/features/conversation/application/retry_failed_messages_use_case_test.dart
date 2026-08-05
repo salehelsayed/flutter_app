@@ -18,6 +18,7 @@ import '../../../features/conversation/domain/repositories/fake_message_reposito
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
@@ -203,6 +204,7 @@ Map<String, dynamic> decodeWirePayload(String wireJson) {
 /// two concurrent retries of the same row can be caught in flight.
 class _GatedInboxP2PService extends FakeP2PService {
   final gate = Completer<void>();
+  final entered = Completer<void>();
 
   _GatedInboxP2PService({required super.initialState})
     : super(storeInInboxResult: true);
@@ -216,6 +218,7 @@ class _GatedInboxP2PService extends FakeP2PService {
     storeInInboxCallCount++;
     lastStoreInInboxPeerId = toPeerId;
     lastStoreInInboxMessage = message;
+    if (!entered.isCompleted) entered.complete();
     await gate.future;
     return storeInInboxResult;
   }
@@ -423,8 +426,8 @@ void main() {
         expect(messageRepo.lastSavedMessage, isNotNull);
         expect(messageRepo.lastSavedMessage!.id, failedMessageId);
         expect(messageRepo.lastSavedMessage!.timestamp, failedTimestamp);
-        expect(messageRepo.wireEnvelopeUpdates, hasLength(1));
-        expect(messageRepo.wireEnvelopeUpdates.single.id, failedMessageId);
+        expect(messageRepo.ordinaryAttemptStages, hasLength(1));
+        expect(messageRepo.ordinaryAttemptStages.single.id, failedMessageId);
 
         final payload = decodeWirePayload(p2pService.lastSendMessageContent!);
         expect(payload['id'], failedMessageId);
@@ -494,6 +497,7 @@ void main() {
           storeInInboxResult: false,
           sendMessageWithReplyResult: const p2p.SendMessageResult(
             sent: true,
+            acked: true,
             reply: 'ack',
           ),
         );
@@ -540,6 +544,151 @@ void main() {
         );
       },
     );
+
+    test('R2 failed delete retry requires explicit committed ACK', () async {
+      Future<ConversationMessage> runOrdinary({
+        required String suffix,
+        required p2p.SendMessageResult sendResult,
+      }) async {
+        final repository = FakeMessageRepository();
+        final message = makeFailedDeletedMessage(
+          id: 'r2-delete-retry-ordinary-$suffix',
+        );
+        repository.seed([message]);
+        final identities = FakeIdentityRepository()..seed(makeIdentity());
+        final contacts = FakeContactRepository()
+          ..seed([makeContact(peerId: 'peer-target')]);
+        final service = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: false,
+          sendMessageWithReplyResult: sendResult,
+        );
+
+        expect(
+          await retryFailedMessages(
+            messageRepo: repository,
+            identityRepo: identities,
+            contactRepo: contacts,
+            p2pService: service,
+            bridge: PassthroughCryptoBridge(),
+          ),
+          1,
+        );
+        expect(service.storeInInboxCallCount, 1);
+        expect(service.sendMessageWithReplyCallCount, 1);
+        return (await repository.getMessage(message.id))!;
+      }
+
+      final replyOnlyOrdinary = await runOrdinary(
+        suffix: 'reply-only',
+        sendResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: '{"ack":true}',
+          transport: 'direct',
+        ),
+      );
+      expect(replyOnlyOrdinary.status, 'sent');
+      expect(replyOnlyOrdinary.transport, 'direct');
+      expect(replyOnlyOrdinary.wireEnvelope, isNotNull);
+      expect(replyOnlyOrdinary.isHidden, isFalse);
+      expect(replyOnlyOrdinary.hiddenAt, isNull);
+
+      final ackedOrdinary = await runOrdinary(
+        suffix: 'explicit-ack',
+        sendResult: const p2p.SendMessageResult(
+          sent: true,
+          acked: true,
+          reply: '{"ack":true}',
+          transport: 'direct',
+        ),
+      );
+      expect(ackedOrdinary.status, 'delivered');
+      expect(ackedOrdinary.transport, 'direct');
+      expect(ackedOrdinary.wireEnvelope, isNull);
+      expect(ackedOrdinary.isHidden, isTrue);
+      expect(ackedOrdinary.hiddenAt, ackedOrdinary.deletedAt);
+
+      Future<ConversationMessage> runPrivate({
+        required String suffix,
+        required p2p.SendMessageResult sendResult,
+      }) async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final messageId = 'r2-delete-retry-private-$suffix';
+        await fixture.seedDirectParent(messageId, contactPeerId: 'peer-target');
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'sender_peer_id': 'my-peer-id',
+            'text': '',
+            'status': 'failed',
+            'is_incoming': 0,
+            'wire_envelope':
+                '{"type":"message_deletion","version":"2","encrypted":{}}',
+            'deleted_at': '2026-01-01T00:01:00.000Z',
+            'deleted_by_peer_id': 'my-peer-id',
+            'hidden_at': null,
+            'private_media_policy_version': 1,
+            'private_media_mode': 'protected',
+            'private_media_state': 'consumed',
+            'private_media_received_at_ms': 1000,
+            'private_media_terminal_at_ms': 2000,
+            'private_media_clock_high_water_ms': 2000,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        final identities = FakeIdentityRepository()..seed(makeIdentity());
+        final contacts = FakeContactRepository()
+          ..seed([makeContact(peerId: 'peer-target')]);
+        final service = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: false,
+          sendMessageWithReplyResult: sendResult,
+        );
+
+        expect(
+          await retryFailedMessages(
+            messageRepo: fixture.messageRepo,
+            identityRepo: identities,
+            contactRepo: contacts,
+            p2pService: service,
+            bridge: PassthroughCryptoBridge(),
+          ),
+          1,
+        );
+        return (await fixture.messageRepo.getMessage(messageId))!;
+      }
+
+      final replyOnlyPrivate = await runPrivate(
+        suffix: 'reply-only',
+        sendResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: '{"ack":true}',
+          transport: 'relay',
+        ),
+      );
+      expect(replyOnlyPrivate.status, 'sent');
+      expect(replyOnlyPrivate.transport, 'relay');
+      expect(replyOnlyPrivate.wireEnvelope, isNotNull);
+      expect(replyOnlyPrivate.isHidden, isFalse);
+      expect(replyOnlyPrivate.hiddenAt, isNull);
+
+      final ackedPrivate = await runPrivate(
+        suffix: 'explicit-ack',
+        sendResult: const p2p.SendMessageResult(
+          sent: true,
+          acked: true,
+          reply: '{"ack":true}',
+          transport: 'relay',
+        ),
+      );
+      expect(ackedPrivate.status, 'delivered');
+      expect(ackedPrivate.transport, 'relay');
+      expect(ackedPrivate.wireEnvelope, isNull);
+      expect(ackedPrivate.isHidden, isTrue);
+      expect(ackedPrivate.hiddenAt, ackedPrivate.deletedAt);
+    });
 
     test(
       'v2 tombstone inbox custody success is inboxed and keeps the tombstone visible',
@@ -900,18 +1049,32 @@ void main() {
         messageRepo.seed([makeFailedLegacyDeletedMessage()]);
         contactRepo.seed([makeContact(peerId: 'peer-target')]);
 
-        final p2pService = FakeP2PService(
+        final p2pService = _GatedInboxP2PService(
           initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-          storeInInboxResult: true,
         );
 
-        final count = await retryFailedMessages(
+        final retry = retryFailedMessages(
           messageRepo: messageRepo,
           identityRepo: identityRepo,
           contactRepo: contactRepo,
           p2pService: p2pService,
           bridge: PassthroughCryptoBridge(),
         );
+        await p2pService.entered.future;
+        try {
+          expect(messageRepo.ordinaryAttemptStages, hasLength(1));
+          final staged = await messageRepo.getMessage('msg-legacy-delete-001');
+          expect(staged, isNotNull);
+          expect(staged!.status, 'sending');
+          expect(staged.transport, isNull);
+          expect(staged.wireEnvelope, p2pService.lastStoreInInboxMessage);
+          expect(staged.wireEnvelope, contains('"version":"2"'));
+          expect(staged.isDeleted, isTrue);
+          expect(staged.isHidden, isFalse);
+        } finally {
+          p2pService.gate.complete();
+        }
+        final count = await retry;
 
         expect(count, 1);
         expect(p2pService.storeInInboxCallCount, 1);
@@ -1302,6 +1465,7 @@ void main() {
       dialPeerResult: true,
       sendMessageWithReplyResult: const p2p.SendMessageResult(
         sent: true,
+        acked: true,
         reply: 'ack',
       ),
       // Envelope replay fails → the full-send fallback fires.
@@ -1337,10 +1501,10 @@ void main() {
           messageRepo.lastSavedMessage!.createdAt,
           '2026-01-01T00:00:00.000Z',
         );
-        // The pre-race updateWireEnvelope persist must now write an EDIT
+        // The guarded pre-race attempt stage must durably bind an EDIT
         // envelope — the poisoning boundary (EF-2's content half).
         final persistedEnvelope = decodeWirePayload(
-          messageRepo.wireEnvelopeUpdates.single.envelope,
+          messageRepo.ordinaryAttemptStages.single.wireEnvelope!,
         );
         expect(persistedEnvelope['action'], MessagePayload.actionEdit);
       },
@@ -1378,7 +1542,7 @@ void main() {
         // The last persisted envelope must still be an EDIT envelope — the
         // edit must remain recoverable by the next retry cycle.
         final lastEnvelope = decodeWirePayload(
-          messageRepo.wireEnvelopeUpdates.last.envelope,
+          messageRepo.ordinaryAttemptStages.last.wireEnvelope!,
         );
         expect(lastEnvelope['action'], MessagePayload.actionEdit);
       },
@@ -1447,7 +1611,7 @@ void main() {
     );
 
     // 116 P2.2 companion PIN (green-on-arrival post-P1): the pre-race
-    // updateWireEnvelope persist of a retried edit writes an EDIT envelope.
+    // guarded attempt stage of a retried edit writes an EDIT envelope.
     // This is the explicit prerequisite the 115 P3 custody sweep inherits:
     // a sweep re-store of an edit row's wire_envelope carries action:edit.
     test(
@@ -1465,7 +1629,7 @@ void main() {
         );
 
         final persisted = decodeWirePayload(
-          messageRepo.wireEnvelopeUpdates.single.envelope,
+          messageRepo.ordinaryAttemptStages.single.wireEnvelope!,
         );
         expect(persisted['action'], MessagePayload.actionEdit);
         expect(persisted['editedAt'], '2026-01-01T00:05:00.000Z');

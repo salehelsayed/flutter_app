@@ -50,8 +50,9 @@ class FakeP2PNetwork {
   Future<bool> deliver(
     String fromPeerId,
     String toPeerId,
-    String content,
-  ) async {
+    String content, {
+    String transport = 'direct',
+  }) async {
     deliverCallCount++;
 
     if (deliveryDelay != null) {
@@ -73,6 +74,9 @@ class FakeP2PNetwork {
       content: content,
       timestamp: DateTime.now().toUtc().toIso8601String(),
       isIncoming: true,
+      // Mirror authenticated libp2p ingress, which assigns provenance rather
+      // than trusting anything carried inside the payload.
+      transport: transport,
     );
 
     target.injectIncomingMessage(message);
@@ -86,6 +90,7 @@ class FakeP2PNetwork {
           content: content,
           timestamp: DateTime.now().toUtc().toIso8601String(),
           isIncoming: true,
+          transport: transport,
         ),
       );
     }

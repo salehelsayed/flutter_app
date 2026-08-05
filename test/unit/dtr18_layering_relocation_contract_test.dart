@@ -130,15 +130,15 @@ const _closureConsumerUriRewrites = <String, String>{
 };
 
 const _resumeSha256 =
-    '89e52ba95601bf01c0b5c635fdf908fea6f24769a2c486dc7b3ae5748f209850';
+    'e3c332eaf79a5aadb0404e2697c82bb2f404be07f27af849e5b7b8e3db119c70';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
 const _applicationRootNormalizedSha256 =
-    '69f36632cae3df0fa7ba1bc518b5049e503431e1ff16b63c67a8efa758c05b57';
+    '5475f6ffac180eca025c67ce4736b2684079db9d0be0e7539086bf48aec0485d';
 const _productionBootstrapNormalizedSha256 =
-    '55b09d205d4f84c32bf47c8e129acc7138ae34704271a61fad978e8b6c4fb453';
+    '3563d711ae1843e14e62bb7bd16fd4eb6cbcd72740da24008b395e51547b36f0';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

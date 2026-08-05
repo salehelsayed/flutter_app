@@ -1,8 +1,12 @@
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// In-memory [MediaAttachmentRepository] for integration tests.
 ///
@@ -17,6 +21,7 @@ class InMemoryMediaAttachmentRepository
         MediaAttachmentByIdLookup,
         OrdinaryGroupAutomaticMediaDownloadStateRepository,
         OrdinaryGroupMediaDownloadFailureRepository,
+        OutgoingOrdinaryAttemptStagingRepository,
         NewMessageMediaPersistenceRollback {
   final Map<String, MediaAttachment> _attachments = {};
   void Function(MediaAttachment attachment)? onSaveAttachment;
@@ -281,5 +286,132 @@ class InMemoryMediaAttachmentRepository
         .toList();
   }
 
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttemptWithMedia({
+    required OutgoingTransportMutationRepository messageMutationRepository,
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final ids = attachments.map((attachment) => attachment.id).toSet();
+    final staleProjection = _attachments.values
+        .where(
+          (attachment) =>
+              attachment.messageId == staged.id &&
+              attachment.ownerLane == MediaOwnerLane.direct &&
+              !ids.contains(attachment.id),
+        )
+        .toList(growable: false);
+    final invalid =
+        attachments.isEmpty ||
+        ids.length != attachments.length ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneRetry ||
+        attachments.any(
+          (attachment) =>
+              attachment.id.isEmpty ||
+              attachment.messageId != staged.id ||
+              (attachment.ownerLane != null &&
+                  attachment.ownerLane != MediaOwnerLane.direct),
+        ) ||
+        staleProjection.any(
+          (attachment) =>
+              attachment.downloadStatus != 'upload_pending' ||
+              attachment.size != 0 ||
+              attachment.contentHash != null ||
+              attachment.encryptionKeyBase64 != null ||
+              attachment.encryptionNonce != null ||
+              attachment.encryptionScheme != null,
+        ) ||
+        (kind == OutgoingOrdinaryAttemptKind.fresh &&
+            _attachments.values.any(
+              (attachment) =>
+                  attachment.messageId == staged.id &&
+                  attachment.ownerLane == MediaOwnerLane.direct &&
+                  ids.contains(attachment.id),
+            )) ||
+        attachments.any((attachment) {
+          final existing = _attachments[attachment.id];
+          return existing != null &&
+              (existing.messageId != staged.id ||
+                  existing.ownerLane != MediaOwnerLane.direct);
+        });
+    if (invalid) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    final result = await messageMutationRepository.stageOutgoingOrdinaryAttempt(
+      expected: expected,
+      staged: staged,
+      kind: kind,
+    );
+    if (!result.authorizesTransport) return result;
+    if (result.outcome == OutgoingOrdinaryMutationOutcome.idempotent &&
+        attachments.any((attachment) {
+          final existing = _attachments[attachment.id];
+          return existing == null ||
+              !_sameOrdinaryOutgoingAttachmentAttempt(
+                existing,
+                attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+              );
+        })) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    for (final stale in staleProjection) {
+      _attachments.remove(stale.id);
+    }
+    for (final attachment in attachments) {
+      final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+      final existing = _attachments[stamped.id];
+      _attachments[stamped.id] = existing == null
+          ? stamped
+          : stamped.copyWith(
+              isBookmarked: existing.isBookmarked,
+              lastPlaybackPositionMs: existing.lastPlaybackPositionMs,
+            );
+    }
+    final committed = _attachments.values
+        .where(
+          (attachment) =>
+              attachment.messageId == staged.id &&
+              attachment.ownerLane == MediaOwnerLane.direct,
+        )
+        .toList(growable: false);
+    return OutgoingOrdinaryMutationResult(
+      outcome:
+          result.outcome == OutgoingOrdinaryMutationOutcome.idempotent &&
+              staleProjection.isNotEmpty
+          ? OutgoingOrdinaryMutationOutcome.applied
+          : result.outcome,
+      message: result.message?.copyWith(media: committed),
+    );
+  }
+
   int get count => _attachments.length;
+}
+
+bool _sameOrdinaryOutgoingAttachmentAttempt(
+  MediaAttachment current,
+  MediaAttachment candidate,
+) {
+  final currentMap = current.toMap()
+    ..remove('is_bookmarked')
+    ..remove('last_playback_position_ms')
+    ..['upload_retry_count'] = current.uploadRetryCount ?? 0
+    ..['download_retry_count'] = current.downloadRetryCount ?? 0;
+  final candidateMap = candidate.toMap()
+    ..remove('is_bookmarked')
+    ..remove('last_playback_position_ms')
+    ..['upload_retry_count'] = candidate.uploadRetryCount ?? 0
+    ..['download_retry_count'] = candidate.downloadRetryCount ?? 0;
+  return currentMap.length == candidateMap.length &&
+      currentMap.entries.every(
+        (entry) => candidateMap[entry.key] == entry.value,
+      );
 }

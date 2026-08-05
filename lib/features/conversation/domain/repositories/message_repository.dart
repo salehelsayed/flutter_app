@@ -1,5 +1,7 @@
 import '../models/conversation_message.dart';
 import '../models/media_attachment.dart';
+import '../models/outgoing_ordinary_mutation_result.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
 /// Repository interface for managing conversation messages.
@@ -141,6 +143,61 @@ abstract class MessageRepository {
     String contactPeerId, {
     int limit = 50,
     String? beforeTimestamp,
+  });
+}
+
+/// Optional, fail-closed authority for ordinary outgoing attempt and transport
+/// mutations. It intentionally lives beside (not on) [MessageRepository] so
+/// unrelated repository fakes do not acquire new abstract methods.
+abstract interface class OutgoingTransportMutationRepository {
+  /// Durably stages one text-only attempt before any P2P or inbox work.
+  ///
+  /// Fresh attempts are insert-only. Every other kind is update-only and binds
+  /// [expected] as the exact caller-observed predecessor.
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  });
+
+  /// Atomically owns status, transport, envelope, relay expiry, custody-check,
+  /// and (for an ordinary deletion tombstone) its delivered visibility.
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  });
+
+  /// Tombstone-specific settlement with atomic delivered visibility derivation.
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  });
+
+  /// Clears only the exact cached envelope invalidated by media-key rotation.
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  });
+
+  /// Exact sent -> failed exception for an unsafe legacy envelope. This is not
+  /// an edge in the normal transport settlement table.
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
   });
 }
 

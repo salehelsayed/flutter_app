@@ -640,7 +640,7 @@ void main() {
         (message) => message.id == messageId && message.status == 'delivered',
       );
 
-      receipts.add(_deliveryReceipt(messageId));
+      receipts.add(_deliveryReceipt(messageId, transport: 'direct'));
       await delivered.timeout(const Duration(seconds: 2));
 
       final persisted = await fixture.messageRepo.getMessage(messageId);
@@ -661,7 +661,7 @@ void main() {
       );
 
       await handleDeliveryReceipt(
-        message: _deliveryReceipt(messageId),
+        message: _deliveryReceipt(messageId, transport: 'relay'),
         messageRepo: fixture.messageRepo,
         mediaAttachmentRepo: fixture.repo,
       );
@@ -695,7 +695,7 @@ void main() {
       );
 
       await handleDeliveryReceipt(
-        message: _deliveryReceipt(messageId),
+        message: _deliveryReceipt(messageId, transport: 'direct'),
         messageRepo: deletingRepository,
         mediaAttachmentRepo: fixture.repo,
       );
@@ -718,7 +718,7 @@ void main() {
       );
 
       await handleDeliveryReceipt(
-        message: _deliveryReceipt(messageId),
+        message: _deliveryReceipt(messageId, transport: 'relay'),
         messageRepo: deletingRepository,
         mediaAttachmentRepo: fixture.repo,
       );
@@ -1031,20 +1031,22 @@ FakeP2PService _p2pService() => FakeP2PService(
   storeInInboxResult: true,
 );
 
-ChatMessage _deliveryReceipt(String messageId) => ChatMessage(
-  from: _contactPeerId,
-  to: 'self-peer',
-  content: jsonEncode(<String, Object?>{
-    'type': 'delivery_receipt',
-    'version': '1',
-    'payload': <String, Object?>{
-      'messageIds': <String>[messageId],
-      'ts': '2020-01-01T00:02:00.000Z',
-    },
-  }),
-  timestamp: '2020-01-01T00:02:00.000Z',
-  isIncoming: true,
-);
+ChatMessage _deliveryReceipt(String messageId, {required String transport}) =>
+    ChatMessage(
+      from: _contactPeerId,
+      to: 'self-peer',
+      content: jsonEncode(<String, Object?>{
+        'type': 'delivery_receipt',
+        'version': '1',
+        'payload': <String, Object?>{
+          'messageIds': <String>[messageId],
+          'ts': '2020-01-01T00:02:00.000Z',
+        },
+      }),
+      timestamp: '2020-01-01T00:02:00.000Z',
+      isIncoming: true,
+      transport: transport,
+    );
 
 class _DeleteAfterReadPrivateMessageRepository
     implements

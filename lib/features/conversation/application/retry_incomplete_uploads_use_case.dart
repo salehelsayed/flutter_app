@@ -244,6 +244,14 @@ Future<int> retryIncompleteUploads({
           msg.privateMediaPolicy.version == 1 &&
           (msg.privateMediaMode == PrivateMediaMode.protected ||
               msg.privateMediaMode == PrivateMediaMode.viewOnce);
+      final preUploadEnvelope = msg.wireEnvelope;
+      final ordinaryTransportRepository =
+          messageRepo is OutgoingTransportMutationRepository
+          ? messageRepo as OutgoingTransportMutationRepository
+          : null;
+      var ordinaryEnvelopeInvalidated =
+          preUploadEnvelope == null || preUploadEnvelope.isEmpty;
+      var ordinaryEnvelopeInvalidationRefused = false;
       final mutationRepository =
           mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository
           ? mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository
@@ -473,15 +481,22 @@ Future<int> retryIncompleteUploads({
         final keyChanged =
             uploaded.encryptionKeyBase64 != attachment.encryptionKeyBase64 ||
             uploaded.encryptionNonce != attachment.encryptionNonce;
-        if (keyChanged && !isOutgoingPrivateOneMoreLook) {
-          final staleMsg = await messageRepo.getMessage(messageId);
-          if (staleMsg != null && staleMsg.wireEnvelope != null) {
-            await messageRepo.saveMessage(
-              staleMsg.copyWith(wireEnvelope: null),
-            );
+        if (keyChanged &&
+            !isOutgoingPrivateOneMoreLook &&
+            !ordinaryEnvelopeInvalidated) {
+          final invalidation = await ordinaryTransportRepository
+              ?.invalidateOutgoingOrdinaryEnvelope(
+                messageId: messageId,
+                expectedContactPeerId: msg.contactPeerId,
+                expectedEnvelope: preUploadEnvelope!,
+              );
+          if (invalidation == null || !invalidation.changed) {
+            ordinaryEnvelopeInvalidationRefused = true;
+            allUploadsSucceeded = false;
             emitFlowEvent(
               layer: 'FL',
-              event: 'RETRY_INCOMPLETE_UPLOAD_WIRE_ENVELOPE_INVALIDATED',
+              event:
+                  'RETRY_INCOMPLETE_UPLOAD_WIRE_ENVELOPE_INVALIDATION_REFUSED',
               details: {
                 'messageId': messageId.length > 8
                     ? messageId.substring(0, 8)
@@ -491,7 +506,21 @@ Future<int> retryIncompleteUploads({
                     : attachment.id,
               },
             );
+            break;
           }
+          ordinaryEnvelopeInvalidated = true;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_UPLOAD_WIRE_ENVELOPE_INVALIDATED',
+            details: {
+              'messageId': messageId.length > 8
+                  ? messageId.substring(0, 8)
+                  : messageId,
+              'attachmentId': attachment.id.length > 8
+                  ? attachment.id.substring(0, 8)
+                  : attachment.id,
+            },
+          );
         }
         if (isOutgoingPrivateOneMoreLook) {
           final expectedPendingPath = attachment.localPath;
@@ -536,6 +565,12 @@ Future<int> retryIncompleteUploads({
             owner: MediaOwnerLane.direct,
           );
         }
+      }
+
+      // A crossed/unsupported parent must not learn the freshly uploaded key,
+      // project attachment completion, or proceed to transport.
+      if (ordinaryEnvelopeInvalidationRefused) {
+        continue;
       }
 
       // Canonical failure handling (G.8.2): transient vs non-retryable

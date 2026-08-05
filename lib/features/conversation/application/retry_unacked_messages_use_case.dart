@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
@@ -89,6 +90,10 @@ Future<int> retryUnackedMessages({
 
     final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(msg);
     final isPrivateDeleteTombstone = isOutgoingPrivate && msg.isDeleted;
+    final ordinaryTransportRepository =
+        messageRepo is OutgoingTransportMutationRepository
+        ? messageRepo as OutgoingTransportMutationRepository
+        : null;
     final privateDeleteRepository =
         messageRepo is DirectPrivateDeleteForEveryoneRepository
         ? messageRepo as DirectPrivateDeleteForEveryoneRepository
@@ -137,6 +142,14 @@ Future<int> retryUnackedMessages({
         );
         continue;
       }
+    }
+    if (!isOutgoingPrivate && ordinaryTransportRepository == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_ORDINARY_SETTLEMENT_CAPABILITY_MISSING',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      continue;
     }
 
     Future<bool> persistTransport({
@@ -188,22 +201,41 @@ Future<int> retryUnackedMessages({
         }
         return outcome.accepted;
       }
-      await messageRepo.saveMessage(
-        normalizeOutgoingDeleteTombstoneVisibility(
-          msg.copyWith(status: status, transport: transport),
-        ),
-      );
-      return true;
+      final result = msg.isDeleted
+          ? await ordinaryTransportRepository!
+                .settleOutgoingOrdinaryDeleteTombstone(
+                  messageId: msg.id,
+                  expectedContactPeerId: msg.contactPeerId,
+                  expectedEnvelope: msg.wireEnvelope!,
+                  status: status,
+                  transport: transport,
+                  relayExpiresAt: null,
+                  mode: OutgoingOrdinarySettlementMode.live,
+                )
+          : await ordinaryTransportRepository!.settleOutgoingOrdinaryTransport(
+              messageId: msg.id,
+              expectedContactPeerId: msg.contactPeerId,
+              expectedEnvelope: msg.wireEnvelope!,
+              status: status,
+              transport: transport,
+              relayExpiresAt: null,
+              mode: OutgoingOrdinarySettlementMode.live,
+            );
+      return result.outcome.authorizesTransport;
     }
 
     if (isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!)) {
-      await persistTransport(
-        status: 'failed',
-        // The private settlement helper requires failed rows to clear stale
-        // transport ownership. Ordinary rows retain the exact pre-existing
-        // transport, matching the former status-only copyWith/save behavior.
-        transport: isOutgoingPrivate ? null : msg.transport,
-      );
+      if (isOutgoingPrivate) {
+        await persistTransport(status: 'failed', transport: null);
+      } else {
+        await ordinaryTransportRepository!
+            .quarantineUnsafeLegacyOutgoingEnvelope(
+              messageId: msg.id,
+              expectedContactPeerId: msg.contactPeerId,
+              expectedEnvelope: msg.wireEnvelope!,
+              isDeleteTombstone: msg.isDeleted,
+            );
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_UNACKED_MESSAGE_SKIP_LEGACY_WIRE_ENVELOPE',

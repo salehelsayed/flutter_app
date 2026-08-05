@@ -27,63 +27,10 @@ import 'package:integration_test/integration_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
-import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
-import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
-import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
-import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
-import 'package:flutter_app/core/database/migrations/006_read_at_column.dart';
-import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
-import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
-import 'package:flutter_app/core/database/migrations/009_quoted_message_id.dart';
-import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
-import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
-import 'package:flutter_app/core/database/migrations/012_transport_column.dart';
-import 'package:flutter_app/core/database/migrations/013_waveform_column.dart';
-import 'package:flutter_app/core/database/migrations/014_wire_envelope_column.dart';
-import 'package:flutter_app/core/database/migrations/015_message_status_cleanup.dart';
-import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
-import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
-import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
-import 'package:flutter_app/core/database/migrations/019_introductions_table.dart';
-import 'package:flutter_app/core/database/migrations/020_intro_banner_columns.dart';
-import 'package:flutter_app/core/database/migrations/021_contact_introduced_by.dart';
-import 'package:flutter_app/core/database/migrations/022_introduction_keys.dart';
-import 'package:flutter_app/core/database/migrations/023_introduction_recipient_keys.dart';
-import 'package:flutter_app/core/database/migrations/024_contact_introduced_by_peer_id.dart';
-import 'package:flutter_app/core/database/migrations/025_introduction_already_connected_status.dart';
-import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
-import 'package:flutter_app/core/database/migrations/027_posts_core.dart';
-import 'package:flutter_app/core/database/migrations/028_posts_engagement.dart';
-import 'package:flutter_app/core/database/migrations/029_posts_nearby.dart';
-import 'package:flutter_app/core/database/migrations/030_posts_pass_along.dart';
-import 'package:flutter_app/core/database/migrations/031_posts_pins.dart';
-import 'package:flutter_app/core/database/migrations/032_posts_retry_recipient_context.dart';
-import 'package:flutter_app/core/database/migrations/033_posts_follow_on_outbox.dart';
-import 'package:flutter_app/core/database/migrations/034_posts_media_upload_recovery.dart';
-import 'package:flutter_app/core/database/migrations/035_posts_repost_delivery_state.dart';
-import 'package:flutter_app/core/database/migrations/036_posts_pass_encrypted_snapshots.dart';
-import 'package:flutter_app/core/database/migrations/037_posts_repost_engagement_state.dart';
-import 'package:flutter_app/core/database/migrations/038_posts_repost_media_crypto.dart';
-import 'package:flutter_app/core/database/migrations/039_posts_pass_avatar_snapshots.dart';
-import 'package:flutter_app/core/database/migrations/040_posts_repost_visual_metrics.dart';
-import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
-import 'package:flutter_app/core/database/migrations/042_media_attachment_reliability_columns.dart';
-import 'package:flutter_app/core/database/migrations/043_messages_edited_at.dart';
-import 'package:flutter_app/core/database/migrations/044_messages_deleted_state.dart';
-import 'package:flutter_app/core/database/migrations/045_inbox_staging_entries.dart';
-import 'package:flutter_app/core/database/migrations/046_pending_introduction_responses.dart';
-import 'package:flutter_app/core/database/migrations/047_introduction_outbox.dart';
-import 'package:flutter_app/core/database/migrations/048_groups_last_membership_event_at.dart';
-import 'package:flutter_app/core/database/migrations/049_groups_metadata_columns.dart';
-import 'package:flutter_app/core/database/migrations/050_groups_mute_column.dart';
-import 'package:flutter_app/core/database/migrations/051_pending_group_invites.dart';
-import 'package:flutter_app/core/database/migrations/052_groups_dissolve_columns.dart';
-import 'package:flutter_app/core/database/migrations/053_groups_backlog_retention_columns.dart';
-import 'package:flutter_app/core/database/migrations/075_contacts_ml_kem_key_updated_ts.dart';
-import 'package:flutter_app/core/database/migrations/077_message_relay_custody.dart';
-import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
@@ -212,74 +159,11 @@ void main() {
     final myMlKemPK = mlKemResult['publicKey'] as String;
     final myMlKemSK = mlKemResult['secretKey'] as String;
 
-    // Open in-memory DB with migrations
+    // Open an in-memory DB with the current production schema.
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
-    final db = await openDatabase(
-      inMemoryDatabasePath,
-      version: 79,
-      onCreate: (db, version) async {
-        await runIdentityTableMigration(db);
-        await runMessagesTableMigration(db);
-        await runMlKemKeysMigration(db);
-        await runSecretNullChecksMigration(db);
-        await runReadAtColumnMigration(db);
-        await runArchiveColumnsMigration(db);
-        await runBlockColumnsMigration(db);
-        await runQuotedMessageIdMigration(db);
-        await runMediaAttachmentsMigration(db);
-        await runMediaAttachmentReliabilityColumnsMigration(db);
-        await runAvatarVersionMigration(db);
-        await runTransportColumnMigration(db);
-        await runWaveformColumnMigration(db);
-        await runWireEnvelopeMigration(db);
-        await runMessageStatusCleanupMigration(db);
-        await runMessageReactionsMigration(db);
-        await runGroupsTablesMigration(db);
-        await runGroupMessagesTablesMigration(db);
-        await runIntroductionsTableMigration(db);
-        await runIntroBannerColumnsMigration(db);
-        await runContactIntroducedByMigration(db);
-        await runIntroductionKeysMigration(db);
-        await runIntroductionRecipientKeysMigration(db);
-        await runContactIntroducedByPeerIdMigration(db);
-        await runIntroductionAlreadyConnectedMigration(db);
-        await runGroupQuotedMessageIdMigration(db);
-        await runPostsCoreMigration(db);
-        await runPostsEngagementMigration(db);
-        await runPostsNearbyMigration(db);
-        await runPostsPassAlongMigration(db);
-        await runPostsPinsMigration(db);
-        await runPostsRetryRecipientContextMigration(db);
-        await runPostsFollowOnOutboxMigration(db);
-        await runPostsMediaUploadRecoveryMigration(db);
-        await runPostsRepostDeliveryStateMigration(db);
-        await runPostsPassEncryptedSnapshotsMigration(db);
-        await runPostsRepostEngagementStateMigration(db);
-        await runPostsRepostMediaCryptoMigration(db);
-        await runPostsPassAvatarSnapshotsMigration(db);
-        await runPostsRepostVisualMetricsMigration(db);
-        await runGroupMessageReliabilityColumnsMigration(db);
-        await runMessagesEditedAtMigration(db);
-        await runMessagesDeletedStateMigration(db);
-        await runInboxStagingEntriesMigration(db);
-        await runPendingIntroductionResponsesMigration(db);
-        await runIntroductionOutboxMigration(db);
-        await runGroupsLastMembershipEventAtMigration(db);
-        await runGroupsMetadataColumnsMigration(db);
-        await runGroupsMuteColumnMigration(db);
-        await runPendingGroupInvitesMigration(db);
-        await runGroupsDissolveColumnsMigration(db);
-        await runGroupsBacklogRetentionColumnsMigration(db);
-        await runContactsMlKemKeyUpdatedTsMigration(db);
-        await runMessageRelayCustodyMigration(db);
-        await runMessageDedupKeyMigration(db);
-      },
-      onUpgrade: (db, oldVersion, newVersion) async {
-        if (oldVersion < 77) await runMessageRelayCustodyMigration(db);
-        if (oldVersion < 79) await runMessageDedupKeyMigration(db);
-      },
-    );
+    final db = await openDatabase(inMemoryDatabasePath, version: 1);
+    await runProductionOnCreate(db, currentIdentityDatabaseVersion);
 
     final contactRepo = ContactRepositoryImpl(
       dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -347,6 +231,76 @@ void main() {
                 olderThan: olderThan,
                 limit: limit,
               ),
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) =>
+              dbStageOutgoingOrdinaryAttempt(
+                db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+              ),
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbInvalidateOutgoingOrdinaryEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+          }) => dbInvalidateOutgoingOrdinaryEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          ),
+      dbQuarantineUnsafeLegacyOutgoingEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required isDeleteTombstone,
+          }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          ),
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(

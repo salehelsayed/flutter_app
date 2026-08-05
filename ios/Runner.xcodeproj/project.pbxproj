@@ -19,6 +19,11 @@
 		6F73C00273A0000000000001 /* NotificationPreviewResolver.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F73C00273A0000000000002 /* NotificationPreviewResolver.swift */; };
 		6F74D00173A1000000000001 /* NotificationTapUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6F74D00273A1000000000001 /* NotificationTapUITests.swift */; };
 		B269D00173A5000000000001 /* GroupMediaBackgroundRecoveryUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B269D00173A5000000000002 /* GroupMediaBackgroundRecoveryUITests.swift */; };
+		C333A00173A6000000000001 /* IosNotificationRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333A00173A6000000000002 /* IosNotificationRecovery.swift */; };
+		C333A00273A6000000000001 /* IosNotificationRecovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333A00173A6000000000002 /* IosNotificationRecovery.swift */; };
+		C333B00173A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */; };
+		C333B00273A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */; };
+		C333C00173A6000000000001 /* IosNotificationRecoveryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */; };
 		74858FAF1ED2DC5600515810 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74858FAE1ED2DC5600515810 /* AppDelegate.swift */; };
 		8947AEE5CF6A83D4C8860F66 /* Pods_Runner.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 790BEFCD1A48E573CB47B8A8 /* Pods_Runner.framework */; };
 		97C146FC1CF9000F007C117D /* Main.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 97C146FA1CF9000F007C117D /* Main.storyboard */; };
@@ -115,6 +120,9 @@
 		6F74D00273A1000000000001 /* NotificationTapUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NotificationTapUITests.swift; sourceTree = "<group>"; };
 		6F74D00373A1000000000001 /* RunnerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = RunnerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		B269D00173A5000000000002 /* GroupMediaBackgroundRecoveryUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GroupMediaBackgroundRecoveryUITests.swift; sourceTree = "<group>"; };
+		C333A00173A6000000000002 /* IosNotificationRecovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = IosNotificationRecovery.swift; path = ../NotificationService/IosNotificationRecovery.swift; sourceTree = "<group>"; };
+		C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationRecoveryCoordinator.swift; sourceTree = "<group>"; };
+		C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IosNotificationRecoveryTests.swift; sourceTree = "<group>"; };
 		74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Runner-Bridging-Header.h"; sourceTree = "<group>"; };
 		74858FAE1ED2DC5600515810 /* AppDelegate.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		790BEFCD1A48E573CB47B8A8 /* Pods_Runner.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Pods_Runner.framework; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -233,6 +241,7 @@
 		331C8082294A63A400263BE5 /* RunnerTests */ = {
 			isa = PBXGroup;
 			children = (
+				C333C00173A6000000000002 /* IosNotificationRecoveryTests.swift */,
 				A258B00173A4000000000002 /* IosReceiverBootstrapHandoffTests.swift */,
 				D23405010000000000000002 /* PrivateMediaProtectionCoordinatorTests.swift */,
 				E227B00173A0000000000002 /* ReceivedMediaEgressCoordinatorTests.swift */,
@@ -313,6 +322,8 @@
 		97C146F01CF9000F007C117D /* Runner */ = {
 			isa = PBXGroup;
 			children = (
+				C333A00173A6000000000002 /* IosNotificationRecovery.swift */,
+				C333B00173A6000000000002 /* IosNotificationRecoveryCoordinator.swift */,
 				A258A00173A4000000000002 /* IosReceiverBootstrapHandoff.swift */,
 				D23405010000000000000012 /* PrivateMediaProtectionCoordinator.swift */,
 				E227A00173A0000000000002 /* ReceivedMediaEgressCoordinator.swift */,
@@ -705,6 +716,9 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C333A00273A6000000000001 /* IosNotificationRecovery.swift in Sources */,
+				C333B00273A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */,
+				C333C00173A6000000000001 /* IosNotificationRecoveryTests.swift in Sources */,
 				A258B00173A4000000000001 /* IosReceiverBootstrapHandoffTests.swift in Sources */,
 				D23405010000000000000001 /* PrivateMediaProtectionCoordinatorTests.swift in Sources */,
 				E227B00173A0000000000001 /* ReceivedMediaEgressCoordinatorTests.swift in Sources */,
@@ -744,6 +758,8 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				C333A00173A6000000000001 /* IosNotificationRecovery.swift in Sources */,
+				C333B00173A6000000000001 /* IosNotificationRecoveryCoordinator.swift in Sources */,
 				A258A00173A4000000000001 /* IosReceiverBootstrapHandoff.swift in Sources */,
 				D23405010000000000000011 /* PrivateMediaProtectionCoordinator.swift in Sources */,
 				E227A00173A0000000000001 /* ReceivedMediaEgressCoordinator.swift in Sources */,

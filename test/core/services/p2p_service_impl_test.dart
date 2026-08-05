@@ -2672,6 +2672,120 @@ void main() {
     );
 
     test(
+      'R2 direct chat and deletion confirm only after durable staging returns',
+      () async {
+        final repo = _GateableInboxStagingRepository();
+        final replayedEntryIds = <String?>[];
+        service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredInboxChatMessage: (_, {String? stagedEntryId}) async {
+            fail('live direct chat must use the live replay callback');
+          },
+          replayLiveDirectChatMessage: (_, {String? stagedEntryId}) async {
+            replayedEntryIds.add(stagedEntryId);
+            return (
+              disposition: RecoveredInboxChatDisposition.committed,
+              reasonCode: 'stored',
+              reasonDetail: null,
+            );
+          },
+          replayRecoveredInboxMessageDeletion:
+              (_, {String? stagedEntryId}) async {
+                replayedEntryIds.add(stagedEntryId);
+                return (
+                  disposition: RecoveredInboxChatDisposition.committed,
+                  reasonCode: 'deleted',
+                  reasonDetail: null,
+                );
+              },
+        );
+        bridge.whenCommand(
+          'message:confirm',
+          (_) => jsonEncode({'ok': true, 'confirmed': true}),
+        );
+
+        final cases = <({String envelope, String nonce, String type})>[
+          (
+            type: 'chat_message',
+            nonce: 'nonce-r2-chat-stage',
+            envelope: _chatEnvelope(
+              id: 'msg-r2-stage-order',
+              text: 'stage before confirm',
+              senderPeerId: 'remote-peer',
+            ),
+          ),
+          (
+            type: 'message_deletion',
+            nonce: 'nonce-r2-deletion-stage',
+            envelope: jsonEncode({
+              'type': 'message_deletion',
+              'version': '1',
+              'payload': {
+                'messageId': 'msg-r2-stage-order',
+                'senderPeerId': 'remote-peer',
+              },
+            }),
+          ),
+        ];
+
+        for (final testCase in cases) {
+          final stageGate = Completer<void>();
+          repo.stageGate = stageGate;
+          final priorConfirmCount = bridge
+              .payloadsFor('message:confirm')
+              .length;
+          final stagedEntryId = 'direct:${testCase.nonce}';
+
+          bridge.onMessageReceived?.call(
+            ChatMessage(
+              from: 'remote-peer',
+              to: 'self-peer',
+              content: testCase.envelope,
+              timestamp: '2026-04-01T00:00:00.000Z',
+              isIncoming: true,
+              transport: 'direct',
+              confirmNonce: testCase.nonce,
+            ),
+          );
+
+          await _waitForCondition(
+            () => repo.entry(stagedEntryId) != null,
+            reason: '${testCase.type} should enter recovery custody',
+          );
+          expect(repo.entry(stagedEntryId)!.messageType, testCase.type);
+          expect(
+            bridge.payloadsFor('message:confirm'),
+            hasLength(priorConfirmCount),
+            reason: 'message:confirm must wait for stageEntries to return',
+          );
+
+          stageGate.complete();
+          await _waitForCondition(
+            () =>
+                bridge.payloadsFor('message:confirm').length ==
+                priorConfirmCount + 1,
+            reason: '${testCase.type} should confirm after staging returns',
+          );
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          expect(
+            bridge.payloadsFor('message:confirm'),
+            hasLength(priorConfirmCount + 1),
+          );
+          expect(
+            bridge.payloadsFor('message:confirm').last,
+            equals({'nonce': testCase.nonce, 'ok': true}),
+          );
+        }
+
+        expect(replayedEntryIds, [
+          'direct:nonce-r2-chat-stage',
+          'direct:nonce-r2-deletion-stage',
+        ]);
+      },
+    );
+
+    test(
       'direct chat with confirmNonce stages locally, confirms, and commits via '
       'the live-direct replay callback (recovery callback never used)',
       () async {

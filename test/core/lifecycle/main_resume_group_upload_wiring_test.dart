@@ -13,7 +13,7 @@ void main() {
         'lib/app/bootstrap/production_application_bootstrap.dart',
       ).readAsString();
       final start = productionSource.indexOf(
-        'final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(',
+        'mediaAttachmentRepository = MediaAttachmentRepositoryImpl(',
       );
       expect(start, isNonNegative);
       final end = productionSource.indexOf(');', start);

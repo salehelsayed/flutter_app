@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -11,6 +12,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../../domain/models/conversation_message.dart';
 import '../../domain/models/conversation_thread_summary.dart';
 import '../../domain/models/media_attachment.dart';
+import '../../domain/models/outgoing_ordinary_mutation_result.dart';
 import '../../domain/repositories/conversation_thread_summary_repository.dart';
 import '../../domain/repositories/direct_private_media_lifecycle_repository.dart';
 import '../../domain/repositories/message_repository.dart';
@@ -26,6 +28,7 @@ class MessageRepositoryImpl
         ConversationThreadSummaryRepository,
         DirectUploadRetryProjectionRepository,
         DirectManualUploadRetryRearmRepository,
+        OutgoingTransportMutationRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
@@ -79,6 +82,47 @@ class MessageRepositoryImpl
   dbRecoverStuckSendingMessages;
   final Future<void> Function(String id, String wireEnvelope)?
   dbUpdateWireEnvelope;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+  })?
+  dbStageOutgoingOrdinaryAttempt;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  })?
+  dbSettleOutgoingOrdinaryTransport;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  })?
+  dbSettleOutgoingOrdinaryDeleteTombstone;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  })?
+  dbInvalidateOutgoingOrdinaryEnvelope;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  })?
+  dbQuarantineUnsafeLegacyOutgoingEnvelope;
+  final Future<List<MediaAttachment>> Function(String messageId)?
+  loadOutgoingOrdinaryMedia;
   final Future<bool> Function({
     required String messageId,
     required String attachmentId,
@@ -250,6 +294,12 @@ class MessageRepositoryImpl
     required this.dbLoadConversationThreadSummaries,
     required this.dbRecoverStuckSendingMessages,
     this.dbUpdateWireEnvelope,
+    this.dbStageOutgoingOrdinaryAttempt,
+    this.dbSettleOutgoingOrdinaryTransport,
+    this.dbSettleOutgoingOrdinaryDeleteTombstone,
+    this.dbInvalidateOutgoingOrdinaryEnvelope,
+    this.dbQuarantineUnsafeLegacyOutgoingEnvelope,
+    this.loadOutgoingOrdinaryMedia,
     this.dbInvalidateWireEnvelopeBeforePrivateUpload,
     this.dbMarkOutgoingDirectPrivateUploadHandoffFailed,
     this.dbCommitOutgoingDirectPrivateWireEnvelope,
@@ -388,6 +438,173 @@ class MessageRepositoryImpl
       // cache that a refused write committed.
       await _loadAndRememberMessage(id);
     }
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final stage = dbStageOutgoingOrdinaryAttempt;
+    final outcome = stage == null
+        ? OutgoingOrdinaryMutationOutcome.refused
+        : await stage(
+            expectedRow: expected?.toMap(),
+            stagedRow: staged.toMap(),
+            kind: kind,
+          );
+    return publishOutgoingOrdinaryMutation(
+      messageId: staged.id,
+      outcome: outcome,
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) async {
+    final settle = dbSettleOutgoingOrdinaryTransport;
+    final outcome = settle == null
+        ? OutgoingOrdinaryMutationOutcome.refused
+        : await settle(
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          );
+    return publishOutgoingOrdinaryMutation(
+      messageId: messageId,
+      outcome: outcome,
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) async {
+    final settle = dbSettleOutgoingOrdinaryDeleteTombstone;
+    final outcome = settle == null
+        ? OutgoingOrdinaryMutationOutcome.refused
+        : await settle(
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          );
+    return publishOutgoingOrdinaryMutation(
+      messageId: messageId,
+      outcome: outcome,
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  }) async {
+    final invalidate = dbInvalidateOutgoingOrdinaryEnvelope;
+    final outcome = invalidate == null
+        ? OutgoingOrdinaryMutationOutcome.refused
+        : await invalidate(
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          );
+    return publishOutgoingOrdinaryMutation(
+      messageId: messageId,
+      outcome: outcome,
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  }) async {
+    final quarantine = dbQuarantineUnsafeLegacyOutgoingEnvelope;
+    final outcome = quarantine == null
+        ? OutgoingOrdinaryMutationOutcome.refused
+        : await quarantine(
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          );
+    return publishOutgoingOrdinaryMutation(
+      messageId: messageId,
+      outcome: outcome,
+    );
+  }
+
+  /// Shared authoritative publication boundary for text and combined-media
+  /// ordinary mutations. MediaAttachmentRepositoryImpl calls this only after
+  /// its parent-plus-media transaction has committed.
+  Future<OutgoingOrdinaryMutationResult> publishOutgoingOrdinaryMutation({
+    required String messageId,
+    required OutgoingOrdinaryMutationOutcome outcome,
+    List<MediaAttachment>? committedMedia,
+  }) async {
+    final row = await dbLoadMessage(messageId);
+    if (row == null) {
+      _messageSnapshots.remove(messageId);
+      return OutgoingOrdinaryMutationResult(
+        outcome: outcome == OutgoingOrdinaryMutationOutcome.applied
+            ? OutgoingOrdinaryMutationOutcome.removed
+            : outcome,
+        message: null,
+      );
+    }
+
+    final committed = _rememberMessage(ConversationMessage.fromMap(row));
+    final media =
+        committedMedia ??
+        await loadOutgoingOrdinaryMedia?.call(messageId) ??
+        const <MediaAttachment>[];
+    final authoritative = committed.copyWith(
+      media: media
+          .where(
+            (attachment) =>
+                attachment.messageId == messageId &&
+                (attachment.ownerLane == null ||
+                    attachment.ownerLane == MediaOwnerLane.direct),
+          )
+          .map(
+            (attachment) =>
+                attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+          )
+          .toList(growable: false),
+    );
+    if (outcome == OutgoingOrdinaryMutationOutcome.applied) {
+      await directReactionProjection?.upsertAuthoredTarget(committed);
+      _messageChangeController.add(authoritative);
+    }
+    return OutgoingOrdinaryMutationResult(
+      outcome: outcome,
+      message: authoritative,
+    );
   }
 
   @override

@@ -5,7 +5,8 @@ import 'package:flutter_app/features/conversation/domain/models/audio_recording.
 import 'package:flutter_test/flutter_test.dart';
 
 import '../features/conversation/application/send_chat_message_use_case_test.dart'
-    show FakeP2PService, FakeMessageRepository;
+    show FakeMessageRepository, FakeP2PService;
+import '../features/conversation/domain/repositories/fake_media_attachment_repository.dart';
 import '../core/bridge/fake_bridge.dart';
 import 'benchmark_harness.dart';
 import 'timing_test_bridge.dart';
@@ -56,12 +57,14 @@ void main() {
       );
       final p2pService = FakeP2PService();
       final messageRepo = FakeMessageRepository();
+      final mediaAttachmentRepo = FakeMediaAttachmentRepository();
       final recording = createRecording();
 
       final events = await harness.captureFlowEvents(() async {
         await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
           targetPeerId: 'target-peer',
           senderPeerId: 'my-peer',
           senderUsername: 'Test',
@@ -93,12 +96,14 @@ void main() {
 
       final p2pService = FakeP2PService();
       final messageRepo = FakeMessageRepository();
+      final mediaAttachmentRepo = FakeMediaAttachmentRepository();
       final recording = createRecording();
 
       final events = await harness.captureFlowEvents(() async {
         await sendVoiceMessage(
           p2pService: p2pService,
           messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
           targetPeerId: 'target-peer',
           senderPeerId: 'my-peer',
           senderUsername: 'Test',
@@ -128,6 +133,7 @@ void main() {
         final bridge = FakeBridge();
         final p2pService = FakeP2PService();
         final messageRepo = FakeMessageRepository();
+        final mediaAttachmentRepo = FakeMediaAttachmentRepository();
 
         // Zero-size recording = invalid
         final recording = AudioRecording(
@@ -140,6 +146,7 @@ void main() {
           await sendVoiceMessage(
             p2pService: p2pService,
             messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
             targetPeerId: 'target-peer',
             senderPeerId: 'my-peer',
             senderUsername: 'Test',

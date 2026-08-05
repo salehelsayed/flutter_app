@@ -79,10 +79,7 @@ const String _kRendezvous = '/dns4/relay/tcp/443/p2p/relay';
 // dart-define knobs
 // ---------------------------------------------------------------------------
 
-const String _role = String.fromEnvironment(
-  'CENSUS_ROLE',
-  defaultValue: '',
-);
+const String _role = String.fromEnvironment('CENSUS_ROLE', defaultValue: '');
 const String _condition = String.fromEnvironment(
   'CENSUS_CONDITION',
   defaultValue: 'unspecified',
@@ -112,6 +109,7 @@ String _resolvePeerJson() {
   }
   return _peerJson;
 }
+
 const String _dbName = String.fromEnvironment(
   'E2E_DB_NAME',
   defaultValue: 'census_default.db',
@@ -261,6 +259,76 @@ Future<_Stack> _buildFreshStack() async {
             ),
     dbUpdateWireEnvelope: (id, wireEnvelope) =>
         dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbStageOutgoingOrdinaryAttempt:
+        ({required expectedRow, required stagedRow, required kind}) =>
+            dbStageOutgoingOrdinaryAttempt(
+              db,
+              expectedRow: expectedRow,
+              stagedRow: stagedRow,
+              kind: kind,
+            ),
+    dbSettleOutgoingOrdinaryTransport:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbSettleOutgoingOrdinaryDeleteTombstone:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbInvalidateOutgoingOrdinaryEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+        }) => dbInvalidateOutgoingOrdinaryEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+        ),
+    dbQuarantineUnsafeLegacyOutgoingEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required isDeleteTombstone,
+        }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          isDeleteTombstone: isDeleteTombstone,
+        ),
     dbLoadStuckSendingOutgoingMessages:
         ({required DateTime olderThan, int limit = 50}) =>
             dbLoadStuckSendingOutgoingMessages(
@@ -382,7 +450,8 @@ Map<String, dynamic> _censusToJson(TransportMetrics tm) {
     // delivered-per-leg = attempts - failures (the per-leg success count).
     'attemptDelivered': {
       for (final leg in kSendAttemptLegs)
-        leg: (tm.attemptCounts()[leg] ?? 0) -
+        leg:
+            (tm.attemptCounts()[leg] ?? 0) -
             (tm.attemptFailureCounts()[leg] ?? 0),
     },
     'latencyByTransport': {
@@ -429,9 +498,11 @@ void _printCensusBlock(
   buf.writeln('attemptCounts (tried): ${census['attemptCounts']}');
   buf.writeln('attemptFailureCounts: ${census['attemptFailureCounts']}');
   buf.writeln('attemptDelivered (tried-failed): ${census['attemptDelivered']}');
-  buf.writeln('holePunch attempt/success/fail: '
-      '${census['holePunchAttempts']}/${census['holePunchSuccesses']}/'
-      '${census['holePunchFailures']}');
+  buf.writeln(
+    'holePunch attempt/success/fail: '
+    '${census['holePunchAttempts']}/${census['holePunchSuccesses']}/'
+    '${census['holePunchFailures']}',
+  );
   buf.writeln('relayToDirectUpgrades: ${census['relayToDirectUpgrades']}');
   buf.writeln('--- latency by transport (median/p95/n) ---');
   final lat = census['latencyByTransport'] as Map<String, dynamic>;
@@ -534,7 +605,9 @@ Future<void> _runSender(_Stack stack) async {
       ? null
       : peerMlKemRaw;
   final peerRendezvous = (peer['rendezvous'] as String?) ?? _kRendezvous;
-  _log('SENDER target peer: ${_truncate(peerId)} hasMlKem=${peerMlKem != null}');
+  _log(
+    'SENDER target peer: ${_truncate(peerId)} hasMlKem=${peerMlKem != null}',
+  );
 
   // 2. Add the receiver as a CONTACT (mirrors transport_e2e add-contact shape).
   await stack.contactRepo.addContact(
@@ -564,8 +637,10 @@ Future<void> _runSender(_Stack stack) async {
   if (sawSendCapability) {
     _log('Node reports sendCapabilityReady — beginning sends');
   } else {
-    _log('sendCapabilityReady not observed within 90s — warming up ~10s then '
-        'proceeding anyway');
+    _log(
+      'sendCapabilityReady not observed within 90s — warming up ~10s then '
+      'proceeding anyway',
+    );
     await Future<void>.delayed(const Duration(seconds: 10));
   }
 
@@ -611,8 +686,10 @@ Future<void> _runSender(_Stack stack) async {
     }
 
     if (i % 10 == 0) {
-      _log('progress: $i/$_sendCount sent (delivered=$delivered '
-          'failed=$failed, samples=${stack.tm.totalTransportSamples})');
+      _log(
+        'progress: $i/$_sendCount sent (delivered=$delivered '
+        'failed=$failed, samples=${stack.tm.totalTransportSamples})',
+      );
     }
 
     await Future<void>.delayed(Duration(milliseconds: _sendIntervalMs));

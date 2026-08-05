@@ -6,13 +6,13 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
-import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 class _AuditBridge implements Bridge {
   final List<String> callLog = [];
@@ -94,7 +94,11 @@ class _FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async => true;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => true;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => true;
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];
@@ -122,8 +126,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Future<void> warmPeer(String peerId, {bool preferQuic = false}) async {}
@@ -156,112 +159,6 @@ class _FakeP2PService implements P2PService {
   void dispose() {}
 }
 
-class _FakeMessageRepo
-    implements MessageRepository, MessageRepositoryChangeSource {
-  final _changes = StreamController<ConversationMessage>.broadcast();
-
-  @override
-  Stream<ConversationMessage> get messageChanges => _changes.stream;
-
-  @override
-  Future<void> saveMessage(ConversationMessage message) async {
-    _changes.add(message);
-  }
-
-  @override
-  Future<void> updateWireEnvelope(String id, String envelope) async {}
-
-  @override
-  Future<List<ConversationMessage>> getMessagesForContact(
-    String contactPeerId,
-  ) async => [];
-
-  @override
-  Future<ConversationMessage?> getLatestMessageForContact(
-    String contactPeerId,
-  ) async => null;
-
-  @override
-  Future<void> updateMessageStatus(String id, String status) async {}
-
-  @override
-  Future<ConversationMessage?> getMessage(String id) async => null;
-
-  @override
-  Future<bool> messageExists(String id) async => false;
-
-  @override
-  Future<bool> existsByContent(
-    String contactPeerId,
-    String senderPeerId,
-    String text,
-    String timestamp,
-  ) async => false;
-
-  @override
-  Future<bool> existsByDedupKey(
-    String contactPeerId,
-    String senderPeerId,
-    String dedupKey,
-  ) async => false;
-
-  @override
-  Future<int> getMessageCountForContact(String contactPeerId) async => 0;
-
-  @override
-  Future<int> markConversationAsRead(String contactPeerId) async => 0;
-
-  @override
-  Future<int> getUnreadCountForContact(String contactPeerId) async => 0;
-
-  @override
-  Future<int> getTotalUnreadCount() async => 0;
-
-  @override
-  Future<int> getTotalUnreadCountExcludingArchived() async => 0;
-
-  @override
-  Future<int> deleteMessagesForContact(String contactPeerId) async => 0;
-
-  @override
-  Future<int> deleteMessage(String id) async => 0;
-
-  @override
-  Future<List<ConversationMessage>> getMessagesPage(
-    String contactPeerId, {
-    int limit = 50,
-    String? beforeTimestamp,
-  }) async => [];
-
-  @override
-  Future<List<ConversationMessage>> getFailedOutgoingMessages() async => [];
-
-  @override
-  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
-    required Duration olderThan,
-  }) async => [];
-
-  @override
-  Future<int> recoverStuckSendingMessages({
-    required Duration olderThan,
-  }) async => 0;
-
-  @override
-  Future<List<ConversationMessage>> getStuckSendingOutgoingMessages({
-    required Duration olderThan,
-  }) async => [];
-
-  @override
-  Future<List<ConversationMessage>> getSendingOutgoingMessages() async => [];
-
-  @override
-  Future<int> conditionalTransitionStatus(
-    String id, {
-    required String fromStatus,
-    required String toStatus,
-  }) async => 0;
-}
-
 void main() {
   group('sendChatMessage background-task ownership', () {
     test('sendChatMessage does not call bg:begin or bg:end', () async {
@@ -269,12 +166,13 @@ void main() {
 
       final (result, _) = await sendChatMessage(
         p2pService: _FakeP2PService(),
-        messageRepo: _FakeMessageRepo(),
+        messageRepo: InMemoryMessageRepository(),
         targetPeerId: 'peer-bob',
         text: 'hello',
         senderPeerId: 'peer-alice',
         senderUsername: 'alice',
         messageId: 'msg-12345678',
+        preassignedMessageIdIsFresh: true,
         timestamp: '2026-03-24T10:00:00.000Z',
         bridge: bridge,
         recipientMlKemPublicKey: 'mlkem-public-key',

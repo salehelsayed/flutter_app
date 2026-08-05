@@ -33,6 +33,8 @@ typedef GroupMessageNotificationDisplayEligibilityResolver =
     Future<GroupMessageNotificationDisplayEligibility> Function(String groupId);
 typedef ForegroundGroupReactionNotificationResolver =
     Future<BackgroundPushNotificationFallback?> Function(RemoteMessage message);
+typedef ForegroundGroupMessageNotificationResolver =
+    Future<BackgroundPushNotificationFallback?> Function(RemoteMessage message);
 typedef ForegroundGroupNotificationReadAcknowledgementResolver =
     Future<bool> Function({
       required String groupId,
@@ -320,6 +322,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   groupMessageDisplayEligibilityResolver,
   ForegroundGroupReactionNotificationResolver?
   groupReactionNotificationResolver,
+  ForegroundGroupMessageNotificationResolver? groupMessageNotificationResolver,
   ResolveDurableNotificationCoordinator?
   durableReactionNotificationCoordinatorResolver,
   ActiveConversationTracker? groupConversationTracker,
@@ -333,7 +336,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   ForegroundGroupConversationNotificationProjectionResolver?
   groupConversationNotificationProjectionResolver,
 }) async {
-  if (result != ForegroundRemoteMessageResult.notificationNeeded) {
+  if (!result.needsNotification) {
     return false;
   }
 
@@ -415,6 +418,8 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   if (routeTarget?.kind == NotificationRouteTargetKind.group) {
     final groupId = _trimToNull(routeTarget?.groupId);
     if (groupId == null) return false;
+    final isTypedGroupMessage =
+        _trimToNull(message.data['type']) == 'group_message';
     final tracker = groupConversationTracker;
     final lifecycle = getAppLifecycleState;
     final coordinatorResolver =
@@ -450,7 +455,41 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
         return false;
       }
 
-      if (canonicalMessageId == null) {
+      BackgroundPushNotificationFallback? resolved;
+      final trustedResolver = groupMessageNotificationResolver;
+      if (isTypedGroupMessage && trustedResolver != null) {
+        resolved = await trustedResolver(message);
+        if (resolved == null && canonicalMessageId != null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+            details: {
+              'messageId': canonicalMessageId,
+              'reason': 'trusted_group_preview_unavailable',
+              'payload': _payloadFromMessage(message) ?? '',
+            },
+          );
+          return false;
+        }
+      }
+
+      final resolvedIdentity = resolved?.resolvedEventIdentity;
+      if (resolvedIdentity != null &&
+          (resolvedIdentity.kind !=
+                  ConversationNotificationContentKind.message ||
+              (canonicalMessageId != null &&
+                  resolvedIdentity.canonicalEventId != canonicalMessageId))) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+          details: const {'reason': 'trusted_group_preview_identity_mismatch'},
+        );
+        return false;
+      }
+      final effectiveMessageId =
+          canonicalMessageId ?? resolvedIdentity?.canonicalEventId;
+
+      if (effectiveMessageId == null) {
         final barePayload = NotificationRouteTarget.group(groupId).toPayload();
         final isViewing =
             tracker.isViewing(conversationKey) ||
@@ -489,7 +528,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
 
       final canonicalPayload = NotificationRouteTarget.group(
         groupId,
-        messageId: canonicalMessageId,
+        messageId: effectiveMessageId,
       ).toPayload();
       final readAcknowledgementResolver =
           groupNotificationReadAcknowledgementResolver;
@@ -497,8 +536,8 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
           await readAcknowledgementResolver(
             groupId: groupId,
             contentKind: ConversationNotificationContentKind.message,
-            eventIdentity: canonicalMessageId,
-            comparand: null,
+            eventIdentity: effectiveMessageId,
+            comparand: resolved?.groupComparand,
           )) {
         emitFlowEvent(
           layer: 'FL',
@@ -513,16 +552,16 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
         getAppLifecycleState: lifecycle,
         contactPeerId: conversationKey,
         routePayload: canonicalPayload,
-        senderUsername: 'Mknoon',
-        messageText: genericBody,
-        messageId: canonicalMessageId,
+        senderUsername: resolved?.title ?? 'Mknoon',
+        messageText: resolved?.body ?? genericBody,
+        messageId: effectiveMessageId,
         durableNotificationCoordinatorResolver: coordinatorResolver,
         loadConversationNotificationSnapshot: () =>
             _loadForegroundGroupConversationNotificationProjection(
               resolver: groupConversationNotificationProjectionResolver,
               groupId: groupId,
-              currentMessageId: canonicalMessageId,
-              currentPrivacyNormalizedLine: genericBody,
+              currentMessageId: effectiveMessageId,
+              currentPrivacyNormalizedLine: resolved?.body ?? genericBody,
             ),
         notificationEventType: 'group_message',
         backgroundDuplicateGuardDelay: Duration.zero,

@@ -76,6 +76,11 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(result.title, "Alice")
     XCTAssertEqual(result.body, "Hello secret")
     XCTAssertEqual(result.threadIdentifier, "peer-alice")
+    XCTAssertEqual(result.recoveryIdentity?.accountPeerId, "peer-self")
+    XCTAssertEqual(result.recoveryIdentity?.lane, .direct)
+    XCTAssertEqual(result.recoveryIdentity?.conversationId, "peer-alice")
+    XCTAssertEqual(result.recoveryIdentity?.eventId, "fixture-chat-1")
+    XCTAssertEqual(result.recoveryIdentity?.kind, .ordinary)
     XCTAssertEqual(decryptor.chatCalls, 1)
     XCTAssertEqual(decryptor.lastChatSecretKey, "chat-secret")
     let previewEvents = eventEmitter.events.filter {
@@ -171,6 +176,11 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertEqual(result.title, "Team Chat")
     XCTAssertEqual(result.body, "Alice: Hello secret")
     XCTAssertEqual(result.threadIdentifier, "group-team")
+    XCTAssertEqual(result.recoveryIdentity?.accountPeerId, "peer-self")
+    XCTAssertEqual(result.recoveryIdentity?.lane, .group)
+    XCTAssertEqual(result.recoveryIdentity?.conversationId, "group-team")
+    XCTAssertEqual(result.recoveryIdentity?.eventId, "fixture-group-1")
+    XCTAssertEqual(result.recoveryIdentity?.kind, .ordinary)
     XCTAssertEqual(decryptor.groupCalls, 1)
     XCTAssertEqual(decryptor.lastGroupKey, "group-secret")
     let previewEvents = eventEmitter.events.filter {
@@ -1649,6 +1659,11 @@ final class NotificationPreviewResolverTests: XCTestCase {
     )
     XCTAssertFalse(result.suppress)
     XCTAssertTrue(result.markAsShown)
+    XCTAssertEqual(result.recoveryIdentity?.accountPeerId, "peer-self")
+    XCTAssertEqual(result.recoveryIdentity?.lane, .direct)
+    XCTAssertEqual(result.recoveryIdentity?.conversationId, "peer-alice")
+    XCTAssertEqual(result.recoveryIdentity?.eventId, eventId)
+    XCTAssertEqual(result.recoveryIdentity?.kind, .reaction)
   }
 
   func testReactionNotificationBoundaryRestoresSoundOnlyForValidatedAlert() throws {
@@ -1912,6 +1927,39 @@ final class NotificationPreviewResolverTests: XCTestCase {
     XCTAssertTrue(second.suppress)
     XCTAssertTrue(second.markAsShown)
     XCTAssertEqual(toneStore.conversations, ["peer-alice", "peer-alice"])
+  }
+
+  func testReactionProductionTonePathReservesWithoutPrecommitting() throws {
+    let eventId = "reaction-reservation"
+    let toneStore = MemoryPushToneReservationStore(outcomes: [.reserved])
+    let result = NotificationPreviewResolver(
+      keyReader: MemoryPushKeyReader([
+        PushSharedKeyNames.identityMlKemSecretKey: "chat-secret",
+        PushSharedKeyNames.directReactionContacts: try reactionContactsJSON(
+          username: "Alice",
+          blocked: false
+        ),
+        PushSharedKeyNames.directReactionAuthoredTargets:
+          try reactionTargetsJSON(),
+      ]),
+      decryptor: MemoryPushDecryptor(
+        chatPlaintext: try reactionPlaintextJSON(eventId: eventId)
+      ),
+      // Production uniqueness now belongs to the shared recovery handoff.
+      dedupeStore: nil,
+      toneLeaseStore: toneStore
+    ).resolve(
+      userInfo: reactionRoute(eventId: eventId),
+      fallbackTitle: "New reaction",
+      fallbackBody: "Someone reacted to your message"
+    )
+
+    let reservation = try XCTUnwrap(
+      result.toneReservation as? MemoryPushToneReservation
+    )
+    XCTAssertFalse(result.suppress)
+    XCTAssertEqual(reservation.commitCalls, 0)
+    XCTAssertEqual(reservation.releaseCalls, 0)
   }
 
   func testReactionEnvelopeStagesWithReactionKind() throws {

@@ -9,6 +9,7 @@ import 'package:flutter_app/core/notifications/deterministic_notification_id.dar
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
@@ -41,6 +42,7 @@ void main() {
 
     tearDown(() {
       debugDefaultTargetPlatformOverride = null;
+      debugSetFlowEventSink(null);
     });
 
     test('shows a fallback for Android-style data-only chat pushes', () {
@@ -247,7 +249,7 @@ void main() {
       () async {
         final notificationService = FakeNotificationService();
         final projection = ConversationNotificationSnapshot(
-          historyLines: const <String>['Alice: older', 'Message'],
+          historyLines: const <String>['Alice: older', 'Alice: Hello'],
           totalUnreadMessageCount: 2,
         );
         const message = RemoteMessage(
@@ -266,6 +268,12 @@ void main() {
           message: message,
           groupMessageDisplayEligibilityResolver: (_) async =>
               const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupMessageNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Team Chat',
+                body: 'Alice: Hello',
+                payload: 'group:group-abc-123|message:msg-123',
+              ),
           groupConversationTracker: groupConversationTracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
           durableGroupMessageNotificationCoordinatorResolver: () async =>
@@ -278,20 +286,225 @@ void main() {
               }) async {
                 expect(groupId, 'group-abc-123');
                 expect(currentMessageId, 'msg-123');
-                expect(currentPrivacyNormalizedLine, 'Message');
+                expect(currentPrivacyNormalizedLine, 'Alice: Hello');
                 return projection;
               },
         );
 
         expect(shown, isTrue);
         expect(notificationService.shown, hasLength(1));
-        expect(notificationService.shown.single.senderUsername, 'Mknoon');
-        expect(notificationService.shown.single.messageText, 'Message');
+        expect(notificationService.shown.single.senderUsername, 'Team Chat');
+        expect(notificationService.shown.single.messageText, 'Alice: Hello');
         expect(
           notificationService.shown.single.payload,
           'group:group-abc-123|message:msg-123',
         );
         expect(notificationService.shown.single.snapshot, same(projection));
+      },
+    );
+
+    test(
+      'anchored group drain fallback uses trusted group and sender preview',
+      () async {
+        final notificationService = FakeNotificationService();
+        const message = RemoteMessage(
+          notification: RemoteNotification(
+            title: 'ATTACKER PROVIDER TITLE',
+            body: 'ATTACKER PROVIDER BODY',
+          ),
+          data: <String, dynamic>{
+            'type': 'group_message',
+            'groupId': 'group-signal-copy',
+            'message_id': 'message-signal-copy',
+            'title': 'ATTACKER DATA TITLE',
+            'body': 'ATTACKER DATA BODY',
+          },
+        );
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: message,
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupMessageNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Team Chat',
+                body: 'Alice: Hello secret',
+                payload: 'group:group-signal-copy|message:message-signal-copy',
+                resolvedEventIdentity:
+                    ResolvedPushEventIdentity.outerAndAuthenticated(
+                      kind: ConversationNotificationContentKind.message,
+                      canonicalEventId: 'message-signal-copy',
+                    ),
+              ),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+          groupConversationNotificationProjectionResolver:
+              ({
+                required groupId,
+                currentMessageId,
+                currentPrivacyNormalizedLine,
+              }) async {
+                expect(groupId, 'group-signal-copy');
+                expect(currentMessageId, 'message-signal-copy');
+                expect(currentPrivacyNormalizedLine, 'Alice: Hello secret');
+                return null;
+              },
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shown, hasLength(1));
+        final notification = notificationService.shown.single;
+        expect(notification.senderUsername, 'Team Chat');
+        expect(notification.messageText, 'Alice: Hello secret');
+        expect(
+          '${notification.senderUsername}|${notification.messageText}',
+          isNot(contains('ATTACKER')),
+        );
+      },
+    );
+
+    test(
+      'typed anchored group drain fallback suppresses untrusted preview',
+      () async {
+        final notificationService = FakeNotificationService();
+        final events = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(events.add);
+        var eligibilityCalls = 0;
+        var resolverCalls = 0;
+
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-untrusted-preview',
+              'message_id': 'message-untrusted-preview',
+            },
+          ),
+          groupMessageDisplayEligibilityResolver: (_) async {
+            eligibilityCalls += 1;
+            return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
+          },
+          groupMessageNotificationResolver: (_) async {
+            resolverCalls += 1;
+            return null;
+          },
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+        );
+
+        expect(shown, isFalse);
+        expect(eligibilityCalls, 1);
+        expect(resolverCalls, 1);
+        expect(notificationService.shown, isEmpty);
+        expect(
+          events,
+          contains(
+            isA<Map<String, dynamic>>()
+                .having(
+                  (event) => event['event'],
+                  'event',
+                  'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
+                )
+                .having(
+                  (event) =>
+                      (event['details'] as Map<String, dynamic>)['reason'],
+                  'reason',
+                  'trusted_group_preview_unavailable',
+                ),
+          ),
+        );
+      },
+    );
+
+    test(
+      'authenticated inner group id anchors rich foreground recovery copy',
+      () async {
+        final notificationService = FakeNotificationService();
+        final shown = await showForegroundPushFallbackNotificationIfNeeded(
+          result: ForegroundRemoteMessageResult.notificationNeeded,
+          notificationService: notificationService,
+          message: const RemoteMessage(
+            data: <String, dynamic>{
+              'type': 'group_message',
+              'groupId': 'group-inner-id',
+              'sender_transport_peer_id': 'transport-alice',
+              'keyEpoch': '7',
+              'ciphertext': 'ciphertext',
+              'nonce': 'nonce',
+            },
+          ),
+          groupMessageDisplayEligibilityResolver: (_) async =>
+              const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupMessageNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Inner ID Team',
+                body: 'Alice: Authenticated preview',
+                payload:
+                    'group:group-inner-id|message:authenticated-inner-message',
+                resolvedEventIdentity:
+                    ResolvedPushEventIdentity.authenticatedInner(
+                      kind: ConversationNotificationContentKind.message,
+                      canonicalEventId: 'authenticated-inner-message',
+                    ),
+              ),
+          groupConversationTracker: groupConversationTracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          durableGroupMessageNotificationCoordinatorResolver: () async =>
+              groupMessageCoordinator,
+        );
+
+        expect(shown, isTrue);
+        expect(notificationService.shown, hasLength(1));
+        final notification = notificationService.shown.single;
+        expect(notification.senderUsername, 'Inner ID Team');
+        expect(notification.messageText, 'Alice: Authenticated preview');
+        expect(
+          notification.payload,
+          'group:group-inner-id|message:authenticated-inner-message',
+        );
+      },
+    );
+
+    test(
+      'application root wires trusted foreground group message resolver',
+      () {
+        final source = File('lib/app/application_root.dart').readAsStringSync();
+
+        expect(
+          source,
+          contains(
+            'groupMessageNotificationResolver:\n'
+            '            _resolveForegroundGroupMessageNotification',
+          ),
+        );
+        expect(
+          source,
+          contains(
+            '_resolveForegroundGroupMessageNotification(RemoteMessage message)',
+          ),
+        );
+        for (final requiredToken in const <String>[
+          'resolveForegroundGroupMessageNotification(',
+          'localPeerId: identity?.peerId',
+          'groupRepository: widget.groupRepository',
+          'locale: WidgetsBinding.instance.platformDispatcher.locale',
+        ]) {
+          expect(source, contains(requiredToken), reason: requiredToken);
+        }
+        expect(
+          source,
+          contains(
+            'callGroupDecrypt(widget.bridge, groupKey, ciphertext, nonce)',
+          ),
+        );
       },
     );
 
@@ -312,7 +525,10 @@ void main() {
           drainGroupOfflineInboxForGroup: (_) async =>
               throw StateError('relay unavailable'),
         );
-        expect(result, ForegroundRemoteMessageResult.notificationNeeded);
+        expect(
+          result,
+          ForegroundRemoteMessageResult.notificationNeededAfterDrainFailure,
+        );
 
         final service = FakeNotificationService();
         await showForegroundPushFallbackNotificationIfNeeded(
@@ -321,6 +537,12 @@ void main() {
           message: message,
           groupMessageDisplayEligibilityResolver: (_) async =>
               const GroupMessageNotificationDisplayEligibility.allowCurrentMember(),
+          groupMessageNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Drain Error Team',
+                body: 'Alice: recovered preview',
+                payload: 'group:group-drain-error|message:message-drain-error',
+              ),
           groupConversationTracker: groupConversationTracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
           durableGroupMessageNotificationCoordinatorResolver: () async =>
@@ -343,7 +565,7 @@ void main() {
         expect(service.shown.single.snapshot?.totalUnreadMessageCount, 2);
         expect(service.shown.single.snapshot?.historyLines, <String>[
           'Alice: prior unread',
-          'Message',
+          'Alice: recovered preview',
         ]);
       },
     );
@@ -1038,7 +1260,7 @@ void main() {
     }
 
     test(
-      'group policy is resolved inside the keyed foreground presentation lane',
+      'queued group fallback rechecks policy before trusted preview resolution',
       () async {
         const groupId = 'group-policy-lane-final-check';
         final presentationCoordinator =
@@ -1053,6 +1275,7 @@ void main() {
         await holdEntered.future;
 
         var policyChecks = 0;
+        var resolverChecks = 0;
         var stillEligible = true;
         final show = showForegroundPushFallbackNotificationIfNeeded(
           result: ForegroundRemoteMessageResult.notificationNeeded,
@@ -1071,6 +1294,15 @@ void main() {
                 : const GroupMessageNotificationDisplayEligibility.suppressed(
                     'group_muted',
                   );
+          },
+          groupMessageNotificationResolver: (_) async {
+            resolverChecks += 1;
+            return const BackgroundPushNotificationFallback(
+              title: 'Policy Team',
+              body: 'Alice: queued preview',
+              payload:
+                  'group:group-policy-lane-final-check|message:message-policy-lane',
+            );
           },
           groupConversationTracker: groupConversationTracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
@@ -1091,6 +1323,7 @@ void main() {
 
         expect(await show, isFalse);
         expect(policyChecks, 1);
+        expect(resolverChecks, 0);
         expect(notificationService.shown, isEmpty);
       },
     );
@@ -1278,15 +1511,15 @@ void main() {
         final notificationService = FakeNotificationService();
         const message = RemoteMessage(
           notification: RemoteNotification(
-            title: 'Team Chat',
-            body: 'Alice: Hello',
+            title: 'ATTACKER PROVIDER TITLE',
+            body: 'ATTACKER PROVIDER BODY',
           ),
           data: {
             'type': 'group_message',
             'groupId': 'group-abc-123',
             'message_id': 'msg-123',
-            'title': 'Team Chat',
-            'body': 'Alice: Hello',
+            'title': 'ATTACKER DATA TITLE',
+            'body': 'ATTACKER DATA BODY',
           },
         );
 
@@ -1298,6 +1531,12 @@ void main() {
             expect(groupId, 'group-abc-123');
             return const GroupMessageNotificationDisplayEligibility.allowCurrentMember();
           },
+          groupMessageNotificationResolver: (_) async =>
+              const BackgroundPushNotificationFallback(
+                title: 'Trusted Team',
+                body: 'Trusted Alice: Hello',
+                payload: 'group:group-abc-123|message:msg-123',
+              ),
           groupConversationTracker: groupConversationTracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
           durableGroupMessageNotificationCoordinatorResolver: () async =>
@@ -1306,8 +1545,11 @@ void main() {
 
         expect(shown, isTrue);
         expect(notificationService.shown, hasLength(1));
-        expect(notificationService.shown.single.senderUsername, 'Mknoon');
-        expect(notificationService.shown.single.messageText, 'Message');
+        expect(notificationService.shown.single.senderUsername, 'Trusted Team');
+        expect(
+          notificationService.shown.single.messageText,
+          'Trusted Alice: Hello',
+        );
         expect(
           notificationService.shown.single.payload,
           'group:group-abc-123|message:msg-123',

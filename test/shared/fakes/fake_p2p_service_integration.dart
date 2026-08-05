@@ -203,6 +203,9 @@ class FakeP2PService implements P2PService, DurableLanSender {
     final delivered = await network.deliver(peerId, targetPeerId, message);
     return SendMessageResult(
       sent: delivered,
+      // A successful fake live delivery means the authenticated receiver
+      // accepted the complete frame, matching the deferred native ACK contract.
+      acked: delivered,
       reply: delivered ? 'received: $message' : null,
       transport: (delivered && reportTransportMode) ? transportMode : null,
     );
@@ -338,7 +341,12 @@ class FakeP2PService implements P2PService, DurableLanSender {
       }
       await Future.delayed(ackDelay);
     }
-    final delivered = await network.deliver(fromPeerId, peerId, message);
+    final delivered = await network.deliver(
+      fromPeerId,
+      peerId,
+      message,
+      transport: 'wifi',
+    );
     return delivered ? localSendAck : LanSendAck.failed;
   }
 

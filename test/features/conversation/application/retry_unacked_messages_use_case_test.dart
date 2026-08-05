@@ -188,6 +188,106 @@ void main() {
     );
 
     test(
+      'unsafe legacy ordinary envelope is quarantined by exact identity without replay',
+      () async {
+        final exactChat =
+            _makeSentMessage(
+              id: 'legacy-chat-exact',
+              wireEnvelope:
+                  '{"type":"chat_message","version":"1","payload":{"text":"legacy chat"}}',
+            ).copyWith(
+              text: 'edited legacy chat',
+              editedAt: '2026-01-01T00:02:00.000Z',
+              transport: 'inbox',
+              relayExpiresAt: 3360701,
+              custodyCheckedAt: '2026-01-01T00:03:00.000Z',
+            );
+        final exactTombstone =
+            _makeSentDeletedMessage(
+              id: 'legacy-delete-exact',
+              wireEnvelope:
+                  '{"type":"message_deletion","version":"1","payload":{"messageId":"legacy-delete-exact"}}',
+            ).copyWith(
+              transport: 'inbox',
+              relayExpiresAt: 3360702,
+              custodyCheckedAt: '2026-01-01T00:04:00.000Z',
+            );
+        final staleCrossedSnapshot =
+            _makeSentMessage(
+              id: 'legacy-chat-crossed',
+              wireEnvelope:
+                  '{"type":"chat_message","version":"1","payload":{"text":"stale"}}',
+            ).copyWith(
+              text: 'stale snapshot',
+              editedAt: '2026-01-01T00:05:00.000Z',
+              transport: 'inbox',
+              relayExpiresAt: 3360703,
+              custodyCheckedAt: '2026-01-01T00:06:00.000Z',
+            );
+        final crossedWinner = staleCrossedSnapshot.copyWith(
+          text: 'concurrent winner',
+          editedAt: '2026-01-01T00:07:00.000Z',
+          wireEnvelope:
+              '{"type":"chat_message","version":"1","payload":{"text":"winner"}}',
+          transport: 'direct',
+          relayExpiresAt: 3360799,
+          custodyCheckedAt: '2026-01-01T00:08:00.000Z',
+        );
+        messageRepo.seed([exactChat, exactTombstone, crossedWinner]);
+        messageRepo.unackedOutgoingOverride = [
+          exactChat,
+          exactTombstone,
+          staleCrossedSnapshot,
+        ];
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        expect(count, 0);
+        expect(
+          (await messageRepo.getMessage(exactChat.id))!.toMap(),
+          exactChat
+              .copyWith(
+                status: 'failed',
+                transport: null,
+                relayExpiresAt: null,
+                custodyCheckedAt: null,
+              )
+              .toMap(),
+        );
+        expect(
+          (await messageRepo.getMessage(exactTombstone.id))!.toMap(),
+          exactTombstone
+              .copyWith(
+                status: 'failed',
+                transport: null,
+                relayExpiresAt: null,
+                custodyCheckedAt: null,
+              )
+              .toMap(),
+        );
+        expect(
+          (await messageRepo.getMessage(crossedWinner.id))!.toMap(),
+          crossedWinner.toMap(),
+        );
+        expect(messageRepo.ordinaryMutationCallCount, 3);
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(p2pService.discoverPeerCallCount, 0);
+        expect(p2pService.dialPeerCallCount, 0);
+        expect(p2pService.sendLocalMediaCallCount, 0);
+      },
+    );
+
+    test(
       'does not replay persisted v1 chat wireEnvelope when coming online',
       () async {
         final msg = _makeSentMessage(
@@ -242,7 +342,8 @@ void main() {
       final saved = messageRepo.lastSavedMessage;
       expect(saved!.status, 'failed');
       expect(saved.editedAt, '2026-01-01T00:05:00.000Z');
-      expect(saved.transport, 'direct');
+      expect(saved.transport, isNull);
+      expect(saved.wireEnvelope, msg.wireEnvelope);
     });
 
     test(

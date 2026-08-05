@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -524,6 +525,20 @@ Future<bool> _retryFailedMessageCandidate({
     if (!resolution.didUpload &&
         msg.wireEnvelope != null &&
         msg.wireEnvelope!.isNotEmpty) {
+      final ordinaryTransportRepository =
+          messageRepo is OutgoingTransportMutationRepository
+          ? messageRepo as OutgoingTransportMutationRepository
+          : null;
+      if (!_isOutgoingOneMoreLookPrivate(msg) &&
+          ordinaryTransportRepository == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_ORDINARY_SETTLEMENT_CAPABILITY_MISSING',
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        );
+        return false;
+      }
+
       Future<bool> persistCachedEnvelopeTransport({
         required String status,
         required String? transport,
@@ -552,12 +567,17 @@ Future<bool> _retryFailedMessageCandidate({
           }
           return outcome.accepted;
         }
-        await messageRepo.saveMessage(
-          normalizeOutgoingDeleteTombstoneVisibility(
-            msg.copyWith(status: status, transport: transport),
-          ),
-        );
-        return true;
+        final outcome = await ordinaryTransportRepository!
+            .settleOutgoingOrdinaryTransport(
+              messageId: msg.id,
+              expectedContactPeerId: msg.contactPeerId,
+              expectedEnvelope: msg.wireEnvelope!,
+              status: status,
+              transport: transport,
+              relayExpiresAt: null,
+              mode: OutgoingOrdinarySettlementMode.live,
+            );
+        return outcome.outcome.authorizesTransport;
       }
 
       if (msg.transport == 'inbox') {
@@ -722,6 +742,10 @@ Future<bool> _retryFailedDeletedTombstone({
   }
 
   final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(msg);
+  final ordinaryTransportRepository =
+      messageRepo is OutgoingTransportMutationRepository
+      ? messageRepo as OutgoingTransportMutationRepository
+      : null;
   final privateDeleteRepository =
       messageRepo is DirectPrivateDeleteForEveryoneRepository
       ? messageRepo as DirectPrivateDeleteForEveryoneRepository
@@ -730,6 +754,13 @@ Future<bool> _retryFailedDeletedTombstone({
     _emitDeleteTombstoneStillFailed(
       msg,
       reason: 'private_delete_capability_missing',
+    );
+    return false;
+  }
+  if (!isOutgoingPrivate && ordinaryTransportRepository == null) {
+    _emitDeleteTombstoneStillFailed(
+      msg,
+      reason: 'ordinary_transport_capability_missing',
     );
     return false;
   }
@@ -797,6 +828,27 @@ Future<bool> _retryFailedDeletedTombstone({
       return false;
     }
     msg = staged;
+  } else {
+    final staged = await ordinaryTransportRepository!
+        .stageOutgoingOrdinaryAttempt(
+          expected: msg,
+          staged: msg.copyWith(
+            status: 'sending',
+            transport: null,
+            wireEnvelope: rebuiltEnvelope,
+            relayExpiresAt: null,
+            custodyCheckedAt: null,
+          ),
+          kind: OutgoingOrdinaryAttemptKind.tombstoneRetry,
+        );
+    if (!staged.authorizesTransport) {
+      _emitDeleteTombstoneStillFailed(
+        msg,
+        reason: 'ordinary_delete_envelope_stage_refused',
+      );
+      return false;
+    }
+    msg = staged.message!;
   }
 
   return _storeOrReplayDeleteEnvelope(
@@ -820,6 +872,11 @@ Future<bool> _storeOrReplayDeleteEnvelope({
       messageRepo is DirectPrivateDeleteForEveryoneRepository
       ? messageRepo as DirectPrivateDeleteForEveryoneRepository
       : null;
+  final ordinaryTransportRepository =
+      messageRepo is OutgoingTransportMutationRepository
+      ? messageRepo as OutgoingTransportMutationRepository
+      : null;
+  if (!isOutgoingPrivate && ordinaryTransportRepository == null) return false;
   Future<bool> persistSettlement(ConversationMessage target) async {
     if (isOutgoingPrivate) {
       if (privateDeleteRepository == null) return false;
@@ -830,8 +887,17 @@ Future<bool> _storeOrReplayDeleteEnvelope({
               ) !=
           null;
     }
-    await messageRepo.saveMessage(target);
-    return true;
+    final outcome = await ordinaryTransportRepository!
+        .settleOutgoingOrdinaryDeleteTombstone(
+          messageId: target.id,
+          expectedContactPeerId: target.contactPeerId,
+          expectedEnvelope: wireEnvelope,
+          status: target.status,
+          transport: target.transport,
+          relayExpiresAt: target.relayExpiresAt,
+          mode: OutgoingOrdinarySettlementMode.live,
+        );
+    return outcome.outcome.authorizesTransport;
   }
 
   // Genuine deletion-envelope inbox custody is persisted as `inboxed`.
@@ -893,13 +959,14 @@ Future<bool> _storeOrReplayDeleteEnvelope({
     msg.contactPeerId,
     sendResult,
   );
-  final status = sendResult.acknowledged ? 'delivered' : 'sent';
+  final provesDeviceDelivery = sendResult.acked == true;
+  final status = provesDeviceDelivery ? 'delivered' : 'sent';
   final persisted = await persistSettlement(
     normalizeOutgoingDeleteTombstoneVisibility(
       msg.copyWith(
         status: status,
         transport: via,
-        wireEnvelope: sendResult.acknowledged ? null : wireEnvelope,
+        wireEnvelope: provesDeviceDelivery ? null : wireEnvelope,
       ),
     ),
   );

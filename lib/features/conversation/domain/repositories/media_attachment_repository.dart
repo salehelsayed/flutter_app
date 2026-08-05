@@ -6,9 +6,13 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
 import '../models/media_attachment.dart';
+import '../models/conversation_message.dart';
 import '../models/media_library.dart';
 import '../models/media_preview_descriptor.dart';
 import '../models/media_storage.dart';
+import '../models/outgoing_ordinary_mutation_result.dart';
+import 'message_repository.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 
 /// Repository interface for managing media attachments.
 ///
@@ -85,6 +89,19 @@ abstract class MediaAttachmentRepository {
   /// The owner filter applies in SQL before the row limit.
   Future<List<MediaAttachment>> getUploadPendingAttachments({
     required MediaOwnerLane owner,
+  });
+}
+
+/// Optional atomic staging authority for ordinary outgoing attempts that own
+/// direct attachment rows. The parent/envelope and the exact normalized media
+/// projection commit in one SQLite transaction or neither side changes.
+abstract interface class OutgoingOrdinaryAttemptStagingRepository {
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttemptWithMedia({
+    required OutgoingTransportMutationRepository messageMutationRepository,
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
   });
 }
 

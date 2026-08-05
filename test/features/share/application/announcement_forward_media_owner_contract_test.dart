@@ -62,6 +62,7 @@ void main() {
       );
       harness.media.reads.clear();
       harness.media.saves.clear();
+      harness.media.atomicStages.clear();
 
       final contact = harness.contact('owner-contact-destination');
       await harness.contacts.addContact(contact);
@@ -94,10 +95,10 @@ void main() {
       expect(qualifiedSource.map((row) => row.id), [
         announcementSourceAttachmentId,
       ]);
-      expect(
-        harness.media.saves.map((call) => call.owner).toSet(),
-        containsAll({MediaOwnerLane.direct, MediaOwnerLane.group}),
-      );
+      expect(<MediaOwnerLane>{
+        ...harness.media.saves.map((call) => call.owner),
+        ...harness.media.atomicStages.map((call) => call.owner),
+      }, containsAll({MediaOwnerLane.direct, MediaOwnerLane.group}));
 
       final directMessage = (await harness.directMessages.getMessagesForContact(
         contact.peerId,

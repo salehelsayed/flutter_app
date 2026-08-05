@@ -40,7 +40,9 @@ void main() {
       [
         'integration_test/group_multi_device_real_harness.dart',
         'integration_test/notification_sound_smoke_harness.dart',
+        'integration_test/routing_smoke_harness.dart',
         'integration_test/smoke_test.dart',
+        'integration_test/transport_e2e_test.dart',
       ],
       reason:
           'a NEW fixture instantiating the real media repository must open '
@@ -75,6 +77,16 @@ void main() {
       reason:
           'the notification sound harness may not pin a historical schema '
           'version',
+    );
+
+    final routing = File(
+      'integration_test/routing_smoke_harness.dart',
+    ).readAsStringSync();
+    expect(routing, contains('openCurrentProductionE2EDatabase'));
+    expect(
+      RegExp(r'version:\s*(11|44|79)\b').hasMatch(routing),
+      isFalse,
+      reason: 'the routing fixture may not pin a historical schema version',
     );
 
     final smoke = File('integration_test/smoke_test.dart').readAsStringSync();

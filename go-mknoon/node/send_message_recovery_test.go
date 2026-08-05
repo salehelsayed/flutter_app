@@ -388,3 +388,108 @@ func TestSendMessageWithTimeout_OpensChatStreamsWithAllowLimitedConnAndDialTimeo
 		t.Fatalf("expected dial timeout 1100ms, got %v", dialTimeout)
 	}
 }
+
+func TestSendMessageWithTransport_AckFrameValidation(t *testing.T) {
+	nodeA := NewNode()
+	stateA, err := nodeA.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("nodeA Start: %v", err)
+	}
+	defer nodeA.Stop()
+
+	nodeB := NewNode()
+	stateB, err := nodeB.Start(NodeConfig{
+		PrivateKeyHex:  generateTestKey(t),
+		RelayAddresses: []string{},
+		AutoRegister:   false,
+	})
+	if err != nil {
+		t.Fatalf("nodeB Start: %v", err)
+	}
+	defer nodeB.Stop()
+
+	var nodeBAddrStrs []string
+	for _, addr := range nodeB.Host().Addrs() {
+		nodeBAddrStrs = append(nodeBAddrStrs, addr.String())
+	}
+	if err := nodeA.DialPeerWithTimeout(stateB.PeerId, nodeBAddrStrs, sendMessageRecoverySetupDialTimeoutMs); err != nil {
+		t.Fatalf("DialPeer: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		reply string
+		acked bool
+	}{
+		{name: "affirmative", reply: `{"ack":true}`, acked: true},
+		{name: "affirmative whitespace and extra fields", reply: " \n { \"diagnostic\": \"stored\", \"ack\" : true } \t", acked: true},
+		{name: "false", reply: `{"ack":false}`},
+		{name: "missing", reply: `{"stored":true}`},
+		{name: "wrong type", reply: `{"ack":"true"}`},
+		{name: "malformed", reply: `{"ack":true`},
+		{name: "primitive", reply: `true`},
+		{name: "empty", reply: ``},
+		{name: "nested", reply: `{"result":{"ack":true}}`},
+		{name: "string embedded", reply: `{"message":"server said {\"ack\":true}"}`},
+	}
+
+	type observation struct {
+		request    string
+		remotePeer string
+		err        error
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			observed := make(chan observation, 1)
+			nodeB.Host().SetStreamHandler(ChatProtocol, func(stream network.Stream) {
+				defer stream.Close()
+				requestBytes, readErr := readFrame(stream)
+				writeErr := readErr
+				if writeErr == nil {
+					writeErr = writeFrame(stream, []byte(tc.reply))
+				}
+				observed <- observation{
+					request:    string(requestBytes),
+					remotePeer: stream.Conn().RemotePeer().String(),
+					err:        writeErr,
+				}
+			})
+
+			request := "ack-frame-validation:" + tc.name
+			result, sendErr := nodeA.SendMessageWithTransport(
+				stateB.PeerId,
+				request,
+				1000,
+			)
+			if sendErr != nil {
+				t.Fatalf("SendMessageWithTransport: %v", sendErr)
+			}
+			if result.Reply != tc.reply {
+				t.Fatalf("Reply = %q, want exact frame %q", result.Reply, tc.reply)
+			}
+			if result.Acked != tc.acked {
+				t.Fatalf("Acked = %v for frame %q, want %v", result.Acked, tc.reply, tc.acked)
+			}
+
+			select {
+			case got := <-observed:
+				if got.err != nil {
+					t.Fatalf("responder stream: %v", got.err)
+				}
+				if got.request != request {
+					t.Fatalf("responder request = %q, want %q", got.request, request)
+				}
+				if got.remotePeer != stateA.PeerId {
+					t.Fatalf("authenticated remote peer = %q, want sender %q", got.remotePeer, stateA.PeerId)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("timed out waiting for responder observation")
+			}
+		})
+	}
+}

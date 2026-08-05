@@ -16,6 +16,9 @@ typedef ConversationNotificationIdLookup =
     Future<int?> Function(String conversationKey);
 typedef ConversationNotificationContentRegistryResolver =
     Future<ConversationNotificationContentRegistry> Function();
+typedef NotificationRecoverySettlementCallback = Future<void> Function();
+typedef ConversationNotificationRecoverySettlementCallback =
+    Future<void> Function(String conversationKey);
 
 /// Production implementation of [NotificationService] using
 /// `flutter_local_notifications`.
@@ -35,6 +38,10 @@ class FlutterNotificationService
   _notificationContentRegistryResolver;
   final ConversationNotificationGenerationFactory
   _notificationGenerationFactory;
+  final NotificationRecoverySettlementCallback? _onNotificationUpdated;
+  final ConversationNotificationRecoverySettlementCallback?
+  _onConversationCleared;
+  final NotificationRecoverySettlementCallback? _onAllNotificationsCleared;
   final FlutterLocalNotificationsPlugin _plugin =
       FlutterLocalNotificationsPlugin();
   DurableConversationNotificationIdRegistry? _notificationIdRegistry;
@@ -51,6 +58,9 @@ class FlutterNotificationService
     ConversationNotificationContentRegistryResolver?
     notificationContentRegistryResolver,
     ConversationNotificationGenerationFactory? notificationGenerationFactory,
+    NotificationRecoverySettlementCallback? onNotificationUpdated,
+    ConversationNotificationRecoverySettlementCallback? onConversationCleared,
+    NotificationRecoverySettlementCallback? onAllNotificationsCleared,
   }) : _requestApplePermissions = requestApplePermissions,
        _notificationIdResolver = notificationIdResolver,
        _notificationIdLookup = notificationIdLookup,
@@ -59,6 +69,9 @@ class FlutterNotificationService
        _notificationGenerationFactory =
            notificationGenerationFactory ??
            createConversationNotificationGeneration,
+       _onNotificationUpdated = onNotificationUpdated,
+       _onConversationCleared = onConversationCleared,
+       _onAllNotificationsCleared = onAllNotificationsCleared,
        _notificationIdRegistryResolver =
            notificationIdRegistryResolver ??
            DurableConversationNotificationIdRegistry.openMobileDefault;
@@ -306,65 +319,69 @@ class FlutterNotificationService
     // coalesces into a single card; the silent variant reuses the SAME id to
     // update in place without sounding (118 Phase 3/4).
     final notificationId = await _resolveNotificationId(contactPeerId);
-    final resolvedPayload = payload ?? contactPeerId;
-    final metadata = contentKind == null
-        ? null
-        : ConversationNotificationContentMetadata(
-            kind: contentKind,
-            eventIdentity: contentEventIdentity?.trim().isEmpty == true
-                ? null
-                : contentEventIdentity?.trim(),
-            generation: _notificationGenerationFactory(),
-          );
-    final nativePayload = metadata == null
-        ? resolvedPayload
-        : encodeConversationNotificationPayload(
-            routePayload: resolvedPayload,
+    try {
+      final resolvedPayload = payload ?? contactPeerId;
+      final metadata = contentKind == null
+          ? null
+          : ConversationNotificationContentMetadata(
+              kind: contentKind,
+              eventIdentity: contentEventIdentity?.trim().isEmpty == true
+                  ? null
+                  : contentEventIdentity?.trim(),
+              generation: _notificationGenerationFactory(),
+            );
+      final nativePayload = metadata == null
+          ? resolvedPayload
+          : encodeConversationNotificationPayload(
+              routePayload: resolvedPayload,
+              conversationKey: contactPeerId,
+              metadata: metadata,
+            );
+      var publishedSilently = silent;
+      Future<void> show({required bool silent}) {
+        publishedSilently = silent;
+        return _plugin.show(
+          notificationId,
+          senderUsername,
+          messageText,
+          mknoonConversationNotificationDetails(
             conversationKey: contactPeerId,
-            metadata: metadata,
-          );
-    var publishedSilently = silent;
-    Future<void> show({required bool silent}) {
-      publishedSilently = silent;
-      return _plugin.show(
-        notificationId,
-        senderUsername,
-        messageText,
-        mknoonConversationNotificationDetails(
+            silent: silent,
+            autoCancel: metadata == null,
+            snapshot: snapshot,
+          ),
+          payload: nativePayload,
+        );
+      }
+
+      if (metadata == null) {
+        await publishNative(show);
+      } else {
+        final contentRegistry = await _resolveNotificationContentRegistry();
+        await contentRegistry.replaceContent(
           conversationKey: contactPeerId,
-          silent: silent,
-          autoCancel: metadata == null,
-          snapshot: snapshot,
-        ),
-        payload: nativePayload,
-      );
-    }
+          notificationId: notificationId,
+          metadata: metadata,
+          retireCurrent: () => _plugin.cancel(notificationId),
+          replace: () => publishNative(show),
+        );
+      }
 
-    if (metadata == null) {
-      await publishNative(show);
-    } else {
-      final contentRegistry = await _resolveNotificationContentRegistry();
-      await contentRegistry.replaceContent(
-        conversationKey: contactPeerId,
-        notificationId: notificationId,
-        metadata: metadata,
-        retireCurrent: () => _plugin.cancel(notificationId),
-        replace: () => publishNative(show),
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_SHOWN',
+        details: {
+          'contactPeerId': contactPeerId.length > 10
+              ? contactPeerId.substring(0, 10)
+              : contactPeerId,
+          'sender': senderUsername,
+          'payload': resolvedPayload,
+          'silent': publishedSilently,
+        },
       );
+    } finally {
+      await _notifyNotificationUpdated();
     }
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'NOTIFICATION_SHOWN',
-      details: {
-        'contactPeerId': contactPeerId.length > 10
-            ? contactPeerId.substring(0, 10)
-            : contactPeerId,
-        'sender': senderUsername,
-        'payload': resolvedPayload,
-        'silent': publishedSilently,
-      },
-    );
   }
 
   @override
@@ -376,20 +393,23 @@ class FlutterNotificationService
     final notificationId = await _resolveNotificationId(
       _genericNotificationConversationKey(payload: payload, title: title),
     );
+    try {
+      await _plugin.show(
+        notificationId,
+        title,
+        body,
+        mknoonMessagesNotificationDetails,
+        payload: payload,
+      );
 
-    await _plugin.show(
-      notificationId,
-      title,
-      body,
-      mknoonMessagesNotificationDetails,
-      payload: payload,
-    );
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'NOTIFICATION_SHOWN',
-      details: {'title': title, 'payload': payload ?? ''},
-    );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'NOTIFICATION_SHOWN',
+        details: {'title': title, 'payload': payload ?? ''},
+      );
+    } finally {
+      await _notifyNotificationUpdated();
+    }
   }
 
   @override
@@ -403,6 +423,8 @@ class FlutterNotificationService
         event: 'NOTIFICATIONS_CLEAR_ERROR',
         details: {'error': e.toString()},
       );
+    } finally {
+      await _notifyAllNotificationsCleared();
     }
   }
 
@@ -412,43 +434,47 @@ class FlutterNotificationService
     ConversationNotificationContentKind? onlyIfContentKind,
     ConversationNotificationContentCancellationPredicate? shouldCancelContent,
   }) async {
-    final notificationId = await _lookupNotificationId(conversationKey);
-    if (notificationId == null) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONVERSATION_NOTIFICATION_CANCEL_SKIPPED',
-        details: {'reason': 'unallocated'},
-      );
-      return;
-    }
-    ConversationNotificationContentRegistry? contentRegistry;
-    if (onlyIfContentKind != null) {
-      contentRegistry = await _resolveNotificationContentRegistry();
-      final cancelled = await contentRegistry.cancelContentIfKind(
-        conversationKey: conversationKey,
-        notificationId: notificationId,
-        kind: onlyIfContentKind,
-        shouldCancel: shouldCancelContent,
-        cancel: () => _dismissNotificationById(
-          notificationId,
-          reason: 'conversation_read',
-          propagateFailure: true,
-        ),
-      );
-      if (!cancelled) {
+    try {
+      final notificationId = await _lookupNotificationId(conversationKey);
+      if (notificationId == null) {
         emitFlowEvent(
           layer: 'FL',
           event: 'CONVERSATION_NOTIFICATION_CANCEL_SKIPPED',
-          details: {'reason': 'content_kind_mismatch_or_unknown'},
+          details: {'reason': 'unallocated'},
         );
+        return;
       }
-      return;
+      ConversationNotificationContentRegistry? contentRegistry;
+      if (onlyIfContentKind != null) {
+        contentRegistry = await _resolveNotificationContentRegistry();
+        final cancelled = await contentRegistry.cancelContentIfKind(
+          conversationKey: conversationKey,
+          notificationId: notificationId,
+          kind: onlyIfContentKind,
+          shouldCancel: shouldCancelContent,
+          cancel: () => _dismissNotificationById(
+            notificationId,
+            reason: 'conversation_read',
+            propagateFailure: true,
+          ),
+        );
+        if (!cancelled) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONVERSATION_NOTIFICATION_CANCEL_SKIPPED',
+            details: {'reason': 'content_kind_mismatch_or_unknown'},
+          );
+        }
+        return;
+      }
+      await _dismissNotificationById(
+        notificationId,
+        reason: 'conversation_read',
+        propagateFailure: true,
+      );
+    } finally {
+      await _notifyConversationCleared(conversationKey);
     }
-    await _dismissNotificationById(
-      notificationId,
-      reason: 'conversation_read',
-      propagateFailure: true,
-    );
   }
 
   @override
@@ -468,27 +494,31 @@ class FlutterNotificationService
     String conversationKey,
     String generation,
   ) async {
-    final notificationId = await _lookupNotificationId(conversationKey);
-    if (notificationId == null) return false;
-    final registry = await _resolveNotificationContentRegistry();
-    final cancelled = await registry.cancelContentIfGeneration(
-      conversationKey: conversationKey,
-      notificationId: notificationId,
-      generation: generation,
-      cancel: () => _dismissNotificationById(
-        notificationId,
-        reason: 'conversation_acknowledged',
-        propagateFailure: true,
-      ),
-    );
-    if (!cancelled) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONVERSATION_NOTIFICATION_CANCEL_SKIPPED',
-        details: {'reason': 'content_generation_mismatch_or_unknown'},
+    try {
+      final notificationId = await _lookupNotificationId(conversationKey);
+      if (notificationId == null) return false;
+      final registry = await _resolveNotificationContentRegistry();
+      final cancelled = await registry.cancelContentIfGeneration(
+        conversationKey: conversationKey,
+        notificationId: notificationId,
+        generation: generation,
+        cancel: () => _dismissNotificationById(
+          notificationId,
+          reason: 'conversation_acknowledged',
+          propagateFailure: true,
+        ),
       );
+      if (!cancelled) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONVERSATION_NOTIFICATION_CANCEL_SKIPPED',
+          details: {'reason': 'content_generation_mismatch_or_unknown'},
+        );
+      }
+      return cancelled;
+    } finally {
+      await _notifyConversationCleared(conversationKey);
     }
-    return cancelled;
   }
 
   @override
@@ -497,49 +527,53 @@ class FlutterNotificationService
     String expectedGeneration,
     CanonicalConversationNotificationReplacement replacement,
   ) async {
-    final notificationId = await _lookupNotificationId(conversationKey);
-    if (notificationId == null) return false;
-    final generation = _notificationGenerationFactory();
-    final metadata = ConversationNotificationContentMetadata(
-      kind: replacement.contentKind,
-      eventIdentity: replacement.eventIdentity.trim().isEmpty
-          ? null
-          : replacement.eventIdentity.trim(),
-      generation: generation,
-    );
-    final payload = encodeConversationNotificationPayload(
-      routePayload: replacement.routePayload,
-      conversationKey: conversationKey,
-      metadata: metadata,
-    );
-    final registry = await _resolveNotificationContentRegistry();
-    final replaced = await registry.replaceContentIfGeneration(
-      conversationKey: conversationKey,
-      notificationId: notificationId,
-      expectedGeneration: expectedGeneration,
-      metadata: metadata,
-      retireCurrent: () => _plugin.cancel(notificationId),
-      replace: () => _plugin.show(
-        notificationId,
-        replacement.senderUsername,
-        replacement.messageText,
-        mknoonConversationNotificationDetails(
-          conversationKey: conversationKey,
-          silent: true,
-          autoCancel: false,
-          snapshot: replacement.snapshot,
-        ),
-        payload: payload,
-      ),
-    );
-    if (!replaced) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CONVERSATION_NOTIFICATION_REBUILD_SKIPPED',
-        details: {'reason': 'content_generation_mismatch_or_unknown'},
+    try {
+      final notificationId = await _lookupNotificationId(conversationKey);
+      if (notificationId == null) return false;
+      final generation = _notificationGenerationFactory();
+      final metadata = ConversationNotificationContentMetadata(
+        kind: replacement.contentKind,
+        eventIdentity: replacement.eventIdentity.trim().isEmpty
+            ? null
+            : replacement.eventIdentity.trim(),
+        generation: generation,
       );
+      final payload = encodeConversationNotificationPayload(
+        routePayload: replacement.routePayload,
+        conversationKey: conversationKey,
+        metadata: metadata,
+      );
+      final registry = await _resolveNotificationContentRegistry();
+      final replaced = await registry.replaceContentIfGeneration(
+        conversationKey: conversationKey,
+        notificationId: notificationId,
+        expectedGeneration: expectedGeneration,
+        metadata: metadata,
+        retireCurrent: () => _plugin.cancel(notificationId),
+        replace: () => _plugin.show(
+          notificationId,
+          replacement.senderUsername,
+          replacement.messageText,
+          mknoonConversationNotificationDetails(
+            conversationKey: conversationKey,
+            silent: true,
+            autoCancel: false,
+            snapshot: replacement.snapshot,
+          ),
+          payload: payload,
+        ),
+      );
+      if (!replaced) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONVERSATION_NOTIFICATION_REBUILD_SKIPPED',
+          details: {'reason': 'content_generation_mismatch_or_unknown'},
+        );
+      }
+      return replaced;
+    } finally {
+      await _notifyNotificationUpdated();
     }
-    return replaced;
   }
 
   @override
@@ -634,6 +668,43 @@ class FlutterNotificationService
         },
       );
       throw lookupError;
+    }
+  }
+
+  Future<void> _notifyNotificationUpdated() => _runRecoverySettlement(
+    callback: _onNotificationUpdated,
+    operation: 'notification_updated',
+  );
+
+  Future<void> _notifyConversationCleared(String conversationKey) =>
+      _runRecoverySettlement(
+        callback: _onConversationCleared == null
+            ? null
+            : () => _onConversationCleared(conversationKey),
+        operation: 'conversation_cleared',
+      );
+
+  Future<void> _notifyAllNotificationsCleared() => _runRecoverySettlement(
+    callback: _onAllNotificationsCleared,
+    operation: 'all_notifications_cleared',
+  );
+
+  Future<void> _runRecoverySettlement({
+    required NotificationRecoverySettlementCallback? callback,
+    required String operation,
+  }) async {
+    if (callback == null) return;
+    try {
+      await callback();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'IOS_NOTIFICATION_RECOVERY_SETTLEMENT_ERROR',
+        details: {
+          'operation': operation,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
     }
   }
 

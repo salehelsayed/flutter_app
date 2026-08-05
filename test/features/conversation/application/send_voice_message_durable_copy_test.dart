@@ -4,74 +4,18 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
-import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 import 'send_chat_message_use_case_test.dart'
     show FakeP2PService, FakeMessageRepository;
+import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
-
-/// Records every saved attachment for inspection (mirrors the local fake in
-/// send_voice_message_use_case_test.dart).
-class _RecordingMediaAttachmentRepository implements MediaAttachmentRepository {
-  final List<MediaAttachment> saved = [];
-
-  @override
-  Future<void> saveAttachment(
-    MediaAttachment attachment, {
-    required MediaOwnerLane owner,
-  }) async {
-    saved.add(attachment);
-  }
-
-  @override
-  Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
-
-  @override
-  Future<int> deleteAttachmentsForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => 0;
-
-  @override
-  Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => 0;
-
-  @override
-  Future<List<MediaAttachment>> getAttachmentsForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => saved.where((a) => a.messageId == messageId).toList();
-
-  @override
-  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds, {
-    required MediaOwnerLane owner,
-  }) async => {};
-
-  @override
-  Future<List<MediaAttachment>> getPendingDownloads() async => const [];
-
-  @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments({
-    required MediaOwnerLane owner,
-  }) async => const [];
-
-  @override
-  Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
-
-  @override
-  Future<void> updateLocalPath(String id, String localPath) async {}
-}
 
 void main() {
   late FakeP2PService p2pService;
   late FakeMessageRepository messageRepo;
   late FakeBridge bridge;
-  late _RecordingMediaAttachmentRepository mediaAttachmentRepo;
+  late FakeMediaAttachmentRepository mediaAttachmentRepo;
   late FakeMediaFileManager mediaFileManager;
   const mlKemKey = 'test-recipient-mlkem-pub-key';
 
@@ -80,7 +24,7 @@ void main() {
   setUp(() {
     p2pService = FakeP2PService();
     messageRepo = FakeMessageRepository();
-    mediaAttachmentRepo = _RecordingMediaAttachmentRepository();
+    mediaAttachmentRepo = FakeMediaAttachmentRepository();
     mediaFileManager = FakeMediaFileManager();
     bridge = FakeBridge(
       initialResponses: {
@@ -135,13 +79,14 @@ void main() {
           mediaAttachmentRepo: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
           messageId: 'msg-durable-1',
+          preassignedMessageIdIsFresh: true,
           blobId: blobId,
         );
 
         expect(result, SendVoiceMessageResult.uploadFailed);
 
-        expect(mediaAttachmentRepo.saved, isNotEmpty);
-        final saved = mediaAttachmentRepo.saved.firstWhere(
+        expect(mediaAttachmentRepo.allSavedAttachments, isNotEmpty);
+        final saved = mediaAttachmentRepo.allSavedAttachments.firstWhere(
           (a) => a.id == blobId,
         );
         // MUST be 'upload_pending', NOT 'done': 'done' is the relay-blob-exists
@@ -187,10 +132,13 @@ void main() {
         mediaAttachmentRepo: mediaAttachmentRepo,
         mediaFileManager: mediaFileManager,
         messageId: 'msg-survives-1',
+        preassignedMessageIdIsFresh: true,
         blobId: blobId,
       );
 
-      final saved = mediaAttachmentRepo.saved.firstWhere((a) => a.id == blobId);
+      final saved = mediaAttachmentRepo.allSavedAttachments.firstWhere(
+        (a) => a.id == blobId,
+      );
       final durablePath = await mediaFileManager.resolveStoredPath(
         saved.localPath!,
       );
@@ -225,14 +173,19 @@ void main() {
           mediaAttachmentRepo: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
           messageId: 'msg-ok-1',
+          preassignedMessageIdIsFresh: true,
           blobId: 'voice-blob-ok-1',
         );
 
         expect(result, SendVoiceMessageResult.success);
         // The encrypted attachment from the upload pipeline is the persisted
         // one (carries encryption metadata).
+        final committed = await mediaAttachmentRepo.getAttachmentsForMessage(
+          'msg-ok-1',
+          owner: MediaOwnerLane.direct,
+        );
         expect(
-          mediaAttachmentRepo.saved.where((a) => a.encryptionKeyBase64 != null),
+          committed.where((a) => a.encryptionKeyBase64 != null),
           isNotEmpty,
         );
       },

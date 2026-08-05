@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -223,6 +224,11 @@ Future<AppPausedResult> handleAppPaused({
         (message.privateMediaMode == PrivateMediaMode.protected ||
             message.privateMediaMode == PrivateMediaMode.viewOnce);
 
+    final ordinaryTransportRepository =
+        messageRepo is OutgoingTransportMutationRepository
+        ? messageRepo as OutgoingTransportMutationRepository
+        : null;
+
     Future<bool> settlePrivateTransport(
       ConversationMessage message, {
       required String status,
@@ -285,7 +291,13 @@ Future<AppPausedResult> handleAppPaused({
       // mark-failed-all behaviour below is unchanged by default. A row whose
       // deposit is ACCEPTED is left in custody and skipped in the loop below.
       final flushOutcome = await _pauseFlushInFlightSends(
-        messages: sendingMessages,
+        messages: sendingMessages
+            .where(
+              (message) =>
+                  isOutgoingOneMoreLookPrivate(message) ||
+                  ordinaryTransportRepository != null,
+            )
+            .toList(growable: false),
         enable: enablePauseFlush,
         p2pService: p2pService,
         bridge: bridge,
@@ -317,11 +329,36 @@ Future<AppPausedResult> handleAppPaused({
                 throw StateError('private pause custody settlement refused');
               }
             } else {
-              await messageRepo.saveMessage(
-                normalizeOutgoingDeleteTombstoneVisibility(
-                  msg.copyWith(status: 'inboxed', transport: 'inbox'),
-                ),
-              );
+              final expectedEnvelope = msg.wireEnvelope;
+              if (expectedEnvelope == null || expectedEnvelope.isEmpty) {
+                throw StateError('ordinary pause custody envelope missing');
+              }
+              final result = msg.isDeleted
+                  ? await ordinaryTransportRepository!
+                        .settleOutgoingOrdinaryDeleteTombstone(
+                          messageId: msg.id,
+                          expectedContactPeerId: msg.contactPeerId,
+                          expectedEnvelope: expectedEnvelope,
+                          status: 'inboxed',
+                          transport: 'inbox',
+                          relayExpiresAt: null,
+                          mode: OutgoingOrdinarySettlementMode.live,
+                        )
+                  : await ordinaryTransportRepository!
+                        .settleOutgoingOrdinaryTransport(
+                          messageId: msg.id,
+                          expectedContactPeerId: msg.contactPeerId,
+                          expectedEnvelope: expectedEnvelope,
+                          status: 'inboxed',
+                          transport: 'inbox',
+                          relayExpiresAt: null,
+                          mode: OutgoingOrdinarySettlementMode.live,
+                        );
+              if (result.outcome != OutgoingOrdinaryMutationOutcome.applied &&
+                  result.outcome !=
+                      OutgoingOrdinaryMutationOutcome.idempotent) {
+                throw StateError('ordinary pause custody settlement refused');
+              }
             }
           } catch (e) {
             // Non-fatal: the deposit already landed in relay custody. A failed

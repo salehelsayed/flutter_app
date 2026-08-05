@@ -191,6 +191,76 @@ Future<_SmokeTestStack> _setupStack() async {
             ),
     dbUpdateWireEnvelope: (id, wireEnvelope) =>
         dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbStageOutgoingOrdinaryAttempt:
+        ({required expectedRow, required stagedRow, required kind}) =>
+            dbStageOutgoingOrdinaryAttempt(
+              db,
+              expectedRow: expectedRow,
+              stagedRow: stagedRow,
+              kind: kind,
+            ),
+    dbSettleOutgoingOrdinaryTransport:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbSettleOutgoingOrdinaryDeleteTombstone:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbInvalidateOutgoingOrdinaryEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+        }) => dbInvalidateOutgoingOrdinaryEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+        ),
+    dbQuarantineUnsafeLegacyOutgoingEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required isDeleteTombstone,
+        }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          isDeleteTombstone: isDeleteTombstone,
+        ),
     dbLoadStuckSendingOutgoingMessages:
         ({required DateTime olderThan, int limit = 50}) =>
             dbLoadStuckSendingOutgoingMessages(

@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -13,10 +14,26 @@ void main() {
   late int dbLoadMessageCallCount;
   late MessageRepositoryImpl repo;
   late DirectReactionNotificationProjection directReactionProjection;
+  late OutgoingOrdinaryMutationOutcome nextStageOutcome;
+  late OutgoingOrdinaryMutationOutcome nextSettlementOutcome;
+  late OutgoingOrdinaryMutationOutcome nextTombstoneSettlementOutcome;
+  late List<MediaAttachment> authoritativeOrdinaryMedia;
+  late int ordinaryStageCallCount;
+  late int ordinarySettlementCallCount;
+  late int ordinaryTombstoneSettlementCallCount;
+  late bool removeAfterAppliedSettlement;
 
   setUp(() async {
     store = {};
     dbLoadMessageCallCount = 0;
+    nextStageOutcome = OutgoingOrdinaryMutationOutcome.refused;
+    nextSettlementOutcome = OutgoingOrdinaryMutationOutcome.refused;
+    nextTombstoneSettlementOutcome = OutgoingOrdinaryMutationOutcome.refused;
+    authoritativeOrdinaryMedia = const <MediaAttachment>[];
+    ordinaryStageCallCount = 0;
+    ordinarySettlementCallCount = 0;
+    ordinaryTombstoneSettlementCallCount = 0;
+    removeAfterAppliedSettlement = false;
     directReactionProjection = DirectReactionNotificationProjection(
       store: _MemorySecureKeyStore(),
     );
@@ -241,6 +258,75 @@ void main() {
       dbRecoverStuckSendingMessages:
           ({required DateTime olderThan, int limit = 50}) async => 0,
       dbUpdateWireEnvelope: (id, wireEnvelope) async {},
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) async {
+            ordinaryStageCallCount++;
+            if (nextStageOutcome == OutgoingOrdinaryMutationOutcome.applied) {
+              store[stagedRow['id'] as String] = <String, Object?>{
+                ...stagedRow,
+                'text': 'authoritative staged text',
+              };
+            }
+            return nextStageOutcome;
+          },
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) async {
+            ordinarySettlementCallCount++;
+            if (nextSettlementOutcome ==
+                OutgoingOrdinaryMutationOutcome.applied) {
+              store[messageId] = <String, Object?>{
+                ...store[messageId]!,
+                'status': status,
+                'transport': transport,
+                'wire_envelope': status == 'delivered'
+                    ? null
+                    : expectedEnvelope,
+                'relay_expires_at': relayExpiresAt,
+                'custody_checked_at': null,
+              };
+              if (removeAfterAppliedSettlement) {
+                store.remove(messageId);
+              }
+            }
+            return nextSettlementOutcome;
+          },
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) async {
+            ordinaryTombstoneSettlementCallCount++;
+            if (nextTombstoneSettlementOutcome ==
+                OutgoingOrdinaryMutationOutcome.applied) {
+              final row = store[messageId]!;
+              store[messageId] = <String, Object?>{
+                ...row,
+                'status': status,
+                'transport': transport,
+                'wire_envelope': status == 'delivered'
+                    ? null
+                    : expectedEnvelope,
+                'relay_expires_at': relayExpiresAt,
+                'custody_checked_at': null,
+                'hidden_at': status == 'delivered' ? row['deleted_at'] : null,
+              };
+            }
+            return nextTombstoneSettlementOutcome;
+          },
+      loadOutgoingOrdinaryMedia: (_) async => authoritativeOrdinaryMedia,
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) async => [],
       dbLoadSendingOutgoingMessages: () async => [],
@@ -321,6 +407,171 @@ void main() {
   }
 
   group('MessageRepositoryImpl', () {
+    test(
+      'ordinary attempt and settlement publish only authoritative applied state',
+      () async {
+        const messageId = 'ordinary-authoritative-publication';
+        final candidate = makeMessage(
+          id: messageId,
+          status: 'sending',
+          wireEnvelope: 'envelope-attempt',
+        );
+        authoritativeOrdinaryMedia = const <MediaAttachment>[
+          MediaAttachment(
+            id: 'ordinary-direct-media',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 7,
+            mediaType: 'image',
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T10:00:02.000Z',
+          ),
+          MediaAttachment(
+            id: 'wrong-owner-media',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 8,
+            mediaType: 'image',
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T10:00:03.000Z',
+            ownerLane: MediaOwnerLane.group,
+          ),
+          MediaAttachment(
+            id: 'wrong-parent-media',
+            messageId: 'another-message',
+            mime: 'image/png',
+            size: 9,
+            mediaType: 'image',
+            downloadStatus: 'done',
+            createdAt: '2026-02-09T10:00:04.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        ];
+        final emitted = <ConversationMessage>[];
+        final subscription = repo.messageChanges.listen(emitted.add);
+        addTearDown(subscription.cancel);
+
+        nextStageOutcome = OutgoingOrdinaryMutationOutcome.applied;
+        final staged = await repo.stageOutgoingOrdinaryAttempt(
+          expected: null,
+          staged: candidate,
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+        );
+        await Future<void>.delayed(Duration.zero);
+
+        expect(ordinaryStageCallCount, 1);
+        expect(staged.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(staged.message!.text, 'authoritative staged text');
+        expect(staged.message!.media, hasLength(1));
+        expect(staged.message!.media.single.id, 'ordinary-direct-media');
+        expect(staged.message!.media.single.ownerLane, MediaOwnerLane.direct);
+        expect(emitted, hasLength(1));
+        expect(emitted.single.text, 'authoritative staged text');
+        expect(
+          (await directReactionProjection.readAuthoredTargets()).map(
+            (target) => target['id'],
+          ),
+          <String?>[messageId],
+        );
+
+        await directReactionProjection.removeAuthoredTarget(messageId);
+        store[messageId] = <String, Object?>{
+          ...store[messageId]!,
+          'text': 'concurrent durable text',
+          'status': 'delivered',
+          'wire_envelope': null,
+        };
+        for (final outcome in <OutgoingOrdinaryMutationOutcome>[
+          OutgoingOrdinaryMutationOutcome.idempotent,
+          OutgoingOrdinaryMutationOutcome.preserved,
+          OutgoingOrdinaryMutationOutcome.refused,
+        ]) {
+          nextSettlementOutcome = outcome;
+          final noOp = await repo.settleOutgoingOrdinaryTransport(
+            messageId: messageId,
+            expectedContactPeerId: 'contact-peer',
+            expectedEnvelope: 'envelope-attempt',
+            status: 'delivered',
+            transport: 'direct',
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.live,
+          );
+          expect(noOp.outcome, outcome);
+          expect(noOp.message!.text, 'concurrent durable text');
+          expect(noOp.message!.status, 'delivered');
+        }
+        await Future<void>.delayed(Duration.zero);
+        expect(ordinarySettlementCallCount, 3);
+        expect(emitted, hasLength(1), reason: 'no-op outcomes stay silent');
+        expect(await directReactionProjection.readAuthoredTargets(), isEmpty);
+
+        const tombstoneId = 'ordinary-authoritative-tombstone';
+        store[tombstoneId] = makeMessage(
+          id: tombstoneId,
+          text: '',
+          status: 'inboxed',
+          deletedAt: '2026-02-09T10:05:00.000Z',
+          deletedByPeerId: 'sender-peer',
+          wireEnvelope: 'delete-envelope',
+        ).toMap();
+        await directReactionProjection.upsertAuthoredTarget(
+          makeMessage(id: tombstoneId),
+        );
+        nextTombstoneSettlementOutcome =
+            OutgoingOrdinaryMutationOutcome.applied;
+        final tombstone = await repo.settleOutgoingOrdinaryDeleteTombstone(
+          messageId: tombstoneId,
+          expectedContactPeerId: 'contact-peer',
+          expectedEnvelope: 'delete-envelope',
+          status: 'delivered',
+          transport: 'inbox',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(ordinaryTombstoneSettlementCallCount, 1);
+        expect(tombstone.message!.isHidden, isTrue);
+        expect(emitted, hasLength(2));
+        expect(emitted.last.id, tombstoneId);
+        expect(await directReactionProjection.readAuthoredTargets(), isEmpty);
+
+        store[messageId] = candidate.toMap();
+        nextSettlementOutcome = OutgoingOrdinaryMutationOutcome.applied;
+        removeAfterAppliedSettlement = true;
+        final removedAfterCommit = await repo.settleOutgoingOrdinaryTransport(
+          messageId: messageId,
+          expectedContactPeerId: 'contact-peer',
+          expectedEnvelope: 'envelope-attempt',
+          status: 'sent',
+          transport: 'direct',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.live,
+        );
+        removeAfterAppliedSettlement = false;
+        expect(
+          removedAfterCommit.outcome,
+          OutgoingOrdinaryMutationOutcome.removed,
+        );
+        expect(removedAfterCommit.message, isNull);
+        expect(emitted, hasLength(2));
+
+        store.remove(messageId);
+        nextSettlementOutcome = OutgoingOrdinaryMutationOutcome.removed;
+        final removed = await repo.settleOutgoingOrdinaryTransport(
+          messageId: messageId,
+          expectedContactPeerId: 'contact-peer',
+          expectedEnvelope: null,
+          status: 'delivered',
+          transport: null,
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+        );
+        expect(removed.outcome, OutgoingOrdinaryMutationOutcome.removed);
+        expect(removed.message, isNull);
+        expect(emitted, hasLength(2));
+      },
+    );
+
     test('saveMessage persists to store', () async {
       final msg = makeMessage();
       await repo.saveMessage(msg);

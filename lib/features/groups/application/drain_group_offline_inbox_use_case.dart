@@ -336,7 +336,7 @@ Future<GroupOfflineInboxDrainResult> drainGroupOfflineInboxContinuation({
   return result;
 }
 
-Future<void> drainGroupOfflineInboxForGroup({
+Future<bool> drainGroupOfflineInboxForGroup({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
@@ -410,6 +410,7 @@ Future<void> drainGroupOfflineInboxForGroup({
     await groupMessageListener?.endCanonicalNotificationRecovery(
       canonicalStateComplete: drainAllPages && !pagesRemaining,
     );
+    return drainAllPages && !pagesRemaining;
   } catch (_) {
     await groupMessageListener?.endCanonicalNotificationRecovery(
       canonicalStateComplete: false,

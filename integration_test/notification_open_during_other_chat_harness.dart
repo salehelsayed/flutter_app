@@ -1184,6 +1184,76 @@ void _runBob() {
                   fromStatus: fromStatus,
                   toStatus: toStatus,
                 ),
+        dbStageOutgoingOrdinaryAttempt:
+            ({required expectedRow, required stagedRow, required kind}) =>
+                dbStageOutgoingOrdinaryAttempt(
+                  stack.db,
+                  expectedRow: expectedRow,
+                  stagedRow: stagedRow,
+                  kind: kind,
+                ),
+        dbSettleOutgoingOrdinaryTransport:
+            ({
+              required messageId,
+              required expectedContactPeerId,
+              required expectedEnvelope,
+              required status,
+              required transport,
+              required relayExpiresAt,
+              required mode,
+            }) => dbSettleOutgoingOrdinaryTransport(
+              stack.db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              status: status,
+              transport: transport,
+              relayExpiresAt: relayExpiresAt,
+              mode: mode,
+            ),
+        dbSettleOutgoingOrdinaryDeleteTombstone:
+            ({
+              required messageId,
+              required expectedContactPeerId,
+              required expectedEnvelope,
+              required status,
+              required transport,
+              required relayExpiresAt,
+              required mode,
+            }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+              stack.db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              status: status,
+              transport: transport,
+              relayExpiresAt: relayExpiresAt,
+              mode: mode,
+            ),
+        dbInvalidateOutgoingOrdinaryEnvelope:
+            ({
+              required messageId,
+              required expectedContactPeerId,
+              required expectedEnvelope,
+            }) => dbInvalidateOutgoingOrdinaryEnvelope(
+              stack.db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+            ),
+        dbQuarantineUnsafeLegacyOutgoingEnvelope:
+            ({
+              required messageId,
+              required expectedContactPeerId,
+              required expectedEnvelope,
+              required isDeleteTombstone,
+            }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+              stack.db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              isDeleteTombstone: isDeleteTombstone,
+            ),
       );
 
       // ── Identity exchange ─────────────────────────────────────────────

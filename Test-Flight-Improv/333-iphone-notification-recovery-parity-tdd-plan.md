@@ -1,224 +1,225 @@
 # 333 - iPhone Notification Recovery Parity
 
-Status: evidence-gated
+Status: implemented; host/simulator verified; physical evidence-gated
 Type: Bug
-Spec: free-text user intent (2026-08-03), plus the iOS badge/history/exact-remote-card residuals recorded by Plans 329 and 331
-Classification: implementation-ready
-Closure tier: device (host + iOS simulator XCTest + availability-bounded physical-iPhone APNs/NSE proof)
+Spec: free-text user intent (2026-08-03), plus the iOS badge and exact-remote-card residuals from Plans 329 and 331
+Classification: reviewed, tightened, implemented, and post-implementation audited after the 2026-08-04 corrections below
+Closure tier: host + pinned iOS simulator XCTest + one availability-bounded physical-iPhone APNs/NSE campaign
 
-## Planning Progress
+## Outcome
 
-| Time | Role | Files inspected | Decision/blocker | Next action |
-|---|---|---|---|---|
-| 2026-08-03 | Evidence Collector | `NotificationService.swift`, `NotificationPreviewResolver.swift`, `AppDelegate.swift`, Dart staging/ingest/resume/foreground paths, relay APNs builders, focused Swift/Dart/Go tests | iOS already decrypts and policy-authorizes direct/group message/reaction alerts and performs canonical drains when the app runs; numeric badge state and exact remote-card reconciliation are missing | Design a post-authorization request ledger and canonical convergence boundary |
-| 2026-08-03 | Planner | Plans 225, 289, 316, 321, 329-331; Graphify compact context; Apple/Firebase primary docs; existing physical-iPhone Sims rig | Promise outcome parity at cold start/resume/foreground push, not Android `onDeletedMessages`/WorkManager mechanism or a dead-process SLA | Pin recovery-state schema, causal races, platform-appropriate history, and real APNs proof |
-| 2026-08-03 | Boundary auditor | `flutter devices --machine`, `xcrun simctl list devices available`, Sims manifest/provider adapter/relay fixture, current environment keys | iPhone 11 `00008030-001A6D2801BB802E`, iPhone 13 `00008110-00184D622289801E`, and iPhone 16e simulator `DBE8C32E-9F19-4593-860A-B41113791D79` are live; current APNs/signing/provider environment inputs are unset | Reuse the proven owner-private APNs/NSE/XCUITest scripts; keep physical evidence open until their preflight passes |
-| 2026-08-03 | TDD reviewer | completion-gate and duplicate-reaction branches, `application_root.dart`, typed ingest result, app-group stores, Apple removal API, `iospayloadproducer`, relay/provider drivers, Sims device binding/build fingerprint | The draft falsely described staging as awaited, excluded visible authorized duplicate/expiry handoffs from request custody, split crash-coupled state, assumed an OS removal completion that does not exist, and under-scoped the direct-only physical rig | Introduce typed convergence, one atomic state transaction, post-remove inventory verification, exact cross-language bindings, and a versioned multi-scenario rig contract |
-| 2026-08-03 | TDD re-reviewer | installed UserNotifications/UIKit SDK headers, NSE handler ordering, Runner badge writer and physical proof | A shared file lock can order content-handler submission but cannot prove when Notification Center later applies `content.badge`; a synchronous fake would false-green the race | Keep NSE content badge-free, use one iOS 16+ completion-bearing writer across processes, defer iOS 13-15 NSE updates, and force the overlap on both physical phones |
-| 2026-08-03 | Dependency re-review | User rejection of Plan 332's OEM adapter/global Android count; Plan-333 scope, tests, gates, and handoff | Standard Android needs no app-wide aggregate/reconciler, so Plan 333 cannot consume one from Plan 332 | Move the read-only canonical aggregate and coalescing reconciler into Plan-333 ownership and keep them unwired from Android |
+On iPhone, a parity-authorized direct or group notification will:
 
-## Problem And Evidence
+- contribute once to an absolute unread badge when it has a trusted canonical ordinary-message identity;
+- keep `content.badge == nil`, so delayed notification presentation cannot overwrite a newer Runner badge;
+- retain the exact Apple request identifier needed to remove that remote card after canonical read, delete, policy, or account convergence; and
+- converge after runtime-ready, resume, foreground push handling, and existing direct/group notification settlement.
 
-- Behavior to improve: on iPhone, authorized direct/group notification events should maintain a useful absolute unread badge, remain grouped with trusted iOS summary metadata, recover canonical state when the app next runs, and retire only remote notification cards made stale by read/delete/policy/account transitions. A concurrent newer card and unrelated card must survive.
-- Impact: the current app can decrypt a rich APNs alert but cannot project a numeric unread total (`presentBadge:true` is only a presentation permission), and `FlutterNotificationService.cancelConversationNotification` cancels only the local Flutter notification ID. Delivered APNs cards have different Apple request identifiers and remain in Notification Center.
-- Confirmed root cause/current gap: `lib/core/notifications/local_notification_support.dart:72-110` supplies Android `number` but no iOS badge number; `ios/NotificationService/NotificationPreviewResolver.swift:148-172` intentionally clears untrusted/expired badge metadata; no unified Runner/NSE recovery state, `removeDeliveredNotifications(withIdentifiers:)` call, or authorized remote-request custody exists.
-- Confirmed exact-ID seam: the NSE receives `UNNotificationRequest` in `NotificationService.didReceive`; Apple exposes its `identifier`, and `removeDeliveredNotifications(withIdentifiers:)` removes those exact delivered requests ([request identifier](https://developer.apple.com/documentation/usernotifications/unnotificationrequest/identifier), [exact removal](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/removedeliverednotifications(withidentifiers:))). Ordinary pushes therefore need no new collapse key. Recording the authorized request identifier avoids merging distinct messages in transit.
-- Confirmed delivery boundary: Apple and Firebase state that notification delivery/background execution is not guaranteed, and a notification service extension modifies an alert-class notification with `mutable-content`; it is not a general silent recovery scheduler ([User Notifications](https://developer.apple.com/documentation/usernotifications), [NSE](https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension), [Firebase receive behavior](https://firebase.google.com/docs/cloud-messaging/ios/receive-messages)). This refutes an Android-mechanism clone.
-- Confirmed badge-ordering boundary: the installed iOS SDK declares the NSE content handler only as submission of modified content for delivery, while `UNUserNotificationCenter.setBadgeCount` is iOS 16+ and supplies an update completion; `UIApplication.shared` is explicitly extension-unavailable. Therefore a file lock around content-handler invocation cannot order actual badge application against Runner, and the iOS 13-15 extension has no equivalent safe fallback ([NSE handler](https://developer.apple.com/documentation/usernotifications/unnotificationserviceextension/didreceive(_:withcontenthandler:)), [`setBadgeCount`](https://developer.apple.com/documentation/usernotifications/unusernotificationcenter/setbadgecount(_:withcompletionhandler:))).
-- Existing recovery, with an ordering gap: `NotificationService.swift:20-57` stages direct ciphertext before resolution and `NotificationPreviewResolver.resolve` authorizes direct/group ordinary and reaction alerts. However, runtime-ready and resume launch staging with `unawaited(...)` at `lib/app/application_root.dart:507` and `:1871`; `_ingestStagedPushEnvelopes` catches errors and returns only `Future<void>` at `:734-748`, so the awaited direct/group resume drain can overtake staging. `handle_foreground_remote_message_use_case.dart` does select the exact direct/group drain for a live foreground push.
-- Existing transport preservation: ordinary encrypted APNs pushes are visible alert + mutable-content and carry no ordinary collapse ID in `go-relay-server/inbox.go:602-633`; direct/group reaction APNs collapse identities are bounded per event in `reaction_push.go:454-578`. Provider payloads carry no trustworthy unread total and must remain that way.
-- Existing proof: `notifications.ios_payload_fast_path` is automation-ready and Plan 289 records a seven-assertion real APNs/NSE/airplane-tap/cleanup pass on physical iPhone `00008110-00184D622289801E`, zero manual actions, and zero child builds. Its owner-private inputs are deliberately outside tracked source.
-- Confirmed custody distinction: `NotificationPreviewResolver.swift:643-675` and `:921-958` deliberately hand off some parity-authorized duplicate reactions with `markAsShown=true`; they need request-ID custody even though they never add badge count. `NotificationPreviewResolverTests.swift:2042-2070` likewise preserves one authorized handoff if the extension-expiry claim wins after resolution. Sanitized ordinary duplicates, rejected/muted/malformed results, and expiry-before-resolution remain non-visible and own no state.
-- Confirmed fixture gap: `integration_test/scripts/ios_notification_relay_fixture_driver.py` accepts only scenario `payload_fast_path_ios_receiver` and payload type `new_message`, while `go-mknoon/cmd/iospayloadproducer` has only the direct v1 producer tests. The new group/reaction/push-omission scenarios require an explicitly versioned extension of this rig, not just new Dart criteria.
-- Missing coverage: no crash-consistent cross-process authorized state, Swift/Dart identity-codec fixture, watermark/readback race, protected-data/account-rotation test, numeric pending-to-canonical convergence, exact remote cancellation, typed lifecycle barrier, platform summary contract, or two-iPhone recovery-parity campaign exists.
-- Refuted findings: iOS does not expose Android `onDeletedMessages`; `presentBadge:true` is not a count; stable local notification IDs do not identify APNs requests; `simctl push` does not prove real APNs/NSE delivery; Plan 331 headless activation is not an iOS prerequisite.
-- Unresolved findings: owner-private APNs/signing/provider/relay inputs are absent from the current shell. This blocks TC-333-11/12 evidence only, not host/native implementation. Target absence, if it changes, is classified by repository policy rather than as a version-specific blocker.
-- Affected production, test, and gate files: one new shared Swift recovery-state store and completion-bearing badge writer plus Runner bridge; `NotificationService.swift`, `NotificationPreviewResolver.swift`, `AppDelegate.swift`, Xcode target membership; Plan-333-owned `lib/core/database/helpers/canonical_notification_badge_state_db_helpers.dart` and `lib/core/notifications/canonical_notification_badge_reconciler.dart`; new Dart remote-control/badge/codec/convergence components and their focused tests; `application_root.dart`, production bootstrap and direct/group settlement triggers; `go-mknoon/cmd/iospayloadproducer`; existing iOS campaign/provider/relay scripts and their Go/Python/Dart tests; Sims `device_binding.dart`, build-cache/manifest/criteria/proof binding, and the new capability.
+The guarantee is deliberately narrow:
 
-## Graph Grounding Snapshot
+- a request with no trusted canonical event identity is badge-neutral and cannot be retired for an individual-message deletion while another eligible message remains; it is retired only by whole-conversation, zero-eligible, policy, or account convergence;
+- an unobserved request is never treated as dismissed merely because it is absent from Notification Center;
+- iOS provides no dead-process recovery SLA, Android dropped-message callback, or general silent worker equivalent; and
+- existing sanitizer behavior remains privacy-clearing, but this plan does not claim that blank sanitized content suppresses an Apple notification without the restricted filtering entitlement.
 
-- Graph fingerprint / freshness: `55638de8c282435f`; topology reported `stale:ios/Flutter/flutter_export_environment.sh`; every iOS/native/relay conclusion was rechecked directly in current source.
-- Query / profile: `python3 graphify-arch/tdd_context.py query "ios/NotificationService/NotificationService.swift ios/Runner/AppDelegate.swift NotificationPreviewResolver.swift ios_apns_notification_open_bridge.dart recent_remote_gate_ios_wiring.dart notification_ios_payload_campaign.dart exact callers tests gates" --profile tdd --budget 700` (one exact-anchor refinement after a broad first query).
-- Anchors: `UserNotifications` -> `ios/NotificationService/NotificationPreviewResolver.swift`; recent-remote iOS wiring -> `test/core/notifications/recent_remote_gate_ios_wiring_test.dart`; APNs open bridge -> `lib/core/notifications/ios_apns_notification_open_bridge.dart`.
-- Surfaced proof/gate files: `test/core/notifications/recent_remote_gate_ios_wiring_test.dart`, `test/core/notifications/ios_apns_notification_open_bridge_test.dart`, `test/integration/ios_notification_payload_campaign_support_test.dart`, `test/integration/ios_notification_payload_xcui_contract_test.dart`.
-- Graph gaps requiring source search: NSE target membership and completion ordering, app-group staging schema, exact APNs builder headers, owner-private provider/relay fixture lifecycle, live target and credential preflight.
-- Reuse rule: anchors may be handed to review/execution; all conclusions still require current-source or command evidence.
+## Evidence And Root Cause
 
-## Scope Contract And Guard
+- Before implementation, `ios/NotificationService/NotificationService.swift` received the exact `UNNotificationRequest.identifier` but discarded it before the content handler.
+- `ios/NotificationService/NotificationPreviewResolver.swift` already derives trusted account, conversation, event, and policy facts for direct/group ordinary and reaction notifications. It clears provider badge metadata and supplies trusted `threadIdentifier` grouping.
+- `lib/core/notifications/flutter_notification_service.dart` cancels local Flutter notification IDs. Those IDs do not identify remote APNs requests.
+- Before implementation, `lib/app/application_root.dart` started staged-envelope ingest with `unawaited(...)` at runtime-ready and resume, so canonical projection could overtake retained ingress.
+- `UNUserNotificationCenter.removeDeliveredNotifications(withIdentifiers:)` is exact-ID-only and has no completion. A second inventory read is useful only after delivery was previously observed; absence cannot distinguish dismissal from a request not yet delivered.
+- `UNUserNotificationCenter.setBadgeCount` is available on iOS 16+ and has a completion callback. `UIApplication.shared` is unavailable to extensions, so iOS 13-15 can update the badge only when Runner is active.
+- `summaryArgument`/`summaryArgumentCount` are deprecated and ignored on current iOS. Existing trusted `threadIdentifier` is the supported grouping surface, so the prior summary-metadata expansion was removed.
+- The relay deliberately permits an identity-free visible fallback when payload size requires omitting `message_id`. It cannot safely provide an unread total and remains unchanged.
 
-In scope:
-- Add one versioned, crash-consistent `IosNotificationRecoveryState` container shared by Runner and NSE. Under one cross-process lock and one locked atomic-replacement transaction it owns `{schemaVersion, installEpoch, accountBindingEpoch, activeBindingDigest, nextSequence, activeRows, retiredRows, canonicalBadgeBaseline, pendingDeltas}`. Request rows contain only the Apple request identifier plus domain-separated hashes of lane/conversation/event identity, kind, timestamp, and badge eligibility. Ledger and badge views may be separate APIs, but never independently committed files. No title/body/plaintext/token/key enters the state.
-- Derive delivery identity only from the parity-checked lane result. Ordinary direct/group and group-reaction projections already carry `localAccountPeerId`, `localDeviceId`, and `localTransportPeerId`; `DirectReactionProjectionSnapshot` currently carries only `localAccountPeerId`. The Runner-published owner token therefore supplies install/device/transport binding, while every lane's authorized result independently supplies the trusted account identity. Commit requires `beginToken.binding == currentActiveBinding` and `beginToken.account == authorizedResult.account == currentActiveAccount`. Define one byte-exact, domain-separated Swift/Dart codec and shared fixtures; provider outer fields cannot choose the binding or hashes.
-- Extend `NotificationPreviewResult` with typed authorized-delivery identity and trusted iOS summary fields. Every normally tracked visible parity-authorized handoff records request custody before the content handler, including tone-suppressed or authorized duplicate reactions and an already-published preview whose expiry callback wins. Only a unique authorized ordinary event records a pending badge delta. Rejected/muted/malformed/parity-mismatched, sanitized ordinary duplicate, and expiry-before-resolution paths write nothing and continue through the full sanitizer. If protected data/capacity/I/O prevents the one transaction, use only the explicit redacted `authorized_untracked` fault result described below; never claim exact retirement for that card.
-- The unified state contains a bounded, deduped pending set over the last canonical baseline. Reactions and duplicates never increment. NSE always clears `content.badge`; it never relies on the content handler to apply badge state. Missing/mismatched/corrupt/protected-data-unavailable/capacity state leaves the badge unchanged rather than guessing. Capacity never evicts a still-owned request row; Runner prunes only against actual delivered inventory, and an exhausted NSE transaction is one typed, non-partial fail-open handoff repaired at next activation.
-- On iOS 16+, NSE and Runner use one shared `UNUserNotificationCenter.setBadgeCount` writer. Each captures the unified sequence, revalidates under the cross-process lock, issues the request, and retains issuance ownership through its completion before committing success/releasing the next writer; a sequence advance or late completion forces an awaited/coalesced latest-state reapply. The content handler receives `badge=nil`, so delayed Notification Center presentation cannot later overwrite a Runner badge. An NSE failure/deadline handoff retains pending work and never blocks the authorized card indefinitely.
-- On iOS 13-15, NSE performs no immediate badge write: `UIApplication` is not an extension fallback and content-handler badge ordering is unobservable. The next Runner activation/resume publishes the absolute total on the main thread through `applicationIconBadgeNumber`. This availability-preserving delay is explicit and native-unit-tested; unavailable old-OS hardware remains policy N/A.
-- Add a Plan-333-owned, read-only canonical badge-state selector over existing direct/group notification-policy facts and a coalescing reconciler used only by the iOS projector. After staged ingest plus canonical direct/group convergence, reconcile pending hashes against durable messages and explicitly publish zero when empty. The Runner transaction uses the iOS 16+ completion-bearing writer or iOS 13-15 main-thread fallback; native success alone advances the canonical baseline, and a concurrent NSE sequence advance forces a final reread/reapply. Do not wire this absolute aggregate into Android.
-- Add a two-phase remote-card reconciler: capture the state watermark, load canonical/read/policy eligibility, then remove only stale request identifiers at or below that watermark. Because Apple's exact-removal API has no completion callback, re-read delivered inventory after removal and prune only identifiers confirmed absent; a request committed later is never selected by an older snapshot.
-- Add a typed iOS convergence coordinator. Runtime-ready/resume must await bounded staged ingest before direct/group drains; a foreground event awaits its exact selected lane drain. Retained pre-authorization staging retries independently and does not block exact state-owned read/policy retirement or unrelated safe badge work. Only authorized unresolved hashes in recovery state and typed incomplete canonical lane drains can defer absolute badge convergence; retained/deferred/failed work keeps its relevant custody and schedules a coalesced retry instead of projecting false zero. Wire read/delete/policy and account cutover/clear through the same generation; keep local-card cancellation separate and idempotent.
-- Reuse/extend the existing signed iOS production build, provider adapter, relay fixture, XCUITest automation, artifact validation, and cleanup to run serially on both currently connected iPhones with fresh disposable identities.
+## 2026-08-04 TDD Review
 
-Must preserve:
-- NSE decrypt/route/account/role/key-epoch/mute/archive/dissolve/private-media parity and full sanitizer -> existing `RunnerTests/NotificationPreviewResolverTests` plus TC-333-01/06.
-- Direct app-group ciphertext staging, atomic cap/TTL, startup/tap ingestion, and recent-remote dedupe -> existing push staging/ingest and recent-remote test suites.
-- Existing completion semantics -> `NotificationPreviewResolverTests.testNotificationServiceCompletionGateExpiryAfterAuthorizedResolutionIsOnce`; an authorized expiry winner stays visible and gains request custody, while expiry-before-resolution remains sanitized and state-free.
-- Visible alert + mutable-content APNs shape and distinct ordinary event delivery -> TC-333-08 Go sentinel.
-- Per-event direct/group reaction collapse identity and reaction badge neutrality -> TC-333-03/08.
-- Foreground FCM forwarding and warm/cold APNs open routing -> existing `ForegroundPushForwardPolicyTests`, `ios_apns_notification_open_bridge_test.dart`, and XCUITest contracts.
-- Local Flutter notification IDs/history and Android behavior -> exact `flutter_notification_service_test.dart`/`local_notification_support_test.dart`; Plan 333 adds no Android mechanism.
-- NSE never opens SQLCipher -> `test/core/notifications/ios_notification_recovery_scope_contract_test.dart::NSE remains SQLCipher free`.
+The incoming plan's verdict was `plan-fixes-required`. Three independent source-backed reviews found that its declared `ready` state could false-green production.
 
-Hard `Do not`:
-- Do not open SQLCipher, instantiate Flutter, perform relay/network I/O, or persist plaintext/content/contact/group names in the NSE.
-- Do not call `removeAllDeliveredNotifications`, blanket `cancelAll` as a remote-card substitute, or derive custody/binding identity directly from provider `userInfo`; only the parity-authorized typed result may create tracked state.
-- Do not prune request custody merely because `removeDeliveredNotifications(withIdentifiers:)` returned; require a post-remove delivered-inventory discriminator.
-- Do not maintain independently committed ledger and badge files, evict a possibly delivered request merely to satisfy a cap, or use divergent Swift/Dart hash encodings.
-- Do not add provider-authored `aps.badge`, a per-conversation ordinary `apns-collapse-id`, or any relay unread counter. The relay cannot know local read/mute/policy truth.
-- Do not send an NSE `content.badge` on any supported iOS version, treat content-handler return as badge-application completion, or invoke `UIApplication` from the extension.
-- Do not add `BGTaskScheduler`, fake `onDeletedMessages`, WorkManager, silent-push delivery guarantees, force-quit recovery promises, or a dead-process latency SLA.
-- Do not count reactions, duplicate events, rejected previews, or missing canonical event identities as pending unread.
-- Do not use an iOS simulator as APNs/NSE evidence or require unavailable model/OS bands.
-- Do not expose the physical completion barrier without the attested Sims build profile plus one-time nonce, let it alter badge values/state, or ship it enabled in an ordinary app launch.
-- Do not extend group push staging into canonical persistence from the current reduced APNs projection: it lacks the complete signed offline-replay envelope. That would create a weaker ingress path and requires a separately grounded wire/privacy plan.
+| Finding | Severity | Correction applied |
+|---|---:|---|
+| A pre-handler row absent from delivered inventory could be pruned, then delivered later as an orphan card | blocker | Persist `prepared`/`committed`, `observedDelivered`, and `retired` state. Only an observed/selected row confirmed absent may be pruned; exact foreground suppression removes its custody and advances the generation fence. |
+| Existing dedupe claims occurred before recovery custody, leaving a crash gap | blocker | The production-used handoff orchestrator atomically decides uniqueness and commits custody before invoking the real content handler. |
+| Blank sanitizer output was treated as guaranteed non-delivery without Apple's filtering entitlement | blocker | Keep the privacy sanitizer, remove every non-visibility claim, and retain custody for parity-authorized duplicates that Apple may still deliver. Filtering entitlement work is out of scope. |
+| Identity-free fallback was promised individual-delete exactness it cannot prove | high | Limit those rows to conversation-wide, zero-eligible, policy, or account retirement. |
+| Lifecycle helper tests did not cover the direct/group production mutation owners | high | Wire the existing notification-service settlement boundary and test the unallocated-cancel path, direct owner, group signal, and account clear. |
+| Unsupported future schema was conflated with corruption | high | Preserve unsupported bytes untouched and make no badge/custody claim; only Runner may quarantine corrupt supported-state bytes and rebuild from canonical truth. |
+| Cold recovery reused runtime-ready ingress truth and initially covered only Firebase's initial-open path | high | Capture an opaque per-flow boundary, scan staging immediately and before settlement, atomically capture/clear/arm the native APNs open, await strict native routing, and consult Firebase only when native is empty or fails before exact drains. |
+| Separate native initial-open consumption and warm-forward arming admitted a tap between the two calls | high | Replace the production sequence with one main-thread native operation that captures the pending payload, clears its slot, arms warm forwarding, and returns the captured payload atomically; do not eagerly arm the production coordinator path. |
+| Node-start failure skipped cold-open custody and could strand or overwrite the launch tap | high | Open the same opaque recovery scope on the failed-node path, perform the initial-open handoff, skip network drains, and settle the same handle incomplete. |
+| Clearing the native slot before strict Dart routing could lose a valid transferred payload on a retryable route failure | high | Keep a valid transferred payload Dart-owned until strict routing succeeds; retry it without consuming native a second time. Full crash-after-transfer acknowledgment is a separate durability protocol and is intentionally out of scope. |
+| A post-watermark NSE event already present in the SQL snapshot was counted once as canonical and again as pending | high | A complete commit absorbs any pending hash present in that canonical identity set regardless of sequence, while preserving post-watermark hashes absent from SQL and their request custody. |
+| A young unreadable final staging file was retained on disk but reported as an empty/complete ingest | medium | Carry retained-unreadable final-file count through the staging read result so neither cold scan can claim canonical completeness until it parses or ages out. |
+| Badge proof omitted `UNNotificationSettings.badgeSetting` | high | Require `badgeSetting == enabled` in physical preflight; disabled is a permission/environment blocker. |
+| Two same-OS iPhones and seven standalone scenarios duplicated one OS boundary | medium | Use one target-bound, multi-phase physical campaign on one discovered iPhone. A second same-band phone is optional confidence only. |
+| Cross-language codec, install/device/transport bindings, deprecated summary metadata, and a new seven-scenario producer stack added no required proof | medium | Keep state native-owned; fence by account/generation; reuse trusted thread grouping and the existing APNs/NSE rig. |
 
-Deferred / accepted difference:
-- Fully offline group-notification tap before any transport restoration -> deferred owner: a future separately reviewed authenticated-group-push-envelope TDD plan. Current iPhone recovery drains canonical group custody when the app runs and network is available; direct offline tap fast path from Plan 225 remains preserved.
-- User force-quit, APNs nondelivery/throttling, and OS/user-disabled badges -> accepted Apple boundaries; next app activation converges when it occurs.
-- If iOS terminates an NSE with an in-flight `setBadgeCount` before its completion can revalidate, no dead-process ordering guarantee is claimed; durable pending state makes the next Runner activation the repair boundary.
-- iOS 13-15 remote delivery does not change the numeric badge until Runner next activates because the extension has no completion-bearing safe fallback; the main-thread absolute write then converges it. No unavailable old-OS device is required for closure.
-- Before first unlock/protected-data availability, or on a typed app-group capacity/write failure, the NSE never guesses badge state and may hand off an otherwise authorized card without durable control state; diagnostics expose only the reason class, and next activation repairs canonical badge state. Exact retirement of that untracked fault-path card is not claimed. Corrupt/unknown state likewise permits badge reconstruction but cannot recreate already-lost request-ID mappings; those cards remain outside exact-retirement claims.
-- iOS history is native per-request Notification Center history grouped by trusted `threadIdentifier`/summary metadata; no Android `InboxStyle` visual clone is promised.
-- A provider event lacking a post-decrypt canonical identity may be displayed if otherwise authorized, but it creates no guessed badge delta; conversation read/policy watermark can still retire its request safely.
+Post-implementation review verdict: coherent and sufficient, with no remaining blocker/high/medium production-correctness finding. The design keeps one native state owner, one Dart reconciliation coordinator, and one existing physical capability rather than adding a cross-language codec, provider fork, or background scheduler. Physical closure remains evidence-gated because owner-private APNs/signing/relay inputs are not present in the current shell.
 
-Dependencies:
-- Plan 333 owns the canonical badge-state selector and coalescing reconciler required for iOS absolute projection. Plan 332 is standard-Android-only, supplies no aggregate/reconciler, and is not an implementation dependency. Keep the Plan-333 selector unwired from Android rather than creating a parallel Android total.
-- Plans 225 and 289 own the direct staged-envelope and physical APNs/NSE proof foundations; Plans 316/321 own current iOS projection/epoch safety; Plans 330 and landed Plan 331 state own canonical notification policy and SQLCipher v107 facts. Plan 333 does not depend on Plan 331 production headless activation.
+## Graph Grounding
+
+- Compact review query: `python3 graphify-arch/tdd_context.py query "Plan 333 counterexample: exact iOS notification badge and delivered-card recovery seams in NotificationService.swift NotificationPreviewResolver.swift AppDelegate.swift application_root.dart; identify existing canonical unread selectors, lifecycle callers, native bridge and tests" --profile review --budget 800`
+- Post-refresh graph fingerprint: `2bcd04d868b7429e`; confidence is anchored and freshness is current.
+- Anchors: `NotificationPreviewResolver`, `NotificationService` expiry/handoff, and `_setupIosApnsNotificationOpenBridge`.
+- Source verification covered the extension, Runner delegate/channel setup, direct/group canonical snapshots and projectors, production bootstrap, relay APNs builders, Sims target binding, installed iOS SDK headers, and current Xcode target membership.
+
+## Minimal Design Contract
+
+### 1. Native-owned recovery state
+
+One Swift-owned app-group document and stable lock inode are shared by Runner and the NSE. Dart never decodes, hashes, or writes this file.
+
+The bounded v1 state contains only:
+
+- schema version, revision/sequence, active account hash, and account generation;
+- canonical badge baseline and pending ordinary-event hashes; and
+- request-ID-keyed rows with account/conversation/event domain-separated hashes, ordinary/reaction kind, sequence, `prepared`/`committed`, observed-delivered, and retired state.
+
+It never contains plaintext, title/body, usernames, group names, tokens, keys, provider credentials, device IDs, or transport IDs. A new event is committed with the exact Apple request identifier before the content handler. Account and generation are revalidated in the same transaction.
+
+Atomic replacement creates and protects the temporary file before rename, excludes it from backup, and uses a separate stable flock file. The implementation caps request custody at 512 rows, canonical ordinary hashes at 4,096, and recent event tombstones at 256. Capacity may reject a new request claim or complete canonical commit, but never evicts an owned request row. Rejection is typed and non-partial.
+
+An unsupported future schema is left byte-for-byte untouched and disables state/badge claims. A corrupt v1 file is left untouched by the NSE; Runner may quarantine it, publish canonical badge truth, and begin a fresh v1 file. Pre-333 binaries ignore the sidecar. After downgrade and re-upgrade, the new Runner repairs it from canonical state; rollback never rewrites an unknown version.
+
+### 2. Production handoff and delivery disposition
+
+`NotificationPreviewResult` gains a trusted recovery identity derived only from the parity-authorized projection: account, lane, conversation, optional canonical event, and kind. Existing `threadIdentifier` grouping remains unchanged.
+
+A shared handoff orchestrator used by the real `NotificationService.finish` performs, in order:
+
+1. the atomic uniqueness/custody transaction;
+2. preview application or the existing sanitized/passive duplicate policy;
+3. unconditional `content.badge = nil`; and
+4. the real content-handler call.
+
+Unique ordinary events add one pending badge identity. Reactions, identity-free ordinary events, and duplicates own their request ID but add no badge delta. Rejected, muted, malformed, parity-mismatched, and expiry-before-resolution results have no trusted identity and create no recovery state.
+
+Rows begin `prepared` and become `committed` only after the Apple content-handler call returns. Runner marks a row `observedDelivered` only when the exact identifier appears in delivered inventory. `AppDelegate.willPresent` reports the exact request when the final presentation options are empty; native state then removes only that custody row, preserves its pending unread event, and advances the generation so an older canonical read cannot absorb it. A retired but never-observed row remains retryable; its absence is not proof of delivery or dismissal.
+
+### 3. Badge projection
+
+The absolute badge is:
+
+`canonical eligible direct + group unread count + unresolved unique pending ordinary events`
+
+The canonical selector uses current durable notification policy:
+
+- direct: incoming, unread, non-hidden, non-deleted, nonterminal private media, active nonblocked/nonarchived contact;
+- group: incoming, unread, non-cutoff, active private media, active nonmuted/nonarchived/nondissolved/nonremoved group.
+
+Reactions and duplicates are count-neutral. A complete canonical pass resolves pending work at or below its watermark and also removes any post-watermark pending event already proven present in that same canonical SQL snapshot. A post-watermark event absent from the snapshot remains pending. This prevents both loss and canonical-plus-pending double counting, including when the exact value is zero. An incomplete staged/drain pass preserves pending work and cannot publish a guessed lower value. A concurrent NSE commit above the watermark survives and forces the latest absolute value to be reapplied.
+
+On iOS 16+, Runner and NSE share one absolute `setBadgeCount` writer. Its stable writer lock is separate from the short state lock, is acquired off-main, and is held through the completion callback. The content handler is never held waiting for this writer. After completion, a sequence change schedules a latest-state reapply.
+
+On iOS 13-15, the NSE performs no badge write and still hands off `badge=nil`; Runner uses `applicationIconBadgeNumber` on the main thread at activation/reconciliation. Unavailable old-iOS hardware is policy N/A, with the branch covered by native tests.
+
+### 4. Two-phase exact reconciliation
+
+Dart calls the native channel `mknoon/ios_notification_recovery`:
+
+- `beginReconciliation({accountPeerId}) -> {token, watermark}` before loading SQLCipher state;
+- `commitReconciliation({token, watermark, accountPeerId, canonicalStateComplete, canonicalBadgeCount, identities})`;
+- `retireConversation({accountPeerId, lane, conversationId})`; and
+- `clearAccount()`.
+
+There is no remove-all method.
+
+At commit, native code reads delivered inventory, marks exact present rows observed, and prunes a previously observed row already absent from that initial inventory as user-dismissed. It then selects stale rows no newer than the watermark. It may select:
+
+- event-bound ordinary rows whose trusted event is absent from complete canonical state;
+- identity-free rows only when their whole conversation has zero eligible events;
+- rows explicitly retired by a conversation clear; and
+- old-account rows after account cutover.
+
+It exact-removes only selected identifiers that are present now or were previously observed. It then reads inventory again and prunes only selected, observed identifiers confirmed absent. A later request, unrelated request, and unobserved pre-handoff request survive. A foreground-suppressed row is removed from custody without an OS removal attempt.
+
+### 5. Lifecycle and mutation owners
+
+One coalescing Dart coordinator owns begin -> canonical load -> commit. Mutation scopes capture the native token before the canonical mutation; overlapping scopes share that boundary, and the last close commits it. Concurrent passive triggers cause one final reread instead of parallel SQL/native races. Incompleteness is sticky until a globally exhaustive successful pass, while account, clear, and mutation epochs fence stale work.
+
+- Runtime-ready begins before staged ingest but deliberately closes that staging-only pass incomplete; listener readiness alone does not prove cold direct/group exhaustion.
+- A successful cold start begins a globally exhaustive scope after node startup/ownership polling, performs the first staged scan, atomically captures/clears the native APNs launch payload while arming warm forwarding, awaits strict native routing, consults Firebase only when native is empty or failed, runs the full direct/group or dropped-owner drains, performs the final staged scan, and settles that same opaque handle. A valid payload transferred out of native remains Dart-owned until strict routing succeeds. Native empty and routed results are terminal/exactly-once; a route failure keeps the pass incomplete and retryable. Overlapping restarted routers cannot cross-settle each other's scopes.
+- A failed node start opens the same initial-open recovery boundary, performs the atomic native handoff and conditional Firebase fallback, skips all network drains, and settles that same handle with `canonicalStateComplete=false` before continuing existing group-exit cleanup.
+- Resume awaits staged ingest, then the existing direct/group drains and projection retries, then recovery.
+- Foreground push recovery runs after the selected direct or group drain/result, never both lanes by default.
+- Existing local notification show/replace/cancel settlement triggers canonical reconciliation in `finally`; even an unallocated local-ID cancel schedules reconciliation, but it does not guess a remote Apple request identifier or blindly retire a conversation.
+- Conversation read/delete/policy owners remain routed through their current direct/group projectors and notification service rather than gaining parallel schedulers.
+- Account clear/cutover uses the exact native state path. Existing `cancelAll` may continue to clear local Flutter cards, but it is not evidence that remote APNs rows were reconciled.
+- The aggregate and coordinator are iOS-only and have no Android consumer, dropped-push marker, headless worker, BGTask, or WorkManager path.
 
 ## Test Contract
 
-Use zero empty cells. `HEAD` means the source snapshot immediately before Plan 333 execution.
+| Case | Required behavior | Causal test / proof | Mutation discriminator |
+|---|---|---|---|
+| TC-333-01 | Real handoff commits atomic uniqueness + exact custody before handler; unique ordinary alone adds pending; content badge is nil | `IosNotificationRecoveryTests` production-used handoff tests | Move preparation after handler, restore content badge, split dedupe/state, or count reaction/duplicate -> red |
+| TC-333-02 | Prepared absence is retained; foreground suppression clears exact custody; observed stale A is exact-removed while newer B and unrelated C survive | `IosNotificationRecoveryTests` inventory/barrier cases | Prune any absent row, remove by thread/all, omit watermark, or prune before readback -> red |
+| TC-333-03 | v1 state is crash-safe, concurrent, account/generation fenced, capacity-safe, and version-reversible | Native temp-directory tests for reopen/concurrency/corruption/unsupported/downgrade/account cutover | Rewrite unknown bytes, evict owned row, accept old account, or publish partial state -> red |
+| TC-333-04 | Canonical direct+group selector and coalescing two-phase coordinator produce an exact absolute badge, de-duplicate post-watermark canonical events, and preserve unresolved pending on incomplete work | canonical DB helper, Dart bridge/coordinator, and native post-watermark tests | Drop a policy filter, load DB before begin, double-count canonical B, clear unresolved B on incomplete, count reaction, or skip final rerun -> red |
+| TC-333-05 | iOS 16+ completion ordering and final reapply prevent regression; iOS 13-15 is Runner-only; every NSE handoff is badge-free | Injected native writer/XCTest | Serialize only submission, call UIKit in extension, wait on handler, or omit latest-state reapply -> red |
+| TC-333-06 | Runtime-ready/resume/foreground/cold-open and real direct/group/account mutation owners invoke recovery in the required order; the atomic initial-open handoff also runs in an incomplete failed-node scope | Focused application-root, StartupRouter, native-open bridge, AppDelegate source-order, and `FlutterNotificationService` callback tests, including unallocated cancellation | Restore `unawaited` staging, split capture/clear/arm, consume native cold open before begin, lose a transferred payload on route failure, drain on failed node, recover before lane drain, omit group/direct owner, or use blanket clear as remote proof -> red |
+| TC-333-07 | Existing parity, staging, open routing, relay payload, reaction collapse, local notification IDs, and Android behavior remain unchanged | Existing Swift/Dart/Go preservation suites | Trust provider badge/ID, add ordinary collapse, open SQLCipher in NSE, or wire aggregate to Android -> sentinel red |
+| TC-333-08 | The existing target-bound `notifications.ios_payload_fast_path` campaign proves real APNs/NSE unique custody with `badge=nil`, final Runner badge convergence, and exact A retirement while an app-local unrelated C survives | Existing signed production APNs/NSE/XCUITest rig, minimally extended in place | Simulator-only injection, disabled badges, a new duplicate capability, reused target manifest, manual action, child build, or dirty cleanup -> proof fails |
 
-| Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
-|---|---|---|---|---|---|---|
-| TC-333-01 | When recovery state is available, every visible parity-authorized handoff atomically commits the exact Apple request identifier before the content handler and only a unique ordinary event adds pending badge state; NSE content is always badge-free and an unavailable-state handoff is explicitly untracked/non-partial | `ios/RunnerTests/IosNotificationRecoveryStateTests.swift::testVisibleAuthorizedHandoffCommitsExactRequestBeforeHandler`, `::testDuplicateReactionAndAuthorizedExpiryWinnerOwnRequestButNoBadgeDelta`, `::testNSEAlwaysHandsOffBadgeNilAndRetainsPendingWhenWriterFails`, `::testSanitizedAndExpiryBeforeResolutionWriteNothing`, and `::testStateUnavailableUsesAuthorizedUntrackedWithoutPartialState` | simulator XCTest / temp app-group directory, real mutable content/request, normal-vs-expiry completion barriers, writer failure/deadline, protected/capacity/I/O failure injection | Causal compile RED: typed identity/state absent -> ordinary, passive duplicate-reaction, and authorized-expiry branches have exact pre-handler custody when state is available; every handoff has `badge=nil`; failed/skipped writer retains pending; rejected/muted/malformed/ordinary-duplicate/expiry-before-resolution branches have zero state; fault handoff has no partial request/delta and no retirement claim | Move transaction after handler, put a number back in content, drop pending after writer failure, treat `didDecrypt` alone as authorization, omit duplicate-reaction custody, add its badge delta, partially write on failure, or write on a sanitizer branch -> named XCTest red | Pinned `IosNotificationRecoveryStateTests`; shared Swift source in Runner/NSE/RunnerTests; preserve the existing completion-gate selector |
-| TC-333-02 | Two-phase watermark reconciliation removes exact stale A while concurrent newer B and unrelated C survive; absent/user-dismissed requests are idempotent; custody is pruned only after delivered-inventory readback | `ios/RunnerTests/IosNotificationRecoveryBridgeTests.swift::testWatermarkRemovalReadbackPreservesConcurrentNewerAndUnrelatedRequests` and `test/core/notifications/ios_remote_notification_control_test.dart::read and policy reconciliation commit one watermark transaction` | simulator XCTest + Dart host / fake notification center with before/after inventories, temp state, barrier-controlled canonical loader | Causal compile RED: native/Dart control absent -> only stale request IDs at/below token watermark are requested for removal; failed/still-present IDs stay owned, while confirmed-absent/user-dismissed IDs prune | Prune immediately after the void remove call, collapse begin/commit into a preloaded snapshot, remove by thread alone, or call remove-all -> readback/newer/unrelated discriminator red | Pinned bridge selector plus direct Dart test; Dart AUTO `core-host-all`, explicit `ONE_TO_ONE_TESTS` + `GROUP_TESTS` |
-| TC-333-03 | Unified recovery state is one atomic cross-process transaction, byte-identical across Swift/Dart, version/install/account/device/transport fenced, protected after-first-unlock, bounded without live-row eviction, and restart/crash safe | `ios/RunnerTests/IosNotificationRecoveryStateTests.swift::testAtomicRequestAndBadgeTransactionRecoversEveryCrashPoint`, `::testConcurrentNSEWritersPreserveBothCommits`, `::testAccountCutoverRejectsOldProjectionUnderNewOwnerTokenForAllFourKinds`, `::testBindingProtectionCorruptionCapacityReinstallAndRestartFailClosed`, and `test/core/notifications/ios_notification_recovery_state_codec_test.dart::Swift fixtures encode identical domain separated bindings and identities` | simulator XCTest + Dart host / temp app-group file and lock, injected replace/fsync crash points, concurrent writers, shared golden fixtures, protected-data/reinstall fake | Causal compile RED: store/codec absent -> no ledger-only/badge-only state; commit requires `beginToken.binding == currentActiveBinding` and `beginToken.account == authorizedResult.account == currentActiveAccount`; both writers survive; no old-binding resurrection; `badge=nil` on unsafe state; no delivered-row eviction | Split files, alter field order/normalization/domain tag, omit three-way account equality for any message/reaction lane, accept wrong binding/schema/install epoch, use non-atomic write, evict live rows, or emit a capped guess -> named test red | Pinned state selector + direct codec test; shared fixture registered for Swift/Dart; Dart AUTO `core-host-all` |
-| TC-333-04 | Main runtime derives one policy-correct direct+group total, converges pending NSE deltas only after relevant typed drains, and serializes NSE/Runner OS badge application through completion without letting delayed content presentation regress it | `test/core/database/helpers/canonical_notification_badge_state_db_helpers_test.dart::eligible direct and group unread messages form one exact aggregate` and `::every notification policy exclusion is count neutral`; `test/core/notifications/canonical_notification_badge_reconciler_test.dart::in flight trigger forces a final canonical reread`; `test/core/notifications/ios_notification_badge_projector_test.dart::canonical direct and group truth replaces resolved pending deltas`, `::incomplete convergence retains unresolved pending and account generation wins`, `::NSE sequence advance during native apply cannot regress final badge or clear newcomer pending state`; `ios/RunnerTests/IosNotificationRecoveryBridgeTests.swift::testNSEAndRunnerSetBadgeCountSerializeThroughCompletion`, `::testAsyncContentHandlerCannotReapplyBadgeBecauseNSEContentBadgeIsNil`, `::testExtensionDeadlineRetainsPendingAndLateCompletionReappliesCurrentSequence`, and `::testBadgeWriterUsesSetBadgeCountOrMainThreadLegacyFallback` | host + simulator XCTest / Plan-333-owned production-schema file-backed selector, typed outcomes, barrier-controlled rereads, blocked asynchronous badge completions/content handler, expiry barrier, injected OS version/writer and shared state lock; production SQLCipher/OS boundary in TC-333-11/12 | Causal compile RED: selector/reconciler/projector/writer absent -> one exact policy-filtered aggregate plus only unresolved authorized pending, exact zero after relevant convergence, final canonical reread after an in-flight change, iOS 16+ NSE/Runner calls ordered through `setBadgeCount` completion, delayed handler incapable of badge writes, expiry/late completion cannot strand/regress state, and iOS 13-15 Runner-only main-thread fallback; final fake OS badge and state both reflect the newest operation | Drop a direct/group policy exclusion, count a reaction, skip the final reread, serialize only submissions, set `content.badge`, release normal path before completion, clear pending/baseline on error/deadline, ignore a surviving late completion, call `UIApplication` in NSE, or remove availability/main-thread fallback -> named test red | Direct selector/reconciler/projector tests + pinned bridge selector; AUTO `core-host-all`, explicit `ONE_TO_ONE_TESTS` + `GROUP_TESTS`; unavailable old runtime hardware is policy N/A |
-| TC-333-05 | Runtime-ready/resume await staged ingest then direct/group drains; a foreground direct/group event awaits its selected lane; unrelated retained pre-authorization staging does not block safe exact retirement/badge reconciliation; iOS never takes Android dropped-push ownership | `test/core/notifications/ios_notification_recovery_wiring_test.dart::runtime ready and resume await staged ingest before full drains and projection`, `::foreground branches await the selected lane before reconciliation`, `::retained preauthorization envelope does not block unrelated exact retirement or safe badge work`, and `::iOS owns no deleted-message marker or headless worker` | host / real application-root composition seam + ordered barriers, one retained raw envelope, authorized-state/canonical fixtures and typed outcomes, not source-string order alone | Causal RED: current runtime-ready/resume call `unawaited` and erase outcome -> exact branch-specific order, independent raw-ingress retry, relevant incomplete-outcome retry, coalesced rerun, unrelated read removal/projection, and no Android bridge call | Restore either `unawaited`, globally block on any retained raw stage, swallow relevant drain result, move badge/removal before its required canonical drain, require both foreground lanes, leave foreground group unwired, or reuse dropped-push coordinator -> named discriminator red | Direct wiring test; AUTO `core-host-all`, explicit curated registrations; `./scripts/run_test_gates.sh runtime-roots` |
-| TC-333-06 | Authorized iOS cards use exact trusted thread/summary metadata; sanitized rejection and expiry-before-resolution clear summary, badge, sound, category, thread, and visible copy | new `ios/RunnerTests/NotificationPreviewResolverTests.swift::testAuthorizedDirectGroupAndReactionResultsApplyExactTrustedSummaryMetadata` and existing/new `::testRejectedAndExpiredContentIsFullySanitized` | simulator XCTest / direct/group ordinary and reaction projection fixtures | Summary test causal RED: result lacks summary fields -> direct ordinary/reaction use trusted contact username with count 1 and sender-peer thread; group ordinary/reaction use trusted group name with count 1 and group thread. Sanitizer is a GREEN preservation sentinel before adjacent edits and remains `summaryArgument=""`, count 0 | Source any field from provider copy, swap group actor for trusted group summary, use a non-one count, omit summary sanitizer, or emulate Android history text -> its exact owner red | Pinned `NotificationPreviewResolverTests` Xcode selector; existing RunnerTests registration |
-| TC-333-07 | Existing direct encrypted staging/replay and recent-remote dedupe stay intact; reduced group APNs projection is not accepted as canonical staged ingress | `ios/RunnerTests/NotificationPreviewResolverTests.swift::testAppGroupPushEnvelopeStoreUsesInjectiveNonceFileNames`, `::testReactionEnvelopeStagesWithReactionKind`; `test/features/push/application/push_envelope_staging_test.dart::stage/readAll/clear round-trips across store re-instantiation; prune keeps fresh and uses nonce id`; `test/features/push/application/ingest_staged_push_envelopes_use_case_test.dart::startup/resume ingestion runs without a notification tap`; new `test/core/notifications/ios_notification_recovery_scope_contract_test.dart::group APNs projection is never replayed as a complete signed envelope` | host + simulator source contract / temp staging store | GREEN sentinels on HEAD -> direct behavior unchanged and unsafe group shortcut remains absent | Drop direct staging fields/atomicity, double-stage iOS Dart path, or route reduced group fields to canonical persistence -> sentinel red | Pinned `NotificationPreviewResolverTests` selector plus `flutter test test/features/push/application/push_envelope_staging_test.dart test/features/push/application/ingest_staged_push_envelopes_use_case_test.dart test/core/notifications/recent_remote_gate_ios_wiring_test.dart test/core/notifications/ios_notification_recovery_scope_contract_test.dart`; AUTO + curated existing registrations |
-| TC-333-08 | Relay keeps visible/mutable ordinary APNs with no badge or ordinary collapse key; direct/group reactions retain distinct bounded per-event collapse IDs | `go-relay-server/inbox_test.go::TestWakePush_VisibleAlert_NotSilentOnly`, characterization `::TestIOSRecoveryParity_APNSOwnsNoUnreadBadgeAndOrdinaryEventsDoNotCollapse`, `reaction_push_test.go::TestBuildReactionPush_SharedBoundedIdentityFixture`, and legacy-misnamed `group_reaction_push_test.go::TestRelayNotificationClosure_GroupReactionApnsCollapseIdRemainsPerGroup` (it asserts per-event identity) | Go host / real Firebase message builders | GREEN preservation sentinels on HEAD, including the new combined characterization before any relay-adjacent edit -> provider shape remains unchanged | Add `aps.badge`, add ordinary collapse, make reaction collapse per conversation, or remove mutable/alert -> Go test red | `GOTOOLCHAIN=go1.25.0 go -C go-relay-server test ./... -count=1`; existing relay test discovery |
-| TC-333-09 | New bridge exposure is exact-ID-only, NSE remains SQLCipher/network/Flutter-free, iOS adds no BGTask/WorkManager/blanket-clear clone, and the Plan-333 absolute aggregate has no Android consumer | causal `test/core/notifications/ios_remote_notification_control_test.dart::native bridge exposes exact ID removal only`; preservation `test/core/notifications/ios_notification_recovery_scope_contract_test.dart::NSE remains SQLCipher free`, `::iOS recovery adds no Android scheduler or blanket remote clear`, and `::absolute badge aggregate is owned by iOS and has no Android consumer` | host / fake bridge plus source/import and Xcode membership contract | Causal compile RED for absent exact-ID controller; forbidden-API and Android-nonconsumer sentinels GREEN on HEAD and before adjacent edits -> narrow new surface with preserved imports/APIs, then remain green when the aggregate lands only behind the iOS projector | Add a remove-all method to the bridge, import SQLCipher/network/Flutter into NSE, import/call the absolute aggregate from Android-owned Dart/native paths, add BG task/WorkManager, or call blanket clear -> exact causal/preservation owner red | Direct controller + scope commands; AUTO `core-host-all`, explicit curated registrations |
-| TC-333-10 | New Sims capability version-preservingly extends the direct-only producer/provider/relay/bootstrap rig for exact v2 direct/group/reaction/push-omission/account-clear/removal/badge-serialization scenarios, receives generalized iOS credential preflight, validates content-addressed target-specific build evidence, runs zero child builds/manual actions, and cleans every private mutation/app | `go-mknoon/cmd/iospayloadproducer::TestIOSRecoveryParityFixturesRemainEncryptedAndKindBound`, Python provider/relay/bootstrap `test_recovery_parity_scenarios_are_exact_and_rollback_safe`, `scripts/test/ios_receiver_bootstrap_contract_test.dart`, `test/tool/sims/sims_device_binding_test.dart::all APNs NSE capabilities receive target bound preflight`, `test/tool/sims/sims_build_cache_test.dart::iOS APNs NSE capability fingerprints target staging attestation`, and `test/integration/ios_notification_recovery_completion_criteria_test.dart::strict artifact requires seven recovery scenarios including completion ordered badge proof` | host Go/Python/Dart process contracts / exact v1-preservation + v2 synthetic requests, fake relay/APNs/device/barrier commands, live-matrix reports, owner-private paths represented only by hashes | Causal compile/discovery RED: v2 rig/capability absent and `device_binding.dart` recognizes only the old capability -> each scenario is exact, v1 fast-path remains byte-compatible, wrong kind/target/omission/secret/barrier/manual/child-build/dirty-cleanup fails | Merely add Dart labels, accept group data through direct schema, bypass generalized preflight/bootstrap, fake submission as completion, reuse target-bound build inputs, remove source/target/cleanup binding, or expose a raw secret -> named contract red | Exact Go producer + Python suites + receiver bootstrap + Dart criteria/provider/XCUI/device-binding/build-cache/manifest/proof/discovery commands; register `notifications.ios_recovery_parity` |
-| TC-333-11 | Fresh iPhone 11 identity proves real APNs/NSE authorized request custody, direct/group push-omission recovery, pending-to-canonical badge, NSE-vs-Runner completion serialization, duplicate/reaction neutrality, exact A removal with later B/unrelated C survival, account cutover/clear, and cleanup | Sims scenarios `ios_recovery_parity_authorized_direct`, `ios_recovery_parity_direct_cold_resume_push_omitted`, `ios_recovery_parity_group_cold_resume_push_omitted`, `ios_recovery_parity_reaction_duplicate_badge_neutral`, `ios_recovery_parity_nse_runner_badge_serialization`, `ios_recovery_parity_exact_retirement_race`, and `ios_recovery_parity_account_cutover_clear` in `integration_test/scripts/run_ios_notification_recovery_parity.dart` | device / physical iPhone `00008030-001A6D2801BB802E`, signed production app/XCTest, real APNs + relay fixture, fresh disposable identity, nonce/profile-gated native completion barrier and ordered markers | Device-only proof: HEAD capability/state/writer/removal absent -> all seven assertions PASS on one target-specific source/app/XCTest digest; `authorized_direct` embeds the existing airplane-before-tap fast-path preservation; serialization row proves final SpringBoard badge and `content.badge=nil` after forced overlap | Serialize only submissions, restore NSE content badge, remove completion barrier/ordered receipt, disable either omitted-push drain, watermark fence, account tombstone, or cleanup -> its scenario red | `SIMS_IOS_PHYSICAL_DEVICE_ID=00008030-001A6D2801BB802E dart tool/sims/sims.dart major --only notifications.ios_recovery_parity`; new capability and strict artifact validator |
-| TC-333-12 | Fresh iPhone 13 independently proves the same real boundary with no state/build/identity leakage from the iPhone 11 run; closure requires PASS for every still-available requested phone and permits only an exact target-policy N/A if one disappears | The same seven exact Sims scenarios, separately generated target-bound staging attestation/build/identity/receipt and live-matrix closure record | device / physical iPhone `00008110-00184D622289801E`, serial second run, fresh identity | Device-only proof: absent on HEAD -> same assertions and independent cleanup PASS, or exact target-unavailable N/A only after rediscovery | Reuse identity/state/proof binding, reuse the iPhone 11 target-specific staging attestation/build, accept a missing receipt without live-matrix N/A, or classify missing credentials as target N/A -> validator red | Pinned iPhone 13 command; separate content-addressed receipt/build attestation; matrix criteria also consume the iPhone 11 result |
+### Counterexamples that must stay named
 
-### Test Notes
+- Reconcile after ledger commit but before content handoff: A is absent and must remain owned; if it later appears it is removed on the next pass.
+- Claim post-watermark B and land it in SQL before commit: canonical B contributes once, its request custody survives, and its pending hash no longer adds a second badge. If B is absent from SQL, its pending contribution survives.
+- A native APNs cold tap is captured/cleared while warm forwarding is armed in one AppDelegate operation after the cold boundary. Strict native routing finishes first; Firebase `getInitialMessage` is only a fallback for native empty/failure, and whichever path runs finishes before exact drains/settlement.
+- If node startup fails, that same initial-open handoff still runs inside an explicitly incomplete scope, no direct/group network drain runs, and the identical opaque handle settles `false`.
+- If native transfers a valid payload but strict Dart routing fails, the bridge retains that payload in Dart and retries it without a second native consume.
+- A young malformed final staging file is retained for retry and therefore makes both staging scans incomplete; an empty parsed-entry list alone is not canonical exhaustion.
+- Foreground delivery: `willPresent` produces no card and must explicitly clear A's prepared custody.
+- User-dismissed card: A was previously observed and is now absent, so its row may be pruned without a removal call.
+- Individual deletion of identity-free A while another unread B remains: A stays owned; no unsafe guess maps the deletion to A.
+- Old Runner/new NSE, new Runner/old NSE, and upgrade -> downgrade -> re-upgrade: unknown versions remain untouched and canonical Runner repair is deterministic.
+- Account switch concurrent with an old-account NSE finish: the old commit is rejected or retained only as retired cleanup; it cannot affect the new account badge.
 
-- TC-333-01 derives canonical event identity from the authorized/decrypted result. Provider outer IDs may help route, but cannot alone create trusted request custody or a badge delta.
-- TC-333-01 uses an explicit matrix: unique/tone-suppressed ordinary event -> request custody + one pending delta; authorized ordinary with trusted conversation but no event ID -> custody only; authorized reaction or duplicate reaction -> custody only; sanitized/muted/rejected/ordinary duplicate/unresolved expiry -> neither. Expiry after an authorized publish follows the applicable authorized row exactly once.
-- TC-333-01's `authorized_untracked` branch is a deliberately degraded availability outcome, not successful custody: it writes neither request nor delta, leaves badge unset, reports only a redacted reason class, and is excluded from exact-retirement claims.
-- TC-333-01 requires `content.badge=nil` on every normal, expiry, failure, and legacy-OS handoff. iOS 16+ immediate badge work is a separate completion-bearing writer operation; iOS 13-15 retains pending work for Runner.
-- TC-333-02 captures the native state watermark *before* the Dart canonical read. Commit may request removal only for rows at/below that watermark; the fixture inserts B after capture, delays one removal, and requires B/unrelated C present while confirmed-absent A prunes and still-present A remains retryable.
-- TC-333-03 covers direct message, direct reaction, group message, and group reaction account-cutover interleavings. The commit equality is exact: begin-token binding remains current, and authorized-result account equals both begin-token and active accounts; direct reaction receives device/transport/install only from the owner token, never provider fields.
-- TC-333-04 treats successful relevant canonical convergence and offline/failure differently. A successful full drain replaces resolved pending deltas with SQLCipher truth; an unsuccessful relevant drain retains bounded pending custody instead of falsely setting zero. On iOS 16+, both processes take the same cross-process writer lock through `setBadgeCount` completion; an asynchronous fake content handler runs later and cannot affect the fake OS badge because its content is nil. A sequence advance or late completion triggers one coalesced latest-state reapply. On iOS 13-15 only Runner writes, synchronously on the main thread at activation.
-- TC-333-06 freezes `summaryArgumentCount=1`; direct ordinary/reaction summary is the trusted contact username, group ordinary/reaction summary is the trusted group name, and sanitizer output is empty/zero. Provider summary fields are never reused.
-- TC-333-11/12 run all seven frozen scenario IDs. `authorized_direct` embeds the existing real APNs/NSE airplane-before-tap fast-path assertion. The two push-omitted scenarios prove canonical direct/group relay custody on cold resume; the group case restores network and does not claim unsupported fully-offline group replay. The serialization barrier opens only after the real NSE `setBadgeCount` completion arrives and before the writer records/releases its lock; the harness then starts Runner and proves no Runner issue marker appears until release. NSE content remains `badge=nil`, the final SpringBoard icon shows Runner's newer total, and removing completion-held serialization must fail the row.
+## Scope Guard
 
-## Implementation Steps
+Do not:
 
-1. Snapshot `git status --short`; preserve all unrelated work. Add TC-333-01..10 before production edits. Record causal REDs separately from pre-existing RunnerTests/analyzer dirt.
-2. Add a single versioned Swift `IosNotificationRecoveryState` source compiled into NotificationService, Runner, and RunnerTests. Implement one owner-only `0600`, backup-excluded, `.completeUntilFirstUserAuthentication` state file, cross-process `flock`, atomic replace + parent-directory durability, the exact schema fields in Scope, bounded pending/request rows, corrupt-state quarantine, and idempotent reopen. Re-assert file mode, protection class, and backup exclusion after every replace. Never TTL/cap-evict a row that has not been proven absent from delivered inventory. Inject crash points before/after replace, concurrent writers, corrupt/unknown versions, and reinstall epochs in tests.
-3. Add a Runner-created, non-migrated notification-recovery install epoch and project its digest with the trusted account/device/transport tuple for NSE use before push registration. At `didReceive`, capture an opaque active-owner token before resolution; after resolver parity and under the same state lock, require begin-token binding to equal the current active binding and authorized-result account to equal both begin-token/current accounts. Direct-reaction device/transport/install binding comes only from the owner token. On account cutover, atomically tombstone the old binding and publish the new epoch before changing the shared resolver projection; retain old exact IDs in a retired cleanup partition until inventory proves them absent. A crash or old projection under a new token for any of the four event kinds fails closed and repairs on next bootstrap.
-4. Add typed authorized-delivery and badge-eligibility fields to `NotificationPreviewResult`. In `NotificationService.finish`, apply/sanitize first, force `content.badge=nil`, then commit one combined request/pending transaction before any writer or content handler. On iOS 16+, attempt the common completion-bearing writer within the extension deadline; success/failure never changes card custody and failure retains pending. On iOS 13-15 skip the extension write. Invoke the content handler exactly once with badge-free content after success, failure, skip, or expiry-safe fallback. Use the explicit matrix in Test Notes, including authorized expiry-after-publish and duplicate-reaction custody. A state failure emits redacted `authorized_untracked`, leaves badge unchanged, writes nothing partial, and never exposes provider copy or throws past the extension; unresolved expiry/rejected paths commit nothing and release tone state.
-5. Add the Runner native bridge and Dart `IosRemoteNotificationControl`. Implement begin-watermark/load-canonical/commit exact selection with `UNUserNotificationCenter.getDeliveredNotifications`, issue `removeDeliveredNotifications(withIdentifiers:)`, then perform bounded inventory readback. Prune only IDs confirmed absent; retain delayed/failed IDs. Account clear retires and removes only state-owned requests, never all app notifications.
-6. Add the Plan-333-owned read-only `canonical_notification_badge_state_db_helpers.dart`, `CanonicalNotificationBadgeReconciler`, `IosNotificationBadgeProjector`, and one native `IosBadgeWriter`. Reuse/extract the existing direct/group canonical notification-policy predicates, perform no schema change or cached-counter write, and force a final durable reread when work changes in flight. Resolve at most the bounded authorized pending hashes against canonical state, retain work on relevant incomplete drains/native failure, publish absolute totals, and advance baseline only after native success. On iOS 16+, both Runner and NSE use `setBadgeCount`: perform the final sequence check, issue, and wait for completion under one cross-process writer lock; compare sequence again and coalesce a latest-state reapply on an advance or late completion. If extension expiry forces an incomplete writer, hand off badge-free content, retain/mark repairable work, and make any surviving late callback recheck sequence before final reapply. On iOS 13-15, expose only the Runner main-thread `applicationIconBadgeNumber` path and prove NSE never imports/calls `UIApplication`. Do not change deployment target or import the absolute aggregate from Android.
-7. Change the application-root ingestion seam to return a typed result and add one coalescing iOS recovery coordinator. Runtime-ready/resume/open await bounded staging before full drains; foreground direct/group awaits only its selected drain. Retry retained pre-authorization staging independently: it cannot block unrelated state-owned read/policy removal or safe badge work. Only an authorized pending hash or an incomplete relevant canonical lane prevents absolute convergence. Preserve Android/general lifecycle semantics and local FLN cancellation.
-8. Apply exact trusted thread/summary fields for authorized direct/group ordinary and reaction results: trusted contact/group summary argument, count one, canonical thread identity; extend the full sanitizer to empty/zero them. Add the explicit scope sentinel that forbids using the reduced group APNs projection as a canonical staged envelope. Do not modify production relay payload shape.
-9. Version-preservingly extend the proven iOS Sims tooling rather than replacing it: update `go-mknoon/cmd/iospayloadproducer`, `ios_notification_provider_adapter.py`, `ios_notification_relay_fixture_driver.py`, `ios_notification_relay_remote_helper.py`, `ios_receiver_bootstrap.py`, the Dart campaign/XCUI driver, and their tests with the seven exact TC-333-11 scenario IDs and a typed v2 manifest/allowlist. Add the attested one-time-nonce native barrier only to the Sims test profile, positioned after the real NSE badge completion and before lock-release/receipt; it delays but never changes a value and is absent/disabled on ordinary launch. Keep the old v1 direct fast-path byte-compatible. Generalize Sims iOS-notification preflight from one hard-coded capability ID to an explicit APNs+NSE capability predicate and test target-bound build-cache inputs.
-10. For each rediscovered phone, generate its own target-bound staging attestation/provider request before the central `ios.device.production` build, run that one prebuilt app/XCTest bundle with zero child builds and a fresh identity, then clean it fully before preparing the second phone. Do not reuse an iPhone 11-bound attestation as iPhone 13 evidence. If a target disappears, record only that target's policy N/A; missing/invalid credentials remain an environment input blocker.
-11. Run focused GREEN, Swift/Go preservation, curated gates, justified core/feature family sweeps, analyzer/hygiene, live campaigns, and one incremental Graphify refresh.
+- add provider-authored `aps.badge`, relay unread totals, or ordinary-message collapse IDs;
+- persist plaintext, names, notification copy, tokens, keys, device IDs, or transport IDs;
+- parse the native state in Dart or create a Swift/Dart golden codec;
+- use `removeAllDeliveredNotifications`, blanket `cancelAll`, thread-only removal, or absence-only pruning as remote-card control;
+- open SQLCipher, start Flutter, or perform network I/O in the NSE;
+- claim Apple-level suppression without the filtering entitlement;
+- add deprecated summary metadata, Android recovery machinery, or a new seven-scenario provider stack; or
+- require a currently unavailable OS/hardware band for closure.
 
-## Risks And Blind Spots
+Out of scope: Apple filtering-entitlement acquisition, fully offline group-tap replay from the reduced APNs projection, a dead-process delivery SLA, and Android badge/recovery behavior.
 
-- Content handler can race ledger commit or extension expiry -> TC-333-01 completion barrier and timeout branch.
-- Resolver can race account rotation or a sibling NSE writer -> TC-333-03 owner-token revalidation, retired-binding partition, concurrent-writer and crash-point tests.
-- Read snapshot can delete a newer request -> TC-333-02 native/Dart watermark barrier.
-- Main-app badge apply can race a newer NSE write or delayed Notification Center presentation -> NSE content is always badge-free; TC-333-04 serializes the common iOS 16+ writer through completion and rechecks sequence; TC-333-11/12 force the real overlap and assert final SpringBoard badge.
-- Badge can drift across duplicates, reactions, app kills, other-device reads, corrupt files, or account rotation -> TC-333-03/04 plus next-activation accepted boundary; corruption can repair badge truth but not recreate lost exact request IDs.
-- Recovery state can leak social/content data -> hashes-only schema, owner-only protection, no names/content/tokens/keys, TC-333-09, and strict artifact redaction.
-- A remote card may already be user-dismissed -> TC-333-02 treats exact removal as idempotent and prunes against actual delivered inventory.
-- Mixed Runner/NSE versions can parse different state -> version fence/corrupt quarantine tests; unknown versions fail closed and await canonical app convergence.
-- File protection/capacity can make state unavailable -> after-first-unlock protection, backup exclusion, no live-row eviction, typed no-partial fail-open outcome, and next-activation repair.
-- iOS 13-15 has no extension-safe completion-bearing fallback -> NSE deliberately leaves badge unchanged; Runner main-thread convergence is compile-time/native-tested and unavailable old-OS hardware is policy N/A.
-- Pre-authorization staged ciphertext can remain for an untrusted event -> TC-333-05 retries that ingress independently while unrelated exact retirement and safe badge work continue.
-- APNs/NSE proof can false-green on simulator or direct peer delivery -> TC-333-11/12 require provider receipt, NSE ordered markers, relay fixture receipt, physical UDID binding, and network-state ordering.
-- Lifecycle / derived-state durability: TC-333-01/03 reopen unified state across instances; TC-333-04 reconstructs canonical state after app restart.
-- Sibling-surface consistency: TC-333-03/04 cover direct/group ordinary and reaction/duplicate asymmetry; TC-333-05 covers cold/resume/foreground/read/account triggers.
-- Destructive-action side effects: TC-333-02 and physical proof assert A removed while later B, unrelated C, local behavior, and ledger consistency survive.
-- Invariant re-verification under new transitions: generation/watermark reruns cover concurrent APNs arrival, lifecycle coalescing, account rotation, and account clear.
+## Gate Cadence And Acceptance
 
-## Gate Cadence
-
-- Per-plan closure: focused Dart/XCTest/Go/process tests; exact NSE/staging/open/relay preservation; `1to1`, `groups`, and `runtime-roots`; justified `core-host-all` and `feature-host-all` because shared notification core, app lifecycle, push, conversation, and group settlement wiring change; availability-bounded physical iPhone campaigns.
-- Do not run full `host-all` for this individual plan. Run `./scripts/run_host_test_gates.sh host-all` once after the notification badge/recovery completion wave (Plans 332-333), and once at final rollout/release closure.
-- Shared tests outside feature/core globs: Xcode selectors, Go builder sentinels, Python provider/relay fixture unit tests, Sims criteria/manifest/proof tests, and discovery run by exact command. Their later `host-all` registration does not create a Plan 333 full-aggregate obligation.
-
-## Acceptance Gates
+Per-plan closure runs focused causal tests, exact preservation sentinels, `1to1`, `groups`, `runtime-roots`, and the justified affected `core-host-all` / `feature-host-all` families. It does not run full `host-all`; that remains a wave/final-rollout gate.
 
 ```bash
-# Snapshot before execution; classify unrelated dirt, expected RED, and input blockers.
-git status --short
-
-# Causal RED before production edits; expect non-zero for the documented absent seams.
-flutter test test/core/notifications/ios_remote_notification_control_test.dart
-flutter test test/core/database/helpers/canonical_notification_badge_state_db_helpers_test.dart
-flutter test test/core/notifications/canonical_notification_badge_reconciler_test.dart
-flutter test test/core/notifications/ios_notification_badge_projector_test.dart
-flutter test test/core/notifications/ios_notification_recovery_state_codec_test.dart
-flutter test test/core/notifications/ios_notification_recovery_wiring_test.dart
-flutter test test/integration/ios_notification_recovery_completion_criteria_test.dart
-xcrun simctl list devices available
-xcodebuild test \
-  -workspace ios/Runner.xcworkspace \
-  -scheme Runner \
-  -destination 'platform=iOS Simulator,id=DBE8C32E-9F19-4593-860A-B41113791D79' \
-  CODE_SIGNING_ALLOWED=NO \
-  -parallel-testing-enabled NO \
-  -only-testing:RunnerTests/IosNotificationRecoveryStateTests \
-  -only-testing:RunnerTests/IosNotificationRecoveryBridgeTests \
-  -only-testing:RunnerTests/NotificationPreviewResolverTests/testAuthorizedDirectGroupAndReactionResultsApplyExactTrustedSummaryMetadata
-GOTOOLCHAIN=go1.25.0 go -C go-mknoon test ./cmd/iospayloadproducer \
-  -run '^TestIOSRecoveryParityFixturesRemainEncryptedAndKindBound$' -count=1
-python3 -m unittest \
-  scripts.test.ios_notification_provider_adapter_test \
-  scripts.test.ios_notification_relay_fixture_driver_test \
-  scripts.test.ios_receiver_bootstrap_test
-
-# Pre-edit preservation boundary; keep this green before and after the iOS
-# aggregate lands so no Android path can import or consume it.
-flutter test test/core/notifications/ios_notification_recovery_scope_contract_test.dart \
-  --plain-name 'absolute badge aggregate is owned by iOS and has no Android consumer'
-
-# Focused Dart GREEN and preservation; expect exit 0 and zero failed tests.
-flutter test \
+# Focused Dart causal tests and adjacent preservation.
+flutter test --concurrency=1 \
   test/core/database/helpers/canonical_notification_badge_state_db_helpers_test.dart \
-  test/core/notifications/canonical_notification_badge_reconciler_test.dart \
-  test/core/notifications/ios_remote_notification_control_test.dart \
-  test/core/notifications/ios_notification_badge_projector_test.dart \
-  test/core/notifications/ios_notification_recovery_state_codec_test.dart \
+  test/core/notifications/ios_notification_recovery_bridge_test.dart \
   test/core/notifications/ios_notification_recovery_wiring_test.dart \
-  test/core/notifications/ios_notification_recovery_scope_contract_test.dart \
-  test/core/notifications/ios_apns_notification_open_bridge_test.dart \
-  test/core/notifications/recent_remote_notification_gate_test.dart \
-  test/core/notifications/recent_remote_gate_ios_wiring_test.dart \
   test/core/notifications/flutter_notification_service_test.dart \
-  test/core/notifications/local_notification_support_test.dart \
   test/features/push/application/push_envelope_staging_test.dart \
   test/features/push/application/ingest_staged_push_envelopes_use_case_test.dart \
-  test/features/push/application/handle_foreground_remote_message_use_case_test.dart
+  test/features/push/application/handle_foreground_remote_message_use_case_test.dart \
+  test/core/lifecycle/handle_app_resumed_parallel_reprime_test.dart \
+  test/core/lifecycle/handle_app_resumed_phase2_continuation_wiring_test.dart \
+  test/features/identity/presentation/screens/startup_router_recovery_test.dart \
+  test/features/account_migration/application/account_migration_runtime_network_gate_test.dart \
+  test/core/notifications/ios_apns_notification_open_bridge_test.dart \
+  test/core/notifications/recent_remote_gate_ios_wiring_test.dart \
+  test/core/notifications/local_notification_exact_cancellation_wiring_test.dart \
+  test/features/push/application/background_push_notification_fallback_test.dart
 
-# Discover an available simulator, then pin it. The observed iPhone 16e ID is shown.
+# Exact source-order and relocation preservation sentinels refreshed for the
+# implemented production seams.
+flutter test --concurrency=1 \
+  test/core/notifications/notification_service_completion_pin_test.dart \
+  test/unit/dtr18_layering_relocation_contract_test.dart
+
+# Pin an actually available simulator before execution.
 xcrun simctl list devices available
 xcodebuild test \
   -workspace ios/Runner.xcworkspace \
@@ -226,110 +227,76 @@ xcodebuild test \
   -destination 'platform=iOS Simulator,id=DBE8C32E-9F19-4593-860A-B41113791D79' \
   CODE_SIGNING_ALLOWED=NO \
   -parallel-testing-enabled NO \
-  -only-testing:RunnerTests/IosNotificationRecoveryStateTests \
-  -only-testing:RunnerTests/IosNotificationRecoveryBridgeTests \
+  -only-testing:RunnerTests/IosNotificationRecoveryTests \
   -only-testing:RunnerTests/NotificationPreviewResolverTests \
   -only-testing:RunnerTests/ForegroundPushForwardPolicyTests \
-  -only-testing:RunnerTests/NotificationServiceConfigurationTests
+  -only-testing:RunnerTests/IosReceiverBootstrapHandoffTests
 
-# Relay/provider preservation; expect exact tests and zero failures.
+# Existing physical-harness contracts extended in place.
+python3 -m unittest \
+  scripts.test.ios_receiver_bootstrap_test \
+  scripts.test.ios_notification_provider_adapter_test \
+  scripts.test.ios_notification_relay_fixture_driver_test
+
+# Relay payload preservation; no Plan-333 producer fork.
 GOTOOLCHAIN=go1.25.0 go -C go-relay-server test ./... \
-  -run 'Test(WakePush_VisibleAlert_NotSilentOnly|IOSRecoveryParity_.*|BuildReactionPush_SharedBoundedIdentityFixture|RelayNotificationClosure_GroupReactionApnsCollapseIdRemainsPerGroup)$' \
+  -run 'Test(WakePush_VisibleAlert_NotSilentOnly|BuildReactionPush_SharedBoundedIdentityFixture|RelayNotificationClosure_GroupReactionApnsCollapseIdRemainsPerGroup)$' \
   -count=1
 GOTOOLCHAIN=go1.25.0 go -C go-mknoon test ./cmd/iospayloadproducer -count=1
-python3 -m unittest \
-  scripts.test.ios_notification_provider_adapter_test \
-  scripts.test.ios_notification_relay_fixture_driver_test \
-  scripts.test.ios_receiver_bootstrap_test
-flutter test scripts/test/ios_receiver_bootstrap_contract_test.dart
 
-# Harness registration and fail-closed artifact binding.
-flutter test \
-  test/integration/ios_notification_recovery_completion_criteria_test.dart \
-  test/integration/ios_notification_payload_campaign_support_test.dart \
-  test/integration/ios_notification_payload_xcui_contract_test.dart \
-  test/integration/ios_notification_provider_adapter_contract_test.dart \
-  test/tool/sims/sims_device_binding_test.dart \
-  test/tool/sims/sims_build_cache_test.dart \
-  test/tool/sims/sims_manifest_test.dart \
-  test/tool/sims/sims_proof_binding_registry_test.dart
-./scripts/test/reliability_simulation_discovery_contract_test.sh
-dart tool/sims/sims.dart major --list --format tsv | rg 'notifications.ios_recovery_parity'
-
-# Affected curated and justified family gates; expect zero Plan-333 failures.
+# Curated/family gates (no per-plan full host-all).
 ./scripts/run_test_gates.sh 1to1
 ./scripts/run_test_gates.sh groups
 ./scripts/run_test_gates.sh runtime-roots
 ./scripts/run_test_gates.sh completeness-check
-./scripts/run_test_gates.sh core-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only
+./scripts/run_test_gates.sh core-host-all --dart-only --batch-flutter --concurrency 1 --reporter failures-only
 ./scripts/run_test_gates.sh feature-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only
 
-# Rediscover and pin physical targets. Each run uses one prebuilt artifact, a fresh
-# disposable identity, zero manual actions/child builds, and complete cleanup.
+# Rediscover and pin one available physical iPhone. The prepare/run wrapper must
+# bind that same UDID into staging manifest, provider request, signing inputs,
+# app/XCTest bundle, and receipt. Badge permission must be enabled.
 flutter devices --machine
-SIMS_IOS_PHYSICAL_DEVICE_ID=00008030-001A6D2801BB802E \
-  dart tool/sims/sims.dart major --only notifications.ios_recovery_parity
-SIMS_IOS_PHYSICAL_DEVICE_ID=00008110-00184D622289801E \
-  dart tool/sims/sims.dart major --only notifications.ios_recovery_parity
+SIMS_IOS_PHYSICAL_DEVICE_ID=<discovered-iphone-udid> \
+  dart tool/sims/sims.dart major --only notifications.ios_payload_fast_path
 
-# Hygiene and coherent app-owned graph closure.
 ./scripts/check_flutter_analyze_strict.sh
 git diff --check
+bash -n scripts/run_test_gates.sh
+plutil -lint ios/Runner/Info.plist ios/NotificationService/Info.plist
+jq empty tool/sims/critical_features.json
 ./graphify-arch/refresh_arch_graph.sh --incremental
 ```
 
-## Device/Relay Proof Profile
+The core family is intentionally serial: four-way execution produced alternating unrelated timing reds in two P2P tests, and both exact files immediately passed alone. Serial execution then exposed and closed the actual Plan-333 source/path sentinels. The feature family remains four-way.
 
-- Profile: external-fixture-gated OS-notification device lab, one physical iPhone per serial run.
-- Boundary being proven: real APNs provider acceptance, NSE launch/decrypt/authorization, app-group cross-process custody, Apple request identifiers, iOS 16+ completion-serialized NSE/Runner badge behavior with badge-free content, exact delivered-notification removal, direct/group relay recovery, XCUITest lifecycle interaction, and cleanup. Simulator/host tests cannot substitute for this boundary.
-- Live availability check: `flutter devices --machine && xcrun simctl list devices available` -> observed requested iPhone 11 `00008030-001A6D2801BB802E` on iOS 26.5, requested iPhone 13 `00008110-00184D622289801E` on iOS 26.5, and booted iPhone 16e simulator `DBE8C32E-9F19-4593-860A-B41113791D79`. Rediscover immediately before execution and pin every command; other connected phones are outside the user's requested closure matrix.
-- Required setup: for each phone, a newly generated target-bound staging attestation/provider request followed by its own central `ios.device.production` signed app/XCTest bundle; owner-only APNs key/team inputs; private relay staging target/key; receiver bootstrap handoff; version-preserved provider adapter/relay fixture/producer; exact v2 recovery scenario manifest; one-time attested completion-barrier nonce; fresh disposable identity and empty app/keychain/app-group state.
-- Two-peer default: one iPhone plus the automated relay/provider fixture is required because this is specifically an iOS APNs/NSE/Notification Center parity claim. No manual second iPhone or user taps are permitted; any peer setup is driven by the fixture/XCUITest harness.
-- Closure role: required physical boundary evidence while an available iPhone exists. Each currently available requested phone receives an independent receipt. A target that disappears is `N/A (target unavailable by project policy)`; invalid/missing APNs/signing/relay inputs remain a typed environment blocker, not N/A.
-- `FLUTTER_DEVICE_ID`: host selector only; physical UDID, signed build, provider, relay, and XCTest bindings remain required.
-- Registration: new `notifications.ios_recovery_parity` capability with `build.ios.device.production` dependency, `ios.physical`, `credentials.apns`, `ios.nse`, and `relay.staging` target capabilities; generalized APNs+NSE device-preflight predicate, target-staging-attestation build-cache input, strict validator, and content-addressed proof registry.
-- Discovery command: `dart tool/sims/sims.dart major --list --format tsv | rg 'notifications.ios_recovery_parity'` -> exactly one active automation-ready capability and its build dependency are listed after implementation.
-- Closure command: each pinned Sims command in Acceptance Gates -> all seven scenario assertions PASS, including ordered real `setBadgeCount` completion and final SpringBoard badge, `validationErrors=[]`, independently generated source/app/XCTest/target/staging-attestation digests match, secrets remain redacted, `childBuilds=0`, `manualActions=0`, network/relay state restored, and post-run app/private fixture inventory is empty.
-- Deferred device work: unavailable iOS model/version bands are policy N/A. Fully offline group tap before transport restoration remains a separate signed-envelope design, not a missing device leg.
+## Device Proof Profile
 
-## Execution Interpretation And Done Criteria
+- Current available matrix (2026-08-04) includes USB iPhones, a booted iOS simulator, a USB Android phone, and an Android emulator. Only one discovered physical iPhone is required because this claim is an APNs/NSE/Notification Center boundary; a second same-OS phone adds no distinct boundary.
+- Preflight must prove: exact target binding, signed production app/NSE/XCTest bundle, real APNs provider and relay inputs, notification authorization, alerts enabled, badges enabled, disposable identity, empty recovery state, zero manual actions, and zero child builds.
+- The existing `notifications.ios_payload_fast_path` capability remains one campaign with two serial, fresh-install APNs legs and one signed product set: (1) its original automated airplane-mode tap/staged-visibility proof; (2) a recovery leg that proves the provider payload omits badge, delivered A has `content.badge == nil`, the absolute badge reaches one, canonical empty-state retirement removes exact A, an app-local unrelated sentinel C survives, the badge reaches zero, and cleanup is automatic.
+- Host/native tests own deterministic NSE/Runner writer overlap, later-watermark B, reaction/duplicate neutrality, mixed versions, identity-free deletion, legacy iOS fallback, and account races. Those causal cases are stronger and cheaper than adding provider barriers or a generalized multi-payload physical stack.
+- CoreSimulator accepts explicit `.complete` protection writes but returns `nil` for `FileManager` protection-key reads on its host-backed filesystem. The XCTest therefore accepts only `nil`/`.complete` on simulator while keeping mode `0600` and all behavior strict; its physical-device branch still requires exactly `.complete`. A signed physical run remains the security boundary. Adding the app-wide default-data-protection entitlement is unrelated scope expansion because this handoff explicitly protects every directory/file and post-rename result.
+- Missing APNs/signing/relay credentials are an `environment_blocker`, not a PASS. A target absent at execution is `N/A (target unavailable by project policy)` and is not replaced by an unavailable model/version requirement.
 
-- Expected RED: TC-333-01..05, TC-333-09's exact-ID bridge assertion, and TC-333-10 fail because typed delivery identity, unified state, Plan-333-owned aggregate/reconciler, bridge/controller, lifecycle wiring, and new capability do not exist. TC-333-06 sanitizer, TC-333-07/08, and TC-333-09 forbidden-API assertions are preservation sentinels and must be green on HEAD before adjacent edits.
-- Green sentinel: existing NSE resolver/sanitizer, foreground forwarding, direct staging/ingest, recent-remote dedupe, APNs visible/mutable shape, reaction collapse, local FLN behavior, and Android activation state stay green; the named mutations re-red their exact owners.
-- Pre-existing dirty tree / known failure: execution records `git status --short` and the full selected RunnerTests baseline before edits. Preserve all unrelated Plan 331/331a/user changes and do not rewrite generated iOS environment files.
-- Environment blocker: current shell has no APNs/signing/provider variables. Host/native implementation may finish while status remains evidence-gated, but Plan 333 cannot close until the owner-private preflight/build/fixture yields fresh PASS receipts for every still-available requested phone. A phone disappearing is target-policy N/A, not an OS-version blocker.
-- Scope drift: NSE SQLCipher/network/Flutter, plaintext or independently committed recovery files, provider badge/count, ordinary collapse IDs, blanket remote clear, Android scheduler clone, group reduced-envelope replay, simulator-only APNs claim, or secret-bearing tracked artifact blocks completion and requires replan.
+## Done Criteria
 
-- [ ] Every behavior has a named host/native test or justified real-device proof.
-- [ ] Causal RED reasons and representative mutation re-reds are recorded; preservation sentinels are green before adjacent edits.
-- [ ] Every state-available authorized handoff commits request custody before handoff; an `authorized_untracked` fault writes no partial state and has no retirement claim. Sanitized/rejected/expiry-before-resolution branches write none; authorized expiry-after-publish writes exactly once.
-- [ ] Watermark reconciliation removes only stale exact IDs; later/unrelated/user-dismissed cases pass.
-- [ ] Badge direct/group total, pending deltas, duplicate/reaction neutrality, zero, account rotation, corrupt/restart, failed-drain behavior, badge-free NSE content, iOS 16+ completion serialization/final reapply, and iOS 13-15 Runner-only fallback pass.
-- [ ] Runtime-ready/resume/foreground/read/account ordering passes without Android dropped-push ownership or headless activation.
-- [ ] NSE/staging/open/relay/privacy boundaries and platform-native summary behavior remain green.
-- [ ] All seven Sims scenarios and the strict validator pass; every still-available requested iPhone has a fresh, independently target-built, content-addressed, automated, redacted, clean PASS receipt. Missing credentials keep this plan open rather than satisfying closure.
-- [ ] Curated/family gates, analyzer, diff hygiene, and incremental Graphify refresh pass with semantic outcomes.
-- [ ] Scope Contract And Guard is respected.
-
-## Handoff
-
-- First causal RED command: `flutter test test/core/notifications/ios_remote_notification_control_test.dart`; expected failure is the intentionally absent two-phase iOS remote notification control seam.
-- Preservation command: `flutter test test/core/notifications/ios_apns_notification_open_bridge_test.dart test/core/notifications/recent_remote_notification_gate_test.dart test/core/notifications/recent_remote_gate_ios_wiring_test.dart test/features/push/application/push_envelope_staging_test.dart test/features/push/application/ingest_staged_push_envelopes_use_case_test.dart` plus the exact existing Swift/Go selectors above.
-- Manual registration: add the Plan-333-owned aggregate, reconciler, projector, recovery, and control Dart tests to both `ONE_TO_ONE_TESTS` and `GROUP_TESTS`; add new Swift sources/tests to Runner, NotificationService, and RunnerTests target membership; add the Sims capability/scenarios/validator/proof binding and keep existing fast-path capability unchanged.
-- Migration: no SQLCipher migration and no DB v108 reservation. The one app-group recovery-state file uses its own v1 schema with mixed-version/corruption/reopen/reinstall/account-clear tests; any SQLCipher requirement or independently committed second sidecar is a stop-and-replan condition.
-- Boundary closure: pinned simulator XCTest plus serial real APNs/NSE campaigns on each available requested iPhone using the established owner-private provider/relay/XCUITest rig.
-- Unresolved evidence: owner-private APNs/signing/provider/relay preflight is open in the current shell. Fully offline group tap is explicitly deferred because the current reduced APNs projection is not a complete authenticated replay envelope.
-
-## Reviewer Findings (2026-08-03)
-
-- Initial verdict: `not-ready`.
-- Source-backed fixes applied: replaced split ledgers with one atomic cross-process state and explicit fail-open policy; added three-way account/binding equality and concurrent-writer/crash/reinstall coverage; corrected the unawaited lifecycle and void-removal contracts; separated retained pre-authorization staging from authorized pending custody; removed NSE content badges, unified iOS 16+ writes behind completion serialization, made iOS 13-15 Runner-only, and froze exact summary, sanitizer, seven-scenario provider/bootstrap, target-specific build, and process-gate contracts.
-- Re-review: evidence/classification, causal tests, bypass/scope, gate integrity, and native/physical boundary proof are `clear` for implementation. The current credential absence is truthfully isolated to the required physical closure rather than treated as a substitute PASS.
-- Dependency re-review: after Plan 332 became standard-Android-only, ownership of the read-only aggregate/reconciler and their direct tests moved into Plan 333. No iOS behavior, device claim, or credential boundary changed, and Android must not consume the absolute total.
-- Post-update verdict: `ready` for implementation; physical closure remains `evidence-gated` until every still-available requested iPhone produces its fresh PASS receipt.
+- [x] Atomic production handoff, disposition race, state/version/account, exact-removal, badge-writer, canonical-selector, coalescing, and production-owner tests pass.
+- [x] Later/unrelated/unobserved rows survive; only observed exact stale identifiers are pruned after readback.
+- [x] Badge count is exact for direct/group canonical policy, reactions/duplicates are neutral, incomplete convergence preserves pending, and zero is explicit.
+- [x] Runtime-ready, resume, foreground, read/delete/policy, failed-node cold-open, and account paths invoke the same iOS-only coordinator without Android ownership.
+- [x] Existing NSE parity/sanitizer, direct staging, recent-remote, tap routing, relay shape, local notification, and Android sentinels remain green.
+- [ ] One target-bound physical campaign passes when owner-private inputs are available; until then status remains evidence-gated with the blocker recorded.
+- [x] Focused/curated/family gates, strict analysis, diff hygiene, and incremental Graphify refresh pass.
 
 ## Execution Progress
 
-| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
-|---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting accepted plan; host/native work can start, physical closure awaits owner-private input preflight | contract extraction |
+| Time | Phase | Evidence | Decision / next |
+|---|---|---|---|
+| 2026-08-04 | review | Graphify review context, three independent source audits, live device/credential preflight | Incoming plan was not ready; corrections above remove unsafe absence pruning and over-engineered scope |
+| 2026-08-04 | contract | Native-only state, production handoff transaction, two-phase Dart channel, one physical campaign | Host/native implementation authorized; preserve unrelated Plan 335 worktree changes |
+| 2026-08-04 | RED/GREEN | Focused Plan-333/adjacent Dart suite 212/212; final cold-open subset 54/54; source/path sentinels green | Atomic handoff, exact badge/card reconciliation, staging completeness, lifecycle ownership, failed-node release, and retained Dart payload implemented |
+| 2026-08-04 | native | Pinned iPhone 16e iOS 26.5 simulator: 94/94 across recovery, preview, foreground policy, and protected bootstrap handoff | Simulator/native closure green; physical protection assertion remains strict and evidence-gated |
+| 2026-08-04 | harness | Python 24/24; focused relay and iOS payload-producer Go tests pass; manifest/provider/bootstrap contracts pass | Existing target-bound capability extended in place; no new producer/capability stack |
+| 2026-08-04 | curated | `1to1` 2778/2778; `groups` 4050/4050 plus Go tails; runtime-root inventory green; completeness 1418/1418 | Affected curated and inventory gates green; no per-plan full `host-all` |
+| 2026-08-04 | family/static | `core-host-all` 3131/3131 across 395 paths; `feature-host-all` 8800 passed + 1 intentional skip across 835 paths; strict analyzer and format/diff/plist/JSON/shell hygiene green | Host/simulator implementation closure complete |
+| 2026-08-04 | device | Live targets available, but owner-private APNs/signing/provider/relay inputs are unset | Run the existing two-leg campaign on one pinned physical iPhone when those inputs are available; status remains physical evidence-gated |

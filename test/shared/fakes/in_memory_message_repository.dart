@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
 
@@ -9,6 +11,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/conversati
 class InMemoryMessageRepository
     implements
         MessageRepository,
+        OutgoingTransportMutationRepository,
         ConversationThreadSummaryRepository,
         MessageRepositoryChangeSource,
         ConversationReadEventSource {
@@ -265,7 +268,8 @@ class InMemoryMessageRepository
     for (final m in visible) {
       if (!m.isIncoming) {
         final ts = DateTime.tryParse(m.timestamp);
-        if (ts != null && (lastOutgoingAt == null || ts.isAfter(lastOutgoingAt))) {
+        if (ts != null &&
+            (lastOutgoingAt == null || ts.isAfter(lastOutgoingAt))) {
           lastOutgoingAt = ts;
         }
       }
@@ -345,6 +349,232 @@ class InMemoryMessageRepository
     }
   }
 
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final current = _messages[staged.id];
+    if (kind == OutgoingOrdinaryAttemptKind.fresh) {
+      if (expected != null || current != null) {
+        return _ordinaryResult(
+          OutgoingOrdinaryMutationOutcome.refused,
+          current,
+        );
+      }
+      return _applyOrdinary(staged);
+    }
+    if (expected == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (_sameMessageSnapshot(current, staged)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        current,
+      );
+    }
+    if (!_sameMessageSnapshot(current, expected)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    return _applyOrdinary(
+      staged.copyWith(
+        transport: null,
+        relayExpiresAt: null,
+        custodyCheckedAt: null,
+      ),
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOutgoingOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: false,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOutgoingOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: true,
+  );
+
+  Future<OutgoingOrdinaryMutationResult> _settleOutgoingOrdinary({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool tombstone,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.isIncoming ||
+        current.contactPeerId != expectedContactPeerId ||
+        current.isDeleted != tombstone) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.status == 'delivered') {
+      return _ordinaryResult(
+        status == 'delivered'
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.status == status) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        current,
+      );
+    }
+    final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
+        ? const <String>{'inboxed', 'sent', 'failed'}
+        : switch (status) {
+            'delivered' => const <String>{
+              'sending',
+              'sent',
+              'inboxed',
+              'failed',
+            },
+            'inboxed' => const <String>{'sending', 'sent', 'failed'},
+            'sent' => const <String>{'sending', 'failed'},
+            'failed' => const <String>{'sending'},
+            _ => const <String>{},
+          };
+    if (!predecessors.contains(current.status)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    return _applyOrdinary(
+      current.copyWith(
+        status: status,
+        transport: transport,
+        wireEnvelope: status == 'delivered' ? null : expectedEnvelope,
+        relayExpiresAt: relayExpiresAt,
+        custodyCheckedAt: null,
+        hiddenAt: tombstone && status == 'delivered' ? current.deletedAt : null,
+      ),
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.contactPeerId != expectedContactPeerId ||
+        current.isIncoming ||
+        current.isDeleted ||
+        !const <String>{'sending', 'failed'}.contains(current.status)) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    return _applyOrdinary(current.copyWith(wireEnvelope: null));
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    if (current.contactPeerId != expectedContactPeerId ||
+        current.isIncoming ||
+        current.isDeleted != isDeleteTombstone ||
+        current.status != 'sent') {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    return _applyOrdinary(
+      current.copyWith(
+        status: 'failed',
+        transport: null,
+        relayExpiresAt: null,
+        custodyCheckedAt: null,
+      ),
+    );
+  }
+
+  Future<OutgoingOrdinaryMutationResult> _applyOrdinary(
+    ConversationMessage message,
+  ) async {
+    _messages[message.id] = message;
+    _messageChangeController.add(message);
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, message);
+  }
+
+  OutgoingOrdinaryMutationResult _ordinaryResult(
+    OutgoingOrdinaryMutationOutcome outcome,
+    ConversationMessage? message,
+  ) => OutgoingOrdinaryMutationResult(outcome: outcome, message: message);
+
   int get count => _messages.length;
 
   Iterable<ConversationMessage> _visibleMessagesForContact(
@@ -354,4 +584,11 @@ class InMemoryMessageRepository
       (message) => message.contactPeerId == contactPeerId && !message.isHidden,
     );
   }
+}
+
+bool _sameMessageSnapshot(ConversationMessage left, ConversationMessage right) {
+  final leftMap = left.toMap();
+  final rightMap = right.toMap();
+  return leftMap.length == rightMap.length &&
+      leftMap.entries.every((entry) => rightMap[entry.key] == entry.value);
 }

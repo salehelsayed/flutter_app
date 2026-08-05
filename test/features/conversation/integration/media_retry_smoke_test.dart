@@ -1,11 +1,14 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -17,7 +20,10 @@ import '../../../features/contacts/domain/repositories/fake_contact_repository.d
 import '../../../core/bridge/fake_bridge.dart';
 
 // Reuse the same fake pattern as C.1 tests
-class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
+class _FakeMediaAttachmentRepository
+    implements
+        MediaAttachmentRepository,
+        OutgoingOrdinaryAttemptStagingRepository {
   final List<MediaAttachment> _attachments = [];
 
   void seedAttachments({
@@ -25,7 +31,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     required List<MediaAttachment> attachments,
   }) {
     for (final a in attachments) {
-      _attachments.add(a.copyWith(messageId: messageId));
+      _attachments.add(
+        a.copyWith(messageId: messageId, ownerLane: MediaOwnerLane.direct),
+      );
     }
   }
 
@@ -34,7 +42,9 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     String messageId, {
     required MediaOwnerLane owner,
   }) async {
-    return _attachments.where((a) => a.messageId == messageId).toList();
+    return _attachments
+        .where((a) => a.messageId == messageId && a.ownerLane == owner)
+        .toList();
   }
 
   @override
@@ -42,11 +52,12 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
   }) async {
+    final stamped = attachment.copyWith(ownerLane: owner);
     final idx = _attachments.indexWhere((a) => a.id == attachment.id);
     if (idx >= 0) {
-      _attachments[idx] = attachment;
+      _attachments[idx] = stamped;
     } else {
-      _attachments.add(attachment);
+      _attachments.add(stamped);
     }
   }
 
@@ -71,7 +82,10 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     required MediaOwnerLane owner,
   }) async {
     final before = _attachments.length;
-    _attachments.removeWhere((attachment) => attachment.messageId == messageId);
+    _attachments.removeWhere(
+      (attachment) =>
+          attachment.messageId == messageId && attachment.ownerLane == owner,
+    );
     return before - _attachments.length;
   }
 
@@ -84,6 +98,7 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
     for (var i = 0; i < _attachments.length; i++) {
       final attachment = _attachments[i];
       if (attachment.messageId == messageId &&
+          attachment.ownerLane == owner &&
           attachment.downloadStatus == 'upload_pending') {
         _attachments[i] = attachment.copyWith(downloadStatus: 'upload_failed');
         count++;
@@ -97,11 +112,159 @@ class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
   @override
   Future<List<MediaAttachment>> getUploadPendingAttachments({
     required MediaOwnerLane owner,
-  }) async => [];
+  }) async => _attachments
+      .where(
+        (attachment) =>
+            attachment.ownerLane == owner &&
+            attachment.downloadStatus == 'upload_pending',
+      )
+      .toList();
   @override
   Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
   @override
   Future<void> updateLocalPath(String id, String localPath) async {}
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttemptWithMedia({
+    required OutgoingTransportMutationRepository messageMutationRepository,
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    final ids = attachments.map((attachment) => attachment.id).toSet();
+    final staleProjection = _attachments
+        .where(
+          (attachment) =>
+              attachment.messageId == staged.id &&
+              attachment.ownerLane == MediaOwnerLane.direct &&
+              !ids.contains(attachment.id),
+        )
+        .toList(growable: false);
+    final invalid =
+        attachments.isEmpty ||
+        ids.length != attachments.length ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+        kind == OutgoingOrdinaryAttemptKind.tombstoneRetry ||
+        attachments.any(
+          (attachment) =>
+              attachment.id.isEmpty ||
+              attachment.messageId != staged.id ||
+              (attachment.ownerLane != null &&
+                  attachment.ownerLane != MediaOwnerLane.direct),
+        ) ||
+        staleProjection.any(
+          (attachment) =>
+              attachment.downloadStatus != 'upload_pending' ||
+              attachment.size != 0 ||
+              attachment.contentHash != null ||
+              attachment.encryptionKeyBase64 != null ||
+              attachment.encryptionNonce != null ||
+              attachment.encryptionScheme != null,
+        ) ||
+        (kind == OutgoingOrdinaryAttemptKind.fresh &&
+            _attachments.any(
+              (attachment) =>
+                  attachment.messageId == staged.id &&
+                  attachment.ownerLane == MediaOwnerLane.direct &&
+                  ids.contains(attachment.id),
+            )) ||
+        attachments.any((attachment) {
+          final existingIndex = _attachments.indexWhere(
+            (candidate) => candidate.id == attachment.id,
+          );
+          final existing = existingIndex < 0
+              ? null
+              : _attachments[existingIndex];
+          return existing != null &&
+              (existing.messageId != staged.id ||
+                  existing.ownerLane != MediaOwnerLane.direct);
+        });
+    if (invalid) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    final result = await messageMutationRepository.stageOutgoingOrdinaryAttempt(
+      expected: expected,
+      staged: staged,
+      kind: kind,
+    );
+    if (!result.authorizesTransport) return result;
+    if (result.outcome == OutgoingOrdinaryMutationOutcome.idempotent &&
+        attachments.any((attachment) {
+          final existingIndex = _attachments.indexWhere(
+            (candidate) => candidate.id == attachment.id,
+          );
+          final existing = existingIndex < 0
+              ? null
+              : _attachments[existingIndex];
+          return existing == null ||
+              !_sameOrdinaryOutgoingAttachmentAttempt(
+                existing,
+                attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+              );
+        })) {
+      return const OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+      );
+    }
+    for (final stale in staleProjection) {
+      _attachments.removeWhere((attachment) => attachment.id == stale.id);
+    }
+    for (final attachment in attachments) {
+      final stamped = attachment.copyWith(ownerLane: MediaOwnerLane.direct);
+      final index = _attachments.indexWhere(
+        (candidate) => candidate.id == stamped.id,
+      );
+      if (index < 0) {
+        _attachments.add(stamped);
+      } else {
+        final current = _attachments[index];
+        _attachments[index] = stamped.copyWith(
+          isBookmarked: current.isBookmarked,
+          lastPlaybackPositionMs: current.lastPlaybackPositionMs,
+        );
+      }
+    }
+    final committed = _attachments
+        .where(
+          (attachment) =>
+              attachment.messageId == staged.id &&
+              attachment.ownerLane == MediaOwnerLane.direct,
+        )
+        .toList(growable: false);
+    return OutgoingOrdinaryMutationResult(
+      outcome:
+          result.outcome == OutgoingOrdinaryMutationOutcome.idempotent &&
+              staleProjection.isNotEmpty
+          ? OutgoingOrdinaryMutationOutcome.applied
+          : result.outcome,
+      message: result.message?.copyWith(media: committed),
+    );
+  }
+}
+
+bool _sameOrdinaryOutgoingAttachmentAttempt(
+  MediaAttachment current,
+  MediaAttachment candidate,
+) {
+  final currentMap = current.toMap()
+    ..remove('is_bookmarked')
+    ..remove('last_playback_position_ms')
+    ..['upload_retry_count'] = current.uploadRetryCount ?? 0
+    ..['download_retry_count'] = current.downloadRetryCount ?? 0;
+  final candidateMap = candidate.toMap()
+    ..remove('is_bookmarked')
+    ..remove('last_playback_position_ms')
+    ..['upload_retry_count'] = candidate.uploadRetryCount ?? 0
+    ..['download_retry_count'] = candidate.downloadRetryCount ?? 0;
+  return currentMap.length == candidateMap.length &&
+      currentMap.entries.every(
+        (entry) => candidateMap[entry.key] == entry.value,
+      );
 }
 
 const _testTs = '2026-01-01T00:00:00.000Z';
@@ -147,6 +310,7 @@ void main() {
           senderPeerId: 'peer-alice',
           senderUsername: 'Alice',
           messageId: 'msg-smoke-stable-001',
+          preassignedMessageIdIsFresh: true,
           timestamp: _testTs,
           bridge: FakeBridge(
             initialResponses: {

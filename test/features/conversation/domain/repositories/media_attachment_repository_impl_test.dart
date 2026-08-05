@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
@@ -11,8 +12,10 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
@@ -135,6 +138,622 @@ void main() {
       fixture.repo.saveAttachment(attachment, owner: MediaOwnerLane.direct);
 
   group('MediaAttachmentRepositoryImpl', () {
+    test(
+      'ordinary media attempt stages parent and attachments atomically or writes nothing',
+      () async {
+        ConversationMessage outgoing({
+          required String id,
+          String text = 'ordinary media',
+          String status = 'sending',
+          String? wireEnvelope = 'envelope-v1',
+          String? editedAt,
+          String? transport,
+          int? relayExpiresAt,
+          String? custodyCheckedAt,
+        }) => ConversationMessage(
+          id: id,
+          contactPeerId: 'peer-ordinary',
+          senderPeerId: 'peer-local',
+          text: text,
+          timestamp: '2026-08-05T10:00:00.000Z',
+          status: status,
+          isIncoming: false,
+          createdAt: '2026-08-05T10:00:00.000Z',
+          editedAt: editedAt,
+          transport: transport,
+          wireEnvelope: wireEnvelope,
+          relayExpiresAt: relayExpiresAt,
+          custodyCheckedAt: custodyCheckedAt,
+        );
+
+        MediaAttachment attemptAttachment({
+          required String id,
+          required String messageId,
+          required String key,
+          String mime = 'image/jpeg',
+          int size = 101,
+        }) => makeAttachment(
+          id: id,
+          messageId: messageId,
+          mime: mime,
+          size: size,
+          mediaType: mime.startsWith('video/') ? 'video' : 'image',
+          downloadStatus: 'upload_pending',
+          localPath: 'pending_uploads/$messageId/$id.bin',
+          encryptionKeyBase64: key,
+          encryptionNonce: 'nonce-$id',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+        Future<void> expectFreshPair(String messageId) async {
+          final attachment = attemptAttachment(
+            id: '$messageId-attachment',
+            messageId: messageId,
+            key: 'key-$messageId',
+          );
+          final staged = await fixture.repo
+              .stageOutgoingOrdinaryAttemptWithMedia(
+                messageMutationRepository:
+                    fixture.messageRepo as OutgoingTransportMutationRepository,
+                expected: null,
+                staged: outgoing(id: messageId),
+                attachments: <MediaAttachment>[attachment],
+                kind: OutgoingOrdinaryAttemptKind.fresh,
+              );
+          expect(staged.outcome, OutgoingOrdinaryMutationOutcome.applied);
+          expect(staged.message!.id, messageId);
+          expect(staged.message!.wireEnvelope, 'envelope-v1');
+          expect(staged.message!.media.map((media) => media.id), <String>[
+            '$messageId-attachment',
+          ]);
+          expect(
+            await fixture.secureKeyStore.read(
+              mediaAttachmentEncryptionKeyStoreName('$messageId-attachment'),
+            ),
+            'key-$messageId',
+          );
+        }
+
+        // Generated and explicitly preassigned caller-owned IDs both use the
+        // same insert-only fresh authority.
+        await expectFreshPair('generated-fresh-parent');
+        await expectFreshPair('preassigned-fresh-parent');
+
+        // A legacy zero-byte upload placeholder can exist without its parent
+        // after the old split writer crashed. Explicit fresh authority replaces
+        // only that non-cryptographic placeholder inside the same transaction.
+        const placeholderParentId = 'fresh-placeholder-parent';
+        const placeholderId = 'legacy-zero-byte-placeholder';
+        await fixture.db.insert(
+          'media_attachments',
+          makeAttachment(
+            id: placeholderId,
+            messageId: placeholderParentId,
+            size: 0,
+            downloadStatus: 'upload_pending',
+            localPath: '/tmp/legacy-placeholder.jpg',
+          ).copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+        );
+        final replacement = attemptAttachment(
+          id: 'fresh-placeholder-replacement',
+          messageId: placeholderParentId,
+          key: 'fresh-placeholder-key',
+        );
+        final replacedPlaceholder = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: null,
+              staged: outgoing(id: placeholderParentId),
+              attachments: <MediaAttachment>[replacement],
+              kind: OutgoingOrdinaryAttemptKind.fresh,
+            );
+        expect(
+          replacedPlaceholder.outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        expect(await rawRow(placeholderId), isNull);
+        expect(
+          (await rawRow(replacement.id))?['download_status'],
+          'upload_pending',
+        );
+
+        // The compatibility exception is deliberately narrow: any durable,
+        // hashed, or encrypted extra row is authoritative projection state and
+        // cannot be discarded by a fresh attempt.
+        final refusedLegacyRows = <({String label, MediaAttachment attachment})>[
+          (
+            label: 'positive-size',
+            attachment: makeAttachment(
+              id: 'legacy-positive-size',
+              messageId: 'fresh-refused-positive-size',
+              size: 1,
+              downloadStatus: 'upload_pending',
+            ),
+          ),
+          (
+            label: 'hashed',
+            attachment:
+                makeAttachment(
+                  id: 'legacy-hashed',
+                  messageId: 'fresh-refused-hashed',
+                  size: 0,
+                  downloadStatus: 'upload_pending',
+                ).copyWith(
+                  contentHash:
+                      'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                ),
+          ),
+          (
+            label: 'thumbnail-hashed',
+            attachment:
+                makeAttachment(
+                  id: 'legacy-thumbnail-hashed',
+                  messageId: 'fresh-refused-thumbnail-hashed',
+                  size: 0,
+                  downloadStatus: 'upload_pending',
+                ).copyWith(
+                  thumbnailHash:
+                      'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                ),
+          ),
+          (
+            label: 'encrypted',
+            attachment: makeAttachment(
+              id: 'legacy-encrypted',
+              messageId: 'fresh-refused-encrypted',
+              size: 0,
+              downloadStatus: 'upload_pending',
+              encryptionKeyBase64: 'legacy-encrypted-key',
+              encryptionNonce: 'legacy-encrypted-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+          ),
+        ];
+        for (final fixtureCase in refusedLegacyRows) {
+          final stale = fixtureCase.attachment.copyWith(
+            ownerLane: MediaOwnerLane.direct,
+          );
+          await fixture.db.insert('media_attachments', stale.toMap());
+          final staleBefore = await rawRow(stale.id);
+          final candidate = attemptAttachment(
+            id: 'replacement-${fixtureCase.label}',
+            messageId: stale.messageId,
+            key: 'replacement-key-${fixtureCase.label}',
+          );
+          final refused = await fixture.repo
+              .stageOutgoingOrdinaryAttemptWithMedia(
+                messageMutationRepository:
+                    fixture.messageRepo as OutgoingTransportMutationRepository,
+                expected: null,
+                staged: outgoing(id: stale.messageId),
+                attachments: <MediaAttachment>[candidate],
+                kind: OutgoingOrdinaryAttemptKind.fresh,
+              );
+          expect(
+            refused.outcome,
+            OutgoingOrdinaryMutationOutcome.refused,
+            reason: fixtureCase.label,
+          );
+          expect(
+            await fixture.messageRepo.getMessage(stale.messageId),
+            isNull,
+            reason: fixtureCase.label,
+          );
+          expect(
+            await rawRow(stale.id),
+            staleBefore,
+            reason: fixtureCase.label,
+          );
+          expect(await rawRow(candidate.id), isNull, reason: fixtureCase.label);
+          expect(
+            await fixture.secureKeyStore.containsKey(
+              mediaAttachmentEncryptionKeyStoreName(candidate.id),
+            ),
+            false,
+            reason: fixtureCase.label,
+          );
+        }
+
+        const existingId = 'existing-attempt-parent';
+        final expectedExisting = outgoing(
+          id: existingId,
+          status: 'failed',
+          wireEnvelope: 'old-envelope',
+          transport: 'direct',
+          relayExpiresAt: 99,
+          custodyCheckedAt: '2026-08-05T10:01:00.000Z',
+        );
+        await fixture.db.insert('messages', expectedExisting.toMap());
+        final existingAttachment = attemptAttachment(
+          id: 'existing-attempt-attachment',
+          messageId: existingId,
+          key: 'existing-attempt-key',
+        );
+        final stagedExisting = expectedExisting.copyWith(
+          status: 'sending',
+          transport: null,
+          wireEnvelope: 'existing-envelope-v2',
+          relayExpiresAt: null,
+          custodyCheckedAt: null,
+        );
+        final existingResult = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: expectedExisting,
+              staged: stagedExisting,
+              attachments: <MediaAttachment>[existingAttachment],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(existingResult.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(existingResult.message!.wireEnvelope, 'existing-envelope-v2');
+        expect(existingResult.message!.media.single.id, existingAttachment.id);
+
+        // An uncertain retry may repair a missing secure-store key while the
+        // already-committed parent/media projection is idempotent. Successful
+        // idempotence authorizes transport and must retain that repaired key.
+        final existingKeyName = mediaAttachmentEncryptionKeyStoreName(
+          existingAttachment.id,
+        );
+        await fixture.secureKeyStore.delete(existingKeyName);
+        expect(
+          await fixture.secureKeyStore.containsKey(existingKeyName),
+          false,
+        );
+        final idempotentExisting = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: expectedExisting,
+              staged: stagedExisting,
+              attachments: <MediaAttachment>[existingAttachment],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(
+          idempotentExisting.outcome,
+          OutgoingOrdinaryMutationOutcome.idempotent,
+        );
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'existing-attempt-key',
+        );
+
+        // A crossed uncertain retry has the same stable secure:<id> SQL
+        // reference even when it carries different raw key material. The
+        // durable envelope still owns the original key; idempotence may
+        // authorize that envelope, but must not silently rotate its key.
+        final conflictingIdempotent = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: expectedExisting,
+              staged: stagedExisting,
+              attachments: <MediaAttachment>[
+                existingAttachment.copyWith(
+                  encryptionKeyBase64: 'crossed-idempotent-key',
+                ),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(
+          conflictingIdempotent.outcome,
+          OutgoingOrdinaryMutationOutcome.idempotent,
+        );
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'existing-attempt-key',
+        );
+        expect(
+          conflictingIdempotent.message!.media.single.encryptionKeyBase64,
+          'existing-attempt-key',
+        );
+
+        // Legacy placeholder replacement belongs only to explicit fresh
+        // authority. An existing retry must not turn an otherwise-idempotent
+        // parent into an applied cleanup that could retain a crossed raw key.
+        const existingRetryPlaceholderId = 'existing-retry-legacy-placeholder';
+        await fixture.db.insert(
+          'media_attachments',
+          makeAttachment(
+            id: existingRetryPlaceholderId,
+            messageId: existingId,
+            size: 0,
+            downloadStatus: 'upload_pending',
+          ).copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+        );
+        final refusedPlaceholderCleanup = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: expectedExisting,
+              staged: stagedExisting,
+              attachments: <MediaAttachment>[
+                existingAttachment.copyWith(
+                  encryptionKeyBase64: 'crossed-placeholder-key',
+                ),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(
+          refusedPlaceholderCleanup.outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(await rawRow(existingRetryPlaceholderId), isNotNull);
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'existing-attempt-key',
+        );
+        expect(
+          await fixture.db.delete(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[existingRetryPlaceholderId],
+          ),
+          1,
+        );
+
+        // A caller that still owns the exact failed predecessor may stage a
+        // genuinely new envelope/key pair. Only the idempotent case restores
+        // a conflict; an applied CAS retains the replacement key.
+        expect(
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{'status': 'failed'},
+            where: 'id = ?',
+            whereArgs: <Object?>[existingId],
+          ),
+          1,
+        );
+        final rotationExpected = stagedExisting.copyWith(status: 'failed');
+        final rotatedStage = rotationExpected.copyWith(
+          status: 'sending',
+          wireEnvelope: 'existing-envelope-v3',
+        );
+        final appliedRotation = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: rotationExpected,
+              staged: rotatedStage,
+              attachments: <MediaAttachment>[
+                existingAttachment.copyWith(
+                  encryptionKeyBase64: 'existing-attempt-key-v3',
+                ),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(
+          appliedRotation.outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        expect(appliedRotation.message!.wireEnvelope, 'existing-envelope-v3');
+        expect(
+          await fixture.secureKeyStore.read(existingKeyName),
+          'existing-attempt-key-v3',
+        );
+
+        const editId = 'edit-attempt-parent';
+        final expectedEdit = outgoing(
+          id: editId,
+          text: 'before edit',
+          status: 'delivered',
+          wireEnvelope: null,
+          transport: 'direct',
+        );
+        await fixture.db.insert('messages', expectedEdit.toMap());
+        final edited = expectedEdit.copyWith(
+          text: 'after edit',
+          status: 'sending',
+          editedAt: '2026-08-05T10:02:00.000Z',
+          transport: null,
+          wireEnvelope: 'edit-envelope',
+        );
+        final editAttachment = attemptAttachment(
+          id: 'edit-attempt-attachment',
+          messageId: editId,
+          key: 'edit-attempt-key',
+        );
+        final editResult = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: expectedEdit,
+              staged: edited,
+              attachments: <MediaAttachment>[editAttachment],
+              kind: OutgoingOrdinaryAttemptKind.edit,
+            );
+        expect(editResult.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(editResult.message!.text, 'after edit');
+        expect(editResult.message!.editedAt, edited.editedAt);
+        expect(editResult.message!.media.single.id, editAttachment.id);
+
+        // A crossed attempt may prepare a different key, but the stale parent
+        // snapshot cannot commit envelope B or projection B, and compensation
+        // restores the key paired with attempt A.
+        const crossedId = 'crossed-attempt-parent';
+        final crossedExpected = outgoing(
+          id: crossedId,
+          status: 'failed',
+          wireEnvelope: 'crossed-old-envelope',
+        );
+        await fixture.db.insert('messages', crossedExpected.toMap());
+        final attachmentA = attemptAttachment(
+          id: 'crossed-attempt-attachment',
+          messageId: crossedId,
+          key: 'crossed-key-a',
+          mime: 'image/jpeg',
+          size: 201,
+        );
+        final attachmentB = attemptAttachment(
+          id: attachmentA.id,
+          messageId: crossedId,
+          key: 'crossed-key-b',
+          mime: 'video/mp4',
+          size: 202,
+        );
+        final attemptA = crossedExpected.copyWith(
+          status: 'sending',
+          wireEnvelope: 'crossed-envelope-a',
+        );
+        final attemptB = crossedExpected.copyWith(
+          status: 'sending',
+          wireEnvelope: 'crossed-envelope-b',
+        );
+        expect(
+          (await fixture.repo.stageOutgoingOrdinaryAttemptWithMedia(
+            messageMutationRepository:
+                fixture.messageRepo as OutgoingTransportMutationRepository,
+            expected: crossedExpected,
+            staged: attemptA,
+            attachments: <MediaAttachment>[attachmentA],
+            kind: OutgoingOrdinaryAttemptKind.existing,
+          )).outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        expect(
+          (await fixture.repo.stageOutgoingOrdinaryAttemptWithMedia(
+            messageMutationRepository:
+                fixture.messageRepo as OutgoingTransportMutationRepository,
+            expected: crossedExpected,
+            staged: attemptB,
+            attachments: <MediaAttachment>[attachmentB],
+            kind: OutgoingOrdinaryAttemptKind.existing,
+          )).outcome,
+          OutgoingOrdinaryMutationOutcome.preserved,
+        );
+        final crossedParent = await fixture.messageRepo.getMessage(crossedId);
+        final crossedMedia = await fixture.repo.getAttachmentsForMessage(
+          crossedId,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(crossedParent!.wireEnvelope, 'crossed-envelope-a');
+        expect(crossedMedia.single.mime, 'image/jpeg');
+        expect(crossedMedia.single.size, 201);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(attachmentA.id),
+          ),
+          'crossed-key-a',
+        );
+
+        // An injected attachment insert crash rolls the parent insert back and
+        // the repository compensates the prepared secure key.
+        const crashParentId = 'atomic-crash-parent';
+        const crashAttachmentId = 'atomic-crash-attachment';
+        await fixture.db.execute(
+          "CREATE TRIGGER reject_atomic_crash_attachment "
+          "BEFORE INSERT ON media_attachments "
+          "WHEN NEW.id = '$crashAttachmentId' "
+          "BEGIN SELECT RAISE(ABORT, 'injected atomic crash'); END",
+        );
+        await expectLater(
+          fixture.repo.stageOutgoingOrdinaryAttemptWithMedia(
+            messageMutationRepository:
+                fixture.messageRepo as OutgoingTransportMutationRepository,
+            expected: null,
+            staged: outgoing(id: crashParentId),
+            attachments: <MediaAttachment>[
+              attemptAttachment(
+                id: crashAttachmentId,
+                messageId: crashParentId,
+                key: 'crash-key',
+              ),
+            ],
+            kind: OutgoingOrdinaryAttemptKind.fresh,
+          ),
+          throwsA(isA<DatabaseException>()),
+        );
+        expect(await fixture.messageRepo.getMessage(crashParentId), isNull);
+        expect(await rawRow(crashAttachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(crashAttachmentId),
+          ),
+          isFalse,
+        );
+
+        // Fresh collision and an update-only removal both write neither side
+        // and leave no prepared key behind.
+        const collisionId = 'fresh-collision-parent';
+        final collisionCurrent = outgoing(
+          id: collisionId,
+          status: 'delivered',
+          wireEnvelope: null,
+        );
+        await fixture.db.insert('messages', collisionCurrent.toMap());
+        const collisionAttachmentId = 'fresh-collision-attachment';
+        final collision = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: null,
+              staged: outgoing(id: collisionId),
+              attachments: <MediaAttachment>[
+                attemptAttachment(
+                  id: collisionAttachmentId,
+                  messageId: collisionId,
+                  key: 'collision-key',
+                ),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.fresh,
+            );
+        expect(collision.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(
+          (await fixture.messageRepo.getMessage(collisionId))!.status,
+          'delivered',
+        );
+        expect(await rawRow(collisionAttachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(collisionAttachmentId),
+          ),
+          isFalse,
+        );
+
+        const removedId = 'removed-before-stage-parent';
+        final removedExpected = outgoing(
+          id: removedId,
+          status: 'failed',
+          wireEnvelope: 'removed-old-envelope',
+        );
+        await fixture.db.insert('messages', removedExpected.toMap());
+        await fixture.db.delete(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[removedId],
+        );
+        const removedAttachmentId = 'removed-before-stage-attachment';
+        final removed = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: removedExpected,
+              staged: removedExpected.copyWith(
+                status: 'sending',
+                wireEnvelope: 'removed-new-envelope',
+              ),
+              attachments: <MediaAttachment>[
+                attemptAttachment(
+                  id: removedAttachmentId,
+                  messageId: removedId,
+                  key: 'removed-key',
+                ),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(removed.outcome, OutgoingOrdinaryMutationOutcome.removed);
+        expect(await fixture.messageRepo.getMessage(removedId), isNull);
+        expect(await rawRow(removedAttachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(removedAttachmentId),
+          ),
+          isFalse,
+        );
+      },
+    );
+
     test(
       'all public row writers queue behind exact lifecycle qualification',
       () async {

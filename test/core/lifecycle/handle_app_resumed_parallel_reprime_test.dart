@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
+import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -124,6 +125,52 @@ void main() {
         expect(result, isTrue);
         expect(fakeP2PService.performImmediateHealthCheckCallCount, 1);
         expect(fakeP2PService.drainOfflineInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'canonical mode awaits the truthful full direct drain outcome',
+      () async {
+        bool? canonicalComplete;
+        fakeP2PService.fullInboxDrainOutcome = const DirectInboxDrainOutcome(
+          isSuccessful: true,
+          hasMore: false,
+        );
+
+        final result = await handleAppResumed(
+          bridge: fakeBridge,
+          p2pService: fakeP2PService,
+          awaitCanonicalInboxDrains: true,
+          onCanonicalInboxDrainsSettled: (complete) {
+            canonicalComplete = complete;
+          },
+        );
+
+        expect(result, isTrue);
+        expect(fakeP2PService.drainOfflineInboxFullyCallCount, 1);
+        expect(canonicalComplete, isTrue);
+      },
+    );
+
+    test(
+      'canonical mode reports retained direct pages as incomplete',
+      () async {
+        bool? canonicalComplete;
+        fakeP2PService.fullInboxDrainOutcome = const DirectInboxDrainOutcome(
+          isSuccessful: true,
+          hasMore: true,
+        );
+
+        await handleAppResumed(
+          bridge: fakeBridge,
+          p2pService: fakeP2PService,
+          awaitCanonicalInboxDrains: true,
+          onCanonicalInboxDrainsSettled: (complete) {
+            canonicalComplete = complete;
+          },
+        );
+
+        expect(canonicalComplete, isFalse);
       },
     );
 

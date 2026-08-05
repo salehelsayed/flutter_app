@@ -15,6 +15,7 @@ import 'package:flutter_app/core/database/helpers/group_rejoin_state_db_helpers.
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reaction_terminal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart';
@@ -246,6 +247,8 @@ import 'package:flutter_app/core/notifications/durable_notification_tone_lease.d
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/flutter_notification_service.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_bridge.dart';
+import 'package:flutter_app/core/notifications/ios_notification_recovery_coordinator.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_bridge.dart';
 import 'package:flutter_app/core/notifications/dropped_push_recovery_coordinator.dart';
@@ -1073,6 +1076,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     projectDirectConversationRead;
 
     // Create message repository
+    late final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
     final messageRepository = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (contactPeerId) =>
@@ -1135,6 +1139,78 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               ),
       dbUpdateWireEnvelope: (id, wireEnvelope) =>
           dbUpdateWireEnvelope(db, id, wireEnvelope),
+      dbStageOutgoingOrdinaryAttempt:
+          ({required expectedRow, required stagedRow, required kind}) =>
+              dbStageOutgoingOrdinaryAttempt(
+                db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+              ),
+      dbSettleOutgoingOrdinaryTransport:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbSettleOutgoingOrdinaryDeleteTombstone:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+          }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          ),
+      dbInvalidateOutgoingOrdinaryEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+          }) => dbInvalidateOutgoingOrdinaryEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+          ),
+      dbQuarantineUnsafeLegacyOutgoingEnvelope:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required isDeleteTombstone,
+          }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            isDeleteTombstone: isDeleteTombstone,
+          ),
+      loadOutgoingOrdinaryMedia: (messageId) => mediaAttachmentRepository
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct),
       dbInvalidateWireEnvelopeBeforePrivateUpload:
           ({
             required messageId,
@@ -1529,9 +1605,29 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // Create media attachment repository (228: owner-lane-aware seams; the
     // save closure is the atomic local-state-preserving merge, never a blind
     // INSERT OR REPLACE).
-    final mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
+    mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState: (row) =>
           dbSaveMediaAttachmentPreservingLocalState(db, row),
+      dbStageOutgoingOrdinaryAttemptWithMedia:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required kind,
+          }) => dbStageOutgoingOrdinaryAttemptWithMedia(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            kind: kind,
+          ),
+      publishOutgoingOrdinaryMutation:
+          ({required messageId, required outcome, required committedMedia}) =>
+              messageRepository.publishOutgoingOrdinaryMutation(
+                messageId: messageId,
+                outcome: outcome,
+                committedMedia: committedMedia,
+              ),
       dbLoadMediaForMessage: (messageId, ownerLane) =>
           dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
       dbLoadMediaById: (id) => dbLoadMediaById(db, id),
@@ -2768,8 +2864,24 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // The repository read boundary and every foreground group presentation
     // share this key. Capturing the currently managed generation before the SQL
     // read commit therefore cannot race a foreground final-show call.
+    final iosNotificationRecoveryEnabled =
+        !kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile;
+    final iosNotificationRecoveryCoordinator = iosNotificationRecoveryEnabled
+        ? IosNotificationRecoveryCoordinator(
+            platformEnabled: true,
+            bridge: MethodChannelIosNotificationRecoveryBridge(),
+            loadActiveAccountPeerId: () async =>
+                (await repository.loadIdentity())?.peerId,
+            loadCanonicalState: () => dbLoadCanonicalNotificationBadgeState(db),
+          )
+        : null;
     final notificationService = FlutterNotificationService(
       requestApplePermissions: !kE2ETestMode,
+      onNotificationUpdated: iosNotificationRecoveryCoordinator?.reconcile,
+      onConversationCleared: iosNotificationRecoveryCoordinator == null
+          ? null
+          : (_) => iosNotificationRecoveryCoordinator.reconcile(),
+      onAllNotificationsCleared: iosNotificationRecoveryCoordinator?.reconcile,
     );
     final groupNotificationPresentationCoordinator =
         GroupNotificationPresentationCoordinator();
@@ -3647,6 +3759,15 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       oldPhoneLeaseCleanup: buildBridgeMigrationCutoverLeaseCleanup(
         bridge: bridge,
         clearLocalStalePushToken: () async {
+          try {
+            await iosNotificationRecoveryCoordinator?.clearAccount();
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'ACCOUNT_MIGRATION_IOS_NOTIFICATION_CLEAR_FAILED',
+              details: {'errorType': error.runtimeType.toString()},
+            );
+          }
           await pushTokenStore.clearToken();
           await canonicalRuntimeBindingCoordinator?.retireAccount();
           await directReactionNotificationProjection?.clearForLogout();
@@ -6238,6 +6359,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         reactionRepository: reactionRepository,
         isDesktop: isDesktop,
         notificationService: notificationService,
+        iosNotificationRecoveryCoordinator: iosNotificationRecoveryCoordinator,
         retryDirectNotificationProjection: directNotificationOwner!.retryNow,
         groupNotificationPresentationCoordinator:
             groupNotificationPresentationCoordinator,
@@ -6308,7 +6430,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         },
         deferredRuntimeStartup: startLiveServicesIfAllowed,
         ingestStagedPushEnvelopes: ({required String source}) async {
-          await ingestStagedPushEnvelopesUseCase(source: source);
+          final result = await ingestStagedPushEnvelopesUseCase(source: source);
+          return result.isCanonicalStateComplete;
         },
         firebaseReadiness: firebaseReadiness,
         onAppDetached: () async {

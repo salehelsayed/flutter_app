@@ -218,6 +218,7 @@ Future<Map<String, Object?>> _runSender({
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
       messageId: request.messageId,
+      preassignedMessageIdIsFresh: true,
       blobId: request.attachmentId,
     );
     if (sendResult != SendVoiceMessageResult.success || sentMessage == null) {

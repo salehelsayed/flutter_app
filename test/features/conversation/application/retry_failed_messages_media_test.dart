@@ -3,12 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
-import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../domain/repositories/fake_message_repository.dart';
+import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
@@ -17,106 +17,17 @@ import '../../../core/bridge/fake_bridge.dart';
 // ---------------------------------------------------------------------------
 // Test-local FakeMediaAttachmentRepository
 // ---------------------------------------------------------------------------
-class _FakeMediaAttachmentRepository implements MediaAttachmentRepository {
-  final List<MediaAttachment> _attachments = [];
-
-  // Call tracking
-  int getAttachmentsForMessageCallCount = 0;
-  int saveAttachmentCallCount = 0;
+class _FakeMediaAttachmentRepository extends FakeMediaAttachmentRepository {
   String? lastQueriedMessageId;
-
-  /// Seed attachments for a specific message. Can be called multiple times
-  /// for different messages.
-  void seedAttachments({
-    required String messageId,
-    required List<MediaAttachment> attachments,
-  }) {
-    for (final a in attachments) {
-      _attachments.add(a.copyWith(messageId: messageId));
-    }
-  }
 
   @override
   Future<List<MediaAttachment>> getAttachmentsForMessage(
     String messageId, {
     required MediaOwnerLane owner,
   }) async {
-    getAttachmentsForMessageCallCount++;
     lastQueriedMessageId = messageId;
-    return _attachments.where((a) => a.messageId == messageId).toList();
+    return super.getAttachmentsForMessage(messageId, owner: owner);
   }
-
-  @override
-  Future<void> saveAttachment(
-    MediaAttachment attachment, {
-    required MediaOwnerLane owner,
-  }) async {
-    saveAttachmentCallCount++;
-    final idx = _attachments.indexWhere((a) => a.id == attachment.id);
-    if (idx >= 0) {
-      _attachments[idx] = attachment;
-    } else {
-      _attachments.add(attachment);
-    }
-  }
-
-  @override
-  Future<Map<String, List<MediaAttachment>>> getAttachmentsForMessages(
-    List<String> messageIds, {
-    required MediaOwnerLane owner,
-  }) async {
-    final result = <String, List<MediaAttachment>>{};
-    for (final messageId in messageIds) {
-      final attachments = await getAttachmentsForMessage(
-        messageId,
-        owner: MediaOwnerLane.direct,
-      );
-      if (attachments.isNotEmpty) {
-        result[messageId] = attachments;
-      }
-    }
-    return result;
-  }
-
-  @override
-  Future<int> deleteAttachmentsForContact(String contactPeerId) async => 0;
-
-  @override
-  Future<int> deleteAttachmentsForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async => 0;
-
-  @override
-  Future<int> markUploadPendingAttachmentsFailedForMessage(
-    String messageId, {
-    required MediaOwnerLane owner,
-  }) async {
-    var count = 0;
-    for (var i = 0; i < _attachments.length; i++) {
-      final attachment = _attachments[i];
-      if (attachment.messageId == messageId &&
-          attachment.downloadStatus == 'upload_pending') {
-        _attachments[i] = attachment.copyWith(downloadStatus: 'upload_failed');
-        count++;
-      }
-    }
-    return count;
-  }
-
-  @override
-  Future<List<MediaAttachment>> getPendingDownloads() async => const [];
-
-  @override
-  Future<List<MediaAttachment>> getUploadPendingAttachments({
-    required MediaOwnerLane owner,
-  }) async => [];
-
-  @override
-  Future<void> updateDownloadStatus(String id, String downloadStatus) async {}
-
-  @override
-  Future<void> updateLocalPath(String id, String localPath) async {}
 }
 
 // ---------------------------------------------------------------------------
@@ -261,9 +172,9 @@ void main() {
           mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
-        // One query resolves retry attachments, and the successful resend
-        // re-queries once more before clearing stale upload_pending rows.
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 2);
+        // One query resolves retry attachments. Atomic attempt staging returns
+        // the authoritative media projection without a post-settlement read.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 1);
         expect(mediaAttachmentRepo.lastQueriedMessageId, msg.id);
       },
     );
@@ -488,9 +399,9 @@ void main() {
         // msg1 (done attachments) → sent, msg2 (text-only) → sent,
         // msg3 (only pending) → skipped (re-upload branch, no local files)
         expect(count, 2);
-        // msg1 is queried twice (retry resolution + resend persistence),
-        // msg2 once, and msg3 once before the skip path.
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 4);
+        // Each row is queried once for retry resolution. Atomic staging
+        // returns msg1's committed media without a resend-persistence read.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 3);
       },
     );
 

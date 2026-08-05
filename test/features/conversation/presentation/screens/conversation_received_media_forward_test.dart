@@ -413,6 +413,7 @@ void main() {
             }),
             timestamp: '2026-07-10T11:01:00.000Z',
             isIncoming: true,
+            transport: 'direct',
           ),
           messageRepo: fixture.messageRepo,
         ),

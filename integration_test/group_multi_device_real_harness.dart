@@ -29,6 +29,7 @@ import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -38,6 +39,8 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -465,6 +468,12 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   bool reuseExistingIdentity = false,
   bool useFreshTransportIdentityForRestoredAccount = false,
   bool onJoinMetadataResyncEnabled = false,
+  Future<OutgoingOrdinaryMutationResult> Function({
+    required String messageId,
+    required OutgoingOrdinaryMutationOutcome outcome,
+    required List<MediaAttachment> committedMedia,
+  })?
+  publishOutgoingOrdinaryMutation,
 }) async {
   if (deleteExistingDb) {
     await deleteTestSecureStore(dbName);
@@ -790,6 +799,20 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
     dbSaveMediaAttachmentPreservingLocalState: (row) =>
         dbSaveMediaAttachmentPreservingLocalState(db, row),
+    dbStageOutgoingOrdinaryAttemptWithMedia:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required attachmentRows,
+          required kind,
+        }) => dbStageOutgoingOrdinaryAttemptWithMedia(
+          db,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          attachmentRows: attachmentRows,
+          kind: kind,
+        ),
+    publishOutgoingOrdinaryMutation: publishOutgoingOrdinaryMutation,
     dbLoadMediaForMessage: (messageId, ownerLane) =>
         dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
     dbLoadMediaById: (id) => dbLoadMediaById(db, id),

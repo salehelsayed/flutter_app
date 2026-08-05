@@ -23,6 +23,9 @@ void main() {
   FlutterNotificationService buildService({
     DurableConversationNotificationIdRegistry? registry,
     ConversationNotificationGenerationFactory? generationFactory,
+    NotificationRecoverySettlementCallback? onNotificationUpdated,
+    ConversationNotificationRecoverySettlementCallback? onConversationCleared,
+    NotificationRecoverySettlementCallback? onAllNotificationsCleared,
   }) {
     final resolvedRegistry =
         registry ??
@@ -32,6 +35,9 @@ void main() {
     return FlutterNotificationService(
       notificationIdRegistryResolver: () async => resolvedRegistry,
       notificationGenerationFactory: generationFactory,
+      onNotificationUpdated: onNotificationUpdated,
+      onConversationCleared: onConversationCleared,
+      onAllNotificationsCleared: onAllNotificationsCleared,
     );
   }
 
@@ -468,6 +474,92 @@ void main() {
 
     expect(log.last.method, 'cancelAll');
   });
+
+  test(
+    'iOS recovery owner callbacks distinguish update, conversation, and all-clear settlements',
+    () async {
+      final updated = <String>[];
+      final conversations = <String>[];
+      var allCleared = 0;
+      final service = buildService(
+        onNotificationUpdated: () async => updated.add('updated'),
+        onConversationCleared: (key) async => conversations.add(key),
+        onAllNotificationsCleared: () async => allCleared += 1,
+      );
+      await service.initialize();
+
+      await service.showMessageNotification(
+        contactPeerId: 'peer-shown',
+        senderUsername: 'Alice',
+        messageText: 'hello',
+      );
+      expect(
+        await service.replaceConversationNotificationGeneration(
+          'group:never-allocated',
+          'missing-generation',
+          const CanonicalConversationNotificationReplacement(
+            senderUsername: 'Family',
+            messageText: 'replacement',
+            routePayload: 'group:never-allocated|message:event',
+            contentKind: ConversationNotificationContentKind.message,
+            eventIdentity: 'event',
+          ),
+        ),
+        isFalse,
+      );
+      await service.cancelConversationNotification('peer-never-allocated');
+      expect(
+        await service.cancelConversationNotificationGeneration(
+          'group:generation-never-allocated',
+          'missing-generation',
+        ),
+        isFalse,
+      );
+      await service.clearDeliveredNotifications();
+
+      expect(updated, <String>['updated', 'updated']);
+      expect(conversations, <String>[
+        'peer-never-allocated',
+        'group:generation-never-allocated',
+      ]);
+      expect(allCleared, 1);
+    },
+  );
+
+  test(
+    'notification update settlement runs after a native show failure',
+    () async {
+      var settlements = 0;
+      final service = buildService(
+        onNotificationUpdated: () async => settlements += 1,
+      );
+      await service.initialize();
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, (MethodCall call) async {
+            log.add(call);
+            if (call.method == 'show') {
+              throw PlatformException(code: 'native_show_failed');
+            }
+            return null;
+          });
+
+      await expectLater(
+        service.showMessageNotification(
+          contactPeerId: 'peer-failed-show',
+          senderUsername: 'Alice',
+          messageText: 'hello',
+        ),
+        throwsA(
+          isA<PlatformException>().having(
+            (error) => error.code,
+            'code',
+            'native_show_failed',
+          ),
+        ),
+      );
+      expect(settlements, 1);
+    },
+  );
 
   test(
     'exact conversation cancellation uses the existing id without cancelAll or allocation',

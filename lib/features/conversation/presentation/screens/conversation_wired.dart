@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e_conversation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
@@ -3532,7 +3533,7 @@ class _ConversationWiredState extends State<ConversationWired>
                   snackText: l10n.upload_cancelled,
                 );
               } else {
-                await _persistMessageStatus(messageId, 'failed');
+                await _transitionSendingMessageToFailed(messageId);
               }
               return true;
             },
@@ -3792,8 +3793,9 @@ class _ConversationWiredState extends State<ConversationWired>
         // preserved — so `retryUnacked` + the delivery receipt converge it to
         // 'delivered', instead of dropping it to terminal 'failed' (a red Retry
         // that never clears even after the peer receives it). peerNotFound /
-        // dialFailed persist their wire envelope before the transport race, so
-        // the kept-'sent' row is getUnackedOutgoingMessages-eligible.
+        // dialFailed persist their wire envelope before the transport race and
+        // return that authoritative row, so the kept-'sent' row is
+        // getUnackedOutgoingMessages-eligible.
         // 185×187 (field-hit 2026-07-02): sendFailed is ALSO lane-eligible, but
         // ONLY in its terminal-rung shape (message != null — the use case
         // persisted the wire envelope). With the 183 keepalive latched, 187
@@ -3801,8 +3803,9 @@ class _ConversationWiredState extends State<ConversationWired>
         // 'direct_skipped_keepalive_drop' → _resultForFailureReason →
         // sendFailed; without this arm an offline sender regressed to the
         // pre-185 terminal 'failed' + Retry. The message != null guard keeps
-        // the NULL-shaped sendFailed returns (encrypt_failed/encrypt_error —
-        // no envelope, NOT self-healing) out of the lane.
+        // every NULL-shaped return (including defensive connectivity results
+        // and encrypt_failed/encrypt_error) out of the lane because it carries
+        // no envelope authority and is NOT self-healing.
         // nodeNotRunning is EXCLUDED: it returns before the envelope is
         // persisted, so its row is not lane-eligible and belongs in the failed /
         // retryFailedMessages lane.
@@ -3820,54 +3823,58 @@ class _ConversationWiredState extends State<ConversationWired>
             (result == SendChatMessageResult.peerNotFound ||
                 result == SendChatMessageResult.dialFailed ||
                 result == SendChatMessageResult.sendFailed) &&
-            (message != null ||
-                (senderOffline && result != SendChatMessageResult.sendFailed));
+            message != null;
 
         if (message != null) {
           final persistedMedia =
               displayMedia ?? uploadedAttachments ?? optimisticMedia;
-          // Override the terminal 'failed' the send use case stamped when the
-          // failure was purely our own offline state (keep it retriable).
-          final effectiveStatus = keepRetriable ? 'sent' : message.status;
-          final messageWithMedia = message.copyWith(
-            quotedMessageId: quotedMessageId,
-            media: persistedMedia ?? message.media,
-            status: effectiveStatus,
-          );
-          setState(() {
-            _upsertMessageById(messageWithMedia);
-          });
+          ConversationMessage? authoritativeMessage = message;
           if (keepRetriable &&
               !_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
-            // Status-only write (preserves the persisted wire envelope) — and it
-            // is the LAST status write, so it wins over the use case's 'failed'.
-            await _persistMessageStatus(message.id, 'sent');
+            authoritativeMessage = await _settleRetriableOrdinaryMessage(
+              message,
+            );
+          }
+          if (authoritativeMessage != null) {
+            final effectiveStatus =
+                keepRetriable &&
+                    _isOutgoingPrivateOneMoreLook(privateMediaPolicy)
+                ? 'sent'
+                : authoritativeMessage.status;
+            final messageWithMedia = authoritativeMessage.copyWith(
+              quotedMessageId: quotedMessageId,
+              media: persistedMedia ?? authoritativeMessage.media,
+              status: effectiveStatus,
+            );
+            setState(() {
+              _upsertMessageById(messageWithMedia);
+            });
+          } else {
+            _removeLocalMessage(message.id);
           }
           _scrollToBottom();
         } else {
-          final fallbackStatus = keepRetriable
-              ? 'sent'
-              : switch (result) {
-                  SendChatMessageResult.success => 'sent',
-                  _ => 'failed',
-                };
+          // A null result carries no durable envelope/transport authority. Keep
+          // the exact optimistic sending -> failed edge and then paint only the
+          // authoritative row that won that CAS.
+          final authoritativeMessage = await _transitionSendingMessageToFailed(
+            optimisticMessage.id,
+          );
           final resolvedMedia = displayMedia ?? uploadedAttachments;
-          if (resolvedMedia != null && resolvedMedia.isNotEmpty) {
+          if (authoritativeMessage != null &&
+              resolvedMedia != null &&
+              resolvedMedia.isNotEmpty) {
             // Re-point the on-screen optimistic message at the resolved absolute
             // durable copies (its picker temps were deleted post-upload).
             setState(() {
               _upsertMessageById(
-                optimisticMessage.copyWith(
-                  media: resolvedMedia,
-                  status: fallbackStatus,
-                ),
+                authoritativeMessage.copyWith(media: resolvedMedia),
               );
             });
+          } else if (authoritativeMessage != null) {
+            await _refreshMessageWithHydratedMedia(optimisticMessage.id);
           } else {
-            _updateLocalMessageStatus(optimisticMessage.id, fallbackStatus);
-          }
-          if (!_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
-            await _persistMessageStatus(optimisticMessage.id, fallbackStatus);
+            _removeLocalMessage(optimisticMessage.id);
           }
         }
 
@@ -4267,9 +4274,22 @@ class _ConversationWiredState extends State<ConversationWired>
     _draftText = commonSnapshot.draftText;
     _privateMediaPolicy = snapshot.privateMediaPolicy;
     _updateComposerState(restoreSnapshot: commonSnapshot, isUploading: false);
-    _updateLocalMessageStatus(optimisticMessageId, 'failed');
-    await _persistMessageStatus(optimisticMessageId, 'failed');
-    await _refreshMessageWithHydratedMedia(optimisticMessageId);
+    final authoritativeMessage = await _transitionSendingMessageToFailed(
+      optimisticMessageId,
+    );
+    if (authoritativeMessage == null) {
+      if (_isOutgoingPrivateOneMoreLook(snapshot.privateMediaPolicy)) {
+        // Preserve the established private-media composer retry projection
+        // when its insert failed before any durable parent existed. This is a
+        // local-only failed bubble; ordinary removed rows still disappear and
+        // no insert-capable fallback is reintroduced.
+        _updateLocalMessageStatus(optimisticMessageId, 'failed');
+      } else {
+        _removeLocalMessage(optimisticMessageId);
+      }
+    } else {
+      await _refreshMessageWithHydratedMedia(optimisticMessageId);
+    }
     if (commonSnapshot.pendingAttachments.isEmpty &&
         commonSnapshot.draftText.isNotEmpty) {
       _restoredFailedMessageId = optimisticMessageId;
@@ -4757,12 +4777,18 @@ class _ConversationWiredState extends State<ConversationWired>
         details: {'error': e.toString()},
       );
       final failedMessage = optimisticMessage.copyWith(status: 'failed');
-      try {
-        await widget.messageRepo.saveMessage(failedMessage);
-      } catch (_) {}
+      final authoritativeMessage = await _transitionSendingMessageToFailed(
+        optimisticMessage.id,
+      );
       if (mounted) {
         setState(() {
-          _upsertMessageById(failedMessage);
+          if (authoritativeMessage == null) {
+            _messages = _messages
+                .where((message) => message.id != failedMessage.id)
+                .toList(growable: false);
+          } else {
+            _upsertMessageById(authoritativeMessage);
+          }
           if (quotedMessageId != null) {
             _activeQuoteMessageId = quotedMessageId;
           }
@@ -4902,16 +4928,33 @@ class _ConversationWiredState extends State<ConversationWired>
             });
           }
         } else if (result == SendVoiceMessageResult.success) {
-          _updateLocalMessageStatus(optimisticMessage.id, 'sent');
-          await _persistMessageStatus(optimisticMessage.id, 'sent');
+          final authoritativeMessage = await _transitionSendingMessageToFailed(
+            optimisticMessage.id,
+          );
+          if (authoritativeMessage == null) {
+            _removeLocalMessage(optimisticMessage.id);
+          } else {
+            await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+          }
         } else if (result == SendVoiceMessageResult.uploadQueued) {
           _updateLocalMessageStatus(optimisticMessage.id, 'sending');
           await _refreshMessageWithHydratedMedia(optimisticMessage.id);
         } else {
-          _updateLocalMessageStatus(optimisticMessage.id, 'failed');
+          ConversationMessage? authoritativeMessage;
           if (result != SendVoiceMessageResult.uploadFailed ||
               _uploadRetryProjection == null) {
-            await _persistMessageStatus(optimisticMessage.id, 'failed');
+            authoritativeMessage = await _transitionSendingMessageToFailed(
+              optimisticMessage.id,
+            );
+          } else {
+            authoritativeMessage = await widget.messageRepo.getMessage(
+              optimisticMessage.id,
+            );
+          }
+          if (authoritativeMessage == null) {
+            _removeLocalMessage(optimisticMessage.id);
+          } else {
+            await _refreshMessageWithHydratedMedia(optimisticMessage.id);
           }
           if (quotedMessageId != null && mounted) {
             setState(() => _activeQuoteMessageId = quotedMessageId);
@@ -5513,15 +5556,60 @@ class _ConversationWiredState extends State<ConversationWired>
     });
   }
 
-  Future<void> _persistMessageStatus(String id, String status) async {
+  Future<ConversationMessage?> _transitionSendingMessageToFailed(
+    String id,
+  ) async {
     try {
-      await widget.messageRepo.updateMessageStatus(id, status);
+      await widget.messageRepo.conditionalTransitionStatus(
+        id,
+        fromStatus: 'sending',
+        toStatus: 'failed',
+      );
+      return widget.messageRepo.getMessage(id);
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CONV_FL_STATUS_UPDATE_ERROR',
-        details: {'error': e.toString(), 'status': status},
+        details: {'error': e.toString(), 'status': 'failed'},
       );
+      try {
+        return await widget.messageRepo.getMessage(id);
+      } catch (_) {
+        return null;
+      }
+    }
+  }
+
+  Future<ConversationMessage?> _settleRetriableOrdinaryMessage(
+    ConversationMessage message,
+  ) async {
+    final repository = widget.messageRepo;
+    final transportRepository =
+        repository is OutgoingTransportMutationRepository
+        ? repository as OutgoingTransportMutationRepository
+        : null;
+    final envelope = message.wireEnvelope;
+    if (transportRepository == null || envelope == null || envelope.isEmpty) {
+      return repository.getMessage(message.id);
+    }
+    try {
+      final result = await transportRepository.settleOutgoingOrdinaryTransport(
+        messageId: message.id,
+        expectedContactPeerId: message.contactPeerId,
+        expectedEnvelope: envelope,
+        status: 'sent',
+        transport: 'inbox',
+        relayExpiresAt: null,
+        mode: OutgoingOrdinarySettlementMode.live,
+      );
+      return result.message;
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_STATUS_UPDATE_ERROR',
+        details: {'error': e.toString(), 'status': 'sent'},
+      );
+      return repository.getMessage(message.id);
     }
   }
 

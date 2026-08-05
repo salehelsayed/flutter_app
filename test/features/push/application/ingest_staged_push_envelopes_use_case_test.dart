@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
@@ -89,7 +90,89 @@ RecoveredInboxReplayOutcome _rejected(String reasonCode) => (
 );
 
 void main() {
+  test(
+    'canonical completeness rejects retained and migration-deferred work',
+    () {
+      expect(
+        const IngestStagedPushEnvelopesResult.empty().isCanonicalStateComplete,
+        isTrue,
+      );
+      expect(
+        const IngestStagedPushEnvelopesResult(
+          attempted: 1,
+          committed: 0,
+          blocked: 0,
+          deferredByMigration: 0,
+          retained: 1,
+          clearedMalformed: 0,
+        ).isCanonicalStateComplete,
+        isFalse,
+      );
+      expect(
+        const IngestStagedPushEnvelopesResult(
+          attempted: 0,
+          committed: 0,
+          blocked: 0,
+          deferredByMigration: 1,
+          retained: 1,
+          clearedMalformed: 0,
+        ).isCanonicalStateComplete,
+        isFalse,
+      );
+    },
+  );
+
   group('IngestStagedPushEnvelopesUseCase', () {
+    test(
+      'young unreadable final-file custody keeps canonical state incomplete',
+      () async {
+        final now = DateTime.utc(2026, 8, 4, 12);
+        final directory = await Directory.systemTemp.createTemp(
+          'push-envelope-unreadable-status-',
+        );
+        addTearDown(() async {
+          if (await directory.exists()) {
+            await directory.delete(recursive: true);
+          }
+        });
+        final torn = File('${directory.path}/nonce-v1-torn.json');
+        await torn.writeAsString('{"kind":"chat",');
+        await torn.setLastModified(now);
+        final store = FilePushEnvelopeStagingStore(
+          directory: directory,
+          now: () => now,
+          malformedRetryWindow: const Duration(seconds: 5),
+        );
+        final useCase = IngestStagedPushEnvelopesUseCase(
+          store: store,
+          localPeerIdProvider: () async => 'local-peer',
+          replayChatMessage:
+              (
+                message, {
+                required suppressNotification,
+                String? stagedEntryId,
+              }) async => _committed(),
+        );
+
+        final retained = await useCase();
+
+        expect(retained.attempted, 0);
+        expect(retained.retainedUnreadableFinalFiles, 1);
+        expect(retained.isCanonicalStateComplete, isFalse);
+        expect(await torn.exists(), isTrue);
+
+        await torn.setLastModified(now.subtract(const Duration(minutes: 1)));
+        final afterAgedCleanup = await useCase();
+        expect(afterAgedCleanup.retainedUnreadableFinalFiles, 0);
+        expect(afterAgedCleanup.isCanonicalStateComplete, isTrue);
+        expect(await torn.exists(), isFalse);
+
+        final normalEmpty = await useCase();
+        expect(normalEmpty.retainedUnreadableFinalFiles, 0);
+        expect(normalEmpty.isCanonicalStateComplete, isTrue);
+      },
+    );
+
     test(
       'identity-pending ciphertext custody is retained without replay',
       () async {

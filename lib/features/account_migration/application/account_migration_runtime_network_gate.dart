@@ -29,7 +29,7 @@ class AccountMigrationRuntimeStartupSteps {
 class AccountMigrationRuntimeStartupLatch {
   final Future<bool> Function()? startRuntime;
   final void Function()? onAttemptStarted;
-  final void Function()? onStarted;
+  final FutureOr<void> Function()? onStarted;
 
   Future<void>? _startedOrInFlight;
 
@@ -68,14 +68,24 @@ class AccountMigrationRuntimeStartupLatch {
     }
 
     outcome.then(
-      (started) {
+      (started) async {
         if (!started && identical(_startedOrInFlight, published)) {
           _startedOrInFlight = null;
         }
-        if (started) {
-          onStarted?.call();
+        if (!started) {
+          completer.complete();
+          return;
         }
-        completer.complete();
+
+        try {
+          await onStarted?.call();
+          completer.complete();
+        } catch (error, stackTrace) {
+          if (identical(_startedOrInFlight, published)) {
+            _startedOrInFlight = null;
+          }
+          completer.completeError(error, stackTrace);
+        }
       },
       onError: (Object error, StackTrace stackTrace) {
         if (identical(_startedOrInFlight, published)) {

@@ -171,6 +171,58 @@ final class NotificationTapUITests: XCTestCase {
     )
   }
 
+  /// Plan 333 physical boundary, before Runner reconciliation. The fresh
+  /// dedicated install makes the one real APNs card the unique owned claim.
+  /// Observe both the exact card and the system-owned absolute badge without
+  /// opening the app or manufacturing another remote notification.
+  func testObservePayloadNotificationRecovery() throws {
+    guard configuredNotificationIsPresent() else {
+      XCTFail("Could not find the unique APNs recovery notification card")
+      return
+    }
+    emitPlan258Marker("RECOVERY_CARD_READY", fields: ["unique": "true"])
+    guard waitForApplicationBadge(1, timeout: 12) else {
+      XCTFail("SpringBoard did not expose the expected absolute badge of one")
+      return
+    }
+    emitPlan258Marker("RECOVERY_BADGE_READY", fields: ["absolute": "1"])
+  }
+
+  /// Plan 333 physical boundary, after the protected Runner proof command.
+  /// The real APNs card A must be gone, the unrelated app-local sentinel C
+  /// must remain, and SpringBoard must expose Runner's final absolute zero.
+  func testVerifyPayloadNotificationRecoveryRetirement() throws {
+    let title = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_TITLE",
+      configKey: "expectedTitle"
+    ) ?? "New Message"
+    let body = configuredValue(
+      environmentName: "MKNOON_APNS_TAP_EXPECTED_BODY",
+      configKey: "expectedBody"
+    )
+    guard !notificationIsPresent(title: title, body: body, timeout: 3) else {
+      XCTFail("The exact APNs recovery card was not retired")
+      return
+    }
+    guard notificationIsPresent(
+      title: "Mknoon recovery sentinel",
+      body: "Unrelated notification preservation",
+      timeout: 10
+    ) else {
+      XCTFail("The unrelated app-local recovery sentinel did not survive")
+      return
+    }
+    emitPlan258Marker(
+      "RECOVERY_RETIREMENT_READY",
+      fields: ["owned_absent": "true", "sentinel_present": "true"]
+    )
+    guard waitForApplicationBadge(0, timeout: 12) else {
+      XCTFail("SpringBoard did not expose the final absolute zero badge")
+      return
+    }
+    emitPlan258Marker("RECOVERY_ZERO_BADGE_READY", fields: ["absolute": "0"])
+  }
+
   /// Best-effort cleanup selector used after a failed physical capture. It is
   /// intentionally idempotent so the next Sims row never inherits airplane
   /// mode from an interrupted run.
@@ -564,6 +616,79 @@ final class NotificationTapUITests: XCTestCase {
       }
     }
     return false
+  }
+
+  private func notificationIsPresent(
+    title: String,
+    body: String?,
+    timeout: TimeInterval
+  ) -> Bool {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    XCUIDevice.shared.press(.home)
+    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+      return false
+    }
+    settleOnSpringboard()
+    openNotificationCenter(from: springboard)
+    revealNotificationHistory(from: springboard)
+    let titleMatched = notificationTextExists(
+      title,
+      springboard: springboard,
+      timeout: timeout
+    )
+    let bodyMatched = body == nil || notificationTextExists(
+      body!,
+      springboard: springboard,
+      timeout: titleMatched ? 2 : 0
+    )
+    return titleMatched && bodyMatched
+  }
+
+  private func waitForApplicationBadge(
+    _ expected: Int,
+    timeout: TimeInterval
+  ) -> Bool {
+    let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+    let appName = ProcessInfo.processInfo.environment["MKNOON_APNS_TAP_APP_NAME"] ?? "Mknoon"
+    XCUIDevice.shared.press(.home)
+    guard springboard.wait(for: .runningForeground, timeout: 10) else {
+      return false
+    }
+    let deadline = Date().addingTimeInterval(timeout)
+    while Date() < deadline {
+      let exact = springboard.icons[appName]
+      let icon: XCUIElement
+      if exact.exists {
+        icon = exact
+      } else {
+        let predicate = NSPredicate(
+          format: "label BEGINSWITH[c] %@ OR identifier ==[c] %@",
+          appName,
+          appName
+        )
+        icon = springboard.icons.matching(predicate).firstMatch
+      }
+      if icon.exists, applicationBadgeValue(icon, appName: appName) == expected {
+        return true
+      }
+      RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+    }
+    return false
+  }
+
+  private func applicationBadgeValue(_ icon: XCUIElement, appName: String) -> Int? {
+    let candidates = [String(describing: icon.value), icon.label]
+    for candidate in candidates {
+      let digits = candidate.split(whereSeparator: { !$0.isNumber })
+      if let value = digits.compactMap({ Int($0) }).first {
+        return value
+      }
+    }
+    let normalizedLabel = icon.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    if normalizedLabel.localizedCaseInsensitiveContains(appName) {
+      return 0
+    }
+    return nil
   }
 
   private func setAirplaneMode(_ enabled: Bool) throws -> Bool {

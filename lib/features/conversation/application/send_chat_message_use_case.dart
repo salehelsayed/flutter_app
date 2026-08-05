@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -57,22 +58,6 @@ const Duration _presenceHintBudget = Duration(milliseconds: 400);
 /// serial probe step: FDC-02 owns its in-race relay-live leg, and an all-fail
 /// race proceeds to durable inbox custody.
 const int relayProbeSendAttempts = 1;
-
-/// NET-REL-05 P2 (grace window): after a non-preferred leg succeeds, wait this
-/// long for a better-ranked transport (local > direct > relay) to land before
-/// committing the worse one. Modest because the front race already starts both
-/// legs simultaneously — only the ack-timing crossover matters. Hard-capped by
-/// [interactiveDirectBudget] so the grace can never push past the direct budget.
-const Duration transportGraceWindow = Duration(milliseconds: 150);
-
-/// NET-REL-05 P3 head-start (consumed here in U-P2): hold a NON-learned leg's
-/// win-eligibility this long so a recently-good (learned) transport tends to win
-/// close ties without re-paying full discovery. Delays WIN-eligibility only —
-/// never the leg's actual transport work — so a dead learned leg cannot stall
-/// the send (the other leg still completes the race after the grace window).
-/// Slightly under [transportGraceWindow] so a genuinely-alive learned leg wins
-/// before the grace fires.
-const Duration kStickyHeadStart = Duration(milliseconds: 120);
 
 // FDC-03: the NET-REL-05 P1/P4 `kLowConfidenceWindow` (30s prior-attempt recency
 // gate) is RETIRED. The concurrent durable inbox now fires for ALL unknown-
@@ -127,20 +112,6 @@ const Duration kDirectSendBudget = Duration(milliseconds: 1500);
 abstract interface class RelayLiveSendObserver {
   void noteRelayLiveSendStart();
 }
-
-/// Transport preference rank for the grace window: higher wins. 'reuse' ranks
-/// with 'direct' (both are a non-relay live connection); unknown ranks lowest.
-/// FDC-02 (C8): the staggered relay-LIVE leg reuses the existing 'relay' label
-/// (Go labels a live `/p2p-circuit` send 'relay'), so it already ranks 1 < direct
-/// < local with NO numeric change here — the leg granularity, not the rank, is
-/// what FDC-02 adds.
-int _transportRank(String? via) => switch (via) {
-  'local' => 3,
-  'direct' => 2,
-  'reuse' => 2,
-  'relay' => 1,
-  _ => 0,
-};
 
 void _recordSuccessfulSendReadinessProof(
   P2PService p2pService,
@@ -274,10 +245,10 @@ PrivateMediaEligibility _privateMediaEligibilityForSend({
 /// 2. Checks P2P node is running
 /// 3. Builds MessagePayload with UUID
 /// 4. Serializes to a v2 encrypted JSON envelope
-/// 5. Persists wireEnvelope to DB row (Section 4: crash-safe retryability)
+/// 5. Atomically stages the parent/envelope (and ordinary media projection)
 /// 6. Reuses an existing connection, races local WiFi with direct relay send,
 ///    and probes the relay only when discoverability is stale
-/// 7. Persists final status via messageRepo.saveMessage()
+/// 7. Atomically settles the attempt-owned transport columns
 ///
 /// A live send that writes to the peer but does not receive an ACK attempts an
 /// immediate durable inbox handoff. If the inbox handoff also fails, the
@@ -299,6 +270,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   String action = MessagePayload.actionSend,
   String? editedAt,
   String? messageId,
+  bool preassignedMessageIdIsFresh = false,
   String? timestamp,
   // F8 tier-2: a normal send stamps `dedupKey = its own id` (the default
   // below); one explicit Forward action passes its random operation token so
@@ -421,8 +393,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   // 116 EF-2 no-downgrade writer gate: a plain send under a message id whose
   // outgoing row carries editedAt or deletedAt would transmit downgraded
-  // content AND poison the stored edit/deletion envelope via the pre-race
-  // updateWireEnvelope below. Fail closed BEFORE encryption and before any
+  // content AND poison the stored edit/deletion envelope via pre-race attempt
+  // staging below. Fail closed BEFORE encryption and before any
   // persist. All UI retry paths route through retryFailedMessage, so this
   // gate has zero legitimate trips — any field occurrence is a bug detector.
   if (action == MessagePayload.actionSend && messageId != null) {
@@ -497,10 +469,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
       timestamp ?? DateTime.now().toUtc().toIso8601String();
-  // F8 tier-2: default a normal send's dedupKey to its own id; one Forward
-  // action keeps its operation token when a destination id/timestamp is
-  // re-minted or retried.
-  final resolvedDedupKey = dedupKey ?? resolvedMessageId;
+  // F8 tier-2: default a fresh normal send's dedupKey to its own id; one
+  // Forward action keeps its operation token when a destination id/timestamp
+  // is re-minted or retried. An existing legacy row may deliberately have a
+  // NULL dedup key, which is part of the exact attempt snapshot and must not
+  // be silently minted during retry staging.
+  final resolvedDedupKey =
+      dedupKey ??
+      (messageId != null && existingOutgoing != null
+          ? existingOutgoing.dedupKey
+          : resolvedMessageId);
   final resolvedEditedAt = action == MessagePayload.actionEdit
       ? (editedAt ?? DateTime.now().toUtc().toIso8601String())
       : null;
@@ -615,14 +593,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     wireJson: jsonString,
   );
 
-  // SECTION 4 CONTRACT: wireEnvelope is persisted BEFORE the transport race.
-  // If the app crashes after this point, the DB row has wireEnvelope != null
-  // and Section 1's PendingMessageRetrier can replay the message without
-  // re-serializing or re-encrypting.
+  // SECTION 4 CONTRACT: the exact attempt and wireEnvelope are persisted
+  // BEFORE the transport race. If the app crashes after this point, Section
+  // 1's PendingMessageRetrier can replay the attempt without re-serializing or
+  // re-encrypting.
   final isOutgoingPrivateOneMoreLook =
       effectivePrivateMediaPolicy.version == 1 &&
       (effectivePrivateMediaPolicy.mode == PrivateMediaMode.protected ||
           effectivePrivateMediaPolicy.mode == PrivateMediaMode.viewOnce);
+  final ordinaryMutationRepo =
+      messageRepo is OutgoingTransportMutationRepository
+      ? messageRepo as OutgoingTransportMutationRepository
+      : null;
   if (isOutgoingPrivateOneMoreLook) {
     final handedOff =
         messageId != null &&
@@ -646,17 +628,113 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       emitSendTiming(outcome: 'private_envelope_handoff_refused');
       return (SendChatMessageResult.sendFailed, null);
     }
-  } else if (messageId != null) {
-    await messageRepo.updateWireEnvelope(messageId, jsonString);
+  } else {
+    final hasOrdinaryMedia = normalizedAttachments?.isNotEmpty ?? false;
+    if (ordinaryMutationRepo == null ||
+        (hasOrdinaryMedia &&
+            mediaAttachmentRepo is! OutgoingOrdinaryAttemptStagingRepository)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
+        details: {
+          'id': resolvedMessageId.length > 8
+              ? resolvedMessageId.substring(0, 8)
+              : resolvedMessageId,
+          'reason': ordinaryMutationRepo == null
+              ? 'missing_message_capability'
+              : 'missing_media_capability',
+        },
+      );
+      emitSendTiming(outcome: 'attempt_stage_refused');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+
+    final attemptKind = action == MessagePayload.actionEdit
+        ? OutgoingOrdinaryAttemptKind.edit
+        : messageId == null || preassignedMessageIdIsFresh
+        ? OutgoingOrdinaryAttemptKind.fresh
+        : OutgoingOrdinaryAttemptKind.existing;
+    final expectedAttempt = attemptKind == OutgoingOrdinaryAttemptKind.fresh
+        ? null
+        : existingOutgoing;
+    final stagedBase = payload.toConversationMessage(
+      contactPeerId: targetPeerId,
+      isIncoming: false,
+      status: 'sending',
+      createdAt: attemptKind == OutgoingOrdinaryAttemptKind.fresh
+          ? (createdAt ?? resolvedTimestamp)
+          : (createdAt ?? existingOutgoing?.createdAt ?? resolvedTimestamp),
+      editedAt: resolvedEditedAt,
+      wireEnvelope: jsonString,
+    );
+    // Runtime-only ordinary/disappearing lifecycle fields are not authored by
+    // this transport attempt. Preserve the exact observed values so staging's
+    // full snapshot CAS detects crossed work without resetting them.
+    final stagedAttempt = expectedAttempt == null
+        ? stagedBase.copyWith(media: normalizedAttachments ?? const [])
+        : stagedBase.copyWith(
+            readAt: expectedAttempt.readAt,
+            privateMediaState: expectedAttempt.privateMediaState,
+            privateMediaReceivedAtMs: expectedAttempt.privateMediaReceivedAtMs,
+            privateMediaExpiresAtMs: expectedAttempt.privateMediaExpiresAtMs,
+            privateMediaRevealedAtMs: expectedAttempt.privateMediaRevealedAtMs,
+            privateMediaTerminalAtMs: expectedAttempt.privateMediaTerminalAtMs,
+            privateMediaClockHighWaterMs:
+                expectedAttempt.privateMediaClockHighWaterMs,
+            media: normalizedAttachments ?? const [],
+          );
+    try {
+      final staged = hasOrdinaryMedia
+          ? await (mediaAttachmentRepo
+                    as OutgoingOrdinaryAttemptStagingRepository)
+                .stageOutgoingOrdinaryAttemptWithMedia(
+                  messageMutationRepository: ordinaryMutationRepo,
+                  expected: expectedAttempt,
+                  staged: stagedAttempt,
+                  attachments: normalizedAttachments!,
+                  kind: attemptKind,
+                )
+          : await ordinaryMutationRepo.stageOutgoingOrdinaryAttempt(
+              expected: expectedAttempt,
+              staged: stagedAttempt,
+              kind: attemptKind,
+            );
+      if (!staged.authorizesTransport) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
+          details: {
+            'id': resolvedMessageId.length > 8
+                ? resolvedMessageId.substring(0, 8)
+                : resolvedMessageId,
+            'reason': staged.outcome.name,
+          },
+        );
+        emitSendTiming(
+          outcome: 'attempt_stage_refused',
+          details: {'reason': staged.outcome.name},
+        );
+        return (SendChatMessageResult.sendFailed, null);
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_ERROR',
+        details: {
+          'id': resolvedMessageId.length > 8
+              ? resolvedMessageId.substring(0, 8)
+              : resolvedMessageId,
+          'error': error.toString(),
+        },
+      );
+      emitSendTiming(outcome: 'attempt_stage_error');
+      return (SendChatMessageResult.sendFailed, null);
+    }
   }
 
-  // FDC-04 (RC2 / INV-2): hoisted above the reuse/sticky short-circuits so a
-  // LAN-visible peer never reuses a warmed direct/relay conn (or a learned
-  // direct/relay sticky transport) ahead of the LAN leg — the warmed path would
-  // silently bypass a viable ~30ms LAN hop on every conversation open. (FDC-02
-  // already carved out relay-ONLY circuit conns; this adds the orthogonal
-  // direct-conn-to-a-LAN-peer case.) Read once here; still consumed downstream
-  // by the race (unknownPresence + alreadyLocal).
+  // LAN visibility is routing metadata, not delivery authority. Read it once
+  // for discovery/inbox scheduling, but never use it to exclude an existing
+  // authenticated target-Peer-ID stream from the reuse path below.
   final isLocalPeer = p2pService.isLocalPeer(targetPeerId);
 
   // 4.5. Check for existing connected peer first (connection reuse).
@@ -666,16 +744,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     (c) => c.peerId == targetPeerId,
   );
   // FDC-02 (C1 resolution A): a peer whose ONLY live connection is a
-  // `/p2p-circuit` must NOT reuse-short-circuit ahead of the race — the warmed
-  // relay would carry a send a 30ms LAN hop should win (§6.1 by latency). It
-  // falls into the ranked race instead, where the staggered relay-LIVE leg is
-  // the rank-aware circuit send. A peer with any direct connection still reuses.
+  // `/p2p-circuit` must not reuse-short-circuit ahead of the race. The full race
+  // preserves the independently staggered relay-LIVE proof opportunity. A peer
+  // with any direct connection still uses the authenticated reuse fast path.
   final isCircuitOnlyConnected = _isCircuitOnlyConnected(
     p2pService,
     targetPeerId,
   );
+  _RaceResult? priorWritten;
 
-  if (isAlreadyConnected && !isCircuitOnlyConnected && !isLocalPeer) {
+  if (isAlreadyConnected && !isCircuitOnlyConnected) {
     connectionReused = true;
     sendPath = 'reuse';
     emitFlowEvent(
@@ -683,6 +761,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       event: 'CHAT_MSG_SEND_REUSE_CONNECTION',
       details: {'targetPeerId': targetPrefix},
     );
+    var reuseWritten = false;
     try {
       final reuseSendStopwatch = Stopwatch()..start();
       final sendResult = await p2pService.sendMessageWithReply(
@@ -698,49 +777,63 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
         if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
       };
+      reuseWritten = sendResult.sent;
       if (sendResult.sent) {
         final reuseVia = _resolveGoSendTransport(
           p2pService,
           targetPeerId,
           sendResult,
         );
-        transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
-        recordMetrics(transport: reuseVia, rung: 'reuse');
-        return _completeSuccessfulSend(
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          payload: payload,
-          targetPeerId: targetPeerId,
-          jsonString: jsonString,
-          acknowledged: sendResult.acknowledged,
+        final reuseEvidence = _RaceResult.succeeded(
           via: reuseVia,
-          resolvedMessageId: resolvedMessageId,
-          text: sanitizedText,
-          createdAt: createdAt,
-          editedAt: resolvedEditedAt,
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          attachments: normalizedAttachments,
-          isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
-          sendStopwatch: sendStopwatch,
-          emitTimingEvent: emitTimingEvent,
-          extraTimingDetails: {
-            'connectionReused': true,
-            'sendPath': 'reuse',
-            ...stepTimings,
-          },
+          explicitAck: sendResult.acked == true,
+          authenticated: true,
+          stepTimings: stepTimings,
         );
+        if (reuseEvidence.provesDeviceDeliveryForCurrentProtocol) {
+          transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
+          recordMetrics(transport: reuseVia, rung: 'reuse');
+          return _completeSuccessfulSend(
+            p2pService: p2pService,
+            messageRepo: messageRepo,
+            payload: payload,
+            targetPeerId: targetPeerId,
+            jsonString: jsonString,
+            acknowledged: true,
+            via: reuseVia,
+            resolvedMessageId: resolvedMessageId,
+            text: sanitizedText,
+            createdAt: createdAt,
+            editedAt: resolvedEditedAt,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            attachments: normalizedAttachments,
+            isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
+            sendStopwatch: sendStopwatch,
+            emitTimingEvent: emitTimingEvent,
+            extraTimingDetails: {
+              'connectionReused': true,
+              'sendPath': 'reuse',
+              ...stepTimings,
+            },
+          );
+        }
+        priorWritten ??= reuseEvidence;
       }
     } catch (_) {
       // Connection reuse failed — fall through to race
     }
-    transportMetrics?.recordAttempt(leg: 'reuse', succeeded: false);
+    // A completed write remains useful attempt telemetry, but only an explicit
+    // affirmative ACK from this authenticated libp2p stream may short-circuit
+    // and mint delivery. Written/uncommitted reuse falls through to the race.
+    transportMetrics?.recordAttempt(leg: 'reuse', succeeded: reuseWritten);
     connectionReused = false;
     sendPath = 'unknown';
     stepTimings = {};
   }
 
   // 5. Race: local WiFi and direct discover/dial/send in parallel.
-  // The first successful path wins and is the only one to persist.
+  // The first authenticated commitment settles. Earlier written-only evidence
+  // remains available to the inbox/retry funnel if no live leg proves delivery.
   // (`isLocalPeer` is read above the reuse block — FDC-04 RC2 hoist.)
 
   // NET-REL-05 P3 (sticky transport): the last-known-good LIVE transport for
@@ -754,22 +847,19 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // never blocks: null (expired/stale/absent) degenerates to the full cold race,
   // identical to today, so a stale/dead preference can never trap the send.
   final learned = p2pService.lastKnownGoodTransport(targetPeerId);
-  // FDC-04 (RC2 / INV-2): a LAN-visible peer must still race the LAN leg — only
-  // a learned `'local'` may sticky-short-circuit for it; a learned
-  // `'direct'`/`'relay'` would bypass the faster LAN hop, so it falls through to
-  // the full race. A non-local peer keeps the unchanged sticky behavior.
-  if (learned != null && (learned == 'local' || !isLocalPeer)) {
+  // A learned local label identifies only the unauthenticated WebSocket route,
+  // so it may not short-circuit authenticated work. Learned direct/relay paths
+  // still reuse a target-Peer-ID stream, including when mDNS also sees the peer.
+  if (learned == 'direct' || learned == 'relay') {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_STICKY_TRANSPORT',
       details: {'targetPeerId': targetPrefix, 'learned': learned},
     );
 
-    // NET-REL-05 P3 short-circuit: a fresh+valid learned transport lets us REUSE
-    // the known-good path WITHOUT re-paying discovery/dial. Send directly over
-    // that transport (sendLocalMessage for 'local' — the peer is still LAN-
-    // visible per the read-time revalidation; sendMessageWithReply for
-    // 'direct'/'relay' — the connection-reuse path, no discover/dial). This is
+    // NET-REL-05 P3 short-circuit: a fresh+valid learned authenticated transport
+    // lets us REUSE the known-good direct/relay path via sendMessageWithReply,
+    // WITHOUT re-paying discovery/dial. This is
     // the only place that skips discover/dial on a NON-connected peer; it is
     // gated behind the now-tested invalidation so a stale entry never reaches
     // here. On ANY miss/failure of this attempt we fall THROUGH to today's full
@@ -779,11 +869,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       p2pService,
       targetPeerId,
       jsonString,
-      senderPeerId,
-      learned: learned,
+      learned: learned!,
       transportMetrics: transportMetrics,
     );
-    if (shortCircuit != null && shortCircuit.success) {
+    if (shortCircuit != null &&
+        shortCircuit.provesDeviceDeliveryForCurrentProtocol) {
       sendPath = 'sticky';
       stepTimings = shortCircuit.stepTimings;
       // The sticky short-circuit reuses the learned known-good path WITHOUT
@@ -797,7 +887,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         payload: payload,
         targetPeerId: targetPeerId,
         jsonString: jsonString,
-        acknowledged: shortCircuit.acknowledged,
+        acknowledged: true,
         via: shortCircuit.via!,
         resolvedMessageId: resolvedMessageId,
         text: sanitizedText,
@@ -815,6 +905,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           ...shortCircuit.stepTimings,
         },
       );
+    }
+    if (shortCircuit != null && shortCircuit.written) {
+      priorWritten ??= shortCircuit;
     }
     emitFlowEvent(
       layer: 'FL',
@@ -834,13 +927,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // is REMOVED: a first-ever / cold notif-tap send is exactly the case that needs
   // fast durable custody, yet it is never "low confidence" (no prior failed
   // attempt exists) and so used to pay the slow serial probe→inbox tail. The
-  // three STRUCTURAL guards are KEPT — a reuse/connected send and a LAN-local
-  // send have their own delivery confirmation (the wire ack / the LAN nonce ack)
-  // and must stay single-path: not a blanket dual-write (§6.2 "recipient cost
-  // rises" honesty note). Presence-aware reachable→lazy / unreachable→inbox-first
-  // emphasis (§6.3) is FDC-08; until then everything non-connected/non-local is
-  // treated as UNKNOWN → concurrent inbox. Dropping the recency lookup also
-  // removes one DB await from the hot send path.
+  // three STRUCTURAL guards are KEPT for scheduling/cost: connected and LAN-
+  // visible sends use the live race first, and any written-but-uncommitted
+  // result still reaches the sequential inbox backstop. Presence-aware
+  // reachable→lazy / unreachable→inbox-first emphasis (§6.3) is FDC-08; until
+  // then everything non-connected/non-local is treated as UNKNOWN → concurrent
+  // inbox. Dropping the recency lookup also removes one DB await from the hot
+  // send path.
   final unknownPresence =
       !isAlreadyConnected &&
       !isLocalPeer &&
@@ -896,11 +989,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           // concurrent-inbox ACK (~110 ms) advance the optimistic row's status to
           // a non-terminal 'inboxed' so the 1:1 bubble shows two ticks instead of
           // resting on the single optimistic tick until the live race resolves
-          // (~1.8 s offline). A status-only update (NOT a full saveMessage): it
-          // touches only the existing row's status column and re-renders via the
-          // SAME messageChanges emit the screen gate already admits for
-          // 'inboxed' — no new write path and no second durable row (the terminal
-          // save still writes the full custody row + envelope). Guarded by
+          // (~1.8 s offline). The guarded transport settlement owns only the
+          // attempt's transport columns and re-renders via the SAME messageChanges
+          // stream the screen already admits for 'inboxed'. Guarded by
           // [liveDelivered] (INV-3) so a live 'delivered' that already won the
           // race is never regressed to 'inboxed'; fires only on ok==true (INV-4:
           // no false two-tick when custody is not secured). Status-surfacing
@@ -918,9 +1009,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
                 relayExpiresAt: null,
               );
             } else {
-              await messageRepo.updateMessageStatus(
-                resolvedMessageId,
-                'inboxed',
+              await ordinaryMutationRepo!.settleOutgoingOrdinaryTransport(
+                messageId: resolvedMessageId,
+                expectedContactPeerId: targetPeerId,
+                expectedEnvelope: jsonString,
+                status: 'inboxed',
+                transport: 'inbox',
+                relayExpiresAt: null,
+                mode: OutgoingOrdinarySettlementMode.live,
               );
             }
             emitFlowEvent(
@@ -1027,8 +1123,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       jsonString,
       transportMetrics: transportMetrics,
       // 187: when set, the direct leg short-circuits BEFORE discover/dial (the
-      // leg stays present so the completer's index/ directLegPending /
-      // pendingCount coupling is undisturbed — Option A).
+      // leg stays present so the race's pending-count/failure classification is
+      // undisturbed — Option A).
       skipForKeepaliveDrop: directSkipForKeepaliveDrop,
     ).timeout(
       // FDC-01: the OUTER cap is the aggregate (serial) ceiling, decoupled from
@@ -1043,66 +1139,28 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     ),
   );
 
-  // Race: best successful result within a grace window wins (NET-REL-05 P2).
-  //
-  // Unlike a pure first-wins completer, we prefer a better-ranked transport
-  // (local > direct > relay) when it lands within [transportGraceWindow] of a
-  // worse one: the front race already starts both legs simultaneously, so the
-  // only window where a "worse" leg beats a "better" one is the few-ms
-  // ack-timing crossover. On the first non-top success we arm a single grace
-  // timer and commit the best result seen when it fires (or immediately on a
-  // top-rank success / once all legs have resolved).
-  //
-  // U-P3 head-start consumption (P3 weighting): when [learned] names a
-  // transport, the matching leg's success is offered to `best` immediately
-  // while the OTHER leg's success is held back by [kStickyHeadStart] so a
-  // genuinely-alive learned transport tends to win close ties. The head-start
-  // gates WIN-eligibility only — the leg's transport work always proceeds — so
-  // a dead learned leg can never stall the send (the other leg still completes
-  // the race after the grace window). When [learned] is null every leg is
-  // immediately eligible (degenerates to grace-only behavior).
+  // Delivery authority is independent of route rank. The first result backed
+  // by both the target Peer ID's authenticated libp2p stream and an explicit
+  // affirmative ACK settles immediately. A WebSocket write (including its
+  // nonce-correlated committed ACK) and an unacked libp2p write remain useful
+  // transport evidence, but only for the existing inbox/retry funnel after all
+  // eligible live legs have had their chance.
   final completer = Completer<_RaceResult>();
   final failures = <_RaceResult>[];
-  _RaceResult? best;
-  Timer? graceTimer;
-  // Tracks whether a leg with WIN-eligibility strictly better than the current
-  // [best] could still arrive. The local leg (raceFutures[0], rank 3) is the
-  // only transport that can outrank a 'direct'/'reuse' best; while its
-  // head-start delay is in flight a local win is still possible, so we keep it
-  // "pending" until that delay (or its failure) resolves.
-  var localLegEligibilityPending = true;
-  // Number of SUCCESSFUL leg results that have resolved but whose win-offer is
-  // still buffered behind a [kStickyHeadStart] delay. A leg counts here once it
-  // has decremented [pendingCount] but not yet been offered to [best]. The
-  // failure path must NOT settle the race as a failure while such a buffered
-  // success exists — otherwise a learned-leg failure that resolves first would
-  // drop a genuinely-alive non-learned success (U-N2: dead learned leg must not
-  // trap the send).
-  var deferredSuccessOffers = 0;
-  // FDC-02: tracks whether the DIRECT leg (raceFutures[1], up to rank 2) is still
-  // in flight. The staggered relay-live leg can commit a rank-1 ('relay') best
-  // while the slower direct leg is still pending; that pending direct leg can
-  // still outrank the relay best, so completion must wait (grace) for it
-  // (TC-02-07). Cleared the moment the direct leg resolves (success or failure).
-  var directLegPending = true;
+  _RaceResult? firstWritten = priorWritten;
 
   // FDC-02: the staggered relay-LIVE leg, added as a THIRD race future so it is
   // counted in [pendingCount] below (C4) — a fast LAN+direct DOUBLE failure
   // therefore cannot settle the race as failed before the relay penalty elapses
   // and the leg has had its chance (§6.2a / TC-02-02). It starts kRelayLegStagger
-  // behind the LAN/direct legs (the penalty) and is SUPPRESSED — returns a failed
-  // result WITHOUT sending — if a better-ranked leg has already committed `best`
-  // by the time the stagger fires (C3: guard on `best != null`, NOT
-  // `completer.isCompleted`, which stays false through a direct-leg grace window
-  // and would let the leg fire spuriously after a direct win). Its result feeds
-  // the SAME rank machinery at rank 1 ('relay'); an in-flight loser is not
-  // cancellable (relies on receiver dedup). [best] is captured by reference, so
-  // this closure must be built AFTER [best] is declared.
+  // behind the LAN/direct legs (the penalty) and is suppressed only after an
+  // authenticated explicit ACK has already completed the race. Written-only
+  // evidence must not prevent the stronger relay proof from starting.
   if (liveRelayEligible) {
     raceFutures.add(
       Future<_RaceResult>(() async {
         await Future<void>.delayed(kRelayLegStagger);
-        if (best != null) {
+        if (completer.isCompleted) {
           return _RaceResult.failed('relay_live_suppressed');
         }
         return _tryRelayLiveSend(
@@ -1117,13 +1175,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   var pendingCount = raceFutures.length;
 
-  void completeWithBest() {
-    if (best != null && !completer.isCompleted) {
-      graceTimer?.cancel();
-      completer.complete(best);
-    }
-  }
-
   void completeWithFailure() {
     if (completer.isCompleted) return;
     var failureReason = failures.isNotEmpty
@@ -1137,128 +1188,47 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         break;
       }
     }
-    graceTimer?.cancel();
     completer.complete(
       _RaceResult.failed(failureReason, relayProbeEligible: relayProbeEligible),
     );
   }
 
-  // True when no still-eligible leg could outrank the current [best].
-  bool noPendingLegCanBeatBest() {
-    if (best == null) return false;
-    final bestRank = _transportRank(best!.via);
-    // A still-pending LOCAL leg (rank 3) can outrank any non-local best.
-    if (localLegEligibilityPending && bestRank < 3) return false;
-    // FDC-02: a still-pending DIRECT leg (up to rank 2) can outrank a rank-1
-    // ('relay') best — the staggered relay-live leg committed first while the
-    // slower direct leg is still in flight (TC-02-07). The relay-live leg itself
-    // is rank 1 (lowest), so a pending relay-live leg never blocks completion.
-    if (directLegPending && bestRank < 2) return false;
-    return true;
-  }
-
-  // Offers a successful leg result (now WIN-eligible) to the best-within-grace
-  // accumulator. May be invoked after a [kStickyHeadStart] head-start delay;
-  // guards against a completer that already settled (e.g. grace fired, or a
-  // learned-leg win already committed).
-  void offerSuccess(_RaceResult result) {
-    if (completer.isCompleted) return;
-    if (best == null ||
-        _transportRank(result.via) > _transportRank(best!.via)) {
-      best = result;
-    }
-    // A learned-transport win is decisive: it is both the preferred transport
-    // and confirmed alive, so commit it immediately (the head-start delayed the
-    // other leg's eligibility precisely so this can win the close tie).
-    final isLearnedWin = learned != null && best!.via == learned;
-    if (isLearnedWin || noPendingLegCanBeatBest()) {
-      completeWithBest();
-      return;
-    }
-    // A worse leg landed first and a better-ranked leg is still in play: arm a
-    // single grace timer, hard-capped so the total never exceeds the direct
-    // budget (fire immediately if the budget is nearly spent).
-    if (graceTimer == null) {
-      final remaining = interactiveDirectBudget - sendStopwatch.elapsed;
-      final graceDuration = remaining <= Duration.zero
-          ? Duration.zero
-          : (remaining < transportGraceWindow
-                ? remaining
-                : transportGraceWindow);
-      graceTimer = Timer(graceDuration, completeWithBest);
-    }
-  }
-
-  // Wire each leg. Index 0 is the local leg (see [localLegEligibilityPending]);
-  // index 1 is the direct leg (see [directLegPending]); index 2 (when present)
-  // is the FDC-02 staggered relay-live leg.
-  for (var i = 0; i < raceFutures.length; i++) {
-    final isLocalLeg = i == 0;
-    final isDirectLeg = i == 1;
+  // Wire each leg. A proving result wins immediately. Written-only results are
+  // retained without suppressing any remaining authenticated attempt.
+  for (final raceFuture in raceFutures) {
     void onResolved(_RaceResult result) {
       pendingCount--;
-      if (!result.success) {
-        failures.add(result);
-        // A failed local leg can no longer produce a top-rank win.
-        if (isLocalLeg) localLegEligibilityPending = false;
-        // FDC-02: a failed direct leg can no longer outrank a committed relay
-        // best (mirrors the local-leg clear). Cleared on the OFFER, not at
-        // resolution, for the buffered-success path below — otherwise a buffered
-        // rank-2 direct win could be beaten by a buffered rank-1 relay win whose
-        // head-start offer fires first.
-        if (isDirectLeg) directLegPending = false;
-        if (best != null) {
-          if (noPendingLegCanBeatBest()) completeWithBest();
-        } else if (pendingCount <= 0 && deferredSuccessOffers <= 0) {
-          // Only a failure when no leg succeeded AND none is buffered behind a
-          // head-start. A buffered success will offer itself (and complete the
-          // race) when its delay fires.
-          completeWithFailure();
-        }
+      if (result.provesDeviceDeliveryForCurrentProtocol) {
+        if (!completer.isCompleted) completer.complete(result);
         return;
       }
-
-      // Head-start (U-P3 consumption): the learned leg's success is WIN-eligible
-      // immediately; a non-learned leg is held back by [kStickyHeadStart] so a
-      // genuinely-alive learned transport wins close ties. The head-start gates
-      // WIN-eligibility ONLY — the leg's transport work already completed — so a
-      // dead learned leg can never stall the send (the surviving leg becomes
-      // eligible after the delay and the race proceeds normally). When
-      // [learned] is null every leg is immediately eligible (grace-only).
-      final isLearnedLeg = learned != null && result.via == learned;
-      if (learned != null && !isLearnedLeg) {
-        // Buffer this success behind the head-start. Tracked so a concurrent
-        // failure of the other leg cannot prematurely settle the race as failed
-        // and drop this still-alive success.
-        deferredSuccessOffers++;
-        Future<void>.delayed(kStickyHeadStart, () {
-          deferredSuccessOffers--;
-          if (isLocalLeg) localLegEligibilityPending = false;
-          if (isDirectLeg) directLegPending = false;
-          offerSuccess(result);
-          // After this (final) offer, if the race has fully resolved with no
-          // better leg possible, commit the best now rather than wait out grace.
-          if (best != null && noPendingLegCanBeatBest()) completeWithBest();
-        });
+      if (result.written) {
+        firstWritten ??= result;
       } else {
-        if (isLocalLeg) localLegEligibilityPending = false;
-        if (isDirectLeg) directLegPending = false;
-        offerSuccess(result);
+        failures.add(result);
+      }
+      if (pendingCount <= 0 && !completer.isCompleted) {
+        if (firstWritten case final written?) {
+          completer.complete(written);
+        } else {
+          completeWithFailure();
+        }
       }
     }
 
-    raceFutures[i]
+    raceFuture
         .then(onResolved)
         .catchError((Object e) => onResolved(_RaceResult.failed(e.toString())));
   }
 
   final raceResult = await completer.future;
-  graceTimer?.cancel();
 
   if (raceResult.success) {
     // 184 (INV-3): a live ACK commits a terminal 'delivered' below — mark it so
     // a late concurrent-inbox custody bump cannot regress it to 'inboxed'.
-    if (raceResult.acknowledged) liveDelivered = true;
+    if (raceResult.provesDeviceDeliveryForCurrentProtocol) {
+      liveDelivered = true;
+    }
     sendPath = raceResult.via == 'local' ? 'local' : 'direct';
     stepTimings = raceResult.stepTimings;
     recordMetrics(transport: raceResult.via, rung: sendPath);
@@ -1268,7 +1238,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       payload: payload,
       targetPeerId: targetPeerId,
       jsonString: jsonString,
-      acknowledged: raceResult.acknowledged,
+      acknowledged: raceResult.provesDeviceDeliveryForCurrentProtocol,
       via: raceResult.via!,
       resolvedMessageId: resolvedMessageId,
       text: sanitizedText,
@@ -1329,6 +1299,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       mediaAttachmentRepo: mediaAttachmentRepo,
       isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
       expectedEnvelope: jsonString,
+      expectedContactPeerId: targetPeerId,
     );
     emitFlowEvent(
       layer: 'FL',
@@ -1349,10 +1320,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       status: 'inboxed',
       text: sanitizedText,
     );
-    _recordSuccessfulSendReadinessProof(p2pService, inboxedMessage);
+    _recordSuccessfulSendReadinessProof(
+      p2pService,
+      persistedMessage ?? inboxedMessage,
+    );
     return (
       SendChatMessageResult.success,
-      persistedMessage?.copyWith(media: normalizedAttachments ?? const []),
+      isOutgoingPrivateOneMoreLook
+          ? persistedMessage?.copyWith(media: normalizedAttachments ?? const [])
+          : persistedMessage,
     );
   }
 
@@ -1377,6 +1353,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       mediaAttachmentRepo: mediaAttachmentRepo,
       isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
       expectedEnvelope: jsonString,
+      expectedContactPeerId: targetPeerId,
     );
     emitFlowEvent(
       layer: 'FL',
@@ -1395,7 +1372,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     return (
       SendChatMessageResult.success,
-      persistedMessage?.copyWith(media: normalizedAttachments ?? const []),
+      isOutgoingPrivateOneMoreLook
+          ? persistedMessage?.copyWith(media: normalizedAttachments ?? const [])
+          : persistedMessage,
     );
   }
 
@@ -1494,6 +1473,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     mediaAttachmentRepo: mediaAttachmentRepo,
     isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
     expectedEnvelope: jsonString,
+    expectedContactPeerId: targetPeerId,
   );
 
   // Reached only after an inbox store attempt that did not succeed (returned
@@ -1521,7 +1501,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   );
   return (
     _resultForFailureReason(failureReason),
-    persistedFailedMessage?.copyWith(media: normalizedAttachments ?? const []),
+    isOutgoingPrivateOneMoreLook
+        ? persistedFailedMessage?.copyWith(
+            media: normalizedAttachments ?? const [],
+          )
+        : persistedFailedMessage,
   );
 }
 
@@ -1575,16 +1559,34 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
 
 /// Internal result of a single send path in the race.
 class _RaceResult {
-  final bool success;
-  final bool acknowledged;
+  /// The complete frame left this sender.
+  final bool written;
+
+  /// The native result carried an explicit `acked == true` value.
+  ///
+  /// This deliberately does not use [SendMessageResult.acknowledged], whose
+  /// reply inference remains available to unrelated compatibility callers.
+  final bool explicitAck;
+
+  /// The attempt used the target Peer ID's authenticated libp2p stream.
+  final bool authenticated;
   final String? via;
   final String? reason;
   final bool relayProbeEligible;
   final Map<String, int> stepTimings;
 
+  bool get success => written;
+
+  /// Delivery proof for current-version peers using the production default-on
+  /// deferred-ACK contract. The wire bytes alone cannot distinguish an older or
+  /// force-disabled receiver, so this remains a private orchestration claim.
+  bool get provesDeviceDeliveryForCurrentProtocol =>
+      written && authenticated && explicitAck;
+
   const _RaceResult._({
-    required this.success,
-    this.acknowledged = false,
+    required this.written,
+    this.explicitAck = false,
+    this.authenticated = false,
     this.via,
     this.reason,
     this.relayProbeEligible = false,
@@ -1593,11 +1595,13 @@ class _RaceResult {
 
   factory _RaceResult.succeeded({
     required String via,
-    bool acknowledged = false,
+    required bool explicitAck,
+    required bool authenticated,
     Map<String, int> stepTimings = const {},
   }) => _RaceResult._(
-    success: true,
-    acknowledged: acknowledged,
+    written: true,
+    explicitAck: explicitAck,
+    authenticated: authenticated,
     via: via,
     stepTimings: stepTimings,
   );
@@ -1607,7 +1611,7 @@ class _RaceResult {
     bool relayProbeEligible = false,
     Map<String, int> stepTimings = const {},
   }) => _RaceResult._(
-    success: false,
+    written: false,
     reason: reason,
     relayProbeEligible: relayProbeEligible,
     stepTimings: stepTimings,
@@ -1652,11 +1656,10 @@ bool _hasLiveCircuitConnection(P2PService p2pService, String peerId) {
 }
 
 /// FDC-02 (C1 resolution A): true when EVERY live connection to the peer is a
-/// `/p2p-circuit` (relay-backed). Such a peer must NOT take the reuse fast-path —
-/// it races, so a faster LAN/direct hop can still win (§6.1 by latency, not the
-/// warmed circuit). A peer with any direct (non-circuit) connection keeps the
-/// reuse short-circuit; an ambiguous empty-multiaddr connection is treated as
-/// direct (conservative — preserves the existing reuse path).
+/// `/p2p-circuit` (relay-backed). Such a peer must not take the reuse fast path,
+/// so the complete proof race, including the staggered relay-LIVE leg, remains
+/// available. A peer with any direct (non-circuit) connection keeps the reuse
+/// short-circuit; an ambiguous empty-multiaddr connection is treated as direct.
 bool _isCircuitOnlyConnected(P2PService p2pService, String peerId) {
   final peerConns = p2pService.currentState.connections
       .where((c) => c.peerId == peerId)
@@ -1705,7 +1708,8 @@ Future<_RaceResult> _tryRelayLiveSend(
     }
     return _RaceResult.succeeded(
       via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
-      acknowledged: sendResult.acknowledged,
+      explicitAck: sendResult.acked == true,
+      authenticated: true,
     );
   } on TimeoutException {
     return _RaceResult.failed('relay_live_timeout');
@@ -1806,7 +1810,8 @@ Future<_RaceResult> _tryLocalSend(
   if (localSent) {
     return _RaceResult.succeeded(
       via: 'local',
-      acknowledged: acknowledged,
+      explicitAck: acknowledged,
+      authenticated: false,
       stepTimings: timings,
     );
   }
@@ -1816,43 +1821,21 @@ Future<_RaceResult> _tryLocalSend(
 /// NET-REL-05 P3 short-circuit: attempt the LEARNED transport directly, WITHOUT
 /// re-paying discovery/dial, reusing the known-good path.
 ///
-/// - `'local'`: send over LAN via [sendLocalMessage] (no `discoverLocalPeer`).
-///   The read-time revalidation in `lastKnownGoodTransport` already confirmed
-///   the peer is still LAN-visible, so a fresh resolve would be redundant.
 /// - `'direct'` / `'relay'`: send via [sendMessageWithReply] over the existing
 ///   known-good connection (no `discoverPeer` / `dialPeer`).
 ///
-/// Returns a successful [_RaceResult] on delivery, or a FAILED result (never
-/// null on a reached attempt) so the caller falls through to the full parallel
-/// race. Returns null only for an unrecognized learned label (defensive — the
-/// memory layer only stores local/direct/relay). Self-bounded so a stalled
-/// learned path cannot make the fallback slower than a cold send.
+/// A learned `'local'` label is intentionally ineligible: it cannot distinguish
+/// an authenticated libp2p path from the unauthenticated WebSocket transport.
+/// Returns written/proof evidence for a reached authenticated attempt, or null
+/// for an unrecognized/ineligible label. Self-bounded so a stalled learned path
+/// cannot make the fallback slower than a cold send.
 Future<_RaceResult?> _tryLearnedShortCircuit(
   P2PService p2pService,
   String targetPeerId,
-  String jsonString,
-  String senderPeerId, {
+  String jsonString, {
   required String learned,
   TransportMetrics? transportMetrics,
 }) async {
-  if (learned == 'local') {
-    try {
-      return await _tryLocalSend(
-        p2pService,
-        targetPeerId,
-        jsonString,
-        senderPeerId,
-        timeoutMs: interactiveLocalBudget.inMilliseconds,
-        transportMetrics: transportMetrics,
-      ).timeout(
-        interactiveLocalBudget,
-        onTimeout: () => _RaceResult.failed('sticky_local_timeout'),
-      );
-    } catch (e) {
-      return _RaceResult.failed('sticky_local_error:$e');
-    }
-  }
-
   if (learned == 'direct' || learned == 'relay') {
     try {
       final sw = Stopwatch()..start();
@@ -1874,14 +1857,14 @@ Future<_RaceResult?> _tryLearnedShortCircuit(
         if (sendResult.writeMs != null) 'writeMs': sendResult.writeMs!,
         if (sendResult.ackWaitMs != null) 'ackWaitMs': sendResult.ackWaitMs!,
       };
-      // Sticky short-circuit = reuse of the learned known-good path; censused
-      // under the 'reuse' leg (no separate sticky leg exists). The 'local'
-      // branch above already recorded its own 'local' leg inside _tryLocalSend.
+      // Sticky short-circuit = reuse of the learned known-good authenticated
+      // path; censused under the 'reuse' leg (no separate sticky leg exists).
       transportMetrics?.recordAttempt(leg: 'reuse', succeeded: sendResult.sent);
       if (sendResult.sent) {
         return _RaceResult.succeeded(
           via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
-          acknowledged: sendResult.acknowledged,
+          explicitAck: sendResult.acked == true,
+          authenticated: true,
           stepTimings: timings,
         );
       }
@@ -1910,8 +1893,8 @@ Future<_RaceResult> _tryDirectSend(
   // while the concurrent durable inbox already holds custody. Short-circuit
   // BEFORE any discover/dial AND before recording a 'direct' attempt (the leg
   // never actually attempted). The leg stays PRESENT in raceFutures[1], so the
-  // completer's leg-index / directLegPending / pendingCount coupling is
-  // untouched; it simply resolves fast to a NON-eligible failure.
+  // pending-count/failure classification is untouched; it simply resolves fast
+  // to a NON-eligible failure.
   // `relayProbeEligible:false` classifies a keepalive-dropped peer for durable
   // inbox custody; there is no separate conversation probe step. The distinct
   // discriminator event proves the skip fired for the KEEPALIVE-DROP reason
@@ -2046,51 +2029,10 @@ Future<_RaceResult> _tryDirectSendInner(
 
   return _RaceResult.succeeded(
     via: _resolveGoSendTransport(p2pService, targetPeerId, sendResult),
-    acknowledged: sendResult.acknowledged,
+    explicitAck: sendResult.acked == true,
+    authenticated: true,
     stepTimings: timings,
   );
-}
-
-Future<void> _persistOutgoingMedia({
-  required MediaAttachmentRepository? mediaAttachmentRepo,
-  required List<MediaAttachment>? attachments,
-}) async {
-  if (mediaAttachmentRepo == null ||
-      attachments == null ||
-      attachments.isEmpty) {
-    return;
-  }
-
-  final messageIds = attachments
-      .map((attachment) => attachment.messageId)
-      .where((messageId) => messageId.isNotEmpty)
-      .toSet();
-  if (messageIds.length == 1) {
-    final messageId = messageIds.first;
-    final expectedIds = attachments.map((attachment) => attachment.id).toSet();
-    final existing = await mediaAttachmentRepo.getAttachmentsForMessage(
-      messageId,
-      owner: MediaOwnerLane.direct,
-    );
-    final hasStaleUploadPending = existing.any(
-      (attachment) =>
-          attachment.downloadStatus == 'upload_pending' &&
-          !expectedIds.contains(attachment.id),
-    );
-    if (hasStaleUploadPending) {
-      await mediaAttachmentRepo.deleteAttachmentsForMessage(
-        messageId,
-        owner: MediaOwnerLane.direct,
-      );
-    }
-  }
-
-  for (final attachment in attachments) {
-    await mediaAttachmentRepo.saveAttachment(
-      attachment,
-      owner: MediaOwnerLane.direct,
-    );
-  }
 }
 
 /// Persists the only durable custody marker for a freshly rebuilt outgoing
@@ -2219,6 +2161,7 @@ Future<ConversationMessage?> _persistOutgoingTransportState({
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required bool isOutgoingPrivateOneMoreLook,
   required String expectedEnvelope,
+  required String expectedContactPeerId,
 }) async {
   if (isOutgoingPrivateOneMoreLook) {
     // Completion persistence was already authorized by the outgoing-private
@@ -2234,26 +2177,18 @@ Future<ConversationMessage?> _persistOutgoingTransportState({
       relayExpiresAt: message.relayExpiresAt,
     );
   }
-  await _saveOutgoingMessageWithMedia(
-    messageRepo: messageRepo,
-    message: message,
-    attachments: attachments,
+  if (messageRepo is! OutgoingTransportMutationRepository) return null;
+  final mutationRepo = messageRepo as OutgoingTransportMutationRepository;
+  final settled = await mutationRepo.settleOutgoingOrdinaryTransport(
+    messageId: message.id,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: message.status,
+    transport: message.transport,
+    relayExpiresAt: message.relayExpiresAt,
+    mode: OutgoingOrdinarySettlementMode.live,
   );
-  await _persistOutgoingMedia(
-    mediaAttachmentRepo: mediaAttachmentRepo,
-    attachments: attachments,
-  );
-  return message;
-}
-
-Future<void> _saveOutgoingMessageWithMedia({
-  required MessageRepository messageRepo,
-  required ConversationMessage message,
-  required List<MediaAttachment>? attachments,
-}) {
-  return messageRepo.saveMessage(
-    message.copyWith(media: attachments ?? const <MediaAttachment>[]),
-  );
+  return settled.message;
 }
 
 Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
@@ -2294,14 +2229,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
     mediaAttachmentRepo: mediaAttachmentRepo,
     isOutgoingPrivateOneMoreLook: isOutgoingPrivateOneMoreLook,
     expectedEnvelope: jsonString,
+    expectedContactPeerId: targetPeerId,
   );
+  final observedMessage = persistedMessage ?? message;
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_SEND_SUCCESS',
     details: {
       'id': resolvedMessageId.substring(0, 8),
-      'status': message.status,
-      'via': message.transport,
+      'status': observedMessage.status,
+      'via': observedMessage.transport,
     },
   );
   if (emitTimingEvent) {
@@ -2313,8 +2250,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
         'outcome': 'success',
         'messageId': resolvedMessageId.substring(0, 8),
         'hasAttachments': attachments != null && attachments.isNotEmpty,
-        'status': message.status,
-        'via': message.transport,
+        'status': observedMessage.status,
+        'via': observedMessage.transport,
         ...extraTimingDetails,
       },
     );
@@ -2322,10 +2259,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
   logChatOutgoing(
     messageId: resolvedMessageId,
     toPeerId: targetPeerId,
-    status: message.status,
+    status: observedMessage.status,
     text: text,
   );
-  _recordSuccessfulSendReadinessProof(p2pService, message);
+  _recordSuccessfulSendReadinessProof(p2pService, observedMessage);
   // NET-REL-05 P3 (sticky transport): remember the LIVE transport that just
   // delivered so a repeat send to this peer can be weighted toward it (head-
   // start consumed in U-P2). Only acked LIVE deliveries qualify — 'inbox' is a
@@ -2333,12 +2270,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
   // ignores it anyway. This single success funnel covers connection reuse,
   // direct/local wins, and relay-live race wins; the inbox custody path and
   // unacked->inbox handoff intentionally do not record.
-  if (message.status == 'delivered' && message.transport != 'inbox') {
-    p2pService.recordSuccessfulTransport(targetPeerId, message.transport ?? '');
+  if (observedMessage.status == 'delivered' &&
+      observedMessage.transport != 'inbox') {
+    p2pService.recordSuccessfulTransport(
+      targetPeerId,
+      observedMessage.transport ?? '',
+    );
   }
   return (
     SendChatMessageResult.success,
-    persistedMessage?.copyWith(media: attachments ?? const []),
+    isOutgoingPrivateOneMoreLook
+        ? persistedMessage?.copyWith(media: attachments ?? const [])
+        : persistedMessage,
   );
 }
 

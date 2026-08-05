@@ -26,6 +26,7 @@ class IngestStagedPushEnvelopesResult {
   final int blocked;
   final int deferredByMigration;
   final int retained;
+  final int retainedUnreadableFinalFiles;
   final int clearedMalformed;
 
   const IngestStagedPushEnvelopesResult({
@@ -34,18 +35,30 @@ class IngestStagedPushEnvelopesResult {
     required this.blocked,
     required this.deferredByMigration,
     required this.retained,
+    this.retainedUnreadableFinalFiles = 0,
     required this.clearedMalformed,
   });
 
-  const IngestStagedPushEnvelopesResult.empty()
-    : this(
-        attempted: 0,
-        committed: 0,
-        blocked: 0,
-        deferredByMigration: 0,
-        retained: 0,
-        clearedMalformed: 0,
-      );
+  const IngestStagedPushEnvelopesResult.empty({
+    int retainedUnreadableFinalFiles = 0,
+  }) : this(
+         attempted: 0,
+         committed: 0,
+         blocked: 0,
+         deferredByMigration: 0,
+         retained: 0,
+         retainedUnreadableFinalFiles: retainedUnreadableFinalFiles,
+         clearedMalformed: 0,
+       );
+
+  /// Whether this pass left no staged ciphertext requiring a later canonical
+  /// replay. Blocked and aged-malformed entries are terminally cleared;
+  /// retained parsed entries, young unreadable final files, or migration-
+  /// deferred entries make an absolute notification snapshot unsafe.
+  bool get isCanonicalStateComplete =>
+      retained == 0 &&
+      retainedUnreadableFinalFiles == 0 &&
+      deferredByMigration == 0;
 }
 
 class IngestStagedPushEnvelopesUseCase {
@@ -88,9 +101,15 @@ class IngestStagedPushEnvelopesUseCase {
   Future<IngestStagedPushEnvelopesResult> _run({String? source}) async {
     onIngestStarted?.call(source);
     await store.prune();
-    final entries = await store.readAll();
+    final readResult = store is PushEnvelopeStagingReadStatusStore
+        ? await (store as PushEnvelopeStagingReadStatusStore)
+              .readAllWithStatus()
+        : PushEnvelopeStagingReadResult(entries: await store.readAll());
+    final entries = readResult.entries;
     if (entries.isEmpty) {
-      return const IngestStagedPushEnvelopesResult.empty();
+      return IngestStagedPushEnvelopesResult.empty(
+        retainedUnreadableFinalFiles: readResult.retainedUnreadableFinalFiles,
+      );
     }
 
     final allowed = await accountMigrationNetworkGate();
@@ -101,6 +120,7 @@ class IngestStagedPushEnvelopesUseCase {
         blocked: 0,
         deferredByMigration: entries.length,
         retained: entries.length,
+        retainedUnreadableFinalFiles: readResult.retainedUnreadableFinalFiles,
         clearedMalformed: 0,
       );
     }
@@ -183,6 +203,7 @@ class IngestStagedPushEnvelopesUseCase {
       blocked: blocked,
       deferredByMigration: 0,
       retained: retained,
+      retainedUnreadableFinalFiles: readResult.retainedUnreadableFinalFiles,
       clearedMalformed: clearedMalformed,
     );
   }

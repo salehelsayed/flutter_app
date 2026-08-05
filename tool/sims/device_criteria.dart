@@ -620,22 +620,29 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'capabilityId',
     'validatorIds',
     'testCase',
+    'recoveryTestCase',
     'scenario',
     'status',
     'platform',
     'capturedAt',
     'messageVisibleAt',
     'networkRestoredAt',
+    'recoveryCompletedAt',
+    'recoveryZeroBadgeObservedAt',
     'devices',
     'checks',
     'runId',
     'nonce',
+    'recoveryRunId',
+    'recoveryNonce',
     'preparedApplicationSha256',
     'providerRequestSha256',
     'payloadProducerSha256',
     'apnsPayloadSha256',
+    'recoveryApnsPayloadSha256',
     'childBuildCount',
     'manualActionCount',
+    'recoveryCounts',
     'evidenceSha256',
     'buildProfile',
     'stagingEnvironment',
@@ -643,6 +650,7 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'candidateRelayRevision',
     'candidateRelaySha256',
     'automationReceiptSha256',
+    'recoveryAutomationReceiptSha256',
   };
   final artifactKeys = artifact.keys.toSet();
   if (artifactKeys.difference(expectedKeys).isNotEmpty ||
@@ -658,6 +666,7 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
         'validateNotificationArtifact',
       ]) ||
       artifact['testCase'] != 'TC-B12' ||
+      artifact['recoveryTestCase'] != 'TC-333-08' ||
       artifact['buildProfile'] != 'ios.device.production' ||
       artifact['stagingEnvironment'] != 'staging') {
     return const DeviceCriteriaResult.fail(
@@ -671,7 +680,12 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     );
   }
 
-  for (final key in const <String>['runId', 'nonce']) {
+  for (final key in const <String>[
+    'runId',
+    'nonce',
+    'recoveryRunId',
+    'recoveryNonce',
+  ]) {
     if (!_isSafeNotificationRunToken(artifact[key])) {
       return DeviceCriteriaResult.fail(
         'iOS notification proof $key must be a safe run token',
@@ -695,14 +709,23 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'providerRequestSha256',
     'payloadProducerSha256',
     'apnsPayloadSha256',
+    'recoveryApnsPayloadSha256',
     'candidateRelaySha256',
     'automationReceiptSha256',
+    'recoveryAutomationReceiptSha256',
   ]) {
     if (!_isLowercaseSha256(artifact[key])) {
       return DeviceCriteriaResult.fail(
         'iOS notification proof $key must be lowercase SHA-256',
       );
     }
+  }
+  if (artifact['runId'] == artifact['recoveryRunId'] ||
+      artifact['nonce'] == artifact['recoveryNonce']) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification fast-path and recovery legs must have distinct '
+      'run and nonce bindings',
+    );
   }
 
   final devices = artifact['devices'];
@@ -742,6 +765,49 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     );
   }
 
+  final recoveryCompletedAt = artifact['recoveryCompletedAt'] is String
+      ? DateTime.tryParse(artifact['recoveryCompletedAt']! as String)
+      : null;
+  final recoveryZeroBadgeObservedAt =
+      artifact['recoveryZeroBadgeObservedAt'] is String
+      ? DateTime.tryParse(artifact['recoveryZeroBadgeObservedAt']! as String)
+      : null;
+  if (recoveryCompletedAt == null ||
+      !recoveryCompletedAt.isUtc ||
+      recoveryZeroBadgeObservedAt == null ||
+      !recoveryZeroBadgeObservedAt.isUtc ||
+      recoveryZeroBadgeObservedAt.isBefore(recoveryCompletedAt)) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification recovery requires ordered UTC completion and final '
+      'zero-badge observation timestamps',
+    );
+  }
+
+  const exactRecoveryCounts = <String, int>{
+    'badgeBefore': 1,
+    'badgeAfter': 0,
+    'deliveredBefore': 1,
+    'deliveredWithSentinel': 2,
+    'deliveredAfter': 1,
+  };
+  final recoveryCounts = artifact['recoveryCounts'];
+  if (recoveryCounts is! Map ||
+      recoveryCounts.keys
+          .toSet()
+          .difference(exactRecoveryCounts.keys.toSet())
+          .isNotEmpty ||
+      exactRecoveryCounts.keys
+          .toSet()
+          .difference(recoveryCounts.keys.toSet())
+          .isNotEmpty ||
+      exactRecoveryCounts.entries.any(
+        (entry) => recoveryCounts[entry.key] != entry.value,
+      )) {
+    return const DeviceCriteriaResult.fail(
+      'iOS notification recovery counts must prove exact A/C retirement',
+    );
+  }
+
   final checks = artifact['checks'];
   final requiredChecks =
       _notificationRequirements['payload_fast_path_ios_receiver']!;
@@ -764,6 +830,17 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
     'recipientLog',
     'uiAutomationLog',
     'stagedEnvelope',
+    'recoveryPreparedApplication',
+    'recoveryPayloadProducer',
+    'recoveryApnsPayload',
+    'recoveryProviderReceipt',
+    'recoveryProviderCleanupReceipt',
+    'notificationRecoveryReceipt',
+    'recoveryRelayLog',
+    'recoveryNseLog',
+    'recoveryRecipientLog',
+    'recoveryUiAutomationLog',
+    'recoveryStagedEnvelope',
   };
   final evidence = artifact['evidenceSha256'];
   if (evidence is! Map ||
@@ -784,7 +861,13 @@ DeviceCriteriaResult _validateIosNotificationDurableArtifact(
   if (evidence['preparedApplication'] !=
           artifact['preparedApplicationSha256'] ||
       evidence['payloadProducer'] != artifact['payloadProducerSha256'] ||
-      evidence['apnsPayload'] != artifact['apnsPayloadSha256']) {
+      evidence['apnsPayload'] != artifact['apnsPayloadSha256'] ||
+      evidence['recoveryPreparedApplication'] !=
+          artifact['preparedApplicationSha256'] ||
+      evidence['recoveryPayloadProducer'] !=
+          artifact['payloadProducerSha256'] ||
+      evidence['recoveryApnsPayload'] !=
+          artifact['recoveryApnsPayloadSha256']) {
     return const DeviceCriteriaResult.fail(
       'iOS notification proof generated-evidence digest chain is broken',
     );
@@ -904,6 +987,14 @@ const Map<String, Set<String>> _notificationRequirements =
         'noRelayDrainBeforeVisibility',
         'networkRestored',
         'appTerminatedAfterCapture',
+        'badgePermissionEnabled',
+        'providerPayloadBadgeAbsent',
+        'deliveredNotificationBadgeWasNil',
+        'recoveryClaimUnique',
+        'runnerAbsoluteBadgeConverged',
+        'exactOwnedNotificationRetired',
+        'unrelatedSentinelSurvived',
+        'zeroBadgePublished',
       },
     };
 

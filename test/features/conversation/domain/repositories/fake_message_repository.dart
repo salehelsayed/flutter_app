@@ -1,10 +1,13 @@
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
 /// In-memory [MessageRepository] for tests.
 ///
 /// Stores messages in a list, configurable return values, tracks call counts.
-class FakeMessageRepository implements MessageRepository {
+class FakeMessageRepository
+    implements MessageRepository, OutgoingTransportMutationRepository {
   final List<ConversationMessage> _messages = [];
 
   // Call tracking
@@ -315,6 +318,250 @@ class FakeMessageRepository implements MessageRepository {
     onUpdateWireEnvelope?.call();
   }
 
+  int ordinaryMutationCallCount = 0;
+  final List<ConversationMessage> ordinaryAttemptStages = [];
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) async {
+    ordinaryMutationCallCount++;
+    ordinaryAttemptStages.add(staged);
+    final index = _messages.indexWhere((message) => message.id == staged.id);
+    if (kind == OutgoingOrdinaryAttemptKind.fresh) {
+      if (expected != null || index >= 0) {
+        return _ordinaryResult(
+          OutgoingOrdinaryMutationOutcome.refused,
+          index < 0 ? null : _messages[index],
+        );
+      }
+      _messages.add(staged);
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, staged);
+    }
+    if (expected == null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, null);
+    }
+    if (index < 0) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    final current = _messages[index];
+    if (_sameMessageSnapshot(current, staged)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        current,
+      );
+    }
+    if (!_sameMessageSnapshot(current, expected)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    _messages[index] = staged.copyWith(
+      transport: null,
+      relayExpiresAt: null,
+      custodyCheckedAt: null,
+    );
+    return _ordinaryResult(
+      OutgoingOrdinaryMutationOutcome.applied,
+      _messages[index],
+    );
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOutgoingOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: false,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => _settleOutgoingOrdinary(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+    tombstone: true,
+  );
+
+  Future<OutgoingOrdinaryMutationResult> _settleOutgoingOrdinary({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool tombstone,
+  }) async {
+    ordinaryMutationCallCount++;
+    final index = _messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    final current = _messages[index];
+    if (current.isIncoming ||
+        current.contactPeerId != expectedContactPeerId ||
+        current.isDeleted != tombstone) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.status == 'delivered') {
+      return _ordinaryResult(
+        status == 'delivered'
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    if (current.status == status) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        current,
+      );
+    }
+    final predecessors = mode == OutgoingOrdinarySettlementMode.receipt
+        ? const <String>{'inboxed', 'sent', 'failed'}
+        : switch (status) {
+            'delivered' => const <String>{
+              'sending',
+              'sent',
+              'inboxed',
+              'failed',
+            },
+            'inboxed' => const <String>{'sending', 'sent', 'failed'},
+            'sent' => const <String>{'sending', 'failed'},
+            'failed' => const <String>{'sending'},
+            _ => const <String>{},
+          };
+    if (!predecessors.contains(current.status)) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final updated = current.copyWith(
+      status: status,
+      transport: transport,
+      wireEnvelope: status == 'delivered' ? null : expectedEnvelope,
+      relayExpiresAt: relayExpiresAt,
+      custodyCheckedAt: null,
+      hiddenAt: tombstone && status == 'delivered' ? current.deletedAt : null,
+    );
+    _messages[index] = updated;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, updated);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  }) async {
+    ordinaryMutationCallCount++;
+    final index = _messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    final current = _messages[index];
+    if (current.contactPeerId != expectedContactPeerId ||
+        current.isIncoming ||
+        current.isDeleted ||
+        !const <String>{'sending', 'failed'}.contains(current.status)) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final updated = current.copyWith(wireEnvelope: null);
+    _messages[index] = updated;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, updated);
+  }
+
+  @override
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  }) async {
+    ordinaryMutationCallCount++;
+    final index = _messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
+    }
+    final current = _messages[index];
+    if (current.contactPeerId != expectedContactPeerId ||
+        current.isIncoming ||
+        current.isDeleted != isDeleteTombstone ||
+        current.status != 'sent') {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current.wireEnvelope != expectedEnvelope) {
+      return _ordinaryResult(
+        OutgoingOrdinaryMutationOutcome.preserved,
+        current,
+      );
+    }
+    final updated = current.copyWith(
+      status: 'failed',
+      transport: null,
+      relayExpiresAt: null,
+      custodyCheckedAt: null,
+    );
+    _messages[index] = updated;
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, updated);
+  }
+
+  OutgoingOrdinaryMutationResult _ordinaryResult(
+    OutgoingOrdinaryMutationOutcome outcome,
+    ConversationMessage? message,
+  ) {
+    // Keep the fixture's historical "last durable message" inspection seam
+    // useful without pretending the typed mutation called saveMessage.
+    if (message != null &&
+        (outcome == OutgoingOrdinaryMutationOutcome.applied ||
+            outcome == OutgoingOrdinaryMutationOutcome.idempotent)) {
+      lastSavedMessage = message;
+    }
+    return OutgoingOrdinaryMutationResult(outcome: outcome, message: message);
+  }
+
   Iterable<ConversationMessage> _visibleMessagesForContact(
     String contactPeerId,
   ) {
@@ -322,4 +569,11 @@ class FakeMessageRepository implements MessageRepository {
       (message) => message.contactPeerId == contactPeerId && !message.isHidden,
     );
   }
+}
+
+bool _sameMessageSnapshot(ConversationMessage left, ConversationMessage right) {
+  final leftMap = left.toMap();
+  final rightMap = right.toMap();
+  return leftMap.length == rightMap.length &&
+      leftMap.entries.every((entry) => rightMap[entry.key] == entry.value);
 }

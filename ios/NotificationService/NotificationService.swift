@@ -6,11 +6,36 @@ final class NotificationService: UNNotificationServiceExtension {
   private var contentHandler: ((UNNotificationContent) -> Void)?
   private var bestAttemptContent: UNNotificationContent?
   private var resolvedPreview: NotificationPreviewResult?
+  private var requestIdentifier: String?
   private let previewEventEmitter = LogPushPreviewEventEmitter()
+  private lazy var notificationRecoveryStore = IosNotificationRecoveryStore()
+  private lazy var notificationRecoveryHandoff =
+    IosNotificationRecoveryHandoffOrchestrator(
+      store: notificationRecoveryStore
+    )
+  private lazy var notificationRecoveryBadgeWriter:
+    IosNotificationBadgeWriting? = {
+      guard #available(iOS 16.0, *),
+            let notificationRecoveryStore else {
+        return nil
+      }
+      return IosNotificationSerializedBadgeWriter(
+        store: notificationRecoveryStore,
+        setter: { count, completion in
+          UNUserNotificationCenter.current().setBadgeCount(
+            count,
+            withCompletionHandler: completion
+          )
+        }
+      )
+    }()
   private lazy var previewResolver = NotificationPreviewResolver(
     keyReader: KeychainPushKeyReader(),
     decryptor: BridgePushDecryptor(),
-    dedupeStore: AppGroupPushDedupeStore(),
+    // The shared handoff orchestrator owns the production uniqueness claim so
+    // there is no crash window between the old resolver-only claim and exact
+    // Apple request custody. The resolver injection remains as a test seam.
+    dedupeStore: nil,
     toneLeaseStore: AppGroupNotificationToneLeaseStore(),
     eventEmitter: previewEventEmitter
   )
@@ -35,6 +60,7 @@ final class NotificationService: UNNotificationServiceExtension {
       self.contentHandler = contentHandler
       bestAttemptContent = mutableContent
       resolvedPreview = nil
+      requestIdentifier = request.identifier
     }
 
     let envelopeStaged = pushEnvelopeStore?.stage(
@@ -93,6 +119,7 @@ final class NotificationService: UNNotificationServiceExtension {
     var handler: ((UNNotificationContent) -> Void)?
     var content: UNNotificationContent?
     var preview: NotificationPreviewResult?
+    var claimedRequestIdentifier: String?
     let claimed = completionGate.claim(generation: generation) {
       handler = contentHandler
       content = bestAttemptContent
@@ -100,28 +127,75 @@ final class NotificationService: UNNotificationServiceExtension {
       contentHandler = nil
       bestAttemptContent = nil
       resolvedPreview = nil
+      claimedRequestIdentifier = requestIdentifier
+      requestIdentifier = nil
     }
     guard claimed, let handler, let content else {
       return
     }
 
     var didApplyPreview = false
-    if let mutableContent = content as? UNMutableNotificationContent {
-      didApplyPreview = applyOrSanitizeNotificationPreviewResult(
-        preview,
-        to: mutableContent
-      )
-      if didApplyPreview {
-        recentRemoteShownMarkerStore?.mark(userInfo: mutableContent.userInfo)
-      }
-    }
-    previewEventEmitter.emit(
-      event: "PUSH_NSE_CONTENT_HANDOFF",
-      details: ["authorized": didApplyPreview ? "true" : "false"]
+    var recoveryDisposition: IosNotificationRecoveryHandoffDisposition =
+      .untracked
+    let badgeWriter = notificationRecoveryBadgeWriter
+    notificationRecoveryHandoff.handoff(
+      requestIdentifier: claimedRequestIdentifier ?? "",
+      identity: preview?.recoveryIdentity,
+      content: content,
+      prepareContent: { [weak self] disposition in
+        recoveryDisposition = disposition
+        guard let mutableContent = content as? UNMutableNotificationContent else {
+          return
+        }
+        switch disposition {
+        case .rejected:
+          sanitizeNotificationContentForUnresolvedExpiry(mutableContent)
+          didApplyPreview = false
+        case .duplicate
+          where preview?.recoveryIdentity?.kind == .ordinary:
+          // Without the filtering entitlement this is privacy clearing, not a
+          // claim that iOS will suppress delivery.
+          sanitizeNotificationContentForUnresolvedExpiry(mutableContent)
+          didApplyPreview = false
+        default:
+          didApplyPreview = applyOrSanitizeNotificationPreviewResult(
+            preview,
+            to: mutableContent
+          )
+          if disposition == .duplicate,
+             preview?.recoveryIdentity?.kind == .reaction {
+            mutableContent.sound = nil
+            if #available(iOS 15.0, *) {
+              mutableContent.interruptionLevel = .passive
+            }
+          }
+        }
+        // Belt-and-suspenders for every branch, including future preview
+        // applicators: APNs badge payloads never escape this extension.
+        mutableContent.badge = nil
+        if didApplyPreview {
+          self?.recentRemoteShownMarkerStore?.mark(
+            userInfo: mutableContent.userInfo
+          )
+        }
+        self?.previewEventEmitter.emit(
+          event: "PUSH_NSE_CONTENT_HANDOFF",
+          details: ["authorized": didApplyPreview ? "true" : "false"]
+        )
+      },
+      beforeContentHandler: { disposition in
+        if disposition == .unique || disposition == .duplicate {
+          // Submission is queued before Apple's handoff so extension teardown
+          // cannot lose it, but the handler never waits for the async writer.
+          badgeWriter?.requestWrite()
+        }
+      },
+      contentHandler: handler
     )
-    handler(content)
     let toneReservation = preview?.toneReservation
-    if didApplyPreview && preview?.markAsShown == true {
+    if didApplyPreview &&
+       recoveryDisposition != .duplicate &&
+       preview?.markAsShown == true {
       if let toneReservation, !toneReservation.commit(now: Date()) {
         previewEventEmitter.emit(
           event: "PUSH_NSE_TONE_COMMIT_FAILED",
