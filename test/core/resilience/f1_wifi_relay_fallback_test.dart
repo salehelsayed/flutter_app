@@ -40,38 +40,50 @@ void main() {
       bob.dispose();
     });
 
-    test('WiFi send succeeds with transport=wifi', () async {
-      final aliceP2P = alice.p2pService;
-      aliceP2P.localPeers.add(bob.peerId);
+    test(
+      'same-WiFi local attempt settles via authenticated direct proof',
+      () async {
+        final aliceP2P = alice.p2pService;
+        aliceP2P.localPeers.add(bob.peerId);
 
-      final bobReceived = Completer<void>();
-      bob.chatListener.incomingMessageStream.listen((_) {
-        if (!bobReceived.isCompleted) bobReceived.complete();
-      });
+        final bobReceived = Completer<void>();
+        bob.chatListener.incomingMessageStream.listen((_) {
+          if (!bobReceived.isCompleted) bobReceived.complete();
+        });
 
-      final (result, msg) = await alice.sendMessage(bob.peerId, 'Hello WiFi');
+        final (result, msg) = await alice.sendMessage(bob.peerId, 'Hello WiFi');
 
-      expect(result, SendChatMessageResult.success);
-      expect(msg, isNotNull);
-      expect(msg!.transport, 'local');
-      expect(aliceP2P.localSendCallCount, 1);
+        expect(result, SendChatMessageResult.success);
+        expect(msg, isNotNull);
+        expect(msg!.transport, 'direct');
+        expect(aliceP2P.localSendCallCount, 1);
+        expect(
+          network.deliverCallCount,
+          2,
+          reason: 'local WebSocket and authenticated direct must both write',
+        );
 
-      // Bob received the message
-      await bobReceived.future.timeout(const Duration(seconds: 2));
-      final bobMessages = await bob.loadConversationWith(alice.peerId);
-      expect(bobMessages, hasLength(1));
-      expect(bobMessages.first.text, 'Hello WiFi');
+        // Bob receives one logical row despite both transport writes.
+        await bobReceived.future.timeout(const Duration(seconds: 2));
+        final bobMessages = await bob.loadConversationWith(alice.peerId);
+        expect(
+          bobMessages,
+          hasLength(1),
+          reason: 'receiver message-ID dedup must collapse both copies',
+        );
+        expect(bobMessages.first.text, 'Hello WiFi');
 
-      // No duplicates on Alice's side
-      expect(alice.messageRepo.count, 1);
-    });
+        // No duplicates on Alice's side
+        expect(alice.messageRepo.count, 1);
+      },
+    );
 
     test(
-      'WiFi disappears mid-session, next send falls through to relay',
+      'WiFi disappears mid-session after authenticated direct settled first',
       () async {
         final aliceP2P = alice.p2pService;
 
-        // First message: WiFi path
+        // First message: local write plus authenticated direct proof.
         aliceP2P.localPeers.add(bob.peerId);
 
         final bobReceived1 = Completer<void>();
@@ -86,12 +98,14 @@ void main() {
 
         expect(result1, SendChatMessageResult.success);
         expect(msg1, isNotNull);
-        expect(msg1!.transport, 'local');
+        expect(msg1!.transport, 'direct');
+        expect(aliceP2P.localSendCallCount, 1);
+        expect(network.deliverCallCount, 2);
 
         await bobReceived1.future.timeout(const Duration(seconds: 2));
         await sub1.cancel();
 
-        // Second message: remove WiFi, falls to relay
+        // Second message: remove WiFi; only authenticated libp2p writes.
         aliceP2P.localPeers.remove(bob.peerId);
 
         final bobReceived2 = Completer<void>();
@@ -107,12 +121,18 @@ void main() {
         expect(result2, SendChatMessageResult.success);
         expect(msg2, isNotNull);
         expect(msg2!.transport, 'direct');
+        expect(aliceP2P.localSendCallCount, 1);
+        expect(network.deliverCallCount, 3);
 
         await bobReceived2.future.timeout(const Duration(seconds: 2));
 
-        // Both messages delivered to Bob, no duplicates
+        // Three transport writes produced two logical receiver rows.
         final bobMessages = await bob.loadConversationWith(alice.peerId);
-        expect(bobMessages, hasLength(2));
+        expect(
+          bobMessages,
+          hasLength(2),
+          reason: 'receiver message-ID dedup must collapse the first dual send',
+        );
         expect(bobMessages[0].text, 'WiFi message');
         expect(bobMessages[1].text, 'Relay message');
 
@@ -125,7 +145,7 @@ void main() {
     );
 
     test(
-      'WiFi send fails (localSendResult=false), falls through to relay',
+      'WiFi send fails (localSendResult=false), authenticated direct settles',
       () async {
         final aliceP2P = alice.p2pService;
         aliceP2P.localPeers.add(bob.peerId);
@@ -227,8 +247,7 @@ void main() {
         expect(network.storeInInboxCallCount, 1);
         expect(network.inboxCount(bob.peerId), 1);
 
-        final drained = await (bob.p2pService)
-            .drainOfflineInboxCount();
+        final drained = await (bob.p2pService).drainOfflineInboxCount();
         expect(drained, 1);
         await bobReceived.future.timeout(const Duration(seconds: 2));
         await Future.delayed(
@@ -246,7 +265,7 @@ void main() {
       },
     );
 
-    test('transport stable across WiFi/relay/WiFi transitions', () async {
+    test('authenticated transport owns WiFi visibility transitions', () async {
       final aliceP2P = alice.p2pService;
 
       // Message 1: WiFi
@@ -288,13 +307,26 @@ void main() {
       await bobReceived3.future.timeout(const Duration(seconds: 2));
       await sub.cancel();
 
-      // Assert transport sequence
+      // Local visibility changes which WebSocket attempts run, but only the
+      // authenticated libp2p proof owns the persisted transport.
       final transports = [m1!.transport, m2!.transport, m3!.transport];
-      expect(transports, ['local', 'direct', 'local']);
+      expect(transports, ['direct', 'direct', 'direct']);
+      expect(aliceP2P.localSendCallCount, 2);
+      expect(
+        network.deliverCallCount,
+        5,
+        reason:
+            'sends one and three each include local plus authenticated '
+            'writes; send two includes only authenticated libp2p',
+      );
 
-      // All 3 messages delivered to Bob
+      // Five transport writes produced three logical receiver rows.
       final bobMessages = await bob.loadConversationWith(alice.peerId);
-      expect(bobMessages, hasLength(3));
+      expect(
+        bobMessages,
+        hasLength(3),
+        reason: 'receiver message-ID dedup must collapse both dual sends',
+      );
 
       // Alice has exactly 3 messages
       final aliceMessages = await alice.messageRepo.getMessagesForContact(

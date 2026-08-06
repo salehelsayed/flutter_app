@@ -2023,6 +2023,7 @@ type groupBridgeMessageParams struct {
 	MediaProtected           json.RawMessage          `json:"mediaProtected,omitempty"`
 	RecipientPeerIds         []string                 `json:"recipientPeerIds,omitempty"`
 	PreserveRecipientPeerIds bool                     `json:"preserveRecipientPeerIds,omitempty"`
+	SkipPeerRefresh          bool                     `json:"skipPeerRefresh,omitempty"`
 	privateMediaPolicy       map[string]interface{}
 }
 
@@ -2162,7 +2163,7 @@ func GroupPublish(paramsJSON string) (result string) {
 		}
 		opts := buildGroupBridgeMessageOpts(params, false)
 
-		msgId, topicPeers, err := n.PublishGroupMessage(
+		msgId, topicPeers, err := n.PublishGroupMessageWithOptions(
 			params.GroupId,
 			params.SenderPrivateKey,
 			params.SenderPeerId,
@@ -2171,6 +2172,9 @@ func GroupPublish(paramsJSON string) (result string) {
 			params.Text,
 			params.MessageId,
 			opts,
+			node.GroupPublishTransportOptions{
+				SkipPeerRefresh: params.SkipPeerRefresh,
+			},
 		)
 		if err != nil {
 			return errJSON("GROUP_ERROR", err.Error())

@@ -35,6 +35,7 @@ import 'package:flutter_app/core/notifications/active_conversation_tracker.dart'
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
@@ -88,6 +89,7 @@ import 'package:flutter_app/features/identity/data/repositories/identity_reposit
 import 'package:flutter_app/l10n/app_localizations.dart';
 
 import '_support/invite_reliability_runner_contract.dart';
+import '_support/canonical_runtime_device_test_lease.dart';
 import '../test/shared/fakes/fake_notification_service.dart';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_pending_group_invite_repository.dart';
@@ -2521,12 +2523,6 @@ String _latencyRecipientObservationStatus({
 
 Future<void> _runInviteSendLatencyPrimary(WidgetTester tester) async {
   _requireTargetLocalLatencyDirectory();
-  if (configuredMode != 'baseline') {
-    throw StateError(
-      'invite_send_latency closure is reserved for the reviewed production '
-      'replan; Wave 0 supports baseline only',
-    );
-  }
   final stack = await setupGroupMultiDeviceStack(
     dbName: _dbNameForRole(),
     username: 'Alice',
@@ -2682,12 +2678,6 @@ Future<void> _runInviteSendLatencyPrimary(WidgetTester tester) async {
 
 Future<void> _runInviteSendLatencySibling() async {
   _requireTargetLocalLatencyDirectory();
-  if (configuredMode != 'baseline') {
-    throw StateError(
-      'invite_send_latency closure is reserved for the reviewed production '
-      'replan; Wave 0 supports baseline only',
-    );
-  }
   final stack = await setupGroupMultiDeviceStack(
     dbName: _dbNameForRole(),
     username: 'Bob',
@@ -3346,50 +3336,69 @@ void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
   initializeSqliteForCurrentPlatform();
 
+  final runtimeLease = CanonicalRuntimeDeviceTestLease(
+    binding: 'group-multi-device-real-$configuredRole',
+  );
+  setUpAll(runtimeLease.acquire);
+  tearDownAll(runtimeLease.release);
+
   testWidgets(
     'MD-004 multi-device proof scenario=$configuredScenario role=$configuredRole run=$configuredRunId',
     (tester) async {
-      if (!_isPrimaryRole && !_isSiblingRole) {
-        fail('Unsupported MD004_ROLE: $configuredRole');
-      }
-
-      if (configuredScenario == 'invite_reliability') {
-        if (_isPrimaryRole) {
-          await _runInviteReliabilityPrimary();
-        } else {
-          await _runInviteReliabilitySibling();
+      try {
+        if (!_isPrimaryRole && !_isSiblingRole) {
+          fail('Unsupported MD004_ROLE: $configuredRole');
         }
-        return;
-      }
 
-      if (configuredScenario == 'invite_send_latency') {
-        if (_isPrimaryRole) {
-          await _runInviteSendLatencyPrimary(tester);
-        } else {
-          await _runInviteSendLatencySibling();
+        if (configuredScenario == 'invite_reliability') {
+          if (_isPrimaryRole) {
+            await _runInviteReliabilityPrimary();
+          } else {
+            await _runInviteReliabilitySibling();
+          }
+          return;
         }
-        return;
-      }
 
-      // R6 (12-P2 Part B): per-device ML-KEM key separation. The primary
-      // (admin/creator) admits its OWN restored sibling device; the sibling
-      // obtains the current group key ONLY via the live announce->admit->
-      // redistribute path (a 1:1 key-update ML-KEM-sealed to its FRESH per-device
-      // key), never via the fixture. Requires the build to be compiled with
-      // --dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true.
-      if (configuredScenario == 'b1b_sibling_device_convergence') {
-        if (_isPrimaryRole) {
-          await _runB1bConvergencePrimary();
-        } else {
-          await _runB1bConvergenceSibling();
+        if (configuredScenario == 'invite_send_latency') {
+          if (_isPrimaryRole) {
+            await _runInviteSendLatencyPrimary(tester);
+          } else {
+            await _runInviteSendLatencySibling();
+          }
+          return;
         }
-        return;
-      }
 
-      if (_isPrimaryRole) {
-        await _runPrimaryScenario();
-      } else {
-        await _runSiblingScenario();
+        // R6 (12-P2 Part B): per-device ML-KEM key separation. The primary
+        // (admin/creator) admits its OWN restored sibling device; the sibling
+        // obtains the current group key ONLY via the live announce->admit->
+        // redistribute path (a 1:1 key-update ML-KEM-sealed to its FRESH per-device
+        // key), never via the fixture. Requires the build to be compiled with
+        // --dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true.
+        if (configuredScenario == 'b1b_sibling_device_convergence') {
+          if (_isPrimaryRole) {
+            await _runB1bConvergencePrimary();
+          } else {
+            await _runB1bConvergenceSibling();
+          }
+          return;
+        }
+
+        if (_isPrimaryRole) {
+          await _runPrimaryScenario();
+        } else {
+          await _runSiblingScenario();
+        }
+      } catch (error, stackTrace) {
+        // `debugPrint` is throttled behind the migration flow-event burst on
+        // Android. Use synchronous `print` here so an early harness failure is
+        // visible to the host runner before the integration-test app exits.
+        print(
+          '[MD004_FATAL] scenario=$configuredScenario role=$configuredRole '
+          'errorType=${error.runtimeType} '
+          'error=${sanitizeDiagnosticText(error)}',
+        );
+        print('[MD004_FATAL_STACK]\n$stackTrace');
+        rethrow;
       }
     },
   );

@@ -388,6 +388,7 @@ Future<CreateGroupWithMembersResult> createGroupWithMembers({
       senderDevicePublicKey: senderBinding.devicePublicKey,
       senderKeyPackageId: senderBinding.keyPackageId,
       messageId: sourceEventId,
+      skipPeerRefresh: true,
     );
     if (publishResult['ok'] != true) {
       membersAddedPublishFailed = true;

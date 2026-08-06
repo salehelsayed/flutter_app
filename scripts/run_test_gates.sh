@@ -1112,7 +1112,7 @@ array_contains() {
 run_group_forwarding_go_bridge_gate() {
   echo "=== Group Forwarding / Private Media Go Bridge Gate ==="
   (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '^TestGMF11ForwardedMarkerMapsToPublishOptions$' -count=1)
-  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030' -count=1)
+  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030|TC3410' -count=1)
 }
 
 # Notification relay closure: curated 1:1 and group gates run only the focused

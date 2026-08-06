@@ -331,7 +331,7 @@ assert_invite_scenario_selectable() {
 assert_invite_scenario_selectable invite_reliability
 assert_invite_scenario_selectable \
   invite_send_latency \
-  baseline \
+  closure \
   android-physical,android-emulator
 
 unset RELIABILITY_MULTI_DEVICE_IDS FLUTTER_MULTI_DEVICE_IDS FLUTTER_DEVICE_ID
@@ -341,7 +341,7 @@ missing_invite_devices_list="$tmp_dir/invite-send-latency-missing-devices.list"
   >"$missing_invite_devices_list" ||
   fail "$invite_runner:invite_send_latency list must remain available without device env"
 grep -Fq -- \
-  "--mode 'baseline' -d '<required:RELIABILITY_MULTI_DEVICE_IDS>'" \
+  "--mode 'closure' -d '<required:RELIABILITY_MULTI_DEVICE_IDS>'" \
   "$missing_invite_devices_list" ||
   fail 'invite_send_latency list did not expose its required explicit device pair'
 

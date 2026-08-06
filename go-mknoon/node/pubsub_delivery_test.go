@@ -224,6 +224,7 @@ func waitForCollectedGroupDiscoveryPeerPrefix(
 
 type lp013GroupHarness struct {
 	nodeA        *Node
+	nodeACapture *testEventCollector
 	nodeBCapture *testEventCollector
 	nodeB        *Node
 	privB64      string
@@ -240,7 +241,8 @@ func setupLP013TwoNodeGroup(t *testing.T, groupId string) lp013GroupHarness {
 		t.Fatalf("generate group key: %v", err)
 	}
 
-	nodeA := startLocalNodeForMultiRelayTest(t)
+	nodeACapture := &testEventCollector{}
+	nodeA := startLocalNodeForMultiRelayTestWithCollector(t, nodeACapture)
 	nodeBCapture := &testEventCollector{}
 	nodeB := startLocalNodeForMultiRelayTestWithCollector(t, nodeBCapture)
 
@@ -273,6 +275,7 @@ func setupLP013TwoNodeGroup(t *testing.T, groupId string) lp013GroupHarness {
 
 	return lp013GroupHarness{
 		nodeA:        nodeA,
+		nodeACapture: nodeACapture,
 		nodeBCapture: nodeBCapture,
 		nodeB:        nodeB,
 		privB64:      privB64,
@@ -610,6 +613,195 @@ func assertGP007NumericEquals(t *testing.T, data map[string]interface{}, field s
 	}
 	if int(got) != want {
 		t.Fatalf("%s = %v, want %d; event=%v", field, got, want, data)
+	}
+}
+
+func TestTC34104BootstrapPublishSkipsOnlyPeerRefreshAndStillPublishes(t *testing.T) {
+	t.Run("live recipient receives the ordinary encrypted envelope", func(t *testing.T) {
+		groupID := "tc341-bootstrap-live-recipient"
+		harness := setupLP013TwoNodeGroup(t, groupID)
+		cancelNW002GroupDiscovery(t, harness.nodeA, groupID)
+
+		senderBaseline := len(harness.nodeACapture.snapshot())
+		receiverBaseline := len(harness.nodeBCapture.snapshot())
+		messageID := "tc341-bootstrap-live-message"
+		msgID, peerCount, err := harness.nodeA.PublishGroupMessageWithOptions(
+			groupID,
+			harness.privB64,
+			harness.nodeA.PeerId(),
+			harness.pubB64,
+			"Alice",
+			"TC-341 bootstrap publish reaches a live recipient",
+			messageID,
+			map[string]interface{}{
+				"tc341PayloadMarker": "preserved",
+			},
+			GroupPublishTransportOptions{SkipPeerRefresh: true},
+		)
+		if err != nil {
+			t.Fatalf("PublishGroupMessageWithOptions: %v", err)
+		}
+		if msgID != messageID {
+			t.Fatalf("messageId = %q, want %q", msgID, messageID)
+		}
+		if peerCount < 1 {
+			t.Fatalf("topicPeers = %d, want at least one live recipient", peerCount)
+		}
+
+		event := waitForCollectedEventAfter(t, harness.nodeBCapture, receiverBaseline, "group_message:received", 5*time.Second)
+		if event["messageId"] != messageID {
+			t.Fatalf("received messageId = %v, want %s", event["messageId"], messageID)
+		}
+		if event["text"] != "TC-341 bootstrap publish reaches a live recipient" {
+			t.Fatalf("received text = %v", event["text"])
+		}
+		if event["tc341PayloadMarker"] != "preserved" {
+			t.Fatalf("received message extra = %v, want preserved", event["tc341PayloadMarker"])
+		}
+		if _, present := event["skipPeerRefresh"]; present {
+			t.Fatalf("transport control leaked into decrypted event: %#v", event)
+		}
+		assertNoTC341PublishRefreshStepAfter(t, harness.nodeACapture, senderBaseline, groupID, 300*time.Millisecond)
+	})
+
+	t.Run("zero live peers still publishes and retains background discovery", func(t *testing.T) {
+		privB64, pubB64 := generateEd25519KeyPair(t)
+		_, remotePubB64 := generateEd25519KeyPair(t)
+		groupKey, err := mcrypto.GenerateGroupKey()
+		if err != nil {
+			t.Fatalf("generate group key: %v", err)
+		}
+
+		capture := &testEventCollector{}
+		n := startLocalNodeForMultiRelayTestWithCollector(t, capture)
+		groupID := "tc341-bootstrap-zero-peer"
+		if err := n.JoinGroupTopic(groupID, &GroupConfig{
+			Name:      "TC-341 Bootstrap Zero Peer",
+			GroupType: GroupTypeChat,
+			Members: []GroupMember{
+				{PeerId: n.PeerId(), Role: GroupRoleAdmin, PublicKey: pubB64},
+				{PeerId: generatePeerIDStr(t), Role: GroupRoleWriter, PublicKey: remotePubB64},
+			},
+			CreatedBy: n.PeerId(),
+		}, &GroupKeyInfo{Key: groupKey, KeyEpoch: 1}); err != nil {
+			t.Fatalf("JoinGroupTopic: %v", err)
+		}
+
+		n.mu.RLock()
+		_, discoveryPresentBefore := n.groupDiscoveryCtx[groupID]
+		n.mu.RUnlock()
+		if !discoveryPresentBefore {
+			t.Fatal("background discovery owner missing before bootstrap publish")
+		}
+
+		baseline := len(capture.snapshot())
+		messageID := "tc341-bootstrap-zero-peer-message"
+		msgID, peerCount, err := n.PublishGroupMessageWithOptions(
+			groupID,
+			privB64,
+			n.PeerId(),
+			pubB64,
+			"Alice",
+			"TC-341 bootstrap publish with zero live peers",
+			messageID,
+			nil,
+			GroupPublishTransportOptions{SkipPeerRefresh: true},
+		)
+		if err != nil {
+			t.Fatalf("PublishGroupMessageWithOptions: %v", err)
+		}
+		if msgID != messageID {
+			t.Fatalf("messageId = %q, want %q", msgID, messageID)
+		}
+		if peerCount != 0 {
+			t.Fatalf("topicPeers = %d, want zero", peerCount)
+		}
+
+		publishDebug := waitForCollectedEventData(t, capture, "group:publish_debug", func(event map[string]interface{}) bool {
+			return event["groupId"] == groupID && event["messageId"] == messageID
+		}, time.Second)
+		assertGP007NumericEquals(t, publishDebug, "topicPeers", 0)
+		assertNoTC341PublishRefreshStepAfter(t, capture, baseline, groupID, 300*time.Millisecond)
+
+		n.mu.RLock()
+		_, discoveryPresentAfter := n.groupDiscoveryCtx[groupID]
+		n.mu.RUnlock()
+		if !discoveryPresentAfter {
+			t.Fatal("bootstrap publish removed the background discovery owner")
+		}
+	})
+}
+
+func TestTC34104BootstrapPublishPreservesAuthorizationBeforeCrypto(t *testing.T) {
+	_, pubB64 := generateEd25519KeyPair(t)
+	capture := &testEventCollector{}
+	n := startLocalNodeForMultiRelayTestWithCollector(t, capture)
+	groupID := "tc341-bootstrap-auth-before-crypto"
+	if err := n.JoinGroupTopic(groupID, &GroupConfig{
+		Name:      "TC-341 Bootstrap Authorization",
+		GroupType: GroupTypeAnnouncement,
+		Members: []GroupMember{
+			{PeerId: n.PeerId(), Role: GroupRoleWriter, PublicKey: pubB64},
+		},
+		CreatedBy: "tc341-absent-admin",
+	}, &GroupKeyInfo{Key: "not-base64-group-key", KeyEpoch: 1}); err != nil {
+		t.Fatalf("JoinGroupTopic: %v", err)
+	}
+
+	baseline := len(capture.snapshot())
+	messageID := "tc341-bootstrap-unauthorized-message"
+	msgID, peerCount, err := n.PublishGroupMessageWithOptions(
+		groupID,
+		"not-base64-private-key",
+		n.PeerId(),
+		pubB64,
+		"Writer",
+		"TC-341 unauthorized bootstrap publish",
+		messageID,
+		nil,
+		GroupPublishTransportOptions{SkipPeerRefresh: true},
+	)
+	if err == nil {
+		t.Fatal("expected unauthorized writer error before crypto, got nil")
+	}
+	if !strings.Contains(err.Error(), "not allowed to write") {
+		t.Fatalf("error = %v, want not allowed to write", err)
+	}
+	if strings.Contains(err.Error(), "encrypt group message") || strings.Contains(err.Error(), "sign group message") {
+		t.Fatalf("unauthorized bootstrap publish reached crypto: %v", err)
+	}
+	if msgID != "" || peerCount != 0 {
+		t.Fatalf("unauthorized publish returned messageId=%q topicPeers=%d, want empty/zero", msgID, peerCount)
+	}
+	assertNoCollectedEventContainingAfter(t, capture, baseline, `"event":"group:publish_debug"`, 300*time.Millisecond)
+	assertNoCollectedEventContainingAfter(t, capture, baseline, messageID, 300*time.Millisecond)
+}
+
+func assertNoTC341PublishRefreshStepAfter(
+	t *testing.T,
+	collector *testEventCollector,
+	baseline int,
+	groupID string,
+	timeout time.Duration,
+) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, raw := range collector.snapshot()[baseline:] {
+			var payload map[string]interface{}
+			if err := json.Unmarshal([]byte(raw), &payload); err != nil || payload["event"] != "group:discovery" {
+				continue
+			}
+			data, _ := payload["data"].(map[string]interface{})
+			if data["groupId"] != groupID {
+				continue
+			}
+			if step := data["step"]; step == "publish_peer_refresh_begin" || step == "publish_peer_refresh_done" {
+				t.Fatalf("bootstrap publish emitted foreground peer refresh event: %s", raw)
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

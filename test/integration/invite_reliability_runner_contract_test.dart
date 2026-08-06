@@ -1039,6 +1039,358 @@ void main() {
       reason: 'two successful role artifacts are mandatory',
     );
   });
+
+  test(
+    'TC-341-08 closure mode is executable and rejects any slow or ambiguous result',
+    () {
+      final closureArguments =
+          InviteReliabilityRunnerArguments.parse(const <String>[
+            '--scenario',
+            'invite_send_latency',
+            '--mode',
+            'closure',
+            '-d',
+            'physical-1,emulator-5554',
+          ], defaultDeviceIds: const <String>[]);
+      expect(closureArguments.mode, 'closure');
+
+      final runnerSource = File(
+        'integration_test/scripts/run_invite_reliability_multi_device.dart',
+      ).readAsStringSync();
+      final harnessSource = File(
+        'integration_test/group_multi_device_real_harness.dart',
+      ).readAsStringSync();
+      expect(
+        runnerSource,
+        isNot(
+          contains("options.isLatencyScenario && options.mode == 'closure'"),
+        ),
+      );
+      expect(harnessSource, isNot(contains("configuredMode != 'baseline'")));
+      expect(
+        runnerSource,
+        allOf(
+          contains('if (!summaryValidation.ok)'),
+          contains('invite_send_latency host summary rejected'),
+        ),
+        reason: 'a rejected closure summary must fail the host orchestrator',
+      );
+
+      final wrongGlobalCell = _validArtifacts();
+      _setCellPhaseDuration(
+        wrongGlobalCell.primary,
+        wrongGlobalCell.sibling,
+        path: 'add',
+        condition: 'offline',
+        phaseName: 'live',
+        durationMs: 5000,
+      );
+      final baselineSummary = _buildLatencyHostSummary(
+        wrongGlobalCell,
+        mode: 'baseline',
+      );
+      final baselineDisposition = Map<String, Object?>.from(
+        baselineSummary['disposition']! as Map,
+      );
+      expect(baselineDisposition['cell'], 'add|offline');
+      expect(baselineDisposition['dominantPhase'], 'live');
+      expect(baselineDisposition['productionAuthorized'], isFalse);
+      expect(
+        _validateLatencyHostSummary(baselineSummary, mode: 'baseline').ok,
+        isTrue,
+        reason: 'baseline remains globally derived and evidence-only',
+      );
+
+      _setArtifactMode(wrongGlobalCell, 'closure');
+      final closureSummary = _buildLatencyHostSummary(
+        wrongGlobalCell,
+        mode: 'closure',
+      );
+      final closureDisposition = Map<String, Object?>.from(
+        closureSummary['disposition']! as Map,
+      );
+      final fixedCell = _summaryCell(
+        closureSummary,
+        path: 'create',
+        condition: 'online-cold',
+      );
+      final fixedPhaseMedians = Map<String, Object?>.from(
+        fixedCell['phaseMedianMs']! as Map,
+      );
+      expect(closureDisposition['cell'], inviteSendLatencyClosureCell);
+      expect(closureDisposition['dominantPhase'], 'pre_fanout');
+      expect(
+        closureDisposition['phaseMedianMs'],
+        fixedPhaseMedians['pre_fanout'],
+      );
+      expect(
+        closureDisposition['basis'],
+        contains('callerMedianMs=${fixedCell['callerMedianMs']}'),
+      );
+      expect(closureDisposition['productionAuthorized'], isTrue);
+      expect(
+        _validateLatencyHostSummary(closureSummary, mode: 'closure').ok,
+        isTrue,
+        reason: 'a slower unrelated cell cannot replace the fixed closure cell',
+      );
+
+      final slowPreFanout = _validArtifacts();
+      _setArtifactMode(slowPreFanout, 'closure');
+      _setCellPhaseDuration(
+        slowPreFanout.primary,
+        slowPreFanout.sibling,
+        path: 'create',
+        condition: 'online-cold',
+        phaseName: 'pre_fanout',
+        durationMs: 951,
+      );
+      final slowPreFanoutSummary = _buildLatencyHostSummary(
+        slowPreFanout,
+        mode: 'closure',
+      );
+      final slowPreFanoutCell = _summaryCell(
+        slowPreFanoutSummary,
+        path: 'create',
+        condition: 'online-cold',
+      );
+      expect((slowPreFanoutCell['phaseMedianMs']! as Map)['pre_fanout'], 951);
+      expect(
+        slowPreFanoutCell['callerMedianMs'],
+        lessThanOrEqualTo(inviteSendLatencyClosureCallerMedianCeilingMs),
+      );
+      final slowPreFanoutValidation = _validateLatencyHostSummary(
+        slowPreFanoutSummary,
+        mode: 'closure',
+      );
+      expect(slowPreFanoutValidation.ok, isFalse);
+      expect(
+        slowPreFanoutValidation.detail,
+        contains('phaseMedianMs.pre_fanout must be <= 950'),
+      );
+      expect(
+        slowPreFanoutValidation.detail,
+        isNot(contains('callerMedianMs must be <= 1300')),
+        reason: 'the pre-fanout bound must fail independently',
+      );
+
+      final slowCaller = _validArtifacts();
+      _setArtifactMode(slowCaller, 'closure');
+      _setCellPhaseDuration(
+        slowCaller.primary,
+        slowCaller.sibling,
+        path: 'create',
+        condition: 'online-cold',
+        phaseName: 'navigation_settlement',
+        durationMs: 1290,
+      );
+      final slowCallerSummary = _buildLatencyHostSummary(
+        slowCaller,
+        mode: 'closure',
+      );
+      final slowCallerCell = _summaryCell(
+        slowCallerSummary,
+        path: 'create',
+        condition: 'online-cold',
+      );
+      expect(slowCallerCell['callerMedianMs'], 1301);
+      expect(
+        (slowCallerCell['phaseMedianMs']! as Map)['pre_fanout'],
+        lessThanOrEqualTo(inviteSendLatencyClosurePreFanoutMedianCeilingMs),
+      );
+      final slowCallerValidation = _validateLatencyHostSummary(
+        slowCallerSummary,
+        mode: 'closure',
+      );
+      expect(slowCallerValidation.ok, isFalse);
+      expect(
+        slowCallerValidation.detail,
+        contains('callerMedianMs must be <= 1300'),
+      );
+      expect(
+        slowCallerValidation.detail,
+        isNot(contains('phaseMedianMs.pre_fanout must be <= 950')),
+        reason: 'the caller bound must fail independently',
+      );
+
+      final falseAuthorization = _copy(closureSummary);
+      (falseAuthorization['disposition']!
+              as Map<String, dynamic>)['productionAuthorized'] =
+          false;
+      expect(
+        _validateLatencyHostSummary(falseAuthorization, mode: 'closure').detail,
+        contains('productionAuthorized must equal true'),
+        reason: 'internally consistent non-authorization is not closure',
+      );
+
+      final ambiguousSummary = _copy(closureSummary);
+      final ambiguousCell = _summaryCell(
+        ambiguousSummary,
+        path: 'add',
+        condition: 'online-warm',
+      );
+      ambiguousCell['recipientEventCountMax'] = 2;
+      expect(
+        _validateLatencyHostSummary(ambiguousSummary, mode: 'closure').detail,
+        contains('recipientEventCountMax must equal 1 in closure mode'),
+        reason:
+            'duplicate recipient evidence is ambiguous, even outside the fixed cell',
+      );
+
+      final unknownLastSample = _validArtifacts();
+      _setArtifactMode(unknownLastSample, 'closure');
+      _makeOutcomeUnknownSample(
+        unknownLastSample.primary,
+        unknownLastSample.sibling,
+        sampleIndex: 29,
+      );
+      expect(
+        validateInviteSendLatencyArtifacts(
+          primaryArtifact: unknownLastSample.primary,
+          siblingArtifact: unknownLastSample.sibling,
+          expectedRunId: 'run-267',
+          expectedMode: 'closure',
+        ).detail,
+        allOf(
+          contains(
+            r'$.primary.samples[29] closure mode forbids outcome_unknown',
+          ),
+          contains(
+            r'$.sibling.samples[29] closure requires one exact-ID recipient event',
+          ),
+        ),
+        reason: 'closure scans every one of the 30 samples for uncertainty',
+      );
+    },
+  );
+}
+
+const String _primaryLatencyArtifactPath = '/tmp/tc341-primary.json';
+const String _siblingLatencyArtifactPath = '/tmp/tc341-sibling.json';
+const String _primaryLatencyArtifactSha =
+    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const String _siblingLatencyArtifactSha =
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+void _setArtifactMode(
+  ({Map<String, dynamic> primary, Map<String, dynamic> sibling}) artifacts,
+  String mode,
+) {
+  artifacts.primary['mode'] = mode;
+  artifacts.sibling['mode'] = mode;
+}
+
+Map<String, Object?> _buildLatencyHostSummary(
+  ({Map<String, dynamic> primary, Map<String, dynamic> sibling}) artifacts, {
+  required String mode,
+}) => buildInviteSendLatencyHostSummary(
+  primaryArtifact: artifacts.primary,
+  siblingArtifact: artifacts.sibling,
+  expectedRunId: 'run-267',
+  expectedMode: mode,
+  primaryArtifactPath: _primaryLatencyArtifactPath,
+  primaryArtifactSha256: _primaryLatencyArtifactSha,
+  siblingArtifactPath: _siblingLatencyArtifactPath,
+  siblingArtifactSha256: _siblingLatencyArtifactSha,
+  provenance: InviteSendLatencyProvenance(
+    appGitRevision: List<String>.filled(40, 'd').join(),
+    appGitDirty: true,
+    appSourceFingerprintSha256: List<String>.filled(64, 'e').join(),
+    nativeGitRevision: List<String>.filled(40, 'f').join(),
+    relayAddressCount: 2,
+    relayAddressesSha256: List<String>.filled(64, 'a').join(),
+  ),
+  generatedAt: DateTime.utc(2026, 8, 6),
+);
+
+InviteSendLatencyArtifactValidation _validateLatencyHostSummary(
+  Object? summary, {
+  required String mode,
+}) => validateInviteSendLatencyHostSummary(
+  summary: summary,
+  expectedRunId: 'run-267',
+  expectedMode: mode,
+  expectedPrimaryArtifactPath: _primaryLatencyArtifactPath,
+  expectedPrimaryArtifactSha256: _primaryLatencyArtifactSha,
+  expectedSiblingArtifactPath: _siblingLatencyArtifactPath,
+  expectedSiblingArtifactSha256: _siblingLatencyArtifactSha,
+);
+
+Map<String, dynamic> _summaryCell(
+  Map<String, Object?> summary, {
+  required String path,
+  required String condition,
+}) => (summary['cells']! as List<Object?>)
+    .cast<Map<String, dynamic>>()
+    .singleWhere(
+      (cell) => cell['path'] == path && cell['condition'] == condition,
+    );
+
+void _setCellPhaseDuration(
+  Map<String, dynamic> primary,
+  Map<String, dynamic> sibling, {
+  required String path,
+  required String condition,
+  required String phaseName,
+  required int durationMs,
+}) {
+  final primarySamples = primary['samples']! as List<Object?>;
+  final siblingSamples = sibling['samples']! as List<Object?>;
+  for (var index = 0; index < primarySamples.length; index += 1) {
+    final sample = primarySamples[index]! as Map<String, dynamic>;
+    if (sample['path'] != path || sample['condition'] != condition) continue;
+
+    final phases = sample['phases']! as List<Object?>;
+    var cursor = DateTime.parse(
+      (sample['caller']! as Map<String, dynamic>)['beginAt']! as String,
+    );
+    DateTime? persistenceEnd;
+    DateTime? navigationEnd;
+    for (final rawPhase in phases) {
+      final phase = rawPhase! as Map<String, dynamic>;
+      final currentDuration = DateTime.parse(
+        phase['endAt']! as String,
+      ).difference(DateTime.parse(phase['beginAt']! as String));
+      final duration = phase['name'] == phaseName
+          ? Duration(milliseconds: durationMs)
+          : currentDuration;
+      final end = cursor.add(duration);
+      phase['beginAt'] = cursor.toUtc().toIso8601String();
+      phase['endAt'] = end.toUtc().toIso8601String();
+      if (phase['name'] == 'persistence') persistenceEnd = end;
+      if (phase['name'] == 'navigation_settlement') navigationEnd = end;
+      cursor = end.add(const Duration(milliseconds: 1));
+    }
+
+    final caller = sample['caller']! as Map<String, dynamic>;
+    caller['beginAt'] =
+        (phases.first! as Map<String, dynamic>)['beginAt']! as String;
+    caller['endAt'] = persistenceEnd!.toUtc().toIso8601String();
+    caller['settledAt'] = navigationEnd!.toUtc().toIso8601String();
+
+    final siblingSample = siblingSamples[index]! as Map<String, dynamic>;
+    final observationStartedAt = navigationEnd.add(
+      const Duration(milliseconds: 1),
+    );
+    siblingSample['observationStartedAt'] = observationStartedAt
+        .toUtc()
+        .toIso8601String();
+    siblingSample['observationDeadlineAt'] = observationStartedAt
+        .add(Duration(milliseconds: inviteSendLatencyObservationWindowMs))
+        .toUtc()
+        .toIso8601String();
+    siblingSample['observedAt'] = observationStartedAt
+        .add(const Duration(milliseconds: 1))
+        .toUtc()
+        .toIso8601String();
+    siblingSample['observationCompletedAt'] = observationStartedAt
+        .add(const Duration(milliseconds: 2))
+        .toUtc()
+        .toIso8601String();
+    siblingSample['finalReconciledAt'] = observationStartedAt
+        .add(const Duration(milliseconds: 3))
+        .toUtc()
+        .toIso8601String();
+  }
 }
 
 InviteSendLatencyArtifactValidation _validate(

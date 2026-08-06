@@ -13,9 +13,11 @@ platform-direction numbers the FDC-S6 Decision Criteria need:
     [failureRate(ON) - failureRate(baseline)] for the <= +1.0pp non-inferiority
     bar.
 
-The win leg per same-WiFi send is read from the receiver-side
-`MSG_RECEIVED_TRANSPORT` flow-event ({from, transport}, p2p_service_impl.dart).
-A clean libp2p-LAN win = a `direct` leg whose peer was bonsoir-fed
+The authoritative logical outcome per same-WiFi send is read from the
+receiver-side `CHAT_MSG_RECEIVE_STORED` flow-event ({id, from, transport},
+handle_incoming_chat_message_use_case.dart). Raw `MSG_RECEIVED_TRANSPORT`
+events remain the arrival-leg census used to audit parallel delivery. A clean
+libp2p-LAN win = a stored `direct` outcome whose peer was bonsoir-fed
 (P2P_LAN_PEER_FOUND_REQUEST fired) AND private-IP (lanPrivateIp:true, the FDC-S6
 net-new Dart discriminator), EXCLUDING `reuse`/`upgraded` (DCUtR/conn-reuse folds,
 not a fresh LAN dial). A bare `direct` without those guards is AMBIGUOUS
@@ -34,6 +36,7 @@ import sys
 FLOW_JSON_RE = re.compile(r"\[FLOW\]\s*(\{.*\})\s*$")
 
 WIN_EVENT = "MSG_RECEIVED_TRANSPORT"
+STORED_EVENT = "CHAT_MSG_RECEIVE_STORED"
 LAN_FOUND_EVENT = "P2P_LAN_PEER_FOUND_REQUEST"
 DOUBLE_DELIVERY_EVENT = "CHAT_MSG_DOUBLE_DELIVERY"
 
@@ -47,6 +50,8 @@ FAILURE_LEGS = {"inbox"}  # inbox = no live leg won; the send fell to the durabl
 
 def wilson_lb(k, n, z=1.96):
     """Wilson score lower bound for k successes in n trials."""
+    if n < 0 or k < 0 or k > n:
+        raise ValueError(f"successes must be between 0 and n (got k={k}, n={n})")
     if n == 0:
         return None
     phat = k / n
@@ -57,6 +62,8 @@ def wilson_lb(k, n, z=1.96):
 
 
 def wilson_interval(k, n, z=1.96):
+    if n < 0 or k < 0 or k > n:
+        raise ValueError(f"successes must be between 0 and n (got k={k}, n={n})")
     if n == 0:
         return (None, None)
     phat = k / n
@@ -82,6 +89,7 @@ def newcombe_diff_ci(k1, n1, k2, n2, z=1.96):
 def parse_files(paths):
     """Returns the raw tallies for one arm (a set of trial logs)."""
     sends = []            # list of (peer_prefix, transport) per MSG_RECEIVED_TRANSPORT
+    stored = []           # list of (peer_prefix, kept transport) per logical message
     bonsoir_peers = set()  # peers a P2P_LAN_PEER_FOUND_REQUEST fired for
     private_ip_peers = set()  # subset with lanPrivateIp:true
     double_deliveries = []  # list of (kept, dropped)
@@ -112,6 +120,13 @@ def parse_files(paths):
                 # harden the join, but NEVER lowercase — peer IDs are base58
                 # (case-sensitive), so folding case could collide distinct IDs.
                 sends.append(((details.get("from") or "").strip(), t))
+            elif event == STORED_EVENT:
+                stored.append(
+                    (
+                        (details.get("from") or "").strip(),
+                        (details.get("transport") or "unknown").strip().lower(),
+                    )
+                )
             elif event == LAN_FOUND_EVENT:
                 peer = (details.get("peer") or "").strip()
                 if peer:
@@ -124,6 +139,7 @@ def parse_files(paths):
                 )
     return dict(
         sends=sends,
+        stored=stored,
         bonsoir_peers=bonsoir_peers,
         private_ip_peers=private_ip_peers,
         double_deliveries=double_deliveries,
@@ -134,15 +150,13 @@ def parse_files(paths):
 def classify(raw):
     """Derive the FDC-S6 metrics from one arm's raw tallies.
 
-    The win-rate is per-LOGICAL-SEND. A double-delivery is one message that
-    arrived on TWO legs — each fires its own MSG_RECEIVED_TRANSPORT — so the raw
-    leg tally over-counts the redundant dropped copy in BOTH the denominator and
-    a win bucket. We attribute the win to the KEPT (first-committed) leg and
-    remove the DROPPED (second, deduped) leg. The soak is a 2-device pair, so the
-    dropped leg is necessarily to the single bonsoir-fed peer; a multi-peer trial
-    would need a message-id on MSG_RECEIVED_TRANSPORT to correlate precisely.
+    Current logs carry one CHAT_MSG_RECEIVE_STORED event per logical send, with
+    the kept transport. Legacy pilot logs are retained through a conservative
+    per-file fallback because staged inbox replay does not itself emit the raw
+    MSG_RECEIVED_TRANSPORT arrival event.
     """
     sends = raw["sends"]
+    stored = raw["stored"]
     bonsoir = raw["bonsoir_peers"]
     private_ip = raw["private_ip_peers"]
 
@@ -153,48 +167,78 @@ def classify(raw):
     ambiguous_direct = 0   # 'direct' without bonsoir-fed + private-IP guards
     excluded_folds = 0     # 'reuse' / 'upgraded'
     failures = 0           # inbox (no live leg won)
-    bonsoir_fed_sends = 0  # legs to a bonsoir-fed peer (LAN-dial reliability denom)
+    bonsoir_fed_sends = 0  # logical sends to a bonsoir-fed peer
 
-    # 1) Per-leg classification of the raw delivery legs. NOTE: unlike Dart's
-    #    transportMix(), the parser deliberately does NOT fold reuse/upgraded into
-    #    'direct' — the soak must keep them DISTINCT to EXCLUDE them from LAN wins.
-    for peer, t in sends:
+    # Raw arrival census only. Decision metrics below use the authoritative
+    # logical outcome when that current-format event is present.
+    for _peer, t in sends:
         census[t] = census.get(t, 0) + 1
-        if peer in bonsoir:
-            bonsoir_fed_sends += 1
-        if t == "wifi":
-            ws_wins += 1
-        elif t in EXCLUDED_FROM_LAN_WIN:
-            excluded_folds += 1
-        elif t == "direct":
-            if peer in bonsoir and peer in private_ip:
-                lan_wins += 1
-            else:
-                ambiguous_direct += 1
-        if t in FAILURE_LEGS:
-            failures += 1
 
-    # 2) Collapse double-delivered legs into LOGICAL sends: drop each redundant
-    #    second-arriving leg from the denominator + the bucket it landed in.
     dd = raw["double_deliveries"]
-    n_dd = len(dd)
-    for _kept, dropped in dd:
-        d = (dropped or "").strip().lower()
-        if d == "wifi":
-            ws_wins = max(0, ws_wins - 1)
-        elif d == "direct":
-            # dropped 'direct' is the redundant copy; remove a clean LAN win first
-            # (conservative — the fail-safe bias is toward KEEP), else ambiguous.
-            if lan_wins > 0:
-                lan_wins -= 1
-            else:
-                ambiguous_direct = max(0, ambiguous_direct - 1)
-        elif d in EXCLUDED_FROM_LAN_WIN:
-            excluded_folds = max(0, excluded_folds - 1)
-        elif d in FAILURE_LEGS:
-            failures = max(0, failures - 1)
-        bonsoir_fed_sends = max(0, bonsoir_fed_sends - 1)
-    n = max(0, n_legs - n_dd)
+    if stored:
+        # Current-format logs: every stored row is exactly one logical send.
+        for peer, t in stored:
+            if peer in bonsoir:
+                bonsoir_fed_sends += 1
+            if t == "wifi":
+                ws_wins += 1
+            elif t in EXCLUDED_FROM_LAN_WIN:
+                excluded_folds += 1
+            elif t == "direct":
+                if peer in bonsoir and peer in private_ip:
+                    lan_wins += 1
+                else:
+                    ambiguous_direct += 1
+            if t in FAILURE_LEGS:
+                failures += 1
+        n = len(stored)
+    else:
+        # Legacy pilot fallback. classify_paths invokes this once per file, so
+        # a later trial's private-IP discovery cannot reclassify an older trial.
+        for peer, t in sends:
+            if peer in bonsoir:
+                bonsoir_fed_sends += 1
+            if t == "wifi":
+                ws_wins += 1
+            elif t in EXCLUDED_FROM_LAN_WIN:
+                excluded_folds += 1
+            elif t == "direct":
+                if peer in bonsoir and peer in private_ip:
+                    lan_wins += 1
+                else:
+                    ambiguous_direct += 1
+            if t in FAILURE_LEGS:
+                failures += 1
+
+        n = n_legs
+        for kept, dropped in dd:
+            d = (dropped or "").strip().lower()
+            # Live dropped legs are present in the raw arrival census. Staged
+            # inbox replay bypasses that event, so a dropped inbox is absent
+            # already and must not shrink the denominator.
+            if d in DELIVERED_LEGS and d != "inbox":
+                n = max(0, n - 1)
+                if d == "wifi":
+                    ws_wins = max(0, ws_wins - 1)
+                elif d == "direct":
+                    if lan_wins > 0:
+                        lan_wins -= 1
+                    else:
+                        ambiguous_direct = max(0, ambiguous_direct - 1)
+                elif d in EXCLUDED_FROM_LAN_WIN:
+                    excluded_folds = max(0, excluded_folds - 1)
+                elif d in FAILURE_LEGS:
+                    failures = max(0, failures - 1)
+                bonsoir_fed_sends = max(0, bonsoir_fed_sends - 1)
+
+            # If inbox committed first, synthesize its otherwise-unlogged
+            # logical outcome after removing any represented dropped live leg.
+            k = (kept or "").strip().lower()
+            if k == "inbox":
+                n += 1
+                failures += 1
+                if bonsoir:
+                    bonsoir_fed_sends += 1
 
     return dict(
         n=n,
@@ -211,6 +255,44 @@ def classify(raw):
     )
 
 
+def merge_classified(classified):
+    """Sum independently classified trial files without leaking peer evidence."""
+    merged = dict(
+        n=0,
+        n_legs=0,
+        census={},
+        lan_wins=0,
+        ws_wins=0,
+        ambiguous_direct=0,
+        excluded_folds=0,
+        failures=0,
+        bonsoir_fed_sends=0,
+        double_deliveries=[],
+        bad_lines=0,
+    )
+    for current in classified:
+        for key in (
+            "n",
+            "n_legs",
+            "lan_wins",
+            "ws_wins",
+            "ambiguous_direct",
+            "excluded_folds",
+            "failures",
+            "bonsoir_fed_sends",
+            "bad_lines",
+        ):
+            merged[key] += current[key]
+        for transport, count in current["census"].items():
+            merged["census"][transport] = merged["census"].get(transport, 0) + count
+        merged["double_deliveries"].extend(current["double_deliveries"])
+    return merged
+
+
+def classify_paths(paths):
+    return merge_classified(classify(parse_files([path])) for path in paths)
+
+
 def pct(x):
     return "—" if x is None else f"{100.0 * x:.1f}%"
 
@@ -222,8 +304,8 @@ def report(label, c, baseline=None):
     n = c["n"]
     print(f"\n=== FDC-S6 libp2p-LAN soak — {label} ===")
     n_dd = len(c["double_deliveries"])
-    print(f"\n[sample floor]  logical sends n={n}  (delivery legs={c['n_legs']}, "
-          f"double-delivered legs collapsed={n_dd})  "
+    print(f"\n[sample floor]  logical sends n={n}  (raw delivery legs={c['n_legs']}, "
+          f"double-delivery collisions={n_dd})  "
           f"({'OK' if n >= SAMPLE_FLOOR else f'BELOW {SAMPLE_FLOOR} — UNDERPOWERED'})")
     if c["bad_lines"]:
         print(f"  ! {c['bad_lines']} unparseable [FLOW] lines skipped")
@@ -285,10 +367,10 @@ def main():
     ap.add_argument("logs", nargs="+")
     args = ap.parse_args()
 
-    arm = classify(parse_files(args.logs))
+    arm = classify_paths(args.logs)
     baseline = None
     if args.baseline_file:
-        baseline = classify(parse_files(args.baseline_file))
+        baseline = classify_paths(args.baseline_file)
     report(args.label, arm, baseline)
 
 

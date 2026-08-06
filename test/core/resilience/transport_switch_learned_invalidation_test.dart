@@ -1,20 +1,21 @@
 /// NET-REL-05 — I2: transport switch mid-conversation, against NEW code
 /// (the P3 sticky/learned-transport layer). Unlike the legacy
 /// `f2_transport_switch_recovery_test.dart` — which only sends twice and checks
-/// both are fast, never simulating a switch — this exercises a REAL LAN->relay
-/// switch via the shared integration fake's `simulateTransportSwitch`, and
+/// both are fast, never simulating a switch — this deterministically exercises
+/// a LAN-visible direct->relay route change via the shared integration fake's
+/// `simulateTransportSwitch`, and
 /// asserts BOTH:
-///   1. delivery continues across the switch, AND
-///   2. the learned (P3) transport INVALIDATES — a stale LAN preference is
-///      never trusted after the peer leaves WiFi.
+///   1. a LAN WebSocket write remains attempted and receiver-deduplicated while
+///      authenticated libp2p owns final delivery, AND
+///   2. the learned authenticated direct transport INVALIDATES when the route
+///      changes, before the relay proof is learned.
 ///
 /// The sticky memory is opt-in on the fake (`stickyTransportEnabled = true`) so
 /// the legacy resilience suite, written before P3, is unaffected.
 ///
-/// NEGATIVE CONTROL (N-no-stale-local): after the LAN->relay switch, the next
-/// send must NOT be labelled 'local' (the departed LAN peer's learned 'local'
-/// must self-invalidate) — proving the test isn't merely re-asserting a frozen
-/// transport.
+/// NEGATIVE CONTROL (N-no-stale-local): after the direct->relay switch, the next
+/// send must NOT be labelled 'local' or reuse the invalidated direct route —
+/// proving the test is not merely re-asserting a frozen transport.
 library;
 
 import 'dart:async';
@@ -72,64 +73,76 @@ void main() {
   }
 
   group('NET-REL-05 I2 — transport switch + learned-transport invalidation', () {
-    test(
-      'LAN->relay switch: delivery continues and the learned LAN transport '
-      'invalidates (not trusted after the peer leaves WiFi)',
-      () async {
-        // --- Phase 1: peer on the same LAN. First send wins via local. ---
-        aliceP2P.localPeers.add(bob.peerId);
-        aliceP2P.transportMode = 'wifi';
+    test('LAN-visible direct->relay switch keeps the local attempt but invalidates '
+        'and relearns only authenticated transport', () async {
+      // --- Phase 1: local writes, authenticated direct proof settles. ---
+      aliceP2P.localPeers.add(bob.peerId);
+      aliceP2P.transportMode = 'direct';
 
-        late dynamic m1;
-        await waitForReceipt(() async {
-          final (r1, msg1) = await alice.sendMessage(bob.peerId, 'On wifi');
-          expect(r1, SendChatMessageResult.success);
-          m1 = msg1;
-        });
-        expect(m1!.transport, 'local');
-        // The live local delivery is now the learned-good transport.
-        expect(aliceP2P.lastKnownGoodTransport(bob.peerId), 'local');
+      late dynamic m1;
+      await waitForReceipt(() async {
+        final (r1, msg1) = await alice.sendMessage(bob.peerId, 'On wifi');
+        expect(r1, SendChatMessageResult.success);
+        m1 = msg1;
+      });
+      expect(m1!.status, 'delivered');
+      expect(m1!.transport, 'direct');
+      expect(aliceP2P.localSendCallCount, 1);
+      expect(
+        network.deliverCallCount,
+        2,
+        reason:
+            'one WebSocket write and one authenticated direct proof must '
+            'reach the receiver for the same logical envelope',
+      );
+      // Only the authenticated proof is learned; the local write is not.
+      expect(aliceP2P.lastKnownGoodTransport(bob.peerId), 'direct');
 
-        // --- Phase 2: the real switch. Peer leaves WiFi, route is now relay. ---
-        aliceP2P.simulateTransportSwitch('relay');
+      // --- Phase 2: the real switch. Peer leaves WiFi, route is now relay. ---
+      aliceP2P.simulateTransportSwitch('relay');
 
-        // The learned 'local' must INVALIDATE: the peer is no longer LAN-visible,
-        // so a stale LAN preference is never returned.
-        expect(
-          aliceP2P.lastKnownGoodTransport(bob.peerId),
-          isNull,
-          reason: 'learned LAN transport must invalidate once the peer leaves '
-              'WiFi (never trust a stale-by-departure local preference)',
-        );
+      // The learned authenticated direct route must invalidate on the network
+      // transition rather than being reused after the peer leaves WiFi.
+      expect(
+        aliceP2P.lastKnownGoodTransport(bob.peerId),
+        isNull,
+        reason:
+            'the prior authenticated direct route must invalidate once '
+            'the network changes',
+      );
 
-        // --- Phase 3: delivery continues over the new transport. ---
-        late dynamic m2;
-        await waitForReceipt(() async {
-          final (r2, msg2) = await alice.sendMessage(bob.peerId, 'After switch');
-          expect(r2, SendChatMessageResult.success);
-          m2 = msg2;
-        });
-        expect(m2!.status, 'delivered');
-        // NEGATIVE CONTROL (N-no-stale-local): the post-switch send is NOT local.
-        expect(
-          m2.transport,
-          isNot('local'),
-          reason: 'after the peer leaves WiFi the send must ride the new '
-              'transport, never the stale LAN path',
-        );
-        expect(m2.transport, 'relay');
-        // The new live delivery is learned for next time.
-        expect(aliceP2P.lastKnownGoodTransport(bob.peerId), 'relay');
+      // --- Phase 3: delivery continues over the new transport. ---
+      late dynamic m2;
+      await waitForReceipt(() async {
+        final (r2, msg2) = await alice.sendMessage(bob.peerId, 'After switch');
+        expect(r2, SendChatMessageResult.success);
+        m2 = msg2;
+      });
+      expect(m2!.status, 'delivered');
+      expect(aliceP2P.localSendCallCount, 1);
+      expect(network.deliverCallCount, 3);
+      // NEGATIVE CONTROL (N-no-stale-local): the post-switch send is NOT local.
+      expect(
+        m2.transport,
+        isNot('local'),
+        reason:
+            'after the peer leaves WiFi the send must ride the new '
+            'transport, never the stale LAN path',
+      );
+      expect(m2.transport, 'relay');
+      // The new live delivery is learned for next time.
+      expect(aliceP2P.lastKnownGoodTransport(bob.peerId), 'relay');
 
-        // Both messages delivered, none duplicated.
-        final bobConvo = await bob.loadConversationWith(alice.peerId);
-        expect(bobConvo, hasLength(2));
-        expect(
-          bobConvo.map((m) => m.text).toList(),
-          ['On wifi', 'After switch'],
-        );
-      },
-    );
+      // Three transport writes produced two logical receiver rows: the local
+      // and authenticated copies of the first envelope were deduplicated.
+      final bobConvo = await bob.loadConversationWith(alice.peerId);
+      expect(
+        bobConvo,
+        hasLength(2),
+        reason: 'receiver message-ID dedup must collapse the dual first send',
+      );
+      expect(bobConvo.map((m) => m.text).toList(), ['On wifi', 'After switch']);
+    });
 
     test(
       'relay->relay re-send across a network change invalidates the non-local '
@@ -153,7 +166,8 @@ void main() {
         expect(
           aliceP2P.lastKnownGoodTransport(bob.peerId),
           isNull,
-          reason: 'a relay-health/network transition clears non-local learned '
+          reason:
+              'a relay-health/network transition clears non-local learned '
               'transports',
         );
 

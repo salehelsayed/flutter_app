@@ -767,15 +767,6 @@ Future<void> main(List<String> args) async {
     _printUsage();
     return;
   }
-  if (options.isLatencyScenario && options.mode == 'closure') {
-    stderr.writeln(
-      'invite_send_latency closure is reserved for the reviewed production '
-      'replan; Wave 0 supports --mode baseline only.',
-    );
-    exitCode = 64;
-    return;
-  }
-
   final devices = options.deviceIds;
   if (options.isLatencyScenario) {
     await _preflightLatencyTargets(devices);

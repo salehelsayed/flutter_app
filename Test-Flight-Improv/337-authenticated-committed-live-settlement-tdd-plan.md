@@ -1,9 +1,9 @@
 # 337 - Authenticated Committed Live Settlement
 
-Status: execution-ready / independently reviewed (2026-08-05)
+Status: implemented — production proof boundary and obsolete resilience harness closed (2026-08-05)
 Type: Bug
 Spec: UI-14-Conn-Type/go-libp2p-transport-assessment-review.md, R2
-Classification: implementation-ready
+Classification: implementation-complete / affected core-host green
 Closure tier: host
 
 ## Planning Progress
@@ -326,19 +326,19 @@ git diff --check
 - Environment blocker: none for host closure. Live inventory on 2026-08-05 included USB Pixel 6 `21071FDF600CSC` and Android emulator `emulator-5554`, but neither is required for the causal authority contract. Unavailable hardware versions are N/A by project policy.
 - Scope drift: any need for new wire ACK levels/capability negotiation, WebSocket signing/removal, schema work, deadline changes, inbox hedging, or non-conversation caller refactors blocks this plan and returns that work to its named owner.
 
-- [ ] Every behavior has a named test or justified proof.
-- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded.
-- [ ] The first authenticated explicit affirmative ACK settles immediately across reuse, sticky, direct, and relay paths under the accepted current-version/default-on contract.
-- [ ] Dart stages chat/deletion into durable recovery custody before confirming, and Go writes no positive ACK before that confirmation.
-- [ ] Every local WebSocket result is non-authoritative and cannot deliver, suppress durability/authenticated work, or train sticky success.
-- [ ] Native ACK parsing rejects every non-affirmative frame while retaining written diagnostics.
-- [ ] Ordinary/private delete and custom delete retry obey the same explicit-proof boundary.
-- [ ] Forged `wifi`/null/unknown delivery receipts perform no read-side settlement or destructive cleanup; direct/relay/inbox receipts remain valid.
-- [ ] Plan 336 atomic settlement and local WebSocket staging/dedup behavior pass unchanged.
-- [ ] Harness registration preserves the eight-Go-tail host shape and names the parser, authenticated-ingress, and deferred-ordering tests.
-- [ ] Focused tests, curated `1to1`, affected `feature-host-all`, analyzer, formatting, and diff hygiene pass.
-- [ ] No migration or mandatory device/relay proof was introduced.
-- [ ] Scope Contract And Guard is respected, including the recorded current-version/default-on compatibility limit.
+- [x] Every behavior has a named test or justified proof.
+- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded. Focused/registered GREEN is retained, but a distinct R2 execution RED/mutation ledger was not reconstructed during this cleanup.
+- [x] The first authenticated explicit affirmative ACK settles immediately across reuse, sticky, direct, and relay paths under the accepted current-version/default-on contract.
+- [x] Dart stages chat/deletion into durable recovery custody before confirming, and Go writes no positive ACK before that confirmation.
+- [x] Every local WebSocket result is non-authoritative and cannot deliver, suppress durability/authenticated work, or train sticky success.
+- [x] Native ACK parsing rejects every non-affirmative frame while retaining written diagnostics.
+- [x] Ordinary/private delete and custom delete retry obey the same explicit-proof boundary.
+- [x] Forged `wifi`/null/unknown delivery receipts perform no read-side settlement or destructive cleanup; direct/relay/inbox receipts remain valid.
+- [x] Plan 336 atomic settlement and local WebSocket staging/dedup behavior pass unchanged.
+- [x] Harness registration preserves the eight-Go-tail host shape and names the parser, authenticated-ingress, and deferred-ordering tests.
+- [ ] Focused tests, curated `1to1`, affected `feature-host-all`, analyzer, formatting, and diff hygiene pass. Owned selectors, curated `1to1`, analyzer, formatting, and hygiene are green; the earlier feature-family command retained one isolated group flake that passed twice alone and in full `host-all`.
+- [x] No migration or mandatory device/relay proof was introduced.
+- [x] Scope Contract And Guard is respected, including the recorded current-version/default-on compatibility limit.
 
 ## Handoff
 
@@ -383,4 +383,4 @@ Verdict: **ready**. Disposition: **execute**.
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | reviewed execution-ready contract | no blocker; preserve unrelated staged/dirty work | add causal REDs |
+| 2026-08-05 21:47 CEST | obsolete authority-harness closure | `transport_switch_learned_invalidation_test.dart`; `f1_wifi_relay_fallback_test.dart`; shared integration fake documentation | Exact two-file run -> `+8`, zero failures; `core-host-all` -> 396 Flutter paths / 3144 tests plus both shell contracts | LAN WebSocket writes remain attempted; authenticated direct/relay proof owns final delivery and sticky learning; 2-write/1-row and 5-write/3-row assertions preserve receiver message-ID dedup | No production change and no blocker; full `host-all` intentionally not repeated | Proceed to R4 using the corrected R2 authority harness |

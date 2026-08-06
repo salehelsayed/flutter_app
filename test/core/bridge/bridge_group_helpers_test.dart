@@ -890,8 +890,31 @@ void main() {
         expect(sentPayload['senderPublicKey'], equals('pk-123'));
         expect(sentPayload['senderPrivateKey'], equals('sk-123'));
         expect(sentPayload['senderUsername'], equals('alice'));
+        expect(sentPayload.containsKey('skipPeerRefresh'), isFalse);
       },
     );
+
+    test('serializes skipPeerRefresh only when explicitly enabled', () async {
+      bridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-bootstrap-001',
+      };
+
+      await callGroupPublish(
+        bridge,
+        groupId: 'grp-bootstrap',
+        text: 'signed members_added',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        skipPeerRefresh: true,
+      );
+
+      final sent = jsonDecode(bridge.lastSentMessage!) as Map<String, dynamic>;
+      final payload = sent['payload'] as Map<String, dynamic>;
+      expect(payload['skipPeerRefresh'], isTrue);
+      expect(payload['text'], 'signed members_added');
+    });
 
     test('returns error map on bridge error', () async {
       bridge.responses['group:publish'] = {

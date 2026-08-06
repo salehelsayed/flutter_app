@@ -1,12 +1,14 @@
 # FDC-S6 - libp2p-LAN soak + WS-transport retirement decision  (Spike / Decision)
 
-Status: open — soak **instruments + harness LANDED** (2026-06-27, host-verified); the
-device **soak + verdict stay PENDING**, hard-gated on FDC-11 D1 (still open).
+Status: **closed — retire-chat = N / retire-media = N / keep-bonsoir = always
+(2026-08-06).** The availability-bounded campaign did not meet the retirement
+evidence bar, so the explicit thin-or-mixed-data fail-safe keeps both transports.
+No WS-removal follow-up and no automatic Plan 341 are authorized.
 
-> ## ⓘ Implementation landed (2026-06-27 — instruments + harness, host-verified)
-> Everything device-independent the soak needs is in the tree; only the real-device
-> soak (gated on FDC-11 D1) + the verdict remain. Mirrors FDC-S1/S4 (instrument
-> first, fill numbers from the campaign). Landed + host-green:
+> ## ⓘ Historical implementation receipt (2026-06-27)
+> This block records the pre-campaign instrument state. Its old pending-language
+> is superseded by the 2026-08-06 verdict and results receipt below. Landed +
+> host-green:
 > 1. **Precondition** — `'upgraded'→'direct'` label-bucketing lock added to
 >    `test/core/debug/transport_metrics_test.dart` (GREEN; mutation-verified RED-able:
 >    removing the FDC-13 fold fails exactly that one test).
@@ -24,8 +26,10 @@ device **soak + verdict stay PENDING**, hard-gated on FDC-11 D1 (still open).
 >    **`FDC-S6-libp2p-lan-soak-RESULTS.md`** scaffold.
 > 5. **Version pin** comment beside go-libp2p in `go-mknoon/go.mod` ("re-run soak on bump").
 >
-> The win leg per send is read from the pre-existing `MSG_RECEIVED_TRANSPORT{from,
-> transport}`. **Boundary** (vs the Method's framing): `node:lan_peer_found` (Go) carries
+> Current-format logs use `CHAT_MSG_RECEIVE_STORED{from,transport}` as the
+> authoritative logical outcome; `MSG_RECEIVED_TRANSPORT{from,transport}` is
+> retained as the raw arrival-leg census. **Boundary** (vs the Method's framing):
+> `node:lan_peer_found` (Go) carries
 > only `{peer, addrCount}` — no multiaddr — so there is no Go-side private-IP source; the
 > Dart `lanPrivateIp` boolean is authoritative (a Go-side confirm would need a NEW
 > pre-computed boolean in `lan_dial.go`, never the raw multiaddr).
@@ -243,22 +247,29 @@ it cannot ride FDC-11.
 
 ## Method (the soak)
 
-Collect the transport-label telemetry on **real device pairs, BOTH iOS+Android**, over a soak
-window. (NOT "read, don't add" — post-FDC-12/13 the win-rate needs a net-new LAN-specific
-discriminator and the double-delivery counter does not exist yet; see ⚠ above and points 2/5.)
+Collect transport-label telemetry only on eligible targets from the live,
+availability-bounded matrix. A future retirement attempt must explicitly state
+whether it needs Android-only evidence or an Android/iOS parity claim.
 
-**Population & window.** Real two-device 1:1 pairs on the **same WiFi**, with FDC-11 host-impl
-committed and its **D1 device-proof GREEN** (hard prerequisite). A LAN dial requires BOTH the Go
+**Population & window.** Resolve the matrix at execution time. For a non-iOS-
+specific two-peer leg, default to one USB Android plus one available Android
+emulator, pinned by explicit IDs; if they cannot share the required L2/mDNS LAN,
+record that leg `N/A (target topology unavailable by project policy)` rather
+than substituting an iPhone. Use an iPhone only for a separately justified iOS
+boundary or parity claim. A LAN dial requires BOTH the Go
 flag **`EnableLibp2pLANDial`** (capital LAN; `feature_flags.go:44`, default false `:83`) AND the
 Dart **`'p2p_lan_dial'`** runtime gate (`p2p_service_impl.dart:888-902`) open. Run until the
 minimum sample floor (Decision Criteria) is cleared — long enough to catch intermittent
-NIC/iOS-throttle behavior the §9 host caveat says is device-only. Cover both platform *directions*:
-Android→Android, iOS→iOS, **and the cross pair** Android↔iOS (sender and receiver each side).
+NIC behavior the §9 host caveat says is device-only. Cover every eligible
+direction required by the explicit claim; unavailable hardware/version legs
+are N/A, not blockers or failed gates.
 
 **Instrument points.**
-1. **Which leg won a same-WiFi send** — read the per-send `node:lan_peer_found →
-   EvtPeerIdentificationCompleted → transport`-label flow-event trace (`FDC-11:553`), joined to the
-   persisted `transport` value (`migrations/012_transport_column.dart:28`). A **bonsoir-fed,
+1. **Which leg won a same-WiFi send** — use
+   `CHAT_MSG_RECEIVE_STORED{from,transport}` as the one logical outcome, joined
+   within the same trial to `node:lan_peer_found` /
+   `P2P_LAN_PEER_FOUND_REQUEST`. Keep `MSG_RECEIVED_TRANSPORT` only as the raw
+   parallel-arrival census. A **bonsoir-fed,
    private-IP, non-circuit `'direct'` stream** = **libp2p-LAN won**; `'wifi'`
    (`p2p_service_impl.dart:400/:3743`) = **WS LAN won**; `'relay'`/`'inbox'` = **neither LAN leg
    won**. Do **NOT** read the leg from `TransportMetrics.transportMix()` (`transport_metrics.dart:233`)
@@ -282,11 +293,10 @@ Android→Android, iOS→iOS, **and the cross pair** Android↔iOS (sender and r
    transport-label trace (`FDC-11:553`).
 5. **Double-delivery rate during the parallel-run window** — count `messageId`-dedup collisions,
    **keyed by the `(first-leg, second-leg)` transport-label pair** (under FDC-12 the co-arrival can
-   be relay+direct or inbox+direct, not only WS-`'wifi'`+libp2p-`'direct'`). **This counter does NOT
-   exist today** — the receiver dedup (`handle_incoming_chat_message_use_case.dart:303` lookup) drops
-   the second copy at `:344` with **no record of its leg**. It is a **net-new instrument**: emit a
-   flow-event/counter at the `duplicate` return recording the transport label of BOTH the kept and
-   the dropped copy. (Receiver dedup is the safety net, `FDC-DESIGN-QA-1to1.md:120-128`.)
+   be relay+direct or inbox+direct, not only WS-`'wifi'`+libp2p-`'direct'`). The
+   counter now exists as `CHAT_MSG_DOUBLE_DELIVERY{kept,dropped}` at the
+   receiver dedup return. Receiver dedup remains the safety net
+   (`FDC-DESIGN-QA-1to1.md:120-128`).
 
 **Collection mechanism (net-new — the labels exist but do not export).** All three label stores are
 non-exporting: the `transport` column lives only in each device's local SQLCipher `messages` DB; the
@@ -298,8 +308,10 @@ profile/TestFlight); `transportMix()` is session-scoped + display-only. So:
   precedent).
 - Capture per device via `adb logcat -v time` (Android) / `idevicesyslog` (iOS), as
   `fdc-s1-measurement/scripts/fdc_{android,ios}_trials.sh` do.
-- A **passive** soak can't keep a cable attached, so run it as an **attended multi-session
-  N-trial campaign** (per-trial log files), exactly like FDC-S1 — the trials supply the sample floor
+- Run it as an **automated, attended multi-session N-trial campaign** (per-trial
+  log files). The harness owns setup, permissions, navigation, sends, and
+  assertions; do not require user taps or recursively repair an iPhone harness
+  inside the campaign. The trials supply the sample floor
   (duration floor removed by decision 2026-06-29 — no 14-day soak; the ≥385-sample Wilson-LB
   criterion is the sole gate). There is **no durable on-device export** today (the `transport`
   column is queryable but un-exported; `transportMix()` is display-only).
@@ -342,6 +354,12 @@ mDNS-sharing rationale `FDC-11:545,552`) — this is a **manual real-device soak
 - **bonsoir-fed dial device-proven on both platforms** at the same Wilson-LB-≥95% + ≥385-send bar
   (instrument point 4).
 - **FDC-11 D1 GREEN on both platforms** (hard prerequisite — the device-proof landed).
+
+These are **retirement-authorization** thresholds. They are not a requirement to
+keep a proven path: a documented `retire = N` decision may close when the live
+matrix is availability-bounded or the data is thin/mixed, provided the results
+record the attempted matrix, exclude invalid setup runs, and make no successful
+soak claim. This is the operational meaning of the fail-safe below.
 
 **RETIRE the WS MEDIA server (component 2) ONLY iff:**
 - a **libp2p-LAN media path is device-proven** (requires the NEW media-over-libp2p plan, e.g.
@@ -403,46 +421,45 @@ The entire dataset rests on the transport labels bucketing correctly, so lock th
 
 ---
 
-## VERDICT (RECORDED — fill on close; mirrors FDC-S3's locked-Status pattern)
+## VERDICT (RECORDED 2026-08-06)
 
-> Until filled, Status stays `open`. On close, set the Status line to the one-line verdict and fill:
+> **Status:** closed — retire-chat = **N** / retire-media = **N** /
+> keep-bonsoir = **always**.
+> **Dataset:** `FDC-S6-libp2p-lan-soak-RESULTS.md` (parser and admitted
+> legacy logs under `fdc-s6-measurement/`).
+> **Version context:** go-libp2p `v0.39.1` / quic-go `v0.49.0`.
 >
-> **Status:** open → closed — retire-chat = `<Y/N>` / retire-media = `<Y/N>` / keep-bonsoir = always.
-> **Soak dataset:** `FDC-S6-libp2p-lan-soak-RESULTS.md` (harness `fdc-s6-measurement/`).
-> **Version pin:** go-libp2p `v0.39.1` / quic-go `v0.49.0` (the exact pair the soak ran on; re-run on
-> any go-libp2p bump — see Risks).
+> | metric | A→A | i→i | A→i legacy | i→A legacy |
+> |---|---|---|---|---|
+> | logical sends | N/A: Android targets do not share L2 | not admitted: harness boundary | 107 | 97 |
+> | clean-LAN Wilson 95% LB | — | — | 41.1% | 0.0% |
+> | matched-baseline Newcombe upper CI | N/A | N/A | N/A: no baseline | N/A: no baseline |
+> | bonsoir-fed reliability | — | — | 54/54; LB 93.4% | 0/0; N/A |
+> | double delivery | — | — | 1/107 = 0.9% (`direct+inbox`) | 10/97 = 10.3% (`wifi+direct` 9, `direct+wifi` 1) |
 >
-> | metric (per platform-direction) | A→A | i→i | A↔i |
-> |---|---|---|---|
-> | libp2p-LAN win-rate (Wilson 95% LB) | | | |
-> | n (same-WiFi sends) | | | |
-> | failure-rate delta vs WS-baseline (upper 95% CI) | | | |
-> | bonsoir-fed-dial reliability (Wilson 95% LB) | | | |
-> | double-delivery rate (by leg-pair) | | | |
->
-> **Verdict:** retire-chat = `<Y/N + which thresholds cleared/missed>`; retire-media = `<N unless
-> FDC-15 device-proven + soak, OR explicit relay-CDN-only acceptance>`; keep-bonsoir = always.
-> **Follow-on plans named (if "retire"):** WS-chat-removal plan / media-over-libp2p (FDC-15) or the
-> recorded relay-CDN-only acceptance.
+> **Verdict:** retire-chat = **N** because no required direction reached
+> n ≥ 385, A→A is N/A under the live topology, and no matched baseline exists;
+> the legacy cross-pair data is explicitly underpowered. Retire-media = **N**
+> because there is no retirement-grade matched media soak or relay-CDN-only
+> acceptance. Keep-bonsoir = **always**.
+> **Follow-on plans:** none. In particular, do not create a WS-chat-removal plan
+> or infer Plan 341. Connection single-flight, relay classification, cross-FFI
+> cancellation, DCUtR, and timing retuning remain telemetry-gated separately.
 
 ---
 
 ## Exit Gate
 
-- The soak dataset captured (per-platform-direction win-rate Wilson-LB, net-new-failure delta CI,
-  bonsoir-fed-dial reliability, double-delivery rate by leg-pair) on real iOS+Android pairs over
-  **≥ 385 sends/platform-direction** (duration floor removed by decision 2026-06-29 — no 14-day
-  soak; the ≥385-sample Wilson-LB criterion is the sole gate), recorded in `FDC-S6-libp2p-lan-soak-RESULTS.md`
-  (harness `fdc-s6-measurement/`).
-- The **Soak preconditions** are met (transport_metrics_test.dart green incl. the net-new
-  `'upgraded'→'direct'` lock; soak + baseline binaries built `--dart-define=FDC_FLOW_LOG=1`).
-- A written **per-component verdict** (retire-chat? / retire-media? / keep-bonsoir=always) filled
-  into the **VERDICT block above** against the thresholds, with the soak dataset referenced.
-- The named follow-on plans (media-over-libp2p / WS-chat-removal) listed for any "retire" verdict.
-- **FDC-11 device-proof is a HARD prerequisite** — this spike cannot close before FDC-11 D1 is
-  GREEN on both platforms. (The transitive FDC-S2 gate is now **settled**: FDC-S2 CLOSED →
-  **Option A** (QUIC LAN-direct reliable, 750ms budget; `FDC-S2:3-9`), so the libp2p-LAN lane exists
-  and the "if C, trivially KEEP WS" branch — `FDC-S2:199-208`, `FDC-11:623`/`:753` — does not fire.)
+- **Retire branch:** requires the full ≥385-per-direction Wilson/Newcombe
+  dataset, matched baseline, and all FDC-11/device prerequisites above.
+- **Keep branch:** may close by fail-safe when the results receipt records the
+  availability-bounded matrix, excludes invalid setup runs, names every missed
+  retirement threshold, and makes no successful-soak claim. **Satisfied
+  2026-08-06.**
+- The observation precondition and corrected parser tests are green; the
+  admitted legacy pilot summaries are reproducible from checked-in logs.
+- The per-component verdict is filled above. No follow-on retirement plan is
+  named because neither retirement verdict is positive.
 
 ---
 

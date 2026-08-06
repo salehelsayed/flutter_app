@@ -271,6 +271,27 @@ class _PerRecipientInviteP2PService extends FakeP2PService {
   }
 }
 
+class _PublishOrderingP2PService extends FakeP2PService {
+  _PublishOrderingP2PService({required this.bridge})
+    : super(
+        initialState: const NodeState(
+          peerId: 'device-admin-phone',
+          isStarted: true,
+        ),
+      );
+
+  final FakeBridge bridge;
+  bool publishObservedBeforeEveryInvite = true;
+
+  @override
+  Future<bool> sendMessage(String peerId, String message) async {
+    publishObservedBeforeEveryInvite =
+        publishObservedBeforeEveryInvite &&
+        bridge.commandLog.contains('group:publish');
+    return super.sendMessage(peerId, message);
+  }
+}
+
 void main() {
   group('createGroupWithMembers', () {
     late PassthroughCryptoBridge bridge;
@@ -680,6 +701,75 @@ void main() {
         expect(sysMsg['__sys'], 'members_added');
         final members = sysMsg['members'] as List;
         expect(members.length, 2);
+      },
+    );
+
+    test(
+      'TC-341-01 fresh-group bootstrap members_added skips pre-publish peer refresh without changing the signed transition',
+      () async {
+        final orderingP2PService = _PublishOrderingP2PService(bridge: bridge);
+
+        final result = await createGroupWithMembers(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          p2pService: orderingP2PService,
+          identity: testIdentity,
+          selectedContacts: [contactAlice, contactBob],
+          type: GroupType.chat,
+          name: 'Bootstrap Group',
+        );
+
+        expect(result.membersAdded, 2);
+        expect(result.invitesSent, 2);
+
+        final publishMessages = bridge.sentMessages.where(
+          (message) =>
+              (jsonDecode(message) as Map<String, dynamic>)['cmd'] ==
+              'group:publish',
+        );
+        expect(publishMessages, hasLength(1));
+        final publish =
+            jsonDecode(publishMessages.single) as Map<String, dynamic>;
+        final payload = publish['payload'] as Map<String, dynamic>;
+        expect(payload['skipPeerRefresh'], isTrue);
+        expect(payload['senderDeviceId'], 'device-admin-phone');
+        expect(payload['senderTransportPeerId'], 'device-admin-phone');
+        expect(payload['senderDevicePublicKey'], testIdentity.publicKey);
+
+        final signedText = payload['text'] as String;
+        expect(signedText, isNot(contains('skipPeerRefresh')));
+        final sysMessage = jsonDecode(signedText) as Map<String, dynamic>;
+        expect(sysMessage['__sys'], 'members_added');
+        expect(sysMessage.containsKey('skipPeerRefresh'), isFalse);
+        expect(
+          (sysMessage['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet(),
+          {'peer-alice', 'peer-bob'},
+        );
+
+        final groupConfig = sysMessage['groupConfig'] as Map<String, dynamic>;
+        expect(
+          (groupConfig['members'] as List<dynamic>)
+              .cast<Map<String, dynamic>>()
+              .map((member) => member['peerId'])
+              .toSet(),
+          {'peer-admin', 'peer-alice', 'peer-bob'},
+        );
+        final audit =
+            sysMessage['signedTransitionAudit'] as Map<String, dynamic>;
+        expect(audit['transitionType'], 'members_added');
+        expect(audit['sourceEventId'], payload['messageId']);
+        final signedPayload =
+            jsonDecode(audit['signedPayload'] as String)
+                as Map<String, dynamic>;
+        final actor = signedPayload['actor'] as Map<String, dynamic>;
+        expect(actor['deviceId'], 'device-admin-phone');
+        expect(actor['transportPeerId'], 'device-admin-phone');
+
+        expect(orderingP2PService.sendMessageCallCount, 2);
+        expect(orderingP2PService.publishObservedBeforeEveryInvite, isTrue);
       },
     );
 

@@ -102,7 +102,7 @@ Dependencies and sequencing:
 
 - Hard dependencies: Plans 336-338 / R1-R3 are implemented and supply monotonic persistence, authenticated first-proof settlement, and the bounded deadline contract.
 - Preferred predecessor: R4, because it deliberately changes presence/inbox scheduling in the same large use case. R5 may be planned and reviewed now, but execute it after R4 to minimize merge/test churn.
-- If R5 is intentionally executed before R4, it remains independently correct; R4 must later re-run TC-339-05 and preserve exactly one inbox deposit. Do not encode current pre-R4 timing into R5 assertions.
+- R5 was intentionally executed before R4 and remained independently correct. Plan 340 later strengthened and re-ran TC-339-05, preserving exactly one joined inbox deposit without encoding pre-R4 timing into the assertion.
 
 ## Test Contract
 
@@ -262,8 +262,8 @@ Wave-level command after both R4 and R5 close, not a Plan 339 done gate:
 - Manual registration: none. Both changed causal files are already selected by curated `1to1` and feature-family discovery.
 - Migration: none.
 - Boundary closure: host-only. The existing fake captures the exact frame and relay leg; receiver integration proves ID dedup; existing Go framing is preserved rather than modified.
-- Execution order: R5 landed before R4 under the requested Plan 339 execution. TC-339-05 is schedule-agnostic and green with exactly one inbox deposit; R4 must re-run it and retain that single joined operation.
-- Deferred rollout evidence: full `host-all` once after the R4-R5 wave; any available automated real-relay/media journey is supporting final-rollout evidence, not a Plan 339 blocker.
+- Execution order: R5 landed before R4 under the requested Plan 339 execution. Plan 340 later strengthened and re-ran schedule-agnostic TC-339-05; it stayed green with exactly one joined inbox deposit.
+- Rollout evidence: Plan 340 closed the R4-R5 wave `host-all` at `+13584 ~1` across 1326 paths plus every registered host/Go contract. Any available automated real-relay/media journey remains supporting final-rollout evidence, not a Plan 339 blocker.
 
 ## Reviewer Findings
 
@@ -293,4 +293,4 @@ Final independent review verdict: **READY**. The revised plan is coherent, suffi
 | 2026-08-05 execution | implementation and focused GREEN | send use case plus two affected test files | focused files -> `+158`; exact R5 selectors -> `+5` | The captured final UTF-8 envelope governs admission; ready attachment descriptors use relay, exact 96 KiB is inclusive, oversized frames skip relay, failed/uncommitted relay falls to one inbox deposit, and the two-transmission receiver fixture retains one row | None | Run mutation and preservation proofs |
 | 2026-08-05 execution | mutation and preservation | affected tests plus exact upload/protected-photo/R1-R3 sentinels | old attachment ban, code-unit length, exclusive cap, and removed-cap mutations each re-red; restored preservation set -> `+11` | Each decision edge is mutation-sensitive; upload/encryption, primary-blob exclusion, protected thumbnail, duplicate rejection, atomic settlement, authenticated proof, and shared R3 ACK-window contracts remain green | None | Run registered gates |
 | 2026-08-05 execution | curated and affected host closure | registered `1to1` and feature host families | `./scripts/run_test_gates.sh 1to1` -> Flutter `+2821` plus relay Go contracts; `feature-host-all` -> `+8832 ~1` | The bounded change is green in both required registered scopes; the one feature skip is expected | None | Complete hygiene and topology closure |
-| 2026-08-05 22:54 CEST | hygiene, graph, and independent implementation review | three changed Dart files, plan/index, architecture graph | formatter -> 3 files / 0 changes; analyzer and diff check -> pass; incremental refresh -> 3 changed code / 3071 unchanged / 0 deleted; review -> approve | Graphify affected-context remained localized and refreshed to current fingerprint `6b96acb19b528031`; no migration, Go/native, gate registration, device, presence, readiness, protocol, proof, deadline, or inbox-scheduling change was introduced | None; pre-existing R2/R3/resilience/fake/Graphify work remains outside the Plan 339 commit | Commit the isolated Plan 339 change; R4 later re-runs TC-339-05 |
+| 2026-08-05 22:54 CEST | hygiene, graph, and independent implementation review | three changed Dart files, plan/index, architecture graph | formatter -> 3 files / 0 changes; analyzer and diff check -> pass; incremental refresh -> 3 changed code / 3071 unchanged / 0 deleted; review -> approve | Graphify affected-context remained localized and refreshed to current fingerprint `6b96acb19b528031`; no migration, Go/native, gate registration, device, presence, readiness, protocol, proof, deadline, or inbox-scheduling change was introduced | None; pre-existing R2/R3/resilience/fake/Graphify work remains outside the Plan 339 commit | Plan 340 later re-ran strengthened TC-339-05 green and closed the R4-R5 wave receipt |

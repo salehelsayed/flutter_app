@@ -1,9 +1,9 @@
 # 338 - Cross-Layer Direct-Send Deadline Contract
 
-Status: implemented — owned causal and curated gates green; repository host closure remains red only on checkpoint-reproduced Plan 337 expectations
+Status: implemented — owned causal, curated, and core gates green; full host receipt not repeated after bounded Plan 337 harness closure
 Type: Bug
 Spec: UI-14-Conn-Type/go-libp2p-transport-assessment-review.md, R3
-Classification: implementation-complete / documented host-closure exception
+Classification: implementation-complete / formal aggregate receipt not rerun
 Closure tier: host
 
 ## Planning Progress
@@ -387,9 +387,9 @@ git diff --check
 - [x] Immediate-ACK introductions and unrelated default-budget callers are not rejected by the reserve.
 - [x] R1/R2 settlement, local cutoff, relay scheduling, deletion cleanup, and self-heal/limited-connection behavior pass unchanged in the owned preservation selectors.
 - [x] New Dart/native tests and the retimed deferred-chat sentinel enter the existing real gates; the eight-Go-tail shape is preserved.
-- [ ] Focused tests, curated `1to1`, affected feature/core family gates, analyzer, formatting, shell syntax, and diff hygiene pass. Focused, `1to1`, analyzer, formatting, syntax, and hygiene are green; the family commands remain red on the documented checkpoint-reproduced Plan 337 expectations, plus one group test that passed twice alone and in `host-all`.
+- [ ] Focused tests, curated `1to1`, affected feature/core family gates, analyzer, formatting, shell syntax, and diff hygiene pass. Focused, `1to1`, analyzer, formatting, syntax, hygiene, and the post-cleanup 396-path / 3144-test `core-host-all` are green; the earlier feature-family command retained one isolated group flake that passed twice alone and in `host-all`.
 - [x] The incremental architecture graph refresh passes and its resulting fingerprint is recorded.
-- [ ] The one post-plan R1-R3 `host-all` correctness-wave closure passes and is not repeated as an ordinary per-plan causal gate. It ran once and all eight Go legs passed, but Flutter retained the same four checkpoint-reproduced Plan 337 expectation failures.
+- [ ] The one post-plan R1-R3 `host-all` correctness-wave closure passes and is not repeated as an ordinary per-plan causal gate. Its historical run had all eight Go legs green and four obsolete Plan 337 expectations red; those expectations were subsequently corrected with exact `+8` and green `core-host-all`, but full `host-all` was intentionally not repeated.
 - [x] No DB migration, device/relay requirement, performance threshold, protocol, coordinator, or cancellation framework was introduced.
 - [x] Scope Contract And Guard is respected.
 
@@ -412,3 +412,4 @@ git diff --check
 | 2026-08-05 execution | curated and affected lanes | registered `1to1`, feature, and core host selections | `1to1` -> 2818 pass; feature -> 8828 pass / 1 fail; core -> 3140 pass / 4 fail | The feature failure passed twice in isolation and later in `host-all`. All four core failures are stale LAN-authority expectations in `transport_switch_learned_invalidation_test.dart` and `f1_wifi_relay_fallback_test.dart`; the identical four failures reproduce from checkpoint `10c4bdb35` | Repository-wide family gate is not green, but no R3 regression is present | Record exception and run the one wave-level closure |
 | 2026-08-05 execution | graph closure | app-owned architecture graph and manifest | `./graphify-arch/refresh_arch_graph.sh --incremental` -> pass | 11 changed code files, 3063 unchanged, 0 deleted; refreshed fingerprint `5381ccd663846180` | None | Run the one post-plan `host-all` command |
 | 2026-08-05 20:49 CEST | R1-R3 wave closure | all discovered Flutter host tests plus eight named Go legs | `host-all --batch-flutter --concurrency 4 --reporter failures-only --continue-on-failure` -> Flutter `+13571 ~1 -4`; all eight Go legs pass | The only failures are the same four Plan 337 LAN-authority expectations reproduced at the checkpoint; the isolated feature flake did not recur | Host closure accurately remains red for inherited expectations; rerunning `host-all` is prohibited by cadence | Commit the implemented R3 change with this exception documented |
+| 2026-08-05 21:47 CEST | bounded Plan 337 harness cleanup | two core resilience files and shared fake documentation | Exact files -> `+8`; `core-host-all` -> 396 Flutter paths / 3144 tests plus two shell contracts | The four obsolete local-authority expectations are corrected; explicit local-attempt, authenticated proof, sticky-learning, and receiver-dedup counters are green | No R3 production change; formal full-host receipt intentionally not repeated | Proceed to R4 with the historical aggregate result and current green core closure both recorded |

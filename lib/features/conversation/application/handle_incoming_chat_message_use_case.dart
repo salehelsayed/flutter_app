@@ -641,6 +641,11 @@ handleIncomingChatMessage({
       'from': payload.senderPeerId.length > 10
           ? payload.senderPeerId.substring(0, 10)
           : payload.senderPeerId,
+      // FDC-S6: unlike the per-leg MSG_RECEIVED_TRANSPORT signal, this event
+      // fires only after the authoritative logical message is stored. Carry
+      // the kept transport so inbox replay (which bypasses that per-leg signal)
+      // remains visible to the soak denominator and failure-rate comparison.
+      'transport': transport,
       'textPreview': storedTextPreview,
     },
   );

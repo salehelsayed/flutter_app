@@ -562,7 +562,7 @@ mode_arg_for_path() {
 
   case "$path:$scenario" in
     integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency)
-      printf 'baseline\n'
+      printf 'closure\n'
       ;;
   esac
 }

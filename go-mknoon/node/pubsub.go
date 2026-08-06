@@ -276,11 +276,35 @@ func runGroupTopicCleanupHook(stage string) {
 	}
 }
 
-// PublishGroupMessage encrypts, signs, and publishes a message to a group topic.
-// Returns the message ID (UUID) and the number of peers subscribed to the topic
-// at publish time. If messageId is non-empty, it is used instead of generating
-// a new one — this allows the sender to reference the same ID locally.
+// GroupPublishTransportOptions controls transport-only publish behavior. These
+// options are deliberately separate from message opts, which are encrypted into
+// the signed group-message payload.
+type GroupPublishTransportOptions struct {
+	SkipPeerRefresh bool
+}
+
+// PublishGroupMessage encrypts, signs, and publishes a message to a group topic
+// using the ordinary foreground peer-refresh behavior.
 func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}) (msgID string, topicPeerCount int, err error) {
+	return n.PublishGroupMessageWithOptions(
+		groupId,
+		privateKeyB64,
+		senderPeerId,
+		senderPublicKeyB64,
+		senderUsername,
+		text,
+		messageId,
+		opts,
+		GroupPublishTransportOptions{},
+	)
+}
+
+// PublishGroupMessageWithOptions encrypts, signs, and publishes a message to a
+// group topic. It returns the message ID (UUID) and the number of peers
+// subscribed to the topic at publish time. If messageId is non-empty, it is used
+// instead of generating a new one so the sender can reference the same ID
+// locally.
+func (n *Node) PublishGroupMessageWithOptions(groupId, privateKeyB64, senderPeerId, senderPublicKeyB64, senderUsername, text, messageId string, opts map[string]interface{}, transportOptions GroupPublishTransportOptions) (msgID string, topicPeerCount int, err error) {
 	n.mu.RLock()
 	topic, topicOk := n.groupTopics[groupId]
 	config, configOk := n.groupConfigs[groupId]
@@ -312,12 +336,15 @@ func (n *Node) PublishGroupMessage(groupId, privateKeyB64, senderPeerId, senderP
 	ctx, cancel := context.WithTimeout(n.ctx, PubSubTimeout)
 	defer cancel()
 
-	peerCount := n.ensureGroupTopicPeersBeforePublish(
-		groupId,
-		config,
-		senderPeerId,
-		topic,
-	)
+	peerCount := len(topic.ListPeers())
+	if !transportOptions.SkipPeerRefresh {
+		peerCount = n.ensureGroupTopicPeersBeforePublish(
+			groupId,
+			config,
+			senderPeerId,
+			topic,
+		)
+	}
 	log.Printf("[PUBSUB] Publishing message %s to group %s (peers in topic: %d)", built.messageId, groupId, peerCount)
 
 	if err := topic.Publish(ctx, []byte(built.envelopeJSON)); err != nil {

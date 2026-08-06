@@ -5,7 +5,7 @@
 **Legend** — category: `▢ host` (host-RED/CI) · `⚙ deploy` · `📱 device` · `🛰 live-relay-env` (gitignored/external) · `⏳ soak` · `⚖ decision` · `🚩 flag-flip`.
 **Rule:** all Go gates run under `GOTOOLCHAIN=go1.25.0`; after any Go run, `git checkout -- go-mknoon/testdata/interop_vectors.json` (path is `go-mknoon/testdata/…`, NOT `…/node/…` — the latter silently no-ops). Never flip a prod flag ahead of its device/saturation gate. Never `git checkout`/`stash` shared files (concurrent `new-orbit` tree). `git status --short` before starting.
 
-> ⭐ **KEYSTONE: CV-08 (FDC-11 D1) — ✅ CLOSED 2026-06-29 (`121f0551`).** D1 is GREEN both OS; this unblocked the soak, FDC-15 media, FDC-13 outgoing badge, FDC-14b ✦, and the S0 LAN-win metric. The **soak (CV-36)** is now the unavoidable long pole. P4.0 prereqs have landed.
+> ⭐ **KEYSTONE: CV-08 (FDC-11 D1) — ✅ CLOSED 2026-06-29 (`121f0551`).** D1 is GREEN both OS; this unblocked FDC-15 media, FDC-13 outgoing badge, FDC-14b ✦, and the S0 LAN-win metric. FDC-S6/CV-35..41 subsequently closed by the conservative KEEP disposition on 2026-08-06; the soak is no longer an open long pole and no WS-removal plan follows.
 
 ---
 
@@ -21,11 +21,11 @@
 - **CV-42** — S0 M3 aggregation host bit (if not already carried by FDC-01).
 - Flag-flip **lock tests** (CV-09/13/19) may be authored in parked/default-OFF form — but **not flipped to GREEN** here.
 
-**⛔ Deferred — env-blocked (kept in plan, deferred-not-waived):**
-- **2-phone both-OS rig — ✅ NOW AVAILABLE (2026-06-28):** iPhone 11 (`00008030-001A6D2801BB802E`) + iPhone 13 (`00008110-00184D622289801E`) — both iOS **26.5**, same WiFi — **+ a physical Android**. The device campaign (**CV-08 keystone** + CV-10/11/12/15/16/17/20/23/24/25/26/27/29/30/32/34/37/46) is **RUNNABLE** — no longer env-blocked (still gated on their own prereqs: gomobile rebuild CV-02, relay deploy CV-03 for push/presence, plan 170 for CV-29's burst, one peer on cellular for DCUtR CV-11/12). **iOS-major caveat WAIVED** (decision 2026-06-28: 11+13 are both 26.5 — proceed on what we have; CV-29's "2nd iOS major" dropped).
+**⛔ Deferred — availability/external-state bounded (kept in plan unless dispositioned):**
+- **Device matrix:** always re-resolve current USB Android, Android emulator, USB iPhone, and simulator targets. Default non-iOS two-peer topology is USB Android + Android emulator; do not substitute an iPhone when that topology is unavailable. The 2026-08-06 FDC-S6 matrix disposition is recorded at CV-35..41 below.
 - **Touches LIVE PROD — ✅ DEPLOY AUTHORIZED (2026-06-28)** — `.env` (EC2_HOST `13.60.15.36`/Redis/Grafana) + `se.pem` present; the EC2 relay redeploy is now go: CV-03/04/05/06/35 (deploy) + CV-15/16/18/21/22/45 (live-relay) are **RUNNABLE**. ⚠ Deploy **NET-REL-07-safe**: SAME endpoint/peer-ID (old clients are pinned), `wakeTokenGateEnforced=OFF` (CV-14 attach not yet saturated), opaque-routing OUT.
-- **Soak (sample collection)** — CV-36/38/39/47.
-- **Decision (needs soak + device data)** — CV-40 (S6 verdict), CV-49 (S0 scorecard).
+- **Soak (sample collection)** — CV-36/38/39 are closed by KEEP disposition; CV-47 remains part of the independent S0 scorecard.
+- **Decision** — CV-40 is closed (S6 KEEP); CV-49 (S0 scorecard) remains independently open.
 - **Flag-flip GREENs (device-gated)** — CV-09/13/19 (+ `EnableLibp2pLanMedia`).
 - **External plan** — CV-29 gated on plan 170.
 
@@ -70,16 +70,26 @@
 - [ ] **CV-29** 📱 FDC-06 T8 open-send-lock delivers on the iPhone 11/13 (iOS 26.5) pair — **2nd-iOS-major WAIVED** (decision 2026-06-28: work with what we have). ⚠ **STALE BLOCKER CORRECTED 2026-07-01:** the "N≥3 burst BLOCKED on plan 170" note is **stale** — plan 170 (send-button freeze) **shipped host-green 2026-06-27** and is LIVE on HEAD. T8 single-message + N∈{3,8} burst are both runnable now; only the sim-scenario registration (classify_path + dart-define) + the device run are owed. (CV-28 ✅ + CV-07 ✅ + CV-06 durable custody all in.)
 
 ## P4.2 — Win-rate soak
-> **Precondition LANDED 2026-06-29 (plan `177-lan-classifier-dns4-local-private`, commit `fd278a71`):** the FDC-S6 win-rate classifier `lan_address_classifier.dart` now counts `/dns4|/dns6|/dnsaddr/<host>.local` as private/LAN (RFC 6762). It previously returned `lanPrivateIp:false` for **iOS-resolved** peers (Fix C's `/dns4` shape), so CV-36/37 could **never certify** a clean LAN win whenever iOS was the discoverer. **Device-confirmed:** iPhone 11 now emits `P2P_LAN_PEER_FOUND_REQUEST{lanPrivateIp:true}` (was `false`). A **pilot** run is done (A→i 54/54 clean = 100%, Wilson-LB 93.4% — UNDERPOWERED at n=54; i→A showed a real 39-direct/14-`wifi` mix + 23% double-delivery). The full soak campaign (CV-36/37/38/39) **stays OPEN**. Capture-procedure note: launch the iPhone advertiser FIRST, then the Pixel, so the Pixel doesn't latch its suspected-denied mDNS gate before discovery.
-- [ ] **CV-35** ⚙ Soak+baseline binaries `flutter build (profile) --dart-define=FDC_FLOW_LOG=1` — ⏳ **ADVANCED (179 `b86bc841` / 180 `53b8d6fc`):** the **LAN-ON** soak binary was built + run (6 pilot logs, `fdc-s6-measurement/logs/pilot_*`). Still owed: the **WS-baseline arm** (LAN-dial gate OFF) from the *same pinned HEAD* (Android also `MKNOON_ENABLE_NATIVE_MDNS`) — required for CV-39's Newcombe delta.
-- [ ] **CV-36** ⏳ Win-rate soak: libp2p-LAN Wilson-LB ≥95%, ≥385 sends/dir, 3 platform-dirs (A→A / i→i / A↔i) — duration floor removed by decision 2026-06-29 (no 14-day soak; the ≥385-sample Wilson-LB criterion is the sole gate). `fdc-s6-measurement/fdc_s6_capture.sh + fdc_s6_parse.py`
-- [ ] **CV-37** 📱 bonsoir-fed-dial reliability both OS (Wilson 95% LB ≥95%, ≥385) — ⏳ **ADVANCED (178 `48c1576f` + 180 `7271cfdf`/`53b8d6fc`):** the Android bonsoir-fed-dial half (the recurring rig blocker) is fixed — suspected-denied over-latch gone + native jmDNS resolver device-proven cross-OS. Still owed: the ≥385/dir certification (same dataset as CV-36).
-- [ ] **CV-38** ⏳ double-delivery rate by (first,second)-leg pair
-- [ ] **CV-39** ⏳ failure-delta ≤ +1.0pp vs bonsoir+WS baseline (Newcombe CI)
+> **FDC-S6 disposition (2026-08-06): KEEP.** The current parser re-read all six
+> legacy pilots with trial-local discovery and logical-send accounting: A→i
+> `n=107`, 54 clean wins, Wilson LB 41.1%, 1/107 double delivery; i→A
+> `n=97`, no certifiable clean wins because the legacy trials lack matching
+> discovery markers, and 10/97 double delivery (9 `wifi+direct`, 1
+> `direct+wifi`). Both directions are underpowered and there is no matched
+> baseline. The live default Android pair is N/A: Pixel Wi-Fi is
+> `192.168.0.240/24`, while `emulator-5554` is NAT-isolated at `10.0.2.15/24`
+> with `wlan0` down. iPhone setup runs were excluded at the harness boundary
+> and stopped rather than repaired recursively. These rows close by conservative
+> disposition, **not** by claiming the retirement thresholds passed.
+- [x] **CV-35** ⚙ **DISPOSITIONED / KEEP:** prior LAN-ON pilot binaries/logs exist. A matched WS-baseline binary was not built after the sample/matrix gate had already failed; baseline evidence remains absent and therefore cannot authorize retirement.
+- [x] **CV-36** ⏳ **RETIREMENT GATE MISSED:** no eligible direction reached ≥385; A→A is `N/A (target topology unavailable by project policy)`. No successful-soak claim.
+- [x] **CV-37** 📱 **RETIREMENT GATE MISSED:** A→i bonsoir-fed reliability is 54/54 with Wilson LB 93.4% (<95%); i→A has no certifiable trial-local denominator; required full-matrix proof is absent.
+- [x] **CV-38** ⏳ **PILOT COST RECORDED:** A→i 1/107 = 0.9% (`direct+inbox`); i→A 10/97 = 10.3% (`wifi+direct` 9, `direct+wifi` 1).
+- [x] **CV-39** ⏳ **N/A FOR KEEP DISPOSITION:** no matched baseline, so no Newcombe non-inferiority CI exists. This blocks retirement authorization; it does not block keeping WS.
 
 ## P4.3 — FDC-S6 verdict
-- [ ] **CV-40** ⚖ Per-component verdict → VERDICT block; Status open→closed (retire-chat Y/N · retire-media Y/N · keep-bonsoir=always). *retire-media also needs CV-34 OR recorded relay-CDN-only acceptance*
-- [ ] **CV-41** ▢ *(conditional — only if retire-chat=Y)* WS-chat-removal repoint (`startAdvertising` off `wsPort` → libp2p host port) — NEW follow-on plan, full RED. `./scripts/run_test_gates.sh transport ; run_host_test_gates.sh core-host-all`
+- [x] **CV-40** ⚖ **CLOSED:** retire-chat = **N** · retire-media = **N** · keep-bonsoir = **always**. Results and spike VERDICT blocks record the availability-bounded matrix and missed thresholds.
+- [x] **CV-41** ▢ **N/A (condition false):** retire-chat is N, so no WS-chat-removal plan and no automatic Plan 341.
 
 ## P4.4 — Staged prod flag-flips (each at its gate; all reversible)
 | Flag | Default → | Gated on | Lock | Box |
@@ -88,7 +98,7 @@
 | `EnableLibp2pLANDial` | false → **true ✅** | CV-08 D1-GREEN ✅ | CV-09 ✅ | [x] (`4cce15c1`, device-proven) |
 | `EnableDcutrUpgrade` | stays **false** (parked) | CV-11/12 closed at host ceiling (188) — flip parked: DCUtR-1:1 is dead machinery under store-and-forward (CV-10 verdict); re-opens only with Option B | CV-13 | (no flip — parked by decision 2026-07-01) |
 | `wakeTokenGateEnforced` | OFF → ON | **CV-14 saturate** then CV-20 | CV-19 | [ ] |
-| `EnableLibp2pLanMedia` | stays OFF | FDC-S6 media verdict | — | (no flip this phase) |
+| `EnableLibp2pLanMedia` | stays OFF | FDC-S6 media verdict = **keep / no retirement** | — | (no flip) |
 
 > **Parked dark-ship lock added (2026-06-28):** `node/feature_flags_runtime_test.go::TestFeatureFlags_FdcTransportFlagsShipDarkUntilDeviceProof` pins `EnableLibp2pLANDial` / `EnableDcutrUpgrade` / `EnableLibp2pLANMedia` = **false** by default, so an accidental flip ahead of its device gate re-reds. This is the *pre-flip* polarity; CV-09/CV-13 invert the matching assertion once D1 / the DCUtR campaign close. **No flag flipped to ON this session** (Scope Guard).
 >

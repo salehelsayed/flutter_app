@@ -1168,6 +1168,41 @@ void main() {
     );
 
     test(
+      'FDC-S6: a newly stored logical receive exports its authoritative kept transport',
+      () async {
+        final flow = <Map<String, dynamic>>[];
+        debugSetFlowEventSink(flow.add);
+        addTearDown(() => debugSetFlowEventSink(null));
+
+        for (final transport in const ['direct', 'inbox']) {
+          flow.clear();
+          messageRepo = FakeMessageRepository();
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(buildValidChatJson()),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            transport: transport,
+          );
+
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(msg, isNotNull);
+          final stored = flow.firstWhere(
+            (event) => event['event'] == 'CHAT_MSG_RECEIVE_STORED',
+          );
+          final details = stored['details'] as Map<String, dynamic>;
+          expect(
+            details['transport'],
+            transport,
+            reason:
+                'the soak denominator must observe the kept logical outcome, '
+                'including relay-inbox replay that bypasses MSG_RECEIVED_TRANSPORT',
+          );
+        }
+      },
+    );
+
+    test(
       'returns duplicate when SAME content arrives under a DIFFERENT id (F8 content dedup)',
       () async {
         // An already-durable incoming message under id 'msg-uuid-001'.

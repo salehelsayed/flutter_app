@@ -48,11 +48,12 @@ class FakeP2PService implements P2PService, DurableLanSender {
   bool localSendResult = true;
 
   /// Ack classification returned by [sendLocalMessageDurable] on a successful
-  /// local delivery. Defaults to [LanSendAck.committed] so a WiFi send reports a
-  /// durable committed receiver ack (doc 114 LAN-ack-after-commit) and the send
-  /// path persists `transport == 'local'` — mirrors the real `P2PServiceImpl`,
-  /// which is a [DurableLanSender]. Tests that want to exercise the legacy
-  /// bool-ack inbox-custody backstop can set this to [LanSendAck.legacyAck].
+  /// local delivery. Defaults to [LanSendAck.committed] to mirror the strongest
+  /// nonce-correlated WebSocket response from the real [DurableLanSender]. Plan
+  /// 337 still treats that response as unauthenticated written evidence: only a
+  /// later authenticated `sendMessageWithReply` proof may settle delivery or
+  /// train sticky transport. Tests for the legacy bool-ack custody backstop can
+  /// set this to [LanSendAck.legacyAck].
   LanSendAck localSendAck = LanSendAck.committed;
 
   /// Delay before a local WiFi send is acknowledged.
@@ -87,15 +88,14 @@ class FakeP2PService implements P2PService, DurableLanSender {
   int? lastDialTimeoutMs;
   int? lastSendTimeoutMs;
 
-  /// Current transport mode for test assertions.
-  /// Can be 'wifi', 'relay', or 'inbox'. Defaults to 'relay'.
+  /// Authenticated libp2p transport label reported by test-controlled sends.
+  /// Use `direct` or `relay`; defaults to `relay`.
   String transportMode = 'relay';
 
   /// When true, [sendMessageWithReply] reports [transportMode] as the
-  /// `SendMessageResult.transport`, so a send-path test can deterministically
-  /// drive the resolved transport label ('direct'/'relay'). Defaults to false
-  /// to preserve the historical inference behaviour relied on by the existing
-  /// resilience suite (which expects `direct` from address inference).
+  /// authenticated `SendMessageResult.transport`, so a send-path test can
+  /// deterministically drive the resolved `direct`/`relay` label. Defaults to
+  /// false to preserve inference from the fake connection census.
   bool reportTransportMode = false;
 
   /// NET-REL-05 P3 (sticky transport) memory, faithful to the production

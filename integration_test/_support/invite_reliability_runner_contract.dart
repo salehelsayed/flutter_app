@@ -17,6 +17,9 @@ const String inviteReliabilityScenario = 'invite_reliability';
 const String inviteSendLatencyScenario = 'invite_send_latency';
 
 const Set<String> inviteSendLatencyModes = <String>{'baseline', 'closure'};
+const int inviteSendLatencyClosurePreFanoutMedianCeilingMs = 950;
+const int inviteSendLatencyClosureCallerMedianCeilingMs = 1300;
+const String inviteSendLatencyClosureCell = 'create|online-cold';
 const List<String> inviteSendLatencyPhaseNames = <String>[
   'pre_fanout',
   'sign',
@@ -832,7 +835,7 @@ Map<String, Object?> buildInviteSendLatencyHostSummary({
     }
   }
 
-  final disposition = _deriveDisposition(cells);
+  final disposition = _deriveDisposition(cells, mode: expectedMode);
   return <String, Object?>{
     'schema': inviteSendLatencyHostSummarySchema,
     'schemaVersion': inviteSendLatencyHostSummarySchemaVersion,
@@ -1010,6 +1013,11 @@ InviteSendLatencyArtifactValidation validateInviteSendLatencyHostSummary({
           '$path.recipientEventCountMax must be at least its median',
         );
       }
+      if (expectedMode == 'closure' && eventMedian != 1) {
+        failures.add(
+          '$path.recipientEventCountMedian must equal 1 in closure mode',
+        );
+      }
       if (expectedMode == 'closure' && eventMax != 1) {
         failures.add(
           '$path.recipientEventCountMax must equal 1 in closure mode',
@@ -1150,12 +1158,96 @@ InviteSendLatencyArtifactValidation validateInviteSendLatencyHostSummary({
     }
   }
 
-  _validateDisposition(root, cellMaps, failures);
+  if (expectedMode == 'closure') {
+    final closureCell = cellMaps[inviteSendLatencyClosureCell];
+    if (closureCell != null) {
+      final phaseMedians = closureCell['phaseMedianMs'];
+      final preFanoutMedian = phaseMedians is Map
+          ? phaseMedians['pre_fanout']
+          : null;
+      if (preFanoutMedian is num &&
+          preFanoutMedian.toDouble() >
+              inviteSendLatencyClosurePreFanoutMedianCeilingMs) {
+        failures.add(
+          r'$.hostSummary.cells[create|online-cold].phaseMedianMs.pre_fanout '
+          'must be <= '
+          '$inviteSendLatencyClosurePreFanoutMedianCeilingMs in closure mode',
+        );
+      }
+      final callerMedian = closureCell['callerMedianMs'];
+      if (callerMedian is num &&
+          callerMedian.toDouble() >
+              inviteSendLatencyClosureCallerMedianCeilingMs) {
+        failures.add(
+          r'$.hostSummary.cells[create|online-cold].callerMedianMs must be <= '
+          '$inviteSendLatencyClosureCallerMedianCeilingMs in closure mode',
+        );
+      }
+    }
+  }
+
+  _validateDisposition(root, cellMaps, expectedMode, failures);
   _validateProvenance(root, failures);
   return InviteSendLatencyArtifactValidation(failures);
 }
 
-Map<String, Object?> _deriveDisposition(List<Map<String, Object?>> cells) {
+Map<String, Object?> _deriveDisposition(
+  List<Map<String, Object?>> cells, {
+  required String mode,
+}) => mode == 'closure'
+    ? _deriveClosureDisposition(cells)
+    : _deriveBaselineDisposition(cells);
+
+Map<String, Object?> _deriveClosureDisposition(
+  List<Map<String, Object?>> cells,
+) {
+  final selectedCell = cells.singleWhere(
+    (cell) =>
+        '${cell['path']}|${cell['condition']}' == inviteSendLatencyClosureCell,
+  );
+  final phaseMedians = Map<String, Object?>.from(
+    selectedCell['phaseMedianMs']! as Map,
+  );
+  final dominantCounts = Map<String, Object?>.from(
+    selectedCell['dominantPhaseCount']! as Map,
+  );
+  final preFanoutMedian = (phaseMedians['pre_fanout']! as num).toDouble();
+  final callerMedian = (selectedCell['callerMedianMs']! as num).toDouble();
+  final exactDeliveryEvidence = cells.every(
+    (cell) =>
+        cell['outcomeUnknownCount'] == 0 &&
+        (cell['recipientEventCountMedian']! as num).toDouble() == 1 &&
+        (cell['recipientEventCountMax']! as num).toDouble() == 1 &&
+        cell['recipientObservedCount'] == 5 &&
+        cell['recipientNotObservedCount'] == 0 &&
+        cell['recipientLateObservedCount'] == 0,
+  );
+  final productionAuthorized =
+      preFanoutMedian <= inviteSendLatencyClosurePreFanoutMedianCeilingMs &&
+      callerMedian <= inviteSendLatencyClosureCallerMedianCeilingMs &&
+      exactDeliveryEvidence;
+
+  return <String, Object?>{
+    'hypothesis': 'H2',
+    'decision': 'candidate_selected',
+    'cell': inviteSendLatencyClosureCell,
+    'dominantPhase': 'pre_fanout',
+    'dominantRepetitions': dominantCounts['pre_fanout'],
+    'phaseMedianMs': preFanoutMedian,
+    'basis':
+        'closure reads create|online-cold phaseMedianMs.pre_fanout='
+        '$preFanoutMedian (ceiling '
+        '$inviteSendLatencyClosurePreFanoutMedianCeilingMs) and '
+        'callerMedianMs=$callerMedian (ceiling '
+        '$inviteSendLatencyClosureCallerMedianCeilingMs); '
+        'exactDeliveryEvidence=$exactDeliveryEvidence',
+    'productionAuthorized': productionAuthorized,
+  };
+}
+
+Map<String, Object?> _deriveBaselineDisposition(
+  List<Map<String, Object?>> cells,
+) {
   Map<String, Object?>? selectedCell;
   var selectedPhase = inviteSendLatencyPhaseNames.first;
   var selectedMedian = -1.0;
@@ -2231,6 +2323,7 @@ int? _boundedCellCount(
 void _validateDisposition(
   Map<String, Object?> root,
   Map<String, Map<String, Object?>> cells,
+  String expectedMode,
   List<String> failures,
 ) {
   const path = r'$.hostSummary.disposition';
@@ -2283,7 +2376,13 @@ void _validateDisposition(
     failures,
   );
   _requiredString(disposition, 'basis', path, failures);
-  _expectValue(disposition, 'productionAuthorized', false, path, failures);
+  _expectValue(
+    disposition,
+    'productionAuthorized',
+    expectedMode == 'closure',
+    path,
+    failures,
+  );
   if (phase != null && hypothesis != null) {
     final expectedHypothesis = switch (phase) {
       'live' => 'H1',
@@ -2337,7 +2436,7 @@ void _validateDisposition(
       }
     }
     if (orderedCells.length == 6) {
-      final expected = _deriveDisposition(orderedCells);
+      final expected = _deriveDisposition(orderedCells, mode: expectedMode);
       for (final key in _dispositionKeys) {
         if (disposition[key] != expected[key]) {
           failures.add('$path.$key does not match the measured cell table');

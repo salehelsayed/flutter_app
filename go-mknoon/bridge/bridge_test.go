@@ -3292,6 +3292,219 @@ func TestGroupPublish_ResponseIncludesTopicPeers(t *testing.T) {
 	}
 }
 
+func TestTC34103GroupPublishMapsPeerRefreshControlOutsideMessageOpts(t *testing.T) {
+	withFreshSingletonNode(t)
+
+	recorder := &recordingBridgeCallback{}
+	Initialize(recorder)
+	identity := generateTestIdentityMaterial(t)
+	assertOk(t, parseJSON(t, StartNode(startNodeJSON(t, identity.PrivateKeyHex))))
+
+	joinGroupWithAbsentRemote := func(t *testing.T, groupID string) {
+		t.Helper()
+
+		remote := generateTestIdentityMaterial(t)
+		groupKey, err := mcrypto.GenerateGroupKey()
+		if err != nil {
+			t.Fatalf("generate group key: %v", err)
+		}
+		joinInput, err := json.Marshal(map[string]interface{}{
+			"groupId": groupID,
+			"groupConfig": map[string]interface{}{
+				"name":      "TC-341 Bridge Peer Refresh",
+				"groupType": "chat",
+				"members": []map[string]interface{}{
+					{
+						"peerId":         identity.PeerId,
+						"role":           "admin",
+						"publicKey":      identity.PublicKey,
+						"mlKemPublicKey": "tc341-mlkem-local",
+					},
+					{
+						"peerId":         remote.PeerId,
+						"role":           "writer",
+						"publicKey":      remote.PublicKey,
+						"mlKemPublicKey": "tc341-mlkem-remote",
+					},
+				},
+				"createdBy": identity.PeerId,
+				"createdAt": "2026-08-06T00:00:00Z",
+			},
+			"groupKey": groupKey,
+			"keyEpoch": 1,
+		})
+		if err != nil {
+			t.Fatalf("marshal group join: %v", err)
+		}
+		assertOk(t, parseJSON(t, GroupJoinTopic(string(joinInput))))
+	}
+
+	baseDecodeInput := map[string]interface{}{
+		"groupId":          "tc341-decode",
+		"text":             "members added",
+		"senderPeerId":     identity.PeerId,
+		"senderPublicKey":  identity.PublicKey,
+		"senderPrivateKey": identity.PrivateKey,
+		"senderUsername":   "Alice",
+		"skipPeerRefresh":  true,
+	}
+	encodedDecodeInput, err := json.Marshal(baseDecodeInput)
+	if err != nil {
+		t.Fatalf("marshal decode input: %v", err)
+	}
+	decoded, errorJSON := decodeGroupBridgeMessageParams(string(encodedDecodeInput))
+	if errorJSON != "" {
+		t.Fatalf("decode skipPeerRefresh=true: %s", errorJSON)
+	}
+	if !decoded.SkipPeerRefresh {
+		t.Fatal("skipPeerRefresh=true did not decode into transport control")
+	}
+	for _, includeRecipients := range []bool{false, true} {
+		messageOpts := buildGroupBridgeMessageOpts(decoded, includeRecipients)
+		if _, present := messageOpts["skipPeerRefresh"]; present {
+			t.Fatalf("skipPeerRefresh leaked into message opts (includeRecipients=%t): %#v", includeRecipients, messageOpts)
+		}
+	}
+	baseDecodeInput["skipPeerRefresh"] = "true"
+	invalidDecodeInput, err := json.Marshal(baseDecodeInput)
+	if err != nil {
+		t.Fatalf("marshal invalid decode input: %v", err)
+	}
+	if _, errorJSON := decodeGroupBridgeMessageParams(string(invalidDecodeInput)); errorJSON == "" {
+		t.Fatal("string skipPeerRefresh must fail typed JSON decoding")
+	}
+
+	falseValue := false
+	for _, tc := range []struct {
+		name                 string
+		groupID              string
+		skipPeerRefresh      *bool
+		wantRefreshPreflight bool
+	}{
+		{
+			name:                 "omitted defaults to ordinary refresh",
+			groupID:              "tc341-bridge-omitted",
+			wantRefreshPreflight: true,
+		},
+		{
+			name:                 "explicit false keeps ordinary refresh",
+			groupID:              "tc341-bridge-false",
+			skipPeerRefresh:      &falseValue,
+			wantRefreshPreflight: true,
+		},
+		{
+			name:            "true skips only refresh",
+			groupID:         "tc341-bridge-true",
+			skipPeerRefresh: func() *bool { value := true; return &value }(),
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			joinGroupWithAbsentRemote(t, tc.groupID)
+			messageID := tc.groupID + "-message"
+			publishInput := map[string]interface{}{
+				"groupId":          tc.groupID,
+				"text":             "TC-341 real bridge publish",
+				"senderPeerId":     identity.PeerId,
+				"senderPublicKey":  identity.PublicKey,
+				"senderPrivateKey": identity.PrivateKey,
+				"senderUsername":   "Alice",
+				"messageId":        messageID,
+			}
+			if tc.skipPeerRefresh != nil {
+				publishInput["skipPeerRefresh"] = *tc.skipPeerRefresh
+			}
+			encoded, err := json.Marshal(publishInput)
+			if err != nil {
+				t.Fatalf("marshal publish input: %v", err)
+			}
+
+			baseline := recorder.eventCount()
+			result := parseJSON(t, GroupPublish(string(encoded)))
+			assertOk(t, result)
+			if result["messageId"] != messageID {
+				t.Fatalf("messageId = %v, want %s", result["messageId"], messageID)
+			}
+			if topicPeers, ok := result["topicPeers"].(float64); !ok || int(topicPeers) != 0 {
+				t.Fatalf("topicPeers = %v, want numeric zero", result["topicPeers"])
+			}
+
+			waitForTC341BridgeEvent(t, recorder, baseline, "group:publish_debug", tc.groupID, messageID, "", time.Second)
+			if tc.wantRefreshPreflight {
+				waitForTC341BridgeEvent(t, recorder, baseline, "group:discovery", tc.groupID, "", "publish_peer_refresh_begin", time.Second)
+				waitForTC341BridgeEvent(t, recorder, baseline, "group:discovery", tc.groupID, "", "publish_peer_refresh_done", time.Second)
+				return
+			}
+			assertNoTC341BridgePublishRefreshEvent(t, recorder, baseline, tc.groupID, 300*time.Millisecond)
+		})
+	}
+}
+
+func waitForTC341BridgeEvent(
+	t *testing.T,
+	recorder *recordingBridgeCallback,
+	baseline int,
+	eventName string,
+	groupID string,
+	messageID string,
+	step string,
+	timeout time.Duration,
+) map[string]interface{} {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, raw := range recorder.snapshotEvents()[baseline:] {
+			var event struct {
+				Event string                 `json:"event"`
+				Data  map[string]interface{} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(raw), &event); err != nil || event.Event != eventName {
+				continue
+			}
+			if event.Data["groupId"] != groupID {
+				continue
+			}
+			if messageID != "" && event.Data["messageId"] != messageID {
+				continue
+			}
+			if step != "" && event.Data["step"] != step {
+				continue
+			}
+			return event.Data
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for bridge event=%s groupId=%s messageId=%s step=%s", eventName, groupID, messageID, step)
+	return nil
+}
+
+func assertNoTC341BridgePublishRefreshEvent(
+	t *testing.T,
+	recorder *recordingBridgeCallback,
+	baseline int,
+	groupID string,
+	timeout time.Duration,
+) {
+	t.Helper()
+
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		for _, raw := range recorder.snapshotEvents()[baseline:] {
+			var event struct {
+				Event string                 `json:"event"`
+				Data  map[string]interface{} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(raw), &event); err != nil || event.Event != "group:discovery" || event.Data["groupId"] != groupID {
+				continue
+			}
+			if step := event.Data["step"]; step == "publish_peer_refresh_begin" || step == "publish_peer_refresh_done" {
+				t.Fatalf("skipPeerRefresh publish emitted foreground refresh event: %s", raw)
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 func TestBuildGroupPublishOpts_IncludesQuotedMessageId(t *testing.T) {
 	media := []map[string]interface{}{
 		{"id": "m1", "mime": "image/jpeg"},

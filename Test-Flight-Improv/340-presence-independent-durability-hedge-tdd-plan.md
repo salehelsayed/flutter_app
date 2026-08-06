@@ -108,7 +108,7 @@ Hard `Do not`:
 Deferred / accepted difference:
 
 - Hedge tuning remains telemetry-gated. Start with one 2.5-second constant; do not pre-design adaptive or per-route policy.
-- Removal of WebSocket chat delivery and foreground connection single-flight remain conditional follow-up plans under the assessment, not Plan 340.
+- Removal of WebSocket chat delivery remained governed by FDC-S6, not Plan 340; FDC-S6 subsequently closed with `retire-chat = N`, so no removal follow-up was spawned. Foreground connection single-flight remains telemetry-gated under the assessment.
 - A started inbox operation may finish/store/push after a live commitment. This is intentional; receiver/relay idempotency and R1 atomic settlement own the duplicate race.
 
 Dependencies:
@@ -303,12 +303,12 @@ Wave-level command after Plan 340 is plan-green, because implemented R5 already 
 - Manual registration: none. Both causal files are already in curated `1to1`; both auto-glob into `feature-host-all`.
 - Migration: none.
 - Boundary closure: host-only deterministic scheduling/authority/persistence proof. No simulator, physical device, iOS, or real relay is required.
-- Execution order: implement after Plans 336-339 as the final roadmap correction. Plan 339 landed first, so strengthen and re-run TC-339-05 during this execution.
-- Unresolved evidence: only post-rollout tuning of the single 2.5-second value; it is not an implementation blocker.
+- Execution order: completed after Plans 336-339 as the final R1-R5 roadmap correction. Plan 339 landed first, and this execution strengthened and re-ran TC-339-05 green.
+- Unresolved evidence: only post-rollout telemetry that may justify retuning the single 2.5-second value; it is not an implementation blocker or an automatic follow-up plan.
 
 ## Reviewer Findings
 
-Verdict: **ready**. Classification: `implementation-ready`; core bet: **confirmed**; disposition: **execute**.
+Pre-execution review verdict: **ready**. Classification: `implementation-ready`; core bet: **confirmed**; disposition: **execute**. Post-execution independent implementation review: **approve** (recorded below).
 
 - The first independent pass returned `plan-fixes-required`. Source verification showed that a narrower plan could pass while omitting learned-sticky or relay-race cancellation, `duplicate` and failed/throwing detailed outcomes, a real recovery retry, the protected-private late-custody writer, the throwing-presence path, or the exact `stage < inbox < sticky` seam.
 - Those gaps are now closed in TC-340-01/02/06/07/08. Fixture preparation is explicit and behavior-neutral; the outcome table pins detailed/Boolean calls, expiry, rejection, retry, and per-call metrics. TC-340-09 additionally proves both terminal non-proof funnels force-start the same hedge before its timer.

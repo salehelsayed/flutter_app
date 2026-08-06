@@ -28,9 +28,9 @@ TS="$(date +%Y%m%d_%H%M%S)"
 OUT="$OUTDIR/${LABEL}_${TS}.log"
 
 # Permissive line filter; the parser does the strict JSON extraction. These are
-# the four FDC-S6 events: per-send win leg, LAN discovery (carries lanPrivateIp),
-# the net-new double-delivery counter, and the Go LAN-dial trace.
-FILTER='MSG_RECEIVED_TRANSPORT|P2P_LAN_PEER_FOUND_REQUEST|CHAT_MSG_DOUBLE_DELIVERY|node:lan_peer_found'
+# the five FDC-S6 events: authoritative stored logical outcome, raw arrival leg,
+# LAN discovery (carries lanPrivateIp), double delivery, and Go LAN-dial trace.
+FILTER='CHAT_MSG_RECEIVE_STORED|MSG_RECEIVED_TRANSPORT|P2P_LAN_PEER_FOUND_REQUEST|CHAT_MSG_DOUBLE_DELIVERY|node:lan_peer_found'
 
 echo "[fdc-s6] capturing ($PLATFORM) → $OUT"
 echo "[fdc-s6] NOW: send 1:1 messages between the two same-WiFi devices. Ctrl-C when done."

@@ -955,7 +955,7 @@ void main() {
     );
 
     testWidgets(
-      'PREREQ-SIGNED-COMMIT-AUDIT batch invite broadcasts one signed members_added system message',
+      'TC-341-02 existing-group members_added keeps normal peer refresh',
       (tester) async {
         final contactRepo = InMemoryContactRepository();
         contactRepo.addTestContact(contactAlice);
@@ -1008,9 +1008,11 @@ void main() {
         });
         final parsed = jsonDecode(publishMsg) as Map<String, dynamic>;
         final payload = parsed['payload'] as Map<String, dynamic>;
+        expect(payload.containsKey('skipPeerRefresh'), isFalse);
         final sysText =
             jsonDecode(payload['text'] as String) as Map<String, dynamic>;
         expect(sysText['__sys'], equals('members_added'));
+        expect(sysText.containsKey('skipPeerRefresh'), isFalse);
         final sysMembers = sysText['members'] as List<dynamic>;
         expect(sysMembers.length, equals(2));
         expect(sysText[signedGroupTransitionAuditField], isA<Map>());

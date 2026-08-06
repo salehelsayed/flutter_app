@@ -101,7 +101,6 @@ Future<Map<String, dynamic>> callGroupCreate(
   }
 }
 
-
 /// Calls the bridge to join an existing group with full config.
 ///
 /// Sends the groupId, groupConfig, groupKey, and keyEpoch to the Go bridge's
@@ -295,6 +294,7 @@ Future<Map<String, dynamic>> callGroupPublish(
   String? quotedMessageId,
   List<Map<String, dynamic>>? media,
   bool isForwarded = false,
+  bool skipPeerRefresh = false,
   Map<String, Object?>? privateMediaPolicy,
   Duration timeout = const Duration(seconds: 10),
 }) async {
@@ -348,6 +348,9 @@ Future<Map<String, dynamic>> callGroupPublish(
   }
   if (isForwarded) {
     payload['isForwarded'] = true;
+  }
+  if (skipPeerRefresh) {
+    payload['skipPeerRefresh'] = true;
   }
   final normalizedPrivateMediaPolicy = _normalizeGroupPrivateMediaPolicyFields(
     privateMediaPolicy,
