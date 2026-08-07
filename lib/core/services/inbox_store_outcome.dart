@@ -1,5 +1,19 @@
 enum InboxStoreStatus { stored, duplicate, rejectedFull, failed }
 
+/// Relay proof required before a direct-text v108 or direct-reaction v109
+/// obligation may leave local custody.
+const String ackOrExpiryInboxCustodyContract = 'ack_or_expiry_v1';
+
+/// The only app-owned envelopes eligible for ACK-or-expiry relay custody.
+enum AckCustodyKind {
+  directTextV108('direct_text_v108'),
+  directReactionV109('direct_reaction_v109');
+
+  const AckCustodyKind(this.wireValue);
+
+  final String wireValue;
+}
+
 class InboxStoreOutcome {
   final InboxStoreStatus status;
   final String? errorCode;
@@ -8,6 +22,7 @@ class InboxStoreOutcome {
   final int? expiresAtMs;
   final int? occupancy;
   final int? capacity;
+  final String? custodyContract;
 
   const InboxStoreOutcome({
     required this.status,
@@ -17,10 +32,20 @@ class InboxStoreOutcome {
     this.expiresAtMs,
     this.occupancy,
     this.capacity,
+    this.custodyContract,
   });
 
   bool get accepted =>
       status == InboxStoreStatus.stored || status == InboxStoreStatus.duplicate;
+
+  /// Narrow ownership predicate for DB v108/v109 custody rows.
+  ///
+  /// Generic relay success remains [accepted], but cannot prove that a relay
+  /// row is non-destructive at capacity and retained until exact ACK/expiry.
+  bool get ackOrExpiryAccepted =>
+      accepted &&
+      (storeStatus == 'stored' || storeStatus == 'duplicate') &&
+      custodyContract == ackOrExpiryInboxCustodyContract;
 
   factory InboxStoreOutcome.fromBridgeResponse(Map<String, dynamic> response) {
     final ok = response['ok'] == true;
@@ -30,6 +55,11 @@ class InboxStoreOutcome {
     final errorCode = rawErrorCode is String ? rawErrorCode : null;
     final rawErrorMessage = response['errorMessage'] ?? response['error'];
     final errorMessage = rawErrorMessage is String ? rawErrorMessage : null;
+    final rawCustodyContract =
+        response['custodyContract'] ?? response['custody_contract'];
+    final custodyContract = rawCustodyContract is String
+        ? rawCustodyContract
+        : null;
 
     final status = _statusFromResponse(
       ok: ok,
@@ -53,6 +83,26 @@ class InboxStoreOutcome {
           : null,
       occupancy: _intField(response, 'occupancy'),
       capacity: _intField(response, 'capacity'),
+      custodyContract: custodyContract,
+    );
+  }
+
+  /// Parses a strict store receipt and makes accepted-looking responses
+  /// without the exact proof non-accepting even to legacy predicates.
+  factory InboxStoreOutcome.fromAckOrExpiryBridgeResponse(
+    Map<String, dynamic> response,
+  ) {
+    final parsed = InboxStoreOutcome.fromBridgeResponse(response);
+    if (!parsed.accepted || parsed.ackOrExpiryAccepted) return parsed;
+    return InboxStoreOutcome(
+      status: InboxStoreStatus.failed,
+      errorCode: parsed.errorCode ?? 'CUSTODY_PROOF_MISSING_OR_INVALID',
+      errorMessage: parsed.errorMessage,
+      storeStatus: parsed.storeStatus,
+      expiresAtMs: parsed.expiresAtMs,
+      occupancy: parsed.occupancy,
+      capacity: parsed.capacity,
+      custodyContract: parsed.custodyContract,
     );
   }
 
@@ -98,6 +148,25 @@ abstract class DetailedInboxStore {
   Future<InboxStoreOutcome> storeInInboxDetailed(
     String toPeerId,
     String message, {
+    int? timeoutMs,
+  });
+}
+
+typedef StoreInAckCustodyInboxDetailedFn =
+    Future<InboxStoreOutcome> Function(
+      String toPeerId,
+      String message, {
+      required AckCustodyKind custodyKind,
+      int? timeoutMs,
+    });
+
+/// Optional strict capability implemented only by inbox stores that request
+/// and validate the relay's ACK-or-expiry custody contract.
+abstract class AckOrExpiryInboxStore {
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
     int? timeoutMs,
   });
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart'
@@ -26,7 +27,8 @@ import '../../features/conversation/domain/repositories/fake_message_repository.
 /// Fake P2P with per-instance forced transport / connection / inbox results, so
 /// a sequence of sends can each take a chosen terminal exit. Records the method
 /// call sequence to make the taken path observable.
-class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
+class _CensusFakeP2PService
+    implements P2PService, ReadinessProofRecorder, AckOrExpiryInboxStore {
   final bool connected;
   final String? forcedTransport;
   final bool inboxOk;
@@ -126,6 +128,22 @@ class _CensusFakeP2PService implements P2PService, ReadinessProofRecorder {
   }) async {
     calls.add('storeInInbox');
     return inboxOk;
+  }
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    calls.add('storeInAckCustodyInboxDetailed');
+    return InboxStoreOutcome(
+      status: inboxOk ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: inboxOk ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: inboxOk ? 'stored' : null,
+      custodyContract: inboxOk ? ackOrExpiryInboxCustodyContract : null,
+    );
   }
 
   @override

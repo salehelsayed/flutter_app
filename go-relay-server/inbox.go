@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1409,6 +1410,9 @@ type InboxStore struct {
 	backend  InboxBackend
 	push     *PushService
 	capacity int
+	// Plan 344: default-off admission applies only to new protected writes.
+	// Retrieve/ACK continue to drain a Redis lane while this kill switch is off.
+	ackCustodyAdmissionEnabled bool
 	// FDC-09 §12 access-token wake gate (always non-nil; fail-open until a
 	// recipient registers a set).
 	wakeTokens *memoryWakeTokenStore
@@ -1424,10 +1428,11 @@ func (is *InboxStore) SetDirectReactionPushEnabled(enabled bool) {
 // NewInboxStore creates an InboxStore with an in-memory backend.
 func NewInboxStore(push *PushService) *InboxStore {
 	return &InboxStore{
-		backend:    newMemoryInboxBackend(),
-		push:       push,
-		capacity:   maxMessagesPerPeer,
-		wakeTokens: newMemoryWakeTokenStore(),
+		backend:                    newMemoryInboxBackend(),
+		push:                       push,
+		capacity:                   maxMessagesPerPeer,
+		ackCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
+		wakeTokens:                 newMemoryWakeTokenStore(),
 	}
 }
 
@@ -1445,10 +1450,11 @@ func NewInboxStoreWithBackendAndCapacity(
 		capacity = maxMessagesPerPeer
 	}
 	return &InboxStore{
-		backend:    backend,
-		push:       push,
-		capacity:   capacity,
-		wakeTokens: newMemoryWakeTokenStore(),
+		backend:                    backend,
+		push:                       push,
+		capacity:                   capacity,
+		ackCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
+		wakeTokens:                 newMemoryWakeTokenStore(),
 	}
 }
 
@@ -1497,6 +1503,14 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 			entry.From[:min(20, len(entry.From))])
 		return InboxStoreResultRejectedFull, nil
 	}
+	is.recordStoredAndLaunchPush(toPeerId, entry)
+	return InboxStoreResultStored, nil
+}
+
+// recordStoredAndLaunchPush is shared by legacy Store and the protected
+// store-after-atomic-commit path. Callers must invoke it only for a genuinely
+// new durable row; duplicates and failed/ambiguous commits never refanout.
+func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMessage) {
 	inboxStoredCounter.Inc()
 	if biz != nil {
 		biz.RecordMessageStored()
@@ -1517,7 +1531,7 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 	// already STORED above either way — only the wake is gated (delivery preserved).
 	if reaction, recognizedReaction, eligibleReaction := extractDirectReactionPushMetadata(entry.Message); recognizedReaction {
 		if !eligibleReaction || reaction.EnvelopeSender != entry.From || !is.directReactionPushEnabled {
-			return InboxStoreResultStored, nil
+			return
 		}
 		// Unlike the global ordinary-message wake gate, direct reactions NEVER
 		// fail open. The recipient must have explicitly registered a set and the
@@ -1527,11 +1541,11 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken)
 		if !authorized {
 			pushSentCounter.WithLabelValues("reaction_unauthorized").Inc()
-			return InboxStoreResultStored, nil
+			return
 		}
 		if is.push == nil || !is.push.recipientSupportsCapability(toPeerId, directReactionCapability) {
 			pushSentCounter.WithLabelValues("reaction_incapable").Inc()
-			return InboxStoreResultStored, nil
+			return
 		}
 		go is.push.SendReactionNotification(
 			context.Background(),
@@ -1539,10 +1553,10 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 			entry.From,
 			entry.Message,
 		)
-		return InboxStoreResultStored, nil
+		return
 	}
 
-	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify {
+	if metadata := extractChatPushMetadata(entry.Message); metadata.ShouldNotify && is.push != nil {
 		if is.wakeTokens == nil || !wakeTokenGateEnforced ||
 			is.wakeTokens.IsAuthorized(toPeerId, entry.WakeToken) {
 			go is.push.SendNotification(context.Background(), toPeerId, entry.From, entry.Message)
@@ -1552,7 +1566,6 @@ func (is *InboxStore) Store(toPeerId string, entry inboxMessage) (InboxStoreResu
 				toPeerId[:min(20, len(toPeerId))])
 		}
 	}
-	return InboxStoreResultStored, nil
 }
 
 func (is *InboxStore) Capacity() int {
@@ -2245,6 +2258,10 @@ type inboxRequest struct {
 	// every other action's frame byte-identical (NET-REL-07).
 	WakeToken  string   `json:"wakeToken,omitempty"`
 	WakeTokens []string `json:"wakeTokens,omitempty"`
+	// Plan 344 additive selectors. Legacy actions ignore these fields, and old
+	// decoders ignore them under the existing lenient JSON contract.
+	CustodyKind     string `json:"custodyKind,omitempty"`
+	CustodyContract string `json:"custodyContract,omitempty"`
 	// Group inbox fields.
 	GroupId                string   `json:"groupId,omitempty"`
 	RecipientPeerIds       []string `json:"recipientPeerIds,omitempty"`
@@ -2259,23 +2276,25 @@ type inboxRequest struct {
 }
 
 type inboxResponse struct {
-	Status        string                 `json:"status"`
-	Error         string                 `json:"error,omitempty"`
-	StoreStatus   string                 `json:"storeStatus,omitempty"`
-	ExpiresAtMs   int64                  `json:"expiresAtMs,omitempty"`
-	Occupancy     int                    `json:"occupancy,omitempty"`
-	Capacity      int                    `json:"capacity,omitempty"`
-	Messages      []inboxMessage         `json:"messages,omitempty"`
-	HasMore       bool                   `json:"hasMore,omitempty"`
-	Acked         int                    `json:"acked,omitempty"`
-	GroupMessages []groupInboxMessage    `json:"groupMessages,omitempty"`
-	NextCursor    string                 `json:"nextCursor,omitempty"`
-	HistoryGaps   []groupInboxHistoryGap `json:"historyGaps,omitempty"`
-	GroupId       string                 `json:"groupId,omitempty"`
-	GapId         string                 `json:"gapId,omitempty"`
-	SourcePeerId  string                 `json:"sourcePeerId,omitempty"`
-	RangeHash     string                 `json:"rangeHash,omitempty"`
-	HeadMessageId string                 `json:"headMessageId,omitempty"`
+	Status          string                 `json:"status"`
+	Error           string                 `json:"error,omitempty"`
+	ErrorCode       string                 `json:"errorCode,omitempty"`
+	StoreStatus     string                 `json:"storeStatus,omitempty"`
+	CustodyContract string                 `json:"custodyContract,omitempty"`
+	ExpiresAtMs     int64                  `json:"expiresAtMs,omitempty"`
+	Occupancy       int                    `json:"occupancy,omitempty"`
+	Capacity        int                    `json:"capacity,omitempty"`
+	Messages        []inboxMessage         `json:"messages,omitempty"`
+	HasMore         bool                   `json:"hasMore,omitempty"`
+	Acked           int                    `json:"acked,omitempty"`
+	GroupMessages   []groupInboxMessage    `json:"groupMessages,omitempty"`
+	NextCursor      string                 `json:"nextCursor,omitempty"`
+	HistoryGaps     []groupInboxHistoryGap `json:"historyGaps,omitempty"`
+	GroupId         string                 `json:"groupId,omitempty"`
+	GapId           string                 `json:"gapId,omitempty"`
+	SourcePeerId    string                 `json:"sourcePeerId,omitempty"`
+	RangeHash       string                 `json:"rangeHash,omitempty"`
+	HeadMessageId   string                 `json:"headMessageId,omitempty"`
 	// FDC-08 presence_get response fields (additive — `omitempty` keeps every
 	// other action's response byte-identical for NET-REL-07). Presence is
 	// "online-ish", never a foreground/background claim. AgeMs is a pointer so a
@@ -2289,6 +2308,14 @@ func fitRetrievePendingResponse(
 	messages []inboxMessage,
 	hasMore bool,
 ) ([]inboxMessage, bool, error) {
+	return fitRetrievePendingResponseForContract(messages, hasMore, "")
+}
+
+func fitRetrievePendingResponseForContract(
+	messages []inboxMessage,
+	hasMore bool,
+	custodyContract string,
+) ([]inboxMessage, bool, error) {
 	if len(messages) == 0 {
 		return nil, hasMore, nil
 	}
@@ -2297,9 +2324,10 @@ func fitRetrievePendingResponse(
 	trimmedHasMore := hasMore
 	for len(trimmed) > 0 {
 		data, err := json.Marshal(inboxResponse{
-			Status:   "OK",
-			Messages: trimmed,
-			HasMore:  trimmedHasMore,
+			Status:          "OK",
+			Messages:        trimmed,
+			HasMore:         trimmedHasMore,
+			CustodyContract: custodyContract,
 		})
 		if err == nil && len(data) <= maxFrameLen {
 			if len(trimmed) != len(messages) {
@@ -2395,6 +2423,74 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			// (only for genuinely new messages, skipped for duplicates).
 		}
 
+	case ackCustodyStoreAction:
+		if req.To == "" || req.Message == "" || req.CustodyKind == "" ||
+			req.CustodyContract != ackCustodyContract {
+			recordAckCustodyStoreResult(ackCustodyStoreMetricIneligible)
+			resp = inboxResponse{
+				Status:    "ERROR",
+				Error:     ackCustodyErrorIneligible,
+				ErrorCode: ackCustodyErrorIneligible,
+			}
+		} else {
+			entry := inboxMessage{
+				From:      remotePeer,
+				Message:   req.Message,
+				Timestamp: time.Now().UnixMilli(),
+				Metadata:  req.Metadata,
+				WakeToken: req.WakeToken,
+			}
+			result, storedEntry, err := inbox.StoreAckCustody(req.To, entry, req.CustodyKind)
+			if err != nil {
+				switch {
+				case errors.Is(err, errAckCustodyAdmissionDisabled):
+					resp = inboxResponse{
+						Status:    "ERROR",
+						Error:     ackCustodyErrorAdmissionDisabled,
+						ErrorCode: ackCustodyErrorAdmissionDisabled,
+					}
+				case errors.Is(err, errAckCustodyIdentityConflict):
+					resp = inboxResponse{
+						Status:    "ERROR",
+						Error:     ackCustodyErrorIdentityConflict,
+						ErrorCode: ackCustodyErrorIdentityConflict,
+					}
+				case errors.Is(err, errAckCustodyIneligible):
+					resp = inboxResponse{
+						Status:    "ERROR",
+						Error:     ackCustodyErrorIneligible,
+						ErrorCode: ackCustodyErrorIneligible,
+					}
+				case errors.Is(err, errAckCustodyBackendUnavailable):
+					resp = inboxResponse{
+						Status:    "ERROR",
+						Error:     ackCustodyErrorBackendUnavailable,
+						ErrorCode: ackCustodyErrorBackendUnavailable,
+					}
+				default:
+					resp = inboxResponse{Status: "ERROR", Error: fmt.Sprintf("store custody failed: %v", err)}
+				}
+			} else if result == InboxStoreResultRejectedFull {
+				resp = inboxResponse{
+					Status:      "ERROR",
+					Error:       ackCustodyErrorInboxFull,
+					ErrorCode:   ackCustodyErrorInboxFull,
+					StoreStatus: string(result),
+					Occupancy:   inbox.CountAckCustody(req.To),
+					Capacity:    inbox.Capacity(),
+				}
+			} else {
+				resp = inboxResponse{
+					Status:          "OK",
+					StoreStatus:     string(result),
+					CustodyContract: ackCustodyContract,
+					ExpiresAtMs:     storedEntry.Timestamp + maxMessageAge.Milliseconds(),
+					Occupancy:       inbox.CountAckCustody(req.To),
+					Capacity:        inbox.Capacity(),
+				}
+			}
+		}
+
 	case "retrieve":
 		limit := req.Limit
 		if limit <= 0 {
@@ -2428,6 +2524,42 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			resp = inboxResponse{Status: "NO_MESSAGES"}
 		}
 
+	case ackCustodyRetrievePendingAction:
+		if req.CustodyContract != ackCustodyContract {
+			resp = inboxResponse{
+				Status:    "ERROR",
+				Error:     ackCustodyErrorIneligible,
+				ErrorCode: ackCustodyErrorIneligible,
+			}
+		} else {
+			limit := req.Limit
+			if limit <= 0 {
+				limit = 50
+			}
+			messages, hasMore, err := inbox.RetrieveAckCustodyPending(remotePeer, limit)
+			if err != nil {
+				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
+			} else if len(messages) == 0 {
+				resp = inboxResponse{Status: "NO_MESSAGES", CustodyContract: ackCustodyContract}
+			} else {
+				fittedMessages, fittedHasMore, err := fitRetrievePendingResponseForContract(
+					messages,
+					hasMore,
+					ackCustodyContract,
+				)
+				if err != nil {
+					resp = inboxResponse{Status: "ERROR", Error: err.Error()}
+				} else {
+					resp = inboxResponse{
+						Status:          "OK",
+						Messages:        fittedMessages,
+						HasMore:         fittedHasMore,
+						CustodyContract: ackCustodyContract,
+					}
+				}
+			}
+		}
+
 	case "ack":
 		if len(req.EntryIds) == 0 {
 			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: entryIds"}
@@ -2437,6 +2569,28 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
 			} else {
 				resp = inboxResponse{Status: "OK", Acked: acked}
+			}
+		}
+
+	case ackCustodyAckAction:
+		if req.CustodyContract != ackCustodyContract {
+			resp = inboxResponse{
+				Status:    "ERROR",
+				Error:     ackCustodyErrorIneligible,
+				ErrorCode: ackCustodyErrorIneligible,
+			}
+		} else if len(req.EntryIds) == 0 {
+			resp = inboxResponse{Status: "ERROR", Error: "Missing required field: entryIds"}
+		} else {
+			acked, err := inbox.AckAckCustody(remotePeer, req.EntryIds)
+			if err != nil {
+				resp = inboxResponse{Status: "ERROR", Error: err.Error()}
+			} else {
+				resp = inboxResponse{
+					Status:          "OK",
+					Acked:           acked,
+					CustodyContract: ackCustodyContract,
+				}
 			}
 		}
 

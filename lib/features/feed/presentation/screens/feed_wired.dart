@@ -2375,31 +2375,26 @@ class _FeedWiredState extends State<FeedWired>
               acquired: true,
             );
           }
-          final detailedStore = widget.p2pService is DetailedInboxStore
-              ? widget.p2pService as DetailedInboxStore
+          final ackCustodyStore = widget.p2pService is AckOrExpiryInboxStore
+              ? widget.p2pService as AckOrExpiryInboxStore
               : null;
           Future<InboxStoreOutcome> storeExactCustody(
             String toPeerId,
             String envelope, {
+            required AckCustodyKind custodyKind,
             int? timeoutMs,
           }) async {
-            if (detailedStore != null) {
-              return detailedStore.storeInInboxDetailed(
+            if (ackCustodyStore != null) {
+              return ackCustodyStore.storeInAckCustodyInboxDetailed(
                 toPeerId,
                 envelope,
+                custodyKind: custodyKind,
                 timeoutMs: timeoutMs,
               );
             }
-            final stored = await widget.p2pService.storeInInbox(
-              toPeerId,
-              envelope,
-              timeoutMs: timeoutMs,
-            );
-            return InboxStoreOutcome(
-              status: stored
-                  ? InboxStoreStatus.stored
-                  : InboxStoreStatus.failed,
-              errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+            return const InboxStoreOutcome(
+              status: InboxStoreStatus.failed,
+              errorCode: 'ACK_OR_EXPIRY_STORE_UNAVAILABLE',
             );
           }
 
@@ -2407,7 +2402,7 @@ class _FeedWiredState extends State<FeedWired>
             final custodyAttempt =
                 await drainDirectInboxCustodyOutboxForMessage(
                   custodyRepository: custodyRepository,
-                  storeInInboxDetailed: storeExactCustody,
+                  storeInAckCustodyInboxDetailed: storeExactCustody,
                   recipientPeerId: contactPeerId,
                   messageId: reply.messageId,
                 );

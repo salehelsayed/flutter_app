@@ -393,6 +393,25 @@ void main() {
     });
 
     test(
+      'Plan 344 reaction ADD rejects generic stored without ack-or-expiry proof',
+      () async {
+        p2pService
+          ..sendMessageResult = false
+          ..automaticallyProveAckCustody = false
+          ..detailedInboxOutcome = const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+          );
+
+        final (result, reaction) = await invoke();
+
+        expect(result, SendReactionResult.sendFailed);
+        expect(reaction, isNotNull);
+        expect(reactionRepo.custodyRows, hasLength(1));
+        expect(p2pService.lastCustodyKind, AckCustodyKind.directReactionV109);
+      },
+    );
+
+    test(
       'ADD uses one exact encrypted envelope on both transport legs',
       () async {
         p2pService.sendMessageResult = true;

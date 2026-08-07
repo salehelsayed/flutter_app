@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -28,7 +29,7 @@ import '../../shared/fakes/test_user.dart';
 /// When [dropAcks] is true, [sendMessageWithReply] delivers the message
 /// to the network (the receiver gets it) but returns a null reply — as if
 /// the ACK packet was lost on the wire.
-class _AckDropP2PService implements P2PService {
+class _AckDropP2PService implements P2PService, AckOrExpiryInboxStore {
   final FakeP2PService _inner;
   bool dropAcks = true;
 
@@ -97,6 +98,19 @@ class _AckDropP2PService implements P2PService {
     String message, {
     int? timeoutMs,
   }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) => _inner.storeInAckCustodyInboxDetailed(
+    toPeerId,
+    message,
+    custodyKind: custodyKind,
+    timeoutMs: timeoutMs,
+  );
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>

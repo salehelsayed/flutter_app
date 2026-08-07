@@ -321,18 +321,24 @@ void main() {
         groupContinuitySweepInterval: const Duration(days: 1),
         drainDirectInboxCustodyOutboxFn: () => drainDirectInboxCustodyOutbox(
           custodyRepository: messageRepo,
-          storeInInboxDetailed: (toPeerId, envelope, {int? timeoutMs}) async {
-            final stored = await p2pService.storeInInbox(
-              toPeerId,
-              envelope,
-              timeoutMs: timeoutMs,
-            );
-            return InboxStoreOutcome(
-              status: stored
-                  ? InboxStoreStatus.stored
-                  : InboxStoreStatus.failed,
-            );
-          },
+          storeInAckCustodyInboxDetailed:
+              (
+                toPeerId,
+                envelope, {
+                required AckCustodyKind custodyKind,
+                int? timeoutMs,
+              }) async {
+                final stored = await p2pService.storeInInbox(
+                  toPeerId,
+                  envelope,
+                  timeoutMs: timeoutMs,
+                );
+                return InboxStoreOutcome(
+                  status: stored
+                      ? InboxStoreStatus.stored
+                      : InboxStoreStatus.failed,
+                );
+              },
         ),
         retryUnackedMessagesOverride: () async {
           if (!passCompleted.isCompleted) passCompleted.complete();

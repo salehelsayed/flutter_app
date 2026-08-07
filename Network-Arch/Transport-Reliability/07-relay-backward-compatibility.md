@@ -72,6 +72,37 @@ chat experience before they update.**
   offline messages are lost). Redis backend persists; treat its record schema with the
   same additive-only discipline as the wire protocol.
 
+### ACK-or-expiry direct-inbox lane (Plan 344)
+
+The non-destructive direct-text/reaction lane follows this compatibility rail
+without changing `InboxProtocol`, existing action/status meanings, or legacy
+Redis keys. It adds three actions to the lenient JSON protocol:
+`store_custody_v1`, `retrieve_custody_pending_v1`, and `ack_custody_v1`.
+Their exact success proof is the additive response field
+`custodyContract: "ack_or_expiry_v1"`; a generic legacy `OK` is not a protected
+custody receipt.
+
+Protected rows live only under
+`${REDIS_PREFIX}custody_inbox:<encoded-peer-id>`. The atomically-created
+`${REDIS_PREFIX}inbox:<encoded-peer-id>` row is a compatibility shadow and may
+be evicted or destructively read by an old client without deleting the
+protected row. Existing `store`, `retrieve`, `retrieve_pending`, and `ack`
+remain legacy-only and retain their frozen behavior, including legacy
+at-capacity eviction.
+
+Old relays reject the new actions with the existing unknown-action response.
+New senders therefore try other configured relays but never downgrade a
+protected store into legacy `store`. Old receivers see only the shadow. New
+receivers negotiate the protected action independently per relay and fall back
+to legacy pending/ACK on that same relay, so mixed pools converge without a
+capability registry.
+
+`DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED` is default false and controls new
+protected stores only. It is valid only with Redis. Retrieval, ACK, expiry, and
+observability remain active while admission is off. Activation follows S0 old
+binary -> S1 new binary/admission off -> S2 every front-end on the same durable
+Redis with admission on -> S3 capable clients using `ack_or_expiry_v1`.
+
 ## Rules for any relay-touching change
 
 1. **Treat protocol-ID strings, `status`/action/response-key names, push `data` keys,

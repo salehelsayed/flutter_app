@@ -164,6 +164,28 @@ final class _InMemoryCustodyRepository
 }
 
 void main() {
+  test('Plan 344 v108 drain retains generic stored without proof', () async {
+    final repository = _InMemoryCustodyRepository();
+    final pending = _entry('unproven');
+    repository.seed(pending, messageStatus: 'failed');
+
+    final completed = await drainDirectInboxCustodyOutbox(
+      custodyRepository: repository,
+      storeInAckCustodyInboxDetailed:
+          (peerId, envelope, {required custodyKind, timeoutMs}) async {
+            expect(custodyKind, AckCustodyKind.directTextV108);
+            return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+          },
+    );
+
+    expect(completed, 0);
+    expect(repository.rows, hasLength(1));
+    expect(
+      repository.rows.values.single.lastErrorCode,
+      DirectInboxCustodyErrorCode.storeFailed,
+    );
+  });
+
   test(
     'TC-342-04a exact at-least-once drain converges without poison starvation',
     () async {
@@ -199,8 +221,10 @@ void main() {
       Future<InboxStoreOutcome> store(
         String peerId,
         String envelope, {
+        required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async {
+        expect(custodyKind, AckCustodyKind.directTextV108);
         calls.add(envelope);
         if (envelope == poison.wireEnvelope) {
           throw StateError('poison store');
@@ -211,6 +235,8 @@ void main() {
             status: localAttempts == 1
                 ? InboxStoreStatus.stored
                 : InboxStoreStatus.duplicate,
+            storeStatus: localAttempts == 1 ? 'stored' : 'duplicate',
+            custodyContract: ackOrExpiryInboxCustodyContract,
           );
         }
         if (envelope == rejected.wireEnvelope) {
@@ -224,17 +250,20 @@ void main() {
             'ok': true,
             'storeStatus': 'duplicate',
             'expiresAtMs': 0,
+            'custodyContract': ackOrExpiryInboxCustodyContract,
           });
         }
         return const InboxStoreOutcome(
           status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
           expiresAtMs: 42,
+          custodyContract: ackOrExpiryInboxCustodyContract,
         );
       }
 
       final completed = await drainDirectInboxCustodyOutbox(
         custodyRepository: repository,
-        storeInInboxDetailed: store,
+        storeInAckCustodyInboxDetailed: store,
       );
 
       expect(completed, 3);
@@ -284,7 +313,7 @@ void main() {
 
       final replay = await drainDirectInboxCustodyOutboxForMessage(
         custodyRepository: repository,
-        storeInInboxDetailed: store,
+        storeInAckCustodyInboxDetailed: store,
         recipientPeerId: localFailure.recipientPeerId,
         messageId: localFailure.messageId,
       );
@@ -314,6 +343,7 @@ void main() {
       Future<InboxStoreOutcome> failStore(
         String peerId,
         String envelope, {
+        required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async {
         boundedCalls.add(envelope);
@@ -323,7 +353,7 @@ void main() {
       expect(
         await drainDirectInboxCustodyOutbox(
           custodyRepository: boundedRepository,
-          storeInInboxDetailed: failStore,
+          storeInAckCustodyInboxDetailed: failStore,
         ),
         0,
       );
@@ -335,7 +365,7 @@ void main() {
       expect(
         await drainDirectInboxCustodyOutbox(
           custodyRepository: boundedRepository,
-          storeInInboxDetailed: failStore,
+          storeInAckCustodyInboxDetailed: failStore,
         ),
         0,
       );
@@ -366,27 +396,37 @@ void main() {
       Future<InboxStoreOutcome> store(
         String peerId,
         String envelope, {
+        required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async {
+        expect(custodyKind, AckCustodyKind.directTextV108);
         calls++;
         if (calls == 1) {
           firstEntered.complete();
           await releaseFirst.future;
-          return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+          return const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          );
         }
-        return const InboxStoreOutcome(status: InboxStoreStatus.duplicate);
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.duplicate,
+          storeStatus: 'duplicate',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        );
       }
 
       final first = drainDirectInboxCustodyOutboxForMessage(
         custodyRepository: repository,
-        storeInInboxDetailed: store,
+        storeInAckCustodyInboxDetailed: store,
         recipientPeerId: entry.recipientPeerId,
         messageId: entry.messageId,
       );
       await firstEntered.future;
       final second = drainDirectInboxCustodyOutboxForMessage(
         custodyRepository: repository,
-        storeInInboxDetailed: store,
+        storeInAckCustodyInboxDetailed: store,
         recipientPeerId: entry.recipientPeerId,
         messageId: entry.messageId,
       );

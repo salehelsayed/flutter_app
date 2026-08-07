@@ -18,6 +18,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -96,7 +97,7 @@ class FakeP2PNetwork {
 
 // ─── Fake P2P Service ───────────────────────────────────────────────
 // Each user gets their own instance. Sending routes through the network.
-class FakeP2PService implements P2PService {
+class FakeP2PService implements P2PService, AckOrExpiryInboxStore {
   final String peerId;
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -207,6 +208,21 @@ class FakeP2PService implements P2PService {
     int? timeoutMs,
   }) async {
     return network.storeInInbox(peerId, toPeerId, message);
+  }
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+    );
   }
 
   @override

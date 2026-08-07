@@ -4,6 +4,7 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -140,6 +141,11 @@ RecoveredInboxReplayOutcome _committed() => (
   reasonDetail: null,
 );
 
+String _requireAckOrExpiryCustodyContract(Map<String, dynamic>? payload) {
+  expect(payload?['custodyContract'], ackOrExpiryInboxCustodyContract);
+  return payload!['custodyContract'] as String;
+}
+
 void main() {
   tearDown(() {
     debugSetFlowEventSink(null);
@@ -150,19 +156,28 @@ void main() {
       'staged entries replay and reach the render stream even when the inbox ack never completes',
       () async {
         final bridge = _FakeBridge();
-        final ack = Completer<String>();
+        final ack = Completer<void>();
         final replayedEntryIds = <String?>[];
-        bridge.whenCommand(
-          'inbox:retrieve_pending',
-          (_) => jsonEncode({
+        bridge.whenCommand('inbox:retrieve_pending', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode({
             'ok': true,
+            'custodyContract': custodyContract,
             'messages': [
               _pendingInboxRow(entryId: 'entry-never-ack', from: 'remote-peer'),
             ],
             'hasMore': false,
-          }),
-        );
-        bridge.whenCommand('inbox:ack', (_) => ack.future);
+          });
+        });
+        bridge.whenCommand('inbox:ack', (payload) async {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          await ack.future;
+          return jsonEncode({
+            'ok': true,
+            'acked': 1,
+            'custodyContract': custodyContract,
+          });
+        });
 
         final service = P2PServiceImpl(
           bridge: bridge,
@@ -197,7 +212,7 @@ void main() {
           'entry-never-ack',
         ]);
 
-        ack.complete(jsonEncode({'ok': true, 'acked': 1}));
+        ack.complete();
         await drain;
         service.dispose();
       },
@@ -210,10 +225,11 @@ void main() {
         final ackGate = Completer<void>();
         final flow = <Map<String, dynamic>>[];
         debugSetFlowEventSink(flow.add);
-        bridge.whenCommand(
-          'inbox:retrieve_pending',
-          (_) => jsonEncode({
+        bridge.whenCommand('inbox:retrieve_pending', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode({
             'ok': true,
+            'custodyContract': custodyContract,
             'messages': [
               _pendingInboxRow(
                 entryId: 'entry-delayed-ack',
@@ -222,11 +238,16 @@ void main() {
               ),
             ],
             'hasMore': false,
-          }),
-        );
-        bridge.whenCommand('inbox:ack', (_) async {
+          });
+        });
+        bridge.whenCommand('inbox:ack', (payload) async {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
           await ackGate.future;
-          return jsonEncode({'ok': true, 'acked': 1});
+          return jsonEncode({
+            'ok': true,
+            'acked': 1,
+            'custodyContract': custodyContract,
+          });
         });
 
         final service = P2PServiceImpl(
@@ -274,10 +295,11 @@ void main() {
         final flow = <Map<String, dynamic>>[];
         debugSetFlowEventSink(flow.add);
         var replayCount = 0;
-        bridge.whenCommand(
-          'inbox:retrieve_pending',
-          (_) => jsonEncode({
+        bridge.whenCommand('inbox:retrieve_pending', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode({
             'ok': true,
+            'custodyContract': custodyContract,
             'messages': [
               _pendingInboxRow(
                 entryId: 'entry-ack-throws',
@@ -285,9 +307,12 @@ void main() {
               ),
             ],
             'hasMore': false,
-          }),
-        );
-        bridge.whenCommand('inbox:ack', (_) => throw StateError('ack down'));
+          });
+        });
+        bridge.whenCommand('inbox:ack', (payload) {
+          _requireAckOrExpiryCustodyContract(payload);
+          throw StateError('ack down');
+        });
 
         final service = P2PServiceImpl(
           bridge: bridge,
@@ -322,17 +347,25 @@ void main() {
       final flow = <Map<String, dynamic>>[];
       debugSetFlowEventSink(flow.add);
       var replayCount = 0;
-      bridge.whenCommand(
-        'inbox:retrieve_pending',
-        (_) => jsonEncode({
+      bridge.whenCommand('inbox:retrieve_pending', (payload) {
+        final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+        return jsonEncode({
           'ok': true,
+          'custodyContract': custodyContract,
           'messages': [
             _pendingInboxRow(entryId: 'entry-gated', from: 'remote-peer'),
           ],
           'hasMore': false,
-        }),
-      );
-      bridge.whenCommand('inbox:ack', (_) => jsonEncode({'ok': true}));
+        });
+      });
+      bridge.whenCommand('inbox:ack', (payload) {
+        final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+        return jsonEncode({
+          'ok': true,
+          'acked': 1,
+          'custodyContract': custodyContract,
+        });
+      });
 
       final service = P2PServiceImpl(
         bridge: bridge,

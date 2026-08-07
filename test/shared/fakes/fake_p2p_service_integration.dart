@@ -32,7 +32,12 @@ Future<bool> _delayExceedsExplicitTimeout(
 /// Per-user P2P service backed by [FakeP2PNetwork].
 ///
 /// Supports online/offline toggling and offline inbox drain.
-class FakeP2PService implements P2PService, DurableLanSender {
+class FakeP2PService
+    implements
+        P2PService,
+        DetailedInboxStore,
+        AckOrExpiryInboxStore,
+        DurableLanSender {
   final String peerId;
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
@@ -285,12 +290,38 @@ class FakeP2PService implements P2PService, DurableLanSender {
     return network.storeInInbox(peerId, toPeerId, message);
   }
 
+  @override
   Future<InboxStoreOutcome> storeInInboxDetailed(
     String toPeerId,
     String message, {
     int? timeoutMs,
   }) async {
     return network.storeInInboxDetailed(peerId, toPeerId, message);
+  }
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    final outcome = await storeInInboxDetailed(
+      toPeerId,
+      message,
+      timeoutMs: timeoutMs,
+    );
+    if (!outcome.accepted) return outcome;
+    return InboxStoreOutcome(
+      status: outcome.status,
+      errorCode: outcome.errorCode,
+      errorMessage: outcome.errorMessage,
+      storeStatus: outcome.storeStatus,
+      expiresAtMs: outcome.expiresAtMs,
+      occupancy: outcome.occupancy,
+      capacity: outcome.capacity,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
   }
 
   @override

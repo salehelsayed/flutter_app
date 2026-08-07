@@ -21,6 +21,7 @@ const _exceptionsPath =
 const _implements = <String>[
   'P2PService',
   'DetailedInboxStore',
+  'AckOrExpiryInboxStore',
   'ReadinessProofRecorder',
   'P2PFullInboxDrain',
   'DurableLanSender',
@@ -95,6 +96,7 @@ const _publicMethods = <String>{
   'checkResumeAlreadyOnline',
   'storeInInbox',
   'storeInInboxDetailed',
+  'storeInAckCustodyInboxDetailed',
   'retrieveInbox',
   'registerPushToken',
   'lastRecoveryMethod',
@@ -172,6 +174,7 @@ const _inboxMethods = <String>{
   '_handleMessageReceived',
   'storeInInbox',
   'storeInInboxDetailed',
+  'storeInAckCustodyInboxDetailed',
   '_waitForNodeStart',
   '_inboxStoreReadinessFailure',
   'retrieveInbox',
@@ -185,6 +188,7 @@ const _inboxMethods = <String>{
 const _inboxDelegates = <String>{
   'storeInInbox',
   'storeInInboxDetailed',
+  'storeInAckCustodyInboxDetailed',
   'retrieveInbox',
   'drainOfflineInbox',
   'drainOfflineInboxFully',
@@ -583,7 +587,7 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 
 // Token/AST fingerprint of the complete public/static facade declaration. It
 // excludes bodies, so moving decisions behind coordinators does not change it.
-const _expectedFacadeApiFingerprint = '09b4df2b';
+const _expectedFacadeApiFingerprint = 'c257b0ef';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(

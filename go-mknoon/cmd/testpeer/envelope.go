@@ -37,7 +37,7 @@ func buildV1Envelope(text, senderPeerId, senderUsername string, opts map[string]
 		"id":             msgID,
 		"text":           text,
 		"senderPeerId":   senderPeerId,
-		"senderUsername":  senderUsername,
+		"senderUsername": senderUsername,
 		"timestamp":      ts,
 	}
 
@@ -95,7 +95,7 @@ func buildV2Envelope(
 		"id":             msgID,
 		"text":           text,
 		"senderPeerId":   senderPeerId,
-		"senderUsername":  senderUsername,
+		"senderUsername": senderUsername,
 		"timestamp":      ts,
 	}
 

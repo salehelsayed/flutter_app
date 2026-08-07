@@ -663,11 +663,14 @@ void main() {
       );
       final attempt = await drainDirectInboxCustodyOutboxForMessage(
         custodyRepository: publicationFailureRepository,
-        storeInInboxDetailed: (peerId, envelope, {timeoutMs}) async =>
-            const InboxStoreOutcome(
-              status: InboxStoreStatus.stored,
-              expiresAtMs: 9300,
-            ),
+        storeInAckCustodyInboxDetailed:
+            (peerId, envelope, {required custodyKind, timeoutMs}) async =>
+                const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  expiresAtMs: 9300,
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                ),
         recipientPeerId: _peer,
         messageId: message.id,
       );

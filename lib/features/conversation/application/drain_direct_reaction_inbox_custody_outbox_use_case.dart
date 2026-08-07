@@ -11,7 +11,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 /// every other outcome retains it with bounded retry metadata.
 Future<int> drainDirectReactionInboxCustodyOutbox({
   required OutgoingDirectReactionInboxCustodyRepository custodyRepository,
-  required StoreInInboxDetailedFn storeInInboxDetailed,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
 }) async {
   final entries = await custodyRepository.loadDirectReactionInboxCustody();
   var completed = 0;
@@ -19,7 +19,7 @@ Future<int> drainDirectReactionInboxCustodyOutbox({
     if (await _attemptDirectReactionInboxCustodyEntry(
       entry: entry,
       custodyRepository: custodyRepository,
-      storeInInboxDetailed: storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
     )) {
       completed++;
     }
@@ -30,13 +30,14 @@ Future<int> drainDirectReactionInboxCustodyOutbox({
 Future<bool> _attemptDirectReactionInboxCustodyEntry({
   required DirectReactionInboxCustodyOutboxEntry entry,
   required OutgoingDirectReactionInboxCustodyRepository custodyRepository,
-  required StoreInInboxDetailedFn storeInInboxDetailed,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
 }) async {
   InboxStoreOutcome outcome;
   try {
-    outcome = await storeInInboxDetailed(
+    outcome = await storeInAckCustodyInboxDetailed(
       entry.recipientPeerId,
       entry.wireEnvelope,
+      custodyKind: AckCustodyKind.directReactionV109,
     );
   } catch (error) {
     await _recordFailureBestEffort(
@@ -48,7 +49,7 @@ Future<bool> _attemptDirectReactionInboxCustodyEntry({
     return false;
   }
 
-  if (!outcome.accepted) {
+  if (!outcome.ackOrExpiryAccepted) {
     final errorCode = outcome.status == InboxStoreStatus.rejectedFull
         ? DirectReactionInboxCustodyErrorCode.storeRejectedFull
         : DirectReactionInboxCustodyErrorCode.storeFailed;

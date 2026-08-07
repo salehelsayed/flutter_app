@@ -786,6 +786,8 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   // key is omitted entirely so the store frame stays byte-identical to the
   // pre-FDC-09 frame (NET-REL-07); the Go bridge mirrors this with `omitempty`.
   String? wakeToken,
+  String? custodyContract,
+  String? custodyKind,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -800,6 +802,8 @@ Future<Map<String, dynamic>> callP2PInboxStore(
       'message': message,
       'timeoutMs': ?timeoutMs,
       if (wakeToken != null && wakeToken.isNotEmpty) 'wakeToken': wakeToken,
+      'custodyContract': ?custodyContract,
+      'custodyKind': ?custodyKind,
     },
   };
 
@@ -943,6 +947,7 @@ Future<Map<String, dynamic>> callP2PInboxRetrieve(
 Future<Map<String, dynamic>> callP2PInboxRetrievePending(
   Bridge bridge, {
   int? timeoutMs,
+  String? custodyContract,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -952,7 +957,10 @@ Future<Map<String, dynamic>> callP2PInboxRetrievePending(
 
   final request = {
     'cmd': 'inbox:retrieve_pending',
-    'payload': <String, dynamic>{'timeoutMs': ?timeoutMs},
+    'payload': <String, dynamic>{
+      'timeoutMs': ?timeoutMs,
+      'custodyContract': ?custodyContract,
+    },
   };
 
   final responseJson = await bridge.send(jsonEncode(request));
@@ -980,6 +988,7 @@ Future<Map<String, dynamic>> callP2PInboxAck(
   Bridge bridge, {
   required List<String> entryIds,
   int? timeoutMs,
+  String? custodyContract,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -989,7 +998,11 @@ Future<Map<String, dynamic>> callP2PInboxAck(
 
   final request = {
     'cmd': 'inbox:ack',
-    'payload': <String, dynamic>{'entryIds': entryIds, 'timeoutMs': ?timeoutMs},
+    'payload': <String, dynamic>{
+      'entryIds': entryIds,
+      'timeoutMs': ?timeoutMs,
+      'custodyContract': ?custodyContract,
+    },
   };
 
   final responseJson = await bridge.send(jsonEncode(request));

@@ -84,6 +84,7 @@ class P2PServiceImpl
     implements
         P2PService,
         DetailedInboxStore,
+        AckOrExpiryInboxStore,
         ReadinessProofRecorder,
         P2PFullInboxDrain,
         DurableLanSender,
@@ -286,19 +287,36 @@ class P2PServiceImpl
               required String message,
               int? timeoutMs,
               String? wakeToken,
+              String? custodyContract,
+              String? custodyKind,
             }) => callP2PInboxStore(
               _bridge,
               toPeerId: toPeerId,
               message: message,
               timeoutMs: timeoutMs,
               wakeToken: wakeToken,
+              custodyContract: custodyContract,
+              custodyKind: custodyKind,
             ),
         retrieveInbox: ({int? timeoutMs}) =>
             callP2PInboxRetrieve(_bridge, timeoutMs: timeoutMs),
-        retrievePendingInbox: ({int? timeoutMs}) =>
-            callP2PInboxRetrievePending(_bridge, timeoutMs: timeoutMs),
-        ackInbox: ({required List<String> entryIds, int? timeoutMs}) =>
-            callP2PInboxAck(_bridge, entryIds: entryIds, timeoutMs: timeoutMs),
+        retrievePendingInbox: ({int? timeoutMs, String? custodyContract}) =>
+            callP2PInboxRetrievePending(
+              _bridge,
+              timeoutMs: timeoutMs,
+              custodyContract: custodyContract,
+            ),
+        ackInbox:
+            ({
+              required List<String> entryIds,
+              int? timeoutMs,
+              String? custodyContract,
+            }) => callP2PInboxAck(
+              _bridge,
+              entryIds: entryIds,
+              timeoutMs: timeoutMs,
+              custodyContract: custodyContract,
+            ),
         emitIncomingMessage: _emitIncomingMessage,
         isMessageStreamClosed: () => _messageController.isClosed,
         recordTransport: (String transport) {
@@ -2701,6 +2719,19 @@ class P2PServiceImpl
   }) => _inboxCoordinator.storeInInboxDetailed(
     toPeerId,
     message,
+    timeoutMs: timeoutMs,
+  );
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) => _inboxCoordinator.storeInAckCustodyInboxDetailed(
+    toPeerId,
+    message,
+    custodyKind: custodyKind,
     timeoutMs: timeoutMs,
   );
 

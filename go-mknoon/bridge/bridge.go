@@ -29,9 +29,10 @@ import (
 )
 
 var (
-	singletonNode            *node.Node
-	singletonCallbackAdapter *nodeCallbackAdapter
-	nodeMu                   sync.Mutex
+	singletonNode                     *node.Node
+	singletonCallbackAdapter          *nodeCallbackAdapter
+	nodeMu                            sync.Mutex
+	errInvalidInboxAckCustodyContract = errors.New("invalid inbox ACK custody contract")
 )
 
 // nodeCallbackAdapter adapts bridge.EventCallback to node.EventCallback.
@@ -1103,8 +1104,64 @@ func ConfirmDirectMessage(paramsJSON string) (result string) {
 
 // --- Inbox ---
 
+// dispatchInboxAckCustodyContract is the pure selection seam shared by the
+// existing retrieve-pending and ACK exports. It does not resolve or mutate the
+// bridge singleton: callers inject closures only after resolving the concrete
+// node. This keeps absent-contract callers on the legacy first-success methods.
+func dispatchInboxAckCustodyContract[T any](
+	custodyContract string,
+	legacy func() (T, error),
+	strict func() (T, error),
+) (T, error) {
+	switch custodyContract {
+	case "":
+		return legacy()
+	case node.AckOrExpiryCustodyContract:
+		return strict()
+	default:
+		var zero T
+		return zero, fmt.Errorf("%w: %q", errInvalidInboxAckCustodyContract, custodyContract)
+	}
+}
+
+func dispatchInboxStoreAckCustodyContract(
+	custodyContract string,
+	custodyKind string,
+	legacy func() (node.InboxStoreOutcome, error),
+	strict func() (node.InboxStoreOutcome, error),
+) (node.InboxStoreOutcome, error) {
+	if custodyContract == "" && custodyKind == "" {
+		return legacy()
+	}
+	if custodyContract != node.AckOrExpiryCustodyContract ||
+		(custodyKind != node.CustodyKindDirectTextV108 &&
+			custodyKind != node.CustodyKindDirectReactionV109) {
+		return node.InboxStoreOutcome{}, fmt.Errorf(
+			"%w: contract=%q kind=%q",
+			errInvalidInboxAckCustodyContract,
+			custodyContract,
+			custodyKind,
+		)
+	}
+	return strict()
+}
+
+func validateInboxRetrieveAckCustodyContract(
+	requestedContract string,
+	result *node.InboxRetrievePendingResult,
+) error {
+	if requestedContract != node.AckOrExpiryCustodyContract {
+		return nil
+	}
+	if result == nil || result.CustodyContract != node.AckOrExpiryCustodyContract {
+		return fmt.Errorf("%w: retrieve result missing exact proof", errInvalidInboxAckCustodyContract)
+	}
+	return nil
+}
+
 // InboxStore stores a message in the offline inbox.
-// Input JSON: { "toPeerId": "...", "message": "..." }
+// Input JSON: { "toPeerId": "...", "message": "...", optional
+// "custodyContract":"ack_or_expiry_v1", "custodyKind":"direct_text_v108" }
 // Returns JSON: { "ok": true }
 func InboxStore(paramsJSON string) (result string) {
 	defer func() {
@@ -1131,7 +1188,9 @@ func InboxStore(paramsJSON string) (result string) {
 		// pre-FDC-09 store frame byte-identical (NET-REL-07). The Dart source of
 		// this token (the recipient-issued token, distributed out of band) is
 		// wired separately; the bridge only threads it through.
-		WakeToken string `json:"wakeToken"`
+		WakeToken       string `json:"wakeToken"`
+		CustodyContract string `json:"custodyContract"`
+		CustodyKind     string `json:"custodyKind"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1140,7 +1199,30 @@ func InboxStore(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing toPeerId or message")
 	}
 
-	outcome, err := n.InboxStoreDetailedWithWakeToken(params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken)
+	outcome, err := dispatchInboxStoreAckCustodyContract(
+		params.CustodyContract,
+		params.CustodyKind,
+		func() (node.InboxStoreOutcome, error) {
+			return n.InboxStoreDetailedWithWakeToken(
+				params.ToPeerId, params.Message, params.TimeoutMs, params.WakeToken,
+			)
+		},
+		func() (node.InboxStoreOutcome, error) {
+			return n.InboxStoreAckCustodyDetailedWithWakeToken(
+				params.ToPeerId,
+				params.Message,
+				params.TimeoutMs,
+				params.WakeToken,
+				params.CustodyKind,
+			)
+		},
+	)
+	if errors.Is(err, errInvalidInboxAckCustodyContract) {
+		return errJSON("INVALID_INPUT", err.Error())
+	}
+	if params.CustodyContract == node.AckOrExpiryCustodyContract {
+		return inboxStoreAckCustodyBridgeResponse(outcome, err)
+	}
 	return inboxStoreBridgeResponse(outcome, err)
 }
 
@@ -1166,6 +1248,50 @@ func inboxStoreBridgeResponse(outcome node.InboxStoreOutcome, err error) string 
 		"expiresAtMs": outcome.ExpiresAtMs,
 		"occupancy":   outcome.Occupancy,
 		"capacity":    outcome.Capacity,
+	})
+}
+
+func inboxStoreAckCustodyBridgeResponse(outcome node.InboxStoreOutcome, err error) string {
+	if err == nil && (outcome.CustodyContract != node.AckOrExpiryCustodyContract ||
+		(outcome.StoreStatus != "stored" && outcome.StoreStatus != "duplicate")) {
+		err = node.ErrInboxCustodyInvalidReceipt
+	}
+	if err != nil {
+		code := outcome.ErrorCode
+		switch {
+		case errors.Is(err, node.ErrInboxFull):
+			code = "INBOX_FULL"
+		case errors.Is(err, node.ErrInboxCustodyIdentityConflict):
+			code = "CUSTODY_IDENTITY_CONFLICT"
+		case errors.Is(err, node.ErrInboxCustodyIneligible):
+			code = "CUSTODY_INELIGIBLE"
+		case errors.Is(err, node.ErrInboxCustodyAdmissionDisabled):
+			code = "CUSTODY_ADMISSION_DISABLED"
+		case code == "":
+			code = "INBOX_ERROR"
+		}
+		response := map[string]interface{}{
+			"ok":           false,
+			"errorCode":    code,
+			"errorMessage": err.Error(),
+			"storeStatus":  outcome.StoreStatus,
+			"expiresAtMs":  outcome.ExpiresAtMs,
+			"occupancy":    outcome.Occupancy,
+			"capacity":     outcome.Capacity,
+		}
+		if outcome.CustodyContract != "" {
+			response["custodyContract"] = outcome.CustodyContract
+		}
+		return okJSON(response)
+	}
+
+	return okJSON(map[string]interface{}{
+		"ok":              true,
+		"storeStatus":     outcome.StoreStatus,
+		"custodyContract": outcome.CustodyContract,
+		"expiresAtMs":     outcome.ExpiresAtMs,
+		"occupancy":       outcome.Occupancy,
+		"capacity":        outcome.Capacity,
 	})
 }
 
@@ -1277,7 +1403,8 @@ func InboxRetrievePendingWithParams(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		TimeoutMs int `json:"timeoutMs"`
+		TimeoutMs       int    `json:"timeoutMs"`
+		CustodyContract string `json:"custodyContract"`
 	}
 	if paramsJSON != "" {
 		if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
@@ -1285,8 +1412,22 @@ func InboxRetrievePendingWithParams(paramsJSON string) (result string) {
 		}
 	}
 
-	res, err := n.InboxRetrievePendingWithTimeout(params.TimeoutMs)
+	res, err := dispatchInboxAckCustodyContract(
+		params.CustodyContract,
+		func() (*node.InboxRetrievePendingResult, error) {
+			return n.InboxRetrievePendingWithTimeout(params.TimeoutMs)
+		},
+		func() (*node.InboxRetrievePendingResult, error) {
+			return n.InboxRetrieveAckCustodyPendingWithTimeout(params.TimeoutMs)
+		},
+	)
+	if errors.Is(err, errInvalidInboxAckCustodyContract) {
+		return errJSON("INVALID_INPUT", err.Error())
+	}
 	if err != nil {
+		return errJSON("INBOX_ERROR", err.Error())
+	}
+	if err := validateInboxRetrieveAckCustodyContract(params.CustodyContract, res); err != nil {
 		return errJSON("INBOX_ERROR", err.Error())
 	}
 
@@ -1300,11 +1441,15 @@ func InboxRetrievePendingWithParams(paramsJSON string) (result string) {
 		}
 	}
 
-	return okJSON(map[string]interface{}{
+	response := map[string]interface{}{
 		"ok":       true,
 		"messages": msgList,
 		"hasMore":  res.HasMore,
-	})
+	}
+	if res.CustodyContract != "" {
+		response["custodyContract"] = res.CustodyContract
+	}
+	return okJSON(response)
 }
 
 // InboxAck deletes only the relay inbox entries whose stable entry IDs match
@@ -1327,8 +1472,9 @@ func InboxAck(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		EntryIds  []string `json:"entryIds"`
-		TimeoutMs int      `json:"timeoutMs"`
+		EntryIds        []string `json:"entryIds"`
+		TimeoutMs       int      `json:"timeoutMs"`
+		CustodyContract string   `json:"custodyContract"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1337,15 +1483,35 @@ func InboxAck(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing entryIds")
 	}
 
-	acked, err := n.InboxAck(params.EntryIds, params.TimeoutMs)
+	acked, err := dispatchInboxAckCustodyContract(
+		params.CustodyContract,
+		func() (int, error) { return n.InboxAck(params.EntryIds, params.TimeoutMs) },
+		func() (int, error) { return n.InboxAckCustody(params.EntryIds, params.TimeoutMs) },
+	)
+	if errors.Is(err, errInvalidInboxAckCustodyContract) {
+		return errJSON("INVALID_INPUT", err.Error())
+	}
 	if err != nil {
+		if params.CustodyContract == node.AckOrExpiryCustodyContract {
+			return okJSON(map[string]interface{}{
+				"ok":              false,
+				"errorCode":       "INBOX_ERROR",
+				"errorMessage":    err.Error(),
+				"acked":           acked,
+				"custodyContract": node.AckOrExpiryCustodyContract,
+			})
+		}
 		return errJSON("INBOX_ERROR", err.Error())
 	}
 
-	return okJSON(map[string]interface{}{
+	response := map[string]interface{}{
 		"ok":    true,
 		"acked": acked,
-	})
+	}
+	if params.CustodyContract == node.AckOrExpiryCustodyContract {
+		response["custodyContract"] = node.AckOrExpiryCustodyContract
+	}
+	return okJSON(response)
 }
 
 // InboxRegisterToken registers an FCM push token.

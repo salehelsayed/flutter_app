@@ -25,6 +25,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -155,26 +156,33 @@ void main() {
     bridge.whenCommand(
       'inbox:store',
       (_) => jsonEncode(
-        relayHealthy
-            ? {'ok': true}
-            : {'ok': false, 'errorCode': 'NO_RELAY'},
+        relayHealthy ? {'ok': true} : {'ok': false, 'errorCode': 'NO_RELAY'},
       ),
     );
 
     // The inbox drain (retrieve) likewise fails before the relay is healthy.
-    bridge.whenCommand(
-      'inbox:retrieve_pending',
-      (_) => jsonEncode(
+    bridge.whenCommand('inbox:retrieve_pending', (payload) {
+      expect(payload?['custodyContract'], ackOrExpiryInboxCustodyContract);
+      return jsonEncode(
         relayHealthy
-            ? {'ok': true, 'messages': <dynamic>[], 'hasMore': false}
+            ? {
+                'ok': true,
+                'custodyContract': payload?['custodyContract'],
+                'messages': <dynamic>[],
+                'hasMore': false,
+              }
             : {'ok': false, 'errorCode': 'NO_RELAY'},
-      ),
-    );
+      );
+    });
 
-    bridge.whenCommand(
-      'inbox:ack',
-      (_) => jsonEncode({'ok': true, 'acked': 1}),
-    );
+    bridge.whenCommand('inbox:ack', (payload) {
+      expect(payload?['custodyContract'], ackOrExpiryInboxCustodyContract);
+      return jsonEncode({
+        'ok': true,
+        'acked': 1,
+        'custodyContract': payload?['custodyContract'],
+      });
+    });
     // Recovery never truthfully reconnects in these tests — the relay comes
     // back via the relay:state push (autorelay), not a Dart relay:reconnect.
     bridge.whenCommand(
@@ -199,8 +207,7 @@ void main() {
 
   int drains() =>
       bridge.calledCommands.where((c) => c == 'inbox:retrieve_pending').length;
-  int stores() =>
-      bridge.calledCommands.where((c) => c == 'inbox:store').length;
+  int stores() => bridge.calledCommands.where((c) => c == 'inbox:store').length;
   int reconnects() =>
       bridge.calledCommands.where((c) => c == 'relay:reconnect').length;
 
@@ -273,7 +280,8 @@ void main() {
       expect(
         service.currentState.inboxCapabilityReady,
         isTrue,
-        reason: 'INV-1: the send-proof store must kick an inbox drain that '
+        reason:
+            'INV-1: the send-proof store must kick an inbox drain that '
             'proves inbox WITHOUT waiting for a 30s health-check tick',
       );
       expect(
@@ -356,7 +364,8 @@ void main() {
       expect(
         drains(),
         0,
-        reason: 'INV-2: the kick is guarded on !inboxCapabilityReady — with '
+        reason:
+            'INV-2: the kick is guarded on !inboxCapabilityReady — with '
             'inbox already proven the store must NOT drain again',
       );
       expect(
@@ -423,7 +432,8 @@ void main() {
       expect(
         service.currentState.inboxCapabilityReady,
         isTrue,
-        reason: 'INV-3: a fresh window must re-arm the kick — the store in the '
+        reason:
+            'INV-3: a fresh window must re-arm the kick — the store in the '
             'new window proves inbox again without a periodic tick',
       );
       expect(

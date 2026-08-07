@@ -31,7 +31,7 @@ Future<RemoveReactionResult> removeReaction({
   required String emoji,
   required String senderPeerId,
   required String recipientMlKemPublicKey,
-  StoreInInboxDetailedFn? storeInInboxDetailed,
+  StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -50,19 +50,20 @@ Future<RemoveReactionResult> removeReaction({
       custodyCapability?.supportsDirectReactionInboxCustody == true
       ? custodyCapability
       : null;
-  final detailedInboxStore = p2pService is DetailedInboxStore
-      ? p2pService as DetailedInboxStore
+  final ackCustodyInboxStore = p2pService is AckOrExpiryInboxStore
+      ? p2pService as AckOrExpiryInboxStore
       : null;
-  final effectiveStoreInInboxDetailed =
-      storeInInboxDetailed ?? detailedInboxStore?.storeInInboxDetailed;
-  if (custodyRepo == null || effectiveStoreInInboxDetailed == null) {
+  final effectiveStoreInAckCustodyInboxDetailed =
+      storeInAckCustodyInboxDetailed ??
+      ackCustodyInboxStore?.storeInAckCustodyInboxDetailed;
+  if (custodyRepo == null || effectiveStoreInAckCustodyInboxDetailed == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'REACTION_REMOVE_CUSTODY_CAPABILITY_REFUSED',
       details: {
         'reason': custodyRepo == null
             ? 'missing_reaction_custody_repository'
-            : 'missing_detailed_inbox_store',
+            : 'missing_ack_or_expiry_inbox_store',
       },
     );
     return RemoveReactionResult.sendFailed;
@@ -160,7 +161,7 @@ Future<RemoveReactionResult> removeReaction({
 
   final delivery = await deliverOutgoingDirectReactionCustody(
     p2pService: p2pService,
-    storeInInboxDetailed: effectiveStoreInInboxDetailed,
+    storeInAckCustodyInboxDetailed: effectiveStoreInAckCustodyInboxDetailed,
     custodyRepository: custodyRepo,
     custody: custody,
     flowPrefix: 'REACTION_REMOVE',

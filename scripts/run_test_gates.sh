@@ -1141,6 +1141,60 @@ run_relay_notification_go_gate() {
   (cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... -run '^TestRelayNotificationClosure_' -count=1)
 }
 
+# Plan 344: the protected direct-inbox lane crosses the relay process, native
+# node selector, existing bridge commands, and rollout/binding contracts. Keep
+# every tagged parent discoverable and require an explicit non-skipped PASS so
+# a missing fixture cannot make the curated gate pass vacuously.
+run_ack_custody_go_gate() {
+  echo "=== Direct Inbox ACK-Custody Go Gate ==="
+
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+      -list '^TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace$' | \
+      rg -x 'TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace')
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+      -run '^TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace$' \
+      -count=1 -v | \
+      rg '^--- PASS: TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace \(')
+
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./node \
+      -list '^TestInboxAckCustodyMixedRelayAndProofContract$' | \
+      rg -x 'TestInboxAckCustodyMixedRelayAndProofContract')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./node \
+      -list '^TestInboxAckCustodyReceiveFanoutContract$' | \
+      rg -x 'TestInboxAckCustodyReceiveFanoutContract')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./node \
+      -run '^TestInboxAckCustody(MixedRelayAndProof|ReceiveFanout)Contract$' \
+      -count=1 -v | \
+      rg '^--- PASS: TestInboxAckCustody' | \
+      awk 'END { exit NR == 2 ? 0 : 1 }')
+
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+      -list '^TestDispatchInboxAckCustodyContract$' | \
+      rg -x 'TestDispatchInboxAckCustodyContract')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+      -run '^TestDispatchInboxAckCustodyContract$' -count=1 -v | \
+      rg '^--- PASS: TestDispatchInboxAckCustodyContract \(')
+
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+      -list '^TestAckCustodyMixedVersionMatrix$' | \
+      rg -x 'TestAckCustodyMixedVersionMatrix')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+      -run '^TestAckCustodyMixedVersionMatrix$' -count=1 -v | \
+      rg '^--- PASS: TestAckCustodyMixedVersionMatrix \(')
+
+  bash scripts/test/relay_ack_custody_rollout_contract_test.sh
+  bash scripts/test/go_binding_staleness_contract_test.sh
+}
+
 run_relay_all_go_gate() {
   echo "=== Relay Full Go Gate ==="
   run_relay_toolchain_contract_gate
@@ -1592,6 +1646,7 @@ main() {
       if ((${#gate_args[@]} == 0)); then
         run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
         run_relay_notification_go_gate
+        run_ack_custody_go_gate
       else
         ./scripts/run_host_test_gates.sh 1to1 "${gate_args[@]}"
       fi
@@ -1654,6 +1709,7 @@ main() {
       run_gate_command "Group Messaging Gate" "${GROUP_TESTS[@]}"
       run_group_forwarding_go_bridge_gate
       run_relay_all_go_gate
+      run_ack_custody_go_gate
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate
       run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"

@@ -130,14 +130,23 @@ class _RelayBackedBridge extends Bridge {
           'connections': [],
         });
       case 'inbox:retrieve_pending':
+        final custodyContract = payload?['custodyContract'];
         return jsonEncode({
           'ok': true,
           'messages': relay.retrievePending(),
           'hasMore': false,
+          if (custodyContract == ackOrExpiryInboxCustodyContract)
+            'custodyContract': ackOrExpiryInboxCustodyContract,
         });
       case 'inbox:ack':
         final ids = (payload?['entryIds'] as List?)?.cast<String>() ?? const [];
-        return jsonEncode({'ok': true, 'acked': relay.ack(ids)});
+        final custodyContract = payload?['custodyContract'];
+        return jsonEncode({
+          'ok': true,
+          'acked': relay.ack(ids),
+          if (custodyContract == ackOrExpiryInboxCustodyContract)
+            'custodyContract': ackOrExpiryInboxCustodyContract,
+        });
       default:
         return jsonEncode({
           'ok': false,

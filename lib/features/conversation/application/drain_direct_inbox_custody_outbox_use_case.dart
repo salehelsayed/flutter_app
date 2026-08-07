@@ -30,7 +30,7 @@ final class DirectInboxCustodyDrainAttempt {
 /// and record bounded retry metadata.
 Future<int> drainDirectInboxCustodyOutbox({
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
-  required StoreInInboxDetailedFn storeInInboxDetailed,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
 }) async {
   final entries = await custodyRepository.loadDirectInboxCustody();
   var completed = 0;
@@ -38,7 +38,7 @@ Future<int> drainDirectInboxCustodyOutbox({
     final result = await _attemptDirectInboxCustodyEntry(
       entry: entry,
       custodyRepository: custodyRepository,
-      storeInInboxDetailed: storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
     );
     if (result.completed) completed++;
   }
@@ -52,7 +52,7 @@ Future<int> drainDirectInboxCustodyOutbox({
 /// local completion fails.
 Future<DirectInboxCustodyDrainAttempt> drainDirectInboxCustodyOutboxForMessage({
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
-  required StoreInInboxDetailedFn storeInInboxDetailed,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
   required String recipientPeerId,
   required String messageId,
 }) async {
@@ -64,20 +64,21 @@ Future<DirectInboxCustodyDrainAttempt> drainDirectInboxCustodyOutboxForMessage({
   return _attemptDirectInboxCustodyEntry(
     entry: entry,
     custodyRepository: custodyRepository,
-    storeInInboxDetailed: storeInInboxDetailed,
+    storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
   );
 }
 
 Future<DirectInboxCustodyDrainAttempt> _attemptDirectInboxCustodyEntry({
   required DirectInboxCustodyOutboxEntry entry,
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
-  required StoreInInboxDetailedFn storeInInboxDetailed,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
 }) async {
   InboxStoreOutcome outcome;
   try {
-    outcome = await storeInInboxDetailed(
+    outcome = await storeInAckCustodyInboxDetailed(
       entry.recipientPeerId,
       entry.wireEnvelope,
+      custodyKind: AckCustodyKind.directTextV108,
     );
   } catch (error) {
     await _recordFailureBestEffort(
@@ -89,7 +90,7 @@ Future<DirectInboxCustodyDrainAttempt> _attemptDirectInboxCustodyEntry({
     return const DirectInboxCustodyDrainAttempt(found: true, completed: false);
   }
 
-  if (!outcome.accepted) {
+  if (!outcome.ackOrExpiryAccepted) {
     final errorCode = outcome.status == InboxStoreStatus.rejectedFull
         ? DirectInboxCustodyErrorCode.storeRejectedFull
         : DirectInboxCustodyErrorCode.storeFailed;

@@ -401,6 +401,22 @@ void main() {
       expect(incapableTransport.storeInInboxCallCount, 0);
     });
 
+    test(
+      'Plan 344 reaction REMOVE rejects generic stored without ack-or-expiry proof',
+      () async {
+        p2pService
+          ..sendMessageResult = false
+          ..automaticallyProveAckCustody = false
+          ..detailedInboxOutcome = const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+          );
+
+        expect(await invoke(), RemoveReactionResult.sendFailed);
+        expect(reactionRepo.custodyRows, hasLength(1));
+        expect(p2pService.lastCustodyKind, AckCustodyKind.directReactionV109);
+      },
+    );
+
     test('reaction REMOVE never enters the failed-message pipeline', () {
       final source = File(
         'lib/features/conversation/application/remove_reaction_use_case.dart',

@@ -15,14 +15,20 @@ class _P2PInboxPort {
     required String message,
     int? timeoutMs,
     String? wakeToken,
+    String? custodyContract,
+    String? custodyKind,
   })
   storeInbox;
   final Future<Map<String, dynamic>> Function({int? timeoutMs}) retrieveInbox;
-  final Future<Map<String, dynamic>> Function({int? timeoutMs})
+  final Future<Map<String, dynamic>> Function({
+    int? timeoutMs,
+    String? custodyContract,
+  })
   retrievePendingInbox;
   final Future<Map<String, dynamic>> Function({
     required List<String> entryIds,
     int? timeoutMs,
+    String? custodyContract,
   })
   ackInbox;
   final void Function(ChatMessage message) emitIncomingMessage;
@@ -920,7 +926,10 @@ class _P2PInboxCoordinator {
     final retrieveSw = Stopwatch()..start();
     Map<String, dynamic> response;
     try {
-      response = await _port.retrievePendingInbox(timeoutMs: timeoutMs);
+      response = await _port.retrievePendingInbox(
+        timeoutMs: timeoutMs,
+        custodyContract: ackOrExpiryInboxCustodyContract,
+      );
     } catch (e) {
       retrieveSw.stop();
       emitFlowEvent(
@@ -961,6 +970,27 @@ class _P2PInboxCoordinator {
         replayed: 0,
         staged: 0,
         hasMore: false,
+        retrieveSucceeded: false,
+        failureReason: failureReason,
+        retrieveMs: retrieveSw.elapsedMilliseconds,
+        ackMs: 0,
+        replayMs: 0,
+      );
+    }
+    if (response['custodyContract'] != ackOrExpiryInboxCustodyContract) {
+      const failureReason = 'custody_proof_missing_or_invalid';
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_INBOX_RETRIEVE_PENDING_ERROR',
+        details: const {
+          'reasonCode': failureReason,
+          'errorMessage': failureReason,
+        },
+      );
+      return (
+        replayed: 0,
+        staged: 0,
+        hasMore: true,
         retrieveSucceeded: false,
         failureReason: failureReason,
         retrieveMs: retrieveSw.elapsedMilliseconds,
@@ -1064,12 +1094,18 @@ class _P2PInboxCoordinator {
     if (ackableEntryIds.isNotEmpty) {
       ackSw.start();
       try {
-        final ackResponse = await _port.ackInbox(entryIds: ackableEntryIds);
+        final ackResponse = await _port.ackInbox(
+          entryIds: ackableEntryIds,
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        );
         if (ackResponse['ok'] != true) {
           ackFailureReason =
               ackResponse['errorMessage']?.toString() ??
               ackResponse['errorCode']?.toString() ??
               'inbox_ack_failed';
+        } else if (ackResponse['custodyContract'] !=
+            ackOrExpiryInboxCustodyContract) {
+          ackFailureReason = 'custody_proof_missing_or_invalid';
         } else {
           final acked = (ackResponse['acked'] as num?)?.toInt();
           if (acked != ackableEntryIds.length) {
@@ -1080,14 +1116,13 @@ class _P2PInboxCoordinator {
         }
         emitFlowEvent(
           layer: 'FL',
-          event: ackResponse['ok'] == true
+          event: ackFailureReason == null
               ? 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_SUCCESS'
               : 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_ERROR',
           details: {
             'requested': ackableEntryIds.length,
             'acked': ackResponse['acked'],
-            if (ackResponse['ok'] != true)
-              'errorMessage': ackResponse['errorMessage'],
+            'errorMessage': ?ackFailureReason,
           },
         );
       } catch (e) {
@@ -1658,6 +1693,25 @@ class _P2PInboxCoordinator {
     String toPeerId,
     String message, {
     int? timeoutMs,
+  }) => _storeInInboxDetailed(toPeerId, message, timeoutMs: timeoutMs);
+
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) => _storeInInboxDetailed(
+    toPeerId,
+    message,
+    timeoutMs: timeoutMs,
+    custodyKind: custodyKind,
+  );
+
+  Future<InboxStoreOutcome> _storeInInboxDetailed(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+    AckCustodyKind? custodyKind,
   }) async {
     if (!await _port.allowsAccountNetworkSideEffects('p2p_store_inbox')) {
       return const InboxStoreOutcome(status: InboxStoreStatus.failed);
@@ -1704,8 +1758,14 @@ class _P2PInboxCoordinator {
         message: message,
         timeoutMs: bridgeTimeoutMs,
         wakeToken: wakeToken,
+        custodyContract: custodyKind == null
+            ? null
+            : ackOrExpiryInboxCustodyContract,
+        custodyKind: custodyKind?.wireValue,
       );
-      final outcome = InboxStoreOutcome.fromBridgeResponse(response);
+      final outcome = custodyKind == null
+          ? InboxStoreOutcome.fromBridgeResponse(response)
+          : InboxStoreOutcome.fromAckOrExpiryBridgeResponse(response);
       final wakeTokenObserver = _acceptedInboxWakeTokenHashObserver;
       if (outcome.accepted &&
           wakeTokenObserver != null &&

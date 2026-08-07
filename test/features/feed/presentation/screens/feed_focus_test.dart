@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/theme/feed_tokens.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
@@ -53,6 +54,32 @@ import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../contact_request/domain/repositories/fake_contact_request_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
+final class _AckCustodyFakeP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  bool proveAckCustody = true;
+  int ackCustodyStoreCallCount = 0;
+  AckCustodyKind? lastAckCustodyKind;
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    ackCustodyStoreCallCount++;
+    lastAckCustodyKind = custodyKind;
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored && proveAckCustody
+          ? ackOrExpiryInboxCustodyContract
+          : null,
+    );
+  }
+}
+
 /// 134-P5 focus + shared composer tests (TC-19/19b/20/21/22/30). Mounts the
 /// REAL FeedWired so focus state, the shared composer, append-stay sends, and
 /// the never-silent retry affordance are exercised end-to-end (bounded pumps —
@@ -62,7 +89,7 @@ void main() {
   late FakeContactRepository contactRepo;
   late FakeContactRequestRepository contactRequestRepo;
   late FakeBridge bridge;
-  late FakeP2PService p2pService;
+  late _AckCustodyFakeP2PService p2pService;
   late FakeSecureKeyStore secureKeyStore;
   late InMemoryMessageRepository messageRepo;
   late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
@@ -101,7 +128,7 @@ void main() {
     contactRepo = FakeContactRepository();
     contactRequestRepo = FakeContactRequestRepository();
     bridge = FakeBridge();
-    p2pService = FakeP2PService();
+    p2pService = _AckCustodyFakeP2PService();
     secureKeyStore = FakeSecureKeyStore();
     messageRepo = InMemoryMessageRepository();
     mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
@@ -571,7 +598,7 @@ void main() {
   );
 
   testWidgets(
-    'TC-342-04c feed retry exact-drains custody after its projection disappears',
+    'Plan 344 contact composer retries v108 through ack custody only',
     (tester) async {
       setWideViewport(tester);
       identityRepo.seed(testIdentity);
@@ -604,6 +631,10 @@ void main() {
       final stageCallsBefore = messageRepo.directInboxCustodyStageCallCount;
       final liveCallsBefore = p2pService.sendMessageWithReplyCallCount;
       final storeCallsBefore = p2pService.storeInInboxCallCount;
+      final strictCallsBefore = p2pService.ackCustodyStoreCallCount;
+      p2pService
+        ..storeInInboxResult = true
+        ..proveAckCustody = false;
 
       await tester.tap(find.text('tap to retry'));
       await pumpFrames(tester, count: 12);
@@ -611,6 +642,8 @@ void main() {
       expect(messageRepo.directInboxCustodyStageCallCount, stageCallsBefore);
       expect(p2pService.sendMessageWithReplyCallCount, liveCallsBefore);
       expect(p2pService.storeInInboxCallCount, storeCallsBefore + 1);
+      expect(p2pService.ackCustodyStoreCallCount, strictCallsBefore + 1);
+      expect(p2pService.lastAckCustodyKind, AckCustodyKind.directTextV108);
       expect(p2pService.lastStoreInInboxMessage, before.wireEnvelope);
       final retained = messageRepo.directCustodyRows.values.single;
       expect(retained.messageId, before.messageId);

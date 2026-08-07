@@ -10,15 +10,38 @@
 import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart' show AppLifecycleState;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
+import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
+import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/fake_p2p_network.dart' as shared_fakes;
+import '../../../shared/fakes/in_memory_contact_repository.dart'
+    as temporal_fakes;
+import '../../../shared/fakes/in_memory_inbox_staging_repository.dart'
+    as temporal_fakes;
+import '../../../shared/fakes/in_memory_message_repository.dart'
+    as temporal_fakes;
 import '../../../shared/fakes/test_user.dart' as shared_fakes;
+import '../domain/repositories/fake_reaction_repository.dart';
 
 // Reuse the integration test infrastructure from two_user_message_exchange_test.dart
 import 'two_user_message_exchange_test.dart';
@@ -50,6 +73,127 @@ Future<List<Map<String, dynamic>>> _captureFlowEvents(
                 as Map<String, dynamic>,
       )
       .toList();
+}
+
+final class _TemporalInboxStagingRepository
+    extends temporal_fakes.InMemoryInboxStagingRepository {
+  _TemporalInboxStagingRepository(this.order);
+
+  final List<String> order;
+  String phase = 'legacy';
+  int stageCallCount = 0;
+
+  @override
+  Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    stageCallCount++;
+    order.add('$phase-stage');
+    return super.stageEntries(entries);
+  }
+}
+
+final class _TemporalReactionRepository extends FakeReactionRepository
+    implements AtomicIncomingReactionMutationRepository {
+  final Map<String, String> _lastRemoveEventIds = <String, String>{};
+  int canonicalMutationCount = 0;
+
+  String _key(MessageReaction reaction) =>
+      '${reaction.messageId}\u0000${reaction.senderPeerId}';
+
+  @override
+  Future<ReactionAddApplyResult> applyIncomingAdd(
+    MessageReaction reaction,
+  ) async {
+    final result = await super.applyIncomingAdd(reaction);
+    if (result == ReactionAddApplyResult.inserted ||
+        result == ReactionAddApplyResult.updated) {
+      canonicalMutationCount++;
+    }
+    return result;
+  }
+
+  @override
+  Future<ReactionRemoveApplyResult> applyIncomingRemove(
+    MessageReaction reaction,
+  ) async {
+    final key = _key(reaction);
+    final current = await getReactionForSenderIncludingRemoved(
+      messageId: reaction.messageId,
+      senderPeerId: reaction.senderPeerId,
+    );
+    final incomingAt = DateTime.tryParse(reaction.timestamp);
+    final currentAt = current == null
+        ? null
+        : DateTime.tryParse(current.removedAt ?? current.timestamp);
+    if (incomingAt != null &&
+        currentAt != null &&
+        incomingAt.isBefore(currentAt)) {
+      return ReactionRemoveApplyResult.stale;
+    }
+    if (_lastRemoveEventIds[key] == reaction.id &&
+        current?.isRemoved == true &&
+        current?.removedAt == reaction.timestamp) {
+      return ReactionRemoveApplyResult.exactReplay;
+    }
+
+    await saveReaction(reaction.copyWith(removedAt: reaction.timestamp));
+    _lastRemoveEventIds[key] = reaction.id;
+    canonicalMutationCount++;
+    return ReactionRemoveApplyResult.applied;
+  }
+}
+
+final class _TemporalUpgradeBridge extends PassthroughCryptoBridge {
+  _TemporalUpgradeBridge({required this.rows, required this.order});
+
+  final List<Map<String, dynamic>> rows;
+  final List<String> order;
+  final List<String?> retrieveContracts = <String?>[];
+  final List<String?> ackContracts = <String?>[];
+  final List<String> ackedEntryIds = <String>[];
+  var _retrieved = false;
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    final command = request['cmd'] as String?;
+    final payload = request['payload'] as Map<String, dynamic>?;
+    switch (command) {
+      case 'node:start':
+        return jsonEncode({
+          'ok': true,
+          'peerId': 'temporal-bob',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+        });
+      case 'inbox:retrieve_pending':
+        retrieveContracts.add(payload?['custodyContract'] as String?);
+        order.add('protected-retrieve');
+        final page = _retrieved ? const <Map<String, dynamic>>[] : rows;
+        _retrieved = true;
+        return jsonEncode({
+          'ok': true,
+          'messages': page,
+          'hasMore': false,
+          'custodyContract': ackOrExpiryInboxCustodyContract,
+        });
+      case 'inbox:ack':
+        ackContracts.add(payload?['custodyContract'] as String?);
+        final ids = (payload?['entryIds'] as List<dynamic>? ?? const [])
+            .map((id) => id.toString())
+            .toList(growable: false);
+        ackedEntryIds.addAll(ids);
+        order.add('protected-ack');
+        return jsonEncode({
+          'ok': true,
+          'acked': ids.length,
+          'custodyContract': ackOrExpiryInboxCustodyContract,
+        });
+      default:
+        return super.send(message);
+    }
+  }
 }
 
 void main() {
@@ -85,49 +229,46 @@ void main() {
   });
 
   group('Offline inbox roundtrip', () {
-    test(
-      'FDC-03-06 first-ever offline send deposits a concurrent inbox copy that '
-      'drains on resume',
-      () async {
-        // Fresh alice→bob with NO prior history. On HEAD this first-ever send is
-        // "high confidence" (no prior failed attempt), so the inbox copy fires
-        // SERIALLY after the race and CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN never
-        // appears. FDC-03 fires it CONCURRENTLY for the unknown-presence peer.
-        bob.setOnline(false);
+    test('FDC-03-06 first-ever offline send deposits a concurrent inbox copy that '
+        'drains on resume', () async {
+      // Fresh alice→bob with NO prior history. On HEAD this first-ever send is
+      // "high confidence" (no prior failed attempt), so the inbox copy fires
+      // SERIALLY after the race and CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN never
+      // appears. FDC-03 fires it CONCURRENTLY for the unknown-presence peer.
+      bob.setOnline(false);
 
-        late SendChatMessageResult result;
-        ConversationMessage? sent;
-        final events = await _captureFlowEvents(() async {
-          final (r, m) = await alice.sendMessage(
-            bob.peerId,
-            'First ever, while you were away',
-          );
-          result = r;
-          sent = m;
-        });
+      late SendChatMessageResult result;
+      ConversationMessage? sent;
+      final events = await _captureFlowEvents(() async {
+        final (r, m) = await alice.sendMessage(
+          bob.peerId,
+          'First ever, while you were away',
+        );
+        result = r;
+        sent = m;
+      });
 
-        expect(result, SendChatMessageResult.success);
-        expect(sent, isNotNull);
-        // Durable custody, not delivery (doc 115).
-        expect(sent!.status, 'inboxed');
-        expect(sent!.transport, 'inbox');
-        // The deposit was CONCURRENT (the discriminator): the BEGIN flow-event
-        // fires even though no prior failed attempt exists. Mutation: re-gate the
-        // concurrent arm behind the recency lookup → BEGIN absent → RED.
-        final names = events.map((e) => e['event']).toList();
-        expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'));
+      expect(result, SendChatMessageResult.success);
+      expect(sent, isNotNull);
+      // Durable custody, not delivery (doc 115).
+      expect(sent!.status, 'inboxed');
+      expect(sent!.transport, 'inbox');
+      // The deposit was CONCURRENT (the discriminator): the BEGIN flow-event
+      // fires even though no prior failed attempt exists. Mutation: re-gate the
+      // concurrent arm behind the recency lookup → BEGIN absent → RED.
+      final names = events.map((e) => e['event']).toList();
+      expect(names, contains('CHAT_MSG_SEND_CONCURRENT_INBOX_BEGIN'));
 
-        // Round-trips correctly: Bob drains and ends with exactly one copy
-        // (receiver messageId dedup → no duplicate).
-        bob.setOnline(true);
-        await bob.drainOfflineInbox();
-        await Future.delayed(const Duration(milliseconds: 50));
+      // Round-trips correctly: Bob drains and ends with exactly one copy
+      // (receiver messageId dedup → no duplicate).
+      bob.setOnline(true);
+      await bob.drainOfflineInbox();
+      await Future.delayed(const Duration(milliseconds: 50));
 
-        final bobConvo = await bob.loadConversation(alice.peerId);
-        expect(bobConvo, hasLength(1));
-        expect(bobConvo.single.text, 'First ever, while you were away');
-      },
-    );
+      final bobConvo = await bob.loadConversation(alice.peerId);
+      expect(bobConvo, hasLength(1));
+      expect(bobConvo.single.text, 'First ever, while you were away');
+    });
 
     test(
       'startup inbox drain completes before relay online state is green',
@@ -631,6 +772,317 @@ void main() {
           receiptAlice.dispose();
           receiptBob.dispose();
         }
+      },
+    );
+
+    test(
+      'Plan 344 legacy receive then upgraded protected redelivery converges once',
+      () async {
+        const alicePeerId = 'temporal-alice';
+        const bobPeerId = 'temporal-bob';
+        const textMessageId = 'temporal-text-message';
+        const reactionTargetId = 'temporal-reaction-target';
+        const addEventId = 'temporal-reaction-add';
+        const removeEventId = 'temporal-reaction-remove';
+        const textTimestamp = '2026-08-07T10:00:00.000Z';
+        const addTimestamp = '2026-08-07T10:01:00.000Z';
+        const removeTimestamp = '2026-08-07T10:02:00.000Z';
+
+        final order = <String>[];
+        final staging = _TemporalInboxStagingRepository(order);
+        final messages = temporal_fakes.InMemoryMessageRepository();
+        final contacts = temporal_fakes.InMemoryContactRepository()
+          ..addTestContact(
+            const ContactModel(
+              peerId: alicePeerId,
+              publicKey: 'alice-public-key',
+              rendezvous: '/dns4/relay/tcp/443/p2p/relay',
+              username: 'Alice',
+              signature: 'alice-signature',
+              scannedAt: '2026-08-07T09:00:00.000Z',
+              mlKemPublicKey: 'alice-mlkem-key',
+            ),
+          );
+        final reactions = _TemporalReactionRepository();
+        final notifications = FakeNotificationService();
+        final tracker = ActiveConversationTracker();
+        final cryptoBridge = PassthroughCryptoBridge();
+        var reactionChanges = 0;
+
+        await messages.saveMessage(
+          const ConversationMessage(
+            id: reactionTargetId,
+            contactPeerId: alicePeerId,
+            senderPeerId: bobPeerId,
+            text: 'Bob-authored reaction target',
+            timestamp: '2026-08-07T09:59:00.000Z',
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: '2026-08-07T09:59:00.000Z',
+          ),
+        );
+
+        final textPayload = MessagePayload(
+          id: textMessageId,
+          text: 'one logical temporal message',
+          senderPeerId: alicePeerId,
+          senderUsername: 'Alice',
+          timestamp: textTimestamp,
+        );
+        final textEnvelope = MessagePayload.buildEncryptedEnvelope(
+          id: textMessageId,
+          senderPeerId: alicePeerId,
+          senderUsername: 'Alice',
+          kem: 'test-kem',
+          ciphertext: textPayload.toInnerJson(),
+          nonce: 'test-nonce-text',
+        );
+        const addPayload = ReactionPayload(
+          id: addEventId,
+          messageId: reactionTargetId,
+          emoji: '👍',
+          action: ReactionPayload.addAction,
+          senderPeerId: alicePeerId,
+          timestamp: addTimestamp,
+        );
+        const removePayload = ReactionPayload(
+          id: removeEventId,
+          messageId: reactionTargetId,
+          emoji: '👍',
+          action: ReactionPayload.removeAction,
+          senderPeerId: alicePeerId,
+          timestamp: removeTimestamp,
+        );
+        final addEnvelope = ReactionPayload.buildEncryptedEnvelope(
+          senderPeerId: alicePeerId,
+          eventId: addEventId,
+          action: ReactionPayload.addAction,
+          targetMessageId: reactionTargetId,
+          kem: 'test-kem',
+          ciphertext: addPayload.toInnerJson(),
+          nonce: 'test-nonce-add',
+        );
+        final removeEnvelope = ReactionPayload.buildEncryptedEnvelope(
+          senderPeerId: alicePeerId,
+          eventId: removeEventId,
+          action: ReactionPayload.removeAction,
+          targetMessageId: reactionTargetId,
+          kem: 'test-kem',
+          ciphertext: removePayload.toInnerJson(),
+          nonce: 'test-nonce-remove',
+        );
+
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream<ChatMessage>.empty(),
+          messageRepo: messages,
+          contactRepo: contacts,
+          bridge: cryptoBridge,
+          getOwnMlKemSecretKey: () async => 'bob-mlkem-secret',
+          notificationService: notifications,
+          conversationTracker: tracker,
+          getAppLifecycleState: () => AppLifecycleState.resumed,
+          backgroundNotificationDuplicateGuardDelay: Duration.zero,
+          durableNotificationCoordinatorResolver: () async =>
+              throw StateError('durable notification store unavailable'),
+        );
+        addTearDown(chatListener.dispose);
+
+        Future<RecoveredInboxReplayOutcome> replayChat(
+          ChatMessage message, {
+          String? stagedEntryId,
+        }) async {
+          order.add('${staging.phase}-replay-text');
+          final outcome = await chatListener.processIncomingMessage(
+            message,
+            stagedEntryId: stagedEntryId,
+          );
+          return mapChatReplayOutcomeToDisposition(outcome);
+        }
+
+        Future<RecoveredInboxReplayOutcome> replayReaction(
+          ChatMessage message, {
+          String? stagedEntryId,
+        }) async {
+          final envelope = jsonDecode(message.content) as Map<String, dynamic>;
+          order.add('${staging.phase}-replay-reaction-${envelope['action']}');
+          final (result, change) = await handleIncomingReaction(
+            message: message,
+            messageRepo: messages,
+            reactionRepo: reactions,
+            contactRepo: contacts,
+            bridge: cryptoBridge,
+            ownMlKemSecretKey: 'bob-mlkem-secret',
+            notificationService: notifications,
+            conversationTracker: tracker,
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+          );
+          if (change != null) reactionChanges++;
+          return mapReactionReplayResultToDisposition(result);
+        }
+
+        final shadowEntries = <InboxStagingEntry>[
+          InboxStagingEntry(
+            entryId: 'temporal-text-entry',
+            ownerPeerId: bobPeerId,
+            senderPeerId: alicePeerId,
+            messageType: 'chat_message',
+            relayTimestamp: textTimestamp,
+            envelope: textEnvelope,
+            stagedAt: textTimestamp,
+          ),
+          InboxStagingEntry(
+            entryId: 'temporal-add-entry',
+            ownerPeerId: bobPeerId,
+            senderPeerId: alicePeerId,
+            messageType: 'message_reaction',
+            relayTimestamp: addTimestamp,
+            envelope: addEnvelope,
+            stagedAt: addTimestamp,
+          ),
+          InboxStagingEntry(
+            entryId: 'temporal-remove-entry',
+            ownerPeerId: bobPeerId,
+            senderPeerId: alicePeerId,
+            messageType: 'message_reaction',
+            relayTimestamp: removeTimestamp,
+            envelope: removeEnvelope,
+            stagedAt: removeTimestamp,
+          ),
+        ];
+
+        // Legacy receiver phase: persist each destructive shadow locally,
+        // replay it through production handlers, then issue the legacy ACK.
+        final legacyAckable = await staging.stageEntries(shadowEntries);
+        expect(legacyAckable, shadowEntries.map((entry) => entry.entryId));
+        for (final entryId in legacyAckable) {
+          final entry = staging.entry(entryId)!;
+          final replay = entry.messageType == 'message_reaction'
+              ? await replayReaction(
+                  entry.toChatMessage(),
+                  stagedEntryId: entryId,
+                )
+              : await replayChat(entry.toChatMessage(), stagedEntryId: entryId);
+          expect(replay.disposition, RecoveredInboxChatDisposition.committed);
+          await staging.deleteEntry(entryId);
+          order.add('legacy-ack:$entryId');
+        }
+
+        final conversationAfterLegacy = await messages.getMessagesForContact(
+          alicePeerId,
+        );
+        expect(
+          conversationAfterLegacy.where(
+            (message) => message.id == textMessageId,
+          ),
+          hasLength(1),
+        );
+        expect(await messages.getUnreadCountForContact(alicePeerId), 1);
+        final reactionAfterLegacy = await reactions
+            .getReactionForSenderIncludingRemoved(
+              messageId: reactionTargetId,
+              senderPeerId: alicePeerId,
+            );
+        expect(reactionAfterLegacy?.id, removeEventId);
+        expect(reactionAfterLegacy?.isRemoved, isTrue);
+        expect(reactions.canonicalMutationCount, 2);
+        expect(reactionChanges, 2);
+        expect(notifications.shown, hasLength(2));
+
+        final canonicalCountAfterLegacy = conversationAfterLegacy.length;
+        final unreadAfterLegacy = await messages.getUnreadCountForContact(
+          alicePeerId,
+        );
+        final reactionMutationsAfterLegacy = reactions.canonicalMutationCount;
+        final reactionChangesAfterLegacy = reactionChanges;
+        final notificationsAfterLegacy = notifications.shown.length;
+
+        // Upgrade phase: the protected copy is redelivered after its legacy
+        // shadow was consumed. The real strict coordinator stages/replays it,
+        // then exact-ACKs all three logical IDs.
+        staging.phase = 'protected';
+        final protectedRows = shadowEntries
+            .map(
+              (entry) => <String, dynamic>{
+                'id': entry.entryId,
+                'from': entry.senderPeerId,
+                'message': entry.envelope,
+                'timestamp': entry.relayTimestamp,
+              },
+            )
+            .toList(growable: false);
+        final upgradeBridge = _TemporalUpgradeBridge(
+          rows: protectedRows,
+          order: order,
+        );
+        final upgradedService = P2PServiceImpl(
+          bridge: upgradeBridge,
+          inboxStagingRepository: staging,
+          replayRecoveredInboxChatMessage: replayChat,
+          replayRecoveredInboxReaction: replayReaction,
+        );
+        addTearDown(upgradedService.dispose);
+
+        expect(
+          await upgradedService.startNodeCore('test-private-key', bobPeerId),
+          isTrue,
+        );
+        final upgradedDrain = await upgradedService.drainOfflineInboxFully();
+        expect(upgradedDrain.isSuccessful, isTrue);
+        expect(upgradedDrain.hasMore, isFalse);
+
+        final conversationAfterUpgrade = await messages.getMessagesForContact(
+          alicePeerId,
+        );
+        expect(conversationAfterUpgrade, hasLength(canonicalCountAfterLegacy));
+        expect(
+          conversationAfterUpgrade.where(
+            (message) => message.id == textMessageId,
+          ),
+          hasLength(1),
+        );
+        expect(
+          await messages.getUnreadCountForContact(alicePeerId),
+          unreadAfterLegacy,
+        );
+        expect(reactions.canonicalMutationCount, reactionMutationsAfterLegacy);
+        expect(reactionChanges, reactionChangesAfterLegacy);
+        expect(notifications.shown, hasLength(notificationsAfterLegacy));
+        final reactionAfterUpgrade = await reactions
+            .getReactionForSenderIncludingRemoved(
+              messageId: reactionTargetId,
+              senderPeerId: alicePeerId,
+            );
+        expect(reactionAfterUpgrade?.id, removeEventId);
+        expect(reactionAfterUpgrade?.isRemoved, isTrue);
+
+        expect(staging.stageCallCount, 2);
+        expect(
+          await staging.getRecoverableEntries(),
+          isEmpty,
+          reason: 'protected duplicate/stale rows must not remain retryable',
+        );
+        expect(upgradeBridge.retrieveContracts, <String?>[
+          ackOrExpiryInboxCustodyContract,
+        ]);
+        expect(upgradeBridge.ackContracts, <String?>[
+          ackOrExpiryInboxCustodyContract,
+        ]);
+        expect(
+          upgradeBridge.ackedEntryIds,
+          shadowEntries.map((entry) => entry.entryId),
+        );
+        expect(
+          order.where((event) => event.startsWith('legacy-ack:')),
+          hasLength(3),
+        );
+        expect(
+          order.indexOf('protected-stage'),
+          lessThan(order.indexOf('protected-replay-text')),
+        );
+        expect(
+          order.indexOf('protected-replay-reaction-remove'),
+          lessThan(order.indexOf('protected-ack')),
+        );
       },
     );
   });

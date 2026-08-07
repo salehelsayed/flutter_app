@@ -6,8 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"sort"
+	"sync"
 	"time"
 
+	"github.com/libp2p/go-libp2p/core/host"
 	"github.com/libp2p/go-libp2p/core/peer"
 	ma "github.com/multiformats/go-multiaddr"
 )
@@ -16,6 +19,21 @@ import (
 // direct-reaction notification pipeline is available. Old relays ignore the
 // additive capabilities field; old clients omit it and remain push-ineligible.
 const DirectReactionPushCapability = "direct_reaction_v1"
+
+const (
+	// AckOrExpiryCustodyContract is the exact proof returned only by the
+	// non-destructive direct-inbox lane. A generic OK or legacy store result is
+	// deliberately not equivalent to this receipt.
+	AckOrExpiryCustodyContract = "ack_or_expiry_v1"
+
+	CustodyKindDirectTextV108     = "direct_text_v108"
+	CustodyKindDirectReactionV109 = "direct_reaction_v109"
+
+	inboxStoreAckCustodyAction    = "store_custody_v1"
+	inboxRetrieveAckCustodyAction = "retrieve_custody_pending_v1"
+	inboxAckCustodyAction         = "ack_custody_v1"
+	inboxAckCustodyFanoutLimit    = 3
+)
 
 // InboxMessage represents a message stored in the offline inbox.
 type InboxMessage struct {
@@ -48,6 +66,11 @@ type inboxRequest struct {
 	// contacts can wake you"). omitempty keeps every non-attaching frame
 	// byte-identical to the pre-FDC-09 store frame (NET-REL-07).
 	WakeToken string `json:"wakeToken,omitempty"`
+	// Plan 344: present only on the additive protected store action. The action
+	// itself selects the contract; this discriminator constrains the two local
+	// custody owners permitted to use it.
+	CustodyKind     string `json:"custodyKind,omitempty"`
+	CustodyContract string `json:"custodyContract,omitempty"`
 }
 
 type inboxResponse struct {
@@ -61,6 +84,9 @@ type inboxResponse struct {
 	Messages    []InboxMessage `json:"messages,omitempty"`
 	HasMore     bool           `json:"hasMore,omitempty"`
 	Acked       int            `json:"acked,omitempty"`
+	// Plan 344: exact proof carried by each valid protected store/retrieve/ACK
+	// response. Legacy actions omit it.
+	CustodyContract string `json:"custodyContract,omitempty"`
 	// FDC-08 presence_get response fields (additive). Presence is "online-ish",
 	// never a foreground/background claim. AgeMs is the age of the relay's
 	// freshest record for the peer in ms (-1 when nothing is known).
@@ -68,15 +94,23 @@ type inboxResponse struct {
 	AgeMs    int64  `json:"ageMs,omitempty"`
 }
 
-var ErrInboxFull = errors.New("inbox full")
+var (
+	ErrInboxFull                     = errors.New("inbox full")
+	ErrInboxCustodyIdentityConflict  = errors.New("inbox custody identity conflict")
+	ErrInboxCustodyIneligible        = errors.New("inbox custody message ineligible")
+	ErrInboxCustodyAdmissionDisabled = errors.New("inbox custody admission disabled")
+	ErrInboxCustodyInvalidReceipt    = errors.New("invalid inbox custody receipt")
+	ErrInboxCustodyPartial           = errors.New("partial inbox custody operation")
+)
 
 type InboxStoreOutcome struct {
-	StoreStatus  string
-	ErrorCode    string
-	ErrorMessage string
-	ExpiresAtMs  int64
-	Occupancy    int
-	Capacity     int
+	StoreStatus     string
+	ErrorCode       string
+	ErrorMessage    string
+	CustodyContract string
+	ExpiresAtMs     int64
+	Occupancy       int
+	Capacity        int
 }
 
 func parseInboxStoreResponse(respBytes []byte) (InboxStoreOutcome, error) {
@@ -117,6 +151,71 @@ func parseInboxStoreResponse(respBytes []byte) (InboxStoreOutcome, error) {
 		outcome.ErrorCode = "INBOX_ERROR"
 	}
 	return outcome, fmt.Errorf("inbox store failed: %s", resp.Error)
+}
+
+// parseInboxAckCustodyStoreResponse owns the strict Plan 344 receipt table.
+// Only stored/duplicate plus the exact proof is accepting. All other replies
+// remain retryable except identity conflict and structural ineligibility,
+// which callers must stop on rather than route around.
+func parseInboxAckCustodyStoreResponse(respBytes []byte) (InboxStoreOutcome, error) {
+	var resp inboxResponse
+	if err := json.Unmarshal(respBytes, &resp); err != nil {
+		return InboxStoreOutcome{}, fmt.Errorf("%w: unmarshal response: %v", ErrInboxCustodyInvalidReceipt, err)
+	}
+
+	outcome := InboxStoreOutcome{
+		StoreStatus:     resp.StoreStatus,
+		ErrorCode:       resp.ErrorCode,
+		ErrorMessage:    resp.Error,
+		CustodyContract: resp.CustodyContract,
+		ExpiresAtMs:     resp.ExpiresAtMs,
+		Occupancy:       resp.Occupancy,
+		Capacity:        resp.Capacity,
+	}
+
+	if resp.Status == "OK" {
+		if resp.CustodyContract != AckOrExpiryCustodyContract {
+			return outcome, fmt.Errorf("%w: missing or unknown custody contract", ErrInboxCustodyInvalidReceipt)
+		}
+		if resp.StoreStatus != "stored" && resp.StoreStatus != "duplicate" {
+			return outcome, fmt.Errorf("%w: unsupported store status %q", ErrInboxCustodyInvalidReceipt, resp.StoreStatus)
+		}
+		return outcome, nil
+	}
+
+	if resp.Status != "ERROR" {
+		return outcome, fmt.Errorf("%w: unsupported response status %q", ErrInboxCustodyInvalidReceipt, resp.Status)
+	}
+
+	code := resp.ErrorCode
+	outcome.ErrorCode = code
+	if code == "INBOX_FULL" || resp.StoreStatus == "rejected_full" {
+		if code != "INBOX_FULL" || resp.StoreStatus != "rejected_full" {
+			return outcome, fmt.Errorf("%w: incomplete protected full response", ErrInboxCustodyInvalidReceipt)
+		}
+		outcome.ErrorCode = "INBOX_FULL"
+		return outcome, fmt.Errorf("%w: %s", ErrInboxFull, responseErrorText(resp))
+	}
+	switch code {
+	case "CUSTODY_IDENTITY_CONFLICT":
+		return outcome, fmt.Errorf("%w: %s", ErrInboxCustodyIdentityConflict, responseErrorText(resp))
+	case "CUSTODY_INELIGIBLE":
+		return outcome, fmt.Errorf("%w: %s", ErrInboxCustodyIneligible, responseErrorText(resp))
+	case "CUSTODY_ADMISSION_DISABLED":
+		return outcome, fmt.Errorf("%w: %s", ErrInboxCustodyAdmissionDisabled, responseErrorText(resp))
+	default:
+		return outcome, fmt.Errorf("inbox custody store failed: %s", responseErrorText(resp))
+	}
+}
+
+func responseErrorText(resp inboxResponse) string {
+	if resp.Error != "" {
+		return resp.Error
+	}
+	if resp.ErrorCode != "" {
+		return resp.ErrorCode
+	}
+	return resp.Status
 }
 
 // InboxStore stores a message in the offline inbox for a peer.
@@ -265,6 +364,149 @@ func (n *Node) InboxStoreDetailedWithWakeToken(
 		return nil
 	})
 	return lastOutcome, err
+}
+
+// InboxStoreAckCustodyDetailedWithWakeToken stores only through the additive
+// ACK-or-expiry action. It never falls back to legacy store: a sender may hand
+// off local custody only after this method receives the exact protected proof.
+// Retryable failures continue across relay peers; identity conflict and
+// ineligibility are terminal because routing around either would split the
+// logical identity contract.
+func (n *Node) InboxStoreAckCustodyDetailedWithWakeToken(
+	toPeerID string,
+	message string,
+	timeoutMs int,
+	wakeToken string,
+	custodyKind string,
+) (InboxStoreOutcome, error) {
+	if !isSupportedInboxCustodyKind(custodyKind) {
+		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"},
+			fmt.Errorf("%w: unsupported custody kind %q", ErrInboxCustodyIneligible, custodyKind)
+	}
+
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	if h == nil {
+		return InboxStoreOutcome{}, fmt.Errorf("node not started")
+	}
+
+	timeout := InboxTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	relays := n.buildRelaySelector(nil).Relays()
+	if len(relays) == 0 {
+		return InboxStoreOutcome{}, fmt.Errorf("no relays configured")
+	}
+
+	req := inboxRequest{
+		Action:          inboxStoreAckCustodyAction,
+		To:              toPeerID,
+		From:            n.peerId,
+		Message:         message,
+		WakeToken:       wakeToken,
+		CustodyKind:     custodyKind,
+		CustodyContract: AckOrExpiryCustodyContract,
+	}
+	start := time.Now()
+	var lastErr error
+	var lastOutcome InboxStoreOutcome
+	var fullOutcome *InboxStoreOutcome
+
+	for _, relay := range relays {
+		var peerResponded bool
+		for _, candidate := range relayInfoAttemptCandidates(relay) {
+			respBytes, err := n.exchangeInboxRequest(h, candidate, req, timeout)
+			if err != nil {
+				lastErr = err
+				continue
+			}
+			peerResponded = true
+			outcome, parseErr := parseInboxAckCustodyStoreResponse(respBytes)
+			lastOutcome = outcome
+			if parseErr == nil {
+				n.emitEvent("inbox:store_timing", map[string]interface{}{
+					"totalMs":         time.Since(start).Milliseconds(),
+					"outcome":         "success",
+					"storeStatus":     outcome.StoreStatus,
+					"custodyContract": outcome.CustodyContract,
+					"occupancy":       outcome.Occupancy,
+					"capacity":        outcome.Capacity,
+				})
+				log.Printf("[INBOX] Stored protected message for %s", toPeerID[:min(20, len(toPeerID))])
+				return outcome, nil
+			}
+			lastErr = parseErr
+			if errors.Is(parseErr, ErrInboxCustodyIdentityConflict) ||
+				errors.Is(parseErr, ErrInboxCustodyIneligible) {
+				return outcome, parseErr
+			}
+			if errors.Is(parseErr, ErrInboxFull) && fullOutcome == nil {
+				copyOutcome := outcome
+				fullOutcome = &copyOutcome
+			}
+			// A protocol response is authoritative for this relay peer. Move to
+			// the next peer rather than repeating the same action over a sibling
+			// transport address.
+			break
+		}
+		if !peerResponded {
+			continue
+		}
+	}
+
+	if fullOutcome != nil {
+		return *fullOutcome, fmt.Errorf("all %d relays rejected protected custody: %w", len(relays), ErrInboxFull)
+	}
+	if lastErr == nil {
+		lastErr = ErrInboxCustodyInvalidReceipt
+	}
+	n.emitEvent("inbox:store_timing", map[string]interface{}{
+		"totalMs":   time.Since(start).Milliseconds(),
+		"outcome":   "store_failed",
+		"errorCode": lastOutcome.ErrorCode,
+	})
+	return lastOutcome, fmt.Errorf("all %d relays failed to accept protected custody: %w", len(relays), lastErr)
+}
+
+func isSupportedInboxCustodyKind(kind string) bool {
+	return kind == CustodyKindDirectTextV108 || kind == CustodyKindDirectReactionV109
+}
+
+func (n *Node) exchangeInboxRequest(
+	h host.Host,
+	relay RelayInfo,
+	req inboxRequest,
+	timeout time.Duration,
+) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(n.ctx, timeout)
+	defer cancel()
+
+	if err := h.Connect(ctx, peer.AddrInfo{ID: relay.ID, Addrs: relay.Addrs}); err != nil {
+		return nil, fmt.Errorf("connect to relay: %w", err)
+	}
+	s, err := h.NewStream(ctx, relay.ID, InboxProtocol)
+	if err != nil {
+		return nil, fmt.Errorf("open inbox stream: %w", err)
+	}
+	streamOK := false
+	defer finishStream(s, &streamOK)
+	setStreamDeadline(s, timeout)
+
+	reqBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("marshal request: %w", err)
+	}
+	if err := writeFrame(s, reqBytes); err != nil {
+		return nil, fmt.Errorf("write request: %w", err)
+	}
+	respBytes, err := readFrame(s)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	streamOK = true
+	return respBytes, nil
 }
 
 // RelayPresence is the coarse, "online-ish, TTL-lagged" presence answer the
@@ -642,8 +884,9 @@ func (n *Node) InboxRetrieveWithTimeout(timeoutMs int) (*InboxRetrieveResult, er
 // InboxRetrievePendingResult holds the paginated result from
 // InboxRetrievePendingWithTimeout.
 type InboxRetrievePendingResult struct {
-	Messages []InboxMessage
-	HasMore  bool
+	Messages        []InboxMessage
+	HasMore         bool
+	CustodyContract string
 }
 
 // InboxRetrievePendingWithTimeout retrieves pending inbox messages without
@@ -787,6 +1030,374 @@ func (n *Node) InboxAck(entryIDs []string, timeoutMs int) (int, error) {
 		streamOK = true
 		return resp.Acked, nil
 	})
+}
+
+// InboxRetrieveAckCustodyPendingWithTimeout scans every configured relay peer.
+// Each peer is negotiated independently: the protected action is attempted
+// first and any invalid/unsupported leg falls back to legacy retrieve_pending
+// on that same peer. Results are exact-coalesced and globally FIFO sorted.
+func (n *Node) InboxRetrieveAckCustodyPendingWithTimeout(
+	timeoutMs int,
+) (*InboxRetrievePendingResult, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	if h == nil {
+		return nil, fmt.Errorf("node not started")
+	}
+
+	timeout := InboxTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	relays := n.buildRelaySelector(nil).Relays()
+	if len(relays) == 0 {
+		return nil, fmt.Errorf("no relays configured")
+	}
+
+	legs := mapInboxAckCustodyRelays(relays, func(relay RelayInfo) (inboxCustodyRetrieveLeg, error) {
+		return n.retrieveAckCustodyRelay(h, relay, timeout)
+	})
+	allMessages := make([]InboxMessage, 0)
+	sourceHasMore := false
+	validPeers := 0
+	failedPeers := 0
+	var lastErr error
+	for _, leg := range legs {
+		if leg.err != nil {
+			failedPeers++
+			lastErr = leg.err
+			continue
+		}
+		validPeers++
+		allMessages = append(allMessages, leg.value.Messages...)
+		sourceHasMore = sourceHasMore || leg.value.HasMore
+	}
+
+	merged, err := coalesceAndSortInboxCustodyMessages(allMessages)
+	if err != nil {
+		return nil, err
+	}
+	if len(merged) == 0 && validPeers != len(relays) {
+		if lastErr == nil {
+			lastErr = ErrInboxCustodyPartial
+		}
+		return nil, fmt.Errorf("%w: empty scan reached %d/%d relays: %v",
+			ErrInboxCustodyPartial, validPeers, len(relays), lastErr)
+	}
+	if validPeers == 0 {
+		return nil, fmt.Errorf("%w: no relay returned a valid inbox response", ErrInboxCustodyPartial)
+	}
+
+	page, hasMore, err := fitInboxAckCustodyPage(
+		merged,
+		sourceHasMore || (failedPeers > 0 && len(merged) > 0),
+	)
+	if err != nil {
+		return nil, err
+	}
+	return &InboxRetrievePendingResult{
+		Messages:        page,
+		HasMore:         hasMore,
+		CustodyContract: AckOrExpiryCustodyContract,
+	}, nil
+}
+
+type inboxCustodyRetrieveLeg struct {
+	Messages []InboxMessage
+	HasMore  bool
+}
+
+func (n *Node) retrieveAckCustodyRelay(
+	h host.Host,
+	relay RelayInfo,
+	timeout time.Duration,
+) (inboxCustodyRetrieveLeg, error) {
+	var lastErr error
+	for _, candidate := range relayInfoAttemptCandidates(relay) {
+		strictRaw, err := n.exchangeInboxRequest(h, candidate, inboxRequest{
+			Action:          inboxRetrieveAckCustodyAction,
+			Limit:           50,
+			CustodyContract: AckOrExpiryCustodyContract,
+		}, timeout)
+		if err == nil {
+			if result, parseErr := parseInboxCustodyRetrieveResponse(strictRaw, true); parseErr == nil {
+				return result, nil
+			} else {
+				lastErr = parseErr
+			}
+		} else {
+			lastErr = err
+		}
+
+		legacyRaw, legacyErr := n.exchangeInboxRequest(h, candidate, inboxRequest{
+			Action: "retrieve_pending",
+			Limit:  50,
+		}, timeout)
+		if legacyErr == nil {
+			if result, parseErr := parseInboxCustodyRetrieveResponse(legacyRaw, false); parseErr == nil {
+				return result, nil
+			} else {
+				lastErr = parseErr
+			}
+		} else {
+			lastErr = legacyErr
+		}
+	}
+	if lastErr == nil {
+		lastErr = ErrInboxCustodyInvalidReceipt
+	}
+	return inboxCustodyRetrieveLeg{}, lastErr
+}
+
+func parseInboxCustodyRetrieveResponse(raw []byte, requireProof bool) (inboxCustodyRetrieveLeg, error) {
+	var resp inboxResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return inboxCustodyRetrieveLeg{}, fmt.Errorf("unmarshal inbox retrieve response: %w", err)
+	}
+	if requireProof && resp.CustodyContract != AckOrExpiryCustodyContract {
+		return inboxCustodyRetrieveLeg{}, fmt.Errorf("%w: retrieve response missing exact proof", ErrInboxCustodyInvalidReceipt)
+	}
+	switch resp.Status {
+	case "NO_MESSAGES":
+		if len(resp.Messages) != 0 || resp.HasMore {
+			return inboxCustodyRetrieveLeg{}, fmt.Errorf("%w: inconsistent NO_MESSAGES response", ErrInboxCustodyInvalidReceipt)
+		}
+		return inboxCustodyRetrieveLeg{}, nil
+	case "OK":
+		return inboxCustodyRetrieveLeg{Messages: resp.Messages, HasMore: resp.HasMore}, nil
+	default:
+		return inboxCustodyRetrieveLeg{}, fmt.Errorf("inbox retrieve failed: %s", responseErrorText(resp))
+	}
+}
+
+func coalesceAndSortInboxCustodyMessages(messages []InboxMessage) ([]InboxMessage, error) {
+	byID := make(map[string]InboxMessage, len(messages))
+	for _, message := range messages {
+		if message.ID == "" {
+			return nil, fmt.Errorf("%w: relay returned a blank entry ID", ErrInboxCustodyInvalidReceipt)
+		}
+		if existing, ok := byID[message.ID]; ok {
+			if existing.From != message.From || existing.Message != message.Message {
+				return nil, fmt.Errorf("%w: relay entry ID %q has conflicting sender or bytes",
+					ErrInboxCustodyIdentityConflict, message.ID)
+			}
+			if message.Timestamp < existing.Timestamp {
+				existing.Timestamp = message.Timestamp
+				byID[message.ID] = existing
+			}
+			continue
+		}
+		byID[message.ID] = message
+	}
+
+	merged := make([]InboxMessage, 0, len(byID))
+	for _, message := range byID {
+		merged = append(merged, message)
+	}
+	sort.Slice(merged, func(i, j int) bool {
+		if merged[i].Timestamp == merged[j].Timestamp {
+			return merged[i].ID < merged[j].ID
+		}
+		return merged[i].Timestamp < merged[j].Timestamp
+	})
+	return merged, nil
+}
+
+func fitInboxAckCustodyPage(
+	messages []InboxMessage,
+	sourceHasMore bool,
+) ([]InboxMessage, bool, error) {
+	limit := min(len(messages), 50)
+	page := append([]InboxMessage(nil), messages[:limit]...)
+	hasMore := sourceHasMore || len(messages) > limit
+	for len(page) > 0 {
+		encoded, err := json.Marshal(inboxResponse{
+			Status:          "OK",
+			Messages:        page,
+			HasMore:         hasMore,
+			CustodyContract: AckOrExpiryCustodyContract,
+		})
+		if err != nil {
+			return nil, false, fmt.Errorf("marshal merged inbox page: %w", err)
+		}
+		if len(encoded) <= MaxFrameLen {
+			return page, hasMore, nil
+		}
+		page = page[:len(page)-1]
+		hasMore = true
+	}
+	if len(messages) > 0 {
+		return nil, false, fmt.Errorf("%w: first merged inbox entry exceeds frame limit", ErrInboxCustodyInvalidReceipt)
+	}
+	return nil, hasMore, nil
+}
+
+// InboxAckCustody best-effort fans the unique entry IDs out to every relay
+// peer. Each peer uses protected ACK when supported and legacy ACK otherwise.
+// A partial relay failure or aggregate count below the requested logical count
+// is non-accepting; callers safely retry after their durable local replay.
+func (n *Node) InboxAckCustody(entryIDs []string, timeoutMs int) (int, error) {
+	n.mu.RLock()
+	h := n.host
+	n.mu.RUnlock()
+	if h == nil {
+		return 0, fmt.Errorf("node not started")
+	}
+
+	uniqueIDs := uniqueNonblankInboxEntryIDs(entryIDs)
+	if len(uniqueIDs) == 0 {
+		return 0, fmt.Errorf("missing nonblank entry IDs")
+	}
+	timeout := InboxTimeout
+	if timeoutMs > 0 {
+		timeout = time.Duration(timeoutMs) * time.Millisecond
+	}
+	relays := n.buildRelaySelector(nil).Relays()
+	if len(relays) == 0 {
+		return 0, fmt.Errorf("no relays configured")
+	}
+
+	legs := mapInboxAckCustodyRelays(relays, func(relay RelayInfo) (int, error) {
+		return n.ackCustodyRelay(h, relay, uniqueIDs, timeout)
+	})
+	totalAcked := 0
+	failedPeers := 0
+	var lastErr error
+	for _, leg := range legs {
+		if leg.err != nil {
+			failedPeers++
+			lastErr = leg.err
+			continue
+		}
+		totalAcked += leg.value
+	}
+	logicalAcked := min(totalAcked, len(uniqueIDs))
+	if failedPeers > 0 {
+		return logicalAcked, fmt.Errorf("%w: ACK reached %d/%d relays: %v",
+			ErrInboxCustodyPartial, len(relays)-failedPeers, len(relays), lastErr)
+	}
+	if totalAcked < len(uniqueIDs) {
+		return logicalAcked, fmt.Errorf("%w: ACK count %d below requested logical count %d",
+			ErrInboxCustodyPartial, totalAcked, len(uniqueIDs))
+	}
+	return logicalAcked, nil
+}
+
+func (n *Node) ackCustodyRelay(
+	h host.Host,
+	relay RelayInfo,
+	entryIDs []string,
+	timeout time.Duration,
+) (int, error) {
+	var lastErr error
+	for _, candidate := range relayInfoAttemptCandidates(relay) {
+		strictRaw, err := n.exchangeInboxRequest(h, candidate, inboxRequest{
+			Action:          inboxAckCustodyAction,
+			EntryIds:        entryIDs,
+			CustodyContract: AckOrExpiryCustodyContract,
+		}, timeout)
+		if err == nil {
+			if acked, parseErr := parseInboxCustodyAckResponse(strictRaw, true, len(entryIDs)); parseErr == nil {
+				return acked, nil
+			} else {
+				lastErr = parseErr
+			}
+		} else {
+			lastErr = err
+		}
+
+		legacyRaw, legacyErr := n.exchangeInboxRequest(h, candidate, inboxRequest{
+			Action:   "ack",
+			EntryIds: entryIDs,
+		}, timeout)
+		if legacyErr == nil {
+			if acked, parseErr := parseInboxCustodyAckResponse(legacyRaw, false, len(entryIDs)); parseErr == nil {
+				return acked, nil
+			} else {
+				lastErr = parseErr
+			}
+		} else {
+			lastErr = legacyErr
+		}
+	}
+	if lastErr == nil {
+		lastErr = ErrInboxCustodyInvalidReceipt
+	}
+	return 0, lastErr
+}
+
+func parseInboxCustodyAckResponse(raw []byte, requireProof bool, requested int) (int, error) {
+	var resp inboxResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return 0, fmt.Errorf("unmarshal inbox ACK response: %w", err)
+	}
+	if resp.Status != "OK" {
+		return 0, fmt.Errorf("inbox ACK failed: %s", responseErrorText(resp))
+	}
+	if requireProof && resp.CustodyContract != AckOrExpiryCustodyContract {
+		return 0, fmt.Errorf("%w: ACK response missing exact proof", ErrInboxCustodyInvalidReceipt)
+	}
+	if resp.Acked < 0 {
+		return 0, fmt.Errorf("%w: negative ACK count", ErrInboxCustodyInvalidReceipt)
+	}
+	if resp.Acked > requested {
+		return 0, fmt.Errorf("%w: ACK count %d exceeds requested count %d",
+			ErrInboxCustodyInvalidReceipt, resp.Acked, requested)
+	}
+	return resp.Acked, nil
+}
+
+func uniqueNonblankInboxEntryIDs(entryIDs []string) []string {
+	seen := make(map[string]struct{}, len(entryIDs))
+	unique := make([]string, 0, len(entryIDs))
+	for _, entryID := range entryIDs {
+		if entryID == "" {
+			continue
+		}
+		if _, ok := seen[entryID]; ok {
+			continue
+		}
+		seen[entryID] = struct{}{}
+		unique = append(unique, entryID)
+	}
+	return unique
+}
+
+type inboxAckCustodyRelayResult[T any] struct {
+	value T
+	err   error
+}
+
+func mapInboxAckCustodyRelays[T any](
+	relays []RelayInfo,
+	fn func(RelayInfo) (T, error),
+) []inboxAckCustodyRelayResult[T] {
+	results := make([]inboxAckCustodyRelayResult[T], len(relays))
+	if len(relays) == 0 {
+		return results
+	}
+	type relayJob struct {
+		index int
+		relay RelayInfo
+	}
+	jobs := make(chan relayJob)
+	var wg sync.WaitGroup
+	for worker := 0; worker < min(len(relays), inboxAckCustodyFanoutLimit); worker++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for job := range jobs {
+				results[job.index].value, results[job.index].err = fn(job.relay)
+			}
+		}()
+	}
+	for index, relay := range relays {
+		jobs <- relayJob{index: index, relay: relay}
+	}
+	close(jobs)
+	wg.Wait()
+	return results
 }
 
 // InboxRegisterToken registers an FCM push token with all configured relays.

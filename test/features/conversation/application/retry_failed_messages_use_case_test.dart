@@ -379,7 +379,7 @@ void main() {
     });
 
     test(
-      'TC-342-04b pending direct-text custody never falls through to re-encrypt',
+      'Plan 344 pending v108 retry cannot wrap bool success as protected receipt',
       () async {
         identityRepo.seed(makeIdentity());
         final message = makeFailedMessage().copyWith(
@@ -415,11 +415,8 @@ void main() {
         );
 
         expect(count, 0);
-        expect(p2pService.storeInInboxCallCount, 1);
-        expect(
-          p2pService.storeInInboxLog.single.message,
-          'exact-v108-custody-envelope',
-        );
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.storeInInboxLog, isEmpty);
         expect(p2pService.sendMessageCallCount, 0);
         expect(p2pService.sendMessageWithReplyCallCount, 0);
         expect(bridge.sendCallCount, 0);

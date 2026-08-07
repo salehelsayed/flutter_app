@@ -276,29 +276,26 @@ Future<int> _retryFailedMessagesInternal({
 }) async {
   final retryStopwatch = clock.stopwatch()..start();
   final effectiveUploadFn = uploadMediaFn ?? uploadMedia;
-  final detailedInboxStore = p2pService is DetailedInboxStore
-      ? p2pService as DetailedInboxStore
+  final ackCustodyInboxStore = p2pService is AckOrExpiryInboxStore
+      ? p2pService as AckOrExpiryInboxStore
       : null;
   Future<InboxStoreOutcome> storeExactCustody(
     String toPeerId,
     String envelope, {
+    required AckCustodyKind custodyKind,
     int? timeoutMs,
   }) async {
-    if (detailedInboxStore != null) {
-      return detailedInboxStore.storeInInboxDetailed(
+    if (ackCustodyInboxStore != null) {
+      return ackCustodyInboxStore.storeInAckCustodyInboxDetailed(
         toPeerId,
         envelope,
+        custodyKind: custodyKind,
         timeoutMs: timeoutMs,
       );
     }
-    final stored = await p2pService.storeInInbox(
-      toPeerId,
-      envelope,
-      timeoutMs: timeoutMs,
-    );
-    return InboxStoreOutcome(
-      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
-      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.failed,
+      errorCode: 'ACK_OR_EXPIRY_STORE_UNAVAILABLE',
     );
   }
 
@@ -415,7 +412,7 @@ Future<bool> _retryFailedMessageCandidate({
   ReleaseMediaUploadLease? releaseUploadLease,
   required bool manualRetry,
   required bool retryDirectInboxCustody,
-  required StoreInInboxDetailedFn storeExactCustody,
+  required StoreInAckCustodyInboxDetailedFn storeExactCustody,
 }) async {
   if (!_retryInFlightMessageIds.add(msg.id)) {
     emitFlowEvent(
@@ -469,7 +466,7 @@ Future<bool> _retryFailedMessageCandidate({
       } else {
         final custodyAttempt = await drainDirectInboxCustodyOutboxForMessage(
           custodyRepository: custodyRepository,
-          storeInInboxDetailed: storeExactCustody,
+          storeInAckCustodyInboxDetailed: storeExactCustody,
           recipientPeerId: msg.contactPeerId,
           messageId: msg.id,
         );

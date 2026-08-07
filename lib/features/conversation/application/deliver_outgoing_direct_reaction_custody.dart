@@ -25,7 +25,7 @@ class DirectReactionImmediateDeliveryResult {
 Future<DirectReactionImmediateDeliveryResult>
 deliverOutgoingDirectReactionCustody({
   required P2PService p2pService,
-  required StoreInInboxDetailedFn storeInInboxDetailed,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
   required OutgoingDirectReactionInboxCustodyRepository custodyRepository,
   required DirectReactionInboxCustodyOutboxEntry custody,
   required String flowPrefix,
@@ -39,9 +39,10 @@ deliverOutgoingDirectReactionCustody({
     late InboxStoreOutcome outcome;
     var storeThrew = false;
     try {
-      outcome = await storeInInboxDetailed(
+      outcome = await storeInAckCustodyInboxDetailed(
         custody.recipientPeerId,
         custody.wireEnvelope,
+        custodyKind: AckCustodyKind.directReactionV109,
         timeoutMs: directReactionImmediateInboxTimeoutMs,
       );
     } catch (error) {
@@ -58,7 +59,7 @@ deliverOutgoingDirectReactionCustody({
       );
     }
 
-    if (outcome.accepted) {
+    if (outcome.ackOrExpiryAccepted) {
       try {
         final completion = await custodyRepository
             .completeAcceptedDirectReactionInboxCustodyIfExact(
@@ -69,8 +70,8 @@ deliverOutgoingDirectReactionCustody({
             await custodyRepository
                 .recordDirectReactionInboxCustodyFailureIfExact(
                   expected: custody,
-                  errorCode: DirectReactionInboxCustodyErrorCode
-                      .localCompletionFailed,
+                  errorCode:
+                      DirectReactionInboxCustodyErrorCode.localCompletionFailed,
                 );
           } catch (_) {
             // The conflicting exact tuple remains owned by its current bytes.

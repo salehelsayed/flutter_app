@@ -52,6 +52,7 @@ import '../../../shared/fakes/in_memory_contact_repository.dart';
 class FakeP2PService
     implements
         P2PService,
+        AckOrExpiryInboxStore,
         ReadinessProofRecorder,
         RelayLiveSendObserver,
         PeerDropSignal {
@@ -256,6 +257,22 @@ class FakeP2PService
     lastInboxPeerId = toPeerId;
     lastInboxMessage = message;
     return controlledStoreInInboxResult ?? storeInInboxResult;
+  }
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+    );
   }
 
   @override
@@ -1541,9 +1558,41 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
+  StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
   bool? preassignedMessageIdIsFresh,
   void Function(String messageId)? onDirectTextCustodyStaged,
 }) {
+  final strictStore =
+      storeInAckCustodyInboxDetailed ??
+      (storeInInboxDetailed == null
+          ? null
+          : (
+              String toPeerId,
+              String message, {
+              required AckCustodyKind custodyKind,
+              int? timeoutMs,
+            }) async {
+              final outcome = await storeInInboxDetailed(
+                toPeerId,
+                message,
+                timeoutMs: timeoutMs,
+              );
+              if (!outcome.accepted) return outcome;
+              return InboxStoreOutcome(
+                status: outcome.status,
+                errorCode: outcome.errorCode,
+                errorMessage: outcome.errorMessage,
+                storeStatus:
+                    outcome.storeStatus ??
+                    (outcome.status == InboxStoreStatus.duplicate
+                        ? 'duplicate'
+                        : 'stored'),
+                expiresAtMs: outcome.expiresAtMs,
+                occupancy: outcome.occupancy,
+                capacity: outcome.capacity,
+                custodyContract: ackOrExpiryInboxCustodyContract,
+              );
+            });
   return chat_use_case.sendChatMessage(
     p2pService: p2pService,
     messageRepo: messageRepo,
@@ -1573,6 +1622,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     emitTimingEvent: emitTimingEvent,
     transportMetrics: transportMetrics,
     storeInInboxDetailed: storeInInboxDetailed,
+    storeInAckCustodyInboxDetailed: strictStore,
     onDirectTextCustodyStaged: onDirectTextCustodyStaged,
   );
 }
@@ -2351,6 +2401,52 @@ void main() {
         expect(service.sendCallCount, 0);
         expect(service.localSendCallCount, 0);
         expect(service.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'Plan 344 immediate v108 rejects generic stored without ack-or-expiry proof',
+      () async {
+        final repository = FakeMessageRepository();
+        final service = FakeP2PService(
+          sendMessageTransport: 'direct',
+          storeInInboxResult: true,
+        );
+        var strictStoreCalls = 0;
+        AckCustodyKind? requestedKind;
+        String? attemptedEnvelope;
+
+        final (result, message) = await chat_use_case.sendChatMessage(
+          p2pService: service,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'proofless generic store cannot retire v108 custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+          storeInAckCustodyInboxDetailed:
+              (peerId, envelope, {required custodyKind, timeoutMs}) async {
+                strictStoreCalls++;
+                requestedKind = custodyKind;
+                attemptedEnvelope = envelope;
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                );
+              },
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message?.status, 'delivered');
+        expect(strictStoreCalls, 1);
+        expect(requestedKind, AckCustodyKind.directTextV108);
+        expect(service.storeInInboxCallCount, 0);
+        expect(repository.directCustodyRows, hasLength(1));
+        final retained = repository.directCustodyRows.values.single;
+        expect(retained.messageId, message?.id);
+        expect(retained.wireEnvelope, attemptedEnvelope);
+        expect(retained.lastErrorCode, DirectInboxCustodyErrorCode.storeFailed);
       },
     );
 

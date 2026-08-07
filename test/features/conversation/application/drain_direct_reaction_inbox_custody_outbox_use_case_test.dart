@@ -121,6 +121,27 @@ final class _InMemoryReactionCustodyRepository
 }
 
 void main() {
+  test('Plan 344 v109 drain retains generic stored without proof', () async {
+    final repository = _InMemoryReactionCustodyRepository();
+    final pending = _entry('unproven');
+    repository.seed(pending);
+
+    final completed = await drainDirectReactionInboxCustodyOutbox(
+      custodyRepository: repository,
+      storeInAckCustodyInboxDetailed:
+          (peerId, envelope, {required custodyKind, timeoutMs}) async {
+            expect(custodyKind, AckCustodyKind.directReactionV109);
+            return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+          },
+    );
+
+    expect(completed, 0);
+    expect(repository.rows, hasLength(1));
+    expect(repository.failureErrorCodes, <String>[
+      DirectReactionInboxCustodyErrorCode.storeFailed,
+    ]);
+  });
+
   test(
     'TC-343-04 exact at-least-once reaction drain converges without poison starvation',
     () async {
@@ -169,8 +190,10 @@ void main() {
       Future<InboxStoreOutcome> store(
         String recipientPeerId,
         String wireEnvelope, {
+        required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async {
+        expect(custodyKind, AckCustodyKind.directReactionV109);
         calls.add((
           recipientPeerId: recipientPeerId,
           eventId: eventByEnvelope[wireEnvelope]!,
@@ -185,14 +208,24 @@ void main() {
             status: localAttempts == 1
                 ? InboxStoreStatus.stored
                 : InboxStoreStatus.duplicate,
+            storeStatus: localAttempts == 1 ? 'stored' : 'duplicate',
+            custodyContract: ackOrExpiryInboxCustodyContract,
           );
         }
         if (wireEnvelope == absent.wireEnvelope) {
           repository.remove(absent);
-          return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+          return const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          );
         }
         if (wireEnvelope == duplicate.wireEnvelope) {
-          return const InboxStoreOutcome(status: InboxStoreStatus.duplicate);
+          return const InboxStoreOutcome(
+            status: InboxStoreStatus.duplicate,
+            storeStatus: 'duplicate',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          );
         }
         if (wireEnvelope == rejected.wireEnvelope) {
           return const InboxStoreOutcome(status: InboxStoreStatus.rejectedFull);
@@ -200,13 +233,17 @@ void main() {
         if (wireEnvelope == failed.wireEnvelope) {
           return const InboxStoreOutcome(status: InboxStoreStatus.failed);
         }
-        return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        );
       }
 
       expect(
         await drainDirectReactionInboxCustodyOutbox(
           custodyRepository: repository,
-          storeInInboxDetailed: store,
+          storeInAckCustodyInboxDetailed: store,
         ),
         3,
       );
@@ -276,7 +313,7 @@ void main() {
       expect(
         await drainDirectReactionInboxCustodyOutbox(
           custodyRepository: repository,
-          storeInInboxDetailed: store,
+          storeInAckCustodyInboxDetailed: store,
         ),
         1,
       );
@@ -298,6 +335,7 @@ void main() {
       Future<InboxStoreOutcome> failStore(
         String recipientPeerId,
         String wireEnvelope, {
+        required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async {
         boundedCalls.add(wireEnvelope);
@@ -307,7 +345,7 @@ void main() {
       expect(
         await drainDirectReactionInboxCustodyOutbox(
           custodyRepository: boundedRepository,
-          storeInInboxDetailed: failStore,
+          storeInAckCustodyInboxDetailed: failStore,
         ),
         0,
       );
@@ -317,7 +355,7 @@ void main() {
       expect(
         await drainDirectReactionInboxCustodyOutbox(
           custodyRepository: boundedRepository,
-          storeInInboxDetailed: failStore,
+          storeInAckCustodyInboxDetailed: failStore,
         ),
         0,
       );
@@ -335,27 +373,37 @@ void main() {
       Future<InboxStoreOutcome> overlappingStore(
         String recipientPeerId,
         String wireEnvelope, {
+        required AckCustodyKind custodyKind,
         int? timeoutMs,
       }) async {
+        expect(custodyKind, AckCustodyKind.directReactionV109);
         expect(recipientPeerId, overlapEntry.recipientPeerId);
         expect(wireEnvelope, overlapEntry.wireEnvelope);
         overlapCalls++;
         if (overlapCalls == 1) {
           firstEntered.complete();
           await releaseFirst.future;
-          return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+          return const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          );
         }
-        return const InboxStoreOutcome(status: InboxStoreStatus.duplicate);
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.duplicate,
+          storeStatus: 'duplicate',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        );
       }
 
       final first = drainDirectReactionInboxCustodyOutbox(
         custodyRepository: overlapRepository,
-        storeInInboxDetailed: overlappingStore,
+        storeInAckCustodyInboxDetailed: overlappingStore,
       );
       await firstEntered.future;
       final second = drainDirectReactionInboxCustodyOutbox(
         custodyRepository: overlapRepository,
-        storeInInboxDetailed: overlappingStore,
+        storeInAckCustodyInboxDetailed: overlappingStore,
       );
       expect(await second, 1);
       releaseFirst.complete();

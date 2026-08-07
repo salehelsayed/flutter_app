@@ -138,7 +138,7 @@ const _privacySha256 =
 const _applicationRootNormalizedSha256 =
     '2b23442774fc0075c8b65caeed6aedb836503d597a07ffb87caf176777d26123';
 const _productionBootstrapNormalizedSha256 =
-    '1cb73917f2ba083bb2995f93ebe9a28f872b37f946e3439c5b9a1223586a8c02';
+    'e7edf6a15c12fe620a9e3f56ccac5020ec016582c1741c264cae15bc051d54da';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

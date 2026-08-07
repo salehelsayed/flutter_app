@@ -285,11 +285,14 @@ void main() {
       expect(composite, contains('custodyRepository: messageRepository'));
       expect(composite, contains('custodyRepository: reactionRepository'));
       expect(
-        'storeInInboxDetailed: p2pService.storeInInboxDetailed'.allMatches(
-          composite,
-        ),
+        'storeInAckCustodyInboxDetailed:'.allMatches(composite),
         hasLength(2),
-        reason: 'both families must replay through the typed relay outcome',
+        reason:
+            'Plan 344 production composes v108 and v109 drains with ack custody store',
+      );
+      expect(
+        'p2pService.storeInAckCustodyInboxDetailed'.allMatches(composite),
+        hasLength(2),
       );
       expect(
         RegExp(r'\btry\s*\{').allMatches(composite),
@@ -380,12 +383,11 @@ void main() {
         p2pImplementation,
         matches(
           RegExp(
-            r'class P2PServiceImpl\s+implements[\s\S]*?\bDetailedInboxStore\b',
+            r'class P2PServiceImpl\s+implements[\s\S]*?\bAckOrExpiryInboxStore\b',
           ),
         ),
         reason:
-            'the production reaction caller omits an explicit store override, '
-            'so its concrete P2P service must expose typed inbox outcomes',
+            'the production reaction caller must expose strict inbox custody',
       );
     },
   );

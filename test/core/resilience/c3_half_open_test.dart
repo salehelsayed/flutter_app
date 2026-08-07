@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -25,7 +26,7 @@ import '../../shared/fakes/test_user.dart';
 // first N calls.
 // ---------------------------------------------------------------------------
 
-class _HalfOpenP2PService implements P2PService {
+class _HalfOpenP2PService implements P2PService, AckOrExpiryInboxStore {
   final FakeP2PService _inner;
   final String connectedPeerId;
 
@@ -102,8 +103,24 @@ class _HalfOpenP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
-      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) => _inner.storeInAckCustodyInboxDetailed(
+    toPeerId,
+    message,
+    custodyKind: custodyKind,
+    timeoutMs: timeoutMs,
+  );
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -137,8 +154,7 @@ class _HalfOpenP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -179,7 +195,8 @@ class _HalfOpenP2PService implements P2PService {
   void dispose() => _inner.dispose();
 }
 
-class _DiscoverMissProbeConnectedP2PService implements P2PService {
+class _DiscoverMissProbeConnectedP2PService
+    implements P2PService, AckOrExpiryInboxStore {
   final FakeP2PService _inner;
   int probeRelayCallCount = 0;
 
@@ -233,8 +250,24 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
   }) => _inner.dialPeer(peerId, addresses: addresses, timeoutMs: timeoutMs);
 
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) =>
-      _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) => _inner.storeInAckCustodyInboxDetailed(
+    toPeerId,
+    message,
+    custodyKind: custodyKind,
+    timeoutMs: timeoutMs,
+  );
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -267,8 +300,7 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -447,48 +479,42 @@ void main() {
       halfOpen.dispose();
     });
 
-    test(
-      'discover miss for an unknown-presence peer takes durable inbox custody '
-      '(FDC-03: probe tail removed) and drains to the recipient',
-      () async {
-        // FDC-03: the serial relay-probe→inbox tail was removed. With no live
-        // circuit, a discover-miss send no longer recovers LIVE via an on-demand
-        // probe; the concurrent durable inbox copy holds custody and the
-        // recipient receives it on drain. (Live relay recovery for a CIRCUIT peer
-        // is FDC-02's in-race relay-live leg.)
-        final innerAlice = FakeP2PService(
-          peerId: alicePeerId,
-          network: network,
-        );
-        final probeP2P = _DiscoverMissProbeConnectedP2PService(innerAlice);
+    test('discover miss for an unknown-presence peer takes durable inbox custody '
+        '(FDC-03: probe tail removed) and drains to the recipient', () async {
+      // FDC-03: the serial relay-probe→inbox tail was removed. With no live
+      // circuit, a discover-miss send no longer recovers LIVE via an on-demand
+      // probe; the concurrent durable inbox copy holds custody and the
+      // recipient receives it on drain. (Live relay recovery for a CIRCUIT peer
+      // is FDC-02's in-race relay-live leg.)
+      final innerAlice = FakeP2PService(peerId: alicePeerId, network: network);
+      final probeP2P = _DiscoverMissProbeConnectedP2PService(innerAlice);
 
-        final (result, msg) = await sendChatMessage(
-          p2pService: probeP2P,
-          messageRepo: aliceRepo,
-          targetPeerId: bob.peerId,
-          text: 'Hello after discover miss',
-          senderPeerId: alicePeerId,
-          senderUsername: aliceUsername,
-          bridge: encryptBridge,
-          recipientMlKemPublicKey: bobMlKemKey,
-        );
+      final (result, msg) = await sendChatMessage(
+        p2pService: probeP2P,
+        messageRepo: aliceRepo,
+        targetPeerId: bob.peerId,
+        text: 'Hello after discover miss',
+        senderPeerId: alicePeerId,
+        senderUsername: aliceUsername,
+        bridge: encryptBridge,
+        recipientMlKemPublicKey: bobMlKemKey,
+      );
 
-        expect(result, SendChatMessageResult.success);
-        expect(msg, isNotNull);
-        // Custody, not live delivery (doc 115) — the probe never runs.
-        expect(msg!.status, 'inboxed');
-        expect(msg.transport, 'inbox');
-        expect(probeP2P.probeRelayCallCount, 0);
-        expect(network.inboxCount(bob.peerId), 1);
+      expect(result, SendChatMessageResult.success);
+      expect(msg, isNotNull);
+      // Custody, not live delivery (doc 115) — the probe never runs.
+      expect(msg!.status, 'inboxed');
+      expect(msg.transport, 'inbox');
+      expect(probeP2P.probeRelayCallCount, 0);
+      expect(network.inboxCount(bob.peerId), 1);
 
-        // The recipient receives exactly one copy on drain.
-        await bob.drainOfflineInbox();
-        final bobMessages = await bob.loadConversationWith(alicePeerId);
-        expect(bobMessages, hasLength(1));
-        expect(bobMessages.first.text, 'Hello after discover miss');
+      // The recipient receives exactly one copy on drain.
+      await bob.drainOfflineInbox();
+      final bobMessages = await bob.loadConversationWith(alicePeerId);
+      expect(bobMessages, hasLength(1));
+      expect(bobMessages.first.text, 'Hello after discover miss');
 
-        probeP2P.dispose();
-      },
-    );
+      probeP2P.dispose();
+    });
   });
 }

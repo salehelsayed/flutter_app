@@ -64,6 +64,7 @@ class _FakeBridge extends Bridge {
   final List<String> calledCommands = [];
   final Map<String, List<Map<String, dynamic>?>> payloadsByCommand = {};
   bool _initialized = false;
+  bool automaticallyProveAckCustody = true;
 
   void whenCommand(
     String cmd,
@@ -103,7 +104,20 @@ class _FakeBridge extends Bridge {
 
     final handler = _handlers[cmd];
     if (handler != null) {
-      return await handler(payload);
+      final response = await handler(payload);
+      if (automaticallyProveAckCustody &&
+          (cmd == 'inbox:retrieve_pending' || cmd == 'inbox:ack') &&
+          payload?['custodyContract'] == ackOrExpiryInboxCustodyContract) {
+        final decoded = jsonDecode(response);
+        if (decoded is Map<String, dynamic> && decoded['ok'] == true) {
+          decoded.putIfAbsent(
+            'custodyContract',
+            () => ackOrExpiryInboxCustodyContract,
+          );
+          return jsonEncode(decoded);
+        }
+      }
+      return response;
     }
 
     return jsonEncode({
@@ -210,6 +224,20 @@ class _GateableInboxStagingRepository extends InMemoryInboxStagingRepository {
   }
 }
 
+class _RecordingInboxStagingRepository extends InMemoryInboxStagingRepository {
+  _RecordingInboxStagingRepository(this.order);
+
+  final List<String> order;
+  int stageCallCount = 0;
+
+  @override
+  Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
+    stageCallCount++;
+    order.add('stage');
+    return super.stageEntries(entries);
+  }
+}
+
 class _ThrowingInboxStagingRepository extends InMemoryInboxStagingRepository {
   @override
   Future<List<String>> stageEntries(List<InboxStagingEntry> entries) async {
@@ -312,6 +340,123 @@ void main() {
       ),
     );
   }
+
+  test('ack-or-expiry capability rejects generic OK', () async {
+    bridge.whenCommand(
+      'inbox:store',
+      (_) => jsonEncode({'ok': true, 'storeStatus': 'stored'}),
+    );
+
+    final genericOk = await service.storeInAckCustodyInboxDetailed(
+      'remote-peer',
+      'strict-envelope',
+      custodyKind: AckCustodyKind.directTextV108,
+    );
+
+    expect(genericOk.status, InboxStoreStatus.failed);
+    expect(genericOk.errorCode, 'CUSTODY_PROOF_MISSING_OR_INVALID');
+    expect(genericOk.ackOrExpiryAccepted, isFalse);
+    expect(
+      bridge.payloadsFor('inbox:store').single,
+      containsPair('custodyContract', ackOrExpiryInboxCustodyContract),
+    );
+    expect(
+      bridge.payloadsFor('inbox:store').single,
+      containsPair('custodyKind', 'direct_text_v108'),
+    );
+  });
+
+  test(
+    'ack-or-expiry retrieve and ACK reject missing or mutated proof',
+    () async {
+      for (final phase in <String>['retrieve', 'ack']) {
+        for (final proof in <String?>[null, 'ack_or_expiry_v2']) {
+          final localBridge = _FakeBridge()
+            ..automaticallyProveAckCustody = false;
+          final repo = InMemoryInboxStagingRepository();
+          var replayCount = 0;
+          final retrieveProof = phase == 'ack'
+              ? ackOrExpiryInboxCustodyContract
+              : proof;
+          final ackProof = phase == 'retrieve'
+              ? ackOrExpiryInboxCustodyContract
+              : proof;
+          localBridge.whenCommand(
+            'node:start',
+            (_) => jsonEncode({
+              'ok': true,
+              'peerId': 'self-peer',
+              'isStarted': true,
+              'listenAddresses': <String>[],
+              'circuitAddresses': <String>[],
+              'connections': <dynamic>[],
+            }),
+          );
+          localBridge.whenCommand(
+            'inbox:retrieve_pending',
+            (_) => jsonEncode({
+              'ok': true,
+              'custodyContract': ?retrieveProof,
+              'messages': <Map<String, dynamic>>[
+                _pendingInboxRow(
+                  entryId: 'proof-$phase-${proof ?? 'missing'}',
+                  from: 'remote-peer',
+                  message: _chatEnvelope(
+                    id: 'message-$phase-${proof ?? 'missing'}',
+                    text: 'proof validation',
+                    senderPeerId: 'remote-peer',
+                  ),
+                ),
+              ],
+              'hasMore': false,
+            }),
+          );
+          localBridge.whenCommand(
+            'inbox:ack',
+            (_) => jsonEncode({
+              'ok': true,
+              'acked': 1,
+              'custodyContract': ?ackProof,
+            }),
+          );
+          final localService = P2PServiceImpl(
+            bridge: localBridge,
+            inboxStagingRepository: repo,
+            replayRecoveredInboxChatMessage:
+                (_, {String? stagedEntryId}) async {
+                  replayCount++;
+                  return (
+                    disposition: RecoveredInboxChatDisposition.committed,
+                    reasonCode: 'stored',
+                    reasonDetail: null,
+                  );
+                },
+          );
+          addTearDown(localService.dispose);
+
+          await localService.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+          final outcome = await localService.drainOfflineInboxFully();
+
+          expect(outcome.isSuccessful, isFalse, reason: '$phase / $proof');
+          expect(
+            outcome.failureReason,
+            contains('custody_proof_missing_or_invalid'),
+            reason: '$phase / $proof',
+          );
+          expect(
+            replayCount,
+            phase == 'retrieve' ? 0 : 1,
+            reason: '$phase / $proof',
+          );
+          expect(
+            localBridge.payloadsFor('inbox:ack').length,
+            phase == 'retrieve' ? 0 : 1,
+            reason: '$phase / $proof',
+          );
+        }
+      }
+    },
+  );
 
   // ───────────────────────── FDC-04: warmPeer ─────────────────────────
   group('FDC-04 warmPeer', () {
@@ -1145,6 +1290,50 @@ void main() {
         );
         expect(oldRelay.status, InboxStoreStatus.stored);
         expect(oldRelay.expiresAtMs, isNull);
+
+        bridge.whenCommand(
+          'inbox:store',
+          (_) => jsonEncode({'ok': true, 'storeStatus': 'stored'}),
+        );
+        final unproven = await service.storeInAckCustodyInboxDetailed(
+          'remote-peer',
+          'strict-envelope',
+          custodyKind: AckCustodyKind.directTextV108,
+        );
+        expect(
+          unproven.status,
+          InboxStoreStatus.failed,
+          reason: 'ack-or-expiry capability rejects generic OK',
+        );
+        expect(unproven.ackOrExpiryAccepted, isFalse);
+        expect(
+          bridge.payloadsFor('inbox:store').last,
+          containsPair('custodyContract', ackOrExpiryInboxCustodyContract),
+        );
+        expect(
+          bridge.payloadsFor('inbox:store').last,
+          containsPair('custodyKind', 'direct_text_v108'),
+        );
+
+        bridge.whenCommand(
+          'inbox:store',
+          (_) => jsonEncode({
+            'ok': true,
+            'storeStatus': 'duplicate',
+            'custodyContract': ackOrExpiryInboxCustodyContract,
+          }),
+        );
+        final proven = await service.storeInAckCustodyInboxDetailed(
+          'remote-peer',
+          'strict-envelope',
+          custodyKind: AckCustodyKind.directReactionV109,
+        );
+        expect(proven.status, InboxStoreStatus.duplicate);
+        expect(proven.ackOrExpiryAccepted, isTrue);
+        expect(
+          bridge.payloadsFor('inbox:store').last,
+          containsPair('custodyKind', 'direct_reaction_v109'),
+        );
 
         bridge.whenCommand(
           'inbox:store',
@@ -3645,8 +3834,9 @@ void main() {
       expect(entry.rejectReasonCode, 'attempt_cap_exceeded');
     });
 
-    test('stages, acks, and deletes committed chat entries', () async {
-      final repo = InMemoryInboxStagingRepository();
+    test('protected and shadow page stages once before custody ACK', () async {
+      final order = <String>[];
+      final repo = _RecordingInboxStagingRepository(order);
       final replayedIds = <String>[];
 
       bridge.whenCommand(
@@ -3660,9 +3850,10 @@ void main() {
           'connections': [],
         }),
       );
-      bridge.whenCommand(
-        'inbox:retrieve_pending',
-        (_) => jsonEncode({
+      bridge.whenCommand('inbox:retrieve_pending', (payload) {
+        order.add('retrieve');
+        expect(payload?['custodyContract'], ackOrExpiryInboxCustodyContract);
+        return jsonEncode({
           'ok': true,
           'messages': [
             {
@@ -3683,10 +3874,13 @@ void main() {
             },
           ],
           'hasMore': false,
-        }),
-      );
+        });
+      });
       bridge.whenCommand('inbox:ack', (payload) {
+        expect(order, <String>['retrieve', 'stage', 'replay']);
+        order.add('ack');
         expect(payload?['entryIds'], ['entry-001']);
+        expect(payload?['custodyContract'], ackOrExpiryInboxCustodyContract);
         return jsonEncode({'ok': true, 'acked': 1});
       });
 
@@ -3695,6 +3889,8 @@ void main() {
         inboxStagingRepository: repo,
         replayRecoveredInboxChatMessage:
             (message, {String? stagedEntryId}) async {
+              expect(repo.entry('entry-001'), isNotNull);
+              order.add('replay');
               final payload =
                   (jsonDecode(message.content)
                           as Map<String, dynamic>)['payload']
@@ -3712,6 +3908,8 @@ void main() {
       await service.drainOfflineInbox();
 
       expect(replayedIds, ['msg-001']);
+      expect(repo.stageCallCount, 1);
+      expect(order, <String>['retrieve', 'stage', 'replay', 'ack']);
       expect(repo.entry('entry-001'), isNull);
       expect(bridge.calledCommands, contains('inbox:retrieve_pending'));
       expect(bridge.calledCommands, contains('inbox:ack'));

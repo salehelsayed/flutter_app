@@ -213,7 +213,7 @@ class TestUser {
       senderUsername: username,
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
-      storeInInboxDetailed: p2pService.storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: p2pService.storeInAckCustodyInboxDetailed,
     );
   }
 
@@ -233,7 +233,7 @@ class TestUser {
       bridge: bridge,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
       quotedMessageId: quotedMessageId,
-      storeInInboxDetailed: p2pService.storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: p2pService.storeInAckCustodyInboxDetailed,
     );
   }
 
@@ -291,7 +291,7 @@ class TestUser {
       emoji: emoji,
       senderPeerId: peerId,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId) ?? '',
-      storeInInboxDetailed: p2pService.storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: p2pService.storeInAckCustodyInboxDetailed,
     );
   }
 
@@ -314,7 +314,7 @@ class TestUser {
       emoji: emoji,
       senderPeerId: peerId,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId) ?? '',
-      storeInInboxDetailed: p2pService.storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: p2pService.storeInAckCustodyInboxDetailed,
     );
   }
 

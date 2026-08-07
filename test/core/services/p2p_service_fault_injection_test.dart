@@ -7,6 +7,7 @@ import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -61,7 +62,8 @@ class _ThrowingInboxStagingRepository extends InMemoryInboxStagingRepository {
   }
 }
 
-class _DiscoverMissProbeConnectedP2PService implements P2PService {
+class _DiscoverMissProbeConnectedP2PService
+    implements P2PService, AckOrExpiryInboxStore {
   final FakeP2PService _inner;
   int probeRelayCallCount = 0;
   int sendMessageWithReplyCallCount = 0;
@@ -131,6 +133,19 @@ class _DiscoverMissProbeConnectedP2PService implements P2PService {
     String message, {
     int? timeoutMs,
   }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) => _inner.storeInAckCustodyInboxDetailed(
+    toPeerId,
+    message,
+    custodyKind: custodyKind,
+    timeoutMs: timeoutMs,
+  );
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>

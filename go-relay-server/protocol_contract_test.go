@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"sort"
+	"sync"
 	"testing"
 	"time"
 
@@ -81,23 +82,25 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 	// Fully populate every field so omitempty does not hide a key.
 	presenceAge := int64(1200)
 	resp := inboxResponse{
-		Status:        "OK",
-		Error:         "e",
-		StoreStatus:   "stored",
-		ExpiresAtMs:   1,
-		Occupancy:     2,
-		Capacity:      3,
-		Messages:      []inboxMessage{{}},
-		HasMore:       true,
-		Acked:         1,
-		GroupMessages: []groupInboxMessage{{}},
-		NextCursor:    "c",
-		HistoryGaps:   []groupInboxHistoryGap{{}},
-		GroupId:       "g",
-		GapId:         "gap",
-		SourcePeerId:  "p",
-		RangeHash:     "r",
-		HeadMessageId: "h",
+		Status:          "OK",
+		Error:           "e",
+		ErrorCode:       "E",
+		StoreStatus:     "stored",
+		CustodyContract: ackCustodyContract,
+		ExpiresAtMs:     1,
+		Occupancy:       2,
+		Capacity:        3,
+		Messages:        []inboxMessage{{}},
+		HasMore:         true,
+		Acked:           1,
+		GroupMessages:   []groupInboxMessage{{}},
+		NextCursor:      "c",
+		HistoryGaps:     []groupInboxHistoryGap{{}},
+		GroupId:         "g",
+		GapId:           "gap",
+		SourcePeerId:    "p",
+		RangeHash:       "r",
+		HeadMessageId:   "h",
 		// FDC-08 presence_get additive keys (consciously registered below).
 		Presence: "reachable",
 		AgeMs:    &presenceAge,
@@ -122,7 +125,9 @@ func TestResponseKeyContract_Frozen(t *testing.T) {
 		"acked",
 		"ageMs", // FDC-08 presence_get (additive)
 		"capacity",
+		"custodyContract", // Plan 344 additive protected-custody proof
 		"error",
+		"errorCode", // Plan 344 additive machine-readable failure class
 		"expiresAtMs",
 		"gapId",
 		"groupId",
@@ -269,6 +274,161 @@ func TestStatusValueContract_FullInboxStoreStaysOK(t *testing.T) {
 	}
 	if got := extractMessageId(head.Messages[0].Message); got != "cf-1" {
 		t.Fatalf("FIFO head after full-inbox store = %q, want cf-1 (cf-0 evicted, newest kept)", got)
+	}
+}
+
+// causalAckCustodyBackend is deliberately test-only. It models the optional
+// protected lane without changing the production memory backend contract.
+// The production handler discovers this capability only for the additive
+// custody actions; legacy Store/Retrieve/Ack remain delegated to InboxBackend.
+type causalAckCustodyBackend struct {
+	InboxBackend
+	mu        sync.Mutex
+	capacity  int
+	protected map[string][]inboxMessage
+}
+
+func newCausalAckCustodyBackend(capacity int) *causalAckCustodyBackend {
+	return &causalAckCustodyBackend{
+		InboxBackend: newMemoryInboxBackendWithLimits(capacity),
+		capacity:     capacity,
+		protected:    make(map[string][]inboxMessage),
+	}
+}
+
+func (b *causalAckCustodyBackend) StoreAckCustody(
+	peerID string,
+	entry inboxMessage,
+	_ string,
+) (InboxStoreResult, inboxMessage, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	entries := b.protected[peerID]
+	if len(entries) >= b.capacity {
+		return InboxStoreResultRejectedFull, inboxMessage{}, nil
+	}
+	entry = ensureInboxMessageID(entry)
+	b.protected[peerID] = append(entries, entry)
+	return InboxStoreResultStored, entry, nil
+}
+
+func (b *causalAckCustodyBackend) RetrieveAckCustodyPending(
+	peerID string,
+	limit int,
+) ([]inboxMessage, bool, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	entries := append([]inboxMessage(nil), b.protected[peerID]...)
+	if limit < len(entries) {
+		return entries[:limit], true, nil
+	}
+	return entries, false, nil
+}
+
+func (b *causalAckCustodyBackend) AckAckCustody(string, []string) (int, error) {
+	return 0, nil
+}
+
+func (b *causalAckCustodyBackend) CountAckCustody(peerID string) int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.protected[peerID])
+}
+
+func (b *causalAckCustodyBackend) AckCustodyStats() (int, int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	peers := 0
+	total := 0
+	for _, entries := range b.protected {
+		if len(entries) == 0 {
+			continue
+		}
+		peers++
+		total += len(entries)
+	}
+	return peers, total
+}
+
+// TestRelayNotificationClosure_AckCustodyActionRejectsFullWithoutEviction is
+// TC-344-01's causal runtime RED. The raw additive action compiles against the
+// frozen protocol on baseline, where it deterministically reaches the
+// "Unknown action" response. Once implemented, a full protected lane must
+// reject the newest distinct obligation and retain the previously accepted
+// entry byte-for-byte.
+func TestRelayNotificationClosure_AckCustodyActionRejectsFullWithoutEviction(t *testing.T) {
+	t.Setenv("DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED", "true")
+
+	backend := newCausalAckCustodyBackend(1)
+	inbox := NewInboxStoreWithBackendAndCapacity(backend, nil, 1)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	senderPeer := env.sender.ID().String()
+	originalEnvelope := fmt.Sprintf(
+		`{"type":"chat_message","version":"2","id":"protected-oldest","senderPeerId":%q,"encrypted":{"kem":"k","ciphertext":"old","nonce":"n"}}`,
+		senderPeer,
+	)
+	original := inboxMessage{
+		ID:        "relay-protected-oldest",
+		From:      senderPeer,
+		Message:   originalEnvelope,
+		Timestamp: time.Now().UnixMilli(),
+	}
+	if result, _, err := backend.StoreAckCustody(
+		recipientPeer,
+		original,
+		directInboxTargetIDDedupePrefix+"protected-oldest",
+	); err != nil || result != InboxStoreResultStored {
+		t.Fatalf("seed protected lane = (%q, %v), want stored", result, err)
+	}
+
+	newEnvelope := fmt.Sprintf(
+		`{"type":"chat_message","version":"2","id":"protected-newest","senderPeerId":%q,"encrypted":{"kem":"k","ciphertext":"new","nonce":"n"}}`,
+		senderPeer,
+	)
+	request := map[string]interface{}{
+		"action":          "store_custody_v1",
+		"to":              recipientPeer,
+		"message":         newEnvelope,
+		"custodyKind":     "direct_text_v108",
+		"custodyContract": "ack_or_expiry_v1",
+	}
+	requestBytes, err := json.Marshal(request)
+	if err != nil {
+		t.Fatalf("marshal raw custody request: %v", err)
+	}
+
+	stream, err := env.sender.NewStream(context.Background(), env.server.ID(), InboxProtocol)
+	if err != nil {
+		t.Fatalf("open custody stream: %v", err)
+	}
+	defer stream.Close()
+	if err := writeFrame(stream, requestBytes); err != nil {
+		t.Fatalf("write custody request: %v", err)
+	}
+	responseBytes, err := readFrame(stream)
+	if err != nil {
+		t.Fatalf("read custody response: %v", err)
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal(responseBytes, &response); err != nil {
+		t.Fatalf("decode custody response: %v", err)
+	}
+	if response["status"] != "ERROR" ||
+		response["storeStatus"] != string(InboxStoreResultRejectedFull) ||
+		response["errorCode"] != "INBOX_FULL" {
+		t.Fatalf("full custody response = %#v, want ERROR/rejected_full/INBOX_FULL", response)
+	}
+
+	pending, hasMore, err := backend.RetrieveAckCustodyPending(recipientPeer, 10)
+	if err != nil {
+		t.Fatalf("retrieve protected lane: %v", err)
+	}
+	if hasMore || len(pending) != 1 || !reflect.DeepEqual(pending[0], original) {
+		t.Fatalf("protected lane after rejection = (%#v, hasMore=%v), want original only", pending, hasMore)
 	}
 }
 

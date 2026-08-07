@@ -99,6 +99,13 @@ func main() {
 	store.StartCleanup(ctx)
 	push := stores.Push
 	inbox := stores.Inbox
+	log.Printf(
+		"[INBOX] ack custody contract=%s admission_enabled=%v backend=%s (default off; %s)",
+		ackCustodyContract,
+		inbox.AckCustodyAdmissionEnabled(),
+		backendCfg.Kind,
+		ackCustodyAdmissionEnabledEnv,
+	)
 	inbox.SetDirectReactionPushEnabled(loadDirectReactionPushEnabledFromEnv())
 	log.Printf(
 		"[INBOX] direct reaction push enabled=%v (default off; %s)",
@@ -271,6 +278,7 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, g
 			conns := len(h.Network().Peers())
 			rzNs, rzPeers := rz.Stats()
 			inboxPeers, inboxMsgs := inbox.Stats()
+			inboxCustodyMsgs := refreshAckCustodyPendingGauge(inbox)
 			tokenCount := inbox.push.TokenCount()
 			mediaBlobs, mediaDiskMB := media.Stats()
 			pCount, pDiskMB := profile.Stats()
@@ -309,8 +317,8 @@ func logStatsPeriodically(ctx context.Context, h host.Host, inbox *InboxStore, g
 				pushTokensByPlatform.WithLabelValues(p).Set(float64(platformCounts[p]))
 			}
 
-			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d group_inbox_groups=%d group_inbox_msgs=%d dau=%d wau=%d mau=%d daily_msgs=%d daily_media=%d heap_mb=%d goroutines=%d",
-				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, tokenCount,
+			log.Printf("[STATS] conns=%d rz_ns=%d rz_peers=%d inbox_peers=%d inbox_msgs=%d inbox_custody_msgs=%d push_tokens=%d media_blobs=%d media_disk_mb=%d profile_count=%d profile_disk_mb=%d group_inbox_groups=%d group_inbox_msgs=%d dau=%d wau=%d mau=%d daily_msgs=%d daily_media=%d heap_mb=%d goroutines=%d",
+				conns, rzNs, rzPeers, inboxPeers, inboxMsgs, inboxCustodyMsgs, tokenCount,
 				mediaBlobs, mediaDiskMB,
 				pCount, pDiskMB,
 				groupInboxGroups, groupInboxMsgs,

@@ -116,6 +116,66 @@ var inboxRejectedFullCounter = promauto.NewCounter(prometheus.CounterOpts{
 	Help: "1:1 inbox messages rejected because the recipient inbox is full.",
 })
 
+// Plan 344 protected-custody metrics are fixed-cardinality. No peer ID,
+// envelope, entry ID, or other user-controlled value is ever a label.
+var inboxCustodyContractInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "relay_inbox_custody_contract_info",
+	Help: "Protected direct-inbox custody contract revision supported by this relay binary.",
+}, []string{"revision"})
+
+var inboxCustodyAdmissionEnabledGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_inbox_custody_admission_enabled",
+	Help: "1 when new protected direct-inbox custody stores are admitted; reads and ACKs are unaffected.",
+})
+
+var inboxCustodyMessagesPendingGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_inbox_custody_messages_pending",
+	Help: "Authoritative protected direct-inbox entries currently pending ACK or expiry.",
+})
+
+var inboxCustodyExpiredCounter = promauto.NewCounter(prometheus.CounterOpts{
+	Name: "relay_inbox_custody_expired_total",
+	Help: "Authoritative protected direct-inbox entries removed by seven-day expiry.",
+})
+
+var inboxCustodyStoreCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_inbox_custody_store_total",
+	Help: "Protected direct-inbox store outcomes by fixed result class.",
+}, []string{"result"})
+
+func init() {
+	inboxCustodyContractInfo.WithLabelValues(ackCustodyContract).Set(1)
+	for _, result := range []string{
+		ackCustodyStoreMetricStored,
+		ackCustodyStoreMetricDuplicate,
+		ackCustodyStoreMetricRejectedFull,
+		ackCustodyStoreMetricDisabled,
+		ackCustodyStoreMetricIdentityConflict,
+		ackCustodyStoreMetricIneligible,
+		ackCustodyStoreMetricFailed,
+	} {
+		inboxCustodyStoreCounter.WithLabelValues(result).Add(0)
+	}
+}
+
+func setAckCustodyAdmissionGauge(enabled bool) {
+	if enabled {
+		inboxCustodyAdmissionEnabledGauge.Set(1)
+		return
+	}
+	inboxCustodyAdmissionEnabledGauge.Set(0)
+}
+
+func recordAckCustodyStoreResult(result string) {
+	inboxCustodyStoreCounter.WithLabelValues(result).Inc()
+}
+
+func recordAckCustodyExpired(count int) {
+	if count > 0 {
+		inboxCustodyExpiredCounter.Add(float64(count))
+	}
+}
+
 // setBackendDurabilityGauge publishes whether the running control-plane backend
 // is durable, mapping cfg.IsDurable() to the relay_backend_durable gauge. Called
 // once at boot so a silently-memory relay (env unset) is alertable.

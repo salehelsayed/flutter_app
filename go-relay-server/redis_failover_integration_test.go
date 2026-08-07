@@ -30,15 +30,122 @@ type redisHelperRequest struct {
 	Limit       int      `json:"limit,omitempty"`
 	TTL         uint64   `json:"ttl,omitempty"`
 	Messages    []string `json:"messages,omitempty"`
+	EntryIDs    []string `json:"entryIds,omitempty"`
+	CustodyKind string   `json:"custodyKind,omitempty"`
+	Admission   bool     `json:"admission,omitempty"`
 }
 
 type redisHelperResponse struct {
-	Records    []string `json:"records,omitempty"`
-	Messages   []string `json:"messages,omitempty"`
-	HasMore    bool     `json:"hasMore,omitempty"`
-	NextCursor string   `json:"nextCursor,omitempty"`
-	Token      string   `json:"token,omitempty"`
-	Platform   string   `json:"platform,omitempty"`
+	Records     []string `json:"records,omitempty"`
+	Messages    []string `json:"messages,omitempty"`
+	HasMore     bool     `json:"hasMore,omitempty"`
+	NextCursor  string   `json:"nextCursor,omitempty"`
+	Token       string   `json:"token,omitempty"`
+	Platform    string   `json:"platform,omitempty"`
+	StoreStatus string   `json:"storeStatus,omitempty"`
+	EntryIDs    []string `json:"entryIds,omitempty"`
+	Timestamps  []int64  `json:"timestamps,omitempty"`
+	Acked       int      `json:"acked,omitempty"`
+}
+
+func TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace(t *testing.T) {
+	const baselineCommit = "6bab4c485dd4d13887392915abaaaabf85ea4b21"
+	baselineSource, err := exec.Command(
+		"git",
+		"show",
+		baselineCommit+":go-relay-server/backend_redis.go",
+	).Output()
+	if err != nil {
+		t.Fatalf("read pinned baseline Redis backend source: %v", err)
+	}
+	const frozenLegacyKeySource = `func (b *redisInboxBackend) key(peerId string) string {
+	return b.prefix + "inbox:" + encodeRedisComponent(peerId)
+}`
+	if !bytes.Contains(baselineSource, []byte(frozenLegacyKeySource)) {
+		t.Fatalf("baseline %s no longer proves the frozen inbox: key constructor", baselineCommit)
+	}
+	if bytes.Contains(baselineSource, []byte("custody_inbox:")) {
+		t.Fatalf("baseline %s unexpectedly knows the protected namespace", baselineCommit)
+	}
+
+	server := miniredis.RunT(t)
+	base := redisHelperRequest{
+		RedisURL:    "redis://" + server.Addr(),
+		RedisPrefix: "ack-process:",
+		PeerID:      "peer-recipient",
+		From:        "peer-sender",
+		CustodyKind: ackCustodyDirectReactionKind,
+		Admission:   true,
+		Messages: []string{
+			ackCustodyReactionEnvelope("process-handoff", "add", "target", "peer-sender", "cipher"),
+		},
+	}
+	keyProbe := newAckCustodyRedisBackend(t, server, base.RedisPrefix, 1)
+	wantLegacyKey := base.RedisPrefix + "inbox:" + encodeRedisComponent(base.PeerID)
+	wantProtectedKey := base.RedisPrefix + "custody_inbox:" + encodeRedisComponent(base.PeerID)
+	if got := keyProbe.key(base.PeerID); got != wantLegacyKey {
+		t.Fatalf("current legacy key = %q, want frozen %q", got, wantLegacyKey)
+	}
+	if got := keyProbe.ackCustodyKey(base.PeerID); got != wantProtectedKey || got == wantLegacyKey {
+		t.Fatalf("protected key = %q, want separate %q", got, wantProtectedKey)
+	}
+
+	stored := runRedisHelper(t, withOp(base, "store_ack_custody", nil))
+	if stored.StoreStatus != string(InboxStoreResultStored) ||
+		len(stored.EntryIDs) != 1 || stored.EntryIDs[0] == "" ||
+		len(stored.Timestamps) != 1 {
+		t.Fatalf("process A protected store = %#v", stored)
+	}
+	originalID := stored.EntryIDs[0]
+	originalTimestamp := stored.Timestamps[0]
+
+	flagOff := base
+	flagOff.Admission = false
+	drained := runRedisHelper(t, withOp(flagOff, "retrieve_ack_custody", func(r *redisHelperRequest) {
+		r.Limit = 50
+	}))
+	if len(drained.EntryIDs) != 1 || drained.EntryIDs[0] != originalID ||
+		len(drained.Timestamps) != 1 || drained.Timestamps[0] != originalTimestamp {
+		t.Fatalf("process B flag-off protected retrieve = %#v", drained)
+	}
+
+	// The independently spawned legacy action can destructively consume only
+	// the inbox: shadow. It has no path to custody_inbox: authority.
+	legacy := runRedisHelper(t, withOp(flagOff, "retrieve_inbox", func(r *redisHelperRequest) {
+		r.Limit = 50
+	}))
+	if len(legacy.Messages) != 1 || legacy.Messages[0] != base.Messages[0] {
+		t.Fatalf("legacy destructive shadow retrieve = %#v", legacy)
+	}
+	stillProtected := runRedisHelper(t, withOp(flagOff, "retrieve_ack_custody", func(r *redisHelperRequest) {
+		r.Limit = 50
+	}))
+	if len(stillProtected.EntryIDs) != 1 || stillProtected.EntryIDs[0] != originalID ||
+		stillProtected.Timestamps[0] != originalTimestamp {
+		t.Fatalf("legacy action addressed protected namespace: %#v", stillProtected)
+	}
+
+	// Re-enable and exact-retry through a third process: duplicate preserves the
+	// original ID/expiry instead of minting/refanning out.
+	reenabled := runRedisHelper(t, withOp(base, "store_ack_custody", nil))
+	if reenabled.StoreStatus != string(InboxStoreResultDuplicate) ||
+		len(reenabled.EntryIDs) != 1 || reenabled.EntryIDs[0] != originalID ||
+		reenabled.Timestamps[0] != originalTimestamp {
+		t.Fatalf("process C re-enabled retry = %#v", reenabled)
+	}
+
+	acked := runRedisHelper(t, withOp(flagOff, "ack_ack_custody", func(r *redisHelperRequest) {
+		r.EntryIDs = []string{originalID}
+	}))
+	if acked.Acked != 1 {
+		t.Fatalf("flag-off process ACK = %#v", acked)
+	}
+	final := runRedisHelper(t, withOp(flagOff, "retrieve_ack_custody", func(r *redisHelperRequest) {
+		r.Limit = 50
+	}))
+	if len(final.Messages) != 0 || len(final.EntryIDs) != 0 || final.HasMore {
+		t.Fatalf("protected row survived exact ACK: %#v", final)
+	}
 }
 
 func TestRedisControlPlaneSharedAcrossProcesses(t *testing.T) {
@@ -185,9 +292,10 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 	}
 
 	stores, err := newControlPlaneStores(context.Background(), backendConfig{
-		Kind:        backendKindRedis,
-		RedisURL:    req.RedisURL,
-		RedisPrefix: req.RedisPrefix,
+		Kind:                       backendKindRedis,
+		RedisURL:                   req.RedisURL,
+		RedisPrefix:                req.RedisPrefix,
+		AckCustodyAdmissionEnabled: req.Admission,
 	}, DefaultServerLimits(), "/path/that/does/not/exist.json")
 	if err != nil {
 		t.Fatalf("newControlPlaneStores() error: %v", err)
@@ -220,6 +328,41 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 		for _, message := range messages {
 			resp.Messages = append(resp.Messages, message.Message)
 		}
+	case "store_ack_custody":
+		if len(req.Messages) != 1 {
+			t.Fatalf("store_ack_custody requires exactly one message")
+		}
+		result, stored, err := stores.Inbox.StoreAckCustody(req.PeerID, inboxMessage{
+			From:      req.From,
+			Message:   req.Messages[0],
+			Timestamp: time.Now().UnixMilli(),
+		}, req.CustodyKind)
+		if err != nil {
+			t.Fatalf("StoreAckCustody: %v", err)
+		}
+		resp.StoreStatus = string(result)
+		resp.EntryIDs = []string{stored.ID}
+		resp.Timestamps = []int64{stored.Timestamp}
+	case "retrieve_ack_custody":
+		messages, hasMore, err := stores.Inbox.RetrieveAckCustodyPending(req.PeerID, req.Limit)
+		if err != nil {
+			t.Fatalf("RetrieveAckCustodyPending: %v", err)
+		}
+		resp.HasMore = hasMore
+		resp.Messages = make([]string, 0, len(messages))
+		resp.EntryIDs = make([]string, 0, len(messages))
+		resp.Timestamps = make([]int64, 0, len(messages))
+		for _, message := range messages {
+			resp.Messages = append(resp.Messages, message.Message)
+			resp.EntryIDs = append(resp.EntryIDs, message.ID)
+			resp.Timestamps = append(resp.Timestamps, message.Timestamp)
+		}
+	case "ack_ack_custody":
+		acked, err := stores.Inbox.AckAckCustody(req.PeerID, req.EntryIDs)
+		if err != nil {
+			t.Fatalf("AckAckCustody: %v", err)
+		}
+		resp.Acked = acked
 	case "register_push":
 		stores.Push.RegisterToken(req.PeerID, req.Token, req.Platform)
 	case "lookup_push":

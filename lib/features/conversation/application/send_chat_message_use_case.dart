@@ -385,6 +385,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
+  StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
   void Function(String messageId)? onDirectTextCustodyStaged,
 }) async {
   final sendStopwatch = clock.stopwatch()..start();
@@ -400,6 +401,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       : null;
   final effectiveStoreInInboxDetailed =
       storeInInboxDetailed ?? detailedInboxStore?.storeInInboxDetailed;
+  final ackCustodyInboxStore = p2pService is AckOrExpiryInboxStore
+      ? p2pService as AckOrExpiryInboxStore
+      : null;
+  final effectiveStoreInAckCustodyInboxDetailed =
+      storeInAckCustodyInboxDetailed ??
+      ackCustodyInboxStore?.storeInAckCustodyInboxDetailed;
   var connectionReused = false;
   var sendPath = 'unknown';
   Map<String, int> stepTimings = {};
@@ -1108,8 +1115,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     late InboxStoreOutcome outcome;
     var storeThrew = false;
     try {
+      final ackCustodyStore = effectiveStoreInAckCustodyInboxDetailed;
       final detailedStore = effectiveStoreInInboxDetailed;
-      if (detailedStore != null) {
+      if (ownsDirectTextInboxCustody && ackCustodyStore != null) {
+        outcome = await ackCustodyStore(
+          targetPeerId,
+          jsonString,
+          custodyKind: AckCustodyKind.directTextV108,
+          timeoutMs: interactiveInboxBudget.inMilliseconds,
+        );
+      } else if (ownsDirectTextInboxCustody) {
+        outcome = const InboxStoreOutcome(
+          status: InboxStoreStatus.failed,
+          errorCode: 'ACK_OR_EXPIRY_STORE_UNAVAILABLE',
+        );
+      } else if (detailedStore != null) {
         outcome = await detailedStore(
           targetPeerId,
           jsonString,
@@ -1143,8 +1163,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
     }
 
-    transportMetrics?.recordAttempt(leg: 'inbox', succeeded: outcome.accepted);
-    if (outcome.accepted) {
+    final custodyAccepted = ownsDirectTextInboxCustody
+        ? outcome.ackOrExpiryAccepted
+        : outcome.accepted;
+    transportMetrics?.recordAttempt(leg: 'inbox', succeeded: custodyAccepted);
+    if (custodyAccepted) {
       await settleAcceptedInboxCustody(outcome);
     } else if (ownsDirectTextInboxCustody && stagedDirectTextCustody != null) {
       final errorCode = storeThrew
@@ -1240,6 +1263,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               sendStopwatch: sendStopwatch,
               emitTimingEvent: emitTimingEvent,
               inboxHedge: inboxHedge,
+              requiresAckOrExpiryCustody: ownsDirectTextInboxCustody,
               extraTimingDetails: {
                 'connectionReused': true,
                 'sendPath': 'reuse',
@@ -1334,6 +1358,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         sendStopwatch: sendStopwatch,
         emitTimingEvent: emitTimingEvent,
         inboxHedge: inboxHedge,
+        requiresAckOrExpiryCustody: ownsDirectTextInboxCustody,
         extraTimingDetails: {
           'connectionReused': false,
           'sendPath': 'sticky',
@@ -1585,6 +1610,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
       inboxHedge: inboxHedge,
+      requiresAckOrExpiryCustody: ownsDirectTextInboxCustody,
       extraTimingDetails: {
         'connectionReused': false,
         'sendPath': sendPath,
@@ -1720,7 +1746,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (inboxOutcome.status == InboxStoreStatus.failed) {
     inboxOutcome = await inboxHedge.retryAfterFailure();
   }
-  if (inboxOutcome.accepted) {
+  if (ownsDirectTextInboxCustody
+      ? inboxOutcome.ackOrExpiryAccepted
+      : inboxOutcome.accepted) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_CONCURRENT_INBOX_CUSTODY',
@@ -2489,6 +2517,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
   required Stopwatch sendStopwatch,
   required bool emitTimingEvent,
   required _SendScopedInboxHedge inboxHedge,
+  required bool requiresAckOrExpiryCustody,
   Map<String, dynamic> extraTimingDetails = const {},
 }) async {
   final message = await _persistOutgoingSendResult(
@@ -2500,6 +2529,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _completeSuccessfulSend({
     editedAt: editedAt,
     via: via,
     inboxHedge: inboxHedge,
+    requiresAckOrExpiryCustody: requiresAckOrExpiryCustody,
   );
   final persistedMessage = await _persistOutgoingTransportState(
     messageRepo: messageRepo,
@@ -2581,6 +2611,7 @@ Future<ConversationMessage> _persistOutgoingSendResult({
   required String? editedAt,
   required String via,
   required _SendScopedInboxHedge inboxHedge,
+  required bool requiresAckOrExpiryCustody,
 }) async {
   if (acknowledged) {
     return payload.toConversationMessage(
@@ -2616,7 +2647,9 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     outcome = await inboxHedge.retryAfterFailure();
   }
 
-  if (outcome.accepted) {
+  if (requiresAckOrExpiryCustody
+      ? outcome.ackOrExpiryAccepted
+      : outcome.accepted) {
     emitFlowEvent(
       layer: 'FL',
       event: wasAlreadyStarted

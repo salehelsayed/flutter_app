@@ -5821,7 +5821,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             try {
               completed += await drainDirectInboxCustodyOutbox(
                 custodyRepository: messageRepository,
-                storeInInboxDetailed: p2pService.storeInInboxDetailed,
+                storeInAckCustodyInboxDetailed:
+                    p2pService.storeInAckCustodyInboxDetailed,
               );
             } catch (error) {
               emitFlowEvent(
@@ -5833,7 +5834,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             try {
               completed += await drainDirectReactionInboxCustodyOutbox(
                 custodyRepository: reactionRepository,
-                storeInInboxDetailed: p2pService.storeInInboxDetailed,
+                storeInAckCustodyInboxDetailed:
+                    p2pService.storeInAckCustodyInboxDetailed,
               );
             } catch (error) {
               emitFlowEvent(

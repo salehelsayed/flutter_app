@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -59,7 +60,7 @@ class _AuditBridge implements Bridge {
   void dispose() {}
 }
 
-class _FakeP2PService implements P2PService {
+class _FakeP2PService implements P2PService, AckOrExpiryInboxStore {
   @override
   NodeState get currentState =>
       const NodeState(isStarted: true, peerId: 'peer-alice');
@@ -99,6 +100,17 @@ class _FakeP2PService implements P2PService {
     String message, {
     int? timeoutMs,
   }) async => true;
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async => const InboxStoreOutcome(
+    status: InboxStoreStatus.stored,
+    storeStatus: 'stored',
+    custodyContract: ackOrExpiryInboxCustodyContract,
+  );
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) async =>
       [];

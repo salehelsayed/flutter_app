@@ -24,6 +24,13 @@ confirms it.
     `setBackendDurabilityGauge(backendCfg)` — `1` durable (redis), `0` in-memory.
   - **No code default change**: `RELAY_BACKEND` unset still selects the in-memory backend
     (local-dev/test default — INV-1). Durability is an **env**, never a code-default flip.
+  - The additive direct-inbox ACK-custody contract uses
+    `custodyContract: "ack_or_expiry_v1"` and a separate
+    `${REDIS_PREFIX}custody_inbox:<encoded-peer-id>` namespace. Its legacy
+    `${REDIS_PREFIX}inbox:<encoded-peer-id>` shadow is compatibility-only.
+  - `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED` defaults to false and may be
+    enabled only with Redis. The flag gates new protected stores; protected
+    retrieval, ACK, expiry, and metrics continue while it is off.
 - **`go-mknoon/node`**
   - `DefaultRelayAddresses()` returns the default relay peer over **both WSS + QUIC** (one peer,
     two transports). Consumed at the node nil-default seam, the recovery-warm fallback, and
@@ -56,6 +63,7 @@ On each front-end box (identical values for `REDIS_URL` + `REDIS_PREFIX` so they
 RELAY_BACKEND=redis
 REDIS_URL=redis://<user>:<pass>@<host>:6379/0      # or rediss:// for TLS
 REDIS_PREFIX=relay:prod:                           # PER-ENV prefix — see below
+DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=false   # S1: deploy/drain before admission
 ```
 
 - `REDIS_PREFIX` is normalized to end in `:` (`loadBackendConfigFromEnv`). **Use a distinct prefix
@@ -66,6 +74,25 @@ REDIS_PREFIX=relay:prod:                           # PER-ENV prefix — see belo
   `TestNewControlPlaneStores_RedisRequiresURL`. It will NOT silently fall back to memory.
 - **Mixed pool hazard:** one redis front-end + one memory front-end splits custody. Ensure *every*
   front-end has `RELAY_BACKEND=redis` and the SAME `REDIS_URL`/prefix.
+- Starting with `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=true` on an
+  in-memory backend fails loudly. Do not bypass that guard.
+
+### ACK-custody activation state machine
+
+- **S0:** old relay binary; protected actions are unsupported.
+- **S1:** deploy the new binary everywhere with Redis and
+  `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=false`. Protected reads, ACKs,
+  expiry, and metrics are live, but new protected stores fail closed.
+- **S2:** after every front-end is verified against the same Redis URL/prefix
+  and Redis persistence/HA survives an actual Redis restart/restore, set
+  `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=true` everywhere.
+- **S3:** release capable clients that require the exact
+  `ack_or_expiry_v1` receipt before retiring local direct-text/reaction custody.
+
+The kill switch is S3 -> S1: turn the admission flag off everywhere. Senders
+retain new rows locally while existing protected rows continue to drain.
+Miniredis and relay-process handoff are code proofs only; they do not replace
+the S2 actual Redis restart/restore receipt.
 
 ---
 
@@ -97,6 +124,17 @@ Also confirm the boot log line:
 
 ```
 Control-plane: backend=redis durable=true prefix=relay:prod:
+```
+
+For ACK-custody admission, also confirm these fixed-cardinality series on every
+front-end (no peer, entry, or envelope labels are allowed):
+
+```text
+relay_inbox_custody_contract_info{revision="ack_or_expiry_v1"} 1
+relay_inbox_custody_admission_enabled 0|1
+relay_inbox_custody_messages_pending <count>
+relay_inbox_custody_expired_total <count>
+relay_inbox_custody_store_total{result="stored|duplicate|rejected_full|disabled|identity_conflict|ineligible|failed"} <count>
 ```
 
 **Alerting:** add a Prometheus alert `relay_backend_durable < 1` (per-instance) — this is the only
@@ -137,10 +175,21 @@ cd go-relay-server && go test -tags integration -run TestRedisControlPlaneShared
 
 ## 7. Rollback
 
-To revert durability (e.g. Redis incident), unset `RELAY_BACKEND` (or set `=memory`) and restart
-the front-ends. The code default is memory, so this is a pure env change. **Caveat:** rolling back
-to memory re-introduces restart-loss; only do so if Redis itself is the outage, and do NOT do it
-while FDC-03's inbox-volume ramp is live.
+Before protected admission, the legacy durability rollback remains available
+with its existing data-loss warning. Once protected pending can be nonzero, do
+not unset `RELAY_BACKEND` or roll back to memory: memory cannot address
+`custody_inbox:` and is not service-equivalent.
+
+The normal protected rollback is **flag off**: set
+`DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=false` on every front-end while
+keeping the new Redis-backed binary running. This stops new admission but keeps
+retrieve/ACK/expiry active. A compatibility binary is the other safe choice.
+
+A **pinned old-binary** emergency rollback pauses protected retrieval and
+requires a separately recorded ops proof that the artifact preserves the
+legacy namespace and fails new stores closed. It is not authorized by the
+current-source helper or miniredis tests. Do not perform it until protected
+pending is zero unless accepting that outage is an explicit incident decision.
 
 ---
 
@@ -148,6 +197,10 @@ while FDC-03's inbox-volume ramp is live.
 
 - [ ] Redis provisioned, persistence enabled, network-restricted.
 - [ ] `RELAY_BACKEND=redis` + `REDIS_URL` + per-env `REDIS_PREFIX` on **every** front-end.
+- [ ] New binary is first deployed in S1 with `DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED=false`.
+- [ ] Shared Redis persistence/HA passed an actual Redis restart/restore before S2.
+- [ ] Admission is enabled on every front-end before S3 capable clients ship.
+- [ ] Kill-switch and pinned old-binary rollback boundaries are recorded.
 - [ ] ≥2 front-ends sharing the one Redis.
 - [ ] `relay_backend_durable 1` on every front-end (`curl :2112/metrics`).
 - [ ] Prometheus alert on `relay_backend_durable < 1`.

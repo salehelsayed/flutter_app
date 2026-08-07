@@ -24,6 +24,10 @@ type redisInboxBackend struct {
 	client     *redis.Client
 	prefix     string
 	maxPerPeer int
+	// Test-only failpoints keep atomicity and ambiguous-commit behavior
+	// deterministic without changing the production Redis command path.
+	ackCustodyBeforeCommit func() error
+	ackCustodyAfterCommit  func() error
 }
 
 type redisGroupInboxBackend struct {
@@ -116,11 +120,19 @@ func withRedisWatchRetry(
 	key string,
 	fn func(tx *redis.Tx) error,
 ) error {
+	return withRedisWatchRetryKeys(client, []string{key}, fn)
+}
+
+func withRedisWatchRetryKeys(
+	client *redis.Client,
+	keys []string,
+	fn func(tx *redis.Tx) error,
+) error {
 	ctx := context.Background()
 	var lastErr error
 
 	for range redisWatchRetries {
-		err := client.Watch(ctx, fn, key)
+		err := client.Watch(ctx, fn, keys...)
 		if err == nil {
 			return nil
 		}
@@ -134,6 +146,34 @@ func withRedisWatchRetry(
 		lastErr = redis.TxFailedErr
 	}
 	return lastErr
+}
+
+// redisReplaceLists commits every supplied list replacement in one EXEC. It is
+// used by protected custody so a newly accepted authoritative row and its
+// legacy compatibility shadow can never become a one-sided known success.
+func redisReplaceLists(tx *redis.Tx, replacements map[string][]string) error {
+	ctx := context.Background()
+	_, err := tx.TxPipelined(ctx, func(pipe redis.Pipeliner) error {
+		keys := make([]string, 0, len(replacements))
+		for key := range replacements {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			values := replacements[key]
+			pipe.Del(ctx, key)
+			if len(values) == 0 {
+				continue
+			}
+			items := make([]interface{}, len(values))
+			for i, value := range values {
+				items[i] = value
+			}
+			pipe.RPush(ctx, key, items...)
+		}
+		return nil
+	})
+	return err
 }
 
 func redisReplaceList(tx *redis.Tx, key string, values []string) error {
@@ -520,6 +560,428 @@ func (b *redisInboxBackend) Stats() (totalPeers int, totalMessages int) {
 		totalMessages += len(validMessages)
 	}
 
+	return totalPeers, totalMessages
+}
+
+func (b *redisInboxBackend) ackCustodyKey(peerID string) string {
+	return b.prefix + "custody_inbox:" + encodeRedisComponent(peerID)
+}
+
+func (b *redisInboxBackend) ackCustodyPattern() string {
+	return b.prefix + "custody_inbox:*"
+}
+
+func equalStringSlices(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for i := range left {
+		if left[i] != right[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func inboxIdentityMatches(entry inboxMessage, from string, message string) bool {
+	return entry.From == from && entry.Message == message
+}
+
+// StoreAckCustody atomically writes the protected authority and legacy shadow.
+// Duplicate and identity-conflict decisions precede the capacity check so an
+// exact retry remains accepting at cap and preserves the original expiry.
+func (b *redisInboxBackend) StoreAckCustody(
+	toPeerID string,
+	entry inboxMessage,
+	dedupeKey string,
+) (InboxStoreResult, inboxMessage, error) {
+	entry = ensureInboxMessageID(entry)
+	protectedKey := b.ackCustodyKey(toPeerID)
+	legacyKey := b.key(toPeerID)
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	capacity := b.maxPerPeer
+	if capacity <= 0 {
+		capacity = maxMessagesPerPeer
+	}
+
+	var (
+		result          InboxStoreResult
+		storedEntry     inboxMessage
+		decisionErr     error
+		protectedPruned int
+		legacyPruned    int
+		legacyEvicted   int
+		acceptedCommit  bool
+	)
+
+	err := withRedisWatchRetryKeys(
+		b.client,
+		[]string{protectedKey, legacyKey},
+		func(tx *redis.Tx) error {
+			ctx := context.Background()
+			protectedRaw, err := tx.LRange(ctx, protectedKey, 0, -1).Result()
+			if err == redis.Nil {
+				protectedRaw = nil
+			} else if err != nil {
+				return err
+			}
+			legacyRaw, err := tx.LRange(ctx, legacyKey, 0, -1).Result()
+			if err == redis.Nil {
+				legacyRaw = nil
+			} else if err != nil {
+				return err
+			}
+
+			validProtectedRaw, protectedMessages, protectedPrunedInTx :=
+				normalizeInboxEntries(protectedRaw, cutoff)
+			validLegacyRaw, legacyMessages, legacyPrunedInTx :=
+				normalizeInboxEntries(legacyRaw, cutoff)
+			protectedPruned = protectedPrunedInTx
+			legacyPruned = legacyPrunedInTx
+			legacyEvicted = 0
+			acceptedCommit = false
+			decisionErr = nil
+			result = ""
+			storedEntry = inboxMessage{}
+
+			var protectedMatch *inboxMessage
+			for i := range protectedMessages {
+				messageKey := extractDirectInboxDedupeKey(protectedMessages[i].Message)
+				if messageKey != dedupeKey {
+					continue
+				}
+				if !inboxIdentityMatches(protectedMessages[i], entry.From, entry.Message) {
+					decisionErr = errAckCustodyIdentityConflict
+					break
+				}
+				matched := protectedMessages[i]
+				protectedMatch = &matched
+			}
+
+			if decisionErr == nil && protectedMatch != nil {
+				result = InboxStoreResultDuplicate
+				storedEntry = *protectedMatch
+			} else if decisionErr == nil {
+				var legacyMatch *inboxMessage
+				for i := range legacyMessages {
+					if extractDirectInboxDedupeKey(legacyMessages[i].Message) != dedupeKey {
+						continue
+					}
+					if !inboxIdentityMatches(legacyMessages[i], entry.From, entry.Message) {
+						decisionErr = errAckCustodyIdentityConflict
+						break
+					}
+					matched := legacyMessages[i]
+					legacyMatch = &matched
+				}
+
+				if decisionErr == nil && len(protectedMessages) >= capacity {
+					result = InboxStoreResultRejectedFull
+				} else if decisionErr == nil && legacyMatch != nil {
+					// Promote the already-accepted legacy identity without extending
+					// its timestamp/expiry or minting a second relay entry ID.
+					storedEntry = *legacyMatch
+					payload, err := json.Marshal(storedEntry)
+					if err != nil {
+						return fmt.Errorf("encode promoted custody message: %w", err)
+					}
+					validProtectedRaw = append(validProtectedRaw, string(payload))
+					result = InboxStoreResultDuplicate
+					acceptedCommit = true
+				} else if decisionErr == nil {
+					storedEntry = entry
+					payload, err := json.Marshal(storedEntry)
+					if err != nil {
+						return fmt.Errorf("encode custody message: %w", err)
+					}
+					validProtectedRaw = append(validProtectedRaw, string(payload))
+
+					// The shadow obeys the frozen legacy evict-oldest capacity
+					// contract. Its eviction never touches the protected list.
+					if len(validLegacyRaw) >= capacity {
+						legacyEvicted = len(validLegacyRaw) - capacity + 1
+						validLegacyRaw = validLegacyRaw[legacyEvicted:]
+					}
+					validLegacyRaw = append(validLegacyRaw, string(payload))
+					result = InboxStoreResultStored
+					acceptedCommit = true
+				}
+			}
+
+			needsWrite := !equalStringSlices(protectedRaw, validProtectedRaw) ||
+				!equalStringSlices(legacyRaw, validLegacyRaw)
+			if !needsWrite {
+				return nil
+			}
+			if acceptedCommit && b.ackCustodyBeforeCommit != nil {
+				if err := b.ackCustodyBeforeCommit(); err != nil {
+					return err
+				}
+			}
+			return redisReplaceLists(tx, map[string][]string{
+				protectedKey: validProtectedRaw,
+				legacyKey:    validLegacyRaw,
+			})
+		},
+	)
+	if err != nil {
+		return "", inboxMessage{}, fmt.Errorf("atomic protected/shadow store: %w", err)
+	}
+
+	recordAckCustodyExpired(protectedPruned)
+	recordInboxExpiredPruned(legacyPruned)
+	if legacyEvicted > 0 {
+		inboxCappedCounter.Add(float64(legacyEvicted))
+	}
+	if decisionErr != nil {
+		return "", inboxMessage{}, decisionErr
+	}
+	if acceptedCommit && b.ackCustodyAfterCommit != nil {
+		if err := b.ackCustodyAfterCommit(); err != nil {
+			return "", inboxMessage{}, fmt.Errorf("ack custody response after commit: %w", err)
+		}
+	}
+	return result, storedEntry, nil
+}
+
+func ackCustodyShadowSignature(message inboxMessage) string {
+	return message.ID + "\x00" + message.From + "\x00" + message.Message
+}
+
+func coalesceAndSortAckCustodyMessages(
+	protectedMessages []inboxMessage,
+	legacyMessages []inboxMessage,
+) []inboxMessage {
+	logical := make([]inboxMessage, 0, len(protectedMessages)+len(legacyMessages))
+	protectedSignatures := make(map[string]struct{}, len(protectedMessages))
+	for _, message := range protectedMessages {
+		logical = append(logical, message)
+		protectedSignatures[ackCustodyShadowSignature(message)] = struct{}{}
+	}
+	for _, message := range legacyMessages {
+		if _, isExactShadow := protectedSignatures[ackCustodyShadowSignature(message)]; isExactShadow {
+			continue
+		}
+		logical = append(logical, message)
+	}
+
+	sort.SliceStable(logical, func(i, j int) bool {
+		if logical[i].Timestamp != logical[j].Timestamp {
+			return logical[i].Timestamp < logical[j].Timestamp
+		}
+		if logical[i].ID != logical[j].ID {
+			return logical[i].ID < logical[j].ID
+		}
+		if logical[i].From != logical[j].From {
+			return logical[i].From < logical[j].From
+		}
+		return logical[i].Message < logical[j].Message
+	})
+	return logical
+}
+
+func (b *redisInboxBackend) RetrieveAckCustodyPending(
+	peerID string,
+	limit int,
+) ([]inboxMessage, bool, error) {
+	if limit <= 0 {
+		return nil, false, nil
+	}
+	protectedKey := b.ackCustodyKey(peerID)
+	legacyKey := b.key(peerID)
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	var (
+		logical         []inboxMessage
+		protectedPruned int
+		legacyPruned    int
+	)
+
+	err := withRedisWatchRetryKeys(
+		b.client,
+		[]string{protectedKey, legacyKey},
+		func(tx *redis.Tx) error {
+			ctx := context.Background()
+			protectedRaw, err := tx.LRange(ctx, protectedKey, 0, -1).Result()
+			if err == redis.Nil {
+				protectedRaw = nil
+			} else if err != nil {
+				return err
+			}
+			legacyRaw, err := tx.LRange(ctx, legacyKey, 0, -1).Result()
+			if err == redis.Nil {
+				legacyRaw = nil
+			} else if err != nil {
+				return err
+			}
+
+			validProtectedRaw, protectedMessages, protectedPrunedInTx :=
+				normalizeInboxEntries(protectedRaw, cutoff)
+			validLegacyRaw, legacyMessages, legacyPrunedInTx :=
+				normalizeInboxEntries(legacyRaw, cutoff)
+			protectedPruned = protectedPrunedInTx
+			legacyPruned = legacyPrunedInTx
+			logical = coalesceAndSortAckCustodyMessages(protectedMessages, legacyMessages)
+
+			if equalStringSlices(protectedRaw, validProtectedRaw) &&
+				equalStringSlices(legacyRaw, validLegacyRaw) {
+				return nil
+			}
+			return redisReplaceLists(tx, map[string][]string{
+				protectedKey: validProtectedRaw,
+				legacyKey:    validLegacyRaw,
+			})
+		},
+	)
+	if err != nil {
+		return nil, false, fmt.Errorf("retrieve ack custody pending: %w", err)
+	}
+	recordAckCustodyExpired(protectedPruned)
+	recordInboxExpiredPruned(legacyPruned)
+
+	pageSize := minInt(limit, len(logical))
+	return append([]inboxMessage(nil), logical[:pageSize]...), len(logical) > pageSize, nil
+}
+
+func ackCustodyTargets(entryIDs []string) map[string]struct{} {
+	targets := make(map[string]struct{}, len(entryIDs))
+	for _, entryID := range entryIDs {
+		if entryID != "" {
+			targets[entryID] = struct{}{}
+		}
+	}
+	return targets
+}
+
+func filterAckCustodyTargets(
+	raw []string,
+	messages []inboxMessage,
+	targets map[string]struct{},
+	found map[string]struct{},
+) []string {
+	remaining := make([]string, 0, len(raw))
+	for i, message := range messages {
+		if _, remove := targets[message.ID]; remove {
+			found[message.ID] = struct{}{}
+			continue
+		}
+		remaining = append(remaining, raw[i])
+	}
+	return remaining
+}
+
+func (b *redisInboxBackend) AckAckCustody(peerID string, entryIDs []string) (int, error) {
+	targets := ackCustodyTargets(entryIDs)
+	if len(targets) == 0 {
+		return 0, nil
+	}
+	protectedKey := b.ackCustodyKey(peerID)
+	legacyKey := b.key(peerID)
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	var (
+		found           map[string]struct{}
+		protectedPruned int
+		legacyPruned    int
+	)
+
+	err := withRedisWatchRetryKeys(
+		b.client,
+		[]string{protectedKey, legacyKey},
+		func(tx *redis.Tx) error {
+			ctx := context.Background()
+			protectedRaw, err := tx.LRange(ctx, protectedKey, 0, -1).Result()
+			if err == redis.Nil {
+				protectedRaw = nil
+			} else if err != nil {
+				return err
+			}
+			legacyRaw, err := tx.LRange(ctx, legacyKey, 0, -1).Result()
+			if err == redis.Nil {
+				legacyRaw = nil
+			} else if err != nil {
+				return err
+			}
+
+			validProtectedRaw, protectedMessages, protectedPrunedInTx :=
+				normalizeInboxEntries(protectedRaw, cutoff)
+			validLegacyRaw, legacyMessages, legacyPrunedInTx :=
+				normalizeInboxEntries(legacyRaw, cutoff)
+			protectedPruned = protectedPrunedInTx
+			legacyPruned = legacyPrunedInTx
+			found = make(map[string]struct{}, len(targets))
+			remainingProtected := filterAckCustodyTargets(
+				validProtectedRaw,
+				protectedMessages,
+				targets,
+				found,
+			)
+			remainingLegacy := filterAckCustodyTargets(
+				validLegacyRaw,
+				legacyMessages,
+				targets,
+				found,
+			)
+			if equalStringSlices(protectedRaw, remainingProtected) &&
+				equalStringSlices(legacyRaw, remainingLegacy) {
+				return nil
+			}
+			return redisReplaceLists(tx, map[string][]string{
+				protectedKey: remainingProtected,
+				legacyKey:    remainingLegacy,
+			})
+		},
+	)
+	if err != nil {
+		return 0, fmt.Errorf("ack custody: %w", err)
+	}
+	recordAckCustodyExpired(protectedPruned)
+	recordInboxExpiredPruned(legacyPruned)
+	return len(found), nil
+}
+
+func (b *redisInboxBackend) CountAckCustody(peerID string) int {
+	rawEntries, err := b.client.LRange(
+		context.Background(),
+		b.ackCustodyKey(peerID),
+		0,
+		-1,
+	).Result()
+	if err == redis.Nil {
+		return 0
+	}
+	if err != nil {
+		log.Printf("[REDIS][ACK_CUSTODY] count failed: %v", err)
+		return 0
+	}
+	_, validMessages := filterInboxEntries(
+		rawEntries,
+		time.Now().Add(-maxMessageAge).UnixMilli(),
+	)
+	return len(validMessages)
+}
+
+func (b *redisInboxBackend) AckCustodyStats() (totalPeers int, totalMessages int) {
+	keys, err := scanRedisKeys(b.client, b.ackCustodyPattern())
+	if err != nil {
+		log.Printf("[REDIS][ACK_CUSTODY] stats scan failed: %v", err)
+		return 0, 0
+	}
+	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	for _, key := range keys {
+		rawEntries, err := b.client.LRange(context.Background(), key, 0, -1).Result()
+		if err == redis.Nil {
+			continue
+		}
+		if err != nil {
+			log.Printf("[REDIS][ACK_CUSTODY] stats read failed: %v", err)
+			continue
+		}
+		_, validMessages := filterInboxEntries(rawEntries, cutoff)
+		if len(validMessages) == 0 {
+			continue
+		}
+		totalPeers++
+		totalMessages += len(validMessages)
+	}
 	return totalPeers, totalMessages
 }
 

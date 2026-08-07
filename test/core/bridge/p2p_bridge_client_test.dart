@@ -674,6 +674,31 @@ void main() {
       expect(payload['toPeerId'], equals('12D3KooWInboxTarget'));
       expect(payload['message'], equals('Hello offline!'));
     });
+
+    test(
+      'ack-or-expiry store uses existing command and exact contract',
+      () async {
+        bridge.nextResponse = <String, dynamic>{
+          'ok': true,
+          'storeStatus': 'stored',
+          'custodyContract': 'ack_or_expiry_v1',
+        };
+
+        await callP2PInboxStore(
+          bridge,
+          toPeerId: 'recipient',
+          message: 'encrypted-envelope',
+          custodyContract: 'ack_or_expiry_v1',
+          custodyKind: 'direct_text_v108',
+        );
+
+        expect(bridge.lastParsedRequest!['cmd'], 'inbox:store');
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['custodyContract'], 'ack_or_expiry_v1');
+        expect(payload['custodyKind'], 'direct_text_v108');
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -787,6 +812,20 @@ void main() {
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['timeoutMs'], equals(4000));
     });
+
+    test('ack-or-expiry retrieve uses existing command', () async {
+      bridge.nextResponse = {'ok': true, 'messages': [], 'hasMore': false};
+
+      await callP2PInboxRetrievePending(
+        bridge,
+        custodyContract: 'ack_or_expiry_v1',
+      );
+
+      expect(bridge.lastParsedRequest!['cmd'], 'inbox:retrieve_pending');
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['custodyContract'], 'ack_or_expiry_v1');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -809,6 +848,21 @@ void main() {
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['entryIds'], equals(['entry-1', 'entry-2']));
       expect(payload['timeoutMs'], equals(1500));
+    });
+
+    test('ack-or-expiry ack uses existing command', () async {
+      bridge.nextResponse = {'ok': true, 'acked': 1};
+
+      await callP2PInboxAck(
+        bridge,
+        entryIds: const ['protected-entry'],
+        custodyContract: 'ack_or_expiry_v1',
+      );
+
+      expect(bridge.lastParsedRequest!['cmd'], 'inbox:ack');
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['custodyContract'], 'ack_or_expiry_v1');
     });
   });
 

@@ -13,9 +13,10 @@ const (
 )
 
 type backendConfig struct {
-	Kind        string
-	RedisURL    string
-	RedisPrefix string
+	Kind                       string
+	RedisURL                   string
+	RedisPrefix                string
+	AckCustodyAdmissionEnabled bool
 }
 
 // IsDurable reports whether the selected control-plane backend persists state
@@ -67,9 +68,10 @@ func loadBackendConfigFromEnv() backendConfig {
 	}
 
 	return backendConfig{
-		Kind:        kind,
-		RedisURL:    strings.TrimSpace(os.Getenv("REDIS_URL")),
-		RedisPrefix: prefix,
+		Kind:                       kind,
+		RedisURL:                   strings.TrimSpace(os.Getenv("REDIS_URL")),
+		RedisPrefix:                prefix,
+		AckCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
 	}
 }
 
@@ -79,6 +81,12 @@ func newControlPlaneStores(
 	limits ServerLimits,
 	serviceAccountPath string,
 ) (*controlPlaneStores, error) {
+	if cfg.AckCustodyAdmissionEnabled && !cfg.IsDurable() {
+		return nil, fmt.Errorf(
+			"%s=true requires RELAY_BACKEND=redis",
+			ackCustodyAdmissionEnabledEnv,
+		)
+	}
 	switch cfg.Kind {
 	case backendKindMemory:
 		pushBackend := newMemoryPushTokenStore()
@@ -91,7 +99,7 @@ func newControlPlaneStores(
 		)
 		groupInbox := NewGroupInboxStoreWithBackend(groupInboxBackend)
 		groupInbox.SetPush(push)
-		return &controlPlaneStores{
+		stores := &controlPlaneStores{
 			Rendezvous: NewRendezvousStoreWithBackend(rzBackend),
 			Inbox: NewInboxStoreWithBackendAndCapacity(
 				inboxBackend,
@@ -104,7 +112,9 @@ func newControlPlaneStores(
 			InboxBackend:      inboxBackend,
 			GroupInboxBackend: groupInboxBackend,
 			PushTokenBackend:  pushBackend,
-		}, nil
+		}
+		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
+		return stores, nil
 	case backendKindRedis:
 		if cfg.RedisURL == "" {
 			return nil, fmt.Errorf("REDIS_URL is required when RELAY_BACKEND=redis")
@@ -132,7 +142,7 @@ func newControlPlaneStores(
 		groupInbox := NewGroupInboxStoreWithBackend(groupInboxBackend)
 		groupInbox.SetPush(push)
 
-		return &controlPlaneStores{
+		stores := &controlPlaneStores{
 			Rendezvous: NewRendezvousStoreWithBackend(rzBackend),
 			Inbox: NewInboxStoreWithBackendAndCapacity(
 				inboxBackend,
@@ -146,7 +156,9 @@ func newControlPlaneStores(
 			GroupInboxBackend: groupInboxBackend,
 			PushTokenBackend:  pushBackend,
 			closeFn:           client.Close,
-		}, nil
+		}
+		stores.Inbox.SetAckCustodyAdmissionEnabled(cfg.AckCustodyAdmissionEnabled)
+		return stores, nil
 	default:
 		return nil, fmt.Errorf("unsupported relay backend: %s", cfg.Kind)
 	}
