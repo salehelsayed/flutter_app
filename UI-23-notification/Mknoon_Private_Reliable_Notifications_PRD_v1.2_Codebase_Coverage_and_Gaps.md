@@ -1,9 +1,9 @@
 # Private and Reliable Notifications: Codebase Coverage and Gap Assessment
 
 - **Assessed PRD:** [Mknoon Private Reliable Notifications PRD v1.2](./Mknoon_Private_Reliable_Notifications_PRD_v1.2.md)
-- **Assessment date:** 6 August 2026
-- **Repository baseline:** Branch `protected-view`, HEAD `366885c71677001168ccd733e6d14db251db8c0e`, plus the current dirty working tree
-- **Assessment scope:** Current working tree, including uncommitted code and locally persisted proof artifacts
+- **Assessment date:** 7 August 2026
+- **Repository baseline:** Branch `protected-view`, HEAD `007c1e2d577c226aee2a94e2050f3a19e4812775`, clean immediately before Plan 343 planning
+- **Assessment scope:** Committed implementation through Plan 342. The reviewed Plan 343 TDD artifact, index entry, and this report refresh are planning/documentation changes and are excluded from the current-code score.
 - **Purpose:** Durable input for later product decisions, implementation planning, story creation, and acceptance-test design
 
 **Document status:** Codebase assessment; not an implementation plan and not evidence that the PRD has been accepted
@@ -16,7 +16,7 @@ Mknoon's notification code contains substantial durability, deduplication, stabl
 
 The current implementation is primarily a **rich encrypted push delivery model**:
 
-- direct delivery can complete without durable recipient-inbox custody;
+- fresh ordinary direct text now retains sender-owned exact-envelope custody independently of live ACK, but reactions, media, edits/deletes, group ordering, device fanout, and relay-overflow retention still lack the universal PRD contract;
 - the relay builds APNs/FCM payloads from message envelopes;
 - provider payloads contain routing/event identifiers and encrypted preview material;
 - iOS and Android locally decrypt or project that provider-carried material;
@@ -41,6 +41,8 @@ Using the PRD's bounded A-01 through A-30 audit checklist and strict scoring (`C
 | **Total** | **30** | **11.5 / 30 = 38.3%** |
 
 This percentage describes alignment with the proposed PRD architecture. It is not a general quality score for the existing notification code.
+
+Plan 342 materially narrows GAP-N01 for fresh ordinary direct text, but no bounded A-control is fully closed by that slice. Plan 343 is reviewed planning only, not implementation evidence. The strict count therefore remains 2 Compliant, 19 Partial, 9 Missing, or **38.3%**.
 
 Implementation status and proof status are kept conceptually separate throughout this assessment. A mechanism can exist but lack required runtime/device proof, or a test can pass while locking behavior that contradicts the PRD. `Partial` therefore never means accepted or release-ready.
 
@@ -73,25 +75,27 @@ Resolving an OQ changes PRD scope, decision wording, and proof obligations; it d
 - Goals G-01, G-04, G-06
 - Target architecture requirements 1, 3, and 6
 - Delivery acknowledgement section 5.1
-- A-02, A-03, A-24, A-26
-- AC-04, AC-05, AC-12
+- A-01, A-02, A-03, A-17, A-18, A-24, A-26
+- AC-04, AC-05, AC-10, AC-12
 
-**Current behavior**
+**Current behavior and bounded progress**
 
-- A connected direct send schedules an inbox hedge, but authenticated direct delivery can cancel it before it starts: `lib/features/conversation/application/send_chat_message_use_case.dart:965-974`, `:978-1019`, and `:1289-1299`.
-- Therefore a direct success can produce no durable recipient-inbox entry and no relay-generated push.
-- When the inbox path is used, the relay correctly stores before push generation: `go-relay-server/inbox.go:1405-1486`.
-- Group delivery stores to the group inbox independently of pubsub, but pubsub publication and inbox store are launched concurrently rather than inbox custody being established first: `go-mknoon/node/pubsub.go:367-453`.
+- Plan 342 closed the live-ACK cancellation window for newly authored ordinary direct text to the current target peer. Eligible sends fail closed without the custody capability (`lib/features/conversation/application/send_chat_message_use_case.dart:540-573`), then atomically stage the message and exact encrypted envelope before transport (`:830-881`). DB v108 owns the status-independent row, and only a typed `stored` or `duplicate` completion retires it (`:1021-1068`; `lib/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart`). Startup/reconnect/network-restored/periodic/resume reuse one production drain (`lib/app/bootstrap/production_application_bootstrap.dart:5761-5771`, `:5975`, `:6419`).
+- Plan 342 also cryptographically binds current edit identity and namespaces relay target/edit dedupe keys, but this prevents a collision with retained initial text; it does **not** put edits into the custody outbox (`go-relay-server/inbox.go:1310-1335`).
+- Direct reaction ADD/REMOVE still author local state only after network success, skip inbox on connected live success, and return before authorship when the node is stopped (`lib/features/conversation/application/send_reaction_use_case.dart:49-57`, `:107-186`; `remove_reaction_use_case.dart:41-49`, `:99-172`). Plan 343 is reviewed and execution-ready for this bounded sender-custody slice, but no Plan 343 production code exists yet.
+- Direct media/voice/private/disappearing sends, edit/delete custody, every-device fanout, and the group inbox-first/truthful-order contract remain open. Group pubsub and inbox work still launch concurrently rather than establishing inbox custody first: `go-mknoon/node/pubsub.go:367-453`.
+- When a direct inbox path is used, the relay stores before push generation (`go-relay-server/inbox.go:1405-1486`). However, a full direct inbox evicts the oldest unacknowledged event and returns `stored` (`go-relay-server/backend_memory.go:114-153`; `backend_redis.go:263-321`), which still conflicts with PRD §5 removal only after recipient ACK or expiry.
 
 **Risk**
 
-A device can acknowledge direct delivery while the app is transitioning out of the foreground. If the process then suspends or crashes before presentation completes, there may be neither a durable inbox recovery item nor a provider wake. This is the PRD's principal persistence-only failure mode.
+For fresh ordinary direct text, the sender-held persistence-only window is now closed through relay acceptance. Equivalent windows remain for reactions and other event lanes, and current relay overflow can still discard an older unacknowledged event after a sender has transferred custody. None of this supplies the completed local notification outcome required by GAP-N03, so a recipient can still persist an event and suspend before presentation ownership is established.
 
 **Required target change**
 
 - Define one authenticated event envelope and commit it to the recipient-device inbox for every notification-worthy direct and group event.
 - Treat direct/pubsub success as latency optimization, not authorization to cancel inbox custody or wake ownership.
 - Preserve per-device expiry and acknowledgement semantics.
+- Replace oldest-unacknowledged direct-inbox eviction with a compatible non-destructive capacity contract before claiming PRD ACK-or-expiry custody; this requires an explicit mixed-version/capability rollout because installed clients currently rely on the full-inbox `OK` response.
 - Decide whether sender latency waits for inbox commit or whether a separate durable coordinator owns asynchronous commit completion, but do not let direct acknowledgement erase the obligation.
 
 **Acceptance evidence required**
@@ -160,7 +164,7 @@ Apple/Google can observe social-graph and event-routing metadata. Payload shape 
 **Current behavior**
 
 - No production `WakeOutcomeAck`, `wake_not_required`, or equivalent opaque outcome contract exists.
-- Direct/authenticated delivery can cancel the inbox hedge before notification policy or presentation completes.
+- Plan 342 prevents direct/authenticated delivery from cancelling the sender-owned custody row for fresh ordinary direct text, but it does not record a completed recipient-side policy/presentation outcome. Reactions and the remaining GAP-N01 lanes still retain their older reachability-dependent custody behavior.
 - Relay inbox store normally starts push immediately after commit; it has no bounded coordinator debounce waiting for a completed local outcome.
 - Background and foreground handlers emit many diagnostic outcomes, but those logs are not a durable sender/gateway decision protocol.
 
@@ -534,9 +538,9 @@ Legend:
 
 | ID | Status | Current coverage and exact evidence | Gap to close before PRD compliance |
 |---|---|---|---|
-| A-01 | Partial | Sender-generated message/event identities are reused and receiver persistence deduplicates them. Group pubsub and inbox reuse one envelope: `go-mknoon/node/pubsub.go:388-453`. | Define and cryptographically bind one authenticated `event_id` and content hash across direct, relay, pubsub, inbox, and notification ledger; eliminate unbound outer/inner and relay-entry identity ambiguity. |
-| A-02 | Partial | Relay inbox paths commit before push: `go-relay-server/inbox.go:1405-1486`, group `:1645-1707`. | Make inbox custody universal; direct ACK must not cancel a not-yet-started inbox write, and group durability must be established independently of concurrent pubsub. |
-| A-03 | Partial | Non-destructive pending retrieval and explicit stable-entry ACK exist: `go-relay-server/inbox_store.go:17-29`, `go-relay-server/inbox.go:1526-1545`; client stages before ACK. | Retire the legacy destructive retrieve API and decide whether encrypted staging before successful decrypt/canonical persistence meets the final durable-ack contract. |
+| A-01 | Partial | Sender-generated identities are reused and receiver persistence deduplicates them. Plan 342 binds fresh ordinary direct text to one immutable envelope/outbox incarnation and gives current edits matching authenticated outer/inner `eventId` plus a separate relay namespace. Direct reactions already enforce outer/inner event, action, and target parity. Group pubsub and inbox reuse one envelope: `go-mknoon/node/pubsub.go:388-453`. | Extend one authenticated `event_id` and content hash contract across every direct/group event, recipient device, relay entry, replay, and notification ledger; Plan 343 is planning only and does not supply universal identity/custody. |
+| A-02 | Partial | Relay inbox paths commit before push (`go-relay-server/inbox.go:1405-1486`, group `:1645-1707`), and Plan 342 makes fresh ordinary direct-text sender custody independent of live ACK through DB v108. | Extend sender/inbox custody to reaction, media, edit/delete, group, and every-device lanes; make relay capacity non-destructive for unacknowledged rows and group durability independent of concurrent pubsub. |
+| A-03 | Partial | Non-destructive pending retrieval and explicit stable-entry ACK exist (`go-relay-server/inbox_store.go:17-29`, `go-relay-server/inbox.go:1526-1545`); Plan 342 stages exact text custody before transport and retires the sender row only on typed relay acceptance. | Retire the legacy destructive retrieve API, eliminate oldest-unacknowledged relay eviction, extend exact sender custody beyond bounded text, and decide whether encrypted staging before successful decrypt/canonical persistence meets the final durable-ack contract. |
 | A-04 | **Compliant** | Group reliable send stores to group inbox independently of pubsub: `go-mknoon/node/pubsub.go:367-453`; relay group inbox is non-destructive. | Preserve this property while moving to inbox-first custody and generic wake. |
 | A-05 | **Missing** | Relay message code builds provider payloads from message envelopes: `go-relay-server/inbox.go:426-632`. | Introduce `mailbox_dirty(push_handle)` and a provider gateway that knows no message/conversation data. |
 | A-06 | **Missing** | Payload builders include forbidden sender/group/message/event routing fields. | Replace with one fixed generic payload and byte-level privacy tests. |
@@ -550,26 +554,26 @@ Legend:
 | A-14 | **Missing** | Android uses InboxStyle; no iOS communication-intent implementation was found. | Add Android MessagingStyle and iOS communication notifications from locally resolved identities. |
 | A-15 | Partial | Durable event/tone claims, recent-remote gates, stable IDs, and generation CAS substantially reduce duplicate alerts. | Unify all owners in one ledger; preserve generic fallback; prove one alert across main/background/NSE/reconciler and crash boundaries. |
 | A-16 | **Missing** | Clear event types/identifiers and encrypted event material are provider-visible; tests require them. | Remove event/media/routing metadata from all provider shapes, including fallbacks and reactions. |
-| A-17 | Partial | Reactions have durable identity, inbox custody, dedupe, display outboxes, and local rendering. | Remove specialized rich reaction push lanes and normalize reactions into the same generic-wake/inbox/ledger/decision pipeline. |
-| A-18 | Partial | Direct inbox addressing and ACK are per transport/device peer; group tests explicitly keep unread and notifications device-local across siblings. | Specify and prove independent per-device inbox cursors/ACKs while preserving the resolved rule that a sibling read does not clear this device. |
+| A-17 | Partial | Reactions have stable event identity, receiver parity checks, LWW/tombstone dedupe, display outboxes, and local rendering. Unknown-presence sends start an inbox copy, but connected live success, node-stopped, and connected-throw paths have no durable sender obligation; local ADD/REMOVE commits after transport. Plan 343 is reviewed planning only. | Implement the reviewed direct ADD/REMOVE custody slice, then remove specialized rich reaction push lanes and normalize reactions into the generic-wake/inbox/ledger/decision pipeline without losing ordering or silent REMOVE behavior. |
+| A-18 | Partial | Direct inbox addressing and ACK are per transport/device peer; Plan 342's durable text slice still targets only the current peer. Group tests explicitly keep unread and notifications device-local across siblings. | Specify and prove independent per-device event fanout, inbox cursors, and ACKs while preserving the resolved rule that a sibling read does not clear this device. |
 | A-19 | **Missing** | Relay, Flutter debug, notification, and NSE logs can include stable ID prefixes, route data, or plaintext previews. | Implement one privacy-safe diagnostic schema and forbidden-data tests across all languages/build modes. |
-| A-20 | Partial | Deterministic fixtures and extensive native/platform harnesses exist; Android subset artifacts are present. | After GAP-N01 through GAP-N11 pass their host/native and Android gates, produce current, provenance-bound real-iPhone APNs evidence in the consolidated GAP-N12 closure phase and complete the availability-bounded platform state matrix. |
+| A-20 | Partial | Deterministic fixtures and extensive native/platform harnesses exist. Plan 342 adds current host, relay, discovery, and physical-Android SQLCipher migration/reopen receipts for its bounded text-storage boundary; broader Android/platform and presentation evidence is still incomplete. | After GAP-N01 through GAP-N11 pass their host/native and Android gates, produce current, provenance-bound real-iPhone APNs evidence in the consolidated GAP-N12 closure phase and complete the availability-bounded platform state matrix. |
 | A-21 | **Missing** | Only in-memory active-chat tracking and ad hoc lifecycle reads exist; null may default to resumed. | Implement one authoritative fresh `AppVisibilitySnapshot` shared with native owners. |
 | A-22 | Partial | Flutter suppresses only `resumed + exact conversation`; focused tests pass. | Apply the same fresh exact-thread rule to every native/background owner and invalidate it immediately on pause/resign-active. |
 | A-23 | Partial | Flutter tests prove another chat/non-chat screen still notifies, and direct/group/reaction live projections use the same helper substantially. | Prove platform parity for implemented text, media, reaction, direct, and group paths across foreground and native owners. A first-class mention lane is `N/A` unless separately introduced. |
-| A-24 | Partial | If Flutter is still executing with a correct lifecycle value, background state leads to local notification. | Remove the direct-ACK/inbox-cancel persistence-only window and require confirmed local/provider presentation ownership. |
+| A-24 | Partial | If Flutter is still executing with a correct lifecycle value, background state leads to local notification. Plan 342 removes the sender persistence-only window for fresh ordinary direct text through relay acceptance, but no completed recipient presentation outcome exists and other lanes remain reachability-dependent. | Extend custody across GAP-N01, then require confirmed local/provider presentation ownership before wake suppression. |
 | A-25 | Partial | Most live Flutter direct/group/reaction paths call `maybeShowNotification`. | Normalize FCM background, iOS NSE, WorkManager, inbox replay, and reconciliation through one decision contract/state machine. |
-| A-26 | **Missing** | No outcome ACK exists; direct delivery can cancel the inbox hedge before completed notification outcome. | Implement bounded debounce plus opaque `wake_not_required` only after a completed approved outcome. |
+| A-26 | **Missing** | No outcome ACK exists. Plan 342 prevents live delivery from cancelling fresh ordinary text sender custody, but neither that row nor any current protocol proves a completed local notification outcome, and the rule is not universal across event lanes. | Implement bounded debounce plus opaque `wake_not_required` only after a completed approved outcome. |
 | A-27 | **Missing** | Several durable registries/outboxes exist, but no one cross-owner `LocalNotificationRecord`. | Define, persist, atomically mutate, migrate, and reconcile the PRD ledger across all owners. |
 | A-28 | **Missing** | Stable IDs and post-show cleanup exist, but the defining immediate pre-post lifecycle/read check does not. | Put a fresh lifecycle/read/policy/revision check at every serialized post/update/cancel boundary. |
 | A-29 | Partial | Suppression and user dismissal do not directly mark read, but ordinary direct/group chat-entry cleanup is currently achieved through read projection; generation-safe cancellation exists. | Separate activation cleanup from the approved read predicate, resolve the direct/group inconsistency, and prove a mounted background conversation cannot auto-read. |
-| A-30 | Partial | Dedupe, claim, CAS, and some direct/FCM order tests exist. | Complete direct→push, push→direct, open-during-build, background-during-build, late-wake-after-read, and crash-after-persistence tests across owners. |
+| A-30 | Partial | Dedupe, claim, CAS, and some direct/FCM order tests exist. Plan 342 adds atomic stage/drain, relay namespace, lifecycle, account-transfer, migration, and real Android SQLCipher reopen/rollback tests for fresh text only. | Complete direct→push, push→direct, open-during-build, background-during-build, late-wake-after-read, relay-overflow, and crash-after-persistence tests across event kinds and owners. |
 
 Primary control-to-gap index for later decomposition:
 
 | Gap | Primary A-controls |
 |---|---|
-| GAP-N01 Universal inbox custody | A-01, A-02, A-03, A-04, A-18, A-24, A-26 |
+| GAP-N01 Universal inbox custody | A-01, A-02, A-03, A-04, A-17, A-18, A-24, A-26 |
 | GAP-N02 Opaque fixed wake and token separation | A-05, A-06, A-07, A-08, A-12, A-16 |
 | GAP-N03 Completed outcome protocol | A-13, A-24, A-26 |
 | GAP-N04 Fresh lifecycle/visible conversation | A-21, A-22, A-23, A-24, A-28 |
@@ -589,15 +593,15 @@ Primary control-to-gap index for later decomposition:
 | AC-01: same-chat A while foreground-active | Partial | GAP-N04, GAP-N05, GAP-N11, GAP-N12; OQ-01 evidence and OQ-03 decision | Prove that an exact active chat updates its timeline and emits no card, sound, vibration, or app haptic on available iOS/Android for implemented direct/group text, media, and reaction paths. Record first-class mention as `N/A` under the approved absence decision. |
 | AC-02: chat B still notifies for A | Partial | GAP-N04, GAP-N06, GAP-N12 | Cross-platform direct/group/text/media/reaction proof that B remains open and only A's stable card/unread state changes. |
 | AC-03: non-chat screens still notify for A | Partial | GAP-N04, GAP-N06, GAP-N12 | Chat-list/settings/media-viewer tests across live, inbox, and provider-wake entry points. |
-| AC-04: direct event after background cannot end persistence-only | Missing/Risky | GAP-N01, GAP-N03, GAP-N04, GAP-N05 | Deterministic pause/background barrier plus suspend/crash recovery proving OS notification or confirmed provider ownership. |
-| AC-05: delivery ACK without outcome does not suppress wake | Missing | GAP-N01, GAP-N03 | Sender/recipient/gateway test showing transport and persistence ACKs leave wake required until opaque completed outcome. |
+| AC-04: direct event after background cannot end persistence-only | Missing/Risky | GAP-N01, GAP-N03, GAP-N04, GAP-N05 | Plan 342 closes only the fresh ordinary-text sender-custody window. Add deterministic pause/background barriers plus suspend/crash recovery proving OS notification or confirmed provider ownership for every required event lane. |
+| AC-05: delivery ACK without outcome does not suppress wake | Missing | GAP-N01, GAP-N03 | Plan 342 keeps fresh text custody after live delivery, but no recipient outcome exists. Add sender/recipient/gateway proof that transport and persistence ACKs leave wake required until an opaque completed outcome. |
 | AC-06: open-during-build prevents stale A notification only | Missing | GAP-N04, GAP-N05, GAP-N06, GAP-N11; OQ-02 | Barrier test opening A between decision and post; A must not publish or alert. If A was already delivered, cleanup must be generation-exact and must not affect B or a newer A generation. Post-then-cancel is not success. |
 | AC-07: background-during-build produces notification | Missing | GAP-N04, GAP-N05 | Barrier test transitioning inactive/background between initial decision and final effect; final recheck must post or retain provider owner. |
 | AC-08: delayed wake after verified handled/read state does not recreate alert | Partial | GAP-N05, GAP-N06, GAP-N11; OQ-03 | Local read/delete/activation and delayed/out-of-order wake tests must not replace a newer/read generation. Preserve sibling-device unread/notification independence; cross-device clearing is outside this PRD unless separately approved. |
 | AC-09: dismiss is not read; approved local triggers govern read | Partial | GAP-N11; OQ-02 and OQ-03 | Prove dismissal, activation cleanup, and every retained local read trigger against the approved predicate. Remove OS `Mark Read` from the PRD unless separately approved and implemented; prove a mounted background direct chat cannot auto-read. |
-| AC-10: all path orders converge to one event/unread/card/normal alert | Partial | GAP-N01, GAP-N03, GAP-N05, GAP-N06, GAP-N12 | Full arrival-order and crash matrix over direct, pubsub, inbox, NSE/FCM, WorkManager, and reconciler. |
+| AC-10: all path orders converge to one event/unread/card/normal alert | Partial | GAP-N01, GAP-N03, GAP-N05, GAP-N06, GAP-N12 | Preserve Plan 342's bounded text stage/drain and identity tests, then complete the arrival-order and crash matrix over event kinds, direct, pubsub, inbox, NSE/FCM, WorkManager, and reconciler. |
 | AC-11: provider requests have no forbidden fields and one shape | Missing/Contradicted | GAP-N02, GAP-N10 | Captured APNs/FCM byte-shape assertions for all event kinds; current rich-route closure tests replaced or bounded to compatibility. |
-| AC-12: launch after missed pushes synchronizes retained inbox exactly once | Partial | GAP-N01, GAP-N06, GAP-N12 | Cold-launch retained-inbox campaign with multiple pages/event kinds, local dedupe, per-device ACK, and no duplicate card/unread/tone. |
+| AC-12: launch after missed pushes synchronizes retained inbox exactly once | Partial | GAP-N01, GAP-N06, GAP-N12 | Plan 342 proves lifecycle retry for a bounded sender text outbox, not recipient launch reconciliation. Add a cold-launch retained-inbox campaign with multiple pages/event kinds, local dedupe, per-device ACK, and no duplicate card/unread/tone. |
 
 ## 6. Codebase answers to OQ-01 through OQ-05
 
@@ -704,15 +708,18 @@ Later planning should avoid discarding these proven mechanisms merely because th
 1. Relay store-before-push ordering and duplicate suppression on actual inbox paths.
 2. Non-destructive pending retrieval, stable relay entry ACK, paging, and expiry.
 3. Local SQLCipher inbox staging and replay/quarantine ownership.
-4. Sender-generated message/reaction identities and local database deduplication.
-5. Durable event claims and per-conversation tone leases using file locking.
-6. Stable conversation notification IDs and exact generation-safe replace/cancel.
-7. Direct/group display, read, and reconciliation outboxes.
-8. Exact frontmost-conversation suppression in the Flutter live path.
-9. iOS App Group atomic file primitives, Apple request custody, badge serialization, and exact delivered-notification retirement.
-10. Android dropped-FCM-batch durable marker and WorkManager recovery scaffolding.
-11. Group mute UI/model/SQL state, shared display policy, iOS group-context projection, Android encrypted-database enforcement, and exact-card reconciliation. The standalone unused mute Keychain sentinel is excluded unless a consumer is explicitly assigned.
-12. Existing deterministic fixtures, platform harnesses, and pinned device orchestration.
+4. Plan 342's DB v108 immutable fresh-direct-text custody row, atomic local-message/envelope staging, typed relay completion, compare-and-delete retirement, and shared lifecycle drain cadence.
+5. Sender-generated message/reaction identities and local database deduplication.
+6. Plan 342's authenticated edit identity parity and cross-type-safe relay target/edit namespaces; these are identity primitives, not evidence that edit custody exists.
+7. Direct-reaction outer/inner event, action, and target parity plus LWW/tombstone convergence; Plan 343 may extend these mechanisms but is not yet implementation evidence.
+8. Durable event claims and per-conversation tone leases using file locking.
+9. Stable conversation notification IDs and exact generation-safe replace/cancel.
+10. Direct/group display, read, and reconciliation outboxes.
+11. Exact frontmost-conversation suppression in the Flutter live path.
+12. iOS App Group atomic file primitives, Apple request custody, badge serialization, and exact delivered-notification retirement.
+13. Android dropped-FCM-batch durable marker and WorkManager recovery scaffolding.
+14. Group mute UI/model/SQL state, shared display policy, iOS group-context projection, Android encrypted-database enforcement, and exact-card reconciliation. The standalone unused mute Keychain sentinel is excluded unless a consumer is explicitly assigned.
+15. Existing deterministic fixtures, platform harnesses, and pinned device orchestration.
 
 These components should be mapped into the new contracts rather than independently extended in ways that increase the number of notification owners.
 
@@ -720,7 +727,7 @@ These components should be mapped into the new contracts rather than independent
 
 ### 8.1 Relay/client version skew
 
-Current iOS NSE and Android background processing require rich provider fields. Switching the relay to a generic wake before compatible inbox-fetch clients ship would remove notification resolution for older clients. Later planning needs an explicit version/capability migration, staged rollout, and rollback boundary.
+Current iOS NSE and Android background processing require rich provider fields. Switching the relay to a generic wake before compatible inbox-fetch clients ship would remove notification resolution for older clients. Plan 342 also introduced distinct current text/edit relay dedupe namespaces, so its relay behavior must precede dependent client activation. Plan 343 proposes a stricter reaction namespace but has not implemented it. Later planning needs explicit version/capability negotiation, staged relay-first rollout, machine-checkable activation, and a rollback boundary.
 
 ### 8.2 Current tests lock the old contract
 
@@ -728,11 +735,11 @@ Go and provider-adapter closure tests assert that routing fields survive platfor
 
 ### 8.3 Persisted-state migration
 
-Existing tone claims, recent-remote gates, conversation ID registries, iOS recovery JSON, Android recovery state, and SQLCipher outboxes may coexist with the new ledger during rollout. The owner precedence, one-time migration, rollback, and garbage-collection rules need explicit design.
+Existing tone claims, recent-remote gates, conversation ID registries, iOS recovery JSON, Android recovery state, and SQLCipher outboxes now include Plan 342's DB v108 direct-text custody table. They may coexist with the new ledger during rollout. Owner precedence, one-time migration, rollback, account-transfer inventory, and garbage-collection rules need explicit design; future schema plans must preserve pending v108 text custody rather than silently recreating or omitting it.
 
 ### 8.4 Event-identity compatibility
 
-Relay entry IDs, outer routing IDs, decrypted message IDs, reaction transition IDs, and notification event identities are not one uniform authenticated contract today. A ledger migration must not merge distinct events or split one event into multiple alert identities.
+Relay entry IDs, outer routing IDs, decrypted message IDs, reaction transition IDs, and notification event identities are not one uniform authenticated contract today. Plan 342 closes target/edit raw-ID collision for its current text/edit relay paths and authenticates current edit outer/inner identity; direct reactions already validate event/action/target parity. Those bounded improvements do not establish one universal identity/hash. A ledger migration must not merge distinct events or split one event into multiple alert identities.
 
 ### 8.5 Generic fallback ownership
 
@@ -750,6 +757,10 @@ Rich-payload and future generic-inbox clients must consult the same installation
 
 PRD v1.2 does not yet define a feature flag, capability negotiation, mixed-version behavior, canary population, success/error thresholds, kill switch, rollback, or legacy cleanup point. These are required planning inputs before the provider contract changes.
 
+### 8.9 Direct-inbox overflow contradicts ACK-or-expiry custody
+
+Both current relay backends evict the oldest unacknowledged direct-inbox row at capacity and still report `stored`. Plan 342's sender may therefore retire exact text custody after the relay has discarded a different older event. Plan 343 intentionally preserves that installed-client behavior as a compatibility sentinel instead of expanding a bounded reaction slice into a relay migration. A later GAP-N01 dependency-wave plan must introduce non-destructive capacity semantics and machine-checkable mixed-version activation before any full PRD custody or release claim.
+
 ## 9. Recommended future work-package boundaries
 
 This is dependency guidance for later planning, not an authorized implementation sequence.
@@ -757,12 +768,12 @@ This is dependency guidance for later planning, not an authorized implementation
 | Boundary | PRD controls primarily addressed | Exit condition before dependent work |
 |---|---|---|
 | WP-00: Product and PRD closure | OQ-01 through OQ-05; PRD cross-reference repair | OQ-01 silent visual cue and OQ-02 activation cleanup approved; OQ-03 predicate chosen; OQ-04 installation-local/no-cross-device-clearing and OQ-05 indefinite installation-local group-only mute adopted; iOS mute caveat disposition and broken references recorded. |
-| WP-01: Authenticated event and durable custody contract | A-01 through A-04, A-18, A-24, A-26 | Every notification-worthy event has one authenticated identity/hash and per-device inbox custody independent of fast path. |
+| WP-01: Authenticated event and durable custody contract | A-01 through A-04, A-17, A-18, A-24, A-26 | Preserve Plan 342's implemented fresh-text slice, execute/review Plan 343's bounded reaction slice, then close media/edit/delete/group/device-fanout and non-destructive relay-capacity work so every notification-worthy event has one authenticated identity/hash and per-device inbox custody independent of fast path. |
 | WP-02: Opaque wake gateway and privacy boundary | A-05 through A-08, A-12, A-16, A-19; AC-11 | Fixed provider shapes, opaque/encrypted token lookup, migration strategy, and captured-request privacy tests. |
 | WP-03: Shared lifecycle, ledger, decision, and outcome state machine | A-13, A-15, A-21 through A-29 | One logical ledger/snapshot/outcome contract with atomic transitions and final effect gate. |
 | WP-04: iOS generic wake and inbox enrichment | A-09 through A-11, A-14, A-15, A-20 | NSE fetches inbox without Flutter, retains generic fallback, and uses shared state. Touched iOS code compiles and focused Swift/native tests pass; required iPhone scenarios are registered for WP-07/GAP-N12 and are not a WP-04 exit gate. |
 | WP-05: Android generic wake and native/background continuation | A-12 through A-15, A-20, A-27, A-28 | FCM service/WorkManager reconcile inbox, use shared state, render MessagingStyle, and prove muted ordinary/reaction events do not post or alert while unread persists on available Android targets. |
-| WP-06: Reaction, read, cleanup, mute, and multi-device independence | A-17, A-18, A-28 through A-30 | All event kinds use the same pipeline; approved local read/mute behavior passes deterministic and Android delayed-wake/order tests; mute preserves delivery/unread, retires the current card, and respects applicable badge policy; sibling independence passes its preservation sentinel. Apple-owned presentation cases remain registered for WP-07/GAP-N12. |
+| WP-06: Generic reaction presentation, read, cleanup, mute, and multi-device independence | A-17, A-18, A-28 through A-30 | After WP-01 owns reaction sender custody, remove specialized rich reaction push/presentation paths so all event kinds use the same generic pipeline; approved local read/mute behavior passes deterministic and Android delayed-wake/order tests; mute preserves delivery/unread, retires the current card, and respects applicable badge policy; sibling independence passes its preservation sentinel. Apple-owned presentation cases remain registered for WP-07/GAP-N12. |
 | WP-07: Mixed-version rollout and consolidated iOS/release closure | A-20, A-30; AC-01 through AC-12 | Begins after GAP-N01 through GAP-N11 are code-complete and their focused host/native, Android, and wave-level `host-all` gates pass. Runs one bounded availability-based iOS closure phase, fixes and reruns affected failures, then records compatibility rollout, kill switch, telemetry, release-eligible platform proof, and final release closure. |
 
 Important dependency rules for later planning:
@@ -850,8 +861,9 @@ The notification initiative should not be described as PRD v1.2 compliant until 
 
 ## 13. Assessment limitations
 
-- This assessment is source- and repository-evidence-based; it did not execute a new full device campaign.
-- The working tree was already heavily modified, and `UI-23-notification/` was untracked at assessment time. Findings therefore describe the current workspace, not necessarily the last committed revision.
-- Existing Android proof artifacts are useful but filtered and non-release-eligible.
+- This refresh is source-, plan-, and repository-evidence-based; it did not execute a new full device campaign.
+- The repository baseline was clean at committed HEAD `007c1e2d577c226aee2a94e2050f3a19e4812775` immediately before Plan 343 planning. The only current workspace changes in scope are the Plan 343 artifact, its index row, and this report refresh.
+- Plan 342's recorded host/relay/discovery and Pixel 6 SQLCipher receipts support only its bounded fresh-direct-text storage claim. They do not close universal GAP-N01, recipient outcome, presentation, or release eligibility.
+- Plan 343 is reviewed planning evidence only. None of its proposed DB v109, reaction custody, UI-generation, relay-namespace, account-transfer, or Android proof work contributes to the current score until implemented and verified.
 - Absence of a persisted iOS/device artifact is reported as evidence debt, not proof that a behavior fails at runtime.
 - Composite A-controls receive full credit only when their defining target condition and required paths are covered. Strong supporting primitives remain documented even when the strict status is Missing.

@@ -1,0 +1,337 @@
+# 343 - GAP-N01 Direct Reaction ADD/REMOVE Inbox Custody Outbox
+
+Status: execution-ready after independent `$tdd-review` (2026-08-07); not independently release-eligible
+Type: Modification
+Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md`; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01
+Classification: reviewed implementation-ready bounded GAP-N01 sender-custody slice; relay ACK-or-expiry retention and dependency-wave release remain open
+Closure tier: host plus one availability-bounded Android SQLCipher device proof; not independently release-eligible before the GAP-N01/N02/N03 dependency wave
+
+## Planning Progress
+
+| Time | Role | Files inspected | Decision/blocker | Next action |
+|---|---|---|---|---|
+| 2026-08-07 | Evidence Collector | Graphify TDD context; direct reaction send/remove/receive paths; reaction repository/SQL helpers; DB v108 custody; lifecycle/bootstrap; relay inbox backends and reaction push; existing tests/gates; PRD gap inventory | Confirmed a bounded GAP-N01 gap: direct ADD/REMOVE has an authenticated transition identity, but connected live success and node-stopped/throw paths can finish without a durable sender obligation. The current one-row reaction projection cannot represent a retry queue. | Define the smallest transition-owned DB, sender, drain, lifecycle, relay, migration, and proof contract. |
+| 2026-08-07 | Planner | Same source plus DB/version/account-transfer/device-discovery surfaces | Chose a separate DB v109 reaction outbox, atomic local-transition-plus-outbox staging, the existing lifecycle cadence, typed inbox outcomes, and one new relay reaction namespace. Rejected v108 generalization, event compaction, a generic ledger, a new scheduler, and routine iOS proof. | Emit the planning draft, run `$tdd-review`, and apply only source-backed deltas. |
+| 2026-08-07 | Independent reviewers | Sender/caller/lifecycle causality; reaction/relay identity and bypasses; DB/account-transfer/SQLCipher/rollout reversibility | Initial verdict **plan-fixes-required** with two blocker-class counterexamples: stale ADD completion could resurrect newer UI intent, and relay `stored` was overstated as PRD ACK-or-expiry custody despite oldest-row eviction. Also found tuple, REMOVE parity, strict relay eligibility, TestUser, AST wiring, production-v109 fixture, constants, wrong-key, and selector gaps. | Apply the smallest bounded corrections; keep relay-capacity protocol and mixed-version activation out of Plan 343 but explicit as release blockers. |
+| 2026-08-07 | Arbiter | Revised scope, all ten Test Contract rows, commands/registration, device profile, and all five review lenses/ten evergreen classes | Final verdict **ready** for implementation of the bounded sender-custody slice. UI generation safety and all causal proof gaps are owned. Relay overflow is not hidden or “fixed” by over-broad Plan 343 work; it remains a named GAP-N01 dependency-wave blocker, so no standalone release claim is allowed. | Execute TC-343-01 through TC-343-10; hold activation for relay-first and dependency-wave release decisions. |
+
+## Problem And Evidence
+
+- Behavior to improve: a user-authored direct reaction ADD or REMOVE must retain one exact encrypted recipient-inbox obligation even when a connected live path acknowledges, the node is stopped, the live send throws, or the immediate inbox call fails.
+- Impact: the recipient can acknowledge a live reaction while transitioning inactive and then suspend or crash before processing/presentation, leaving no retained relay event or wake. This is the reaction form of GAP-N01's persistence-only failure. REMOVE can likewise fail to converge after the sender UI has already hidden the reaction.
+- Confirmed current gap — ADD: `sendReaction` returns before authorship when the node is stopped (`lib/features/conversation/application/send_reaction_use_case.dart:49-57`), starts inbox storage only for unknown presence (`:107-132`), lets connected live success return without inbox (`:134-150`), returns on a connected throw without inbox (`:151-164`), and persists the local reaction only after network success (`:176-186`).
+- Confirmed current gap — REMOVE: `removeReaction` has the same pre-authoring node gate and reachability-dependent inbox path (`lib/features/conversation/application/remove_reaction_use_case.dart:41-49`, `:99-145`), then writes the local tombstone only after transport success (`:155-172`). The existing DB delete updates only an existing row and cannot create a remove-before-add tombstone (`lib/core/database/helpers/reactions_db_helpers.dart:555-602`).
+- Confirmed usable identity: each outgoing transition already puts the same UUID in the encrypted inner payload and outer `eventId`, with outer `action` and `targetMessageId` (`send_reaction_use_case.dart:59-97`; `remove_reaction_use_case.dart:51-89`). The receiver checks outer/inner event, action, and target parity before side effects (`handle_incoming_reaction_use_case.dart:103-212`) and has atomic stale/exact-replay/tombstone handling (`:267-359`).
+- Confirmed storage mismatch: `message_reactions` is `UNIQUE(message_id, sender_peer_id)` (`lib/core/database/migrations/016_message_reactions.dart:18-27`) and is the latest local projection, not a per-event retry ledger. Rapid ADD/REMOVE transitions therefore need separate immutable rows; the canonical row alone cannot own every authored envelope.
+- Confirmed relay collision: direct reaction `eventId` is extracted in `go-relay-server/inbox.go:1272-1279`, but `extractDirectInboxDedupeKey` namespaces only chat edits and sends every remaining identity through `target-id:` (`:1309-1335`). A reaction event ID equal to a chat target ID can receive `duplicate` for the wrong ciphertext and cause unsafe local retirement.
+- Existing coverage: current ADD/REMOVE tests prove encrypted metadata and unknown-presence concurrent storage, but positively lock connected `storeInInboxCallCount == 0` and both-network-fail/no-local-mutation (`send_reaction_use_case_test.dart:195-217`, `:238-400`; `remove_reaction_use_case_test.dart:174-209`, `:211-367`). These expectations must be replaced, not retained.
+- Existing receiver coverage: metadata mismatch, exact replay, stale ordering, remove-before-add tombstones, notification eligibility, and roundtrip tests are preservation sentinels. Relay store-before-push and duplicate-no-refanout behavior also exists and remains load-bearing.
+- Missing coverage: no schema, atomic outgoing reaction stage, restart-safe drain, lifecycle composition, relay cross-type namespace test, same-version transfer row, or real SQLCipher v108-to-v109 proof exists on HEAD.
+- Refuted: "reactions already always have inbox custody" is false; only unknown-presence paths start it. "Reuse the text outbox" is unsafe because v108 is keyed by recipient/message and projects message transport state. "Reuse the group reaction outbox" is unsafe because it is group-scoped, rebuild-capable, and carries a different payload/status contract.
+- Unresolved but non-blocking for this slice: equal-timestamp distinct reaction transitions remain arrival-order dependent because the current LWW test uses `isBefore`, not a deterministic tie-break. Plan 343 uses distinct authored timestamps and records the tie protocol as deferred rather than silently changing direct and group receiver semantics.
+- Affected production/test/gate surfaces: DB version/registries and new migration/helper/model; `ReactionRepository`/`ReactionRepositoryImpl`; direct ADD/REMOVE use cases and canonical wired caller; direct custody drain composition in bootstrap/retrier/resume; account-transfer schema/import; relay inbox dedupe; focused reaction, migration, repository, lifecycle, relay, discovery, and Android SQLCipher tests.
+
+## Graph Grounding Snapshot
+
+- Graph fingerprint / freshness: `fca8cff3a08b2868`; current.
+- Query / profile: `python3 graphify-arch/tdd_context.py query "Plan 343 GAP-N01 direct reaction ADD REMOVE durable recipient inbox custody outbox atomic stage exact encrypted eventId envelope lifecycle retry SendReaction removeReaction ReactionRepository direct_inbox_custody_outbox DB v108 run_test_gates 1to1" --profile tdd --budget 700`.
+- Anchors: `removeReaction` -> `lib/features/conversation/application/remove_reaction_use_case.dart`; `sendReaction` -> reaction test/caller neighborhood; v108 `direct_inbox_custody_outbox` -> existing sender-custody pattern.
+- Surfaced proof/gate files: direct reaction use-case tests, current direct custody tests, `ONE_TO_ONE_TESTS`, and AUTO feature/core host registrations.
+- Graph gaps requiring source search: exact `sendReaction` production node, relay/go-mknoon code, DB registry/account transfer, device discovery scripts, and lifecycle/bootstrap callers were not fully surfaced and were verified directly in current source.
+- Reuse rule: these anchors may be handed to review/execution; every conclusion still requires current-source or command evidence.
+
+## Scope Contract And Guard
+
+In scope:
+
+- Add DB v109 table `direct_reaction_inbox_custody_outbox` with exactly `recipient_peer_id`, `event_id`, immutable `wire_envelope`, `retry_count`, nullable `last_attempt_at`, nullable bounded `last_error_code`, `created_at`, and `updated_at`. Primary key `(recipient_peer_id, event_id)` permits later per-device fanout of one event. Add fair index `(last_attempt_at, created_at, recipient_peer_id, event_id)`. Require nonblank identifiers/envelope/timestamps and nonnegative retry count. Permit only `store_failed|store_rejected_full|store_threw|local_completion_failed`. No foreign key, cascade, decrypted reaction content, emoji, preview, media material, push payload, action column, or target-message column.
+- Export and pin a separate production cap of exactly 512 rows and a storage-enforced fair batch cap of exactly 50. A caller request above 50 is clamped. Local capacity refusal never evicts or replaces an older obligation, and an exact replay remains idempotent even while the local table is full. Historical v108 reactions receive no backfill because their exact ciphertext cannot be reconstructed.
+- Add an optional fail-closed `OutgoingDirectReactionInboxCustodyRepository` capability beside `ReactionRepository`, implemented by the production `ReactionRepositoryImpl`. Keep `MessageRepository`, v108 text custody, and group reaction repositories unchanged.
+- Stage every newly authored direct ADD/REMOVE by requiring an existing direct `messages` target owned by the exact recipient, refusing an observable same-ID `group_messages` collision, and validating the canonical reaction against the exact v2 outer event/action/target/sender metadata. Then write its canonical local transition and exact outbox row in one `dbWriteTransaction` before any live or inbox call. A REMOVE writes a complete tombstone even if the prior local reaction row vanished. A distinct older transition still gets its own custody row while the newest authored timestamp remains the canonical projection. Exact same bytes are idempotent; same event ID with changed bytes is refused atomically.
+- Retain every distinct ADD and REMOVE event; never compact by message, actor, action, or latest state. Completion and failure use recipient + event + exact envelope CAS. Target/reaction deletion after staging does not cascade or cancel authored custody.
+- Resolve the typed `StoreInInboxDetailedFn` from the production P2P capability or an explicit test delegate. After staging, start/join exactly one immediate detailed inbox attempt for every reachability state while retaining live delivery as latency optimization. `stored` and `duplicate` are the only accepting outcomes under the current relay contract. Live success/ACK never deletes local custody. Failed/full/store-throw or accepted-then-local-completion error retains exact bytes and bounded metadata for lifecycle retry without throwing from the sender use case.
+- Preserve the existing result enums as immediate transport diagnostics rather than add a queued-state API. Once ADD staging commits, return its authoritative nonnull `MessageReaction` even when the result is `nodeNotRunning` or `sendFailed`; REMOVE's committed tombstone remains repository-authoritative on every post-stage result. The wired caller may adopt a returned ADD only while its exact optimistic attempt is still the latest visible user intent; a late older ADD must not overwrite a newer ADD or REMOVE. A capability/detailed-store/schema/capacity/atomic-stage refusal maps to the existing `sendFailed` result before every network side effect and without a partial canonical transition.
+- Move the node-running decision after encryption and atomic staging when bridge/key/custody capabilities are available. A stopped node starts no network work but leaves exact durable custody for the existing startup/reconnect/network-restored/periodic/resume cadence.
+- Compose the new reaction drain with the current direct-text drain behind the one existing production direct-custody lifecycle callback. Both bounded families run with separate fault isolation before failed/unacked rebuild. Add no timer, isolate, WorkManager job, singleton, or scheduler.
+- Add one relay-only direct-reaction custody-identity helper and use it from centralized `extractDirectInboxDedupeKey`: only a complete exact-v2 direct ADD or REMOVE receives `reaction-event-id:<eventId>`. Do not reuse the ADD-only push-eligibility boolean. Incomplete, legacy, whitespace-mutated, and unsupported-action reactions retain their prior target-key/empty behavior. Keep `target-id:` and `edit-event-id:` behavior, `extractMessageId`, reaction push `event_id`/`target_message_id`, store-before-push, capability gating, and duplicate-no-refanout unchanged. Prove same-target/distinct-reaction siblings plus cross-type equal raw IDs across memory, limited-memory/ACK rebuild, and Redis.
+- Raise the identity DB to v109, update both ordered production registries and classified current-version consumers, preserve exact same-v109 account transfer, reject v108 manifests before target mutation, and prove one-way v109-to-v108 downgrade refusal.
+
+Must preserve:
+
+- Authenticated receiver outer/inner event/action/target parity, exact replay, stale ADD/REMOVE convergence, and remove-before-add tombstones -> TC-343-09.
+- Direct reaction ADD remains the only wake-eligible action under the current rich-payload compatibility contract; REMOVE remains custody-only/silent -> TC-343-07/09. GAP-N02 later replaces the provider shape.
+- Plan 342 direct-text DB v108 immutability, lifecycle ownership, and target/edit namespace behavior -> TC-343-05/07/09.
+- The shipped direct-relay at-cap contract still evicts the oldest row and returns `stored`; Plan 343 must preserve `TestStatusValueContract_FullInboxStoreStaysOK` and must not describe relay acceptance as recipient ACK/expiry retention -> TC-343-07/09.
+- Group reaction replay/wake/outbox behavior and the shared latest-state reaction projection -> TC-343-02/09.
+- No direct reaction enters the failed-message retry pipeline or creates a `messages` transport row -> TC-343-03/09. The new reaction outbox is its only sender retry owner.
+- Current optimistic reaction UX and result enums remain source-compatible. A generation/sentinel guard prevents late completion from replacing a newer user intent; no tap queue or new visible state is introduced -> TC-343-06.
+- The required `reaction_roundtrip_test.dart` harness stays fail-closed by adapting only its `TestUser` authored-reaction wrapper to a purpose-built custody-capable repository adapter and its existing detailed-store method. Lightweight receiver/group fakes do not become globally capable -> TC-343-06/09.
+
+Hard `Do not`:
+
+- Do not alter or generalize DB v108, reuse the group reaction outbox, or create a generic notification/event ledger.
+- Do not add event compaction, cap eviction, envelope rebuilding/re-encryption, a second retry cadence, or message-status coupling.
+- Do not add a reaction tap serializer/queue or globally upgrade every reaction fake merely to satisfy capability checks.
+- Do not expand into direct media, disappearing/private media, edit/delete custody, groups, linked-device fanout, provider privacy, wake outcomes, notification styling, read/mute cleanup, or cross-device clearing.
+- Do not change reaction wire fields, make REMOVE push-visible, remove rich provider fields, or activate GAP-N02/N03 behavior.
+- Do not add an iOS device, iOS simulator, APNs/NSE, or UI-notification harness leg. If unexpected iOS production code becomes necessary, stop and re-scope rather than silently deferring compile safety.
+- Do not deploy the production relay as part of plan implementation without separate user authorization.
+
+Deferred / accepted difference:
+
+- Equal-timestamp distinct transition tie-breaking -> later shared direct/group reaction protocol plan. TC-343 tests use distinct sender-authored timestamps and do not claim equal-time convergence.
+- Direct media/voice/private/disappearing custody, direct edits/deletes, group ordering/truthfulness, canonical content hash, and account sibling-device fanout -> remaining GAP-N01/WP-01 slices.
+- Generic fixed provider wake and opaque push handles -> GAP-N02/WP-02 after compatible inbox-fetch clients and mixed-version strategy exist.
+- Completed local outcome/wake arbitration -> GAP-N03/WP-03 after durable event custody exists for the applicable lanes.
+- Relay overflow remains non-PRD-aligned: the current max-100 direct inbox evicts the oldest unacknowledged row and returns `stored`, so this plan proves sender retention only until the current relay accepts an exact row, not PRD §5 ACK-or-expiry retention. Changing that frozen old-client contract requires a separate capability/mixed-version GAP-N01 rollout slice; it is a dependency-wave release blocker, not Plan 343 scope.
+- Real-relay two-peer crash/background presentation recovery -> the later GAP-N01/N02/N03 dependency-wave acceptance scenario `direct-reaction-custody-background-recovery`, automated on one discovered physical Android plus one discovered Android emulator. Plan 343 proves the local SQLCipher, typed bridge outcome, and relay backend contracts independently and makes no full recipient-presentation claim.
+- Reaction-specific queued/offline UI status and rollback of the pre-existing optimistic projection on a pre-stage failure -> future UX work; this plan preserves current UI shape and makes committed/noncommitted authority testable.
+- iOS device/APNs/NSE acceptance -> consolidated GAP-N12/WP-07 closure after GAP-N01 through GAP-N11 non-iOS gates pass.
+
+Dependencies:
+
+- Post-stage result truth table: live success returns `success` while local custody remains until the detailed attempt is accepted; live false/throw plus an accepted detailed store returns `success`; both transport legs nonaccepting return `sendFailed`; a stopped node returns `nodeNotRunning` without starting network work. Every one of those ADD results carries the committed reaction. Pre-stage encryption failure preserves its current encryption result and authors nothing; pre-stage capability/stage refusal returns `sendFailed` and authors nothing.
+- `storeInInboxDetailed` must continue distinguishing `stored`, `duplicate`, `rejectedFull`, and `failed`; only current-contract `stored` or `duplicate` may retire an exact local event, subject to the explicit relay-overflow limitation above.
+- Relay support for Plan 342's target/edit namespaces and Plan 343's reaction namespace must deploy before client activation. Otherwise a false cross-type `duplicate` can retire the wrong ciphertext. Relay deployment remains separately authorized. If any intermediate build is to be externally distributed, stop for a product-owned relay-revision/capability, rollback, and kill-switch decision; Plan 343 does not invent a protocol flag for non-shipped implementation builds.
+- DB v109 is a one-way local schema floor; only exact same-version account transfer is supported.
+- OQ-01 through OQ-05 do not weaken or block the P0 custody invariant. OQ-02/OQ-03 become prerequisites for later delayed-wake/read/outcome work, not this sender-custody slice.
+- This plan remains a bounded GAP-N01 slice and is not independently release-eligible before remaining GAP-N01 event/device work plus GAP-N02/N03 close.
+
+## Test Contract
+
+| Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
+|---|---|---|---|---|---|---|
+| TC-343-01 | DB v109 installs the exact identifier-plus-ciphertext reaction outbox on fresh create and v108 upgrade, runs twice, leaves historical reactions unbackfilled, and refuses v109-to-v108 downgrade without mutation. | `test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart::TC-343-01 v109 installs immutable direct-reaction custody and refuses downgrade without mutation` | Host migration / production callbacks with FFI SQLite; TC-343-10 supplies real SQLCipher | HEAD compile RED: v109 migration/table are absent -> GREEN: exact columns/checks/PK/fair index, no forbidden columns/FK/cascade, empty backfill, ordered create+upgrade registry entries, run-twice stability, downgrade error through production callback, and unchanged v109 reopen snapshot. | Omit the upgrade registry, add backfill/FK/content columns, key by target message, or permit downgrade -> TC-343-01 red. | `flutter test test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart`; add exactly once to both 1:1 arrays; AUTO `core-host-all`. |
+| TC-343-02 | ADD/REMOVE canonical projection and immutable custody stage are one transaction; every distinct transition survives while canonical LWW stays newest; exact replay is idempotent; conflicts/capacity/lane collision/SQL failure are all-or-nothing; production limits are exact. | `test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart::TC-343-02 atomic direct-reaction custody preserves every transition and fails closed` | Host repository integration / real FFI DB, production helper/repository, capacity-2 fixture, blocked transaction barriers, direct/group same-ID fixture | HEAD compile RED -> GREEN: ADD and remove-before-add tombstone commit with rows; same-target ADD then REMOVE retains two envelopes; crossed stage and exact older replay preserve newest canonical state; same bytes remain idempotent even at full capacity; changed bytes, missing/wrong-recipient direct targets, and an observable same-ID group target refuse; cap and injected SQL abort leave neither partial canonical mutation nor new outbox; post-stage target/canonical deletion leaves custody; accepted completion deletes the exact row without recreating canonical state. Assert production constants are exactly 512/50 and a load request above 50 returns 50 in fair order. | Split the writes, call standalone save/delete, REPLACE an occupied event, compact siblings, let an older stage overwrite canonical state, accept a group-colliding target, check capacity before exact replay, change either production limit, ignore the load clamp, evict/cascade, or delete without exact-envelope CAS -> TC-343-02 red. | `flutter test test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart`; add exactly once to both 1:1 arrays; AUTO `core-host-all`. |
+| TC-343-03 | Every authored ADD/REMOVE stages before transport; connected live ACK, unknown-presence live win, live failure/throw, accepted-store/local-completion failure, and node-stopped results obey the exact result/custody truth table. Stage refusal is zero-network. | `test/features/conversation/application/send_reaction_use_case_test.dart::{TC-343-03a connected ADD stages exact custody before live and live ACK cannot retire it,TC-343-03b ADD immediate outcome matrix retains committed custody}`; `test/features/conversation/application/remove_reaction_use_case_test.dart::{TC-343-03c connected REMOVE stages exact custody before live and live ACK cannot retire it,TC-343-03d REMOVE immediate outcome matrix retains committed custody}` | Host application / capable transaction spy, typed inbox completers, live barriers, bridge plaintext capture, stopped-node and connected/unknown matrix | HEAD RED: connected live success stores no inbox, node-stopped authors nothing, and both-fail writes no local transition -> GREEN: exact stage precedes network; one detailed store starts after stage for every running route; the spy binds `(recipientPeerId,eventId,wireEnvelope)` to the exact completion/failure entry; live ACK alone never completes it; accepted store completes exact custody; failed/full/store-throw retains; accepted-then-local-completion throw does not escape and retains `local_completion_failed`; stopped node returns its diagnostic with committed state; live-fail plus accepted store is success; both nonaccepting legs are `sendFailed`; every post-stage ADD returns its committed reaction. REMOVE captures and compares encrypted plaintext `id/action/messageId/senderPeerId`, outer metadata, staged tombstone, and both transport envelopes. | Restore the pre-stage node return, stage after send, call boolean storage, swap sibling recipient/event/CAS entry, diverge REMOVE inner/outer identity, skip connected inbox, cancel/delete on live success, leak a completion exception, return the wrong result, roll back after network failure, or start a second inbox call -> a TC-343-03 cell red. | Exact send/remove files; already in `ONE_TO_ONE_TESTS`, add once to `ONE_TO_ONE_HOST_TESTS`, AUTO `feature-host-all`. |
+| TC-343-04 | Lifecycle drain replays the exact recipient/event/envelope tuple; stored/duplicate completes; failed/full/throw/local-delete failure retains; crossed siblings, poison, and overlapping attempts converge without re-encryption. | `test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart::TC-343-04 exact at-least-once reaction drain converges without poison starvation` | Host application/repository / fake typed store plus real in-memory custody repository, two same-target sibling entries, barriers and throwing exact completion | HEAD compile RED -> GREEN: outcome table covers all statuses, exact bytes, bounded retry metadata, max 50/fair order, per-row isolation, and recorded `(recipientPeerId,eventId,wireEnvelope)` plus exact CAS entry. Cross accepted/failed outcomes so only the failed sibling remains; accepted-then-local-failure retention, duplicate replay completion, overlapping accepted absence-as-convergence, exact deletion, and zero encrypt/live/canonical rebuild calls also hold. | Treat failed/full as accepted, send both rows to one recipient, complete sibling B after storing A, delete before accepted completion, delete by event without exact bytes, stop on a poison row, order only by creation, or rebuild/re-encrypt -> TC-343-04 red. | `flutter test test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart`; add exactly once to both 1:1 arrays; AUTO `feature-host-all`. |
+| TC-343-05 | Startup-already-online, reconnect, OS network-restored, periodic retry, and app resume drain both text and reaction custody before failed/unacked rebuild; either family throwing cannot starve its sibling or later work. | `test/core/services/pending_message_retrier_direct_inbox_custody_test.dart::TC-343-05 retrier lifecycle drains text and reaction custody without sibling starvation`; `test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart::TC-343-05 resume drains both direct custody families before failed and unacked rebuild` | Host lifecycle / fake clock, callback order recorder, independent throwing drains | HEAD compile/order RED -> GREEN: all existing triggers invoke the bounded composite, text and reaction order is fixed, each family has its own error boundary, later retry families run, and no timer/callback owner is added. | Omit one trigger/family, use one unisolated composite, place reaction after rebuild, or introduce a new timer -> TC-343-05 red. | Existing retrier/resume files remain in both 1:1 arrays; AUTO `core-host-all`. |
+| TC-343-06 | Production repository/bootstrap, the one app-owned caller, and the required `TestUser` authored-send harness use the fail-closed capability and typed store; UI adoption is generation-safe across out-of-order completion. | `test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart::TC-343-06a production wires capable reaction custody and one causal composite lifecycle drain`; `test/features/conversation/presentation/screens/conversation_wired_test.dart::{TC-343-06b wired reaction adopts its still-current committed ADD across immediate outcomes,TC-343-06c late older ADD cannot overwrite newer REMOVE or ADD intent}`; `test/features/conversation/integration/reaction_roundtrip_test.dart::TC-343-06d required roundtrip uses an explicit custody-capable TestUser adapter` | Host AST composition/widget/integration / local-function extraction, capability-negative fake, async completion barriers, purpose-built TestUser adapter | HEAD RED -> GREEN: production `ReactionRepositoryImpl` owns every DB delegate; one production caller remains; missing capability/detailed store/schema/capacity fails before network; the AST contract inspects one composite closure containing exactly one text drain and one reaction drain with their intended repositories, `p2pService.storeInInboxDetailed`, and separate error boundaries, and proves that same closure feeds retrier and resume. A committed ADD replaces only its own still-current optimistic sentinel; delayed ADD after newer REMOVE stays hidden and delayed ADD after newer ADD cannot replace it. `TestUser` passes its existing detailed-store method and a narrow custody-capable adapter without a production bypass or globally capable fakes. | Make capability fail-open, leave an authored-send raw caller, bind a no-op/refusing production delegate, omit one drain/error boundary, require `result == success` to adopt a current committed ADD, unconditionally adopt a stale ADD, add a tap queue, globally widen lightweight fakes, wire a second DB/lifecycle owner, or fall into failed-message retry -> TC-343-06 red. | Exact bootstrap/wired/roundtrip/use-case tests; add `reaction_repository_impl_test.dart` exactly once to both 1:1 arrays; existing wired/roundtrip files remain registered; AUTO core/feature gates. |
+| TC-343-07 | Relay direct custody strictly namespaces complete reaction event IDs away from chat targets/edits across memory, limited/ACK rebuild, and Redis; sibling reactions do not collapse; malformed compatibility, duplicate push behavior, and the shipped overflow contract remain unchanged. | `go-relay-server/direct_reaction_custody_dedupe_test.go::{TestRelayNotificationClosure_DirectReactionCustodyIdentityEligibility,TestRelayNotificationClosure_DirectReactionCustodyNamespacesMemoryAndRebuilds,TestRelayNotificationClosure_DirectReactionCustodyNamespacesRedis,TestRelayNotificationClosure_DirectReactionDuplicateDoesNotRefanoutPush}`; `go-relay-server/protocol_contract_test.go::TestStatusValueContract_FullInboxStoreStaysOK`; existing direct reaction/push projection sentinels | Host native / direct helper table, memory, limited-memory, miniredis, real inbox store handler, recording push sender | HEAD RED: reaction identity uses `target-id:` and equal raw cross-type IDs collide -> GREEN: one cross-type equal-raw fixture and two reaction siblings sharing a target but using distinct event IDs, including a complete REMOVE, all store in crossed orders; each exact replay is duplicate after rebuild/rescan. A negative table covers non-v2, blank/missing event/action/target/sender/encryption members, whitespace mutations, and unsupported action, proving only complete ADD/REMOVE receives `reaction-event-id:` while prior target-key/empty behavior remains. Only first eligible ADD pushes; REMOVE stays silent; `extractMessageId`, provider `event_id`/`target_message_id`, and oldest-evict/`stored` overflow compatibility stay byte/behavior compatible. | Use target instead of event identity, reuse the ADD-only wake boolean so REMOVE falls through, collapse same-target siblings, accept a partial/unsupported reaction, update only one backend, push on duplicate/REMOVE, change generic push identity, or change the frozen at-cap result -> TC-343-07 red. | Run the closure-prefixed direct-reaction Go command and the focused compatibility selector from Acceptance Gates; curated `1to1` selects the former, while the latter explicitly includes `TestStatusValueContract_FullInboxStoreStaysOK`. |
+| TC-343-08 | DB v109 and the new table participate in exact same-version account transfer/current-version consumers; v108 input is rejected before target mutation; every literal `108` is classified as historical or updated-current. | `test/features/account_migration/application/migration_database_schema_inventory_test.dart::TC-343-08a v109 inventory contains direct reaction custody`; `test/features/account_migration/application/migration_database_active_importer_test.dart::TC-343-08b production-v109 transfer preserves two pending reaction transitions and v108 rejection leaves target unchanged`; `test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart::TC-343-08c literal v108 inventory has no stale current-version consumer` | Host integration / source and target opened through production create/upgrade callbacks, real staged importer, manifest compatibility, full inventory/snapshot, explicit source-census allowlist | HEAD RED: current DB is v108 and inventory lacks the table -> GREEN: source and target each assert `PRAGMA user_version == 109` plus the full production schema inventory before import; same-v109 transfer round-trips exact ADD+REMOVE envelopes for one target; a v108 manifest fails before any table changes and the whole target snapshot stays byte/value-equivalent; registries/runtime/current proofs assert 109; only migration-108 definitions and explicit v108 setup/downgrade/rejection or unrelated numeric literals remain allowlisted. | Stamp a compile-time 109 manifest onto a version-1 partial fixture, omit the table from inventory/import, accept cross-version input, mutate any target table before compatibility, restore a current-version pin to 108, or widen the allowlist silently -> TC-343-08 red. | Exact account/migration/full-chain tests; AUTO core/feature; direct classified `rg` census in Acceptance Gates. |
+| TC-343-09 | Existing authenticated receiver, LWW/tombstone, required roundtrip, notification-action, Plan 342 text custody, group reaction, rich-provider, and relay-overflow compatibility behavior remains unchanged. | `test/features/conversation/application/handle_incoming_reaction_use_case_test.dart::{rejects each outer event action or target mismatch before side effects,duplicate add deliveries stay idempotent,INV-T2 remove-then-stale-add stays removed (tombstone closes residual)}`; `test/features/conversation/domain/repositories/reaction_repository_impl_test.dart::concurrent ADD vs REMOVE is last-writer-wins across repositories`; `test/features/conversation/integration/reaction_roundtrip_test.dart::TC-343-06d required roundtrip uses an explicit custody-capable TestUser adapter`; exact Plan 342/group/relay sentinels | Host preservation / table-driven deterministic decrypt fake, real FFI reaction mutation, explicit TestUser capability adapter, existing group/text fixtures, Go relay tests | GREEN sentinel -> remains GREEN: outbound custody reuses the same event bytes; independent event, action, and target mismatches each return metadata mismatch with null change and zero repository/notification side effects; replay/order converges; text/group tables and retries do not change; ADD wake eligibility, REMOVE silence, provider projection, and current relay at-cap behavior remain compatible until later GAP slices. | Drop any one outer/inner parity clause, alter receiver ordering, bypass TestUser capability, reuse v108/group tables, route reactions into message retry, widen REMOVE wake eligibility, or change at-cap compatibility -> TC-343-09 red. | Exact preservation commands plus `./scripts/run_test_gates.sh 1to1`; AUTO feature/core; group files run directly, not a second broad curated lane. |
+| TC-343-10 | Real SQLCipher proves v108-to-v109 upgrade, encryption, close/reopen durability of same-target ADD+REMOVE, accepted-then-local-delete rollback recovery, prior-v108 data preservation, and one-way downgrade refusal on an available Android target. | `integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart::TC-343-10 Android SQLCipher v108-to-v109 direct-reaction custody survives reopen and completion rollback` | Single device / production SQLCipher plugin and migration callbacks on USB Pixel 6 `21071FDF600CSC` | Device HEAD compile RED -> GREEN: cipher check; `PRAGMA user_version == 108` before upgrade and `== 109` after upgrade/reopen; a seeded v108 direct-text custody row remains byte-identical; reaction table has empty historical backfill; atomic ADD+REMOVE stage; close/reopen exact rows; wrong-key access is read-only, the failed handle is closed, and correct-key reopen restores an exact full snapshot; simulated local-completion delete failure retains the row; reopen/duplicate convergence; a second production migration pass leaves `user_version == 109` and rows byte-identical; v109-to-v108 downgrade refusal and unchanged correct-version reopen. | Use plain SQLite, perform a read-write wrong-key probe, leak its handle, omit PRAGMA/reopen/snapshot, compact ADD+REMOVE, clear on live/local deletion, complete before local transaction, lose the v108 text row, call a clean reopen an abrupt crash, or permit downgrade -> TC-343-10 red. | Add one `1to1/test` discovery record and explicit-single-device classification; run `flutter test integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart -d 21071FDF600CSC`; not a host array. |
+
+### Test Notes
+
+- TC-343-02 validates only relay-visible outer metadata against the canonical row at stage. It does not pretend SQL can authenticate ciphertext. Receiver outer/inner parity remains the cryptographic identity check in TC-343-09.
+- TC-343-02 uses distinct timestamps for crossed ADD/REMOVE transitions. An equal-time deterministic tie-break is explicitly deferred and must not be smuggled into this plan through a comparator rewrite.
+- TC-343-03 replaces the obsolete connected-zero-inbox and both-fail-no-local-mutation expectations in the current FDC-18 tests. Keep their exactly-one-store and same-envelope assertions; do not delete the cases.
+- TC-343-03 owns the immediate accepted-store/local-completion-throw cells for both ADD and REMOVE; TC-343-04 separately owns the same failure during lifecycle drain. Neither may substitute for the other.
+- TC-343-06 uses an exact optimistic-attempt sentinel/generation, not `senderPeerId` alone. The guard must survive ADD-A completing after REMOVE-B and ADD-A completing after ADD-B without serializing taps.
+- TC-343-06/09 adapt only the required `TestUser` authored-send harness. The structurally matching `FakeP2PServiceIntegration.storeInInboxDetailed` is passed explicitly; nominally widening every fake or adding a legacy fail-open sender path is forbidden.
+- TC-343-07 deliberately separates two discriminators: one raw string is reused across chat-target, chat-edit-event, and reaction-event identity; independently, two reactions share one target while carrying distinct event IDs and actions. Either fixture alone is insufficient.
+- TC-343-07 preserves the current direct-relay oldest-eviction behavior only for compatibility. It is a GREEN sentinel and an explicit remaining GAP-N01 release risk, not evidence of PRD §5 ACK-or-expiry retention.
+- TC-343-08 must not reuse the file's version-1 partial-schema fixture while claiming v109. Its source and target are production-created/upgraded databases with literal PRAGMA and full-inventory assertions.
+- TC-343-10 is a storage/plugin close/reopen proof with a fake typed remote outcome. Its wrong-key probe is read-only and followed by exact correct-key recovery. It does not claim abrupt process kill, real relay delivery, notification presentation, or cross-platform parity.
+
+## Implementation Steps
+
+1. Snapshot `git status --short`, confirm Plan 343 is the only new top-level number, capture the classified literal-108 baseline, and add TC-343-01 through TC-343-10 causal tests/sentinels before production edits.
+2. Add DB v109 in `app_database_version.dart`, a new `109_direct_reaction_inbox_custody_outbox.dart`, and both ordered production registries. Implement the minimal schema, fresh/upgrade/run-twice/empty-backfill and one-way downgrade contract. Stop-if: another coherent change has already claimed v109.
+3. Add the reaction outbox contract/model and DB helpers. Factor only the transaction-scoped canonical reaction compare/write primitive needed to place ADD/REMOVE and outbox insert in one transaction; do not build a generic event framework. Bind stage to the exact direct target/recipient and refuse an observable group-ID collision. Implement tuple-exact load/failure/completion CAS, exact 512/50 defaults and clamp, cap/idempotency order, fair load, and no-cascade behavior.
+4. Add the optional outgoing custody capability to `ReactionRepositoryImpl` and production construction. Keep incoming/group interfaces and lightweight unrelated fakes source-compatible. Use purpose-built capable fakes in sender tests and a narrow adapter in `TestUser`; pass its existing detailed-store method explicitly so the required roundtrip stays fail-closed.
+5. Change `sendReaction` and `removeReaction` so encryption and atomic stage precede the node/network branch, every running route starts one typed exact inbox attempt, accepted-completion failure is caught/recorded, and live results never retire custody. Preserve the result truth table and return a committed ADD object across post-stage failures. Update the canonical wired caller to adopt only its still-current optimistic attempt; add no tap queue.
+6. Add the reaction drain and compose it with text custody inside the existing production lifecycle callback, with per-family error isolation on startup-already-online, reconnect, OS restored, periodic, and resume paths. Extend the existing AST helper to prove the causal closure body and exact delegates rather than only identifier presence. Do not add a scheduler or instantiate the full bootstrap in a test.
+7. Add a strict complete-ADD/REMOVE reaction-custody identity helper used by `extractDirectInboxDedupeKey`; keep ADD-only wake eligibility separate. Update memory/limited/Redis sibling, crossed-ID, negative-eligibility, overflow-preservation, and duplicate/no-refanout tests without changing push projection.
+8. Update same-v109 account transfer/schema inventory using production-created/upgraded source and target databases, full migration chain, classified current-version assertions, SQLCipher proof files, discovery classification/contracts, and both curated 1:1 arrays exactly as named in the Test Contract. Use a read-only wrong-key probe and compare the correct-key full snapshot afterward.
+9. Run focused causal RED/GREEN and representative mutation re-reds, exact preservation tests, curated/family gates, pinned Android SQLCipher closure, analyzer, and diff hygiene. Stop-if: correct implementation requires provider payload changes, group/media/device fanout, a new timer, iOS production edits, or cross-version transfer support; re-scope rather than broadening Plan 343.
+
+## Risks And Blind Spots
+
+- False `duplicate` for different ciphertext -> TC-343-07 requires an explicit cross-type namespace collision fixture across all backends and relay-first activation.
+- Same target can mask a wrong reaction identity -> TC-343-07 separately requires distinct sibling event IDs, including REMOVE, and exact replay after rebuild.
+- Split canonical/outbox writes or rapid crossed taps -> TC-343-02 blocks split transactions, compaction, stale canonical reversal, lane collision, and same-event byte replacement; TC-343-06 blocks late UI resurrection without serializing taps.
+- Lifecycle / derived-state durability -> TC-343-04/05 prove exact reopen-safe retry under every existing trigger, with crossed-sibling/overlap/poison isolation.
+- Sibling-surface consistency -> TC-343-09 protects receiver, notification action, text custody, and group reaction semantics; TC-343-06 pins the only production caller.
+- Destructive-action side effects -> TC-343-01/02/08/10 prove no cascade, no cap eviction, downgrade/import rejection before mutation, and exact completion after local deletion.
+- Invariant re-verification under new transitions -> TC-343-02/09 prove all events remain in custody while the latest canonical state converges under distinct timestamps.
+- Relay at-cap eviction violates the target ACK-or-expiry contract -> explicitly retained only for installed-client compatibility and assigned to a later capability/mixed-version GAP-N01 rollout slice. It blocks dependency-wave release, not this bounded implementation artifact.
+- Real-network presentation remains unproved -> explicitly deferred dependency-wave evidence; no Plan 343 release or full GAP-N01 closure claim is allowed.
+
+## Gate Cadence
+
+- Per-plan closure: focused TC-343 files, exact Plan 342/group/receiver/provider sentinels, curated `1to1`, justified `core-host-all` for DB/version/lifecycle changes, justified `feature-host-all` for reaction repository/use-case/caller changes, relay host tests, and the single Pixel SQLCipher proof plus changed current-version Android sentinels.
+- Do not run full `host-all` for this individual plan. Run `./scripts/run_host_test_gates.sh host-all` once after the GAP-N01/N02/N03 dependency wave (or its explicitly named implementation batch) and once at final rollout/release closure.
+- Shared tests outside feature/core globs: run the exact Go relay commands and Android `integration_test` proof directly. Registration under later `host-all` does not make full `host-all` a Plan 343 gate.
+
+## Acceptance Gates
+
+```bash
+# Snapshot and allocation before execution; every command below except the
+# explicitly marked causal RED must exit 0 with zero test failures/new issues.
+git status --short
+test "$(find Test-Flight-Improv -maxdepth 1 -type f -name '343-*' | wc -l | tr -d ' ')" -eq 1
+test "$(grep -Fc '| [343-gap-n01-direct-reaction-inbox-custody-outbox-tdd-plan.md](343-gap-n01-direct-reaction-inbox-custody-outbox-tdd-plan.md)' Test-Flight-Improv/00-INDEX.md)" -eq 1
+rg -n '\b108\b' lib test integration_test --glob '*.dart'
+
+# First causal RED before production edits: expect non-zero because connected
+# ADD has no atomic custody capability and currently skips inbox storage.
+flutter test test/features/conversation/application/send_reaction_use_case_test.dart \
+  --plain-name 'TC-343-03a connected ADD stages exact custody before live and live ACK cannot retire it'
+
+# Focused migration/storage/application/lifecycle GREEN: exit 0, zero failures.
+flutter test test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart
+flutter test test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart
+flutter test test/features/conversation/application/send_reaction_use_case_test.dart \
+  test/features/conversation/application/remove_reaction_use_case_test.dart
+flutter test test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart
+flutter test test/core/services/pending_message_retrier_direct_inbox_custody_test.dart \
+  test/core/lifecycle/handle_app_resumed_upload_ordering_test.dart \
+  test/core/bootstrap/production_application_bootstrap_phase_contract_test.dart
+flutter test test/features/conversation/domain/repositories/reaction_repository_impl_test.dart \
+  test/features/conversation/presentation/screens/conversation_wired_test.dart
+flutter test test/features/conversation/integration/reaction_roundtrip_test.dart
+
+# Version/account-transfer/current-chain proof and classified literal census.
+flutter test test/features/account_migration/application/migration_database_schema_inventory_test.dart \
+  test/features/account_migration/application/migration_database_active_importer_test.dart \
+  test/core/database/integration/full_migration_chain_test.dart
+flutter test test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart \
+  --plain-name 'TC-343-08c literal v108 inventory has no stale current-version consumer'
+rg -n '\b108\b' lib test integration_test --glob '*.dart'
+
+# Exact receiver/text/group/provider preservation.
+flutter test test/features/conversation/application/handle_incoming_reaction_use_case_test.dart \
+  --plain-name 'rejects each outer event action or target mismatch before side effects'
+flutter test test/features/conversation/application/handle_incoming_reaction_use_case_test.dart \
+  --plain-name 'INV-T2 remove-then-stale-add stays removed (tombstone closes residual)'
+flutter test test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart \
+  test/features/conversation/application/drain_direct_inbox_custody_outbox_use_case_test.dart
+flutter test test/features/groups/application/send_group_reaction_use_case_test.dart \
+  test/features/groups/application/remove_group_reaction_use_case_test.dart \
+  test/features/groups/application/retry_failed_group_inbox_stores_use_case_test.dart
+(cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./... -count=1)
+
+# Relay namespace, exact duplicate, and provider compatibility: exit 0.
+(cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... \
+  -run '^TestRelayNotificationClosure_DirectReaction' -count=1)
+(cd go-relay-server && GOTOOLCHAIN=go1.25.0 go test ./... \
+  -run '^(TestStatusValueContract_FullInboxStoreStaysOK$|TestInboxStore_ReactionNonAddOrIneligibleNeverSendsPush|TestBuildReactionPush_|TestRelayNotificationClosure_OrdinaryPush)' -count=1)
+
+# Registration: new custody files and the shared repository test appear once
+# in each curated 1:1 array; current send/remove files gain host-lane ownership.
+for plan_test in \
+  test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart \
+  test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart \
+  test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart \
+  test/features/conversation/domain/repositories/reaction_repository_impl_test.dart; do
+  test "$(sed -n '/readonly ONE_TO_ONE_TESTS=(/,/^)/p' scripts/run_test_gates.sh | grep -Fxc "  \"$plan_test\"")" -eq 1
+  test "$(sed -n '/readonly ONE_TO_ONE_HOST_TESTS=(/,/^)/p' scripts/run_host_test_gates.sh | grep -Fxc "  \"$plan_test\"")" -eq 1
+done
+for existing_host_test in \
+  test/features/conversation/application/send_reaction_use_case_test.dart \
+  test/features/conversation/application/remove_reaction_use_case_test.dart; do
+  test "$(sed -n '/readonly ONE_TO_ONE_HOST_TESTS=(/,/^)/p' scripts/run_host_test_gates.sh | grep -Fxc "  \"$existing_host_test\"")" -eq 1
+done
+test "$(./scripts/check_reliability_simulation_discovery.sh --records-tsv | \
+  awk -F '\t' '$1 == "1to1" && $2 == "test" && \
+    $3 == "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart" { count++ } \
+    END { print count + 0 }')" -eq 1
+bash scripts/test/reliability_simulation_discovery_contract_test.sh
+
+# Per-plan curated and justified family gates; no full host-all here.
+./scripts/run_test_gates.sh 1to1
+./scripts/run_host_test_gates.sh core-host-all
+./scripts/run_host_test_gates.sh feature-host-all
+
+# Availability-bounded Android SQLCipher closure; rediscover and pin target.
+flutter devices --machine
+adb devices -l
+xcrun simctl list devices available
+flutter test integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart \
+  -d 21071FDF600CSC
+for version_proof in \
+  integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart \
+  integration_test/direct_notification_durability_sqlcipher_proof_test.dart \
+  integration_test/group_notification_display_outbox_sqlcipher_proof_test.dart \
+  integration_test/group_exit_intents_sqlcipher_proof_test.dart \
+  integration_test/group_self_removed_marker_sqlcipher_proof_test.dart; do
+  flutter test "$version_proof" -d 21071FDF600CSC
+done
+ANDROID_SERIAL=21071FDF600CSC ./android/gradlew -p android \
+  :app:connectedReleaseAndroidTest --no-parallel \
+  -PenableGroupExitReleaseDiagnosticsProof=true \
+  -PdisableGoogleServicesForDisposableProof=true \
+  -PandroidApplicationId=com.mknoon.app.pb266proof \
+  -Ptarget="$PWD/integration_test/group_exit_release_diagnostics_sqlcipher_proof_test.dart" \
+  -Ptarget-platform=android-arm64
+
+# Hygiene: no new analyzer issues or whitespace errors.
+flutter analyze
+git diff --check
+```
+
+## Device/Relay Proof Profile
+
+- Profile: single Android device plus host-native relay backends.
+- Boundary being proven: production SQLCipher v108-to-v109 migration, wrong-key protection, close/reopen durability for two same-target reaction transitions, local completion rollback/retry, one-way downgrade refusal, and relay memory/limited/Redis namespace parity. Host FFI cannot prove the Android SQLCipher plugin boundary; a remote relay is not needed to prove key derivation/dedup storage semantics.
+- Live availability check: `flutter devices --machine`, `adb devices -l`, and `xcrun simctl list devices available` on 2026-08-07 found USB Pixel 6 `21071FDF600CSC` (Android API 36), Android emulator `emulator-5554` (API 37), and available Apple targets. Only the USB Android is required for this single-device storage proof.
+- Required setup: one pinned USB Android `21071FDF600CSC`; production SQLCipher plugin/callbacks; test-local temporary encrypted identity DB/key; fake typed remote outcome at the repository boundary; host Go memory/limited/miniredis relay tests. No Firebase credential, production relay, second peer, UI navigation, or manual tap.
+- Two-peer default: N/A — TC-343-10 claims storage/plugin durability, not delivery/presentation or Android/iOS parity. A second endpoint would not strengthen this boundary. Any later non-iOS two-peer recovery proof defaults to USB Android `21071FDF600CSC` plus emulator `emulator-5554` with full automation.
+- Closure role: required Plan 343 boundary evidence, but only partial GAP-N01 evidence.
+- `FLUTTER_DEVICE_ID`: sufficient for the single-device proof; the command pins `-d 21071FDF600CSC` explicitly.
+- Registration: one `1to1/test` record in `scripts/check_reliability_simulation_discovery.sh`, explicit-single-device handling in the reliability runner, and matching shell discovery contract. The proof is not added to host arrays.
+- Discovery command: `./scripts/check_reliability_simulation_discovery.sh --records-tsv` -> exactly one direct-reaction custody record; `flutter devices --machine` -> Pixel ID present immediately before execution.
+- Closure command: `flutter test integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart -d 21071FDF600CSC` -> every TC-343-10 checkpoint passes; changed current-version Android proofs and PB266 release SQLCipher sentinel then pass on the same pinned physical target.
+- Deferred device work: no iOS and no two-peer campaign in Plan 343. The named dependency-wave scenario `direct-reaction-custody-background-recovery` owns real-relay recipient background/crash/presentation evidence and defaults to one live-discovered physical Android plus one live-discovered Android emulator with no user taps. Apple-owned acceptance stays consolidated under GAP-N12/WP-07.
+- Relay activation: host tests are required; production deployment is not authorized by this plan and must occur relay-first under a separate rollout action before Plan 343 client activation. Any externally distributed intermediate build additionally requires a product-owned machine-checkable relay-revision/capability and rollback decision; process ordering alone is not claimed as fail-closed rollout safety.
+
+## Execution Interpretation And Done Criteria
+
+- Expected RED: TC-343-03a sees no atomic reaction custody capability and the current connected path records zero inbox stores; TC-343-01/02/04/10 initially cannot compile because DB v109 and the reaction outbox do not exist; TC-343-07 deliberately collapses equal raw reaction/chat identities through `target-id:`.
+- Green sentinel: independent receiver event/action/target mismatch rejection, replay/tombstone behavior, Plan 342 direct-text custody, required TestUser roundtrip, group reaction replay, ADD-only wake eligibility, REMOVE silence, provider projection, and current direct-relay at-cap result remain unchanged.
+- Pre-existing dirty tree / known failure: none at planning start; HEAD `007c1e2d5` was clean before this plan artifact.
+- Environment blocker: none for planning. At execution, an unavailable listed target is `N/A (target unavailable by project policy)`, but any available replacement must be explicitly discovered and pinned. No unavailable Android/iOS version can block closure.
+- Scope drift: any need for provider changes, relay-capacity/mixed-version protocol changes, new scheduler, group/media/device fanout, equal-time protocol redesign, cross-version import, real-relay deployment, or iOS production edits blocks execution until re-planned.
+
+- [ ] Every behavior has a named causal test or preservation/device proof.
+- [ ] Causal RED, focused GREEN, and representative mutation re-red are recorded.
+- [ ] Exact preservation, relay, curated lane, and justified family gates pass.
+- [ ] Host/device discovery and curated registrations are exact and non-duplicated.
+- [ ] DB v109 host migration, production-v109 same-version transfer, Android SQLCipher, read-only wrong-key, close/reopen, completion rollback, and downgrade checks pass.
+- [ ] `flutter analyze` has no new issues; `git diff --check` is clean.
+- [ ] Scope Contract And Guard and relay-first/non-release boundary are respected.
+
+## Handoff
+
+- First causal RED command: `flutter test test/features/conversation/application/send_reaction_use_case_test.dart --plain-name 'TC-343-03a connected ADD stages exact custody before live and live ACK cannot retire it'`.
+- Preservation command: `flutter test test/features/conversation/application/handle_incoming_reaction_use_case_test.dart --plain-name 'INV-T2 remove-then-stale-add stays removed (tombstone closes residual)'`.
+- Behavior cases: 10 canonical Test Contract rows covering migration, atomic transitions, sender paths, drain, lifecycle, production wiring, relay namespace, transfer/versioning, preservation, and Android SQLCipher.
+- Manual registration: four new/shared host files in both curated 1:1 arrays; two existing sender files added to `ONE_TO_ONE_HOST_TESTS`; the existing required reaction roundtrip remains curated; one classified explicit-single-device Android proof; four closure-prefixed relay tests selected by the existing 1:1 Go gate.
+- Migration: DB v109 with host production-callback tests and real SQLCipher Android proof.
+- Boundary closure: host Dart/FFI/Go plus one pinned physical Android SQLCipher test; no second peer or iOS device.
+- Gate cadence: focused + curated `1to1` + justified core/feature families per plan; full `host-all` only after the GAP-N01/N02/N03 dependency wave and at final release closure.
+- Confirmed findings: reachability/node/throw custody bypass, post-network local mutation, one-row projection mismatch, relay target/reaction key collision, late-ADD UI resurrection, TestUser capability bypass pressure, version-1 transfer-fixture vacuity, and read-write wrong-key risk.
+- Refuted findings: universal existing reaction custody, safe reuse of v108, and need for a new retry scheduler.
+- Unresolved evidence: equal-timestamp tie behavior, relay ACK-or-expiry retention under overflow, fail-closed mixed-version activation, abrupt-process-kill recovery, and full real-relay/recipient presentation are explicitly deferred; none is claimed by this bounded plan and the relay/release items remain dependency-wave blockers.
+
+## Reviewer Findings
+
+Initial verdict: **plan-fixes-required**. Plan classification remained a viable bounded GAP-N01 modification; core bet **confirmed**; disposition **apply-plan-fixes**. The independent passes made no file edits.
+
+1. **[plan-fix, resolved] Late ADD completion could resurrect newer UI intent.** `conversation_wired.dart:5176-5241` updates optimistic state before awaiting and previously selected a replacement by sender alone. TC-343-06 now requires an exact optimistic-attempt generation guard plus ADD-after-REMOVE and crossed-ADD barriers; a tap queue is explicitly rejected.
+2. **[plan-fix, resolved] Sender/drain tests could pass with the wrong sibling tuple or leak accepted-completion errors.** The current text drain correctly pairs recipient and envelope at `drain_direct_inbox_custody_outbox_use_case.dart:76-81`, while reaction REMOVE parity is enforced by the receiver at `handle_incoming_reaction_use_case.dart:200-211`. TC-343-03/04 now bind recipient, event, bytes, and CAS entry; cross sibling outcomes; compare REMOVE inner/outer/staged identity; and cover accepted-store/local-completion throw for both actions.
+3. **[plan-fix, resolved] Relay positives did not prove event rather than target identity or strict REMOVE eligibility.** `inbox.go:1272-1278` separates reaction event identity from its target, while `reaction_push.go:94-108` is deliberately ADD-only for wake eligibility. TC-343-07 now uses separate cross-type and same-target/distinct-event fixtures, a complete ADD/REMOVE custody helper table, malformed/legacy preservation, and all backend rebuild paths.
+4. **[plan-fix, resolved] One receiver mismatch and the focused provider selector were vacuous for sibling clauses.** `handle_incoming_reaction_use_case.dart:200-204` checks event, action, and target, but the old test varied only event. The sentinel is now table-driven across all three. The old `TestBuildOrdinaryPush_` selector matched no tests; the verified replacement selects current `TestRelayNotificationClosure_OrdinaryPush...` cases.
+5. **[plan-fix, resolved] Production names could hide a no-op drain and the required TestUser roundtrip could pressure a fail-open bypass.** The bootstrap test already has local-function extraction support at `production_application_bootstrap_phase_contract_test.dart:145-171`; TC-343-06 now inspects the causal composite body and exact delegates. `test_user.dart:274-315` receives only a purpose-built custody adapter and its existing detailed-store method; unrelated fakes stay unchanged.
+6. **[plan-fix, resolved] Migration/fixture claims could be green without a real v109 database.** `MigrationDatabaseManifest.current` stamps the compile-time version (`migration_database_manifest.dart:65-82`) while the legacy importer fixture opens version 1 (`migration_database_active_importer_test.dart:24-38`). TC-343-08 now requires production callbacks, `PRAGMA user_version == 109`, full inventory, and whole-target nonmutation on v108 rejection. TC-343-02 pins 512/50 production defaults and clamp behavior.
+7. **[plan-fix, resolved] The SQLCipher wrong-key leg was unsafe and “crash” was overstated.** Repository precedent uses a read-only wrong-key probe because a keyed write-open can poison immediate reopen (`media_library_state_sqlcipher_proof_test.dart:300-318`). TC-343-10 now closes the probe, compares the correct-key snapshot, preserves a v108 text-custody row, and claims close/reopen plus transaction rollback only.
+8. **[release blocker, explicitly owned] Relay `stored` is not PRD §5 ACK-or-expiry retention under overflow.** Production memory and Redis evict the oldest row at cap and return `stored` (`backend_memory.go:114-153`; `backend_redis.go:263-321`), while the PRD requires removal only after recipient ACK or expiry. Changing this frozen installed-client contract would turn Plan 343 into a cross-client relay migration. The plan instead narrows its claim, preserves the exact overflow sentinel, and assigns non-destructive capacity plus machine-checkable mixed-version activation to a later GAP-N01 rollout slice. This blocks release, not implementation of the bounded sender-held outbox.
+
+## Arbiter Decision
+
+Final verdict: **ready**. Plan classification: reviewed implementation-ready bounded sender-custody slice; core bet **confirmed**. Disposition: **execute**, with no standalone client activation or release.
+
+- L1 evidence truth: clear; current reachability/node/throw bypasses and the separate-transition storage need are source-confirmed.
+- L2 causality: clear after tuple binding, immediate completion-failure, UI generation, strict relay eligibility, receiver-clause, production-limit, and real-v109 fixture corrections.
+- L3 bypass/scope: clear after the app caller, TestUser authored-send wrapper, production closure, direct/group collision, and lightweight-fake boundaries were pinned.
+- L4 gates: clear; focused selectors are non-vacuous, new host/device registrations are exact, curated/family cadence is proportionate, and full `host-all` remains owned by the named dependency wave and final release.
+- L5 boundary/reversibility: clear for bounded implementation through production-v109 host fixtures, read-only wrong-key/reopen, one-way downgrade, and one available Android SQLCipher proof. Relay overflow, mixed-version activation, abrupt kill, real presentation, and iOS remain explicit later release boundaries.
+- Evergreen sweep: B-1/B-2/B-4/B-5/B-8/B-9/B-10 hits are resolved or assigned to the named dependency-wave owner; B-3 and B-7 are clear; B-6 is covered by SQLCipher reopen plus lifecycle drains. No product decision blocks implementation. External distribution would create the separately named rollout/capability decision.
+
+## Execution Progress
+
+| Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
+|---|---|---|---|---|---|---|
+| - | not started | - | Go selector dry-run: 12 matching tests, exit 0; ten-row structure and document hygiene pass | `$tdd-review` verdict ready; ten causal contracts are executable | none for bounded implementation; relay overflow and mixed-version activation remain dependency-wave release blockers | begin TC-343-03a causal RED |
