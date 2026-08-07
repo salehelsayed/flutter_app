@@ -92,6 +92,54 @@ final class _SendChatMessageInvocationCollector
   }
 }
 
+final class _DirectReactionAuthoringInvocationCollector
+    extends RecursiveAstVisitor<void> {
+  final invocations = <MethodInvocation>[];
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    final name = node.methodName.name;
+    final namesP2pService = node.argumentList.arguments
+        .whereType<NamedExpression>()
+        .any((argument) => argument.name.label.name == 'p2pService');
+    if (name == 'sendReactionFn' ||
+        name == 'removeReactionFn' ||
+        ((name == 'sendReaction' || name == 'removeReaction') &&
+            namesP2pService)) {
+      invocations.add(node);
+    }
+    super.visitMethodInvocation(node);
+  }
+}
+
+List<({String path, String callee})>
+_discoverDirectReactionAuthoringInvocations() {
+  final paths =
+      Directory('lib')
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .map((file) => file.path.replaceAll('\\', '/'))
+          .where((path) => path.endsWith('.dart'))
+          .toList(growable: false)
+        ..sort();
+  final discovered = <({String path, String callee})>[];
+  for (final path in paths) {
+    final source = File(path).readAsStringSync();
+    if (!RegExp(
+      r'\b(?:sendReaction|sendReactionFn|removeReaction|removeReactionFn)\s*\(',
+    ).hasMatch(source)) {
+      continue;
+    }
+    final unit = parseString(content: source, path: path).unit;
+    final collector = _DirectReactionAuthoringInvocationCollector();
+    unit.accept(collector);
+    for (final invocation in collector.invocations) {
+      discovered.add((path: path, callee: invocation.methodName.name));
+    }
+  }
+  return discovered;
+}
+
 List<
   ({String path, int line, String callee, Map<String, String> namedArguments})
 >
@@ -206,17 +254,58 @@ void main() {
   });
 
   test(
-    'TC-342-07 production wires direct custody drain and capable message repository',
+    'TC-343-06a production wires capable reaction custody and one causal composite lifecycle drain',
     () {
       final production = File(_productionPath).readAsStringSync();
       final applicationRoot = File(_applicationRootPath).readAsStringSync();
+      final normalMethod = _method(
+        _productionClass(production),
+        '_prepareNormalApplication',
+      );
+      final localBodies = _localFunctionBodies(normalMethod);
 
       expect(
-        'Future<int> drainDirectTextInboxCustody()'.allMatches(production),
+        'Future<int> drainDirectInboxCustodyFamilies()'.allMatches(production),
         hasLength(1),
-        reason: 'production must construct one shared lifecycle closure',
+        reason: 'production must construct one shared direct-custody closure',
       );
-      expect(production, contains('custodyRepository: messageRepository'));
+      final composite = localBodies['drainDirectInboxCustodyFamilies']!;
+      expect(
+        RegExp(
+          r'\bdrainDirectInboxCustodyOutbox\s*\(',
+        ).allMatches(composite).length,
+        1,
+      );
+      expect(
+        RegExp(
+          r'\bdrainDirectReactionInboxCustodyOutbox\s*\(',
+        ).allMatches(composite).length,
+        1,
+      );
+      expect(composite, contains('custodyRepository: messageRepository'));
+      expect(composite, contains('custodyRepository: reactionRepository'));
+      expect(
+        'storeInInboxDetailed: p2pService.storeInInboxDetailed'.allMatches(
+          composite,
+        ),
+        hasLength(2),
+        reason: 'both families must replay through the typed relay outcome',
+      );
+      expect(
+        RegExp(r'\btry\s*\{').allMatches(composite),
+        hasLength(2),
+        reason: 'text and reaction drains need separate fault boundaries',
+      );
+      expect(
+        RegExp(r'\bcatch\s*\(').allMatches(composite),
+        hasLength(2),
+        reason: 'either custody family throwing must preserve its sibling',
+      );
+      expect(
+        composite.indexOf('drainDirectReactionInboxCustodyOutbox('),
+        greaterThan(composite.indexOf('drainDirectInboxCustodyOutbox(')),
+        reason: 'the existing text family retains deterministic first order',
+      );
       for (final binding in const <String>[
         'dbStageOutgoingDirectTextInboxCustody:',
         'dbLoadDirectInboxCustodyOutbox:',
@@ -230,22 +319,31 @@ void main() {
           reason: 'production must wire exactly one complete $binding seam',
         );
       }
+      for (final binding in const <String>[
+        'dbStageOutgoingDirectReactionInboxCustody:',
+        'dbLoadDirectReactionInboxCustodyOutbox:',
+        'dbLoadDirectReactionInboxCustodyOutboxForEvent:',
+        'dbRecordDirectReactionInboxCustodyFailureIfExact:',
+        'dbCompleteAcceptedDirectReactionInboxCustodyIfExact:',
+      ]) {
+        expect(
+          binding.allMatches(production),
+          hasLength(1),
+          reason:
+              'production must wire exactly one capable reaction $binding seam',
+        );
+      }
       expect(
-        production,
-        contains('storeInInboxDetailed: p2pService.storeInInboxDetailed'),
-      );
-      expect(
-        'drainDirectInboxCustodyOutboxFn: drainDirectTextInboxCustody'
+        'drainDirectInboxCustodyOutboxFn: drainDirectInboxCustodyFamilies'
             .allMatches(production),
         hasLength(1),
-        reason: 'the background retrier must receive the production drain',
+        reason: 'the background retrier must receive the composite drain',
       );
       expect(
-        'drainDirectInboxCustodyOutbox: drainDirectTextInboxCustody'.allMatches(
-          production,
-        ),
+        'drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies'
+            .allMatches(production),
         hasLength(1),
-        reason: 'the application root must receive the same closure for resume',
+        reason: 'the app-resume root must receive the same composite closure',
       );
       expect(
         applicationRoot,
@@ -253,6 +351,41 @@ void main() {
           'drainDirectInboxCustodyOutboxFn: '
           'widget.drainDirectInboxCustodyOutbox',
         ),
+      );
+    },
+  );
+
+  test(
+    'TC-343-06a direct reaction caller census stays on the capable wired route',
+    () {
+      final callers = _discoverDirectReactionAuthoringInvocations();
+      expect(callers, hasLength(2));
+      expect(
+        callers.map((caller) => '${caller.path}::${caller.callee}').toSet(),
+        <String>{
+          'lib/features/conversation/presentation/screens/'
+              'conversation_wired.dart::sendReactionFn',
+          'lib/features/conversation/presentation/screens/'
+              'conversation_wired.dart::removeReactionFn',
+        },
+        reason:
+            'every app-owned ADD/REMOVE authoring route must traverse the '
+            'custody-capable ConversationWired injection seams',
+      );
+
+      final p2pImplementation = File(
+        'lib/core/services/p2p_service_impl.dart',
+      ).readAsStringSync();
+      expect(
+        p2pImplementation,
+        matches(
+          RegExp(
+            r'class P2PServiceImpl\s+implements[\s\S]*?\bDetailedInboxStore\b',
+          ),
+        ),
+        reason:
+            'the production reaction caller omits an explicit store override, '
+            'so its concrete P2P service must expose typed inbox outcomes',
       );
     },
   );

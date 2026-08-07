@@ -29,4 +29,7 @@
 // 342: DB v108 adds the sender-owned, status-independent exact-envelope
 // custody outbox for newly authored ordinary direct text. The migration has
 // deliberately empty historical backfill and remains a one-way schema floor.
-const int currentIdentityDatabaseVersion = 108;
+// 343: DB v109 adds event-scoped exact-envelope custody for newly authored
+// direct reaction ADD/REMOVE transitions. Historical reactions are not
+// backfilled and v109 remains a one-way schema floor.
+const int currentIdentityDatabaseVersion = 109;

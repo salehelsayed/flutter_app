@@ -862,8 +862,9 @@ Future<bool?> handleAppResumed({
       }
     }
 
-    // Step 8b.1: Retry immutable direct-text relay custody before either message
-    // rebuild family. This is independently fault-isolated so one poison/drain
+    // Step 8b.1: Retry the immutable direct text+reaction relay-custody
+    // composite before either message rebuild family. The production composite
+    // isolates its two families, and this callback boundary ensures an outer
     // failure cannot suppress failed or unacked recovery on resume.
     if (drainDirectInboxCustodyOutboxFn != null) {
       try {

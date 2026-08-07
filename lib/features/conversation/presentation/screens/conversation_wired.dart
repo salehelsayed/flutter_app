@@ -84,6 +84,7 @@ import 'package:flutter_app/features/conversation/application/retry_failed_messa
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/conversation/presentation/controllers/reaction_optimistic_attempt_guard.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/feed/application/app_shell_controller.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -153,6 +154,30 @@ typedef SendVoiceMessageFn =
       String? timestamp,
       String? blobId,
       EncryptedMediaArtifact? preparedArtifact,
+    });
+
+typedef SendReactionFn =
+    Future<(SendReactionResult, MessageReaction?)> Function({
+      required P2PService p2pService,
+      required Bridge bridge,
+      required ReactionRepository reactionRepo,
+      required String targetPeerId,
+      required String messageId,
+      required String emoji,
+      required String senderPeerId,
+      required String recipientMlKemPublicKey,
+    });
+
+typedef RemoveReactionFn =
+    Future<RemoveReactionResult> Function({
+      required P2PService p2pService,
+      required Bridge bridge,
+      required ReactionRepository reactionRepo,
+      required String targetPeerId,
+      required String messageId,
+      required String emoji,
+      required String senderPeerId,
+      required String recipientMlKemPublicKey,
     });
 
 typedef DownloadMediaFn =
@@ -390,6 +415,8 @@ class ConversationWired extends StatefulWidget {
   final UploadMediaFn uploadMediaFn;
   final DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo;
   final SendVoiceMessageFn sendVoiceMessageFn;
+  final SendReactionFn sendReactionFn;
+  final RemoveReactionFn removeReactionFn;
   final DownloadMediaFn downloadMediaFn;
 
   /// Injectable seam for the encrypt-once LAN artifact (112 Phase 4): the
@@ -479,6 +506,8 @@ class ConversationWired extends StatefulWidget {
     this.uploadMediaFn = uploadMedia,
     this.uploadRetryProjectionRepo,
     this.sendVoiceMessageFn = sendVoiceMessage,
+    this.sendReactionFn = sendReaction,
+    this.removeReactionFn = removeReaction,
     this.downloadMediaFn = downloadMedia,
     this.prepareEncryptedMediaArtifactFn = prepareEncryptedMediaArtifact,
     this.notificationTappedAt,
@@ -551,6 +580,7 @@ class _ConversationWiredState extends State<ConversationWired>
   _uploadActivityController;
   final _reactionProjectionController =
       ConversationReactionProjectionController();
+  final _reactionAttemptGuard = ReactionOptimisticAttemptGuard();
   late final ConversationVoiceCaptureController _voiceCaptureController;
   PrivateMediaPolicy _privateMediaPolicy = const PrivateMediaPolicy.ordinary();
   bool _privateMediaPolicyInvalidated = false;
@@ -5172,6 +5202,7 @@ class _ConversationWiredState extends State<ConversationWired>
     final ownReaction = existingReactions
         .where((r) => r.senderPeerId == identity.peerId)
         .firstOrNull;
+    final optimisticAttempt = _reactionAttemptGuard.begin(messageId);
 
     if (ownReaction != null && ownReaction.emoji == emoji) {
       // Toggle off: remove reaction
@@ -5180,7 +5211,7 @@ class _ConversationWiredState extends State<ConversationWired>
           .toList();
       _reactionProjectionController.replaceForMessage(messageId, updated);
 
-      await removeReaction(
+      await widget.removeReactionFn(
         p2pService: widget.p2pService,
         bridge: bridge,
         reactionRepo: reactionRepo,
@@ -5196,7 +5227,7 @@ class _ConversationWiredState extends State<ConversationWired>
     // Add/replace reaction optimistically
     final now = DateTime.now().toUtc().toIso8601String();
     final optimisticReaction = MessageReaction(
-      id: '',
+      id: optimisticAttempt.optimisticReactionId,
       messageId: messageId,
       emoji: emoji,
       senderPeerId: identity.peerId,
@@ -5215,7 +5246,7 @@ class _ConversationWiredState extends State<ConversationWired>
     }
     _reactionProjectionController.replaceForMessage(messageId, updated);
 
-    final (result, reaction) = await sendReaction(
+    final (_, reaction) = await widget.sendReactionFn(
       p2pService: widget.p2pService,
       bridge: bridge,
       reactionRepo: reactionRepo,
@@ -5226,13 +5257,25 @@ class _ConversationWiredState extends State<ConversationWired>
       recipientMlKemPublicKey: _contact.mlKemPublicKey ?? '',
     );
 
-    // Update with real reaction on success
-    if (result == SendReactionResult.success && reaction != null && mounted) {
+    // The atomic custody stage, rather than the immediate transport diagnostic,
+    // makes a returned reaction authoritative. Adopt it only while this exact
+    // optimistic attempt is still the newest visible user intent. A delayed
+    // ADD must never replace a later ADD or resurrect after a later REMOVE.
+    if (reaction != null && mounted) {
       final updated = List<MessageReaction>.from(
         _reactionProjectionController.reactionsFor(messageId),
       );
+      if (!_reactionAttemptGuard.canAdopt(
+        attempt: optimisticAttempt,
+        senderPeerId: identity.peerId,
+        visibleReactions: updated,
+      )) {
+        return;
+      }
       final idx = updated.indexWhere(
-        (candidate) => candidate.senderPeerId == identity.peerId,
+        (candidate) =>
+            candidate.senderPeerId == identity.peerId &&
+            candidate.id == optimisticReaction.id,
       );
       if (idx >= 0) {
         updated[idx] = reaction;

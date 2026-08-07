@@ -35,7 +35,9 @@ import 'package:flutter_app/features/conversation/application/delete_message_use
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -53,6 +55,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/controllers/reaction_optimistic_attempt_guard.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/conversation_header.dart';
@@ -1334,6 +1337,69 @@ void main() {
     );
   }
 
+  group('Plan 343 reaction optimistic attempt authority', () {
+    MessageReaction optimistic(
+      ReactionOptimisticAttempt attempt,
+      String emoji,
+    ) => MessageReaction(
+      id: attempt.optimisticReactionId,
+      messageId: attempt.messageId,
+      emoji: emoji,
+      senderPeerId: 'self-peer',
+      timestamp: '2026-08-07T12:00:00.000Z',
+      createdAt: '2026-08-07T12:00:00.000Z',
+    );
+
+    test('guard unit accepts its still-current optimistic sentinel', () {
+      final guard = ReactionOptimisticAttemptGuard();
+      final attempt = guard.begin('message-1');
+
+      expect(
+        guard.canAdopt(
+          attempt: attempt,
+          senderPeerId: 'self-peer',
+          visibleReactions: <MessageReaction>[optimistic(attempt, '👍')],
+        ),
+        isTrue,
+      );
+    });
+
+    test('guard unit rejects an older generation after newer user intent', () {
+      final removeGuard = ReactionOptimisticAttemptGuard();
+      final beforeRemove = removeGuard.begin('message-1');
+      removeGuard.begin('message-1');
+      expect(
+        removeGuard.canAdopt(
+          attempt: beforeRemove,
+          senderPeerId: 'self-peer',
+          visibleReactions: <MessageReaction>[optimistic(beforeRemove, '👍')],
+        ),
+        isFalse,
+      );
+
+      final addGuard = ReactionOptimisticAttemptGuard();
+      final olderAdd = addGuard.begin('message-1');
+      final newerAdd = addGuard.begin('message-1');
+      final visible = <MessageReaction>[optimistic(newerAdd, '🔥')];
+      expect(
+        addGuard.canAdopt(
+          attempt: olderAdd,
+          senderPeerId: 'self-peer',
+          visibleReactions: visible,
+        ),
+        isFalse,
+      );
+      expect(
+        addGuard.canAdopt(
+          attempt: newerAdd,
+          senderPeerId: 'self-peer',
+          visibleReactions: visible,
+        ),
+        isTrue,
+      );
+    });
+  });
+
   // 112 Phase 4: the real prepareEncryptedMediaArtifact does file I/O that
   // cannot complete inside the testWidgets fake-async zone (deadlocks at
   // the 10-min timeout). All widget tests get this SYNC-I/O stub so the
@@ -1373,6 +1439,8 @@ void main() {
     ContactRepository? contactRepo,
     ReactionRepository? reactionRepo,
     ReactionListener? reactionListener,
+    SendReactionFn? sendReactionFn,
+    RemoveReactionFn? removeReactionFn,
     MediaFileManager? mediaFileManager,
     FakeAudioRecorderService? audioRecorderService,
     MicPermissionGateway? micPermissionGateway,
@@ -1423,6 +1491,8 @@ void main() {
           contactRepo: contactRepo,
           reactionRepo: reactionRepo,
           reactionListener: reactionListener,
+          sendReactionFn: sendReactionFn ?? sendReaction,
+          removeReactionFn: removeReactionFn ?? removeReaction,
           mediaAttachmentRepo: mediaAttachmentRepo,
           mediaFileManager: mediaFileManager,
           audioRecorderService: audioRecorderService,
@@ -1445,6 +1515,247 @@ void main() {
     );
     await tester.pump(const Duration(milliseconds: 400));
   }
+
+  group('Plan 343 wired reaction attempt authority', () {
+    ConversationMessage reactionMessage() => ConversationMessage(
+      id: 'message-343',
+      contactPeerId: makeContact().peerId,
+      senderPeerId: makeContact().peerId,
+      text: 'react to me',
+      timestamp: '2026-08-07T11:59:00.000Z',
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: '2026-08-07T11:59:00.000Z',
+    );
+
+    MessageReaction committedReaction(String id, String emoji) =>
+        MessageReaction(
+          id: id,
+          messageId: 'message-343',
+          emoji: emoji,
+          senderPeerId: makeIdentity().peerId,
+          timestamp: '2026-08-07T12:00:00.000Z',
+          createdAt: '2026-08-07T12:00:00.000Z',
+        );
+
+    Future<void> pumpReactionHarness(
+      WidgetTester tester, {
+      required SendReactionFn sendReactionFn,
+      required RemoveReactionFn removeReactionFn,
+    }) async {
+      final messageRepo = FakeMessageRepository();
+      final message = reactionMessage();
+      messageRepo.store[message.id] = message;
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messageRepo,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn: _instantSuccessSendFn,
+        bridge: FakeBridge(),
+        reactionRepo: FakeReactionRepository(),
+        initialMessages: <ConversationMessage>[message],
+        sendReactionFn: sendReactionFn,
+        removeReactionFn: removeReactionFn,
+      );
+    }
+
+    testWidgets(
+      'TC-343-06b wired caller adopts current committed ADD for durable diagnostics',
+      (tester) async {
+        for (final diagnostic in <SendReactionResult>[
+          SendReactionResult.nodeNotRunning,
+          SendReactionResult.sendFailed,
+        ]) {
+          final committed = committedReaction(
+            'committed-${diagnostic.name}',
+            '👍',
+          );
+
+          Future<(SendReactionResult, MessageReaction?)> sendStub({
+            required P2PService p2pService,
+            required Bridge bridge,
+            required ReactionRepository reactionRepo,
+            required String targetPeerId,
+            required String messageId,
+            required String emoji,
+            required String senderPeerId,
+            required String recipientMlKemPublicKey,
+          }) async => (diagnostic, committed);
+
+          Future<RemoveReactionResult> removeStub({
+            required P2PService p2pService,
+            required Bridge bridge,
+            required ReactionRepository reactionRepo,
+            required String targetPeerId,
+            required String messageId,
+            required String emoji,
+            required String senderPeerId,
+            required String recipientMlKemPublicKey,
+          }) async => RemoveReactionResult.success;
+
+          await pumpReactionHarness(
+            tester,
+            sendReactionFn: sendStub,
+            removeReactionFn: removeStub,
+          );
+
+          tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .onReactionSelected!
+              .call('message-343', '👍');
+          await tester.pump();
+
+          final visible = tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .reactions['message-343']!;
+          expect(visible, hasLength(1));
+          expect(visible.single.id, committed.id);
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
+      },
+    );
+
+    testWidgets(
+      'TC-343-06c late older ADD cannot overwrite newer REMOVE or ADD intent',
+      (tester) async {
+        final addCompletions =
+            <Completer<(SendReactionResult, MessageReaction?)>>[
+              Completer<(SendReactionResult, MessageReaction?)>(),
+              Completer<(SendReactionResult, MessageReaction?)>(),
+            ];
+        var addCalls = 0;
+
+        Future<(SendReactionResult, MessageReaction?)> orderedSend({
+          required P2PService p2pService,
+          required Bridge bridge,
+          required ReactionRepository reactionRepo,
+          required String targetPeerId,
+          required String messageId,
+          required String emoji,
+          required String senderPeerId,
+          required String recipientMlKemPublicKey,
+        }) => addCompletions[addCalls++].future;
+
+        Future<RemoveReactionResult> immediateRemove({
+          required P2PService p2pService,
+          required Bridge bridge,
+          required ReactionRepository reactionRepo,
+          required String targetPeerId,
+          required String messageId,
+          required String emoji,
+          required String senderPeerId,
+          required String recipientMlKemPublicKey,
+        }) async => RemoveReactionResult.success;
+
+        await pumpReactionHarness(
+          tester,
+          sendReactionFn: orderedSend,
+          removeReactionFn: immediateRemove,
+        );
+        var screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onReactionSelected!.call('message-343', '👍');
+        await tester.pump();
+        screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onReactionSelected!.call('message-343', '🔥');
+        await tester.pump();
+
+        addCompletions.first.complete((
+          SendReactionResult.success,
+          committedReaction('older-add', '👍'),
+        ));
+        await tester.pump();
+        var visible = tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .reactions['message-343']!;
+        expect(visible.single.emoji, '🔥');
+        expect(visible.single.id, isNot('older-add'));
+
+        addCompletions.last.complete((
+          SendReactionResult.success,
+          committedReaction('newer-add', '🔥'),
+        ));
+        await tester.pump();
+        visible = tester
+            .widget<ConversationScreen>(find.byType(ConversationScreen))
+            .reactions['message-343']!;
+        expect(visible.single.id, 'newer-add');
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        final delayedAdd = Completer<(SendReactionResult, MessageReaction?)>();
+        final removeCompletion = Completer<RemoveReactionResult>();
+
+        Future<(SendReactionResult, MessageReaction?)> delayedSend({
+          required P2PService p2pService,
+          required Bridge bridge,
+          required ReactionRepository reactionRepo,
+          required String targetPeerId,
+          required String messageId,
+          required String emoji,
+          required String senderPeerId,
+          required String recipientMlKemPublicKey,
+        }) => delayedAdd.future;
+
+        Future<RemoveReactionResult> delayedRemove({
+          required P2PService p2pService,
+          required Bridge bridge,
+          required ReactionRepository reactionRepo,
+          required String targetPeerId,
+          required String messageId,
+          required String emoji,
+          required String senderPeerId,
+          required String recipientMlKemPublicKey,
+        }) => removeCompletion.future;
+
+        await pumpReactionHarness(
+          tester,
+          sendReactionFn: delayedSend,
+          removeReactionFn: delayedRemove,
+        );
+        screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onReactionSelected!.call('message-343', '👍');
+        await tester.pump();
+        screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        screen.onReactionSelected!.call('message-343', '👍');
+        await tester.pump();
+        expect(
+          tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .reactions['message-343'],
+          isEmpty,
+        );
+
+        delayedAdd.complete((
+          SendReactionResult.success,
+          committedReaction('removed-add', '👍'),
+        ));
+        await tester.pump();
+        expect(
+          tester
+              .widget<ConversationScreen>(find.byType(ConversationScreen))
+              .reactions['message-343'],
+          isEmpty,
+        );
+        removeCompletion.complete(RemoveReactionResult.success);
+        await tester.pump();
+      },
+    );
+  });
 
   Future<void> pumpUntil(
     WidgetTester tester,

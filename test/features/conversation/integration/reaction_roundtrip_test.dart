@@ -14,14 +14,15 @@
 /// and via the persisted repo keyed on the target message id.
 ///
 /// Harness: reuses the `TestUser` + `FakeP2PNetwork` family (`withReactions:
-/// true`), mirroring the passing sibling `emoji_reaction_exchange_test.dart`.
-/// No new fakes.
+/// true`) with TestUser's narrow authored-reaction custody adapter and explicit
+/// typed inbox-store delegate. Receiver-only reaction fakes remain incapable.
 library;
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 
 import '../../../shared/fakes/fake_p2p_network.dart';
 import '../../../shared/fakes/test_user.dart';
@@ -77,11 +78,12 @@ void main() {
   });
 
   test(
-    'reaction round-trip: Alice reacts, receiver Bob shows it on the target message',
+    'TC-343-06d required roundtrip uses an explicit custody-capable TestUser adapter',
     () async {
       // Subscribe to Bob's live reaction stream BEFORE anything is sent so the
       // round-trip delivery is observable end-to-end (not just via the repo).
-      final bobReactionFuture = bob.reactionListener!.incomingReactionStream.first;
+      final bobReactionFuture =
+          bob.reactionListener!.incomingReactionStream.first;
 
       // Bob sends a 1:1 message to Alice; Alice will react to THIS message.
       final (sendResult, targetMsg) = await bob.sendMessage(
@@ -107,6 +109,23 @@ void main() {
       expect(sentReaction!.emoji, '🔥');
       expect(sentReaction.messageId, targetMsg.id);
       expect(sentReaction.senderPeerId, alice.peerId);
+      expect(
+        alice.reactionRepo,
+        isA<OutgoingDirectReactionInboxCustodyRepository>(),
+      );
+      final authoredCustody =
+          alice.reactionRepo! as OutgoingDirectReactionInboxCustodyRepository;
+      expect(authoredCustody.supportsDirectReactionInboxCustody, isTrue);
+      expect(
+        await authoredCustody.loadDirectReactionInboxCustodyForEvent(
+          recipientPeerId: bob.peerId,
+          eventId: sentReaction.id,
+        ),
+        isNull,
+        reason:
+            'the explicit TestUser typed-inbox delegate accepted the exact '
+            'event, so sender custody must converge after the live roundtrip',
+      );
 
       // --- RECEIVE: the reaction arrives live on Bob's listener stream. ---
       final received = await bobReactionFuture.timeout(
@@ -120,12 +139,14 @@ void main() {
 
       // --- APPLY: the receiver SHOWS the reaction ON THE TARGET MESSAGE. ---
       // Queried by the target message id — this is the gap-closing assertion.
-      final onTarget =
-          await bob.reactionRepo!.getReactionsForMessage(targetMsg.id);
+      final onTarget = await bob.reactionRepo!.getReactionsForMessage(
+        targetMsg.id,
+      );
       expect(
         onTarget.length,
         1,
-        reason: 'receiver should show exactly one reaction on the target message',
+        reason:
+            'receiver should show exactly one reaction on the target message',
       );
       expect(onTarget.single.emoji, '🔥');
       expect(onTarget.single.senderPeerId, alice.peerId);
@@ -133,64 +154,60 @@ void main() {
     },
   );
 
-  test(
-    'FDC-18-06b first-ever offline reaction deposits concurrently and '
-    'round-trips to exactly one reaction after drain',
-    () async {
-      // Observe Bob's receive end-to-end.
-      final bobReactionFuture =
-          bob.reactionListener!.incomingReactionStream.first;
+  test('FDC-18-06b first-ever offline reaction deposits concurrently and '
+      'round-trips to exactly one reaction after drain', () async {
+    // Observe Bob's receive end-to-end.
+    final bobReactionFuture =
+        bob.reactionListener!.incomingReactionStream.first;
 
-      // Bob sends a message to Alice; the reaction targets THIS message (so the
-      // target exists on Bob's side for the receive-time validation).
-      final (sendResult, targetMsg) = await bob.sendMessage(
-        alice.peerId,
-        'React to me while Bob is offline',
-      );
-      expect(sendResult, SendChatMessageResult.success);
-      expect(targetMsg, isNotNull);
-      final targetId = targetMsg!.id;
-      await Future.delayed(const Duration(milliseconds: 50));
+    // Bob sends a message to Alice; the reaction targets THIS message (so the
+    // target exists on Bob's side for the receive-time validation).
+    final (sendResult, targetMsg) = await bob.sendMessage(
+      alice.peerId,
+      'React to me while Bob is offline',
+    );
+    expect(sendResult, SendChatMessageResult.success);
+    expect(targetMsg, isNotNull);
+    final targetId = targetMsg!.id;
+    await Future.delayed(const Duration(milliseconds: 50));
 
-      // Bob goes offline: Alice's live reaction send will miss, so the
-      // concurrent durable inbox copy is the delivery tier.
-      bob.setOnline(false);
+    // Bob goes offline: Alice's live reaction send will miss, so the
+    // concurrent durable inbox copy is the delivery tier.
+    bob.setOnline(false);
 
-      late SendReactionResult reactionResult;
-      final events = await _captureFlowEvents(() async {
-        final (r, _) = await alice.sendReaction(bob.peerId, targetId, '🔥');
-        reactionResult = r;
-      });
+    late SendReactionResult reactionResult;
+    final events = await _captureFlowEvents(() async {
+      final (r, _) = await alice.sendReaction(bob.peerId, targetId, '🔥');
+      reactionResult = r;
+    });
 
-      // Offline peer's reaction still takes custody, via the CONCURRENT arm.
-      expect(reactionResult, SendReactionResult.success);
-      expect(
-        events.map((e) => e['event']),
-        contains('REACTION_SEND_CONCURRENT_INBOX_BEGIN'),
-      );
+    // Offline peer's reaction still takes custody, via the CONCURRENT arm.
+    expect(reactionResult, SendReactionResult.success);
+    expect(
+      events.map((e) => e['event']),
+      contains('REACTION_SEND_CONCURRENT_INBOX_BEGIN'),
+    );
 
-      // Bob comes back and drains: the inbox copy replays to him.
-      bob.setOnline(true);
-      await bob.drainOfflineInbox();
+    // Bob comes back and drains: the inbox copy replays to him.
+    bob.setOnline(true);
+    await bob.drainOfflineInbox();
 
-      final received = await bobReactionFuture.timeout(
-        const Duration(seconds: 2),
-        onTimeout: () => throw StateError(
-          'Bob never received the drained offline reaction',
-        ),
-      );
-      expect(received.emoji, '🔥');
-      expect(received.messageId, targetId);
+    final received = await bobReactionFuture.timeout(
+      const Duration(seconds: 2),
+      onTimeout: () =>
+          throw StateError('Bob never received the drained offline reaction'),
+    );
+    expect(received.emoji, '🔥');
+    expect(received.messageId, targetId);
 
-      // Exactly one reaction row after drain (byte-identical dedup => no dupes).
-      final onTarget = await bob.reactionRepo!.getReactionsForMessage(targetId);
-      expect(
-        onTarget.length,
-        1,
-        reason: 'drained offline reaction must produce exactly one row',
-      );
-      expect(onTarget.single.emoji, '🔥');
-      expect(onTarget.single.senderPeerId, alice.peerId);
-    },
-  );
+    // Exactly one reaction row after drain (byte-identical dedup => no dupes).
+    final onTarget = await bob.reactionRepo!.getReactionsForMessage(targetId);
+    expect(
+      onTarget.length,
+      1,
+      reason: 'drained offline reaction must produce exactly one row',
+    );
+    expect(onTarget.single.emoji, '🔥');
+    expect(onTarget.single.senderPeerId, alice.peerId);
+  });
 }

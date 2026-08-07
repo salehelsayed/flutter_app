@@ -579,7 +579,9 @@ requires_explicit_multi_device_ids() {
 
 requires_explicit_single_device_id() {
   [ "$1" = \
-    "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart" ]
+    "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart" ] ||
+    [ "$1" = \
+      "integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart" ]
 }
 
 print_device_arg_for_path() {

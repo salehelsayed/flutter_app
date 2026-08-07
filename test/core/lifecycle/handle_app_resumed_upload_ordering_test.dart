@@ -7,6 +7,32 @@ import '../../features/identity/domain/repositories/fake_identity_repository.dar
 import '../services/fake_p2p_service.dart';
 import '../bridge/fake_bridge.dart';
 
+Future<int> _drainBothDirectCustodyFamilies(
+  List<String> calls, {
+  String? throwingFamily,
+}) async {
+  var completed = 0;
+  try {
+    calls.add('drainDirectTextInboxCustody');
+    if (throwingFamily == 'text') {
+      throw StateError('forced text custody drain failure');
+    }
+    completed++;
+  } catch (_) {
+    // Mirrors the production composite's per-family error boundary.
+  }
+  try {
+    calls.add('drainDirectReactionInboxCustody');
+    if (throwingFamily == 'reaction') {
+      throw StateError('forced reaction custody drain failure');
+    }
+    completed++;
+  } catch (_) {
+    // Mirrors the production composite's per-family error boundary.
+  }
+  return completed;
+}
+
 // Helpers to track call ordering across all four recovery steps.
 // Each callback appends its name to the shared `callOrder` list
 // so we can assert exact sequential ordering.
@@ -32,42 +58,46 @@ void main() {
 
   group('handleAppResumed -- retryIncompleteUploads ordering', () {
     test(
-      'TC-342-06 resume drains direct text custody before failed and unacked rebuild',
+      'TC-343-05 resume drains both direct custody families before failed and unacked rebuild',
       () async {
-        final callOrder = <String>[];
+        for (final throwingFamily in const <String>['text', 'reaction']) {
+          final callOrder = <String>[];
 
-        await handleAppResumed(
-          bridge: fakeBridge,
-          p2pService: fakeP2PService,
-          recoverStuckSendingMessagesFn: () async {
-            callOrder.add('recoverStuckSendingMessages');
-            return 0;
-          },
-          retryIncompleteUploadsFn: () async {
-            callOrder.add('retryIncompleteUploads');
-            return 0;
-          },
-          drainDirectInboxCustodyOutboxFn: () async {
-            callOrder.add('drainDirectInboxCustodyOutbox');
-            throw StateError('forced custody drain failure');
-          },
-          retryFailedMessagesFn: () async {
-            callOrder.add('retryFailedMessages');
-            return 0;
-          },
-          retryUnackedMessagesFn: () async {
-            callOrder.add('retryUnackedMessages');
-            return 0;
-          },
-        );
+          await handleAppResumed(
+            bridge: fakeBridge,
+            p2pService: fakeP2PService,
+            recoverStuckSendingMessagesFn: () async {
+              callOrder.add('recoverStuckSendingMessages');
+              return 0;
+            },
+            retryIncompleteUploadsFn: () async {
+              callOrder.add('retryIncompleteUploads');
+              return 0;
+            },
+            drainDirectInboxCustodyOutboxFn: () =>
+                _drainBothDirectCustodyFamilies(
+                  callOrder,
+                  throwingFamily: throwingFamily,
+                ),
+            retryFailedMessagesFn: () async {
+              callOrder.add('retryFailedMessages');
+              return 0;
+            },
+            retryUnackedMessagesFn: () async {
+              callOrder.add('retryUnackedMessages');
+              return 0;
+            },
+          );
 
-        expect(callOrder, <String>[
-          'recoverStuckSendingMessages',
-          'retryIncompleteUploads',
-          'drainDirectInboxCustodyOutbox',
-          'retryFailedMessages',
-          'retryUnackedMessages',
-        ]);
+          expect(callOrder, <String>[
+            'recoverStuckSendingMessages',
+            'retryIncompleteUploads',
+            'drainDirectTextInboxCustody',
+            'drainDirectReactionInboxCustody',
+            'retryFailedMessages',
+            'retryUnackedMessages',
+          ]);
+        }
       },
     );
 

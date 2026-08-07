@@ -393,6 +393,40 @@ fi
 grep -Fq 'Platform.isAndroid' "$custody_path" ||
   fail 'TC-342-11 does not reject a non-Android explicit target'
 
+# Plan 343 adds one independent Android SQLCipher proof and keeps it off host.
+reaction_custody_path=integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart
+assert_record_once 1to1 test "$reaction_custody_path"
+grep -Fq $'1to1\ttest\t'$reaction_custody_path$'\t343 TC-343-10 Android v108-to-v109 direct-reaction custody SQLCipher durability device proof' \
+  "$records" || fail 'TC-343-10 discovery record lost its exact Android proof label'
+
+unset RELIABILITY_SINGLE_DEVICE_ID FLUTTER_DEVICE_ID
+missing_reaction_custody_device_list="$tmp_dir/tc343-missing-device.list"
+./scripts/run_test_gates.sh reliability-sim 1to1 --list \
+  --only "$reaction_custody_path" \
+  >"$missing_reaction_custody_device_list" ||
+  fail 'TC-343-10 list must remain available without a device env'
+grep -Fq -- "-d '<required:RELIABILITY_SINGLE_DEVICE_ID>'" \
+  "$missing_reaction_custody_device_list" ||
+  fail 'TC-343-10 list did not expose its required explicit Android target'
+
+missing_reaction_custody_device_run="$tmp_dir/tc343-missing-device.run"
+set +e
+./scripts/run_test_gates.sh reliability-sim 1to1 \
+  --only "$reaction_custody_path" \
+  >"$missing_reaction_custody_device_run" 2>&1
+missing_reaction_custody_device_status=$?
+set -e
+[ "$missing_reaction_custody_device_status" -eq 64 ] ||
+  fail "TC-343-10 without device env exited $missing_reaction_custody_device_status instead of 64"
+grep -Fq 'Missing explicit single-device ID' \
+  "$missing_reaction_custody_device_run" ||
+  fail 'TC-343-10 without device env did not fail with the explicit-ID diagnostic'
+if grep -Fq '==>' "$missing_reaction_custody_device_run"; then
+  fail 'TC-343-10 without device env reached Flutter/device execution'
+fi
+grep -Fq 'Platform.isAndroid' "$reaction_custody_path" ||
+  fail 'TC-343-10 does not reject a non-Android explicit target'
+
 # The recorder proof remains executable, but is honest about its one native
 # boundary and has no compile-time skip escape hatch.
 voice_path=integration_test/voice_message_e2e_test.dart

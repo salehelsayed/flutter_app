@@ -250,9 +250,10 @@ class PendingMessageRetrier {
     if (_isNetworkRestoredFlushing) return;
     _isNetworkRestoredFlushing = true;
     try {
-      // TC-342-06: exact-envelope sender custody is the first retry family on
-      // the OS-restored light pass. A drain error is isolated so the existing
-      // zero-age unacked and media recovery legs still run.
+      // TC-343-05: the shared text+reaction exact-envelope custody composite is
+      // the first retry family on the OS-restored light pass. Its internal
+      // family boundaries and this callback boundary keep zero-age unacked and
+      // media recovery running after any custody error.
       await _drainDirectInboxCustodyOutbox();
 
       try {
@@ -786,10 +787,10 @@ class PendingMessageRetrier {
         }
       }
 
-      // TC-342-06: retry immutable direct-text custody after stuck/upload
-      // recovery and before either message rebuild family. The helper owns its
-      // own error boundary so a poison/drain failure cannot starve failed or
-      // unacked retries.
+      // TC-343-05: retry the shared immutable direct text+reaction custody
+      // composite after stuck/upload recovery and before either message rebuild
+      // family. The composite isolates its siblings; this helper also isolates
+      // the callback so a poison/drain failure cannot starve later retries.
       await _drainDirectInboxCustodyOutbox();
 
       // Step 8: Retry failed messages

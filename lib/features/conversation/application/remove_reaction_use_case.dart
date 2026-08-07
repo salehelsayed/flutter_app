@@ -1,8 +1,11 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/deliver_outgoing_direct_reaction_custody.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 
@@ -17,8 +20,8 @@ enum RemoveReactionResult {
 
 const _uuid = Uuid();
 
-/// Sends a "remove" reaction to a contact via P2P (v2 encrypted only)
-/// and deletes the local reaction.
+/// Authors a v2 encrypted REMOVE, atomically stages its complete local
+/// tombstone plus exact custody row, then races live and typed inbox delivery.
 Future<RemoveReactionResult> removeReaction({
   required P2PService p2pService,
   required Bridge bridge,
@@ -28,6 +31,7 @@ Future<RemoveReactionResult> removeReaction({
   required String emoji,
   required String senderPeerId,
   required String recipientMlKemPublicKey,
+  StoreInInboxDetailedFn? storeInInboxDetailed,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -38,17 +42,34 @@ Future<RemoveReactionResult> removeReaction({
     },
   );
 
-  // 1. Check P2P node
-  if (!p2pService.currentState.isStarted) {
+  final custodyCapability =
+      reactionRepo is OutgoingDirectReactionInboxCustodyRepository
+      ? reactionRepo as OutgoingDirectReactionInboxCustodyRepository
+      : null;
+  final custodyRepo =
+      custodyCapability?.supportsDirectReactionInboxCustody == true
+      ? custodyCapability
+      : null;
+  final detailedInboxStore = p2pService is DetailedInboxStore
+      ? p2pService as DetailedInboxStore
+      : null;
+  final effectiveStoreInInboxDetailed =
+      storeInInboxDetailed ?? detailedInboxStore?.storeInInboxDetailed;
+  if (custodyRepo == null || effectiveStoreInInboxDetailed == null) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'REACTION_REMOVE_NODE_NOT_RUNNING',
-      details: {},
+      event: 'REACTION_REMOVE_CUSTODY_CAPABILITY_REFUSED',
+      details: {
+        'reason': custodyRepo == null
+            ? 'missing_reaction_custody_repository'
+            : 'missing_detailed_inbox_store',
+      },
     );
-    return RemoveReactionResult.nodeNotRunning;
+    return RemoveReactionResult.sendFailed;
   }
 
-  // 2. Build remove payload
+  // Build and encrypt before consulting node state so a stopped node still
+  // leaves one exact durable REMOVE obligation.
   final reactionId = _uuid.v4();
   final timestamp = DateTime.now().toUtc().toIso8601String();
 
@@ -96,69 +117,62 @@ Future<RemoveReactionResult> removeReaction({
     return RemoveReactionResult.encryptionFailed;
   }
 
-  // 4. Send — FDC-18: concurrent durable inbox, the twin of the add path. The
-  //    un-react toggle gets the identical treatment so the reaction stays
-  //    symmetric (fast to react AND fast to un-react). See
-  //    send_reaction_use_case.dart for the full rationale: unknown-presence =>
-  //    fire storeInInbox concurrently with the live send; connected =>
-  //    single live path; exactly one storeInInbox per toggle.
-  final unknownPresence = !p2pService.isConnectedToPeer(targetPeerId);
-
-  Future<bool>? concurrentInbox;
-  if (unknownPresence) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'REACTION_REMOVE_CONCURRENT_INBOX_BEGIN',
-      details: {
-        'messageId': messageId.length > 8
-            ? messageId.substring(0, 8)
-            : messageId,
-      },
-    );
-    concurrentInbox = p2pService
-        .storeInInbox(targetPeerId, jsonString)
-        .catchError((_) => false);
-  }
-
-  bool delivered;
+  final authoredTombstone = payload.toMessageReaction().copyWith(
+    removedAt: timestamp,
+  );
+  late DirectReactionInboxCustodyOutboxEntry custody;
   try {
-    final sent = await p2pService.sendMessage(targetPeerId, jsonString);
-    if (sent) {
-      delivered = true;
-    } else if (concurrentInbox != null) {
-      delivered = await concurrentInbox;
-    } else {
-      delivered = await p2pService.storeInInbox(targetPeerId, jsonString);
-    }
-  } catch (e) {
-    if (concurrentInbox != null) {
-      delivered = await concurrentInbox;
-    } else {
+    final staged = await custodyRepo.stageOutgoingDirectReactionInboxCustody(
+      reaction: authoredTombstone,
+      recipientPeerId: targetPeerId,
+      action: ReactionPayload.removeAction,
+      wireEnvelope: jsonString,
+    );
+    final stagedCustody = staged.custody;
+    if (!staged.authorizesTransport ||
+        staged.reaction == null ||
+        stagedCustody == null) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'REACTION_REMOVE_SEND_FAILED',
-        details: {'error': e.toString()},
+        event: 'REACTION_REMOVE_CUSTODY_STAGE_REFUSED',
+        details: {'reason': staged.outcome.name},
       );
       return RemoveReactionResult.sendFailed;
     }
-  }
-
-  if (!delivered) {
+    custody = stagedCustody;
+  } catch (error) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'REACTION_REMOVE_SEND_FAILED',
-      details: {'reason': 'direct_and_inbox_failed'},
+      event: 'REACTION_REMOVE_CUSTODY_STAGE_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
     );
     return RemoveReactionResult.sendFailed;
   }
 
-  // 5. Delete locally (tombstone with the remove's authored timestamp so a
-  //    stale re-delivered add can't resurrect it — INV-T1/INV-T2).
-  await reactionRepo.removeReaction(
-    messageId,
-    senderPeerId,
-    removedAtTimestamp: timestamp,
+  if (!p2pService.currentState.isStarted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_REMOVE_NODE_NOT_RUNNING',
+      details: const {'custodyStaged': true},
+    );
+    return RemoveReactionResult.nodeNotRunning;
+  }
+
+  final delivery = await deliverOutgoingDirectReactionCustody(
+    p2pService: p2pService,
+    storeInInboxDetailed: effectiveStoreInInboxDetailed,
+    custodyRepository: custodyRepo,
+    custody: custody,
+    flowPrefix: 'REACTION_REMOVE',
   );
+  if (!delivery.delivered) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_REMOVE_SEND_FAILED',
+      details: const {'reason': 'direct_and_inbox_failed'},
+    );
+    return RemoveReactionResult.sendFailed;
+  }
 
   emitFlowEvent(
     layer: 'FL',

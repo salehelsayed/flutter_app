@@ -108,6 +108,7 @@ import 'migrations/105_reaction_outbox_needs_build.dart';
 import 'migrations/106_group_notification_display_outbox.dart';
 import 'migrations/107_direct_notification_durability.dart';
 import 'migrations/108_direct_inbox_custody_outbox.dart';
+import 'migrations/109_direct_reaction_inbox_custody_outbox.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -625,6 +626,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '108_direct_inbox_custody_outbox',
     runDirectInboxCustodyOutboxMigration,
   ),
+  ProductionMigrationEntry(
+    109,
+    '109_direct_reaction_inbox_custody_outbox',
+    runDirectReactionInboxCustodyOutboxMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1131,6 +1137,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     108,
     '108_direct_inbox_custody_outbox',
     runDirectInboxCustodyOutboxMigration,
+  ),
+  ProductionMigrationEntry(
+    109,
+    '109_direct_reaction_inbox_custody_outbox',
+    runDirectReactionInboxCustodyOutboxMigration,
   ),
 ]);
 

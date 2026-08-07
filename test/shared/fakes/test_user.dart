@@ -28,6 +28,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../core/bridge/fake_bridge.dart';
 import '../../features/conversation/domain/repositories/fake_reaction_repository.dart';
 import '../helpers/lifecycle_helpers.dart' as lifecycle_helpers;
+import 'in_memory_direct_reaction_custody_repository.dart';
 import 'fake_p2p_network.dart';
 import 'fake_p2p_service_integration.dart';
 import 'in_memory_contact_repository.dart';
@@ -110,7 +111,7 @@ class TestUser {
       router = IncomingMessageRouter(p2pService: p2p);
       chatStream = router.chatMessageStream;
       if (withReactions) {
-        reactionRepo = FakeReactionRepository();
+        reactionRepo = InMemoryDirectReactionCustodyRepository();
         reactionListener = ReactionListener(
           reactionStream: router.reactionStream,
           messageRepo: msgRepo,
@@ -290,6 +291,7 @@ class TestUser {
       emoji: emoji,
       senderPeerId: peerId,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId) ?? '',
+      storeInInboxDetailed: p2pService.storeInInboxDetailed,
     );
   }
 
@@ -312,6 +314,7 @@ class TestUser {
       emoji: emoji,
       senderPeerId: peerId,
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId) ?? '',
+      storeInInboxDetailed: p2pService.storeInInboxDetailed,
     );
   }
 

@@ -545,6 +545,10 @@ classify_path() {
       record "1to1" "$path" "test" "342 TC-342-11 Android v107-to-v108 direct-text custody SQLCipher durability device proof"
       return
       ;;
+    integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart)
+      record "1to1" "$path" "test" "343 TC-343-10 Android v108-to-v109 direct-reaction custody SQLCipher durability device proof"
+      return
+      ;;
     integration_test/outgoing_transport_settlement_sqlcipher_proof_test.dart)
       record "1to1" "$path" "test" "336 TC-336-16 atomic outgoing transport settlement SQLCipher device proof"
       return

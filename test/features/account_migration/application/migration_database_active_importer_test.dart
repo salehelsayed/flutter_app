@@ -410,7 +410,7 @@ CREATE TABLE identity (
     );
 
     test(
-      'TC-342-10b same-v108 transfer preserves pending custody and v107 rejection leaves target unchanged',
+      'legacy partial-schema fixture follows current manifest and rejects v107 before mutation',
       () async {
         await runGroupExitDiagnosticsMigration(activeDb);
         await runGroupExitDiagnosticsMigration(stagedDb);
@@ -450,8 +450,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 108);
-        expect(manifest.databaseVersion, 108);
+        expect(currentIdentityDatabaseVersion, 109);
+        expect(manifest.databaseVersion, 109);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -522,6 +522,132 @@ CREATE TABLE identity (
         );
       },
     );
+
+    test(
+      'TC-343-08b production-v109 transfer preserves two pending reaction transitions and v108 rejection leaves target unchanged',
+      () async {
+        final productionActive = await openDatabase(
+          p.join(tempDir.path, 'tc343-production-active.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        final productionStaged = await openDatabase(
+          p.join(tempDir.path, 'tc343-production-staged.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        addTearDown(() async {
+          if (productionActive.isOpen) await productionActive.close();
+          if (productionStaged.isOpen) await productionStaged.close();
+        });
+
+        expect(await _userVersion(productionActive), 109);
+        expect(await _userVersion(productionStaged), 109);
+        final activeInventory =
+            await MigrationDatabaseSchemaInventory.fromDatabase(
+              productionActive,
+            );
+        final stagedInventory =
+            await MigrationDatabaseSchemaInventory.fromDatabase(
+              productionStaged,
+            );
+        expect(activeInventory.schemaHash, stagedInventory.schemaHash);
+        expect(
+          activeInventory.tableNames,
+          containsAll(<String>[
+            'identity',
+            'messages',
+            'message_reactions',
+            'direct_inbox_custody_outbox',
+            'direct_reaction_inbox_custody_outbox',
+          ]),
+        );
+
+        final addRow = _reactionCustodyRow(
+          eventId: 'transfer-reaction-add',
+          envelope: '{"event":"add","cipher":"exact-a"}',
+          createdAt: '2026-08-07T06:00:00.000Z',
+        );
+        final removeRow = _reactionCustodyRow(
+          eventId: 'transfer-reaction-remove',
+          envelope: '{"event":"remove","cipher":"exact-b"}',
+          createdAt: '2026-08-07T06:00:01.000Z',
+        );
+        await productionStaged.insert(
+          'direct_reaction_inbox_custody_outbox',
+          addRow,
+        );
+        await productionStaged.insert(
+          'direct_reaction_inbox_custody_outbox',
+          removeRow,
+        );
+        final manifest = await _manifestFor(productionStaged);
+        expect(manifest.databaseVersion, 109);
+        expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
+
+        await MigrationDatabaseActiveImporter(
+          activeDatabase: productionActive,
+        ).importVerifiedStagedDatabase(
+          MigrationDatabaseImportStagingResult(
+            database: productionStaged,
+            manifest: manifest,
+            stagedDatabasePath: p.join(
+              tempDir.path,
+              'tc343-production-staged.db',
+            ),
+          ),
+        );
+        expect(
+          await productionActive.query(
+            'direct_reaction_inbox_custody_outbox',
+            orderBy: 'created_at ASC',
+          ),
+          <Map<String, Object?>>[addRow, removeRow],
+        );
+
+        await productionActive.delete('direct_reaction_inbox_custody_outbox');
+        final targetSentinel = _reactionCustodyRow(
+          eventId: 'target-must-survive-v108-rejection',
+          envelope: '{"target":"unchanged"}',
+          createdAt: '2026-08-07T06:01:00.000Z',
+        );
+        await productionActive.insert(
+          'direct_reaction_inbox_custody_outbox',
+          targetSentinel,
+        );
+        final targetBefore = await _snapshotAllProductionRows(productionActive);
+
+        await expectLater(
+          MigrationDatabaseActiveImporter(
+            activeDatabase: productionActive,
+          ).importVerifiedStagedDatabase(
+            MigrationDatabaseImportStagingResult(
+              database: productionStaged,
+              manifest: manifest.copyWith(databaseVersion: 108),
+              stagedDatabasePath: p.join(
+                tempDir.path,
+                'tc343-production-staged.db',
+              ),
+            ),
+          ),
+          throwsA(
+            isA<MigrationDatabaseActiveImportException>().having(
+              (error) => error.message,
+              'message',
+              contains('unsupportedDatabaseVersion'),
+            ),
+          ),
+        );
+        expect(
+          await _snapshotAllProductionRows(productionActive),
+          targetBefore,
+        );
+      },
+    );
   });
 }
 
@@ -554,6 +680,21 @@ Map<String, Object?> _custodyRow({
   'last_error_code': 'store_failed',
   'created_at': '2026-08-06T09:00:00.000Z',
   'updated_at': '2026-08-06T10:00:00.000Z',
+};
+
+Map<String, Object?> _reactionCustodyRow({
+  required String eventId,
+  required String envelope,
+  required String createdAt,
+}) => <String, Object?>{
+  'recipient_peer_id': 'transfer-recipient',
+  'event_id': eventId,
+  'wire_envelope': envelope,
+  'retry_count': 0,
+  'last_attempt_at': null,
+  'last_error_code': null,
+  'created_at': createdAt,
+  'updated_at': createdAt,
 };
 
 Future<void> _createSchema(Database db) async {
@@ -627,6 +768,21 @@ Future<Map<String, List<Map<String, Object?>>>> _snapshotRows(
     'identity': await db.query('identity', orderBy: 'id'),
     'messages': await db.query('messages', orderBy: 'id'),
   };
+}
+
+Future<Map<String, List<Map<String, Object?>>>> _snapshotAllProductionRows(
+  Database db,
+) async {
+  final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(db);
+  return <String, List<Map<String, Object?>>>{
+    for (final tableName in inventory.tableNames)
+      tableName: await db.query(tableName),
+  };
+}
+
+Future<int> _userVersion(Database db) async {
+  final rows = await db.rawQuery('PRAGMA user_version');
+  return (rows.single.values.single as num).toInt();
 }
 
 Future<MigrationDatabaseManifest> _manifestFor(Database db) async {

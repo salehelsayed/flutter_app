@@ -1,4 +1,5 @@
 import '../models/message_reaction.dart';
+import '../models/direct_reaction_inbox_custody_outbox_entry.dart';
 
 /// Result of atomically applying an incoming ADD event.
 enum ReactionAddApplyResult {
@@ -122,6 +123,50 @@ abstract interface class AtomicGroupReactionRemovalRepository {
   Future<ReactionRemoveApplyResult> applyGroupRemove({
     required String groupId,
     required MessageReaction reaction,
+  });
+}
+
+/// Optional, fail-closed authority for newly authored direct-reaction inbox
+/// custody. It stays beside [ReactionRepository] so incoming/group-only fakes
+/// do not acquire sender-custody methods.
+abstract interface class OutgoingDirectReactionInboxCustodyRepository {
+  /// True only when the complete atomic stage/drain/completion surface is
+  /// configured. An authored direct reaction must fail closed when false.
+  bool get supportsDirectReactionInboxCustody;
+
+  /// Commits the canonical ADD/REMOVE projection and immutable encrypted event
+  /// in one transaction before any live or inbox work.
+  Future<DirectReactionCustodyStageResult>
+  stageOutgoingDirectReactionInboxCustody({
+    required MessageReaction reaction,
+    required String recipientPeerId,
+    required String action,
+    required String wireEnvelope,
+  });
+
+  /// Loads at most 50 rows in fair retry order. Storage clamps larger limits.
+  Future<List<DirectReactionInboxCustodyOutboxEntry>>
+  loadDirectReactionInboxCustody({int limit = 50});
+
+  /// Loads one exact recipient/event tuple, or null when it has converged.
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectReactionInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  });
+
+  /// Records one retained failure only while [expected]'s exact bytes own the
+  /// recipient/event tuple.
+  Future<bool> recordDirectReactionInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  });
+
+  /// Retires an accepted exact event. Concurrent absence is convergence;
+  /// envelope replacement is stale and must not be deleted.
+  Future<DirectReactionInboxCustodyCompletionOutcome>
+  completeAcceptedDirectReactionInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
   });
 }
 

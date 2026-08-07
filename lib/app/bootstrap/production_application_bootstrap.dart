@@ -26,6 +26,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -148,6 +149,7 @@ import 'package:flutter_app/features/push/application/show_notification_use_case
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_direct_private_committed_pending_cleanup.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -2332,6 +2334,54 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           dbDeleteReactionsForMessage(db, messageId),
       dbDeleteReactionsForContact: (contactPeerId) =>
           dbDeleteReactionsForContact(db, contactPeerId),
+      dbStageOutgoingDirectReactionInboxCustody:
+          ({
+            required reactionRow,
+            required recipientPeerId,
+            required action,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectReactionInboxCustody(
+            db,
+            reactionRow: reactionRow,
+            recipientPeerId: recipientPeerId,
+            action: action,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbLoadDirectReactionInboxCustodyOutbox: ({limit = 50}) =>
+          dbLoadDirectReactionInboxCustodyOutbox(db, limit: limit),
+      dbLoadDirectReactionInboxCustodyOutboxForEvent:
+          ({required recipientPeerId, required eventId}) =>
+              dbLoadDirectReactionInboxCustodyOutboxForEvent(
+                db,
+                recipientPeerId: recipientPeerId,
+                eventId: eventId,
+              ),
+      dbRecordDirectReactionInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) => dbRecordDirectReactionInboxCustodyFailureIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            errorCode: errorCode,
+            attemptedAt: attemptedAt,
+          ),
+      dbCompleteAcceptedDirectReactionInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+          }) => dbCompleteAcceptedDirectReactionInboxCustodyIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+          ),
       groupReactionProjection: groupReactionNotificationProjection,
       dbLoadGroupReactionComparandsForProjection:
           (accountPeerId, {limit = 1024}) =>
@@ -5758,17 +5808,43 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       notificationService: notificationService,
     );
 
-    // TC-342-07: one production closure owns the direct-text custody drain for
-    // every lifecycle trigger. Both the background retrier and app-resume root
-    // receive this same capable repository + detailed relay-store binding.
-    Future<int> drainDirectTextInboxCustody() => runAccountRuntimeNetworkAction(
-      operation: 'direct_text_inbox_custody_drain',
-      blockedValue: 0,
-      action: () => drainDirectInboxCustodyOutbox(
-        custodyRepository: messageRepository,
-        storeInInboxDetailed: p2pService.storeInInboxDetailed,
-      ),
-    );
+    // TC-343-06a: one production closure owns both immutable direct-custody
+    // families for every lifecycle trigger. Each bounded drain has its own
+    // fault boundary, so a poison row/family cannot starve its sibling or the
+    // failed/unacked rebuild work that follows this shared callback.
+    Future<int> drainDirectInboxCustodyFamilies() =>
+        runAccountRuntimeNetworkAction(
+          operation: 'direct_inbox_custody_families_drain',
+          blockedValue: 0,
+          action: () async {
+            var completed = 0;
+            try {
+              completed += await drainDirectInboxCustodyOutbox(
+                custodyRepository: messageRepository,
+                storeInInboxDetailed: p2pService.storeInInboxDetailed,
+              );
+            } catch (error) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'DIRECT_TEXT_INBOX_CUSTODY_FAMILY_DRAIN_ERROR',
+                details: {'errorType': error.runtimeType.toString()},
+              );
+            }
+            try {
+              completed += await drainDirectReactionInboxCustodyOutbox(
+                custodyRepository: reactionRepository,
+                storeInInboxDetailed: p2pService.storeInInboxDetailed,
+              );
+            } catch (error) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'DIRECT_REACTION_INBOX_CUSTODY_FAMILY_DRAIN_ERROR',
+                details: {'errorType': error.runtimeType.toString()},
+              );
+            }
+            return completed;
+          },
+        );
 
     // Create pending message retrier
     final pendingMessageRetrier = PendingMessageRetrier(
@@ -5972,7 +6048,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // Finding 05 Phase 4 (P1.6): jitter the background retry cadence in prod so
       // reconnecting clients do not stampede the relay in lockstep.
       jitterRandom: Random(),
-      drainDirectInboxCustodyOutboxFn: drainDirectTextInboxCustody,
+      drainDirectInboxCustodyOutboxFn: drainDirectInboxCustodyFamilies,
       verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_inbox_custody_verify',
         blockedValue: 0,
@@ -6416,7 +6492,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         profileUpdateListener: profileUpdateListener,
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
-        drainDirectInboxCustodyOutbox: drainDirectTextInboxCustody,
+        drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies,
         pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
         pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,
         pendingPostFollowOnRetrier: pendingPostFollowOnRetrier,

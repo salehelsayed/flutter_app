@@ -4,6 +4,7 @@ import 'package:flutter_app/core/notifications/group_reaction_notification_proje
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
+import '../../domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../../domain/models/message_reaction.dart';
 import '../../domain/repositories/reaction_repository.dart';
 
@@ -13,7 +14,8 @@ class ReactionRepositoryImpl
         ReactionRepository,
         AtomicIncomingReactionMutationRepository,
         AtomicGroupReactionAdditionRepository,
-        AtomicGroupReactionRemovalRepository {
+        AtomicGroupReactionRemovalRepository,
+        OutgoingDirectReactionInboxCustodyRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertReaction;
   final Future<ReactionAddApplyResult> Function(Map<String, Object?> row)?
   dbApplyIncomingAdd;
@@ -47,12 +49,41 @@ class ReactionRepositoryImpl
   dbDeleteReaction;
   final Future<int> Function(String messageId) dbDeleteReactionsForMessage;
   final Future<int> Function(String contactPeerId) dbDeleteReactionsForContact;
+  final Future<DbDirectReactionCustodyStageResult> Function({
+    required Map<String, Object?> reactionRow,
+    required String recipientPeerId,
+    required String action,
+    required String wireEnvelope,
+  })?
+  dbStageOutgoingDirectReactionInboxCustody;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadDirectReactionInboxCustodyOutbox;
+  final Future<Map<String, Object?>?> Function({
+    required String recipientPeerId,
+    required String eventId,
+  })?
+  dbLoadDirectReactionInboxCustodyOutboxForEvent;
+  final Future<bool> Function({
+    required String recipientPeerId,
+    required String eventId,
+    required String expectedWireEnvelope,
+    required String errorCode,
+    required String attemptedAt,
+  })?
+  dbRecordDirectReactionInboxCustodyFailureIfExact;
+  final Future<DirectReactionInboxCustodyCompletionOutcome> Function({
+    required String recipientPeerId,
+    required String eventId,
+    required String expectedWireEnvelope,
+  })?
+  dbCompleteAcceptedDirectReactionInboxCustodyIfExact;
   final GroupReactionNotificationProjection? groupReactionProjection;
   final Future<List<Map<String, Object?>>> Function(
     String accountPeerId, {
     int limit,
   })?
   dbLoadGroupReactionComparandsForProjection;
+  final DateTime Function() now;
   Future<void> _incomingMutationTail = Future<void>.value();
 
   ReactionRepositoryImpl({
@@ -67,9 +98,115 @@ class ReactionRepositoryImpl
     required this.dbDeleteReaction,
     required this.dbDeleteReactionsForMessage,
     required this.dbDeleteReactionsForContact,
+    this.dbStageOutgoingDirectReactionInboxCustody,
+    this.dbLoadDirectReactionInboxCustodyOutbox,
+    this.dbLoadDirectReactionInboxCustodyOutboxForEvent,
+    this.dbRecordDirectReactionInboxCustodyFailureIfExact,
+    this.dbCompleteAcceptedDirectReactionInboxCustodyIfExact,
     this.groupReactionProjection,
     this.dbLoadGroupReactionComparandsForProjection,
-  });
+    DateTime Function()? now,
+  }) : now = now ?? DateTime.now;
+
+  @override
+  bool get supportsDirectReactionInboxCustody =>
+      dbStageOutgoingDirectReactionInboxCustody != null &&
+      dbLoadDirectReactionInboxCustodyOutbox != null &&
+      dbLoadDirectReactionInboxCustodyOutboxForEvent != null &&
+      dbRecordDirectReactionInboxCustodyFailureIfExact != null &&
+      dbCompleteAcceptedDirectReactionInboxCustodyIfExact != null;
+
+  @override
+  Future<DirectReactionCustodyStageResult>
+  stageOutgoingDirectReactionInboxCustody({
+    required MessageReaction reaction,
+    required String recipientPeerId,
+    required String action,
+    required String wireEnvelope,
+  }) async {
+    if (!supportsDirectReactionInboxCustody) {
+      return const DirectReactionCustodyStageResult.refused();
+    }
+    final stage = dbStageOutgoingDirectReactionInboxCustody;
+    if (stage == null) {
+      return const DirectReactionCustodyStageResult.refused();
+    }
+    final result = await stage(
+      reactionRow: reaction.toMap(),
+      recipientPeerId: recipientPeerId,
+      action: action,
+      wireEnvelope: wireEnvelope,
+    );
+    final custodyRow = result.custodyRow;
+    if (!result.outcome.authorizesTransport || custodyRow == null) {
+      return const DirectReactionCustodyStageResult.refused();
+    }
+    return DirectReactionCustodyStageResult(
+      outcome: result.outcome,
+      reaction: reaction,
+      custody: DirectReactionInboxCustodyOutboxEntry.fromMap(custodyRow),
+    );
+  }
+
+  @override
+  Future<List<DirectReactionInboxCustodyOutboxEntry>>
+  loadDirectReactionInboxCustody({int limit = 50}) async {
+    final load = dbLoadDirectReactionInboxCustodyOutbox;
+    if (load == null) {
+      return const <DirectReactionInboxCustodyOutboxEntry>[];
+    }
+    return (await load(limit: limit))
+        .map(DirectReactionInboxCustodyOutboxEntry.fromMap)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectReactionInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) async {
+    final load = dbLoadDirectReactionInboxCustodyOutboxForEvent;
+    if (load == null) return null;
+    final row = await load(recipientPeerId: recipientPeerId, eventId: eventId);
+    return row == null
+        ? null
+        : DirectReactionInboxCustodyOutboxEntry.fromMap(row);
+  }
+
+  @override
+  Future<bool> recordDirectReactionInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) {
+    final record = dbRecordDirectReactionInboxCustodyFailureIfExact;
+    if (record == null) return Future<bool>.value(false);
+    return record(
+      recipientPeerId: expected.recipientPeerId,
+      eventId: expected.eventId,
+      expectedWireEnvelope: expected.wireEnvelope,
+      errorCode: errorCode,
+      attemptedAt: now().toUtc().toIso8601String(),
+    );
+  }
+
+  @override
+  Future<DirectReactionInboxCustodyCompletionOutcome>
+  completeAcceptedDirectReactionInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+  }) {
+    final complete = dbCompleteAcceptedDirectReactionInboxCustodyIfExact;
+    if (complete == null) {
+      return Future<DirectReactionInboxCustodyCompletionOutcome>.value(
+        DirectReactionInboxCustodyCompletionOutcome.stale,
+      );
+    }
+    return complete(
+      recipientPeerId: expected.recipientPeerId,
+      eventId: expected.eventId,
+      expectedWireEnvelope: expected.wireEnvelope,
+    );
+  }
 
   @override
   Future<void> saveReaction(MessageReaction reaction) async {

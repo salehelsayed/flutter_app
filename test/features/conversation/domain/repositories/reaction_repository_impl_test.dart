@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
@@ -163,6 +164,209 @@ void main() {
       expect(insertedRows[0]['message_id'], 'msg-1');
       expect(insertedRows[0]['emoji'], '👍');
     });
+
+    test(
+      'TC-343-06a outgoing reaction custody capability requires all exact delegates',
+      () {
+        ReactionRepositoryImpl build({String? omit}) => ReactionRepositoryImpl(
+          dbInsertReaction: (_) async {},
+          dbLoadReactionsForMessage: (_) async => const [],
+          dbLoadReactionsForMessages: (_) async => const [],
+          dbLoadActiveOrTombstonedReactionForSender: (_, _) async => null,
+          dbDeleteReaction: (_, _, {removedAtTimestamp}) async => 0,
+          dbDeleteReactionsForMessage: (_) async => 0,
+          dbDeleteReactionsForContact: (_) async => 0,
+          dbStageOutgoingDirectReactionInboxCustody: omit == 'stage'
+              ? null
+              : ({
+                  required reactionRow,
+                  required recipientPeerId,
+                  required action,
+                  required wireEnvelope,
+                }) async => const DbDirectReactionCustodyStageResult(
+                  outcome: DirectReactionCustodyStageOutcome.refused,
+                  custodyRow: null,
+                ),
+          dbLoadDirectReactionInboxCustodyOutbox: omit == 'loadBatch'
+              ? null
+              : ({limit = 50}) async => const [],
+          dbLoadDirectReactionInboxCustodyOutboxForEvent: omit == 'loadEvent'
+              ? null
+              : ({required recipientPeerId, required eventId}) async => null,
+          dbRecordDirectReactionInboxCustodyFailureIfExact:
+              omit == 'recordFailure'
+              ? null
+              : ({
+                  required recipientPeerId,
+                  required eventId,
+                  required expectedWireEnvelope,
+                  required errorCode,
+                  required attemptedAt,
+                }) async => false,
+          dbCompleteAcceptedDirectReactionInboxCustodyIfExact:
+              omit == 'complete'
+              ? null
+              : ({
+                  required recipientPeerId,
+                  required eventId,
+                  required expectedWireEnvelope,
+                }) async => DirectReactionInboxCustodyCompletionOutcome.absent,
+        );
+
+        expect(build().supportsDirectReactionInboxCustody, isTrue);
+        for (final omitted in const <String>[
+          'stage',
+          'loadBatch',
+          'loadEvent',
+          'recordFailure',
+          'complete',
+        ]) {
+          expect(
+            build(omit: omitted).supportsDirectReactionInboxCustody,
+            isFalse,
+            reason: 'custody must fail closed when $omitted is absent',
+          );
+        }
+      },
+    );
+
+    test(
+      'outgoing reaction custody delegates exact tuple bytes time and outcomes',
+      () async {
+        const envelope = '{"cipher":"exact"}';
+        final custodyRow = <String, Object?>{
+          'recipient_peer_id': 'recipient-1',
+          'event_id': testReaction.id,
+          'wire_envelope': envelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': testReaction.createdAt,
+          'updated_at': testReaction.createdAt,
+        };
+        Map<String, Object?>? capturedStageRow;
+        String? capturedStageRecipient;
+        String? capturedStageAction;
+        String? capturedStageEnvelope;
+        int? capturedLimit;
+        List<Object?>? capturedFailure;
+        List<Object?>? capturedCompletion;
+        repo = ReactionRepositoryImpl(
+          dbInsertReaction: (_) async {},
+          dbLoadReactionsForMessage: (_) async => const [],
+          dbLoadReactionsForMessages: (_) async => const [],
+          dbLoadActiveOrTombstonedReactionForSender: (_, _) async => null,
+          dbDeleteReaction: (_, _, {removedAtTimestamp}) async => 0,
+          dbDeleteReactionsForMessage: (_) async => 0,
+          dbDeleteReactionsForContact: (_) async => 0,
+          dbStageOutgoingDirectReactionInboxCustody:
+              ({
+                required reactionRow,
+                required recipientPeerId,
+                required action,
+                required wireEnvelope,
+              }) async {
+                capturedStageRow = Map<String, Object?>.from(reactionRow);
+                capturedStageRecipient = recipientPeerId;
+                capturedStageAction = action;
+                capturedStageEnvelope = wireEnvelope;
+                return DbDirectReactionCustodyStageResult(
+                  outcome: DirectReactionCustodyStageOutcome.applied,
+                  custodyRow: custodyRow,
+                );
+              },
+          dbLoadDirectReactionInboxCustodyOutbox: ({limit = 50}) async {
+            capturedLimit = limit;
+            return <Map<String, Object?>>[custodyRow];
+          },
+          dbLoadDirectReactionInboxCustodyOutboxForEvent:
+              ({required recipientPeerId, required eventId}) async {
+                expect(recipientPeerId, 'recipient-1');
+                expect(eventId, testReaction.id);
+                return custodyRow;
+              },
+          dbRecordDirectReactionInboxCustodyFailureIfExact:
+              ({
+                required recipientPeerId,
+                required eventId,
+                required expectedWireEnvelope,
+                required errorCode,
+                required attemptedAt,
+              }) async {
+                capturedFailure = <Object?>[
+                  recipientPeerId,
+                  eventId,
+                  expectedWireEnvelope,
+                  errorCode,
+                  attemptedAt,
+                ];
+                return true;
+              },
+          dbCompleteAcceptedDirectReactionInboxCustodyIfExact:
+              ({
+                required recipientPeerId,
+                required eventId,
+                required expectedWireEnvelope,
+              }) async {
+                capturedCompletion = <Object?>[
+                  recipientPeerId,
+                  eventId,
+                  expectedWireEnvelope,
+                ];
+                return DirectReactionInboxCustodyCompletionOutcome.completed;
+              },
+          now: () => DateTime.parse('2026-08-07T09:00:00.000Z'),
+        );
+
+        final staged = await repo.stageOutgoingDirectReactionInboxCustody(
+          reaction: testReaction,
+          recipientPeerId: 'recipient-1',
+          action: 'add',
+          wireEnvelope: envelope,
+        );
+        expect(staged.outcome, DirectReactionCustodyStageOutcome.applied);
+        expect(staged.reaction, same(testReaction));
+        expect(staged.custody?.toMap(), custodyRow);
+        expect(capturedStageRow, testReaction.toMap());
+        expect(capturedStageRecipient, 'recipient-1');
+        expect(capturedStageAction, 'add');
+        expect(capturedStageEnvelope, envelope);
+
+        final loaded = await repo.loadDirectReactionInboxCustody(limit: 99);
+        expect(capturedLimit, 99);
+        expect(loaded.single.toMap(), custodyRow);
+        final exact = await repo.loadDirectReactionInboxCustodyForEvent(
+          recipientPeerId: 'recipient-1',
+          eventId: testReaction.id,
+        );
+        expect(exact?.toMap(), custodyRow);
+        expect(
+          await repo.recordDirectReactionInboxCustodyFailureIfExact(
+            expected: exact!,
+            errorCode: DirectReactionInboxCustodyErrorCode.storeThrew,
+          ),
+          isTrue,
+        );
+        expect(capturedFailure, <Object?>[
+          'recipient-1',
+          testReaction.id,
+          envelope,
+          DirectReactionInboxCustodyErrorCode.storeThrew,
+          '2026-08-07T09:00:00.000Z',
+        ]);
+        expect(
+          await repo.completeAcceptedDirectReactionInboxCustodyIfExact(
+            expected: exact,
+          ),
+          DirectReactionInboxCustodyCompletionOutcome.completed,
+        );
+        expect(capturedCompletion, <Object?>[
+          'recipient-1',
+          testReaction.id,
+          envelope,
+        ]);
+      },
+    );
 
     test(
       'group ADD adapter threads exact group and notification transition identity',

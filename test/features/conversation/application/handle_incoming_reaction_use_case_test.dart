@@ -353,30 +353,102 @@ void main() {
     );
 
     test(
-      'rejects outer notification metadata that mismatches plaintext',
+      'rejects each outer event action or target mismatch before side effects',
       () async {
-        final v2 = ReactionPayload.buildEncryptedEnvelope(
-          senderPeerId: _senderPeerId,
-          eventId: 'different-event',
-          action: 'add',
-          targetMessageId: 'msg-1',
-          kem: 'k',
-          ciphertext: 'c',
-          nonce: 'n',
-        );
+        final cases =
+            <
+              ({
+                String name,
+                String eventId,
+                String action,
+                String targetMessageId,
+              })
+            >[
+              (
+                name: 'event',
+                eventId: 'different-event',
+                action: ReactionPayload.addAction,
+                targetMessageId: 'msg-1',
+              ),
+              (
+                name: 'action',
+                eventId: 'r1',
+                action: ReactionPayload.removeAction,
+                targetMessageId: 'msg-1',
+              ),
+              (
+                name: 'target',
+                eventId: 'r1',
+                action: ReactionPayload.addAction,
+                targetMessageId: 'different-message',
+              ),
+            ];
 
-        final (result, change) = await handleIncomingReaction(
-          message: _makeReactionMessage(v2),
-          messageRepo: messageRepo,
-          reactionRepo: reactionRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-          ownMlKemSecretKey: _ownMlKemSecretKey,
-        );
+        for (final testCase in cases) {
+          final localReactions = FakeReactionRepository();
+          final notifications = FakeNotificationService();
+          var notificationCustodySideEffects = 0;
+          final v2 = ReactionPayload.buildEncryptedEnvelope(
+            senderPeerId: _senderPeerId,
+            eventId: testCase.eventId,
+            action: testCase.action,
+            targetMessageId: testCase.targetMessageId,
+            kem: 'k',
+            ciphertext: 'c',
+            nonce: 'n',
+          );
 
-        expect(result, HandleReactionResult.metadataMismatch);
-        expect(change, isNull);
-        expect(reactionRepo.saveReactionCallCount, 0);
+          final (result, change) = await handleIncomingReaction(
+            message: _makeReactionMessage(v2),
+            messageRepo: messageRepo,
+            reactionRepo: localReactions,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: _ownMlKemSecretKey,
+            notificationService: notifications,
+            conversationTracker: ActiveConversationTracker(),
+            getAppLifecycleState: () => AppLifecycleState.resumed,
+            stageNotificationDisplayCustody:
+                ({required payload, required targetMessage}) async {
+                  notificationCustodySideEffects++;
+                },
+            promoteNotificationDisplayCustody:
+                ({required payload, required targetMessage}) async {
+                  notificationCustodySideEffects++;
+                },
+            commitNotificationRemove:
+                ({
+                  required peerId,
+                  required messageId,
+                  required actorPeerId,
+                }) async {
+                  notificationCustodySideEffects++;
+                },
+            retryNotificationDisplays: () async {
+              notificationCustodySideEffects++;
+            },
+          );
+
+          expect(
+            result,
+            HandleReactionResult.metadataMismatch,
+            reason: testCase.name,
+          );
+          expect(change, isNull, reason: testCase.name);
+          expect(
+            localReactions.saveReactionCallCount,
+            0,
+            reason: testCase.name,
+          );
+          expect(
+            localReactions.removeReactionCallCount,
+            0,
+            reason: testCase.name,
+          );
+          expect(localReactions.reactions, isEmpty, reason: testCase.name);
+          expect(notificationCustodySideEffects, 0, reason: testCase.name);
+          expect(notifications.shown, isEmpty, reason: testCase.name);
+        }
       },
     );
 

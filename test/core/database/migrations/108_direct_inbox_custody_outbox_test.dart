@@ -70,8 +70,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 108);
-      expect(await _userVersion(upgraded), 108);
+      expect(currentIdentityDatabaseVersion, 109);
+      expect(await _userVersion(upgraded), 109);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
         await upgraded.query('direct_inbox_custody_outbox'),
@@ -88,7 +88,8 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '108_direct_inbox_custody_outbox');
         expect(entries.single.run, same(runDirectInboxCustodyOutboxMigration));
-        expect(registry.last, same(entries.single));
+        final index108 = registry.indexOf(entries.single);
+        expect(registry[index108 + 1].version, 109);
       }
 
       await runDirectInboxCustodyOutboxMigration(upgraded);
@@ -141,7 +142,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 108);
+      expect(await _userVersion(upgraded), 109);
       await _expectExactSchema(upgraded);
       expect(
         await upgraded.query(
@@ -221,7 +222,7 @@ void main() {
         ): 1,
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 2].version, $historicalVersion);',
+          'expect(registry[registry.length - 3].version, $historicalVersion);',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',

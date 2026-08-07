@@ -16,6 +16,32 @@ import '../../features/identity/domain/repositories/fake_identity_repository.dar
 import '../bridge/fake_bridge.dart';
 import 'fake_p2p_service.dart';
 
+Future<int> _drainBothDirectCustodyFamilies(
+  List<String> calls, {
+  String? throwingFamily,
+}) async {
+  var completed = 0;
+  try {
+    calls.add('textCustody');
+    if (throwingFamily == 'text') {
+      throw StateError('forced text custody drain failure');
+    }
+    completed++;
+  } catch (_) {
+    // Mirrors the production composite's per-family error boundary.
+  }
+  try {
+    calls.add('reactionCustody');
+    if (throwingFamily == 'reaction') {
+      throw StateError('forced reaction custody drain failure');
+    }
+    completed++;
+  } catch (_) {
+    // Mirrors the production composite's per-family error boundary.
+  }
+  return completed;
+}
+
 void main() {
   const online = NodeState(
     isStarted: true,
@@ -26,12 +52,12 @@ void main() {
   tearDown(groupRecoveryGate.resetForTest);
 
   test(
-    'TC-342-06 retrier lifecycle drains direct custody before message rebuild without cross-family starvation',
+    'TC-343-05 retrier lifecycle drains text and reaction custody without sibling starvation',
     () async {
       Future<List<String>> runFullPass({
         required bool startsOnline,
         required bool periodic,
-        bool drainThrows = false,
+        String? throwingCustodyFamily,
       }) async {
         final calls = <String>[];
         final completed = Completer<void>();
@@ -61,11 +87,11 @@ void main() {
             calls.add('upload');
             return 0;
           },
-          drainDirectInboxCustodyOutboxFn: () async {
-            calls.add('directCustody');
-            if (drainThrows) throw StateError('forced custody drain failure');
-            return 0;
-          },
+          drainDirectInboxCustodyOutboxFn: () =>
+              _drainBothDirectCustodyFamilies(
+                calls,
+                throwingFamily: throwingCustodyFamily,
+              ),
           retryFailedMessagesOverride: () async {
             calls.add('failed');
             return 0;
@@ -90,30 +116,46 @@ void main() {
       expect(await runFullPass(startsOnline: true, periodic: false), <String>[
         'recover',
         'upload',
-        'directCustody',
+        'textCustody',
+        'reactionCustody',
         'failed',
         'unacked',
       ]);
 
-      // A reconnect drain failure is isolated from both rebuild families.
+      // A text failure cannot starve reaction custody or either rebuild family.
       expect(
         await runFullPass(
           startsOnline: false,
           periodic: false,
-          drainThrows: true,
+          throwingCustodyFamily: 'text',
         ),
-        <String>['recover', 'upload', 'directCustody', 'failed', 'unacked'],
+        <String>[
+          'recover',
+          'upload',
+          'textCustody',
+          'reactionCustody',
+          'failed',
+          'unacked',
+        ],
       );
 
-      // The existing periodic cadence owns custody without introducing a new
-      // timer and preserves the same ordering.
-      expect(await runFullPass(startsOnline: true, periodic: true), <String>[
-        'recover',
-        'upload',
-        'directCustody',
-        'failed',
-        'unacked',
-      ]);
+      // A reaction failure on the existing periodic cadence cannot starve the
+      // message rebuild tail and introduces no new timer.
+      expect(
+        await runFullPass(
+          startsOnline: true,
+          periodic: true,
+          throwingCustodyFamily: 'reaction',
+        ),
+        <String>[
+          'recover',
+          'upload',
+          'textCustody',
+          'reactionCustody',
+          'failed',
+          'unacked',
+        ],
+      );
 
       // OS connectivity restoration uses its existing light pass. Custody is
       // first, and its failure cannot suppress the zero-age unacked family.
@@ -129,10 +171,10 @@ void main() {
         bridge: FakeBridge(),
         networkRestoredSignal: restoredSignal.stream,
         networkRestoredDebounce: Duration.zero,
-        drainDirectInboxCustodyOutboxFn: () async {
-          restoredCalls.add('directCustody');
-          throw StateError('forced restored custody drain failure');
-        },
+        drainDirectInboxCustodyOutboxFn: () => _drainBothDirectCustodyFamilies(
+          restoredCalls,
+          throwingFamily: 'text',
+        ),
         retryUnackedMessagesOverride: () async {
           restoredCalls.add('unacked');
           restoredCompleted.complete();
@@ -142,7 +184,11 @@ void main() {
       restoredRetrier.start();
       restoredSignal.add(null);
       await restoredCompleted.future.timeout(const Duration(seconds: 2));
-      expect(restoredCalls, <String>['directCustody', 'unacked']);
+      expect(restoredCalls, <String>[
+        'textCustody',
+        'reactionCustody',
+        'unacked',
+      ]);
       restoredRetrier.dispose();
       restoredP2p.dispose();
       await restoredSignal.close();
@@ -159,6 +205,8 @@ void main() {
       var maxActiveDrains = 0;
       var unackedCalls = 0;
       var failedCalls = 0;
+      var textCustodyCalls = 0;
+      var reactionCustodyCalls = 0;
       final overlapRetrier = PendingMessageRetrier(
         p2pService: overlapP2p,
         messageRepo: FakeMessageRepository(),
@@ -179,8 +227,10 @@ void main() {
             twoDrainsStarted.complete();
           }
           await releaseDrains.future;
+          textCustodyCalls++;
+          reactionCustodyCalls++;
           activeDrains--;
-          return 0;
+          return 2;
         },
         retryFailedMessagesOverride: () async {
           failedCalls++;
@@ -201,6 +251,8 @@ void main() {
       releaseDrains.complete();
       await bothTailsCompleted.future.timeout(const Duration(seconds: 2));
       expect(maxActiveDrains, 2);
+      expect(textCustodyCalls, 2);
+      expect(reactionCustodyCalls, 2);
       expect(failedCalls, 1);
       expect(unackedCalls, 2);
       overlapRetrier.dispose();

@@ -41,7 +41,7 @@ void main() {
         isFalse,
         reason: 'This proof must run with --release.',
       );
-      expect(currentIdentityDatabaseVersion, 108);
+      expect(currentIdentityDatabaseVersion, 109);
 
       final temp = await Directory.systemTemp.createTemp(
         'group_exit_release_diagnostics_',
@@ -98,7 +98,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 108);
+        expect(await _userVersion(db), 109);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(await db.query('group_exit_diagnostics'), isEmpty);
         expect(await db.query('group_exit_intents'), hasLength(1));
@@ -237,7 +237,7 @@ void main() {
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
         try {
-          expect(await _userVersion(fresh), 108);
+          expect(await _userVersion(fresh), 109);
           expect(await _cipherVersion(fresh), isNotEmpty);
           expect(await fresh.query('group_exit_diagnostics'), isEmpty);
           await migration.run(fresh);

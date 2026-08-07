@@ -227,6 +227,12 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/helpers/direct_inbox_custody_outbox_db_helpers_test.dart"
   "test/core/services/pending_message_retrier_direct_inbox_custody_test.dart"
   "test/features/conversation/application/drain_direct_inbox_custody_outbox_use_case_test.dart"
+  # 343: immutable direct-reaction relay-inbox custody replays exact authored
+  # event envelopes on the existing direct-custody lifecycle cadence.
+  "test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart"
+  "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"
+  "test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart"
+  "test/features/conversation/domain/repositories/reaction_repository_impl_test.dart"
   # 331: v107 typed direct notification durability and bounded retry custody.
   "test/core/database/migrations/107_direct_notification_durability_test.dart"
   "test/features/conversation/application/direct_notification_display_retry_coordinator_test.dart"

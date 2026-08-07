@@ -1,8 +1,11 @@
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/deliver_outgoing_direct_reaction_custody.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -20,13 +23,13 @@ const _uuid = Uuid();
 
 /// Sends an emoji reaction to a contact via P2P (v2 encrypted only).
 ///
-/// 1. Checks P2P node is running
-/// 2. Enforces v2 encryption
-/// 3. Encrypts payload, sends v2 envelope
-/// 4. Persists locally (optimistic)
-/// 5. Falls back to inbox when peer offline
+/// 1. Enforces v2 encryption
+/// 2. Atomically stages the canonical ADD and exact encrypted custody row
+/// 3. Returns a committed diagnostic when the node is stopped
+/// 4. Otherwise races live delivery with one typed inbox handoff
 ///
-/// Returns (result, MessageReaction?) — reaction is non-null on success.
+/// The reaction is non-null after any successful local stage, even when the
+/// immediate transport diagnostic is `nodeNotRunning` or `sendFailed`.
 Future<(SendReactionResult, MessageReaction?)> sendReaction({
   required P2PService p2pService,
   required Bridge bridge,
@@ -36,6 +39,7 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
   required String emoji,
   required String senderPeerId,
   required String recipientMlKemPublicKey,
+  StoreInInboxDetailedFn? storeInInboxDetailed,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -46,17 +50,34 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
     },
   );
 
-  // 1. Check P2P node
-  if (!p2pService.currentState.isStarted) {
+  final custodyCapability =
+      reactionRepo is OutgoingDirectReactionInboxCustodyRepository
+      ? reactionRepo as OutgoingDirectReactionInboxCustodyRepository
+      : null;
+  final custodyRepo =
+      custodyCapability?.supportsDirectReactionInboxCustody == true
+      ? custodyCapability
+      : null;
+  final detailedInboxStore = p2pService is DetailedInboxStore
+      ? p2pService as DetailedInboxStore
+      : null;
+  final effectiveStoreInInboxDetailed =
+      storeInInboxDetailed ?? detailedInboxStore?.storeInInboxDetailed;
+  if (custodyRepo == null || effectiveStoreInInboxDetailed == null) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'REACTION_SEND_NODE_NOT_RUNNING',
-      details: {},
+      event: 'REACTION_SEND_CUSTODY_CAPABILITY_REFUSED',
+      details: {
+        'reason': custodyRepo == null
+            ? 'missing_reaction_custody_repository'
+            : 'missing_detailed_inbox_store',
+      },
     );
-    return (SendReactionResult.nodeNotRunning, null);
+    return (SendReactionResult.sendFailed, null);
   }
 
-  // 2. Build payload
+  // Build and encrypt before consulting node state. A stopped node still owns
+  // the exact authored transition once its atomic local custody stage commits.
   final reactionId = _uuid.v4();
   final timestamp = DateTime.now().toUtc().toIso8601String();
 
@@ -104,78 +125,63 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
     return (SendReactionResult.encryptionFailed, null);
   }
 
-  // 4. Send — FDC-18: fire the durable inbox copy CONCURRENTLY with the live
-  //    send for an unknown-presence (non-connected) peer, mirroring FDC-03 onto
-  //    the reaction path. A slow/offline peer's toggle takes custody immediately
-  //    (not on a late serial tail); an online peer's toggle is still delivered
-  //    live, the inbox copy a deduped parallel safety net (NOT demoted to
-  //    inbox-only). The SAME [jsonString] envelope is deposited, so the drained
-  //    copy is byte-identical and the receiver's last-writer-wins tombstone
-  //    dedups it. A live-connected peer keeps a single live path
-  //    (confirmed-path => single-path). Exactly one storeInInbox per toggle.
-  final unknownPresence = !p2pService.isConnectedToPeer(targetPeerId);
-
-  Future<bool>? concurrentInbox;
-  if (unknownPresence) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'REACTION_SEND_CONCURRENT_INBOX_BEGIN',
-      details: {
-        'messageId': messageId.length > 8
-            ? messageId.substring(0, 8)
-            : messageId,
-      },
-    );
-    concurrentInbox = p2pService
-        .storeInInbox(targetPeerId, jsonString)
-        .catchError((_) => false);
-  }
-
-  bool delivered;
+  final authoredReaction = payload.toMessageReaction();
+  late MessageReaction committedReaction;
+  late DirectReactionInboxCustodyOutboxEntry custody;
   try {
-    final sent = await p2pService.sendMessage(targetPeerId, jsonString);
-    if (sent) {
-      // Live win (connected single-path OR unknown-presence live win). Do NOT
-      // await the concurrent deposit — it lands in background custody and is
-      // deduped on receive.
-      delivered = true;
-    } else if (concurrentInbox != null) {
-      // Unknown presence + live miss: the SAME concurrent deposit is the
-      // delivery tier. Await it — do NOT start a fresh serial store.
-      delivered = await concurrentInbox;
-    } else {
-      // Connected-but-failed edge: the only path that starts a fresh serial
-      // store (preserves exactly-one for a confirmed peer whose live leg died).
-      delivered = await p2pService.storeInInbox(targetPeerId, jsonString);
-    }
-  } catch (e) {
-    // Live send threw. For unknown presence the concurrent deposit may already
-    // hold custody — honor it. For a connected peer (no concurrent arm) preserve
-    // today's catch behaviour: sendFailed with no deposit.
-    if (concurrentInbox != null) {
-      delivered = await concurrentInbox;
-    } else {
+    final staged = await custodyRepo.stageOutgoingDirectReactionInboxCustody(
+      reaction: authoredReaction,
+      recipientPeerId: targetPeerId,
+      action: ReactionPayload.addAction,
+      wireEnvelope: jsonString,
+    );
+    final stagedReaction = staged.reaction;
+    final stagedCustody = staged.custody;
+    if (!staged.authorizesTransport ||
+        stagedReaction == null ||
+        stagedCustody == null) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'REACTION_SEND_FAILED',
-        details: {'error': e.toString()},
+        event: 'REACTION_SEND_CUSTODY_STAGE_REFUSED',
+        details: {'reason': staged.outcome.name},
       );
       return (SendReactionResult.sendFailed, null);
     }
-  }
-
-  if (!delivered) {
+    committedReaction = stagedReaction;
+    custody = stagedCustody;
+  } catch (error) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'REACTION_SEND_FAILED',
-      details: {'reason': 'direct_and_inbox_failed'},
+      event: 'REACTION_SEND_CUSTODY_STAGE_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
     );
     return (SendReactionResult.sendFailed, null);
   }
 
-  // 5. Persist locally
-  final reaction = payload.toMessageReaction();
-  await reactionRepo.saveReaction(reaction);
+  if (!p2pService.currentState.isStarted) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_SEND_NODE_NOT_RUNNING',
+      details: const {'custodyStaged': true},
+    );
+    return (SendReactionResult.nodeNotRunning, committedReaction);
+  }
+
+  final delivery = await deliverOutgoingDirectReactionCustody(
+    p2pService: p2pService,
+    storeInInboxDetailed: effectiveStoreInInboxDetailed,
+    custodyRepository: custodyRepo,
+    custody: custody,
+    flowPrefix: 'REACTION_SEND',
+  );
+  if (!delivery.delivered) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'REACTION_SEND_FAILED',
+      details: const {'reason': 'direct_and_inbox_failed'},
+    );
+    return (SendReactionResult.sendFailed, committedReaction);
+  }
 
   emitFlowEvent(
     layer: 'FL',
@@ -183,5 +189,5 @@ Future<(SendReactionResult, MessageReaction?)> sendReaction({
     details: {'id': reactionId.substring(0, 8), 'emoji': emoji},
   );
 
-  return (SendReactionResult.success, reaction);
+  return (SendReactionResult.success, committedReaction);
 }

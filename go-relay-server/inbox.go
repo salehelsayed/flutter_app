@@ -1307,9 +1307,46 @@ func extractMessageId(message string) string {
 }
 
 const (
-	directInboxTargetIDDedupePrefix    = "target-id:"
-	directInboxEditEventIDDedupePrefix = "edit-event-id:"
+	directInboxTargetIDDedupePrefix        = "target-id:"
+	directInboxEditEventIDDedupePrefix     = "edit-event-id:"
+	directInboxReactionEventIDDedupePrefix = "reaction-event-id:"
 )
+
+// extractDirectReactionCustodyDedupeKey returns a namespaced custody identity
+// only for a complete, exact v2 direct reaction. Custody accepts both ADD and
+// REMOVE transitions. This is intentionally independent of
+// extractDirectReactionPushMetadata, whose eligibility remains ADD-only.
+//
+// Legacy, partial, malformed, whitespace-mutated, and unsupported-action
+// envelopes return an empty key so extractDirectInboxDedupeKey can preserve
+// their historical target-key (or no-key) behavior.
+func extractDirectReactionCustodyDedupeKey(message string) string {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil ||
+		exactString(envelope["type"]) != "message_reaction" ||
+		exactString(envelope["version"]) != "2" {
+		return ""
+	}
+
+	eventID := exactString(envelope["eventId"])
+	action := exactString(envelope["action"])
+	if eventID == "" ||
+		(action != "add" && action != "remove") ||
+		exactString(envelope["targetMessageId"]) == "" ||
+		exactString(envelope["senderPeerId"]) == "" {
+		return ""
+	}
+
+	encrypted, ok := envelope["encrypted"].(map[string]interface{})
+	if !ok ||
+		exactString(encrypted["kem"]) == "" ||
+		exactString(encrypted["ciphertext"]) == "" ||
+		exactString(encrypted["nonce"]) == "" {
+		return ""
+	}
+
+	return directInboxReactionEventIDDedupePrefix + eventID
+}
 
 // extractDirectInboxDedupeKey returns the relay-custody identity for a direct
 // inbox envelope. It is deliberately separate from extractMessageId: push
@@ -1327,6 +1364,9 @@ func extractDirectInboxDedupeKey(message string) string {
 		if eventID, ok := envelope["eventId"].(string); ok && strings.TrimSpace(eventID) != "" {
 			return directInboxEditEventIDDedupePrefix + eventID
 		}
+	}
+	if reactionKey := extractDirectReactionCustodyDedupeKey(message); reactionKey != "" {
+		return reactionKey
 	}
 
 	if messageID := extractMessageId(message); messageID != "" {

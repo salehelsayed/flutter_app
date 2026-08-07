@@ -95,7 +95,7 @@ void main() {
         isTrue,
         reason: 'TC-342-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 108);
+      expect(currentIdentityDatabaseVersion, 109);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_inbox_custody_sqlcipher_',
@@ -131,7 +131,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v107-to-v108';
+        proofStage = 'upgrade-v107-to-v109';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -141,7 +141,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 108);
+        expect(await _userVersion(db), 109);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
         expect(
@@ -345,7 +345,7 @@ END
           throwsA(anything),
         );
 
-        proofStage = 'reopen-v108-unchanged-after-refusal';
+        proofStage = 'reopen-v109-unchanged-after-refusal';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -355,7 +355,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 108);
+        expect(await _userVersion(db), 109);
         expect(await _authoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-342-11 failed at $proofStage: $error\n$stackTrace');
