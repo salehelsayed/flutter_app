@@ -1,0 +1,395 @@
+import 'dart:convert';
+import 'dart:math' as math;
+
+import 'package:sqflite_sqlcipher/sqflite.dart';
+
+import '../db_write_transaction.dart';
+import '../direct_inbox_custody_outbox_contract.dart';
+import '../outgoing_transport_mutation.dart';
+import 'messages_db_helpers.dart';
+
+const String _table = 'direct_inbox_custody_outbox';
+
+const int kDirectInboxCustodyOutboxCapacity = 512;
+const int kDirectInboxCustodyOutboxMaxLoadBatch = 50;
+
+/// Atomically stages a fresh ordinary message and its immutable relay-inbox
+/// custody. No message row is allowed to commit without its companion row.
+///
+/// [capacity] exists only so a real-DB test can prove the full condition with
+/// a small fixture. Production callers use the default constant.
+Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String recipientPeerId,
+  required String messageId,
+  required String incarnationId,
+  required String wireEnvelope,
+  int capacity = kDirectInboxCustodyOutboxCapacity,
+}) {
+  final createdAt = stagedRow['created_at'] as String? ?? '';
+  final validAuthority =
+      capacity >= 0 &&
+      kind == OutgoingOrdinaryAttemptKind.fresh &&
+      expectedRow == null &&
+      recipientPeerId.trim().isNotEmpty &&
+      messageId.trim().isNotEmpty &&
+      incarnationId.length == 32 &&
+      wireEnvelope.trim().isNotEmpty &&
+      stagedRow['id'] == messageId &&
+      stagedRow['contact_peer_id'] == recipientPeerId &&
+      stagedRow['wire_envelope'] == wireEnvelope &&
+      createdAt.trim().isNotEmpty &&
+      _isEligibleFreshOrdinaryDirectText(stagedRow) &&
+      _isExactV2DirectTextEnvelope(
+        wireEnvelope,
+        messageId: messageId,
+        senderPeerId: stagedRow['sender_peer_id'],
+      );
+  if (!validAuthority) {
+    return Future<OutgoingOrdinaryMutationOutcome>.value(
+      OutgoingOrdinaryMutationOutcome.refused,
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final currentMessages = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    final currentScope = await txn.query(
+      _table,
+      where: 'recipient_peer_id = ? AND message_id = ?',
+      whereArgs: <Object?>[recipientPeerId, messageId],
+      limit: 1,
+    );
+    final currentIncarnation = await txn.query(
+      _table,
+      where: 'incarnation_id = ?',
+      whereArgs: <Object?>[incarnationId],
+      limit: 1,
+    );
+
+    if (currentMessages.isNotEmpty ||
+        currentScope.isNotEmpty ||
+        currentIncarnation.isNotEmpty) {
+      final isExactReplay =
+          currentMessages.length == 1 &&
+          currentScope.length == 1 &&
+          currentIncarnation.length == 1 &&
+          _messageAttemptMatches(currentMessages.single, stagedRow) &&
+          _immutableCustodyMatches(
+            currentScope.single,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            incarnationId: incarnationId,
+            wireEnvelope: wireEnvelope,
+          ) &&
+          _immutableCustodyMatches(
+            currentIncarnation.single,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            incarnationId: incarnationId,
+            wireEnvelope: wireEnvelope,
+          );
+      return isExactReplay
+          ? OutgoingOrdinaryMutationOutcome.idempotent
+          : OutgoingOrdinaryMutationOutcome.refused;
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_table',
+    );
+    final count = (countRows.single['count'] as num?)?.toInt() ?? 0;
+    if (count >= capacity) return OutgoingOrdinaryMutationOutcome.refused;
+
+    final messageOutcome =
+        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+        );
+    if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+
+    await txn.insert(_table, <String, Object?>{
+      'recipient_peer_id': recipientPeerId,
+      'message_id': messageId,
+      'incarnation_id': incarnationId,
+      'wire_envelope': wireEnvelope,
+      'retry_count': 0,
+      'last_attempt_at': null,
+      'last_error_code': null,
+      'created_at': createdAt,
+      'updated_at': createdAt,
+    }, conflictAlgorithm: ConflictAlgorithm.abort);
+    return OutgoingOrdinaryMutationOutcome.applied;
+  });
+}
+
+/// Loads a fair bounded batch. SQLite's ascending order places NULL first, so
+/// never-attempted rows lead, followed by the oldest recorded attempt.
+Future<List<Map<String, Object?>>> dbLoadDirectInboxCustodyOutbox(
+  DatabaseExecutor db, {
+  int limit = kDirectInboxCustodyOutboxMaxLoadBatch,
+}) {
+  if (limit <= 0) return Future<List<Map<String, Object?>>>.value(const []);
+  final boundedLimit = math.min(limit, kDirectInboxCustodyOutboxMaxLoadBatch);
+  return db.rawQuery(
+    'SELECT * FROM $_table '
+    'ORDER BY last_attempt_at ASC, created_at ASC, '
+    'recipient_peer_id ASC, message_id ASC LIMIT ?',
+    <Object?>[boundedLimit],
+  );
+}
+
+Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxForMessage(
+  DatabaseExecutor db, {
+  required String recipientPeerId,
+  required String messageId,
+}) async {
+  final rows = await db.query(
+    _table,
+    where: 'recipient_peer_id = ? AND message_id = ?',
+    whereArgs: <Object?>[recipientPeerId, messageId],
+    limit: 1,
+  );
+  return rows.isEmpty ? null : rows.single;
+}
+
+/// Retains the row and records one bounded failure classification only while
+/// the caller's exact immutable incarnation still owns the scope.
+Future<bool> dbRecordDirectInboxCustodyFailureIfExact(
+  DatabaseExecutor db, {
+  required String recipientPeerId,
+  required String messageId,
+  required String expectedIncarnationId,
+  required String expectedWireEnvelope,
+  required String errorCode,
+  required String attemptedAt,
+}) async {
+  if (!DirectInboxCustodyErrorCode.values.contains(errorCode) ||
+      attemptedAt.trim().isEmpty) {
+    return false;
+  }
+  final changed = await db.rawUpdate(
+    'UPDATE $_table SET retry_count = retry_count + 1, '
+    'last_attempt_at = ?, last_error_code = ?, updated_at = ? '
+    'WHERE recipient_peer_id = ? AND message_id = ? '
+    'AND incarnation_id = ? AND wire_envelope = ?',
+    <Object?>[
+      attemptedAt,
+      errorCode,
+      attemptedAt,
+      recipientPeerId,
+      messageId,
+      expectedIncarnationId,
+      expectedWireEnvelope,
+    ],
+  );
+  return changed == 1;
+}
+
+/// Atomically projects accepted remote custody without downgrading stronger
+/// local truth, then retires only the exact immutable incarnation.
+Future<DirectInboxCustodyCompletionOutcome>
+dbCompleteAcceptedDirectInboxCustodyIfExact(
+  Database db, {
+  required String recipientPeerId,
+  required String messageId,
+  required String expectedIncarnationId,
+  required String expectedWireEnvelope,
+  required int? relayExpiresAt,
+}) {
+  if (recipientPeerId.trim().isEmpty ||
+      messageId.trim().isEmpty ||
+      expectedIncarnationId.length != 32 ||
+      expectedWireEnvelope.trim().isEmpty ||
+      (relayExpiresAt != null && relayExpiresAt <= 0)) {
+    return Future<DirectInboxCustodyCompletionOutcome>.value(
+      DirectInboxCustodyCompletionOutcome.stale,
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final custodyRows = await txn.query(
+      _table,
+      where: 'recipient_peer_id = ? AND message_id = ?',
+      whereArgs: <Object?>[recipientPeerId, messageId],
+      limit: 1,
+    );
+    if (custodyRows.isEmpty ||
+        !_immutableCustodyMatches(
+          custodyRows.single,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          incarnationId: expectedIncarnationId,
+          wireEnvelope: expectedWireEnvelope,
+        )) {
+      return DirectInboxCustodyCompletionOutcome.stale;
+    }
+
+    final messageRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    var outcome = DirectInboxCustodyCompletionOutcome.messageRemoved;
+    if (messageRows.isNotEmpty) {
+      final message = messageRows.single;
+      final status = message['status'] as String?;
+      final ownsMessage =
+          ((message['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+          message['contact_peer_id'] == recipientPeerId;
+      final userTerminal =
+          message['deleted_at'] != null || message['hidden_at'] != null;
+      final stillProjectsOwnedAttempt =
+          message['wire_envelope'] == expectedWireEnvelope;
+      final shouldAdvance =
+          ownsMessage &&
+          !userTerminal &&
+          stillProjectsOwnedAttempt &&
+          const <String>{
+            'sending',
+            'sent',
+            'failed',
+            'inboxed',
+          }.contains(status);
+      if (shouldAdvance) {
+        final alreadyProjected =
+            status == 'inboxed' &&
+            message['transport'] == 'inbox' &&
+            (relayExpiresAt == null ||
+                message['relay_expires_at'] == relayExpiresAt);
+        if (alreadyProjected) {
+          outcome = DirectInboxCustodyCompletionOutcome.messagePreserved;
+        } else {
+          final changed = await txn.update(
+            'messages',
+            <String, Object?>{
+              'status': 'inboxed',
+              'transport': 'inbox',
+              'relay_expires_at': relayExpiresAt,
+              'custody_checked_at': null,
+            },
+            where:
+                'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+                'AND status = ? AND deleted_at IS NULL AND hidden_at IS NULL',
+            whereArgs: <Object?>[messageId, recipientPeerId, status],
+          );
+          if (changed != 1) {
+            throw StateError(
+              'direct inbox custody message projection lost its exact row',
+            );
+          }
+          outcome = DirectInboxCustodyCompletionOutcome.messageAdvanced;
+        }
+      } else {
+        // Delivered and user-terminal rows are intentionally stronger than an
+        // inbox-custody projection. Identity mismatches and later edit/send
+        // attempts with different exact envelopes are also never edited.
+        outcome = DirectInboxCustodyCompletionOutcome.messagePreserved;
+      }
+    }
+
+    final deleted = await txn.delete(
+      _table,
+      where:
+          'recipient_peer_id = ? AND message_id = ? '
+          'AND incarnation_id = ? AND wire_envelope = ?',
+      whereArgs: <Object?>[
+        recipientPeerId,
+        messageId,
+        expectedIncarnationId,
+        expectedWireEnvelope,
+      ],
+    );
+    if (deleted != 1) {
+      throw StateError(
+        'direct inbox custody completion lost its exact incarnation',
+      );
+    }
+    return outcome;
+  });
+}
+
+bool _immutableCustodyMatches(
+  Map<String, Object?> row, {
+  required String recipientPeerId,
+  required String messageId,
+  required String incarnationId,
+  required String wireEnvelope,
+}) =>
+    row['recipient_peer_id'] == recipientPeerId &&
+    row['message_id'] == messageId &&
+    row['incarnation_id'] == incarnationId &&
+    row['wire_envelope'] == wireEnvelope;
+
+bool _messageAttemptMatches(
+  Map<String, Object?> current,
+  Map<String, Object?> staged,
+) => staged.entries.every(
+  (entry) => _sameDatabaseValue(current[entry.key], entry.value),
+);
+
+bool _sameDatabaseValue(Object? left, Object? right) {
+  if (left is num && right is num) return left == right;
+  return left == right;
+}
+
+bool _isEligibleFreshOrdinaryDirectText(Map<String, Object?> row) =>
+    _isNonBlankString(row['sender_peer_id']) &&
+    _isNonBlankString(row['text']) &&
+    _isNonBlankString(row['timestamp']) &&
+    row['status'] == 'sending' &&
+    _asInt(row['is_incoming']) == 0 &&
+    row['edited_at'] == null &&
+    row['deleted_at'] == null &&
+    row['deleted_by_peer_id'] == null &&
+    row['hidden_at'] == null &&
+    row['transport'] == null &&
+    row['relay_expires_at'] == null &&
+    row['custody_checked_at'] == null &&
+    _asInt(row['private_media_policy_version']) == 0 &&
+    row['private_media_mode'] == 'ordinary' &&
+    row['private_media_duration_seconds'] == null &&
+    row['private_media_state'] == 'none' &&
+    row['private_media_received_at_ms'] == null &&
+    row['private_media_expires_at_ms'] == null &&
+    row['private_media_revealed_at_ms'] == null &&
+    row['private_media_terminal_at_ms'] == null &&
+    row['private_media_clock_high_water_ms'] == null;
+
+bool _isExactV2DirectTextEnvelope(
+  String wireEnvelope, {
+  required String messageId,
+  required Object? senderPeerId,
+}) {
+  try {
+    final decoded = jsonDecode(wireEnvelope);
+    if (decoded is! Map<String, dynamic>) return false;
+    final encrypted = decoded['encrypted'];
+    return decoded['type'] == 'chat_message' &&
+        decoded['version'] == '2' &&
+        decoded['id'] == messageId &&
+        decoded['senderPeerId'] == senderPeerId &&
+        encrypted is Map<String, dynamic> &&
+        _isNonBlankString(encrypted['kem']) &&
+        _isNonBlankString(encrypted['ciphertext']) &&
+        _isNonBlankString(encrypted['nonce']);
+  } on FormatException {
+    return false;
+  }
+}
+
+bool _isNonBlankString(Object? value) =>
+    value is String && value.trim().isNotEmpty;
+
+int? _asInt(Object? value) => value is num ? value.toInt() : null;

@@ -337,7 +337,7 @@ void main() {
 
       await runProductionOnUpgrade(db, 101, 102);
 
-      expect(currentIdentityDatabaseVersion, 107);
+      expect(currentIdentityDatabaseVersion, 108);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -352,10 +352,12 @@ void main() {
         final index105 = registry.indexWhere((entry) => entry.version == 105);
         final index106 = registry.indexWhere((entry) => entry.version == 106);
         final index107 = registry.indexWhere((entry) => entry.version == 107);
+        final index108 = registry.indexWhere((entry) => entry.version == 108);
         expect(index105, index104 + 1);
         expect(index106, index105 + 1);
         expect(index107, index106 + 1);
-        expect(index107, registry.length - 1);
+        expect(index108, index107 + 1);
+        expect(index108, registry.length - 1);
         expect(registry[index102].name, '102_groups_self_removed_at');
         expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
         expect(registry[index104].name, '104_group_exit_diagnostics');
@@ -366,6 +368,7 @@ void main() {
           '106_group_notification_display_outbox',
         );
         expect(registry[index107].name, '107_direct_notification_durability');
+        expect(registry[index108].name, '108_direct_inbox_custody_outbox');
       }
 
       final columns = await db.rawQuery('PRAGMA table_info(groups)');

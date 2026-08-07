@@ -42,6 +42,7 @@ import 'package:flutter_app/features/conversation/data/repositories/message_repo
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '_support/canonical_runtime_device_test_lease.dart';
 import '_support/cli_peer_fixture.dart';
+import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/fake_secure_key_store.dart';
 import '_support/test_db_seeder.dart';
 
@@ -203,6 +204,7 @@ Future<_TestStack> _setupStack() async {
   );
 
   late final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
+  final custodyDb = DirectInboxCustodyDbBindings(db);
   final messageRepo = MessageRepositoryImpl(
     dbInsertMessage: (row) => dbInsertMessage(db, row),
     dbLoadMessagesForContact: (contactPeerId) =>
@@ -261,6 +263,12 @@ Future<_TestStack> _setupStack() async {
               stagedRow: stagedRow,
               kind: kind,
             ),
+    dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+    dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+    dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+    dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
+    dbCompleteAcceptedDirectInboxCustodyIfExact:
+        custodyDb.completeAcceptedIfExact,
     dbSettleOutgoingOrdinaryTransport:
         ({
           required messageId,

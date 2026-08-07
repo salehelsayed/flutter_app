@@ -21,6 +21,7 @@ import 'package:flutter_app/core/utils/chat_console_logger.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
@@ -384,6 +385,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
+  void Function(String messageId)? onDirectTextCustodyStaged,
 }) async {
   final sendStopwatch = clock.stopwatch()..start();
   final liveDeadline = OutgoingLiveDeadline(() => sendStopwatch.elapsed);
@@ -449,9 +451,23 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
-  final existingOutgoing = messageId == null
-      ? null
-      : await messageRepo.getMessage(messageId);
+  ConversationMessage? existingOutgoing;
+  try {
+    existingOutgoing = messageId == null
+        ? null
+        : await messageRepo.getMessage(messageId);
+  } catch (error) {
+    // This read happens before any envelope build or atomic attempt/custody
+    // stage. Convert the escaping repository exception into a definitive
+    // non-staged result so callers may safely retry with a fresh authority.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_PRE_STAGE_READ_ERROR',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+    emitSendTiming(outcome: 'pre_stage_read_error');
+    return (SendChatMessageResult.sendFailed, null);
+  }
   final effectivePrivateMediaPolicy =
       privateMediaPolicy ??
       (existingOutgoing != null && !existingOutgoing.isIncoming
@@ -515,8 +531,63 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     }
   }
 
-  // 2. Check P2P node
-  if (!p2pService.currentState.isStarted) {
+  final isOutgoingPrivateOneMoreLook =
+      effectivePrivateMediaPolicy.version == 1 &&
+      (effectivePrivateMediaPolicy.mode == PrivateMediaMode.protected ||
+          effectivePrivateMediaPolicy.mode == PrivateMediaMode.viewOnce);
+  final attemptKind = action == MessagePayload.actionEdit
+      ? OutgoingOrdinaryAttemptKind.edit
+      : messageId == null || preassignedMessageIdIsFresh
+      ? OutgoingOrdinaryAttemptKind.fresh
+      : OutgoingOrdinaryAttemptKind.existing;
+  final ownsDirectTextInboxCustody =
+      !isOutgoingPrivateOneMoreLook &&
+      attemptKind == OutgoingOrdinaryAttemptKind.fresh &&
+      action == MessagePayload.actionSend &&
+      !hasAttachments &&
+      effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary;
+  final ordinaryMutationRepo =
+      messageRepo is OutgoingTransportMutationRepository
+      ? messageRepo as OutgoingTransportMutationRepository
+      : null;
+  final directTextCustodyCapability =
+      messageRepo is OutgoingDirectTextInboxCustodyRepository
+      ? messageRepo as OutgoingDirectTextInboxCustodyRepository
+      : null;
+  final directTextCustodyRepo =
+      directTextCustodyCapability?.supportsDirectTextInboxCustody == true
+      ? directTextCustodyCapability
+      : null;
+  if (ownsDirectTextInboxCustody &&
+      (ordinaryMutationRepo == null || directTextCustodyRepo == null)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
+      details: {
+        'reason': ordinaryMutationRepo == null
+            ? 'missing_message_capability'
+            : 'missing_direct_text_custody_capability',
+      },
+    );
+    emitSendTiming(outcome: 'attempt_stage_refused');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+  final recipientKey = recipientMlKemPublicKey?.trim();
+  final nodeWasNotRunningAtEntry = !p2pService.currentState.isStarted;
+  final canStageCustodyBeforeNodeNotRunning =
+      nodeWasNotRunningAtEntry &&
+      ownsDirectTextInboxCustody &&
+      ordinaryMutationRepo != null &&
+      directTextCustodyRepo != null &&
+      bridge != null &&
+      recipientKey != null &&
+      recipientKey.isNotEmpty;
+
+  // Preserve the historical pre-encryption return for paths that do not own
+  // newly-authored direct-text custody, or cannot atomically acquire it. A
+  // capable fresh text send continues through encryption/staging so a stopped
+  // node cannot strand a UI-only optimistic bubble without durable custody.
+  if (nodeWasNotRunningAtEntry && !canStageCustodyBeforeNodeNotRunning) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_NODE_NOT_RUNNING',
@@ -526,7 +597,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.nodeNotRunning, null);
   }
 
-  final recipientKey = recipientMlKemPublicKey?.trim();
   if (bridge == null || recipientKey == null || recipientKey.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
@@ -580,6 +650,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedEditedAt = action == MessagePayload.actionEdit
       ? (editedAt ?? DateTime.now().toUtc().toIso8601String())
       : null;
+  // Relay inbox dedupe keys encrypted chat events by cleartext outer identity.
+  // An edit targets the original message id but is a different immutable wire
+  // event, so it receives an authenticated event id of its own.
+  final resolvedEventId = action == MessagePayload.actionEdit
+      ? _uuid.v4()
+      : null;
   final normalizedAttachments = mediaAttachments
       ?.map(
         (attachment) => attachment.copyWith(
@@ -626,6 +702,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     senderUsername: senderUsername,
     timestamp: resolvedTimestamp,
     action: action,
+    eventId: resolvedEventId,
     editedAt: resolvedEditedAt,
     quotedMessageId: quotedMessageId,
     media: mediaJson,
@@ -674,6 +751,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       kem: encryptResult['kem'] as String,
       ciphertext: encryptResult['ciphertext'] as String,
       nonce: encryptResult['nonce'] as String,
+      eventId: resolvedEventId,
     );
   } catch (e) {
     emitFlowEvent(
@@ -695,14 +773,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // BEFORE the transport race. If the app crashes after this point, Section
   // 1's PendingMessageRetrier can replay the attempt without re-serializing or
   // re-encrypting.
-  final isOutgoingPrivateOneMoreLook =
-      effectivePrivateMediaPolicy.version == 1 &&
-      (effectivePrivateMediaPolicy.mode == PrivateMediaMode.protected ||
-          effectivePrivateMediaPolicy.mode == PrivateMediaMode.viewOnce);
-  final ordinaryMutationRepo =
-      messageRepo is OutgoingTransportMutationRepository
-      ? messageRepo as OutgoingTransportMutationRepository
-      : null;
+  DirectInboxCustodyOutboxEntry? stagedDirectTextCustody;
+  ConversationMessage? stagedDirectTextMessage;
   if (isOutgoingPrivateOneMoreLook) {
     final handedOff =
         messageId != null &&
@@ -729,6 +801,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   } else {
     final hasOrdinaryMedia = normalizedAttachments?.isNotEmpty ?? false;
     if (ordinaryMutationRepo == null ||
+        (ownsDirectTextInboxCustody && directTextCustodyRepo == null) ||
         (hasOrdinaryMedia &&
             mediaAttachmentRepo is! OutgoingOrdinaryAttemptStagingRepository)) {
       emitFlowEvent(
@@ -740,6 +813,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               : resolvedMessageId,
           'reason': ordinaryMutationRepo == null
               ? 'missing_message_capability'
+              : ownsDirectTextInboxCustody && directTextCustodyRepo == null
+              ? 'missing_direct_text_custody_capability'
               : 'missing_media_capability',
         },
       );
@@ -747,11 +822,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       return (SendChatMessageResult.sendFailed, null);
     }
 
-    final attemptKind = action == MessagePayload.actionEdit
-        ? OutgoingOrdinaryAttemptKind.edit
-        : messageId == null || preassignedMessageIdIsFresh
-        ? OutgoingOrdinaryAttemptKind.fresh
-        : OutgoingOrdinaryAttemptKind.existing;
     final expectedAttempt = attemptKind == OutgoingOrdinaryAttemptKind.fresh
         ? null
         : existingOutgoing;
@@ -782,7 +852,19 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             media: normalizedAttachments ?? const [],
           );
     try {
-      final staged = hasOrdinaryMedia
+      final custodyIncarnationId = ownsDirectTextInboxCustody
+          ? _uuid.v4().replaceAll('-', '')
+          : null;
+      final staged = ownsDirectTextInboxCustody
+          ? await directTextCustodyRepo!.stageOutgoingDirectTextInboxCustody(
+              expected: expectedAttempt,
+              staged: stagedAttempt,
+              kind: attemptKind,
+              recipientPeerId: targetPeerId,
+              incarnationId: custodyIncarnationId!,
+              wireEnvelope: jsonString,
+            )
+          : hasOrdinaryMedia
           ? await (mediaAttachmentRepo
                     as OutgoingOrdinaryAttemptStagingRepository)
                 .stageOutgoingOrdinaryAttemptWithMedia(
@@ -814,6 +896,41 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         );
         return (SendChatMessageResult.sendFailed, null);
       }
+      if (ownsDirectTextInboxCustody) {
+        stagedDirectTextMessage = staged.message;
+        // The authorized atomic mutation is the authority boundary. Build the
+        // immutable handle from those exact inputs instead of re-reading after
+        // commit: a concurrent lifecycle drain may already have completed and
+        // deleted the row, which must not turn a committed send into failure.
+        stagedDirectTextCustody = DirectInboxCustodyOutboxEntry(
+          recipientPeerId: targetPeerId,
+          messageId: resolvedMessageId,
+          incarnationId: custodyIncarnationId!,
+          wireEnvelope: jsonString,
+          retryCount: 0,
+          lastAttemptAt: null,
+          lastErrorCode: null,
+          createdAt: stagedAttempt.createdAt,
+          updatedAt: stagedAttempt.createdAt,
+        );
+        try {
+          onDirectTextCustodyStaged?.call(resolvedMessageId);
+        } catch (error) {
+          // The atomic stage is already committed transport authority. An
+          // optional observer may record UI provenance, but can never revoke
+          // custody or prevent the transport attempt.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_DIRECT_INBOX_CUSTODY_STAGE_OBSERVER_ERROR',
+            details: {
+              'id': resolvedMessageId.length > 8
+                  ? resolvedMessageId.substring(0, 8)
+                  : resolvedMessageId,
+              'errorType': error.runtimeType.toString(),
+            },
+          );
+        }
+      }
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -822,12 +939,60 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           'id': resolvedMessageId.length > 8
               ? resolvedMessageId.substring(0, 8)
               : resolvedMessageId,
-          'error': error.toString(),
+          'errorType': error.runtimeType.toString(),
         },
       );
       emitSendTiming(outcome: 'attempt_stage_error');
       return (SendChatMessageResult.sendFailed, null);
     }
+  }
+
+  if (canStageCustodyBeforeNodeNotRunning) {
+    ConversationMessage? authoritativeMessage = stagedDirectTextMessage;
+    try {
+      final settled = await ordinaryMutationRepo
+          .settleOutgoingOrdinaryTransport(
+            messageId: resolvedMessageId,
+            expectedContactPeerId: targetPeerId,
+            expectedEnvelope: jsonString,
+            status: 'failed',
+            transport: null,
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.live,
+          );
+      authoritativeMessage =
+          settled.outcome == OutgoingOrdinaryMutationOutcome.removed
+          ? null
+          : settled.message ?? authoritativeMessage;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_NODE_NOT_RUNNING_SETTLEMENT_ERROR',
+        details: {
+          'id': resolvedMessageId.length > 8
+              ? resolvedMessageId.substring(0, 8)
+              : resolvedMessageId,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+      try {
+        // A successful null reload is authoritative physical removal. Retain
+        // the staged fallback only when this diagnostic reload itself throws.
+        authoritativeMessage = await messageRepo.getMessage(resolvedMessageId);
+      } catch (_) {
+        // The atomic stage already retained the exact message and outbox.
+      }
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_NODE_NOT_RUNNING',
+      details: const {'custodyStaged': true},
+    );
+    emitSendTiming(
+      outcome: 'node_not_running',
+      details: const {'custodyStaged': true},
+    );
+    return (SendChatMessageResult.nodeNotRunning, authoritativeMessage);
   }
 
   // LAN visibility is routing metadata, not delivery authority. Read it once
@@ -867,6 +1032,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           transport: 'inbox',
           relayExpiresAt: outcome.expiresAtMs,
         );
+      } else if (ownsDirectTextInboxCustody) {
+        final custody = stagedDirectTextCustody;
+        if (custody == null) {
+          throw StateError('accepted custody has no staged local authority');
+        }
+        final completion = await directTextCustodyRepo!
+            .completeAcceptedDirectInboxCustodyIfExact(
+              expected: custody,
+              relayExpiresAt: outcome.expiresAtMs,
+            );
+        observedMessage = completion.message;
       } else {
         final settled = await ordinaryMutationRepo!
             .settleOutgoingOrdinaryTransport(
@@ -881,12 +1057,22 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         observedMessage = settled.message;
       }
     } catch (error) {
+      if (ownsDirectTextInboxCustody && stagedDirectTextCustody != null) {
+        try {
+          await directTextCustodyRepo!.recordDirectInboxCustodyFailureIfExact(
+            expected: stagedDirectTextCustody,
+            errorCode: DirectInboxCustodyErrorCode.localCompletionFailed,
+          );
+        } catch (_) {
+          // The exact row remains durable; a later lifecycle drain retries it.
+        }
+      }
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_CUSTODY_SETTLEMENT_ERROR',
         details: {
-          'id': resolvedMessageId.substring(0, 8),
-          'error': error.toString(),
+          'id': shortenMessageId(resolvedMessageId),
+          'errorType': error.runtimeType.toString(),
         },
       );
       return;
@@ -920,6 +1106,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
     final inboxStopwatch = Stopwatch()..start();
     late InboxStoreOutcome outcome;
+    var storeThrew = false;
     try {
       final detailedStore = effectiveStoreInInboxDetailed;
       if (detailedStore != null) {
@@ -940,15 +1127,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         );
       }
     } catch (error) {
+      storeThrew = true;
       outcome = InboxStoreOutcome(
         status: InboxStoreStatus.failed,
         errorCode: 'STORE_ERROR',
-        errorMessage: error.toString(),
+        errorMessage: error.runtimeType.toString(),
       );
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_SEND_INBOX_FALLBACK_ERROR',
-        details: {'error': error.toString()},
+        details: {'errorType': error.runtimeType.toString()},
       );
     } finally {
       inboxStopwatch.stop();
@@ -958,6 +1146,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     transportMetrics?.recordAttempt(leg: 'inbox', succeeded: outcome.accepted);
     if (outcome.accepted) {
       await settleAcceptedInboxCustody(outcome);
+    } else if (ownsDirectTextInboxCustody && stagedDirectTextCustody != null) {
+      final errorCode = storeThrew
+          ? DirectInboxCustodyErrorCode.storeThrew
+          : outcome.status == InboxStoreStatus.rejectedFull
+          ? DirectInboxCustodyErrorCode.storeRejectedFull
+          : DirectInboxCustodyErrorCode.storeFailed;
+      try {
+        await directTextCustodyRepo!.recordDirectInboxCustodyFailureIfExact(
+          expected: stagedDirectTextCustody,
+          errorCode: errorCode,
+        );
+      } catch (_) {
+        // Retention is already durable; failure metadata is best-effort here.
+      }
     }
     return outcome;
   }
@@ -1015,7 +1217,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             stepTimings: stepTimings,
           );
           if (reuseEvidence.provesDeviceDeliveryForCurrentProtocol) {
-            inboxHedge.cancelIfNotStarted();
+            if (!ownsDirectTextInboxCustody) {
+              inboxHedge.cancelIfNotStarted();
+            }
             transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
             recordMetrics(transport: reuseVia, rung: 'reuse');
             return _completeSuccessfulSend(
@@ -1102,7 +1306,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     if (shortCircuit != null &&
         shortCircuit.provesDeviceDeliveryForCurrentProtocol) {
-      inboxHedge.cancelIfNotStarted();
+      if (!ownsDirectTextInboxCustody) {
+        inboxHedge.cancelIfNotStarted();
+      }
       sendPath = 'sticky';
       stepTimings = shortCircuit.stepTimings;
       // The sticky short-circuit reuses the learned known-good path WITHOUT
@@ -1293,7 +1499,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       pendingCount--;
       if (result.provesDeviceDeliveryForCurrentProtocol) {
         if (!completer.isCompleted) {
-          inboxHedge.cancelIfNotStarted();
+          if (!ownsDirectTextInboxCustody) {
+            inboxHedge.cancelIfNotStarted();
+          }
           completer.complete(result);
         }
         return;

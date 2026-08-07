@@ -76,6 +76,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
+import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/node_readiness.dart';
 import '_support/signal_files.dart';
 import 'group_multi_device_real_harness.dart';
@@ -482,6 +483,7 @@ void _runAlice() {
       );
 
       // 1:1 message repository wired against the stack DB.
+      final custodyDb = DirectInboxCustodyDbBindings(stack.db);
       final messageRepo = MessageRepositoryImpl(
         dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
         dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
@@ -535,6 +537,13 @@ void _runAlice() {
                 ),
         dbUpdateWireEnvelope: (id, we) =>
             dbUpdateWireEnvelope(stack.db, id, we),
+        dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+        dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+        dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+        dbRecordDirectInboxCustodyFailureIfExact:
+            custodyDb.recordFailureIfExact,
+        dbCompleteAcceptedDirectInboxCustodyIfExact:
+            custodyDb.completeAcceptedIfExact,
         dbLoadStuckSendingOutgoingMessages:
             ({required DateTime olderThan, int limit = 50}) =>
                 dbLoadStuckSendingOutgoingMessages(
@@ -1114,6 +1123,7 @@ void _runBob() {
         timeout: const Duration(seconds: 60),
       );
 
+      final custodyDb = DirectInboxCustodyDbBindings(stack.db);
       final messageRepo = MessageRepositoryImpl(
         dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
         dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
@@ -1167,6 +1177,13 @@ void _runBob() {
                 ),
         dbUpdateWireEnvelope: (id, we) =>
             dbUpdateWireEnvelope(stack.db, id, we),
+        dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+        dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+        dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+        dbRecordDirectInboxCustodyFailureIfExact:
+            custodyDb.recordFailureIfExact,
+        dbCompleteAcceptedDirectInboxCustodyIfExact:
+            custodyDb.completeAcceptedIfExact,
         dbLoadStuckSendingOutgoingMessages:
             ({required DateTime olderThan, int limit = 50}) =>
                 dbLoadStuckSendingOutgoingMessages(

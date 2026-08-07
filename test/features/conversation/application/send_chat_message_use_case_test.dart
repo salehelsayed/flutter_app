@@ -25,9 +25,11 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
     as chat_use_case
     show sendChatMessage, editChatMessage;
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
@@ -617,7 +619,10 @@ class _R3DelayedCryptoBridge extends PassthroughCryptoBridge {
 
 // -- Fake Message Repository --
 class FakeMessageRepository
-    implements MessageRepository, OutgoingTransportMutationRepository {
+    implements
+        MessageRepository,
+        OutgoingTransportMutationRepository,
+        OutgoingDirectTextInboxCustodyRepository {
   final List<ConversationMessage> saved = [];
 
   // Section 4: wireEnvelope tracking
@@ -674,10 +679,15 @@ class FakeMessageRepository
   /// 116 P2: seedable rows for the no-downgrade writer gate's
   /// `getMessage(messageId)` lookup. Empty by default (legacy behavior).
   final Map<String, ConversationMessage> existingMessages = {};
+  bool throwOnGetMessage = false;
 
   @override
-  Future<ConversationMessage?> getMessage(String id) async =>
-      existingMessages[id];
+  Future<ConversationMessage?> getMessage(String id) async {
+    if (throwOnGetMessage) {
+      throw StateError('synthetic pre-stage message read failure');
+    }
+    return existingMessages[id];
+  }
 
   @override
   Future<bool> messageExists(String id) async =>
@@ -780,8 +790,27 @@ class FakeMessageRepository
     })
   >
   ordinarySettlementCalls = [];
+  final List<
+    ({
+      ConversationMessage staged,
+      String recipientPeerId,
+      String incarnationId,
+      String wireEnvelope,
+    })
+  >
+  directCustodyStageCalls = [];
+  final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
+  bool directTextInboxCustodySupported = true;
+
+  @override
+  bool get supportsDirectTextInboxCustody => directTextInboxCustodySupported;
+  final List<({DirectInboxCustodyOutboxEntry expected, int? relayExpiresAt})>
+  directCustodyCompletionCalls = [];
   OutgoingOrdinaryMutationOutcome? forcedStageOutcome;
   VoidCallback? onOrdinaryStage;
+  VoidCallback? afterDirectCustodyStage;
+  bool throwOnOrdinarySettlement = false;
+  int directCustodyLoadForMessageCallCount = 0;
   ConversationMessage Function(ConversationMessage staged)?
   authoritativeStageProjection;
 
@@ -907,6 +936,9 @@ class FakeMessageRepository
       mode: mode,
       tombstone: tombstone,
     ));
+    if (throwOnOrdinarySettlement) {
+      throw StateError('forced ordinary settlement failure');
+    }
     final current = existingMessages[messageId];
     if (current == null) {
       return _ordinaryResult(OutgoingOrdinaryMutationOutcome.removed, null);
@@ -983,6 +1015,169 @@ class FakeMessageRepository
     OutgoingOrdinaryMutationOutcome.refused,
     existingMessages[messageId],
   );
+
+  String _custodyKey(String recipientPeerId, String messageId) =>
+      '$recipientPeerId\u0000$messageId';
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String incarnationId,
+    required String wireEnvelope,
+  }) async {
+    directCustodyStageCalls.add((
+      staged: staged,
+      recipientPeerId: recipientPeerId,
+      incarnationId: incarnationId,
+      wireEnvelope: wireEnvelope,
+    ));
+    ordinaryStageCalls.add((expected: expected, staged: staged, kind: kind));
+    onOrdinaryStage?.call();
+    final key = _custodyKey(recipientPeerId, staged.id);
+    final existingCustody = directCustodyRows[key];
+    final current = existingMessages[staged.id];
+    final forced = forcedStageOutcome;
+    if (forced != null && forced != OutgoingOrdinaryMutationOutcome.applied) {
+      return _ordinaryResult(forced, current);
+    }
+    if (kind != OutgoingOrdinaryAttemptKind.fresh || expected != null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (existingCustody != null) {
+      final exact =
+          existingCustody.incarnationId == incarnationId &&
+          existingCustody.wireEnvelope == wireEnvelope &&
+          current?.toMap().toString() == staged.toMap().toString();
+      return _ordinaryResult(
+        exact
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.refused,
+        current,
+      );
+    }
+    if (current != null) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    directCustodyRows[key] = DirectInboxCustodyOutboxEntry(
+      recipientPeerId: recipientPeerId,
+      messageId: staged.id,
+      incarnationId: incarnationId,
+      wireEnvelope: wireEnvelope,
+      retryCount: 0,
+      lastAttemptAt: null,
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    final authoritative = authoritativeStageProjection?.call(staged) ?? staged;
+    _remember(authoritative);
+    afterDirectCustodyStage?.call();
+    return _ordinaryResult(
+      OutgoingOrdinaryMutationOutcome.applied,
+      authoritative,
+    );
+  }
+
+  @override
+  Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
+    int limit = 50,
+  }) async {
+    final rows = directCustodyRows.values.toList()
+      ..sort((a, b) {
+        final aAttempt = a.lastAttemptAt;
+        final bAttempt = b.lastAttemptAt;
+        if (aAttempt == null && bAttempt != null) return -1;
+        if (aAttempt != null && bAttempt == null) return 1;
+        final byAttempt = (aAttempt ?? '').compareTo(bAttempt ?? '');
+        if (byAttempt != 0) return byAttempt;
+        final byCreated = a.createdAt.compareTo(b.createdAt);
+        if (byCreated != 0) return byCreated;
+        final byPeer = a.recipientPeerId.compareTo(b.recipientPeerId);
+        return byPeer != 0 ? byPeer : a.messageId.compareTo(b.messageId);
+      });
+    return rows.take(limit.clamp(0, 50)).toList(growable: false);
+  }
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyForMessage({
+    required String recipientPeerId,
+    required String messageId,
+  }) async {
+    directCustodyLoadForMessageCallCount++;
+    return directCustodyRows[_custodyKey(recipientPeerId, messageId)];
+  }
+
+  @override
+  Future<bool> recordDirectInboxCustodyFailureIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    final key = _custodyKey(expected.recipientPeerId, expected.messageId);
+    final current = directCustodyRows[key];
+    if (current == null || current.incarnationId != expected.incarnationId) {
+      return false;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    directCustodyRows[key] = current.copyWith(
+      retryCount: current.retryCount + 1,
+      lastAttemptAt: now,
+      lastErrorCode: errorCode,
+      updatedAt: now,
+    );
+    return true;
+  }
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    directCustodyCompletionCalls.add((
+      expected: expected,
+      relayExpiresAt: relayExpiresAt,
+    ));
+    final key = _custodyKey(expected.recipientPeerId, expected.messageId);
+    final currentCustody = directCustodyRows[key];
+    if (currentCustody == null ||
+        currentCustody.incarnationId != expected.incarnationId) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.stale,
+        message: null,
+      );
+    }
+    directCustodyRows.remove(key);
+    final current = existingMessages[expected.messageId];
+    if (current == null) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messageRemoved,
+        message: null,
+      );
+    }
+    if (current.status == 'delivered' ||
+        current.status == 'inboxed' ||
+        current.isDeleted ||
+        current.hiddenAt != null) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
+        message: current,
+      );
+    }
+    final advanced = current.copyWith(
+      status: 'inboxed',
+      transport: 'inbox',
+      relayExpiresAt: relayExpiresAt,
+    );
+    _remember(advanced);
+    return DirectInboxCustodyCompletionResult(
+      outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
+      message: advanced,
+    );
+  }
 }
 
 class _BlockedOrdinarySettlementMessageRepository
@@ -1018,6 +1213,17 @@ class _BlockedOrdinarySettlementMessageRepository
   }
 }
 
+class _ThrowingDirectCustodyCompletionRepository extends FakeMessageRepository {
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) => Future<DirectInboxCustodyCompletionResult>.error(
+    StateError('injected direct custody completion failure'),
+  );
+}
+
 class _DetailedInboxStoreFixture {
   _DetailedInboxStoreFixture({this.controlledResult, this.order});
 
@@ -1043,6 +1249,10 @@ class _MessageRepositoryWithoutOrdinaryCapability implements MessageRepository {
   @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
+
+class _OrdinaryOnlyMessageRepository
+    extends _MessageRepositoryWithoutOrdinaryCapability
+    implements OutgoingTransportMutationRepository {}
 
 class _BlockedPrivateSettlementP2PService extends FakeP2PService {
   final Completer<void> transportStarted = Completer<void>();
@@ -1324,6 +1534,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   Bridge? bridge,
   String? recipientMlKemPublicKey,
   String? quotedMessageId,
+  bool isForwarded = false,
   List<MediaAttachment>? mediaAttachments,
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
@@ -1331,6 +1542,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
   bool? preassignedMessageIdIsFresh,
+  void Function(String messageId)? onDirectTextCustodyStaged,
 }) {
   return chat_use_case.sendChatMessage(
     p2pService: p2pService,
@@ -1350,6 +1562,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     recipientMlKemPublicKey:
         recipientMlKemPublicKey ?? testRecipientMlKemPublicKey,
     quotedMessageId: quotedMessageId,
+    isForwarded: isForwarded,
     mediaAttachments: mediaAttachments,
     privateMediaPolicy: privateMediaPolicy,
     mediaAttachmentRepo:
@@ -1360,6 +1573,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     emitTimingEvent: emitTimingEvent,
     transportMetrics: transportMetrics,
     storeInInboxDetailed: storeInInboxDetailed,
+    onDirectTextCustodyStaged: onDirectTextCustodyStaged,
   );
 }
 
@@ -1674,6 +1888,594 @@ void main() {
         expect(concurrentMessage.wireEnvelope, isNull);
         expect(concurrentRepo.ordinarySettlementCalls.last.status, 'delivered');
         expect(concurrentRepo.saved.single.text, 'concurrent durable delivery');
+      },
+    );
+
+    test(
+      'TC-342-03a fresh direct text stages immutable custody before every transport',
+      () async {
+        final rows =
+            <
+              ({
+                String name,
+                String? messageId,
+                String? quotedMessageId,
+                bool isForwarded,
+              })
+            >[
+              (
+                name: 'generated id',
+                messageId: null,
+                quotedMessageId: null,
+                isForwarded: false,
+              ),
+              (
+                name: 'fresh quote metadata',
+                messageId: null,
+                quotedMessageId: 'tc-342-quoted-source',
+                isForwarded: false,
+              ),
+              (
+                name: 'fresh forwarded marker',
+                messageId: 'tc-342-forwarded-text',
+                quotedMessageId: null,
+                isForwarded: true,
+              ),
+              (
+                name: 'explicitly fresh preassigned id',
+                messageId: 'tc-342-preassigned-text',
+                quotedMessageId: null,
+                isForwarded: false,
+              ),
+            ];
+
+        for (final row in rows) {
+          final order = <String>[];
+          final repository = FakeMessageRepository()
+            ..onOrdinaryStage = () => order.add('stage');
+          final service = FakeP2PService(sendMessageTransport: 'direct')
+            ..onSendMessage = () => order.add('live-send');
+          final storeOutcome = Completer<InboxStoreOutcome>();
+          final store = _DetailedInboxStoreFixture(
+            controlledResult: storeOutcome.future,
+            order: order,
+          );
+
+          final (result, message) = await sendChatMessage(
+            p2pService: service,
+            messageRepo: repository,
+            targetPeerId: 'target-peer',
+            text: 'fresh text: ${row.name}',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: row.messageId,
+            preassignedMessageIdIsFresh: row.messageId == null ? null : true,
+            quotedMessageId: row.quotedMessageId,
+            isForwarded: row.isForwarded,
+            storeInInboxDetailed: store.call,
+            onDirectTextCustodyStaged: (messageId) {
+              expect(
+                messageId,
+                repository.directCustodyStageCalls.single.staged.id,
+                reason: row.name,
+              );
+              order.add('custody-observer');
+            },
+          );
+
+          expect(result, SendChatMessageResult.success, reason: row.name);
+          expect(message!.status, 'delivered', reason: row.name);
+          expect(repository.directCustodyStageCalls, hasLength(1));
+          expect(
+            repository.directCustodyStageCalls.single.staged.quotedMessageId,
+            row.quotedMessageId,
+            reason: row.name,
+          );
+          expect(
+            repository.directCustodyStageCalls.single.staged.isForwarded,
+            row.isForwarded,
+            reason: row.name,
+          );
+          expect(
+            repository.directCustodyStageCalls.single.wireEnvelope,
+            service.lastSentMessage,
+            reason: row.name,
+          );
+          expect(store.lastEnvelope, service.lastSentMessage, reason: row.name);
+          expect(order.first, 'stage', reason: row.name);
+          expect(order[1], 'custody-observer', reason: row.name);
+          expect(order, containsAll(<String>['inbox-call', 'live-send']));
+          expect(
+            order.indexOf('custody-observer'),
+            lessThan(order.indexOf('inbox-call')),
+            reason: row.name,
+          );
+          expect(
+            order.indexOf('custody-observer'),
+            lessThan(order.indexOf('live-send')),
+            reason: row.name,
+          );
+          final owned = repository.directCustodyRows.values.single;
+          expect(owned.messageId, message.id, reason: row.name);
+          expect(owned.incarnationId, hasLength(32), reason: row.name);
+          expect(owned.wireEnvelope, service.lastSentMessage, reason: row.name);
+
+          storeOutcome.complete(
+            const InboxStoreOutcome(status: InboxStoreStatus.stored),
+          );
+          for (
+            var i = 0;
+            i < 4 && repository.directCustodyRows.isNotEmpty;
+            i++
+          ) {
+            await Future<void>.delayed(Duration.zero);
+          }
+          expect(repository.directCustodyRows, isEmpty, reason: row.name);
+          expect(repository.existingMessages[message.id]!.status, 'delivered');
+        }
+      },
+    );
+
+    test(
+      'TC-342-03g custody stage observer failure cannot revoke committed authority',
+      () async {
+        final order = <String>[];
+        final repository = FakeMessageRepository()
+          ..onOrdinaryStage = () => order.add('stage');
+        final service = FakeP2PService(sendMessageTransport: 'direct')
+          ..onSendMessage = () => order.add('live-send');
+        final storeOutcome = Completer<InboxStoreOutcome>();
+        final store = _DetailedInboxStoreFixture(
+          controlledResult: storeOutcome.future,
+          order: order,
+        );
+        var observerCalls = 0;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'observer failure cannot revoke custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          storeInInboxDetailed: store.call,
+          onDirectTextCustodyStaged: (messageId) {
+            observerCalls++;
+            order.add('custody-observer');
+            throw StateError('observer failed after commit');
+          },
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message?.status, 'delivered');
+        expect(observerCalls, 1);
+        expect(order.take(2), <String>['stage', 'custody-observer']);
+        expect(service.sendCallCount, greaterThan(0));
+        expect(repository.directCustodyRows, hasLength(1));
+        expect(
+          repository.directCustodyRows.values.single.messageId,
+          message?.id,
+        );
+
+        storeOutcome.complete(
+          const InboxStoreOutcome(status: InboxStoreStatus.failed),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(repository.directCustodyRows, hasLength(1));
+      },
+    );
+
+    test(
+      'TC-342-03d committed stage authority survives concurrent custody completion without post-commit read',
+      () async {
+        final repository = FakeMessageRepository();
+        repository.afterDirectCustodyStage = () {
+          // Model a concurrent lifecycle drain completing the exact row after
+          // the atomic mutation commits but before send-path control resumes.
+          repository.directCustodyRows.clear();
+        };
+        final service = FakeP2PService(sendMessageTransport: 'direct');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'committed authority survives completion race',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          storeInInboxDetailed: (peerId, envelope, {timeoutMs}) async =>
+              const InboxStoreOutcome(status: InboxStoreStatus.duplicate),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message?.status, 'delivered');
+        expect(service.sendCallCount, greaterThan(0));
+        expect(
+          repository.directCustodyLoadForMessageCallCount,
+          0,
+          reason:
+              'the authorized atomic mutation must not be revalidated by a racy read',
+        );
+      },
+    );
+
+    test(
+      'TC-342-03c media private edit delete and existing attempts remain outside new custody',
+      () async {
+        const existingId = 'tc-342-existing-exclusion';
+        const timestamp = '2026-08-06T10:00:00.000Z';
+        final existing = ConversationMessage(
+          id: existingId,
+          contactPeerId: 'target-peer',
+          senderPeerId: 'my-peer',
+          text: 'existing text',
+          timestamp: timestamp,
+          status: 'failed',
+          isIncoming: false,
+          createdAt: timestamp,
+        );
+        final existingRepository = FakeMessageRepository()
+          ..forceCurrent(existing);
+        await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: existingRepository,
+          targetPeerId: 'target-peer',
+          text: existing.text,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: existing.id,
+          timestamp: existing.timestamp,
+          createdAt: existing.createdAt,
+          preassignedMessageIdIsFresh: false,
+        );
+        expect(existingRepository.directCustodyStageCalls, isEmpty);
+
+        const media = MediaAttachment(
+          id: 'tc-342-media-exclusion',
+          messageId: '',
+          mime: 'image/png',
+          size: 12,
+          mediaType: 'image',
+          localPath: 'pending_uploads/tc-342.png',
+          downloadStatus: 'upload_pending',
+          createdAt: timestamp,
+          contentHash: 'tc-342-media-hash',
+          encryptionKeyBase64: 'tc-342-media-key',
+          encryptionNonce: 'tc-342-media-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final mediaRepository = FakeMessageRepository();
+        await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: mediaRepository,
+          targetPeerId: 'target-peer',
+          text: 'media exclusion',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const <MediaAttachment>[media],
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        );
+        expect(mediaRepository.directCustodyStageCalls, isEmpty);
+
+        final disappearingRepository = FakeMessageRepository();
+        final (disappearingResult, _) = await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: disappearingRepository,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const <MediaAttachment>[media],
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(86400),
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        );
+        expect(disappearingResult, SendChatMessageResult.success);
+        expect(
+          disappearingRepository.directCustodyStageCalls,
+          isEmpty,
+          reason:
+              'disappearing is a one-attachment media policy in this domain',
+        );
+
+        final editRepository = FakeMessageRepository();
+        await editChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: editRepository,
+          originalMessage: existing.copyWith(status: 'delivered'),
+          updatedText: 'edited exclusion',
+          senderUsername: 'Me',
+        );
+        expect(editRepository.directCustodyStageCalls, isEmpty);
+
+        final deleteRepository = FakeMessageRepository()
+          ..forceCurrent(existing.copyWith(status: 'delivered'));
+        await deleteMessageForEveryone(
+          p2pService: FakeP2PService(),
+          messageRepo: deleteRepository,
+          originalMessage: existing.copyWith(status: 'delivered'),
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+        );
+        expect(deleteRepository.directCustodyStageCalls, isEmpty);
+
+        for (final privateCase in <({String name, PrivateMediaPolicy policy})>[
+          (name: 'protected', policy: const PrivateMediaPolicy.protected()),
+          (name: 'view-once', policy: const PrivateMediaPolicy.viewOnce()),
+        ]) {
+          final messageId = 'tc-342-${privateCase.name}-exclusion';
+          final attachmentId = '$messageId-att';
+          final attachment = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 1024,
+            mediaType: 'image',
+            localPath: MediaFilePathConvention.relativePathForAttachment(
+              contactPeerId: 'target-peer',
+              blobId: attachmentId,
+              mime: 'image/jpeg',
+            ),
+            downloadStatus: 'done',
+            createdAt: timestamp,
+            contentHash:
+                'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            encryptionKeyBase64: 'tc-342-private-key',
+            encryptionNonce: 'tc-342-private-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final privateRepository = _PrivateCustodyMessageRepository(
+            ConversationMessage(
+              id: messageId,
+              contactPeerId: 'target-peer',
+              senderPeerId: 'my-peer',
+              text: '',
+              timestamp: timestamp,
+              status: 'sending',
+              isIncoming: false,
+              createdAt: timestamp,
+              privateMediaPolicy: privateCase.policy,
+              privateMediaState: PrivateMediaLifecycleState.available,
+            ),
+          );
+          final privateMediaRepository = _PrivateMutationMediaRepository()
+            ..seed(<MediaAttachment>[attachment]);
+
+          final (result, _) = await chat_use_case.sendChatMessage(
+            p2pService: FakeP2PService(),
+            messageRepo: privateRepository,
+            targetPeerId: 'target-peer',
+            text: '',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: messageId,
+            bridge: PassthroughCryptoBridge(),
+            recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+            mediaAttachments: <MediaAttachment>[attachment],
+            privateMediaPolicy: privateCase.policy,
+            mediaAttachmentRepo: privateMediaRepository,
+          );
+
+          expect(result, SendChatMessageResult.success);
+          expect(
+            privateRepository.directCustodyStageCalls,
+            isEmpty,
+            reason:
+                '${privateCase.name} must remain on dedicated private custody',
+          );
+        }
+      },
+    );
+
+    test(
+      'TC-342-04i pre-stage repository read error returns definitive non-staged failure',
+      () async {
+        const messageId = 'tc-342-pre-stage-read-error';
+        final service = FakeP2PService();
+        final repository = FakeMessageRepository()..throwOnGetMessage = true;
+        final bridge = PassthroughCryptoBridge();
+        var custodyStageObserverCalls = 0;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'transient read failure has not staged authority',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: true,
+          bridge: bridge,
+          onDirectTextCustodyStaged: (_) => custodyStageObserverCalls++,
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNull);
+        expect(custodyStageObserverCalls, 0);
+        expect(repository.directCustodyStageCalls, isEmpty);
+        expect(repository.directCustodyRows, isEmpty);
+        expect(repository.ordinaryStageCalls, isEmpty);
+        expect(bridge.sendCallCount, 0);
+        expect(service.sendCallCount, 0);
+        expect(service.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'TC-342-07 eligible text fails closed without atomic custody capability',
+      () async {
+        final service = FakeP2PService();
+        var custodyStageObserverCalls = 0;
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: _OrdinaryOnlyMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'must not degrade to a live-only send',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          onDirectTextCustodyStaged: (_) => custodyStageObserverCalls++,
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNull);
+        expect(custodyStageObserverCalls, 0);
+        expect(service.sendCallCount, 0);
+        expect(service.localSendCallCount, 0);
+        expect(service.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'TC-342-07 nominal custody interface fails before encryption when incomplete',
+      () async {
+        final service = FakeP2PService();
+        final repository = FakeMessageRepository()
+          ..directTextInboxCustodySupported = false;
+        final bridge = PassthroughCryptoBridge();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'partial wiring must not advertise custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: bridge,
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNull);
+        expect(repository.directCustodyStageCalls, isEmpty);
+        expect(repository.ordinaryStageCalls, isEmpty);
+        expect(bridge.sendCallCount, 0);
+        expect(service.sendCallCount, 0);
+        expect(service.localSendCallCount, 0);
+        expect(service.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'TC-342-05 accepted custody projects monotonic status but only exact outbox completion retires ownership',
+      () async {
+        final repository = FakeMessageRepository();
+        final storeOutcome = Completer<InboxStoreOutcome>();
+        final store = _DetailedInboxStoreFixture(
+          controlledResult: storeOutcome.future,
+        );
+        final service = FakeP2PService(sendMessageTransport: 'direct');
+
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'delivery is stronger than custody',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          storeInInboxDetailed: store.call,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message!.status, 'delivered');
+        expect(message.wireEnvelope, isNull);
+        expect(repository.directCustodyRows, hasLength(1));
+        await repository.updateMessageStatus(message.id, 'delivered');
+        expect(
+          repository.directCustodyRows,
+          hasLength(1),
+          reason: 'delivery/receipt truth cannot retire sender custody',
+        );
+
+        storeOutcome.complete(
+          const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            expiresAtMs: 3407001,
+          ),
+        );
+        for (var i = 0; i < 6 && repository.directCustodyRows.isNotEmpty; i++) {
+          await Future<void>.delayed(Duration.zero);
+        }
+
+        expect(repository.directCustodyRows, isEmpty);
+        final authoritative = repository.existingMessages[message.id]!;
+        expect(authoritative.status, 'delivered');
+        expect(authoritative.transport, 'direct');
+        expect(authoritative.relayExpiresAt, isNull);
+        expect(authoritative.wireEnvelope, isNull);
+      },
+    );
+
+    test(
+      'TC-342-04c send-time custody failures retain bounded exact metadata',
+      () async {
+        final cases = <({String name, String expectedCode})>[
+          (
+            name: 'failed',
+            expectedCode: DirectInboxCustodyErrorCode.storeFailed,
+          ),
+          (
+            name: 'rejected-full',
+            expectedCode: DirectInboxCustodyErrorCode.storeRejectedFull,
+          ),
+          (name: 'threw', expectedCode: DirectInboxCustodyErrorCode.storeThrew),
+          (
+            name: 'local-completion',
+            expectedCode: DirectInboxCustodyErrorCode.localCompletionFailed,
+          ),
+        ];
+
+        for (final testCase in cases) {
+          final repository = testCase.name == 'local-completion'
+              ? _ThrowingDirectCustodyCompletionRepository()
+              : FakeMessageRepository();
+          final service = FakeP2PService(
+            sendMessageResult: false,
+            sendMessageAcked: false,
+            useNullDiscover: true,
+            dialPeerResult: false,
+            storeInInboxResult: false,
+          );
+          String? replayedEnvelope;
+          Future<InboxStoreOutcome> store(
+            String peerId,
+            String envelope, {
+            int? timeoutMs,
+          }) async {
+            replayedEnvelope = envelope;
+            return switch (testCase.name) {
+              'failed' => const InboxStoreOutcome(
+                status: InboxStoreStatus.failed,
+              ),
+              'rejected-full' => const InboxStoreOutcome(
+                status: InboxStoreStatus.rejectedFull,
+              ),
+              'threw' => throw StateError('injected inbox store throw'),
+              'local-completion' => const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+              ),
+              _ => throw StateError('unknown test case'),
+            };
+          }
+
+          await sendChatMessage(
+            p2pService: service,
+            messageRepo: repository,
+            targetPeerId: 'target-peer',
+            text: 'retained ${testCase.name} custody',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            storeInInboxDetailed: store,
+          );
+
+          expect(repository.directCustodyRows, hasLength(1));
+          final retained = repository.directCustodyRows.values.single;
+          expect(retained.wireEnvelope, replayedEnvelope);
+          expect(retained.retryCount, greaterThanOrEqualTo(1));
+          expect(
+            retained.lastErrorCode,
+            testCase.expectedCode,
+            reason: testCase.name,
+          );
+        }
       },
     );
 
@@ -2332,23 +3134,179 @@ void main() {
       expect(message, isNull);
     });
 
-    test('returns nodeNotRunning when P2P is stopped', () async {
-      p2pService = FakeP2PService(
-        currentState: const NodeState(isStarted: false),
-      );
+    test(
+      'TC-342-03d node-stopped fresh text stages exact retained custody before return',
+      () async {
+        const messageId = 'tc-342-node-stopped-fresh';
+        final bridge = PassthroughCryptoBridge();
+        final detailedStore = _DetailedInboxStoreFixture();
+        p2pService = FakeP2PService(
+          currentState: const NodeState(isStarted: false),
+        );
 
-      final (result, message) = await sendChatMessage(
-        p2pService: p2pService,
-        messageRepo: messageRepo,
-        targetPeerId: 'target-peer',
-        text: 'Hello',
-        senderPeerId: 'my-peer',
-        senderUsername: 'Me',
-      );
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Hello while stopped',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: true,
+          bridge: bridge,
+          storeInInboxDetailed: detailedStore.call,
+        );
 
-      expect(result, SendChatMessageResult.nodeNotRunning);
-      expect(message, isNull);
-    });
+        expect(result, SendChatMessageResult.nodeNotRunning);
+        expect(message, isNotNull);
+        expect(message!.id, messageId);
+        expect(message.status, 'failed');
+        expect(message.transport, isNull);
+        expect(message.wireEnvelope, isNotNull);
+        expect(bridge.sendCallCount, 1);
+
+        expect(messageRepo.directCustodyStageCalls, hasLength(1));
+        final stage = messageRepo.directCustodyStageCalls.single;
+        expect(stage.staged.id, messageId);
+        expect(stage.staged.status, 'sending');
+        expect(stage.staged.wireEnvelope, message.wireEnvelope);
+        expect(stage.wireEnvelope, message.wireEnvelope);
+        expect(messageRepo.ordinarySettlementCalls, hasLength(1));
+        final settlement = messageRepo.ordinarySettlementCalls.single;
+        expect(settlement.messageId, messageId);
+        expect(settlement.expectedContactPeerId, 'target-peer');
+        expect(settlement.expectedEnvelope, message.wireEnvelope);
+        expect(settlement.status, 'failed');
+        expect(settlement.transport, isNull);
+        expect(settlement.relayExpiresAt, isNull);
+        expect(settlement.mode, OutgoingOrdinarySettlementMode.live);
+
+        expect(messageRepo.directCustodyRows, hasLength(1));
+        final retained = messageRepo.directCustodyRows.values.single;
+        expect(retained.recipientPeerId, 'target-peer');
+        expect(retained.messageId, messageId);
+        expect(retained.incarnationId, stage.incarnationId);
+        expect(retained.wireEnvelope, message.wireEnvelope);
+        expect(retained.retryCount, 0);
+        expect(retained.lastAttemptAt, isNull);
+        expect(retained.lastErrorCode, isNull);
+        expect(messageRepo.existingMessages[messageId], message);
+
+        expect(p2pService.discoverCallCount, 0);
+        expect(p2pService.dialCallCount, 0);
+        expect(p2pService.probeRelayCallCount, 0);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.localSendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(detailedStore.callCount, 0);
+      },
+    );
+
+    test(
+      'TC-342-03e node-stopped settlement honors concurrent physical removal',
+      () async {
+        const messageId = 'tc-342-node-stopped-removed';
+        final bridge = PassthroughCryptoBridge();
+        p2pService = FakeP2PService(
+          currentState: const NodeState(isStarted: false),
+        );
+        messageRepo.afterDirectCustodyStage = () {
+          messageRepo.existingMessages.remove(messageId);
+          messageRepo.saved.removeWhere((message) => message.id == messageId);
+        };
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Deleted while staging',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: true,
+          bridge: bridge,
+        );
+
+        expect(result, SendChatMessageResult.nodeNotRunning);
+        expect(message, isNull);
+        expect(messageRepo.existingMessages, isNot(contains(messageId)));
+        expect(
+          messageRepo.directCustodyRows.values.single.messageId,
+          messageId,
+          reason: 'projection removal must not cancel independent custody',
+        );
+        expect(messageRepo.ordinarySettlementCalls, hasLength(1));
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'TC-342-03f node-stopped settlement error reload honors physical removal',
+      () async {
+        const messageId = 'tc-342-node-stopped-settlement-error-removed';
+        final bridge = PassthroughCryptoBridge();
+        p2pService = FakeP2PService(
+          currentState: const NodeState(isStarted: false),
+        );
+        messageRepo.throwOnOrdinarySettlement = true;
+        messageRepo.afterDirectCustodyStage = () {
+          messageRepo.existingMessages.remove(messageId);
+          messageRepo.saved.removeWhere((message) => message.id == messageId);
+        };
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: 'Deleted before failed settlement reload',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: true,
+          bridge: bridge,
+        );
+
+        expect(result, SendChatMessageResult.nodeNotRunning);
+        expect(message, isNull);
+        expect(messageRepo.existingMessages, isNot(contains(messageId)));
+        expect(messageRepo.ordinarySettlementCalls, hasLength(1));
+        expect(
+          messageRepo.directCustodyRows.values.single.messageId,
+          messageId,
+          reason: 'a failed projection settlement cannot cancel custody',
+        );
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test(
+      'fails closed before stopped-node work when custody is unavailable',
+      () async {
+        final bridge = PassthroughCryptoBridge();
+        p2pService = FakeP2PService(
+          currentState: const NodeState(isStarted: false),
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: _OrdinaryOnlyMessageRepository(),
+          targetPeerId: 'target-peer',
+          text: 'Hello',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: bridge,
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNull);
+        expect(bridge.sendCallCount, 0);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.localSendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
 
     test('returns encryptionRequired when bridge is missing', () async {
       final (result, message) = await chat_use_case.sendChatMessage(
@@ -2772,6 +3730,8 @@ void main() {
       );
 
       final payload = decodeWirePayload(p2pService.lastSentMessage!);
+      final envelope =
+          jsonDecode(p2pService.lastSentMessage!) as Map<String, dynamic>;
 
       expect(result, SendChatMessageResult.success);
       expect(message, isNotNull);
@@ -2787,6 +3747,17 @@ void main() {
       expect(payload['quotedMessageId'], original.quotedMessageId);
       expect(payload['action'], MessagePayload.actionEdit);
       expect(payload['editedAt'], isNotNull);
+      expect(envelope['id'], original.id);
+      expect(
+        envelope['eventId'],
+        isA<String>().having(
+          (value) => value.trim(),
+          'trimmed event id',
+          isNotEmpty,
+        ),
+      );
+      expect(envelope['eventId'], isNot(original.id));
+      expect(payload['eventId'], envelope['eventId']);
     });
 
     test(
@@ -2920,6 +3891,55 @@ void main() {
         ),
         isTrue,
       );
+    });
+
+    test('wire diagnostics expose metadata but never envelope bytes', () async {
+      const secret = 'wire-plaintext-must-not-appear';
+      final lines = await capturePrintedLines(() async {
+        await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: 'target-peer',
+          text: secret,
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+      });
+
+      final wireLines = lines
+          .where((line) => line.contains('[CHAT_WIRE_OUT]'))
+          .toList();
+      expect(wireLines, hasLength(1));
+      expect(wireLines.single, contains('wireChars='));
+      expect(wireLines.single, isNot(contains('envelope=')));
+      expect(wireLines.single, isNot(contains(secret)));
+    });
+
+    test('custody stage errors emit only a bounded error type', () async {
+      const secret = 'sql-argument-secret-must-not-appear';
+      final repository = FakeMessageRepository()
+        ..onOrdinaryStage = () => throw StateError(secret);
+      late (SendChatMessageResult, ConversationMessage?) outcome;
+
+      final events = await captureFlowEvents(() async {
+        outcome = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: repository,
+          targetPeerId: 'target-peer',
+          text: 'safe stage error',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+        );
+      });
+
+      expect(outcome.$1, SendChatMessageResult.sendFailed);
+      final stageError = events.singleWhere(
+        (event) => event['event'] == 'CHAT_MSG_SEND_ATTEMPT_STAGE_ERROR',
+      );
+      final details = stageError['details'] as Map<String, dynamic>;
+      expect(details['errorType'], isNotEmpty);
+      expect(details.containsKey('error'), isFalse);
+      expect(jsonEncode(events), isNot(contains(secret)));
     });
 
     test(
@@ -5820,152 +6840,161 @@ void main() {
         );
       });
 
-      // R4 replaces the obsolete FDC-03-P1/P2 "never schedules custody" claim.
-      // Connected and LAN-visible sends now arm a delayed hedge; authenticated
-      // libp2p commitment must synchronously cancel it before persistence.
-      test(
-        'R4 authenticated libp2p commitment cancels every scheduled unstarted hedge',
-        () {
-          const directConnection = p2p.ConnectionState(
-            peerId: 'target-peer',
-            multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
-            direction: 'outbound',
-            status: 'connected',
-          );
-          const relayConnection = p2p.ConnectionState(
-            peerId: 'target-peer',
-            multiaddrs: ['/ip4/10.0.0.8/tcp/4001/p2p/relay/p2p-circuit'],
-            direction: 'outbound',
-            status: 'connected',
-          );
-          final rows =
-              <
-                ({
-                  String name,
-                  NodeState state,
-                  String? learned,
-                  bool lanVisible,
-                  bool liveConnected,
-                  bool dialSucceeds,
-                  bool relayProof,
-                  String expectedTransport,
-                })
-              >[
-                (
-                  name: 'connected reuse (former FDC-03-P1)',
-                  state: const NodeState(
-                    isStarted: true,
-                    connections: [directConnection],
-                  ),
-                  learned: null,
-                  lanVisible: false,
-                  liveConnected: false,
-                  dialSucceeds: true,
-                  relayProof: false,
-                  expectedTransport: 'direct',
+      // Plan 342 replaces the obsolete R4 cancellation contract for newly
+      // authored direct text. Live delivery stays fast, while the exact staged
+      // custody remains owned until the delayed remote store is accepted.
+      test('TC-342-03b live ACK leaves scheduled text custody owned', () {
+        const directConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/127.0.0.1/tcp/4001'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        const relayConnection = p2p.ConnectionState(
+          peerId: 'target-peer',
+          multiaddrs: ['/ip4/10.0.0.8/tcp/4001/p2p/relay/p2p-circuit'],
+          direction: 'outbound',
+          status: 'connected',
+        );
+        final rows =
+            <
+              ({
+                String name,
+                NodeState state,
+                String? learned,
+                bool lanVisible,
+                bool liveConnected,
+                bool dialSucceeds,
+                bool relayProof,
+                String expectedTransport,
+              })
+            >[
+              (
+                name: 'connected reuse (former FDC-03-P1)',
+                state: const NodeState(
+                  isStarted: true,
+                  connections: [directConnection],
                 ),
-                (
-                  name:
-                      'LAN-visible learned-direct sticky reuse '
-                      '(former FDC-03-P2)',
-                  state: const NodeState(isStarted: true),
-                  learned: 'direct',
-                  lanVisible: true,
-                  liveConnected: false,
-                  dialSucceeds: true,
-                  relayProof: false,
-                  expectedTransport: 'direct',
+                learned: null,
+                lanVisible: false,
+                liveConnected: false,
+                dialSucceeds: true,
+                relayProof: false,
+                expectedTransport: 'direct',
+              ),
+              (
+                name:
+                    'LAN-visible learned-direct sticky reuse '
+                    '(former FDC-03-P2)',
+                state: const NodeState(isStarted: true),
+                learned: 'direct',
+                lanVisible: true,
+                liveConnected: false,
+                dialSucceeds: true,
+                relayProof: false,
+                expectedTransport: 'direct',
+              ),
+              (
+                name: 'direct proof-race',
+                state: const NodeState(isStarted: true),
+                learned: null,
+                lanVisible: false,
+                liveConnected: true,
+                dialSucceeds: true,
+                relayProof: false,
+                expectedTransport: 'direct',
+              ),
+              (
+                name: 'circuit-only relay proof-race',
+                state: const NodeState(
+                  isStarted: true,
+                  connections: [relayConnection],
                 ),
-                (
-                  name: 'direct proof-race',
-                  state: const NodeState(isStarted: true),
-                  learned: null,
-                  lanVisible: false,
-                  liveConnected: true,
-                  dialSucceeds: true,
-                  relayProof: false,
-                  expectedTransport: 'direct',
-                ),
-                (
-                  name: 'circuit-only relay proof-race',
-                  state: const NodeState(
-                    isStarted: true,
-                    connections: [relayConnection],
-                  ),
-                  learned: null,
-                  lanVisible: false,
-                  liveConnected: false,
-                  dialSucceeds: false,
-                  relayProof: true,
-                  expectedTransport: 'relay',
-                ),
-              ];
+                learned: null,
+                lanVisible: false,
+                liveConnected: false,
+                dialSucceeds: false,
+                relayProof: true,
+                expectedTransport: 'relay',
+              ),
+            ];
 
-          for (final row in rows) {
-            fakeAsync((async) {
-              final repository = _BlockedOrdinarySettlementMessageRepository();
-              final detailedStore = _DetailedInboxStoreFixture();
-              final service =
-                  FakeP2PService(
-                      currentState: row.state,
-                      dialPeerResult: row.dialSucceeds,
-                      sendMessageTransport: 'direct',
-                    )
-                    ..lastKnownGoodTransportResult = row.learned
-                    ..isConnectedToPeerResult = row.liveConnected;
-              if (row.lanVisible) service.localPeers.add('target-peer');
-              (SendChatMessageResult, ConversationMessage?)? outcome;
+        for (final row in rows) {
+          fakeAsync((async) {
+            final repository = _BlockedOrdinarySettlementMessageRepository();
+            final storeOutcome = Completer<InboxStoreOutcome>();
+            final detailedStore = _DetailedInboxStoreFixture(
+              controlledResult: storeOutcome.future,
+            );
+            final service =
+                FakeP2PService(
+                    currentState: row.state,
+                    dialPeerResult: row.dialSucceeds,
+                    sendMessageTransport: 'direct',
+                  )
+                  ..lastKnownGoodTransportResult = row.learned
+                  ..isConnectedToPeerResult = row.liveConnected;
+            if (row.lanVisible) service.localPeers.add('target-peer');
+            (SendChatMessageResult, ConversationMessage?)? outcome;
 
-              sendChatMessage(
-                p2pService: service,
-                messageRepo: repository,
-                targetPeerId: 'target-peer',
-                text: 'cancel hedge at ${row.name}',
-                senderPeerId: 'my-peer',
-                senderUsername: 'Me',
-                storeInInboxDetailed: detailedStore.call,
-              ).then((value) => outcome = value);
+            sendChatMessage(
+              p2pService: service,
+              messageRepo: repository,
+              targetPeerId: 'target-peer',
+              text: 'cancel hedge at ${row.name}',
+              senderPeerId: 'my-peer',
+              senderUsername: 'Me',
+              storeInInboxDetailed: detailedStore.call,
+            ).then((value) => outcome = value);
+            async.flushMicrotasks();
+            if (row.relayProof) {
+              async.elapse(kRelayLegStagger);
               async.flushMicrotasks();
-              if (row.relayProof) {
-                async.elapse(kRelayLegStagger);
-                async.flushMicrotasks();
-              }
+            }
 
-              final proofReachedPersistence =
-                  repository.deliverySettlementStarted.isCompleted;
-              async.elapse(const Duration(seconds: 3));
-              async.flushMicrotasks();
-              final detailedCallsWhilePersistenceBlocked =
-                  detailedStore.callCount;
-              final booleanCallsWhilePersistenceBlocked =
-                  service.storeInInboxCallCount;
+            final proofReachedPersistence =
+                repository.deliverySettlementStarted.isCompleted;
+            final ownedAtLiveProof = repository.directCustodyRows.length;
 
-              repository.releaseDeliverySettlement.complete();
-              async.flushMicrotasks();
-              async.elapse(const Duration(seconds: 3));
-              async.flushMicrotasks();
+            repository.releaseDeliverySettlement.complete();
+            async.flushMicrotasks();
+            final returnedBeforeCustodyStore = outcome != null;
+            final ownedAfterLiveReturn = repository.directCustodyRows.length;
 
-              expect(proofReachedPersistence, isTrue, reason: row.name);
-              expect(detailedCallsWhilePersistenceBlocked, 0, reason: row.name);
-              expect(booleanCallsWhilePersistenceBlocked, 0, reason: row.name);
-              expect(detailedStore.callCount, 0, reason: row.name);
-              expect(service.storeInInboxCallCount, 0, reason: row.name);
-              expect(outcome, isNotNull, reason: row.name);
-              expect(
-                outcome!.$1,
-                SendChatMessageResult.success,
-                reason: row.name,
-              );
-              expect(outcome!.$2!.status, 'delivered', reason: row.name);
-              expect(
-                outcome!.$2!.transport,
-                row.expectedTransport,
-                reason: row.name,
-              );
-            });
-          }
-        },
-      );
+            async.elapse(const Duration(seconds: 3));
+            async.flushMicrotasks();
+            final detailedCallsAfterHedge = detailedStore.callCount;
+            final ownedWhileStoreInFlight = repository.directCustodyRows.length;
+
+            storeOutcome.complete(
+              const InboxStoreOutcome(status: InboxStoreStatus.stored),
+            );
+            async.flushMicrotasks();
+            async.elapse(const Duration(milliseconds: 1));
+            async.flushMicrotasks();
+
+            expect(proofReachedPersistence, isTrue, reason: row.name);
+            expect(ownedAtLiveProof, 1, reason: row.name);
+            expect(returnedBeforeCustodyStore, isTrue, reason: row.name);
+            expect(ownedAfterLiveReturn, 1, reason: row.name);
+            expect(detailedCallsAfterHedge, 1, reason: row.name);
+            expect(ownedWhileStoreInFlight, 1, reason: row.name);
+            expect(service.storeInInboxCallCount, 0, reason: row.name);
+            expect(outcome, isNotNull, reason: row.name);
+            expect(
+              outcome!.$1,
+              SendChatMessageResult.success,
+              reason: row.name,
+            );
+            expect(outcome!.$2!.status, 'delivered', reason: row.name);
+            expect(
+              outcome!.$2!.transport,
+              row.expectedTransport,
+              reason: row.name,
+            );
+          });
+        }
+      });
     });
 
     // U4 — dedup (happy): the same messageId winning on more than one path
@@ -7688,6 +8717,8 @@ void main() {
                   .where((call) => call.status == 'inboxed')
                   .toList() ??
               const [];
+          final directCustodyCompletions =
+              ordinaryRepository?.directCustodyCompletionCalls ?? const [];
           final privateCustodyCandidates =
               privateRepository?.settlementArguments
                   .where((call) => call.status == 'inboxed')
@@ -7697,23 +8728,21 @@ void main() {
               ? (privateCustodyCandidates.isEmpty
                     ? null
                     : privateCustodyCandidates.single.transport)
-              : (ordinaryCustodyCandidates.isEmpty
-                    ? null
-                    : ordinaryCustodyCandidates.single.transport);
+              : (directCustodyCompletions.isEmpty ? null : 'inbox');
           final custodyCandidateExpiry = row.isPrivate
               ? (privateCustodyCandidates.isEmpty
                     ? null
                     : privateCustodyCandidates.single.relayExpiresAt)
-              : (ordinaryCustodyCandidates.isEmpty
+              : (directCustodyCompletions.isEmpty
                     ? null
-                    : ordinaryCustodyCandidates.single.relayExpiresAt);
+                    : directCustodyCompletions.single.relayExpiresAt);
           final custodyCandidateEnvelope = row.isPrivate
               ? (privateCustodyCandidates.isEmpty
                     ? null
                     : privateCustodyCandidates.single.expectedEnvelope)
-              : (ordinaryCustodyCandidates.isEmpty
+              : (directCustodyCompletions.isEmpty
                     ? null
-                    : ordinaryCustodyCandidates.single.expectedEnvelope);
+                    : directCustodyCompletions.single.expected.wireEnvelope);
           final authoritative = row.isPrivate
               ? privateRepository!.current
               : ordinaryRepository!.existingMessages.values.single;
@@ -7726,6 +8755,8 @@ void main() {
             'detailedCalls': detailedStore.callCount,
             'booleanCalls': service.storeInInboxCallCount,
             'ordinaryCustodyCandidates': ordinaryCustodyCandidates.length,
+            'directCustodyCompletions': directCustodyCompletions.length,
+            'directCustodyRows': ordinaryRepository?.directCustodyRows.length,
             'privateCustodyCandidates': privateCustodyCandidates.length,
             'custodyCandidateTransport': custodyCandidateTransport,
             'custodyCandidateExpiry': custodyCandidateExpiry,
@@ -7758,8 +8789,16 @@ void main() {
         expect(observations.map((row) => row['booleanCalls']), <int>[0, 0]);
         expect(
           observations.map((row) => row['ordinaryCustodyCandidates']),
+          <int>[0, 0],
+        );
+        expect(
+          observations.map((row) => row['directCustodyCompletions']),
           <int>[1, 0],
         );
+        expect(observations.map((row) => row['directCustodyRows']), <int?>[
+          0,
+          null,
+        ]);
         expect(
           observations.map((row) => row['privateCustodyCandidates']),
           <int>[0, 1],

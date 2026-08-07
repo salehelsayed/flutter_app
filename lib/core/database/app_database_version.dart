@@ -26,4 +26,7 @@
 // 331: DB v107 adds identifier-only direct-notification display/read/
 // reconciliation custody. Direct reaction terminal facts are peer-scoped in a
 // separate typed table because the shared reaction table has no lane key.
-const int currentIdentityDatabaseVersion = 107;
+// 342: DB v108 adds the sender-owned, status-independent exact-envelope
+// custody outbox for newly authored ordinary direct text. The migration has
+// deliberately empty historical backfill and remains a one-way schema floor.
+const int currentIdentityDatabaseVersion = 108;

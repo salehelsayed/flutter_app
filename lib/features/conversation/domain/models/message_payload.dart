@@ -24,6 +24,10 @@ class MessagePayload {
   final String senderUsername;
   final String timestamp;
   final String action;
+
+  /// Immutable relay event identity for a same-message mutation such as edit.
+  /// The authored message [id] remains the local mutation target.
+  final String? eventId;
   final String? editedAt;
   final String? quotedMessageId;
   final List<Map<String, dynamic>>? media;
@@ -47,6 +51,7 @@ class MessagePayload {
     required this.senderUsername,
     required this.timestamp,
     this.action = actionSend,
+    this.eventId,
     this.editedAt,
     this.quotedMessageId,
     this.media,
@@ -84,6 +89,7 @@ class MessagePayload {
       }
 
       final action = payload['action'] as String? ?? actionSend;
+      final eventId = payload['eventId'] as String?;
       final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
       final dedupKey = payload['dedupKey'] as String?;
@@ -101,6 +107,7 @@ class MessagePayload {
         senderUsername: senderUsername,
         timestamp: timestamp,
         action: action,
+        eventId: eventId,
         editedAt: editedAt,
         quotedMessageId: quotedMessageId,
         media: media,
@@ -121,6 +128,7 @@ class MessagePayload {
       'senderUsername': senderUsername,
       'timestamp': timestamp,
       if (action != actionSend) 'action': action,
+      'eventId': ?eventId,
       if (editedAt != null) 'editedAt': editedAt,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,
@@ -147,11 +155,13 @@ class MessagePayload {
     required String kem,
     required String ciphertext,
     required String nonce,
+    String? eventId,
   }) {
     final envelope = {
       'type': 'chat_message',
       'version': '2',
       'id': id,
+      'eventId': ?eventId,
       'senderPeerId': senderPeerId,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     };
@@ -201,6 +211,7 @@ class MessagePayload {
       }
 
       final action = payload['action'] as String? ?? actionSend;
+      final eventId = payload['eventId'] as String?;
       final editedAt = payload['editedAt'] as String?;
       final quotedMessageId = payload['quotedMessageId'] as String?;
       final dedupKey = payload['dedupKey'] as String?;
@@ -227,6 +238,7 @@ class MessagePayload {
         senderUsername: senderUsername,
         timestamp: timestamp,
         action: action,
+        eventId: eventId,
         editedAt: editedAt,
         quotedMessageId: quotedMessageId,
         media: media,
@@ -251,6 +263,7 @@ class MessagePayload {
       'senderUsername': senderUsername,
       'timestamp': timestamp,
       if (action != actionSend) 'action': action,
+      'eventId': ?eventId,
       if (editedAt != null) 'editedAt': editedAt,
       if (quotedMessageId != null) 'quotedMessageId': quotedMessageId,
       if (media != null && media!.isNotEmpty) 'media': media,

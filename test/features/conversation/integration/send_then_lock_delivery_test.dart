@@ -1157,7 +1157,7 @@ void main() {
     });
 
     testWidgets(
-      '5. conversation_wired widget path saves the optimistic row before send and updates the same row',
+      '5. conversation_wired keeps fresh text memory-optimistic until custody staging',
       (tester) async {
         final chatListener = ChatMessageListener(
           chatMessageStream: const Stream.empty(),
@@ -1170,6 +1170,8 @@ void main() {
         expect(contact, isNotNull);
         final allowSend = Completer<void>();
         final optimisticRowSeen = Completer<ConversationMessage?>();
+        String? canonicalMessageId;
+        bool? canonicalMessageIdIsFresh;
 
         await pumpConversationWired(
           tester,
@@ -1185,6 +1187,7 @@ void main() {
                 required senderPeerId,
                 required senderUsername,
                 messageId,
+                required bool preassignedMessageIdIsFresh,
                 timestamp,
                 bridge,
                 recipientMlKemPublicKey,
@@ -1194,6 +1197,8 @@ void main() {
                 transportMetrics,
                 privateMediaPolicy,
               }) async {
+                canonicalMessageId = messageId;
+                canonicalMessageIdIsFresh = preassignedMessageIdIsFresh;
                 final savedBeforeSend = await messageRepo.getMessage(
                   messageId!,
                 );
@@ -1209,6 +1214,7 @@ void main() {
                   senderPeerId: senderPeerId,
                   senderUsername: senderUsername,
                   messageId: messageId,
+                  preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
                   timestamp: timestamp,
                   bridge: bridge,
                   recipientMlKemPublicKey: recipientMlKemPublicKey,
@@ -1228,15 +1234,15 @@ void main() {
         await tester.pump();
 
         final savedBeforeSend = await optimisticRowSeen.future;
-        expect(savedBeforeSend, isNotNull);
-        expect(savedBeforeSend!.status, 'sending');
+        expect(savedBeforeSend, isNull);
+        expect(canonicalMessageId, isNotNull);
+        expect(canonicalMessageIdIsFresh, isTrue);
+        expect(find.text('Two-phase test'), findsOneWidget);
 
         final intermediate = await alice.messageRepo.getMessagesForContact(
           bob.peerId,
         );
-        expect(intermediate, hasLength(1));
-        expect(intermediate.single.id, savedBeforeSend.id);
-        expect(intermediate.single.status, 'sending');
+        expect(intermediate, isEmpty);
 
         allowSend.complete();
         await tester.pump(const Duration(milliseconds: 300));
@@ -1250,7 +1256,7 @@ void main() {
           bob.peerId,
         );
         expect(afterSend, hasLength(1));
-        expect(afterSend.single.id, savedBeforeSend.id);
+        expect(afterSend.single.id, canonicalMessageId);
         expect(afterSend.single.status, isNot('sending'));
 
         await bobHarness.expectMessageCount(alice.peerId, 1);

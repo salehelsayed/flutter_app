@@ -101,13 +101,13 @@ func (b *memoryRendezvousBackend) Stats() (namespaces int, totalPeers int) {
 type memoryInboxBackend struct {
 	mu         sync.Mutex
 	store      map[string][]inboxMessage  // peerId -> messages
-	messageIds map[string]map[string]bool // peerId -> set of messageIds
+	dedupeKeys map[string]map[string]bool // peerId -> set of direct-inbox dedupe keys
 }
 
 func newMemoryInboxBackend() *memoryInboxBackend {
 	return &memoryInboxBackend{
 		store:      make(map[string][]inboxMessage),
-		messageIds: make(map[string]map[string]bool),
+		dedupeKeys: make(map[string]map[string]bool),
 	}
 }
 
@@ -118,10 +118,10 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 	entry = ensureInboxMessageID(entry)
 	messages := b.pruneExpiredForPeerLocked(toPeerId)
 
-	// Extract messageId for dedup.
-	msgId := extractMessageId(entry.Message)
-	if msgId != "" {
-		if ids, ok := b.messageIds[toPeerId]; ok && ids[msgId] {
+	// Extract the direct-inbox custody identity for dedup.
+	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	if dedupeKey != "" {
+		if keys, ok := b.dedupeKeys[toPeerId]; ok && keys[dedupeKey] {
 			// Duplicate — skip store and push.
 			return InboxStoreResultDuplicate, nil
 		}
@@ -136,18 +136,18 @@ func (b *memoryInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSt
 		overflow := len(messages) - maxMessagesPerPeer + 1
 		inboxCappedCounter.Add(float64(overflow))
 		messages = messages[overflow:]
-		b.rebuildMessageIds(toPeerId, messages)
+		b.rebuildDedupeKeys(toPeerId, messages)
 	}
 
 	messages = append(messages, entry)
 	b.store[toPeerId] = messages
 
-	// Track messageId
-	if msgId != "" {
-		if b.messageIds[toPeerId] == nil {
-			b.messageIds[toPeerId] = make(map[string]bool)
+	// Track the custody identity.
+	if dedupeKey != "" {
+		if b.dedupeKeys[toPeerId] == nil {
+			b.dedupeKeys[toPeerId] = make(map[string]bool)
 		}
-		b.messageIds[toPeerId][msgId] = true
+		b.dedupeKeys[toPeerId][dedupeKey] = true
 	}
 
 	return InboxStoreResultStored, nil
@@ -160,7 +160,7 @@ func (b *memoryInboxBackend) RetrievePending(peerId string, limit int) ([]inboxM
 	messages := b.pruneExpiredForPeerLocked(peerId)
 	if len(messages) == 0 {
 		delete(b.store, peerId)
-		delete(b.messageIds, peerId)
+		delete(b.dedupeKeys, peerId)
 		return nil, false
 	}
 
@@ -193,7 +193,7 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 
 	if len(messages) == 0 {
 		delete(b.store, peerId)
-		delete(b.messageIds, peerId)
+		delete(b.dedupeKeys, peerId)
 		return nil, false
 	}
 
@@ -207,12 +207,12 @@ func (b *memoryInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage,
 	remaining := messages[limit:]
 	if len(remaining) > 0 {
 		b.store[peerId] = remaining
-		b.rebuildMessageIds(peerId, remaining)
+		b.rebuildDedupeKeys(peerId, remaining)
 		return result, true
 	}
 
 	delete(b.store, peerId)
-	delete(b.messageIds, peerId)
+	delete(b.dedupeKeys, peerId)
 	return result, false
 }
 
@@ -227,7 +227,7 @@ func (b *memoryInboxBackend) Ack(peerId string, entryIDs []string) (int, error) 
 	messages := b.pruneExpiredForPeerLocked(peerId)
 	if len(messages) == 0 {
 		delete(b.store, peerId)
-		delete(b.messageIds, peerId)
+		delete(b.dedupeKeys, peerId)
 		return 0, nil
 	}
 
@@ -255,26 +255,26 @@ func (b *memoryInboxBackend) Ack(peerId string, entryIDs []string) (int, error) 
 
 	if len(remaining) == 0 {
 		delete(b.store, peerId)
-		delete(b.messageIds, peerId)
+		delete(b.dedupeKeys, peerId)
 		return removed, nil
 	}
 
 	b.store[peerId] = remaining
-	b.rebuildMessageIds(peerId, remaining)
+	b.rebuildDedupeKeys(peerId, remaining)
 	return removed, nil
 }
 
-func (b *memoryInboxBackend) rebuildMessageIds(peerId string, messages []inboxMessage) {
-	ids := make(map[string]bool, len(messages))
+func (b *memoryInboxBackend) rebuildDedupeKeys(peerId string, messages []inboxMessage) {
+	keys := make(map[string]bool, len(messages))
 	for _, m := range messages {
-		if msgId := extractMessageId(m.Message); msgId != "" {
-			ids[msgId] = true
+		if dedupeKey := extractDirectInboxDedupeKey(m.Message); dedupeKey != "" {
+			keys[dedupeKey] = true
 		}
 	}
-	if len(ids) > 0 {
-		b.messageIds[peerId] = ids
+	if len(keys) > 0 {
+		b.dedupeKeys[peerId] = keys
 	} else {
-		delete(b.messageIds, peerId)
+		delete(b.dedupeKeys, peerId)
 	}
 }
 
@@ -300,7 +300,7 @@ func (b *memoryInboxBackend) pruneExpiredForPeerLocked(peerId string) []inboxMes
 	if pruned > 0 {
 		recordInboxExpiredPruned(pruned)
 		b.store[peerId] = messages
-		b.rebuildMessageIds(peerId, messages)
+		b.rebuildDedupeKeys(peerId, messages)
 	}
 	return messages
 }

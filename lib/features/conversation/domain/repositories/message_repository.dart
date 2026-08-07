@@ -1,4 +1,5 @@
 import '../models/conversation_message.dart';
+import '../models/direct_inbox_custody_outbox_entry.dart';
 import '../models/media_attachment.dart';
 import '../models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -198,6 +199,55 @@ abstract interface class OutgoingTransportMutationRepository {
     required String expectedContactPeerId,
     required String expectedEnvelope,
     required bool isDeleteTombstone,
+  });
+}
+
+/// Optional, fail-closed companion authority for newly authored ordinary
+/// direct-text inbox custody. It stays beside [MessageRepository] so unrelated
+/// repository fakes and every excluded event kind need no implementation.
+abstract interface class OutgoingDirectTextInboxCustodyRepository {
+  /// True only when the complete atomic stage/drain/completion surface is
+  /// configured. Eligible fresh text must fail closed when this is false; it
+  /// must never fall back to live-only ordinary staging.
+  bool get supportsDirectTextInboxCustody;
+
+  /// Commits the exact fresh message attempt and immutable custody row in one
+  /// SQLCipher transaction. Only [OutgoingOrdinaryAttemptKind.fresh] with a
+  /// null [expected] predecessor may mint custody.
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String incarnationId,
+    required String wireEnvelope,
+  });
+
+  /// Loads at most 50 rows, with never-attempted rows first and then the
+  /// oldest attempt. A caller-supplied larger limit is clamped by storage.
+  Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
+    int limit = 50,
+  });
+
+  /// Loads the pending exact-event owner for one outgoing direct message.
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyForMessage({
+    required String recipientPeerId,
+    required String messageId,
+  });
+
+  /// Records one retained failure only if [expected]'s immutable incarnation
+  /// still owns its recipient/message scope.
+  Future<bool> recordDirectInboxCustodyFailureIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  });
+
+  /// After `stored` or `duplicate`, atomically preserves stronger local truth,
+  /// otherwise projects `inboxed`, and retires only [expected]'s incarnation.
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
   });
 }
 

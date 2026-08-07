@@ -31,6 +31,10 @@ const _v107Indexes = <String>{
   'idx_direct_notification_display_outbox_reaction',
   'idx_direct_notification_reconciliation_outbox_eligible',
 };
+const _currentDirectIndexes = <String>{
+  ..._v107Indexes,
+  'idx_direct_inbox_custody_outbox_fair_load',
+};
 const _v107Triggers = <String>{
   'trg_direct_notification_read_ack_message_insert',
   'trg_direct_notification_reconcile_contact_policy',
@@ -60,7 +64,7 @@ void main() {
   });
 
   test(
-    'TC-331-07 v106 to v107 installs identifier-only typed direct authority and repairs partial migration',
+    'TC-331-07 v106 to current installs v107 typed direct authority and repairs partial migration',
     () async {
       var db = await databaseFactoryFfi.openDatabase(
         path,
@@ -98,8 +102,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 107);
-      expect(await _userVersion(db), 107);
+      expect(currentIdentityDatabaseVersion, 108);
+      expect(await _userVersion(db), 108);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -111,7 +115,7 @@ void main() {
           entries.single.run,
           same(runDirectNotificationDurabilityMigration),
         );
-        expect(registry.last.version, 107);
+        expect(registry.last.version, 108);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
@@ -188,7 +192,7 @@ void main() {
       );
       expect(
         await _schemaObjectNames(db, 'index', 'idx_direct_'),
-        _v107Indexes,
+        _currentDirectIndexes,
       );
       expect(
         await _schemaObjectNames(db, 'trigger', 'trg_direct_'),
@@ -228,7 +232,7 @@ void main() {
       await runDirectNotificationDurabilityMigration(db);
       expect(
         await _schemaObjectNames(db, 'index', 'idx_direct_'),
-        _v107Indexes,
+        _currentDirectIndexes,
       );
       expect(
         await _schemaObjectNames(db, 'trigger', 'trg_direct_'),
@@ -421,7 +425,7 @@ void main() {
   );
 
   test(
-    'TC-331-07 v107 is a one-way floor and refused downgrade preserves data',
+    'TC-331-07 current version is a one-way floor and refused downgrade preserves v107 data',
     () async {
       var db = await _openCurrent(path);
       await dbUpsertDirectNotificationReactionTerminalEvent(
@@ -453,7 +457,7 @@ void main() {
       addTearDown(() async {
         if (db.isOpen) await db.close();
       });
-      expect(await _userVersion(db), 107);
+      expect(await _userVersion(db), 108);
       expect(
         await dbLoadDirectNotificationReactionTerminalEvent(
           db,

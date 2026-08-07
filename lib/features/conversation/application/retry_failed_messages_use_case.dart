@@ -13,10 +13,12 @@ import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
@@ -171,6 +173,12 @@ String deriveRetryAction(ConversationMessage msg) {
 /// When [uploadMediaFn] is provided, uses that function for media uploads
 /// instead of the production [uploadMedia] symbol (for testability).
 ///
+/// [retryDirectInboxCustody] defaults to true so standalone bulk callers retain
+/// the historical exact-custody retry behavior. A caller that has just run the
+/// fair global custody drain may set it to false; pending custody is still
+/// detected as the sole retry authority, but is not stored a second time and
+/// never falls through to envelope rebuild or re-encryption.
+///
 /// Returns the count of successfully retried messages.
 /// Non-fatal: catches errors per-message and continues with the next.
 Future<int> retryFailedMessages({
@@ -182,6 +190,7 @@ Future<int> retryFailedMessages({
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
   MediaFileManager? mediaFileManager,
+  bool retryDirectInboxCustody = true,
 }) {
   return _retryFailedMessagesInternal(
     messageRepo: messageRepo,
@@ -194,6 +203,7 @@ Future<int> retryFailedMessages({
     mediaFileManager: mediaFileManager,
     uploadRetryProjectionRepo: null,
     manualRetry: false,
+    retryDirectInboxCustody: retryDirectInboxCustody,
     loadFailedMessages: messageRepo.getFailedOutgoingMessages,
   );
 }
@@ -236,6 +246,7 @@ Future<int> retryFailedMessage({
     tryClaimUploadLease: tryClaimUploadLease,
     releaseUploadLease: releaseUploadLease,
     manualRetry: true,
+    retryDirectInboxCustody: true,
     loadFailedMessages: () async {
       final message = await messageRepo.getMessage(messageId);
       if (message == null || message.isIncoming || message.status != 'failed') {
@@ -261,9 +272,36 @@ Future<int> _retryFailedMessagesInternal({
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
   ReleaseMediaUploadLease? releaseUploadLease,
   required bool manualRetry,
+  required bool retryDirectInboxCustody,
 }) async {
   final retryStopwatch = clock.stopwatch()..start();
   final effectiveUploadFn = uploadMediaFn ?? uploadMedia;
+  final detailedInboxStore = p2pService is DetailedInboxStore
+      ? p2pService as DetailedInboxStore
+      : null;
+  Future<InboxStoreOutcome> storeExactCustody(
+    String toPeerId,
+    String envelope, {
+    int? timeoutMs,
+  }) async {
+    if (detailedInboxStore != null) {
+      return detailedInboxStore.storeInInboxDetailed(
+        toPeerId,
+        envelope,
+        timeoutMs: timeoutMs,
+      );
+    }
+    final stored = await p2pService.storeInInbox(
+      toPeerId,
+      envelope,
+      timeoutMs: timeoutMs,
+    );
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+    );
+  }
+
   void emitRetryTiming({
     required String outcome,
     required int total,
@@ -331,6 +369,8 @@ Future<int> _retryFailedMessagesInternal({
       tryClaimUploadLease: tryClaimUploadLease,
       releaseUploadLease: releaseUploadLease,
       manualRetry: manualRetry,
+      retryDirectInboxCustody: retryDirectInboxCustody,
+      storeExactCustody: storeExactCustody,
     );
     if (retried) {
       successCount++;
@@ -374,6 +414,8 @@ Future<bool> _retryFailedMessageCandidate({
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
   ReleaseMediaUploadLease? releaseUploadLease,
   required bool manualRetry,
+  required bool retryDirectInboxCustody,
+  required StoreInInboxDetailedFn storeExactCustody,
 }) async {
   if (!_retryInFlightMessageIds.add(msg.id)) {
     emitFlowEvent(
@@ -399,6 +441,51 @@ Future<bool> _retryFailedMessageCandidate({
       return false;
     }
     msg = fresh;
+
+    // A v108 immutable custody row is the sole retry authority for its initial
+    // direct-text event. Resolve that authority before inspecting message
+    // shape/status: either this caller attempts the exact bytes, or a bulk pass
+    // following the global drain recognizes the retained row and stops. Neither
+    // path may fall through to cached-envelope or re-encryption work.
+    if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+      final custodyRepository =
+          messageRepo as OutgoingDirectTextInboxCustodyRepository;
+      if (!retryDirectInboxCustody) {
+        final pending = await custodyRepository
+            .loadDirectInboxCustodyForMessage(
+              recipientPeerId: msg.contactPeerId,
+              messageId: msg.id,
+            );
+        if (pending != null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_SKIPPED_AFTER_DRAIN',
+            details: <String, Object?>{
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            },
+          );
+          return false;
+        }
+      } else {
+        final custodyAttempt = await drainDirectInboxCustodyOutboxForMessage(
+          custodyRepository: custodyRepository,
+          storeInInboxDetailed: storeExactCustody,
+          recipientPeerId: msg.contactPeerId,
+          messageId: msg.id,
+        );
+        if (custodyAttempt.found) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_OWNED',
+            details: <String, Object?>{
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+              'completed': custodyAttempt.completed,
+            },
+          );
+          return custodyAttempt.completed;
+        }
+      }
+    }
 
     if (msg.isDeleted) {
       return _retryFailedDeletedTombstone(
@@ -603,9 +690,11 @@ Future<bool> _retryFailedMessageCandidate({
         return true;
       }
 
-      final unsafeLegacyEnvelope = isUnsafeLegacyOutboundEnvelope(
-        msg.wireEnvelope!,
-      );
+      final cachedEditEventId = _cachedEditEventId(msg);
+      final unsafeLegacyEnvelope =
+          isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!) ||
+          (deriveRetryAction(msg) == MessagePayload.actionEdit &&
+              cachedEditEventId == null);
       if (!unsafeLegacyEnvelope) {
         try {
           final stored = await p2pService.storeInInbox(
@@ -636,7 +725,23 @@ Future<bool> _retryFailedMessageCandidate({
             return true;
           }
         } catch (_) {
-          // Wire envelope inbox failed -- fall through to full send
+          // The exact custody attempt remains durably retryable below.
+        }
+        if (cachedEditEventId != null) {
+          // A current edit envelope is one immutable logical event. If STORE
+          // committed remotely but its response was lost, re-encrypting under
+          // the same event id would let relay `duplicate` retire custody for
+          // different bytes (and potentially an obsolete recipient key).
+          // Retain this exact envelope for the next retry instead. Only a
+          // legacy edit without an event id may take the one-time rebuild path.
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_EDIT_EXACT_ENVELOPE_RETAINED',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            },
+          );
+          return false;
         }
       } else {
         emitFlowEvent(
@@ -728,6 +833,32 @@ Future<bool> _retryFailedMessageCandidate({
         _retryInFlightMessageIds.remove(msg.id);
       }
     }
+  }
+}
+
+/// Returns the immutable event identity from a cached v2 edit envelope.
+///
+/// The message id remains the edit target. A missing/blank/malformed identity
+/// identifies a legacy edit: its cached bytes must not enter the relay inbox,
+/// and the full-send path will mint and atomically persist one before transport.
+String? _cachedEditEventId(ConversationMessage message) {
+  if (deriveRetryAction(message) != MessagePayload.actionEdit) return null;
+  final wireEnvelope = message.wireEnvelope;
+  if (wireEnvelope == null || wireEnvelope.isEmpty) return null;
+  try {
+    final decoded = jsonDecode(wireEnvelope);
+    if (decoded is! Map<String, dynamic> ||
+        decoded['type'] != 'chat_message' ||
+        decoded['version'].toString() != '2' ||
+        decoded['id'] != message.id) {
+      return null;
+    }
+    final eventId = decoded['eventId'];
+    if (eventId is! String) return null;
+    final normalized = eventId.trim();
+    return normalized.isEmpty ? null : normalized;
+  } catch (_) {
+    return null;
   }
 }
 

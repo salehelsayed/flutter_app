@@ -581,10 +581,70 @@ void main() {
       '_FeedWiredState',
       '_sendContactComposerReply',
     );
-    expect(_count(feed, 'messageRepository.saveMessage('), 1);
+    expect(_count(feed, 'messageRepository.saveMessage('), 0);
     expect(_count(feed, '.conditionalTransitionStatus('), 2);
     expect(feed, isNot(contains('updateMessageStatus(')));
   });
+
+  test(
+    'TC-342-07 feed composer delegates fresh preassigned text to atomic custody',
+    () {
+      final feed = _methodBody(
+        _feedPath,
+        '_FeedWiredState',
+        '_sendContactComposerReply',
+      );
+      final dispatch = _methodBody(
+        _feedPath,
+        '_FeedWiredState',
+        '_dispatchFeedComposerSend',
+      );
+
+      expect(
+        feed,
+        isNot(contains('messageRepository.saveMessage(')),
+        reason:
+            'the composer must not preinsert a message ahead of the atomic '
+            'message-plus-custody stage',
+      );
+      expect(feed, contains('id: messageId'));
+      expect(feed, isNot(contains('_uuid.v4()')));
+      expect(feed, contains('messageId: optimisticMessage.id'));
+      expect(feed, contains('preassignedMessageIdIsFresh: true'));
+      expect(dispatch, contains('messageId: reply.messageId'));
+    },
+  );
+
+  test(
+    'TC-342-04b feed retry reuses durable authority and remints only proven never-staged work',
+    () {
+      final retry = _methodBody(_feedPath, '_FeedWiredState', '_onRetrySend');
+      final contactRetry = _methodBody(
+        _feedPath,
+        '_FeedWiredState',
+        '_retryContactComposerReply',
+      );
+
+      expect(retry, contains('_retryContactComposerReply(threadId, reply)'));
+      expect(contactRetry, contains('reply.messageId'));
+      expect(contactRetry, contains('retryFailedMessage('));
+      expect(contactRetry, contains('messageId: reply.messageId'));
+      expect(contactRetry, contains('_sendContactComposerReply('));
+
+      final convergedAuthority = contactRetry.indexOf(
+        'durableAuthority == true',
+      );
+      final unknownAuthority = contactRetry.indexOf(
+        'durableAuthority != false',
+      );
+      final replacementMint = contactRetry.indexOf('messageId: _uuid.v4()');
+      expect(convergedAuthority, greaterThanOrEqualTo(0));
+      expect(unknownAuthority, greaterThan(convergedAuthority));
+      expect(replacementMint, greaterThan(unknownAuthority));
+      expect(_count(contactRetry, '_uuid.v4()'), 1);
+      expect(contactRetry, contains('messageId: replacement.messageId'));
+    },
+  );
 
   test('production wiring and writer census close only the R1 bypass set', () {
     final messageConstruction = _singleConstruction(

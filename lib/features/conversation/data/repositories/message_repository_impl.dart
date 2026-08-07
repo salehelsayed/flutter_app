@@ -11,6 +11,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../../domain/models/conversation_message.dart';
 import '../../domain/models/conversation_thread_summary.dart';
+import '../../domain/models/direct_inbox_custody_outbox_entry.dart';
 import '../../domain/models/media_attachment.dart';
 import '../../domain/models/outgoing_ordinary_mutation_result.dart';
 import '../../domain/repositories/conversation_thread_summary_repository.dart';
@@ -29,6 +30,7 @@ class MessageRepositoryImpl
         DirectUploadRetryProjectionRepository,
         DirectManualUploadRetryRearmRepository,
         OutgoingTransportMutationRepository,
+        OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
@@ -88,6 +90,40 @@ class MessageRepositoryImpl
     required OutgoingOrdinaryAttemptKind kind,
   })?
   dbStageOutgoingOrdinaryAttempt;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String messageId,
+    required String incarnationId,
+    required String wireEnvelope,
+  })?
+  dbStageOutgoingDirectTextInboxCustody;
+  final Future<List<Map<String, Object?>>> Function({int limit})?
+  dbLoadDirectInboxCustodyOutbox;
+  final Future<Map<String, Object?>?> Function({
+    required String recipientPeerId,
+    required String messageId,
+  })?
+  dbLoadDirectInboxCustodyOutboxForMessage;
+  final Future<bool> Function({
+    required String recipientPeerId,
+    required String messageId,
+    required String expectedIncarnationId,
+    required String expectedWireEnvelope,
+    required String errorCode,
+    required String attemptedAt,
+  })?
+  dbRecordDirectInboxCustodyFailureIfExact;
+  final Future<DirectInboxCustodyCompletionOutcome> Function({
+    required String recipientPeerId,
+    required String messageId,
+    required String expectedIncarnationId,
+    required String expectedWireEnvelope,
+    required int? relayExpiresAt,
+  })?
+  dbCompleteAcceptedDirectInboxCustodyIfExact;
   final Future<OutgoingOrdinaryMutationOutcome> Function({
     required String messageId,
     required String expectedContactPeerId,
@@ -262,6 +298,7 @@ class MessageRepositoryImpl
     required List<ManualUploadRetryAttachmentExpectation> attachments,
   })?
   dbRearmDirectUploadRetryForManualRetry;
+  final DateTime Function() now;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
   final StreamController<DirectMessageRemoval> _messageRemovalController =
@@ -295,6 +332,11 @@ class MessageRepositoryImpl
     required this.dbRecoverStuckSendingMessages,
     this.dbUpdateWireEnvelope,
     this.dbStageOutgoingOrdinaryAttempt,
+    this.dbStageOutgoingDirectTextInboxCustody,
+    this.dbLoadDirectInboxCustodyOutbox,
+    this.dbLoadDirectInboxCustodyOutboxForMessage,
+    this.dbRecordDirectInboxCustodyFailureIfExact,
+    this.dbCompleteAcceptedDirectInboxCustodyIfExact,
     this.dbSettleOutgoingOrdinaryTransport,
     this.dbSettleOutgoingOrdinaryDeleteTombstone,
     this.dbInvalidateOutgoingOrdinaryEnvelope,
@@ -328,11 +370,20 @@ class MessageRepositoryImpl
     this.directReactionProjection,
     this.dbLoadLocallyAuthoredMessagesForProjection,
     this.dbRearmDirectUploadRetryForManualRetry,
-  });
+    DateTime Function()? now,
+  }) : now = now ?? DateTime.now;
 
   @override
   Stream<ConversationMessage> get messageChanges =>
       _messageChangeController.stream;
+
+  @override
+  bool get supportsDirectTextInboxCustody =>
+      dbStageOutgoingDirectTextInboxCustody != null &&
+      dbLoadDirectInboxCustodyOutbox != null &&
+      dbLoadDirectInboxCustodyOutboxForMessage != null &&
+      dbRecordDirectInboxCustodyFailureIfExact != null &&
+      dbCompleteAcceptedDirectInboxCustodyIfExact != null;
 
   @override
   Stream<DirectMessageRemoval> get messageRemovals =>
@@ -461,6 +512,188 @@ class MessageRepositoryImpl
   }
 
   @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String incarnationId,
+    required String wireEnvelope,
+  }) async {
+    if (!supportsDirectTextInboxCustody) {
+      return OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: expected,
+      );
+    }
+    // Attachments are transient and intentionally absent from
+    // ConversationMessage.toMap(). Reject them before crossing the database
+    // seam so this text-only capability cannot accidentally stage media.
+    if (staged.media.isNotEmpty) {
+      return OutgoingOrdinaryMutationResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: expected,
+      );
+    }
+    final stage = dbStageOutgoingDirectTextInboxCustody;
+    final outcome = stage == null
+        ? OutgoingOrdinaryMutationOutcome.refused
+        : await stage(
+            expectedRow: expected?.toMap(),
+            stagedRow: staged.toMap(),
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            messageId: staged.id,
+            incarnationId: incarnationId,
+            wireEnvelope: wireEnvelope,
+          );
+    final published = await _publishCommittedOutgoingOrdinaryMutationBestEffort(
+      messageId: staged.id,
+      outcome: outcome,
+      committedFallback: outcome.authorizesTransport ? staged : null,
+    );
+    // The atomic helper outcome owns transport authority. A physical message
+    // removal may win immediately after that transaction while the independent
+    // custody row remains durable. The normal publisher truthfully reports the
+    // now-missing projection as `removed`, but that post-commit observation must
+    // not revoke the already-committed exact-envelope obligation.
+    if (outcome.authorizesTransport && !published.authorizesTransport) {
+      return OutgoingOrdinaryMutationResult(outcome: outcome, message: staged);
+    }
+    return published;
+  }
+
+  @override
+  Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
+    int limit = 50,
+  }) async {
+    final load = dbLoadDirectInboxCustodyOutbox;
+    if (load == null) return const <DirectInboxCustodyOutboxEntry>[];
+    return (await load(
+      limit: limit,
+    )).map(DirectInboxCustodyOutboxEntry.fromMap).toList(growable: false);
+  }
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyForMessage({
+    required String recipientPeerId,
+    required String messageId,
+  }) async {
+    final load = dbLoadDirectInboxCustodyOutboxForMessage;
+    if (load == null) return null;
+    final row = await load(
+      recipientPeerId: recipientPeerId,
+      messageId: messageId,
+    );
+    return row == null ? null : DirectInboxCustodyOutboxEntry.fromMap(row);
+  }
+
+  @override
+  Future<bool> recordDirectInboxCustodyFailureIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) {
+    final record = dbRecordDirectInboxCustodyFailureIfExact;
+    if (record == null) return Future<bool>.value(false);
+    return record(
+      recipientPeerId: expected.recipientPeerId,
+      messageId: expected.messageId,
+      expectedIncarnationId: expected.incarnationId,
+      expectedWireEnvelope: expected.wireEnvelope,
+      errorCode: errorCode,
+      attemptedAt: now().toUtc().toIso8601String(),
+    );
+  }
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final complete = dbCompleteAcceptedDirectInboxCustodyIfExact;
+    if (complete == null) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.stale,
+        message: null,
+      );
+    }
+    final outcome = await complete(
+      recipientPeerId: expected.recipientPeerId,
+      messageId: expected.messageId,
+      expectedIncarnationId: expected.incarnationId,
+      expectedWireEnvelope: expected.wireEnvelope,
+      relayExpiresAt: relayExpiresAt,
+    );
+    if (!outcome.completed) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: outcome,
+        message: null,
+      );
+    }
+    final published = await _publishCommittedOutgoingOrdinaryMutationBestEffort(
+      messageId: expected.messageId,
+      outcome: outcome.messageChanged
+          ? OutgoingOrdinaryMutationOutcome.applied
+          : OutgoingOrdinaryMutationOutcome.idempotent,
+    );
+    return DirectInboxCustodyCompletionResult(
+      outcome: outcome,
+      message: published.message,
+    );
+  }
+
+  /// Publishes an already-returned ordinary DB mutation without letting
+  /// fallible cache, media, reaction-projection, or stream work rewrite it.
+  ///
+  /// This helper is deliberately entered only after the atomic DB delegate has
+  /// returned. Delegate failures still propagate to the caller. Once the DB
+  /// outcome is known, publication is a best-effort notification boundary: a
+  /// failed reload or projection cannot make committed transport look failed,
+  /// committed custody look refused, or a retired exact row look retryable.
+  Future<OutgoingOrdinaryMutationResult>
+  _publishCommittedOutgoingOrdinaryMutationBestEffort({
+    required String messageId,
+    required OutgoingOrdinaryMutationOutcome outcome,
+    ConversationMessage? committedFallback,
+  }) async {
+    try {
+      return await publishOutgoingOrdinaryMutation(
+        messageId: messageId,
+        outcome: outcome,
+      );
+    } catch (error) {
+      ConversationMessage? authoritativeFallback;
+      var fallbackReloadCompleted = false;
+      try {
+        final row = await dbLoadMessage(messageId);
+        fallbackReloadCompleted = true;
+        if (row != null) {
+          authoritativeFallback = ConversationMessage.fromMap(row);
+        }
+      } catch (_) {
+        // The DB mutation already committed. A second diagnostic reload is
+        // best-effort and must not replace that authoritative outcome either.
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'OUTGOING_ORDINARY_COMMITTED_PUBLICATION_ERROR',
+        details: <String, Object?>{
+          'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+          'outcome': outcome.name,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+      return OutgoingOrdinaryMutationResult(
+        outcome: outcome,
+        message: fallbackReloadCompleted
+            ? authoritativeFallback
+            : committedFallback,
+      );
+    }
+  }
+
+  @override
   Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
     required String messageId,
     required String expectedContactPeerId,
@@ -482,7 +715,7 @@ class MessageRepositoryImpl
             relayExpiresAt: relayExpiresAt,
             mode: mode,
           );
-    return publishOutgoingOrdinaryMutation(
+    return _publishCommittedOutgoingOrdinaryMutationBestEffort(
       messageId: messageId,
       outcome: outcome,
     );

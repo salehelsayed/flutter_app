@@ -1701,8 +1701,67 @@ func assertAPNSCustomString(t *testing.T, msg *messaging.Message, key, want stri
 	}
 }
 
-func TestHandleInboxStream_StoreTriggersPushSendAfterPersistence(t *testing.T) {
-	t.Skip("push sender injection coverage is outside Section 4 and not required for this verification gate")
+func TestRelayNotificationClosure_DirectStoreTriggersPushAfterPersistence(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
+	inbox := NewInboxStore(push)
+	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+	env := setupInboxStreamEnv(t, inbox, groupInbox)
+
+	recipientPeer := env.recipient.ID().String()
+	senderPeer := env.sender.ID().String()
+	tokenStore.RegisterToken(recipientPeer, "recipient-token", "ios")
+	message := `{"type":"chat_message","version":"2","id":"msg-store-before-push-001","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+	storedAtPush := make(chan []inboxMessage, 1)
+	recorder.onSend = func(
+		ctx context.Context,
+		msg *messaging.Message,
+	) (string, error) {
+		pending, _ := inbox.RetrievePendingWithMeta(recipientPeer, 10)
+		storedAtPush <- pending
+		return "mock-message-id", nil
+	}
+
+	stream, err := env.sender.NewStream(
+		context.Background(),
+		env.server.ID(),
+		InboxProtocol,
+	)
+	if err != nil {
+		t.Fatalf("open store stream: %v", err)
+	}
+	defer stream.Close()
+
+	sendInboxReq(t, stream, inboxRequest{
+		Action:  "store",
+		To:      recipientPeer,
+		From:    "untrusted-caller-supplied-from",
+		Message: message,
+	})
+	resp := recvInboxResp(t, stream)
+	if resp.Status != "OK" || resp.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("store response = %#v, want OK/stored", resp)
+	}
+
+	select {
+	case pending := <-storedAtPush:
+		if len(pending) != 1 {
+			t.Fatalf("pending rows observed by push callback = %d, want 1", len(pending))
+		}
+		if pending[0].Message != message {
+			t.Fatalf("stored envelope at push = %q, want %q", pending[0].Message, message)
+		}
+		if pending[0].From != senderPeer {
+			t.Fatalf("stored sender at push = %q, want authenticated %q", pending[0].From, senderPeer)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for direct push callback")
+	}
+	if got := recorder.SendCallCount(); got != 1 {
+		t.Fatalf("push sends = %d, want 1", got)
+	}
 }
 
 func TestPushService_SendNotification_UnregistersInvalidToken(t *testing.T) {
@@ -2516,14 +2575,18 @@ func TestHandleInboxStream_StoreBackendErrorReturnsError(t *testing.T) {
 	}
 }
 
-func TestHandleInboxStream_StoreDuplicateReturnsOKWithoutSecondPendingMessage(t *testing.T) {
-	push := NewPushServiceWithBackend(newMemoryPushTokenStore())
+func TestRelayNotificationClosure_DirectDuplicateDoesNotRefanoutPush(t *testing.T) {
+	tokenStore := newMemoryPushTokenStore()
+	push := NewPushServiceWithBackend(tokenStore)
+	recorder := newRecordingPushSender()
+	push.sender = recorder.Send
 	inbox := NewInboxStore(push)
 	groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
 	env := setupInboxStreamEnv(t, inbox, groupInbox)
 
 	recipientPeer := env.recipient.ID().String()
 	senderPeer := env.sender.ID().String()
+	tokenStore.RegisterToken(recipientPeer, "recipient-token", "ios")
 	message := `{"type":"chat_message","version":"2","id":"msg-stream-duplicate-001","encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
 
 	storeMessage := func() inboxResponse {
@@ -2551,6 +2614,11 @@ func TestHandleInboxStream_StoreDuplicateReturnsOKWithoutSecondPendingMessage(t 
 	if first.StoreStatus != string(InboxStoreResultStored) {
 		t.Fatalf("first storeStatus = %q, want %q", first.StoreStatus, InboxStoreResultStored)
 	}
+	select {
+	case <-recorder.sentSignal:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for first direct push")
+	}
 
 	second := storeMessage()
 	if second.Status != "OK" {
@@ -2558,6 +2626,14 @@ func TestHandleInboxStream_StoreDuplicateReturnsOKWithoutSecondPendingMessage(t 
 	}
 	if second.StoreStatus != string(InboxStoreResultDuplicate) {
 		t.Fatalf("second storeStatus = %q, want %q", second.StoreStatus, InboxStoreResultDuplicate)
+	}
+	select {
+	case <-recorder.sentSignal:
+		t.Fatal("duplicate direct store re-fanned out a push")
+	case <-time.After(200 * time.Millisecond):
+	}
+	if got := recorder.SendCallCount(); got != 1 {
+		t.Fatalf("push sends after duplicate = %d, want 1", got)
 	}
 
 	stream, err := env.recipient.NewStream(context.Background(), env.server.ID(), InboxProtocol)

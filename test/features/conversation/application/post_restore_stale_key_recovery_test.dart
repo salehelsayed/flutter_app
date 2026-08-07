@@ -139,6 +139,7 @@ ChatMessage _v2Message() {
     content: jsonEncode({
       'type': 'chat_message',
       'version': '2',
+      'id': 'msg-old-key-001',
       'senderPeerId': _senderPeerId,
       'encrypted': {
         'kem': 'kem-blob',
@@ -244,14 +245,16 @@ void main() {
       );
     });
 
-    test('saveIdentity pushes previous differing ML-KEM secret onto the ring',
-        () async {
-      await repo.saveIdentity(_identity(mlKemSecretKey: 'secret-A'));
-      await repo.saveIdentity(_identity(mlKemSecretKey: 'secret-B'));
+    test(
+      'saveIdentity pushes previous differing ML-KEM secret onto the ring',
+      () async {
+        await repo.saveIdentity(_identity(mlKemSecretKey: 'secret-A'));
+        await repo.saveIdentity(_identity(mlKemSecretKey: 'secret-B'));
 
-      final ring = await loadMlKemSecretKeyRing(secureKeyStore);
-      expect(ring, ['secret-A']);
-    });
+        final ring = await loadMlKemSecretKeyRing(secureKeyStore);
+        expect(ring, ['secret-A']);
+      },
+    );
 
     test('ring is capped at 3, newest first', () async {
       for (final secret in ['s1', 's2', 's3', 's4', 's5']) {
@@ -348,48 +351,45 @@ void main() {
   });
 
   group('B-6 end-to-end same-device story', () {
-    test(
-      'message encrypted to pre-restore key decrypts via ring after silent '
-      'recovery',
-      () async {
-        // 1. Old identity saved with secret-OLD.
-        final secureKeyStore = FakeSecureKeyStore();
-        final identityRepo = IdentityRepositoryImpl(
-          dbLoadIdentityRow: () async => null,
-          dbUpsertIdentityRow: (_) async {},
-          secureKeyStore: secureKeyStore,
-        );
-        await repoSave(identityRepo, 'old-mlkem-secret');
+    test('message encrypted to pre-restore key decrypts via ring after silent '
+        'recovery', () async {
+      // 1. Old identity saved with secret-OLD.
+      final secureKeyStore = FakeSecureKeyStore();
+      final identityRepo = IdentityRepositoryImpl(
+        dbLoadIdentityRow: () async => null,
+        dbUpsertIdentityRow: (_) async {},
+        secureKeyStore: secureKeyStore,
+      );
+      await repoSave(identityRepo, 'old-mlkem-secret');
 
-        // 2. Silent recovery regenerates the pair — the ring keeps the old
-        //    secret that would otherwise be destroyed.
-        await repoSave(identityRepo, 'new-mlkem-secret');
-        final ring = await loadMlKemSecretKeyRing(secureKeyStore);
-        expect(ring, ['old-mlkem-secret']);
+      // 2. Silent recovery regenerates the pair — the ring keeps the old
+      //    secret that would otherwise be destroyed.
+      await repoSave(identityRepo, 'new-mlkem-secret');
+      final ring = await loadMlKemSecretKeyRing(secureKeyStore);
+      expect(ring, ['old-mlkem-secret']);
 
-        // 3. An in-flight message encrypted to the OLD public key arrives.
-        final bridge = _KeyedDecryptBridge(
-          correctSecret: 'old-mlkem-secret',
-          plaintext: _chatPlaintext(),
-        );
-        final messageRepo = _RecordingMessageRepository();
-        final contactRepo = _SeededContactRepository()..seed(_aliceContact());
+      // 3. An in-flight message encrypted to the OLD public key arrives.
+      final bridge = _KeyedDecryptBridge(
+        correctSecret: 'old-mlkem-secret',
+        plaintext: _chatPlaintext(),
+      );
+      final messageRepo = _RecordingMessageRepository();
+      final contactRepo = _SeededContactRepository()..seed(_aliceContact());
 
-        final (result, message, _) = await handleIncomingChatMessage(
-          message: _v2Message(),
-          messageRepo: messageRepo,
-          contactRepo: contactRepo,
-          bridge: bridge,
-          ownMlKemSecretKey: 'new-mlkem-secret',
-          fallbackMlKemSecretKeys: ring,
-        );
+      final (result, message, _) = await handleIncomingChatMessage(
+        message: _v2Message(),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: 'new-mlkem-secret',
+        fallbackMlKemSecretKeys: ring,
+      );
 
-        // 4. Stored, not quarantined.
-        expect(result, HandleChatMessageResult.chatMessage);
-        expect(message!.text, 'Sent to the pre-restore key');
-        expect(messageRepo.saved, hasLength(1));
-      },
-    );
+      // 4. Stored, not quarantined.
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(message!.text, 'Sent to the pre-restore key');
+      expect(messageRepo.saved, hasLength(1));
+    });
   });
 }
 

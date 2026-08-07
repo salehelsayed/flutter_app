@@ -905,12 +905,14 @@ void main() {
 
     // The mid-send custody milestone fired...
     expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isTrue);
-    // ...and an atomic 'inboxed' settlement was applied at the ACK in addition
-    // to the terminal custody settlement.
+    // ...and the sender-owned exact-envelope custody row was completed at the
+    // ACK before the terminal custody settlement observed the inboxed message.
+    expect(repo.directCustodyCompletionCalls, hasLength(1));
     expect(
       repo.ordinarySettlementCalls.where((call) => call.status == 'inboxed'),
-      hasLength(greaterThanOrEqualTo(2)),
+      hasLength(1),
     );
+    expect(repo.directCustodyRows, isEmpty);
     // Distinct-event discriminator: the custody bump STRICTLY precedes the
     // terminal timing event, so it is the mid-send milestone, not the terminal
     // 'inboxed' save (both carry status=='inboxed').
@@ -991,11 +993,13 @@ void main() {
         expect(captureSettled, isTrue);
         expect(rowAfterLiveAck.status, 'delivered');
         expect(rowAfterLiveAck.transport, 'direct');
+        expect(repo.directCustodyCompletionCalls, hasLength(1));
+        expect(repo.directCustodyRows, isEmpty);
         expect(
           repo.ordinarySettlementCalls.where(
             (call) => call.status == 'inboxed',
           ),
-          hasLength(1),
+          isEmpty,
         );
         expect(finalRow.status, 'delivered');
         expect(finalRow.transport, 'direct');
@@ -1032,12 +1036,14 @@ void main() {
     // The bubble rests at custody (two ticks): the terminal persist writes the
     // full 'inboxed' custody row...
     expect(repo.saved.last.status, 'inboxed');
-    // ...AND the mid-send bump advanced the status to 'inboxed' through an
-    // additional atomic settlement before the terminal custody settlement.
+    // ...AND the mid-send bump advanced the status through the sender-owned
+    // exact-envelope completion before the terminal custody settlement.
+    expect(repo.directCustodyCompletionCalls, hasLength(1));
     expect(
       repo.ordinarySettlementCalls.where((call) => call.status == 'inboxed'),
-      hasLength(greaterThanOrEqualTo(2)),
+      hasLength(1),
     );
+    expect(repo.directCustodyRows, isEmpty);
     expect(_has(events, 'CHAT_MSG_SEND_CUSTODY_CONFIRMED'), isTrue);
   });
 

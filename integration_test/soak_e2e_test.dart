@@ -41,6 +41,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/signal_files.dart';
 
 // ---------------------------------------------------------------------------
@@ -182,6 +183,7 @@ void main() {
       dbSetIntrosSentAt: (peerId, timestamp) =>
           dbSetIntrosSentAt(db, peerId, timestamp),
     );
+    final custodyDb = DirectInboxCustodyDbBindings(db);
     final messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (contactPeerId) =>
@@ -239,6 +241,12 @@ void main() {
                 stagedRow: stagedRow,
                 kind: kind,
               ),
+      dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+      dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+      dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          custodyDb.completeAcceptedIfExact,
       dbSettleOutgoingOrdinaryTransport:
           ({
             required messageId,

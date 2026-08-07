@@ -39,6 +39,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 
+import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/node_readiness.dart';
 import '_support/signal_files.dart';
 import 'group_multi_device_real_harness.dart';
@@ -420,6 +421,7 @@ void _runAlice() {
     await waitForOnline(stack.p2pService, timeout: const Duration(seconds: 60));
 
     // ── 1:1 message repo (not created by setupGroupMultiDeviceStack) ──
+    final custodyDb = DirectInboxCustodyDbBindings(stack.db);
     messageRepo = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(stack.db, row),
       dbLoadMessagesForContact: (p) => dbLoadMessagesForContact(stack.db, p),
@@ -478,6 +480,12 @@ void _runAlice() {
                 stagedRow: stagedRow,
                 kind: kind,
               ),
+      dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+      dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+      dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          custodyDb.completeAcceptedIfExact,
       dbSettleOutgoingOrdinaryTransport:
           ({
             required messageId,

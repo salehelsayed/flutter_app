@@ -112,61 +112,71 @@ void main() {
   sqfliteFfiInit();
   databaseFactory = databaseFactoryFfi;
 
-  test('v100 remains the sole successor to v99 and v101-v104 follow it', () {
-    expect(currentIdentityDatabaseVersion, 107);
-    for (final registry in [
-      productionCreateMigrations,
-      productionUpgradeMigrations,
-    ]) {
-      expect(registry.where((entry) => entry.version == 100), hasLength(1));
-      expect(registry.where((entry) => entry.version == 101), hasLength(1));
-      expect(registry.where((entry) => entry.version == 102), hasLength(1));
-      expect(registry.where((entry) => entry.version == 103), hasLength(1));
-      expect(registry.where((entry) => entry.version == 104), hasLength(1));
-      expect(registry.where((entry) => entry.version == 105), hasLength(1));
-      expect(registry.where((entry) => entry.version == 106), hasLength(1));
-      expect(registry.where((entry) => entry.version == 107), hasLength(1));
-      expect(registry.where((entry) => entry.version > 107), isEmpty);
-      final index99 = registry.indexWhere((entry) => entry.version == 99);
-      final index100 = registry.indexWhere((entry) => entry.version == 100);
-      final index101 = registry.indexWhere((entry) => entry.version == 101);
-      final index102 = registry.indexWhere((entry) => entry.version == 102);
-      final index103 = registry.indexWhere((entry) => entry.version == 103);
-      final index104 = registry.indexWhere((entry) => entry.version == 104);
-      expect(index99, greaterThanOrEqualTo(0));
-      expect(index100, index99 + 1);
-      expect(index101, index100 + 1);
-      expect(index102, index101 + 1);
-      expect(index103, index102 + 1);
-      expect(index104, index103 + 1);
-      final index105 = registry.indexWhere((entry) => entry.version == 105);
-      final index106 = registry.indexWhere((entry) => entry.version == 106);
-      final index107 = registry.indexWhere((entry) => entry.version == 107);
-      expect(index105, index104 + 1);
-      expect(index106, index105 + 1);
-      expect(index107, index106 + 1);
-      expect(index107, registry.length - 1);
-      expect(registry[index100].name, '100_direct_private_media_lifecycle');
-      expect(
-        registry[index100].run,
-        same(runDirectPrivateMediaLifecycleMigration),
-      );
-      expect(registry[index101].name, '101_group_private_media_lifecycle');
-      expect(
-        registry[index101].run,
-        same(runGroupPrivateMediaLifecycleMigration),
-      );
-      expect(registry[index102].name, '102_groups_self_removed_at');
-      expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
-      expect(registry[index103].name, '103_group_exit_intents');
-      expect(registry[index103].run, same(runGroupExitIntentsMigration));
-      expect(registry[index104].name, '104_group_exit_diagnostics');
-      expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
-      expect(registry[index105].name, '105_reaction_outbox_needs_build');
-      expect(registry[index106].name, '106_group_notification_display_outbox');
-      expect(registry[index107].name, '107_direct_notification_durability');
-    }
-  });
+  test(
+    'v100 remains the sole successor to v99 and later versions follow it',
+    () {
+      expect(currentIdentityDatabaseVersion, 108);
+      for (final registry in [
+        productionCreateMigrations,
+        productionUpgradeMigrations,
+      ]) {
+        expect(registry.where((entry) => entry.version == 100), hasLength(1));
+        expect(registry.where((entry) => entry.version == 101), hasLength(1));
+        expect(registry.where((entry) => entry.version == 102), hasLength(1));
+        expect(registry.where((entry) => entry.version == 103), hasLength(1));
+        expect(registry.where((entry) => entry.version == 104), hasLength(1));
+        expect(registry.where((entry) => entry.version == 105), hasLength(1));
+        expect(registry.where((entry) => entry.version == 106), hasLength(1));
+        expect(registry.where((entry) => entry.version == 107), hasLength(1));
+        expect(registry.where((entry) => entry.version == 108), hasLength(1));
+        expect(registry.where((entry) => entry.version > 108), isEmpty);
+        final index99 = registry.indexWhere((entry) => entry.version == 99);
+        final index100 = registry.indexWhere((entry) => entry.version == 100);
+        final index101 = registry.indexWhere((entry) => entry.version == 101);
+        final index102 = registry.indexWhere((entry) => entry.version == 102);
+        final index103 = registry.indexWhere((entry) => entry.version == 103);
+        final index104 = registry.indexWhere((entry) => entry.version == 104);
+        expect(index99, greaterThanOrEqualTo(0));
+        expect(index100, index99 + 1);
+        expect(index101, index100 + 1);
+        expect(index102, index101 + 1);
+        expect(index103, index102 + 1);
+        expect(index104, index103 + 1);
+        final index105 = registry.indexWhere((entry) => entry.version == 105);
+        final index106 = registry.indexWhere((entry) => entry.version == 106);
+        final index107 = registry.indexWhere((entry) => entry.version == 107);
+        final index108 = registry.indexWhere((entry) => entry.version == 108);
+        expect(index105, index104 + 1);
+        expect(index106, index105 + 1);
+        expect(index107, index106 + 1);
+        expect(index108, index107 + 1);
+        expect(index108, registry.length - 1);
+        expect(registry[index100].name, '100_direct_private_media_lifecycle');
+        expect(
+          registry[index100].run,
+          same(runDirectPrivateMediaLifecycleMigration),
+        );
+        expect(registry[index101].name, '101_group_private_media_lifecycle');
+        expect(
+          registry[index101].run,
+          same(runGroupPrivateMediaLifecycleMigration),
+        );
+        expect(registry[index102].name, '102_groups_self_removed_at');
+        expect(registry[index102].run, same(runGroupsSelfRemovedAtMigration));
+        expect(registry[index103].name, '103_group_exit_intents');
+        expect(registry[index103].run, same(runGroupExitIntentsMigration));
+        expect(registry[index104].name, '104_group_exit_diagnostics');
+        expect(registry[index104].run, same(runGroupExitDiagnosticsMigration));
+        expect(registry[index105].name, '105_reaction_outbox_needs_build');
+        expect(
+          registry[index106].name,
+          '106_group_notification_display_outbox',
+        );
+        expect(registry[index107].name, '107_direct_notification_durability');
+        expect(registry[index108].name, '108_direct_inbox_custody_outbox');
+      }
+    },
+  );
 
   test(
     'real 99 to 100 upgrade is idempotent constrained and preserves sibling owners',

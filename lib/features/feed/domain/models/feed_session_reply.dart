@@ -16,15 +16,26 @@ class FeedSessionReply {
   /// "tap to retry" affordance instead of a silent/absent state.
   final bool failed;
 
+  /// Durable-authority disposition for this optimistic direct reply.
+  ///
+  /// `true` means its message projection or exact inbox-custody row was
+  /// positively observed. `false` means the send positively finished before
+  /// either authority was staged. `null` means the attempt has not yet been
+  /// classified, so an absent projection/outbox must not be re-minted.
+  final bool? hadDurableAuthority;
+
   const FeedSessionReply({
     required this.messageId,
     required this.text,
     this.failed = false,
+    this.hadDurableAuthority,
   });
 
-  FeedSessionReply copyWith({bool? failed}) => FeedSessionReply(
-    messageId: messageId,
-    text: text,
-    failed: failed ?? this.failed,
-  );
+  FeedSessionReply copyWith({bool? failed, bool? hadDurableAuthority}) =>
+      FeedSessionReply(
+        messageId: messageId,
+        text: text,
+        failed: failed ?? this.failed,
+        hadDurableAuthority: hadDurableAuthority ?? this.hadDurableAuthority,
+      );
 }

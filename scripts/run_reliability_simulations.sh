@@ -577,6 +577,11 @@ requires_explicit_multi_device_ids() {
       "integration_test/scripts/run_group_media_send_reliability.dart" ]
 }
 
+requires_explicit_single_device_id() {
+  [ "$1" = \
+    "integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart" ]
+}
+
 print_device_arg_for_path() {
   local path="$1"
   local scenario="${2:-}"
@@ -591,6 +596,9 @@ print_device_arg_for_path() {
   if requires_explicit_multi_device_ids "$path" "$scenario"; then
     printf ' -d %s' \
       "$(quote_for_display '<required:RELIABILITY_MULTI_DEVICE_IDS>')"
+  elif requires_explicit_single_device_id "$path"; then
+    printf ' -d %s' \
+      "$(quote_for_display '<required:RELIABILITY_SINGLE_DEVICE_ID>')"
   fi
 }
 
@@ -602,6 +610,13 @@ validate_required_device_args() {
 
   while IFS=$'\t' read -r index kind path scenario; do
     [ -n "$path" ] || continue
+    if requires_explicit_single_device_id "$path" &&
+       [ -z "$(single_device_id)" ]; then
+      printf 'Missing explicit single-device ID for %s.\n' "$path" >&2
+      printf 'Set RELIABILITY_SINGLE_DEVICE_ID=<discovered-android-id> ' >&2
+      printf '(fallback: single-valued FLUTTER_DEVICE_ID).\n' >&2
+      return 64
+    fi
     if requires_explicit_multi_device_ids "$path" "$scenario" &&
        [ -z "$(device_arg_for_path "$path")" ]; then
       printf 'Missing explicit two-device IDs for %s:%s.\n' \
@@ -669,10 +684,7 @@ print_command_for_path() {
       ;;
     integration_test/*.dart)
       printf 'flutter test --no-pub'
-      device_id="$(single_device_id)"
-      if [ -n "$device_id" ]; then
-        printf ' -d %s' "$(quote_for_display "$device_id")"
-      fi
+      print_device_arg_for_path "$path" "$scenario"
       printf ' %s' "$(quote_for_display "--dart-define=MKNOON_RELAY_ADDRESSES=$(relay_addresses)")"
       if [ "$path" = "integration_test/group_lifecycle_simulator_harness.dart" ] && [ -n "$scenario" ]; then
         printf ' %s' "$(quote_for_display "--dart-define=GROUP_SIM_SCENARIO=$scenario")"

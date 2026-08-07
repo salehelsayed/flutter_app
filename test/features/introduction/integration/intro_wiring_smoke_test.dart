@@ -193,7 +193,11 @@ class _FakeP2PService implements P2PService {
   @override
   Future<bool> stopNode() async => true;
   @override
-  Future<bool> storeInInbox(String toPeerId, String message, {int? timeoutMs}) async => false;
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async => false;
   @override
   Future<bool> registerPushToken(String token, String platform) async => true;
   @override
@@ -218,8 +222,7 @@ class _FakeP2PService implements P2PService {
   Future<bool> discoverLocalPeer(
     String peerId, {
     required Duration timeout,
-  }) async =>
-      false;
+  }) async => false;
 
   @override
   Stream<LocalMediaReady> get incomingLocalMediaStream => const Stream.empty();
@@ -323,6 +326,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   required String senderPeerId,
   required String senderUsername,
   String? messageId,
+  required bool preassignedMessageIdIsFresh,
   String? quotedMessageId,
   String? timestamp,
   Bridge? bridge,

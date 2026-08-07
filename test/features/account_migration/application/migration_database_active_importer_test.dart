@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
+import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_active_importer.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
@@ -183,7 +184,7 @@ CREATE TABLE identity (
     });
 
     test(
-      'production v107 group and direct triggers preserve exact reconciliation rows',
+      'production current group and direct triggers preserve exact reconciliation rows',
       () async {
         final productionActive = await openDatabase(
           p.join(tempDir.path, 'production-active.db'),
@@ -409,10 +410,12 @@ CREATE TABLE identity (
     );
 
     test(
-      'PB266-05 same-v107 move transfers diagnostics and v106 mismatch preserves target',
+      'TC-342-10b same-v108 transfer preserves pending custody and v107 rejection leaves target unchanged',
       () async {
         await runGroupExitDiagnosticsMigration(activeDb);
         await runGroupExitDiagnosticsMigration(stagedDb);
+        await runDirectInboxCustodyOutboxMigration(activeDb);
+        await runDirectInboxCustodyOutboxMigration(stagedDb);
         await activeDb.insert('identity', {
           'id': 1,
           'peer_id': 'active-peer',
@@ -435,10 +438,20 @@ CREATE TABLE identity (
           intentRef: 'bbbbbbbbbbbbbbbbbbbbbbbb',
         );
         await stagedDb.insert('group_exit_diagnostics', transferredDiagnostic);
+        final transferredCustody = _custodyRow(
+          recipientPeerId: 'transferred-recipient',
+          messageId: 'transferred-message',
+          incarnationId: '1234567890abcdef1234567890abcdef',
+          wireEnvelope: '{"type":"chat_message","id":"transferred-message"}',
+        );
+        await stagedDb.insert(
+          'direct_inbox_custody_outbox',
+          transferredCustody,
+        );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 107);
-        expect(manifest.databaseVersion, 107);
+        expect(currentIdentityDatabaseVersion, 108);
+        expect(manifest.databaseVersion, 108);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -457,14 +470,32 @@ CREATE TABLE identity (
             {'id': 1, ...transferredDiagnostic},
           ],
         );
+        expect(
+          await activeDb.query('direct_inbox_custody_outbox'),
+          <Map<String, Object?>>[transferredCustody],
+        );
 
         await activeDb.delete('group_exit_diagnostics');
+        await activeDb.delete('direct_inbox_custody_outbox');
         final targetSentinel = _diagnosticRow(
           groupRef: 'cccccccccccc',
           intentRef: 'cccccccccccccccccccccccc',
         );
         await activeDb.insert('group_exit_diagnostics', targetSentinel);
+        final targetCustodySentinel = _custodyRow(
+          recipientPeerId: 'target-recipient',
+          messageId: 'target-message',
+          incarnationId: 'fedcba0987654321fedcba0987654321',
+          wireEnvelope: '{"type":"chat_message","id":"target-message"}',
+        );
+        await activeDb.insert(
+          'direct_inbox_custody_outbox',
+          targetCustodySentinel,
+        );
         final targetBefore = await activeDb.query('group_exit_diagnostics');
+        final targetCustodyBefore = await activeDb.query(
+          'direct_inbox_custody_outbox',
+        );
 
         await expectLater(
           MigrationDatabaseActiveImporter(
@@ -472,13 +503,23 @@ CREATE TABLE identity (
           ).importVerifiedStagedDatabase(
             MigrationDatabaseImportStagingResult(
               database: stagedDb,
-              manifest: manifest.copyWith(databaseVersion: 106),
+              manifest: manifest.copyWith(databaseVersion: 107),
               stagedDatabasePath: p.join(tempDir.path, 'staged.db'),
             ),
           ),
-          throwsA(isA<MigrationDatabaseActiveImportException>()),
+          throwsA(
+            isA<MigrationDatabaseActiveImportException>().having(
+              (error) => error.message,
+              'message',
+              contains('unsupportedDatabaseVersion'),
+            ),
+          ),
         );
         expect(await activeDb.query('group_exit_diagnostics'), targetBefore);
+        expect(
+          await activeDb.query('direct_inbox_custody_outbox'),
+          targetCustodyBefore,
+        );
       },
     );
   });
@@ -496,6 +537,23 @@ Map<String, Object?> _diagnosticRow({
   'phase': 'native',
   'public_code': 'EX04',
   'reason_code': 'node_not_initialized',
+};
+
+Map<String, Object?> _custodyRow({
+  required String recipientPeerId,
+  required String messageId,
+  required String incarnationId,
+  required String wireEnvelope,
+}) => <String, Object?>{
+  'recipient_peer_id': recipientPeerId,
+  'message_id': messageId,
+  'incarnation_id': incarnationId,
+  'wire_envelope': wireEnvelope,
+  'retry_count': 2,
+  'last_attempt_at': '2026-08-06T10:00:00.000Z',
+  'last_error_code': 'store_failed',
+  'created_at': '2026-08-06T09:00:00.000Z',
+  'updated_at': '2026-08-06T10:00:00.000Z',
 };
 
 Future<void> _createSchema(Database db) async {

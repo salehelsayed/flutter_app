@@ -13,41 +13,49 @@ void main() {
   );
 
   group('MessagePayload', () {
-    test('forward marker is legacy-safe inner-only and carries media plus dedup', () {
-      const forwarded = MessagePayload(
-        id: 'forwarded-1',
-        text: 'caption',
-        senderPeerId: 'sender',
-        senderUsername: 'Sender',
-        timestamp: '2026-07-10T00:00:00.000Z',
-        dedupKey: 'operation-token',
-        isForwarded: true,
-        media: [
-          {'id': 'attachment-1', 'mime': 'image/jpeg', 'mediaType': 'image'},
-        ],
-      );
+    test(
+      'forward marker is legacy-safe inner-only and carries media plus dedup',
+      () {
+        const forwarded = MessagePayload(
+          id: 'forwarded-1',
+          text: 'caption',
+          senderPeerId: 'sender',
+          senderUsername: 'Sender',
+          timestamp: '2026-07-10T00:00:00.000Z',
+          dedupKey: 'operation-token',
+          isForwarded: true,
+          media: [
+            {'id': 'attachment-1', 'mime': 'image/jpeg', 'mediaType': 'image'},
+          ],
+        );
 
-      final v1 = MessagePayload.fromJson(forwarded.toJson())!;
-      final v2 = MessagePayload.fromDecryptedJson(forwarded.toInnerJson())!;
-      expect(v1.isForwarded, isTrue);
-      expect(v2.isForwarded, isTrue);
-      expect(v2.dedupKey, 'operation-token');
-      expect(v2.media, hasLength(1));
-      expect(MessagePayload.fromJson(testPayload.toJson())!.isForwarded, isFalse);
+        final v1 = MessagePayload.fromJson(forwarded.toJson())!;
+        final v2 = MessagePayload.fromDecryptedJson(forwarded.toInnerJson())!;
+        expect(v1.isForwarded, isTrue);
+        expect(v2.isForwarded, isTrue);
+        expect(v2.dedupKey, 'operation-token');
+        expect(v2.media, hasLength(1));
+        expect(
+          MessagePayload.fromJson(testPayload.toJson())!.isForwarded,
+          isFalse,
+        );
 
-      final outer = jsonDecode(
-        MessagePayload.buildEncryptedEnvelope(
-          id: forwarded.id,
-          senderPeerId: forwarded.senderPeerId,
-          senderUsername: forwarded.senderUsername,
-          kem: 'kem',
-          ciphertext: forwarded.toInnerJson(),
-          nonce: 'nonce',
-        ),
-      ) as Map<String, dynamic>;
-      expect(outer.keys, isNot(contains('isForwarded')));
-      expect(outer.keys, isNot(contains('dedupKey')));
-    });
+        final outer =
+            jsonDecode(
+                  MessagePayload.buildEncryptedEnvelope(
+                    id: forwarded.id,
+                    senderPeerId: forwarded.senderPeerId,
+                    senderUsername: forwarded.senderUsername,
+                    kem: 'kem',
+                    ciphertext: forwarded.toInnerJson(),
+                    nonce: 'nonce',
+                  ),
+                )
+                as Map<String, dynamic>;
+        expect(outer.keys, isNot(contains('isForwarded')));
+        expect(outer.keys, isNot(contains('dedupKey')));
+      },
+    );
 
     group('toJson / fromJson round-trip', () {
       test('round-trips correctly', () {
@@ -103,17 +111,68 @@ void main() {
       });
     });
 
+    group('edit event identity', () {
+      const editPayload = MessagePayload(
+        id: 'msg-edit-target-001',
+        text: 'Updated text',
+        senderPeerId: '12D3KooWSender123',
+        senderUsername: 'Alice',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        action: MessagePayload.actionEdit,
+        eventId: 'edit-event-001',
+        editedAt: '2026-02-09T16:00:00.000Z',
+      );
+
+      test('round-trips through v1 and encrypted inner payloads', () {
+        final v1 = MessagePayload.fromJson(editPayload.toJson());
+        final inner = MessagePayload.fromDecryptedJson(
+          editPayload.toInnerJson(),
+        );
+
+        expect(v1, isNotNull);
+        expect(v1!.id, editPayload.id);
+        expect(v1.eventId, editPayload.eventId);
+        expect(v1.action, MessagePayload.actionEdit);
+        expect(inner, isNotNull);
+        expect(inner!.id, editPayload.id);
+        expect(inner.eventId, editPayload.eventId);
+        expect(inner.action, MessagePayload.actionEdit);
+      });
+
+      test('encrypted outer builder keeps target id and stamps event id', () {
+        final envelope =
+            jsonDecode(
+                  MessagePayload.buildEncryptedEnvelope(
+                    id: editPayload.id,
+                    senderPeerId: editPayload.senderPeerId,
+                    senderUsername: editPayload.senderUsername,
+                    kem: 'kem',
+                    ciphertext: 'ciphertext',
+                    nonce: 'nonce',
+                    eventId: editPayload.eventId,
+                  ),
+                )
+                as Map<String, dynamic>;
+
+        expect(envelope['id'], editPayload.id);
+        expect(envelope['eventId'], editPayload.eventId);
+        expect(envelope['id'], isNot(envelope['eventId']));
+      });
+    });
+
     group('dedupKey (F8 tier-2)', () {
-      MessagePayload keyed({String dedupKey = 'src-1', List<Map<String, dynamic>>? media}) =>
-          MessagePayload(
-            id: 'msg-002',
-            text: 'Hello!',
-            senderPeerId: '12D3KooWSender123',
-            senderUsername: 'Alice',
-            timestamp: '2026-02-09T15:30:00.000Z',
-            dedupKey: dedupKey,
-            media: media,
-          );
+      MessagePayload keyed({
+        String dedupKey = 'src-1',
+        List<Map<String, dynamic>>? media,
+      }) => MessagePayload(
+        id: 'msg-002',
+        text: 'Hello!',
+        senderPeerId: '12D3KooWSender123',
+        senderUsername: 'Alice',
+        timestamp: '2026-02-09T15:30:00.000Z',
+        dedupKey: dedupKey,
+        media: media,
+      );
 
       test('round-trips through v1 toJson/fromJson', () {
         expect(MessagePayload.fromJson(keyed().toJson())!.dedupKey, 'src-1');
@@ -121,16 +180,24 @@ void main() {
         expect(MessagePayload.fromJson(testPayload.toJson())!.dedupKey, isNull);
       });
 
-      test('round-trips through v2 inner (toInnerJson/fromDecryptedJson) — PROD-CRITICAL', () {
-        final inner = keyed().toInnerJson();
-        expect(inner, contains('"dedupKey":"src-1"'));
-        expect(MessagePayload.fromDecryptedJson(inner)!.dedupKey, 'src-1');
-      });
+      test(
+        'round-trips through v2 inner (toInnerJson/fromDecryptedJson) — PROD-CRITICAL',
+        () {
+          final inner = keyed().toInnerJson();
+          expect(inner, contains('"dedupKey":"src-1"'));
+          expect(MessagePayload.fromDecryptedJson(inner)!.dedupKey, 'src-1');
+        },
+      );
 
       test('survives the v2 inner leg alongside media (M3 media forward)', () {
         final inner = keyed(
           media: [
-            {'id': 'm1', 'mime': 'image/jpeg', 'size': 10, 'mediaType': 'image'},
+            {
+              'id': 'm1',
+              'mime': 'image/jpeg',
+              'size': 10,
+              'mediaType': 'image',
+            },
           ],
         ).toInnerJson();
         final restored = MessagePayload.fromDecryptedJson(inner)!;

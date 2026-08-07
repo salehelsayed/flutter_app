@@ -73,51 +73,63 @@ void main() {
       expect(missingColumn.schemaHash, isNot(full.schemaHash));
     });
 
-    test(
-      'v107 inventory includes every typed direct notification authority',
-      () async {
-        db = await openDatabase(
-          inMemoryDatabasePath,
-          version: currentIdentityDatabaseVersion,
-          singleInstance: false,
-          onCreate: runProductionOnCreate,
-          onUpgrade: runProductionOnUpgrade,
-        );
+    test('TC-342-10a v108 inventory contains direct custody', () async {
+      db = await openDatabase(
+        inMemoryDatabasePath,
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      );
 
-        final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(
-          db!,
-        );
+      final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(
+        db!,
+      );
 
-        expect(currentIdentityDatabaseVersion, 107);
-        expect(
-          inventory.tableNames,
-          containsAll(<String>[
-            'direct_notification_display_outbox',
-            'direct_notification_read_acknowledgements',
-            'direct_notification_reaction_terminal_events',
-            'direct_notification_reconciliation_outbox',
-          ]),
-        );
-        expect(
-          inventory.hasColumn(
-            'direct_notification_reaction_terminal_events',
-            'peer_id',
-          ),
-          isTrue,
-        );
-        expect(
-          inventory.hasColumn(
-            'direct_notification_reaction_terminal_events',
-            'terminal_event_id',
-          ),
-          isTrue,
-        );
-        expect(
-          inventory.hasColumn('message_reactions', 'direct_peer_id'),
-          isFalse,
-        );
-      },
-    );
+      expect(currentIdentityDatabaseVersion, 108);
+      expect(
+        inventory.tableNames,
+        containsAll(<String>[
+          'direct_notification_display_outbox',
+          'direct_notification_read_acknowledgements',
+          'direct_notification_reaction_terminal_events',
+          'direct_notification_reconciliation_outbox',
+        ]),
+      );
+      expect(
+        inventory.hasColumn(
+          'direct_notification_reaction_terminal_events',
+          'peer_id',
+        ),
+        isTrue,
+      );
+      expect(
+        inventory.hasColumn(
+          'direct_notification_reaction_terminal_events',
+          'terminal_event_id',
+        ),
+        isTrue,
+      );
+      expect(
+        inventory.hasColumn('message_reactions', 'direct_peer_id'),
+        isFalse,
+      );
+      expect(inventory.tableNames, contains('direct_inbox_custody_outbox'));
+      expect(
+        inventory.tables['direct_inbox_custody_outbox'],
+        containsAll(<String>[
+          'recipient_peer_id',
+          'message_id',
+          'incarnation_id',
+          'wire_envelope',
+          'retry_count',
+          'last_attempt_at',
+          'last_error_code',
+          'created_at',
+          'updated_at',
+        ]),
+      );
+    });
   });
 }
 

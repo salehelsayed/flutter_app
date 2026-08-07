@@ -519,7 +519,9 @@ void main() {
   }
 
   String buildV2EncryptedEnvelopeJson({
+    String id = 'msg-v2-001',
     String senderId = senderPeerId,
+    String? eventId,
     String kem = 'kem-blob',
     String ciphertext = 'cipher-blob',
     String nonce = 'nonce-blob',
@@ -527,6 +529,8 @@ void main() {
     return jsonEncode({
       'type': 'chat_message',
       'version': '2',
+      'id': id,
+      'eventId': ?eventId,
       'senderPeerId': senderId,
       'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     });
@@ -565,7 +569,7 @@ void main() {
         mediaRepo.onSave = () => order.add('attachment');
 
         final (result, _, _) = await handleIncomingChatMessage(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson(id: messageId)),
           messageRepo: messageRepo,
           contactRepo: contactRepo,
           predecryptedText: plaintext,
@@ -595,7 +599,7 @@ void main() {
         mediaRepo.onSave = () => order.add('attachment');
 
         Future<void> receive() => handleIncomingChatMessage(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson(id: messageId)),
           messageRepo: messageRepo,
           contactRepo: contactRepo,
           predecryptedText: plaintext,
@@ -616,7 +620,7 @@ void main() {
 
         mediaRepo.saveError = null;
         final (result, _, _) = await handleIncomingChatMessage(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          message: buildP2PMessage(buildV2EncryptedEnvelopeJson(id: messageId)),
           messageRepo: messageRepo,
           contactRepo: contactRepo,
           predecryptedText: plaintext,
@@ -661,7 +665,7 @@ void main() {
       var promoted = false;
 
       final (result, _, _) = await handleIncomingChatMessage(
-        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        message: buildP2PMessage(buildV2EncryptedEnvelopeJson(id: messageId)),
         messageRepo: messageRepo,
         contactRepo: contactRepo,
         predecryptedText: plaintext,
@@ -686,7 +690,9 @@ void main() {
         final before = DateTime.now().millisecondsSinceEpoch;
 
         final (result, stored, _) = await handleIncomingChatMessage(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: 'private-receive-1'),
+          ),
           messageRepo: messageRepo,
           contactRepo: contactRepo,
           predecryptedText: jsonEncode({
@@ -733,7 +739,9 @@ void main() {
       final mediaRepo = FakeMediaAttachmentRepository();
 
       final (result, stored, _) = await handleIncomingChatMessage(
-        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        message: buildP2PMessage(
+          buildV2EncryptedEnvelopeJson(id: 'private-unsupported-1'),
+        ),
         messageRepo: messageRepo,
         contactRepo: contactRepo,
         predecryptedText: jsonEncode({
@@ -818,7 +826,9 @@ void main() {
           );
 
           final (result, stored, _) = await handleIncomingChatMessage(
-            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: testCase.id),
+            ),
             messageRepo: replayRepo,
             contactRepo: contactRepo,
             predecryptedText: jsonEncode({
@@ -924,7 +934,9 @@ void main() {
           );
 
           final (result, _, _) = await handleIncomingChatMessage(
-            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: testCase.id),
+            ),
             messageRepo: editRepo,
             contactRepo: contactRepo,
             predecryptedText: jsonEncode({
@@ -1007,7 +1019,7 @@ void main() {
           final mediaRepo = FakeMediaAttachmentRepository();
 
           final (result, _, _) = await handleIncomingChatMessage(
-            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            message: buildP2PMessage(buildV2EncryptedEnvelopeJson(id: id)),
             messageRepo: replayRepo,
             contactRepo: contactRepo,
             predecryptedText: jsonEncode({
@@ -2171,7 +2183,9 @@ void main() {
               'errorCode': 'BRIDGE_TIMEOUT',
               'errorMessage': 'Bridge call timed out after 10s',
             };
-          final message = buildP2PMessage(buildV2EncryptedEnvelopeJson());
+          final message = buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: 'msg-replay-001'),
+          );
 
           final (firstResult, firstMsg, _) = await handleIncomingChatMessage(
             message: message,
@@ -2229,7 +2243,10 @@ void main() {
               }),
             };
           final message = buildP2PMessage(
-            buildV2EncryptedEnvelopeJson(senderId: 'different-envelope-sender'),
+            buildV2EncryptedEnvelopeJson(
+              id: 'msg-uuid-001',
+              senderId: 'different-envelope-sender',
+            ),
           );
 
           final (result, msg, _) = await handleIncomingChatMessage(
@@ -2243,6 +2260,302 @@ void main() {
           expect(result, HandleChatMessageResult.unauthorized);
           expect(msg, isNull);
           expect(messageRepo.saved, isEmpty);
+        },
+      );
+
+      test(
+        'TC-342-08 encrypted direct chat rejects outer and authenticated inner message ID mismatch',
+        () async {
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': 'authenticated-inner-id',
+                'text': 'must not persist',
+                'senderPeerId': senderPeerId,
+                'senderUsername': 'Alice',
+                'timestamp': '2026-02-09T15:30:00.000Z',
+              }),
+            };
+          final receiptIds = <String>[];
+          var notificationStaged = false;
+          var notificationPromoted = false;
+
+          final (result, msg, updatedContact) = await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: 'outer-message-id'),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+            sendDeliveryReceipt: (id) async => receiptIds.add(id),
+            stageNotificationDisplayCustody: (_) async {
+              notificationStaged = true;
+            },
+            promoteNotificationDisplayCustody: (_) async {
+              notificationPromoted = true;
+            },
+          );
+
+          expect(result, HandleChatMessageResult.unauthorized);
+          expect(msg, isNull);
+          expect(updatedContact, isNull);
+          expect(messageRepo.saved, isEmpty);
+          expect(contactRepo.upserted, isEmpty);
+          expect(receiptIds, isEmpty);
+          expect(notificationStaged, isFalse);
+          expect(notificationPromoted, isFalse);
+        },
+      );
+
+      test(
+        'matching distinct outer and authenticated inner eventId applies an edit to its target',
+        () async {
+          const targetId = 'edit-target-001';
+          const eventId = 'edit-event-001';
+          const original = ConversationMessage(
+            id: targetId,
+            contactPeerId: senderPeerId,
+            senderPeerId: senderPeerId,
+            text: 'Original text',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          );
+          messageRepo = FakeMessageRepository(
+            existingMessages: {targetId: original},
+          );
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': targetId,
+                'eventId': eventId,
+                'text': 'Edited text',
+                'senderPeerId': senderPeerId,
+                'senderUsername': 'Alice',
+                'timestamp': original.timestamp,
+                'action': MessagePayload.actionEdit,
+                'editedAt': '2026-02-09T16:00:00.000Z',
+              }),
+            };
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: targetId, eventId: eventId),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+          );
+
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(msg, isNotNull);
+          expect(msg!.id, targetId);
+          expect(msg.text, 'Edited text');
+          expect(messageRepo.saved, hasLength(1));
+          expect(messageRepo.saved.single.id, targetId);
+          expect(messageRepo.saved.single.text, 'Edited text');
+        },
+      );
+
+      test(
+        'partial or mismatched edit eventId is unauthorized before side effects',
+        () async {
+          const targetId = 'edit-target-invalid-event';
+          const original = ConversationMessage(
+            id: targetId,
+            contactPeerId: senderPeerId,
+            senderPeerId: senderPeerId,
+            text: 'Original text',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          );
+          final cases =
+              <({String name, String? outerEventId, String? innerEventId})>[
+                (
+                  name: 'outer only',
+                  outerEventId: 'edit-event-outer',
+                  innerEventId: null,
+                ),
+                (
+                  name: 'inner only',
+                  outerEventId: null,
+                  innerEventId: 'edit-event-inner',
+                ),
+                (
+                  name: 'mismatch',
+                  outerEventId: 'edit-event-outer',
+                  innerEventId: 'edit-event-inner',
+                ),
+              ];
+
+          for (final testCase in cases) {
+            final caseRepo = FakeMessageRepository(
+              existingMessages: {targetId: original},
+            );
+            final bridge = FakeDecryptBridge()
+              ..decryptResponse = {
+                'ok': true,
+                'plaintext': jsonEncode({
+                  'id': targetId,
+                  'eventId': ?testCase.innerEventId,
+                  'text': 'Must not apply',
+                  'senderPeerId': senderPeerId,
+                  'senderUsername': 'Alice',
+                  'timestamp': original.timestamp,
+                  'action': MessagePayload.actionEdit,
+                  'editedAt': '2026-02-09T16:00:00.000Z',
+                }),
+              };
+            final receiptIds = <String>[];
+            var notificationStaged = false;
+            var notificationPromoted = false;
+
+            final (
+              result,
+              msg,
+              updatedContact,
+            ) = await handleIncomingChatMessage(
+              message: buildP2PMessage(
+                buildV2EncryptedEnvelopeJson(
+                  id: targetId,
+                  eventId: testCase.outerEventId,
+                ),
+              ),
+              messageRepo: caseRepo,
+              contactRepo: contactRepo,
+              bridge: bridge,
+              ownMlKemSecretKey: 'own-secret-key',
+              sendDeliveryReceipt: (id) async => receiptIds.add(id),
+              stageNotificationDisplayCustody: (_) async {
+                notificationStaged = true;
+              },
+              promoteNotificationDisplayCustody: (_) async {
+                notificationPromoted = true;
+              },
+            );
+
+            expect(
+              result,
+              HandleChatMessageResult.unauthorized,
+              reason: testCase.name,
+            );
+            expect(msg, isNull, reason: testCase.name);
+            expect(updatedContact, isNull, reason: testCase.name);
+            expect(caseRepo.saved, isEmpty, reason: testCase.name);
+            expect(receiptIds, isEmpty, reason: testCase.name);
+            expect(notificationStaged, isFalse, reason: testCase.name);
+            expect(notificationPromoted, isFalse, reason: testCase.name);
+            expect(
+              (await caseRepo.getMessage(targetId))!.text,
+              original.text,
+              reason: testCase.name,
+            );
+          }
+        },
+      );
+
+      test(
+        'normal send carrying an eventId is unauthorized before side effects',
+        () async {
+          const messageId = 'normal-send-with-event';
+          const eventId = 'unexpected-edit-event';
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': messageId,
+                'eventId': eventId,
+                'text': 'Must not persist',
+                'senderPeerId': senderPeerId,
+                'senderUsername': 'Alice',
+                'timestamp': '2026-02-09T15:30:00.000Z',
+              }),
+            };
+          final receiptIds = <String>[];
+          var notificationStaged = false;
+          var notificationPromoted = false;
+
+          final (result, msg, updatedContact) = await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: messageId, eventId: eventId),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+            sendDeliveryReceipt: (id) async => receiptIds.add(id),
+            stageNotificationDisplayCustody: (_) async {
+              notificationStaged = true;
+            },
+            promoteNotificationDisplayCustody: (_) async {
+              notificationPromoted = true;
+            },
+          );
+
+          expect(result, HandleChatMessageResult.unauthorized);
+          expect(msg, isNull);
+          expect(updatedContact, isNull);
+          expect(messageRepo.saved, isEmpty);
+          expect(contactRepo.upserted, isEmpty);
+          expect(receiptIds, isEmpty);
+          expect(notificationStaged, isFalse);
+          expect(notificationPromoted, isFalse);
+        },
+      );
+
+      test(
+        'legacy v2 edit with both eventId fields absent remains accepted',
+        () async {
+          const targetId = 'legacy-edit-target';
+          const original = ConversationMessage(
+            id: targetId,
+            contactPeerId: senderPeerId,
+            senderPeerId: senderPeerId,
+            text: 'Original text',
+            timestamp: '2026-02-09T15:30:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-02-09T15:30:01.000Z',
+          );
+          messageRepo = FakeMessageRepository(
+            existingMessages: {targetId: original},
+          );
+          final bridge = FakeDecryptBridge()
+            ..decryptResponse = {
+              'ok': true,
+              'plaintext': jsonEncode({
+                'id': targetId,
+                'text': 'Legacy edited text',
+                'senderPeerId': senderPeerId,
+                'senderUsername': 'Alice',
+                'timestamp': original.timestamp,
+                'action': MessagePayload.actionEdit,
+                'editedAt': '2026-02-09T16:00:00.000Z',
+              }),
+            };
+
+          final (result, msg, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: targetId),
+            ),
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            ownMlKemSecretKey: 'own-secret-key',
+          );
+
+          expect(result, HandleChatMessageResult.chatMessage);
+          expect(msg, isNotNull);
+          expect(msg!.id, targetId);
+          expect(msg.text, 'Legacy edited text');
+          expect(messageRepo.saved, hasLength(1));
         },
       );
 
@@ -3221,7 +3534,9 @@ void main() {
       // persists a message is by skipping the decrypt entirely.
       final bridge = ThrowingDecryptBridge();
       final (result, stored, _) = await handleIncomingChatMessage(
-        message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+        message: buildP2PMessage(
+          buildV2EncryptedEnvelopeJson(id: 'msg-predecrypt-1'),
+        ),
         messageRepo: messageRepo,
         contactRepo: contactRepo,
         bridge: bridge,
@@ -3254,7 +3569,9 @@ void main() {
         final bridge = ThrowingDecryptBridge();
 
         final (baseResult, _, _) = await handleIncomingChatMessage(
-          message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: 'msg-edit-base-1'),
+          ),
           messageRepo: messageRepo,
           contactRepo: contactRepo,
           bridge: bridge,
@@ -3268,7 +3585,9 @@ void main() {
 
         final lines = await captureDebugPrintedLines(() async {
           final (editResult, _, _) = await handleIncomingChatMessage(
-            message: buildP2PMessage(buildV2EncryptedEnvelopeJson()),
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: 'msg-edit-base-1'),
+            ),
             messageRepo: messageRepo,
             contactRepo: contactRepo,
             bridge: bridge,

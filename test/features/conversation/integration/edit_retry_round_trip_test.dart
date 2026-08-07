@@ -51,7 +51,8 @@ void main() {
       'sender and receiver text converge after a failed-then-retried edit (divergence repair)',
       () async {
         // 1. Healthy send: bob holds the pre-edit text.
-        final bobReceivedOriginal = bob.chatListener.incomingMessageStream.first;
+        final bobReceivedOriginal =
+            bob.chatListener.incomingMessageStream.first;
         final (sendResult, sentMessage) = await alice.sendMessage(
           bob.peerId,
           'original text',
@@ -67,8 +68,9 @@ void main() {
         network.deliveryFails = true;
         network.inboxDisabled = true;
 
-        final recipientKey =
-            (await alice.contactRepo.getContact(bob.peerId))!.mlKemPublicKey;
+        final recipientKey = (await alice.contactRepo.getContact(
+          bob.peerId,
+        ))!.mlKemPublicKey;
         final (editResult, _) = await editChatMessage(
           p2pService: alice.p2pService,
           messageRepo: alice.messageRepo,
@@ -85,9 +87,11 @@ void main() {
         expect(failedRow.editedAt, isNotNull);
         expect(failedRow.wireEnvelope, isNotNull);
 
-        // 3. Heal the direct leg ONLY (inbox stays down so the envelope
-        //    replay fails and the full-send fallback fires).
+        // 3. Heal relay STORE. A current edit event owns one immutable
+        //    envelope/eventId, so retry must replay those exact bytes and may
+        //    not fall through to a fresh direct re-encryption.
         network.deliveryFails = false;
+        network.inboxDisabled = false;
 
         final identityRepo = FakeIdentityRepository()
           ..seed(
@@ -102,6 +106,7 @@ void main() {
             ),
           );
 
+        final bobReceivedEdit = bob.chatListener.incomingMessageStream.first;
         final retried = await retryFailedMessages(
           messageRepo: alice.messageRepo,
           identityRepo: identityRepo,
@@ -110,7 +115,9 @@ void main() {
           bridge: alice.bridge,
         );
         expect(retried, 1);
-        await Future<void>.delayed(const Duration(milliseconds: 150));
+        await bob.p2pService.drainOfflineInbox();
+        await bobReceivedEdit.timeout(const Duration(seconds: 2));
+        await Future<void>.delayed(const Duration(milliseconds: 50));
 
         // 4. Convergence: bob displays the EDITED text with editedAt set
         //    (edit applied via the action-aware receive path), and alice's

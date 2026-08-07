@@ -54,12 +54,8 @@ void logChatWireEnvelope({
   required String wireJson,
 }) {
   final idPart = messageId.isEmpty ? '' : ' id=${shortenMessageId(messageId)}';
-  // Truncate to first 300 chars for readability
-  final preview = wireJson.length > 300
-      ? '${wireJson.substring(0, 300)}...(${wireJson.length} chars)'
-      : wireJson;
   if (kDebugMode) {
-    debugPrint('[CHAT_WIRE_$direction]$idPart envelope=$preview');
+    debugPrint('[CHAT_WIRE_$direction]$idPart wireChars=${wireJson.length}');
   }
 }
 

@@ -76,6 +76,7 @@ class PendingMessageRetrier {
   final Future<int> Function()? clearGroupRetryBackoffFn;
   final Future<int> Function()? retryFailedMessagesOverride;
   final Future<int> Function()? retryUnackedMessagesOverride;
+  final Future<int> Function()? drainDirectInboxCustodyOutboxFn;
   final Future<int> Function()? verifyInboxCustodyFn;
 
   /// 195: OS connectivity-restored edges (the 182 `connectivityRestoredSignal`
@@ -143,6 +144,7 @@ class PendingMessageRetrier {
     this.clearGroupRetryBackoffFn,
     this.retryFailedMessagesOverride,
     this.retryUnackedMessagesOverride,
+    this.drainDirectInboxCustodyOutboxFn,
     this.verifyInboxCustodyFn,
     this.networkRestoredSignal,
     this.retryDebounce = defaultRetryDebounce,
@@ -248,6 +250,11 @@ class PendingMessageRetrier {
     if (_isNetworkRestoredFlushing) return;
     _isNetworkRestoredFlushing = true;
     try {
+      // TC-342-06: exact-envelope sender custody is the first retry family on
+      // the OS-restored light pass. A drain error is isolated so the existing
+      // zero-age unacked and media recovery legs still run.
+      await _drainDirectInboxCustodyOutbox();
+
       try {
         final count = await _retryUnackedMessagesNow(olderThan: Duration.zero);
         if (count > 0) {
@@ -340,6 +347,11 @@ class PendingMessageRetrier {
       bridge: bridge,
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
+      // The full pass has just run the fair global custody drain. Retained
+      // rows still suppress rebuild, but must not be deposited twice in one
+      // automatic trigger. Lightweight/legacy compositions without that
+      // callback retain the standalone bulk retry default.
+      retryDirectInboxCustody: drainDirectInboxCustodyOutboxFn == null,
     );
   }
 
@@ -355,6 +367,27 @@ class PendingMessageRetrier {
       // pass null → the use case default (60s anti-race window).
       olderThan: olderThan ?? const Duration(seconds: 60),
     );
+  }
+
+  Future<void> _drainDirectInboxCustodyOutbox() async {
+    final drain = drainDirectInboxCustodyOutboxFn;
+    if (drain == null) return;
+    try {
+      final count = await drain();
+      if (count > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_RETRIER_DIRECT_INBOX_CUSTODY_DRAINED',
+          details: {'count': count},
+        );
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_DIRECT_INBOX_CUSTODY_DRAIN_ERROR',
+        details: {'errorType': e.runtimeType.toString()},
+      );
+    }
   }
 
   void _startOnlineTimers() {
@@ -573,9 +606,10 @@ class PendingMessageRetrier {
       //   8. group retry failed messages (re-publish)
       //   9. 1:1 recover stuck
       //  10. 1:1 retry incomplete uploads
-      //  11. 1:1 retry failed messages
-      //  12. 1:1 retry unacked messages
-      //  13. intro retry pending deliveries
+      //  11. 1:1 drain direct-text sender custody
+      //  12. 1:1 retry failed messages
+      //  13. 1:1 retry unacked messages
+      //  14. intro retry pending deliveries
       // Confirm (7) runs before re-publish (8): both touch 'pending' rows, and
       // confirm-first prevents re-publishing a pending row custody resolved.
 
@@ -751,6 +785,12 @@ class PendingMessageRetrier {
           // Non-fatal: continue to retryFailedMessages
         }
       }
+
+      // TC-342-06: retry immutable direct-text custody after stuck/upload
+      // recovery and before either message rebuild family. The helper owns its
+      // own error boundary so a poison/drain failure cannot starve failed or
+      // unacked retries.
+      await _drainDirectInboxCustodyOutbox();
 
       // Step 8: Retry failed messages
       final count = await _retryFailedMessagesNow();

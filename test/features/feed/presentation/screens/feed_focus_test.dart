@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -30,6 +33,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p;
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
+import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_app/features/posts/application/pending_post_target_store.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -148,7 +152,11 @@ void main() {
         );
   });
 
-  Future<void> seedPendingThread(String peerId, String name, String body) async {
+  Future<void> seedPendingThread(
+    String peerId,
+    String name,
+    String body,
+  ) async {
     final ts = DateTime.now().toUtc().toIso8601String();
     await messageRepo.saveMessage(
       ConversationMessage(
@@ -289,8 +297,7 @@ void main() {
     addTearDown(tester.view.resetDevicePixelRatio);
   }
 
-  bool flowEmitted(String event) =>
-      flowEvents.any((e) => e['event'] == event);
+  bool flowEmitted(String event) => flowEvents.any((e) => e['event'] == event);
 
   // Mounting the Orbit host (tab switch) renders the all-chats list chrome,
   // which overflows at the test viewport — unrelated to the focus-clear
@@ -340,8 +347,10 @@ void main() {
       // affordance, nav bar fully opaque.
       expect(find.byType(LetterCardOneToOne), findsNWidgets(3));
       expect(find.byType(FeedComposer), findsNothing);
-      expect(find.byKey(const ValueKey('feed-open-full-conversation')),
-          findsNothing);
+      expect(
+        find.byKey(const ValueKey('feed-open-full-conversation')),
+        findsNothing,
+      );
       expect(opacityOf(tester, find.byType(FeedNavigationBar)), 1.0);
 
       // Tap the first card.
@@ -350,8 +359,10 @@ void main() {
 
       // The single shared composer + "open full conversation" appear.
       expect(find.byType(FeedComposer), findsOneWidget);
-      expect(find.byKey(const ValueKey('feed-open-full-conversation')),
-          findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('feed-open-full-conversation')),
+        findsOneWidget,
+      );
 
       // The focused card stays opaque + present; the other two collapse away
       // (AnimatedSize→0) AND fade (AnimatedOpacity→0): their text is gone and
@@ -388,23 +399,22 @@ void main() {
     },
   );
 
-  testWidgets(
-    'TC-21: 1:1 composer placeholder reads "Reply to <contact>…"',
-    (tester) async {
-      setWideViewport(tester);
-      identityRepo.seed(testIdentity);
-      contactRepo.seed([contact('p1', 'Ann')]);
-      await seedPendingThread('p1', 'Ann', 'hi from ann');
+  testWidgets('TC-21: 1:1 composer placeholder reads "Reply to <contact>…"', (
+    tester,
+  ) async {
+    setWideViewport(tester);
+    identityRepo.seed(testIdentity);
+    contactRepo.seed([contact('p1', 'Ann')]);
+    await seedPendingThread('p1', 'Ann', 'hi from ann');
 
-      await tester.pumpWidget(buildWired());
-      await pumpFrames(tester);
+    await tester.pumpWidget(buildWired());
+    await pumpFrames(tester);
 
-      await tester.tap(find.text('hi from ann'));
-      await pumpFrames(tester);
+    await tester.tap(find.text('hi from ann'));
+    await pumpFrames(tester);
 
-      expect(find.text('Reply to Ann…'), findsOneWidget);
-    },
-  );
+    expect(find.text('Reply to Ann…'), findsOneWidget);
+  });
 
   testWidgets(
     'TC-22: composer send appends a green outgoing bubble, keeps focus with '
@@ -452,9 +462,10 @@ void main() {
       identityRepo.seed(testIdentity);
       contactRepo.seed([contact('p1', 'Ann')]);
       await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService.storeInInboxResult = false;
 
-      // p2pService default send fails (no live peer) → SendChatMessageResult is
-      // not success → the optimistic bubble persists with a retry affordance.
+      // No live peer and a rejected exact inbox replay keep both attempts
+      // failed, so the optimistic bubble retains its retry affordance.
       await tester.pumpWidget(buildWired());
       await pumpFrames(tester);
 
@@ -490,9 +501,400 @@ void main() {
       expect(
         retryShownAfter,
         greaterThan(retryShownBefore),
-        reason: 'tapping retry must re-invoke the send (a second failure '
+        reason:
+            'tapping retry must re-invoke the send (a second failure '
             're-emits FEED_SEND_RETRY_SHOWN)',
       );
+    },
+  );
+
+  testWidgets(
+    'TC-342-04b feed retry replays one exact custody row without a second mint',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'one durable retry identity',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('tap to retry'), findsOneWidget);
+      final outgoing = (await messageRepo.getMessagesForContact(
+        'p1',
+      )).where((message) => !message.isIncoming).toList(growable: false);
+      expect(outgoing, hasLength(1));
+      expect(outgoing.single.status, 'failed');
+      expect(messageRepo.directInboxCustodyStageCallCount, 1);
+      expect(messageRepo.directCustodyRows, hasLength(1));
+      final before = messageRepo.directCustodyRows.values.single;
+      expect(before.messageId, outgoing.single.id);
+      final liveCallsBefore = p2pService.sendMessageWithReplyCallCount;
+      final retryCountBefore = before.retryCount;
+
+      await tester.tap(find.text('tap to retry'));
+      await pumpFrames(tester, count: 12);
+
+      final afterMessages = (await messageRepo.getMessagesForContact(
+        'p1',
+      )).where((message) => !message.isIncoming).toList(growable: false);
+      expect(afterMessages, hasLength(1));
+      expect(afterMessages.single.id, before.messageId);
+      expect(messageRepo.directInboxCustodyStageCallCount, 1);
+      expect(messageRepo.directCustodyRows, hasLength(1));
+      final after = messageRepo.directCustodyRows.values.single;
+      expect(after.messageId, before.messageId);
+      expect(after.incarnationId, before.incarnationId);
+      expect(after.wireEnvelope, before.wireEnvelope);
+      expect(after.retryCount, greaterThan(retryCountBefore));
+      expect(p2pService.sendMessageWithReplyCallCount, liveCallsBefore);
+      expect(find.text('tap to retry'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04c feed retry exact-drains custody after its projection disappears',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'custody outlives projection',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      final before = messageRepo.directCustodyRows.values.single;
+      expect(await messageRepo.deleteMessage(before.messageId), 1);
+      final stageCallsBefore = messageRepo.directInboxCustodyStageCallCount;
+      final liveCallsBefore = p2pService.sendMessageWithReplyCallCount;
+      final storeCallsBefore = p2pService.storeInInboxCallCount;
+
+      await tester.tap(find.text('tap to retry'));
+      await pumpFrames(tester, count: 12);
+
+      expect(messageRepo.directInboxCustodyStageCallCount, stageCallsBefore);
+      expect(p2pService.sendMessageWithReplyCallCount, liveCallsBefore);
+      expect(p2pService.storeInInboxCallCount, storeCallsBefore + 1);
+      expect(p2pService.lastStoreInInboxMessage, before.wireEnvelope);
+      final retained = messageRepo.directCustodyRows.values.single;
+      expect(retained.messageId, before.messageId);
+      expect(retained.incarnationId, before.incarnationId);
+      expect(retained.wireEnvelope, before.wireEnvelope);
+      expect(retained.retryCount, greaterThan(before.retryCount));
+      expect(find.text('tap to retry'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04d feed retry converges after projection and custody retire without remint',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'retired authority already converged',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      final retired = messageRepo.directCustodyRows.values.single;
+      expect(await messageRepo.deleteMessage(retired.messageId), 1);
+      final completion = await messageRepo
+          .completeAcceptedDirectInboxCustodyIfExact(
+            expected: retired,
+            relayExpiresAt: 4102444800000,
+          );
+      expect(completion.completed, isTrue);
+      expect(messageRepo.directCustodyRows, isEmpty);
+      final stageCallsBefore = messageRepo.directInboxCustodyStageCallCount;
+      final storeCallsBefore = p2pService.storeInInboxCallCount;
+      final liveCallsBefore = p2pService.sendMessageWithReplyCallCount;
+
+      await tester.tap(find.text('tap to retry'));
+      await pumpFrames(tester, count: 20);
+
+      expect(messageRepo.directInboxCustodyStageCallCount, stageCallsBefore);
+      expect(p2pService.storeInInboxCallCount, storeCallsBefore);
+      expect(p2pService.sendMessageWithReplyCallCount, liveCallsBefore);
+      expect(messageRepo.directCustodyRows, isEmpty);
+      final outgoing = (await messageRepo.getMessagesForContact(
+        'p1',
+      )).where((message) => !message.isIncoming).toList(growable: false);
+      expect(outgoing, isEmpty);
+      expect(find.text('retired authority already converged'), findsNothing);
+      expect(find.text('tap to retry'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04g feed retry may remint only after a positively never-staged failure',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+      bridge.responses['message.encrypt'] = <String, dynamic>{
+        'ok': false,
+        'errorCode': 'TEST_ENCRYPTION_UNAVAILABLE',
+        'errorMessage': 'failed before atomic custody stage',
+      };
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'never staged may retry fresh',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('tap to retry'), findsOneWidget);
+      expect(
+        messageRepo.directInboxCustodyStageCallCount,
+        0,
+        reason: 'the exact custody-stage provenance callback never fired',
+      );
+      expect(messageRepo.directCustodyRows, isEmpty);
+      final firstEncryptRequest = bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .firstWhere((request) => request['cmd'] == 'message.encrypt');
+      final firstInner =
+          jsonDecode(
+                (firstEncryptRequest['payload']
+                        as Map<String, dynamic>)['plaintext']
+                    as String,
+              )
+              as Map<String, dynamic>;
+      final neverStagedMessageId = firstInner['id'] as String;
+
+      bridge.responses.remove('message.encrypt');
+      await tester.tap(find.text('tap to retry'));
+      await pumpFrames(tester, count: 20);
+
+      expect(messageRepo.directInboxCustodyStageCallCount, 1);
+      expect(messageRepo.directCustodyRows, hasLength(1));
+      final replacement = messageRepo.directCustodyRows.values.single;
+      expect(replacement.messageId, isNot(neverStagedMessageId));
+      expect(find.text('tap to retry'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04h thrown pre-send failure permits one fresh retry instead of sticking',
+    (tester) async {
+      setWideViewport(tester);
+      final throwingContactRepo = _ThrowNextGetContactRepository();
+      contactRepo = throwingContactRepo;
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'pre-stage dependency failure may retry fresh',
+      );
+      await tester.pump();
+      throwingContactRepo.throwNextGetContact = true;
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('tap to retry'), findsOneWidget);
+      expect(messageRepo.directInboxCustodyStageCallCount, 0);
+      expect(messageRepo.directCustodyRows, isEmpty);
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+
+      await tester.tap(find.text('tap to retry'));
+      await pumpFrames(tester, count: 20);
+
+      expect(messageRepo.directInboxCustodyStageCallCount, 1);
+      expect(messageRepo.directCustodyRows, hasLength(1));
+      expect(bridge.commandLog, contains('message.encrypt'));
+      expect(find.text('tap to retry'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04i send-owned pre-stage read error permits one fresh retry',
+    (tester) async {
+      setWideViewport(tester);
+      final throwingMessageRepo = _ThrowNextGetMessageRepository();
+      messageRepo = throwingMessageRepo;
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'send-owned pre-stage failure may retry fresh',
+      );
+      await tester.pump();
+      throwingMessageRepo.throwNextGetMessage = true;
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      expect(find.text('tap to retry'), findsOneWidget);
+      expect(messageRepo.directInboxCustodyStageCallCount, 0);
+      expect(messageRepo.directCustodyRows, isEmpty);
+      expect(bridge.commandLog, isNot(contains('message.encrypt')));
+
+      await tester.tap(find.text('tap to retry'));
+      await pumpFrames(tester, count: 20);
+
+      expect(messageRepo.directInboxCustodyStageCallCount, 1);
+      expect(messageRepo.directCustodyRows, hasLength(1));
+      expect(bridge.commandLog, contains('message.encrypt'));
+      expect(find.text('tap to retry'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04f feed retry converges when a competing drain retires missing projection custody',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      p2pService
+        ..emitState(const NodeState(isStarted: true, peerId: 'me-peer'))
+        ..sendMessageResult = false
+        ..sendMessageWithReplyResult = const SendMessageResult(
+          sent: false,
+          acked: false,
+        )
+        ..dialPeerResult = false
+        ..storeInInboxResult = false;
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'concurrent completion wins',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 20);
+
+      final pending = messageRepo.directCustodyRows.values.single;
+      expect(await messageRepo.deleteMessage(pending.messageId), 1);
+      final stageCallsBefore = messageRepo.directInboxCustodyStageCallCount;
+      final retryStoreEntered = Completer<void>();
+      final releaseRetryStore = Completer<void>();
+      p2pService.onStoreInInbox = (peerId, envelope, {timeoutMs}) async {
+        if (!retryStoreEntered.isCompleted) retryStoreEntered.complete();
+        await releaseRetryStore.future;
+        return true;
+      };
+
+      await tester.tap(find.text('tap to retry'));
+      await tester.pump();
+      await retryStoreEntered.future;
+      final competingCompletion = await messageRepo
+          .completeAcceptedDirectInboxCustodyIfExact(
+            expected: pending,
+            relayExpiresAt: 4102444800000,
+          );
+      expect(competingCompletion.completed, isTrue);
+      expect(messageRepo.directCustodyRows, isEmpty);
+      releaseRetryStore.complete();
+      await pumpFrames(tester, count: 12);
+
+      expect(find.text('concurrent completion wins'), findsNothing);
+      expect(find.text('tap to retry'), findsNothing);
+      expect(messageRepo.directInboxCustodyStageCallCount, stageCallsBefore);
+      expect(messageRepo.directCustodyRows, isEmpty);
     },
   );
 
@@ -595,6 +997,42 @@ void main() {
 
       // Read is DEFERRED to leave: the conversation stays unread after a send.
       expect(await messageRepo.getUnreadCountForContact('p1'), 1);
+    },
+  );
+
+  testWidgets(
+    'TC-342-04e successful send does not resurrect a concurrently removed projection',
+    (tester) async {
+      setWideViewport(tester);
+      identityRepo.seed(testIdentity);
+      contactRepo.seed([contact('p1', 'Ann')]);
+      await seedPendingThread('p1', 'Ann', 'hi from ann');
+      seedLiveConnection('p1');
+      p2pService.storeInInboxResult = false;
+      messageRepo.afterDirectInboxCustodyStage = (staged) async {
+        expect(await messageRepo.deleteMessage(staged.id), 1);
+      };
+
+      await tester.pumpWidget(buildWired());
+      await pumpFrames(tester);
+      await tester.tap(find.text('hi from ann'));
+      await pumpFrames(tester);
+      await tester.enterText(
+        find.byKey(const ValueKey('feed-composer-field')),
+        'removed after durable stage',
+      );
+      await tester.pump();
+      await tester.tap(find.byKey(const ValueKey('feed-composer-send')));
+      await pumpFrames(tester, count: 16);
+
+      expect(find.text('removed after durable stage'), findsNothing);
+      expect(find.text('hi from ann'), findsOneWidget);
+      final outgoing = (await messageRepo.getMessagesForContact(
+        'p1',
+      )).where((message) => !message.isIncoming);
+      expect(outgoing, isEmpty);
+      expect(messageRepo.directCustodyRows, hasLength(1));
+      expect(messageRepo.directInboxCustodyStageCallCount, 1);
     },
   );
 
@@ -1016,4 +1454,30 @@ void main() {
       expect(await messageRepo.getUnreadCountForContact('p1'), 3);
     },
   );
+}
+
+class _ThrowNextGetContactRepository extends FakeContactRepository {
+  bool throwNextGetContact = false;
+
+  @override
+  Future<ContactModel?> getContact(String peerId) {
+    if (throwNextGetContact) {
+      throwNextGetContact = false;
+      throw StateError('synthetic pre-send contact lookup failure');
+    }
+    return super.getContact(peerId);
+  }
+}
+
+class _ThrowNextGetMessageRepository extends InMemoryMessageRepository {
+  bool throwNextGetMessage = false;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) {
+    if (throwNextGetMessage) {
+      throwNextGetMessage = false;
+      throw StateError('synthetic send-owned pre-stage message read failure');
+    }
+    return super.getMessage(id);
+  }
 }

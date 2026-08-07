@@ -61,6 +61,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
+import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/fake_secure_key_store.dart' show FakeSecureKeyStore;
 import '_support/test_db_seeder.dart';
 
@@ -178,12 +179,24 @@ class _Stack {
 
 Future<_Stack> _buildFreshStack() async {
   final secureKeyStore = FakeSecureKeyStore();
-  final db = await openE2EDatabase(
-    secureKeyStore: secureKeyStore,
-    dbName: _dbName,
-    version: _kTestDbVersion,
+  final hasDirectTextCustodySchema = _role == 'sender';
+  final db = hasDirectTextCustodySchema
+      ? await openCurrentProductionE2EDatabase(
+          secureKeyStore: secureKeyStore,
+          dbName: _dbName,
+        )
+      : await openE2EDatabase(
+          secureKeyStore: secureKeyStore,
+          dbName: _dbName,
+          version: _kTestDbVersion,
+        );
+  _log(
+    'Fresh test DB opened (name=$_dbName schema='
+    '${hasDirectTextCustodySchema ? 'current' : 'v$_kTestDbVersion'})',
   );
-  _log('Fresh test DB opened (name=$_dbName version=$_kTestDbVersion)');
+  final custodyDb = hasDirectTextCustodySchema
+      ? DirectInboxCustodyDbBindings(db)
+      : null;
 
   final identityRepo = IdentityRepositoryImpl(
     dbLoadIdentityRow: () => dbLoadIdentityRow(db),
@@ -267,6 +280,12 @@ Future<_Stack> _buildFreshStack() async {
               stagedRow: stagedRow,
               kind: kind,
             ),
+    dbStageOutgoingDirectTextInboxCustody: custodyDb?.stage,
+    dbLoadDirectInboxCustodyOutbox: custodyDb?.load,
+    dbLoadDirectInboxCustodyOutboxForMessage: custodyDb?.loadForMessage,
+    dbRecordDirectInboxCustodyFailureIfExact: custodyDb?.recordFailureIfExact,
+    dbCompleteAcceptedDirectInboxCustodyIfExact:
+        custodyDb?.completeAcceptedIfExact,
     dbSettleOutgoingOrdinaryTransport:
         ({
           required messageId,

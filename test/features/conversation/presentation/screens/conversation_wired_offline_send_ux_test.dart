@@ -35,8 +35,8 @@ import '../../../../shared/fakes/fake_audio_recorder_service.dart';
 //   S1 (TC-04): a send-failure SnackBar carries a bottom margin so it never
 //       renders over the bottom composer / Send button.
 // plus two preservation locks:
-//   TC-03: the optimistic sending->failed bubble status survives the
-//       (now background-resolving) send completion.
+//   TC-03: a custody-authoritative failed result replaces the memory-only
+//       optimistic bubble after the background send completes.
 //   TC-02: one Send tap == exactly one outgoing message (no duplicate-send
 //       once the global re-entrancy lock is relaxed).
 //
@@ -469,9 +469,10 @@ class _GatedSendRecorder {
 
   int get pending => _completers.length;
 
-  /// Resolve the last in-flight send as [result] with a NULL message — the
-  /// early-return failure shape (invalidMessage / nodeNotRunning /
-  /// encryptionRequired) the UI handles in its `message == null` branch.
+  /// Resolve the last in-flight send as [result] with a NULL message — a
+  /// no-authority failure shape (invalidMessage / encryptionRequired, or
+  /// nodeNotRunning when custody capability is unavailable) handled by the
+  /// UI's `message == null` branch.
   void completeLast(SendChatMessageResult result) {
     _completers.last.complete((result, null));
   }
@@ -496,6 +497,7 @@ class _GatedSendRecorder {
         required String senderPeerId,
         required String senderUsername,
         String? messageId,
+        required bool preassignedMessageIdIsFresh,
         String? timestamp,
         dynamic bridge,
         String? recipientMlKemPublicKey,
@@ -667,9 +669,26 @@ void main() {
         await _typeAndSend(tester, 'offline message');
         expect(recorder.callCount, 1);
 
-        // Resolve the in-flight send as the offline failure
-        // (nodeNotRunning -> the honest sender-offline copy).
-        recorder.completeLast(SendChatMessageResult.nodeNotRunning);
+        // Production's fresh-text node-stopped path has already staged exact
+        // custody and returns its authoritative failed row. The snackbar's
+        // promise is therefore backed by durable retry ownership.
+        final sentId = recorder.messageIds.last!;
+        final failedMessage = ConversationMessage(
+          id: sentId,
+          contactPeerId: _contactPeerId,
+          senderPeerId: _identity.peerId,
+          text: 'offline message',
+          timestamp: '2026-08-06T10:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-08-06T10:00:00.000Z',
+          wireEnvelope: '{"type":"chat_message","version":"2"}',
+        );
+        await messageRepo.saveMessage(failedMessage);
+        recorder.completeLastWithMessage(
+          SendChatMessageResult.nodeNotRunning,
+          failedMessage,
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 800)); // slide-in
 
@@ -719,8 +738,8 @@ void main() {
     );
 
     testWidgets(
-      'PRESERVE optimistic sending->failed bubble status survives the '
-      'background send completion',
+      'PRESERVE custody-authoritative failed status replaces the memory-only '
+      'optimistic bubble after background completion',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final recorder = _GatedSendRecorder();
@@ -740,8 +759,26 @@ void main() {
         expect(find.byIcon(Icons.done_rounded), findsOneWidget);
         expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
 
-        // Resolve as a failure -> the bubble must transition sending->failed.
-        recorder.completeLast(SendChatMessageResult.nodeNotRunning);
+        // Production nodeNotRunning now returns the failed row created by the
+        // atomic message-plus-custody stage. Mirror that authoritative shape;
+        // the presentation layer must replace its memory-only optimism with it.
+        final sentId = recorder.messageIds.last!;
+        final failedMessage = ConversationMessage(
+          id: sentId,
+          contactPeerId: _contactPeerId,
+          senderPeerId: _identity.peerId,
+          text: 'preserve me',
+          timestamp: '2026-08-06T10:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-08-06T10:00:00.000Z',
+          wireEnvelope: '{"type":"chat_message","version":"2"}',
+        );
+        await messageRepo.saveMessage(failedMessage);
+        recorder.completeLastWithMessage(
+          SendChatMessageResult.nodeNotRunning,
+          failedMessage,
+        );
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 50));
         await tester.pump();
@@ -750,8 +787,8 @@ void main() {
           find.byIcon(Icons.error_outline_rounded),
           findsOneWidget,
           reason:
-              'the failed status write on the background completion must still '
-              'drive the bubble (this is the retry affordance source)',
+              'the custody-authoritative failed row must drive the bubble '
+              '(this is the retry affordance source)',
         );
         expect(find.byIcon(Icons.done_rounded), findsNothing);
 
@@ -816,10 +853,12 @@ void main() {
     // failure path returns a failedMessage — send_chat_message_use_case.dart
     // :1305-1345), so the real offline path is the `message != null` branch,
     // locked by TC-185-01b below. Plan 336 deliberately keeps this
-    // envelope-less shape on the exact sending -> failed CAS; it has no
-    // transport authority with which to mint a retriable sent row.
+    // Under Plan 342 fresh ordinary text is only memory-optimistic before the
+    // atomic custody stage. A null result therefore has no durable authority
+    // to paint or retain a failed row: the bubble is removed and the draft is
+    // restored.
     testWidgets(
-      "TC-185-01 envelope-less defensive else-branch remains terminal 'failed'",
+      'TC-185-01 envelope-less fresh result removes memory-only optimism and restores the draft',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final recorder = _GatedSendRecorder();
@@ -839,24 +878,18 @@ void main() {
         // Synthetic null-message resolution -> the UI's else branch.
         recorder.completeLast(SendChatMessageResult.peerNotFound);
         await tester.pump();
-        await tester.pump(const Duration(milliseconds: 50));
+        await tester.pump(const Duration(milliseconds: 800));
         await tester.pump();
 
-        final stored = messageRepo.store.values.firstWhere(
-          (m) => m.text == 'offline retriable',
-        );
+        expect(messageRepo.store, isEmpty);
         expect(
-          stored.status,
-          'failed',
-          reason:
-              'an envelope-less result has no transport authority and must '
-              'use the exact sending -> failed CAS',
+          tester
+              .widget<TextField>(find.byType(TextField).first)
+              .controller
+              ?.text,
+          'offline retriable',
         );
-        expect(
-          find.byKey(ValueKey('failed-message-retry-${stored.id}')),
-          findsOneWidget,
-        );
-        expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
         expect(find.byIcon(Icons.done_rounded), findsNothing);
       },
     );
@@ -948,7 +981,7 @@ void main() {
     }
 
     testWidgets(
-      'TC-185-02 online peerNotFound still fails (no over-correction)',
+      'TC-185-02 online NULL peerNotFound has no custody authority and restores the draft',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final recorder = _GatedSendRecorder();
@@ -970,20 +1003,16 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 800));
 
-        final stored = messageRepo.store.values.firstWhere(
-          (m) => m.text == 'online fail',
-        );
+        expect(messageRepo.store, isEmpty);
         expect(
-          stored.status,
-          'failed',
-          reason:
-              'a genuine failure while WE are online must stay failed — the fix '
-              'must not blanket-reclassify (mutation: ignore relayReady -> red)',
+          tester
+              .widget<TextField>(find.byType(TextField).first)
+              .controller
+              ?.text,
+          'online fail',
         );
-        expect(
-          find.byKey(ValueKey('failed-message-retry-${stored.id}')),
-          findsOneWidget,
-        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_rounded), findsNothing);
       },
     );
 
@@ -1264,8 +1293,8 @@ void main() {
     );
 
     testWidgets(
-      'TC-192-03 PRESERVE online NULL-shaped sendFailed (no envelope) stays '
-      'terminal failed with a Retry',
+      'TC-192-03 online NULL-shaped sendFailed has no custody authority and '
+      'restores the draft',
       (tester) async {
         final messageRepo = _FakeMessageRepository();
         final recorder = _GatedSendRecorder();
@@ -1284,20 +1313,16 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 800));
 
-        final stored = messageRepo.store.values.firstWhere(
-          (m) => m.text == 'online terminal',
-        );
+        expect(messageRepo.store, isEmpty);
         expect(
-          stored.status,
-          'failed',
-          reason:
-              'no envelope -> not self-healing -> must stay terminal failed '
-              '(mutation lock: dropping the message != null guard re-reds)',
+          tester
+              .widget<TextField>(find.byType(TextField).first)
+              .controller
+              ?.text,
+          'online terminal',
         );
-        expect(
-          find.byKey(ValueKey('failed-message-retry-${stored.id}')),
-          findsOneWidget,
-        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(find.byIcon(Icons.done_rounded), findsNothing);
       },
     );
   });

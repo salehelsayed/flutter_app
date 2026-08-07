@@ -980,9 +980,17 @@ void main() {
 
       await _sendNotificationResponse(payload: newPayload, notificationId: id);
       await _waitForAsyncNotificationWork(
-        until: () =>
-            log.where((call) => call.method == 'cancel').length ==
-            baselineCancels + 1,
+        until: () async {
+          if (log.where((call) => call.method == 'cancel').length !=
+              baselineCancels + 1) {
+            return false;
+          }
+          return await registry.lookupContentMetadata(
+                conversationKey: key,
+                notificationId: id,
+              ) ==
+              null;
+        },
       );
 
       expect(tapped, <String>[
@@ -1119,11 +1127,13 @@ Future<void> _sendNotificationResponse({
       );
 }
 
-Future<void> _waitForAsyncNotificationWork({bool Function()? until}) async {
+Future<void> _waitForAsyncNotificationWork({
+  FutureOr<bool> Function()? until,
+}) async {
   final deadline = DateTime.now().add(const Duration(seconds: 2));
   do {
     await Future<void>.delayed(const Duration(milliseconds: 5));
-    if (until == null || until()) return;
+    if (until == null || await until()) return;
   } while (DateTime.now().isBefore(deadline));
   throw StateError('timed out waiting for notification callback work');
 }

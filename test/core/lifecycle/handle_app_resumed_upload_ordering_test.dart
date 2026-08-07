@@ -2,6 +2,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
+import '../../features/contacts/domain/repositories/fake_contact_repository.dart';
+import '../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../services/fake_p2p_service.dart';
 import '../bridge/fake_bridge.dart';
 
@@ -29,6 +31,93 @@ void main() {
   });
 
   group('handleAppResumed -- retryIncompleteUploads ordering', () {
+    test(
+      'TC-342-06 resume drains direct text custody before failed and unacked rebuild',
+      () async {
+        final callOrder = <String>[];
+
+        await handleAppResumed(
+          bridge: fakeBridge,
+          p2pService: fakeP2PService,
+          recoverStuckSendingMessagesFn: () async {
+            callOrder.add('recoverStuckSendingMessages');
+            return 0;
+          },
+          retryIncompleteUploadsFn: () async {
+            callOrder.add('retryIncompleteUploads');
+            return 0;
+          },
+          drainDirectInboxCustodyOutboxFn: () async {
+            callOrder.add('drainDirectInboxCustodyOutbox');
+            throw StateError('forced custody drain failure');
+          },
+          retryFailedMessagesFn: () async {
+            callOrder.add('retryFailedMessages');
+            return 0;
+          },
+          retryUnackedMessagesFn: () async {
+            callOrder.add('retryUnackedMessages');
+            return 0;
+          },
+        );
+
+        expect(callOrder, <String>[
+          'recoverStuckSendingMessages',
+          'retryIncompleteUploads',
+          'drainDirectInboxCustodyOutbox',
+          'retryFailedMessages',
+          'retryUnackedMessages',
+        ]);
+      },
+    );
+
+    test(
+      'resume isolates key exchange and post retry throws before custody and message recovery',
+      () async {
+        final callOrder = <String>[];
+
+        await handleAppResumed(
+          bridge: fakeBridge,
+          p2pService: fakeP2PService,
+          contactRepo: FakeContactRepository(),
+          identityRepo: FakeIdentityRepository(),
+          retryIncompleteKeyExchangesFn: () async {
+            callOrder.add('retryIncompleteKeyExchanges');
+            throw StateError('forced key exchange failure');
+          },
+          retryPendingPostMediaUploads: () async {
+            callOrder.add('retryPendingPostMediaUploads');
+            throw StateError('forced post media failure');
+          },
+          retryPendingPostDeliveries: () async {
+            callOrder.add('retryPendingPostDeliveries');
+            throw StateError('forced post delivery failure');
+          },
+          drainDirectInboxCustodyOutboxFn: () async {
+            callOrder.add('drainDirectInboxCustodyOutbox');
+            return 0;
+          },
+          retryFailedMessagesFn: () async {
+            callOrder.add('retryFailedMessages');
+            return 0;
+          },
+          retryUnackedMessagesFn: () async {
+            callOrder.add('retryUnackedMessages');
+            return 0;
+          },
+        );
+
+        expect(callOrder, <String>[
+          'retryIncompleteKeyExchanges',
+          'retryPendingPostMediaUploads',
+          'retryPendingPostDeliveries',
+          'drainDirectInboxCustodyOutbox',
+          'retryFailedMessages',
+          'retryUnackedMessages',
+        ]);
+      },
+    );
+
     test(
       'calls custody verification after retryUnackedMessages and before introduction retry',
       () async {

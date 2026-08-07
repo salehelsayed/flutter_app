@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
@@ -12,15 +13,23 @@ class InMemoryMessageRepository
     implements
         MessageRepository,
         OutgoingTransportMutationRepository,
+        OutgoingDirectTextInboxCustodyRepository,
         ConversationThreadSummaryRepository,
         MessageRepositoryChangeSource,
         ConversationReadEventSource {
   final Map<String, ConversationMessage> _messages = {};
+  final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
+  int directInboxCustodyStageCallCount = 0;
+  Future<void> Function(ConversationMessage staged)?
+  afterDirectInboxCustodyStage;
   final StreamController<ConversationMessage> _messageChangeController =
       StreamController<ConversationMessage>.broadcast();
   // 194: mirrors the impl — conversation-level read signal (peerId).
   final StreamController<String> _conversationReadController =
       StreamController<String>.broadcast();
+
+  @override
+  bool get supportsDirectTextInboxCustody => true;
 
   // 160 spy counters: distinguish the unbounded full-load path from the
   // batched-summary + bounded-page paths so widget tests can assert the feed
@@ -559,6 +568,184 @@ class InMemoryMessageRepository
         relayExpiresAt: null,
         custodyCheckedAt: null,
       ),
+    );
+  }
+
+  String _directCustodyKey(String recipientPeerId, String messageId) =>
+      '$recipientPeerId\u0000$messageId';
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String incarnationId,
+    required String wireEnvelope,
+  }) async {
+    directInboxCustodyStageCallCount++;
+    final key = _directCustodyKey(recipientPeerId, staged.id);
+    final current = _messages[staged.id];
+    final custody = directCustodyRows[key];
+    final validFreshAuthority =
+        kind == OutgoingOrdinaryAttemptKind.fresh &&
+        expected == null &&
+        staged.contactPeerId == recipientPeerId &&
+        staged.wireEnvelope == wireEnvelope &&
+        incarnationId.length == 32 &&
+        wireEnvelope.isNotEmpty;
+    if (!validFreshAuthority) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current != null || custody != null) {
+      final exact =
+          current != null &&
+          custody != null &&
+          _sameMessageSnapshot(current, staged) &&
+          custody.incarnationId == incarnationId &&
+          custody.wireEnvelope == wireEnvelope;
+      return _ordinaryResult(
+        exact
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.refused,
+        current,
+      );
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    _messages[staged.id] = staged;
+    directCustodyRows[key] = DirectInboxCustodyOutboxEntry(
+      recipientPeerId: recipientPeerId,
+      messageId: staged.id,
+      incarnationId: incarnationId,
+      wireEnvelope: wireEnvelope,
+      retryCount: 0,
+      lastAttemptAt: null,
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    await afterDirectInboxCustodyStage?.call(staged);
+    _messageChangeController.add(staged);
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, staged);
+  }
+
+  @override
+  Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
+    int limit = 50,
+  }) async {
+    final rows = directCustodyRows.values.toList()
+      ..sort((left, right) {
+        if (left.lastAttemptAt == null && right.lastAttemptAt != null) {
+          return -1;
+        }
+        if (left.lastAttemptAt != null && right.lastAttemptAt == null) {
+          return 1;
+        }
+        final byAttempt = (left.lastAttemptAt ?? '').compareTo(
+          right.lastAttemptAt ?? '',
+        );
+        if (byAttempt != 0) {
+          return byAttempt;
+        }
+        final byCreated = left.createdAt.compareTo(right.createdAt);
+        if (byCreated != 0) {
+          return byCreated;
+        }
+        final byPeer = left.recipientPeerId.compareTo(right.recipientPeerId);
+        return byPeer != 0 ? byPeer : left.messageId.compareTo(right.messageId);
+      });
+    final bounded = limit < 0 ? 0 : (limit > 50 ? 50 : limit);
+    return rows.take(bounded).toList(growable: false);
+  }
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyForMessage({
+    required String recipientPeerId,
+    required String messageId,
+  }) async => directCustodyRows[_directCustodyKey(recipientPeerId, messageId)];
+
+  @override
+  Future<bool> recordDirectInboxCustodyFailureIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    if (!DirectInboxCustodyErrorCode.values.contains(errorCode)) return false;
+    final key = _directCustodyKey(expected.recipientPeerId, expected.messageId);
+    final current = directCustodyRows[key];
+    if (current == null ||
+        current.incarnationId != expected.incarnationId ||
+        current.wireEnvelope != expected.wireEnvelope) {
+      return false;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    directCustodyRows[key] = current.copyWith(
+      retryCount: current.retryCount + 1,
+      lastAttemptAt: now,
+      lastErrorCode: errorCode,
+      updatedAt: now,
+    );
+    return true;
+  }
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final key = _directCustodyKey(expected.recipientPeerId, expected.messageId);
+    final custody = directCustodyRows[key];
+    if (custody == null ||
+        custody.incarnationId != expected.incarnationId ||
+        custody.wireEnvelope != expected.wireEnvelope) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.stale,
+        message: null,
+      );
+    }
+
+    final current = _messages[expected.messageId];
+    directCustodyRows.remove(key);
+    if (current == null) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messageRemoved,
+        message: null,
+      );
+    }
+    if (!const <String>{
+          'sending',
+          'sent',
+          'failed',
+          'inboxed',
+        }.contains(current.status) ||
+        current.isDeleted ||
+        current.hiddenAt != null) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
+        message: current,
+      );
+    }
+    if (current.status == 'inboxed' &&
+        current.transport == 'inbox' &&
+        (relayExpiresAt == null || current.relayExpiresAt == relayExpiresAt)) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
+        message: current,
+      );
+    }
+
+    final advanced = current.copyWith(
+      status: 'inboxed',
+      transport: 'inbox',
+      relayExpiresAt: relayExpiresAt,
+      custodyCheckedAt: null,
+    );
+    _messages[current.id] = advanced;
+    _messageChangeController.add(advanced);
+    return DirectInboxCustodyCompletionResult(
+      outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
+      message: advanced,
     );
   }
 

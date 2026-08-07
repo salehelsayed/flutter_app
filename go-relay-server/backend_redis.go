@@ -269,7 +269,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 
 	key := b.key(toPeerId)
 	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
-	msgID := extractMessageId(entry.Message)
+	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
 	var result InboxStoreResult
 	pruned := 0
 	evicted := 0
@@ -286,9 +286,9 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 		pruned = prunedInTx
 		evicted = 0
 
-		if msgID != "" {
+		if dedupeKey != "" {
 			for _, message := range validMessages {
-				if extractMessageId(message.Message) == msgID {
+				if extractDirectInboxDedupeKey(message.Message) == dedupeKey {
 					if len(validRaw) != len(rawEntries) {
 						if err := redisReplaceList(tx, key, validRaw); err != nil {
 							return err

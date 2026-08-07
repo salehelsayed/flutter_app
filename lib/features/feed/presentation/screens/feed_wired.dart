@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
@@ -32,9 +33,11 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/load_reactions_use_case.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -2076,6 +2079,57 @@ class _FeedWiredState extends State<FeedWired>
     if (mounted) setState(() {});
   }
 
+  void _recordSessionOutgoingDurableAuthority(
+    String threadId,
+    String messageId, {
+    required bool acquired,
+  }) {
+    final list = _feedSessionOutgoing[threadId];
+    if (list == null) return;
+    final idx = list.indexWhere((reply) => reply.messageId == messageId);
+    if (idx < 0) return;
+    final current = list[idx];
+    // Once exact durable authority has been observed, absence can only mean
+    // convergence elsewhere. Never downgrade that provenance to "not staged".
+    if (current.hadDurableAuthority == true ||
+        current.hadDurableAuthority == acquired) {
+      return;
+    }
+    list[idx] = current.copyWith(hadDurableAuthority: acquired);
+    if (mounted) setState(() {});
+  }
+
+  bool? _sessionOutgoingDurableAuthority(String threadId, String messageId) {
+    final list = _feedSessionOutgoing[threadId];
+    if (list == null) return null;
+    final idx = list.indexWhere((reply) => reply.messageId == messageId);
+    return idx < 0 ? null : list[idx].hadDurableAuthority;
+  }
+
+  void _removeSessionOutgoing(String threadId, String messageId) {
+    final list = _feedSessionOutgoing[threadId];
+    if (list == null) return;
+    list.removeWhere((reply) => reply.messageId == messageId);
+    if (list.isEmpty) _feedSessionOutgoing.remove(threadId);
+    if (mounted) setState(() {});
+  }
+
+  bool _replaceSessionOutgoing(
+    String threadId,
+    FeedSessionReply expected,
+    FeedSessionReply replacement,
+  ) {
+    final list = _feedSessionOutgoing[threadId];
+    if (list == null) return false;
+    final idx = list.indexWhere(
+      (reply) => reply.messageId == expected.messageId,
+    );
+    if (idx < 0) return false;
+    list[idx] = replacement;
+    if (mounted) setState(() {});
+    return true;
+  }
+
   Future<void> _dispatchFeedComposerSend(
     String threadId,
     FeedSessionReply reply,
@@ -2087,28 +2141,75 @@ class _FeedWiredState extends State<FeedWired>
       return;
     }
     // 1:1 / system letters both resolve to a contact send.
-    final ok = await _sendContactComposerReply(threadId, reply.text);
+    final ok = await _sendContactComposerReply(
+      threadId,
+      reply.text,
+      messageId: reply.messageId,
+    );
     if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
+  }
+
+  Future<bool?> _observeExactDirectTextCustody(
+    String contactPeerId,
+    String messageId,
+  ) async {
+    final messageRepository = widget.messageRepository;
+    if (messageRepository is! OutgoingDirectTextInboxCustodyRepository) {
+      return false;
+    }
+    final custodyRepository =
+        messageRepository as OutgoingDirectTextInboxCustodyRepository;
+    if (!custodyRepository.supportsDirectTextInboxCustody) return false;
+    try {
+      return await custodyRepository.loadDirectInboxCustodyForMessage(
+            recipientPeerId: contactPeerId,
+            messageId: messageId,
+          ) !=
+          null;
+    } catch (_) {
+      // Unknown is intentionally distinct from a positive never-staged result:
+      // a retry may not mint a second identity after an authority read failed.
+      return null;
+    }
   }
 
   /// Sends a 1:1 reply for the focused composer. Returns false (so the caller
   /// can surface a retry affordance) on any failure — never silently.
   Future<bool> _sendContactComposerReply(
     String contactPeerId,
-    String text,
-  ) async {
+    String text, {
+    required String messageId,
+  }) async {
     final identity = _identity;
-    if (identity == null) return false;
+    if (identity == null) {
+      _recordSessionOutgoingDurableAuthority(
+        contactPeerId,
+        messageId,
+        acquired: false,
+      );
+      return false;
+    }
     final sanitizedText = sanitizeMessageText(text);
     String? bgTaskId;
     ConversationMessage? optimisticMessage;
+    var custodyStageCommitted = false;
+    var sendUseCaseInvoked = false;
     try {
       final contact = await widget.contactRepository.getContact(contactPeerId);
-      if (contact == null || !mounted) return false;
+      if (contact == null || !mounted) {
+        if (mounted) {
+          _recordSessionOutgoingDurableAuthority(
+            contactPeerId,
+            messageId,
+            acquired: false,
+          );
+        }
+        return false;
+      }
 
       final timestamp = DateTime.now().toUtc().toIso8601String();
       optimisticMessage = ConversationMessage(
-        id: _uuid.v4(),
+        id: messageId,
         contactPeerId: contactPeerId,
         senderPeerId: identity.peerId,
         text: sanitizedText,
@@ -2117,11 +2218,9 @@ class _FeedWiredState extends State<FeedWired>
         isIncoming: false,
         createdAt: timestamp,
       );
-      try {
-        await widget.messageRepository.saveMessage(optimisticMessage);
-      } catch (_) {}
 
       bgTaskId = await callBgBegin(widget.bridge);
+      sendUseCaseInvoked = true;
       final (result, message) = await sendChatMessage(
         p2pService: widget.p2pService,
         messageRepo: widget.messageRepository,
@@ -2130,12 +2229,43 @@ class _FeedWiredState extends State<FeedWired>
         senderPeerId: identity.peerId,
         senderUsername: identity.username,
         messageId: optimisticMessage.id,
+        preassignedMessageIdIsFresh: true,
         timestamp: optimisticMessage.timestamp,
         bridge: widget.bridge,
         recipientMlKemPublicKey: contact.mlKemPublicKey,
         transportMetrics: widget.transportMetrics,
+        onDirectTextCustodyStaged: (stagedMessageId) {
+          if (stagedMessageId != messageId) return;
+          custodyStageCommitted = true;
+          if (mounted) {
+            _recordSessionOutgoingDurableAuthority(
+              contactPeerId,
+              messageId,
+              acquired: true,
+            );
+          }
+        },
       );
+      final observedCustody = message == null && !custodyStageCommitted
+          ? await _observeExactDirectTextCustody(contactPeerId, messageId)
+          : null;
       if (!mounted) return false;
+
+      if (message != null || observedCustody == true) {
+        _recordSessionOutgoingDurableAuthority(
+          contactPeerId,
+          messageId,
+          acquired: true,
+        );
+      } else if (!custodyStageCommitted &&
+          observedCustody == false &&
+          result != SendChatMessageResult.success) {
+        _recordSessionOutgoingDurableAuthority(
+          contactPeerId,
+          messageId,
+          acquired: false,
+        );
+      }
 
       if (result == SendChatMessageResult.success) {
         // B5: do NOT mark the conversation read on send — the incoming bubbles
@@ -2146,10 +2276,14 @@ class _FeedWiredState extends State<FeedWired>
         // 160 B5: merge the held optimistic outgoing IN MEMORY (no full DB
         // re-read) so the green bubble appears immediately; mirrors the
         // incoming/status-flip merge and dedupes by id.
-        _mergeOutgoingContactMessageIntoFeed(
-          contact,
-          message ?? optimisticMessage,
-        );
+        if (message == null) {
+          // Transport may succeed after the independently removable local
+          // projection loses its race. Keep exact custody, but never resurrect
+          // the optimistic snapshot as UI authority.
+          _removeSessionOutgoing(contactPeerId, optimisticMessage.id);
+        } else {
+          _mergeOutgoingContactMessageIntoFeed(contact, message);
+        }
         await _loadTotalUnreadCount();
         return true;
       }
@@ -2163,6 +2297,28 @@ class _FeedWiredState extends State<FeedWired>
       }
       return false;
     } catch (e) {
+      final observedCustody = custodyStageCommitted
+          ? true
+          : sendUseCaseInvoked
+          ? await _observeExactDirectTextCustody(contactPeerId, messageId)
+          : false;
+      if (mounted && observedCustody == true) {
+        _recordSessionOutgoingDurableAuthority(
+          contactPeerId,
+          messageId,
+          acquired: true,
+        );
+      } else if (mounted && !sendUseCaseInvoked) {
+        // Nothing capable of staging this fresh authority was invoked. This
+        // positive pre-stage boundary permits one later retry to mint a new
+        // identity. Once the send use case starts, an absent row is ambiguous
+        // (a competing drain may already have retired it), so it stays unknown.
+        _recordSessionOutgoingDurableAuthority(
+          contactPeerId,
+          messageId,
+          acquired: false,
+        );
+      }
       if (optimisticMessage != null) {
         try {
           await widget.messageRepository.conditionalTransitionStatus(
@@ -2178,11 +2334,174 @@ class _FeedWiredState extends State<FeedWired>
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_COMPOSER_SEND_ERROR',
-        details: {'error': e.toString()},
+        details: {'errorType': e.runtimeType.toString()},
       );
       return false;
     } finally {
       await callBgEnd(widget.bridge, bgTaskId);
+    }
+  }
+
+  /// Retries a feed-session reply without ever re-minting an old authority.
+  ///
+  /// A committed failed projection goes through the shared failed-message path.
+  /// If its projection disappeared while exact v108 custody survived, that
+  /// immutable row is drained directly. If either authority was observed
+  /// earlier and both are now absent, another owner already converged it and
+  /// the session bubble is dismissed. A fresh id is minted only after positive
+  /// evidence that the prior attempt never acquired durable authority.
+  Future<({bool ok, String messageId})> _retryContactComposerReply(
+    String contactPeerId,
+    FeedSessionReply reply,
+  ) async {
+    try {
+      final existing = await widget.messageRepository.getMessage(
+        reply.messageId,
+      );
+      if (existing == null) {
+        final messageRepository = widget.messageRepository;
+        if (messageRepository is OutgoingDirectTextInboxCustodyRepository) {
+          final custodyRepository =
+              messageRepository as OutgoingDirectTextInboxCustodyRepository;
+          final observedCustody = await custodyRepository
+              .loadDirectInboxCustodyForMessage(
+                recipientPeerId: contactPeerId,
+                messageId: reply.messageId,
+              );
+          if (observedCustody != null) {
+            _recordSessionOutgoingDurableAuthority(
+              contactPeerId,
+              reply.messageId,
+              acquired: true,
+            );
+          }
+          final detailedStore = widget.p2pService is DetailedInboxStore
+              ? widget.p2pService as DetailedInboxStore
+              : null;
+          Future<InboxStoreOutcome> storeExactCustody(
+            String toPeerId,
+            String envelope, {
+            int? timeoutMs,
+          }) async {
+            if (detailedStore != null) {
+              return detailedStore.storeInInboxDetailed(
+                toPeerId,
+                envelope,
+                timeoutMs: timeoutMs,
+              );
+            }
+            final stored = await widget.p2pService.storeInInbox(
+              toPeerId,
+              envelope,
+              timeoutMs: timeoutMs,
+            );
+            return InboxStoreOutcome(
+              status: stored
+                  ? InboxStoreStatus.stored
+                  : InboxStoreStatus.failed,
+              errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+            );
+          }
+
+          if (observedCustody != null) {
+            final custodyAttempt =
+                await drainDirectInboxCustodyOutboxForMessage(
+                  custodyRepository: custodyRepository,
+                  storeInInboxDetailed: storeExactCustody,
+                  recipientPeerId: contactPeerId,
+                  messageId: reply.messageId,
+                );
+            if (custodyAttempt.found) {
+              if (custodyAttempt.completed) {
+                _removeSessionOutgoing(contactPeerId, reply.messageId);
+              }
+              return (ok: custodyAttempt.completed, messageId: reply.messageId);
+            }
+          }
+        }
+
+        final durableAuthority =
+            _sessionOutgoingDurableAuthority(contactPeerId, reply.messageId) ??
+            reply.hadDurableAuthority;
+        if (durableAuthority == true) {
+          _removeSessionOutgoing(contactPeerId, reply.messageId);
+          return (ok: true, messageId: reply.messageId);
+        }
+        if (durableAuthority != false) {
+          return (ok: false, messageId: reply.messageId);
+        }
+
+        final replacement = FeedSessionReply(
+          messageId: _uuid.v4(),
+          text: reply.text,
+        );
+        if (!_replaceSessionOutgoing(contactPeerId, reply, replacement)) {
+          return (ok: false, messageId: reply.messageId);
+        }
+        final sent = await _sendContactComposerReply(
+          contactPeerId,
+          reply.text,
+          messageId: replacement.messageId,
+        );
+        return (ok: sent, messageId: replacement.messageId);
+      }
+      if (existing.isIncoming || existing.contactPeerId != contactPeerId) {
+        return (ok: false, messageId: reply.messageId);
+      }
+      _recordSessionOutgoingDurableAuthority(
+        contactPeerId,
+        reply.messageId,
+        acquired: true,
+      );
+      if (existing.status != 'failed') {
+        final accepted = const <String>{
+          'sent',
+          'inboxed',
+          'delivered',
+        }.contains(existing.status);
+        return (ok: accepted, messageId: reply.messageId);
+      }
+
+      String? bgTaskId;
+      try {
+        bgTaskId = await callBgBegin(widget.bridge);
+        final retried = await retryFailedMessage(
+          messageId: reply.messageId,
+          messageRepo: widget.messageRepository,
+          identityRepo: widget.repository,
+          contactRepo: widget.contactRepository,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          mediaAttachmentRepo: widget.mediaAttachmentRepository,
+          mediaFileManager: widget.mediaFileManager,
+        );
+        if (retried <= 0 || !mounted) {
+          return (ok: false, messageId: reply.messageId);
+        }
+
+        final authoritative = await widget.messageRepository.getMessage(
+          reply.messageId,
+        );
+        final contact = await widget.contactRepository.getContact(
+          contactPeerId,
+        );
+        if (authoritative != null && contact != null && mounted) {
+          _mergeOutgoingContactMessageIntoFeed(contact, authoritative);
+        } else if (authoritative == null) {
+          _removeSessionOutgoing(contactPeerId, reply.messageId);
+        }
+        await _loadTotalUnreadCount();
+        return (ok: true, messageId: reply.messageId);
+      } finally {
+        await callBgEnd(widget.bridge, bgTaskId);
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'FEED_FL_COMPOSER_RETRY_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return (ok: false, messageId: reply.messageId);
     }
   }
 
@@ -2231,7 +2550,7 @@ class _FeedWiredState extends State<FeedWired>
       emitFlowEvent(
         layer: 'FL',
         event: 'FEED_FL_GROUP_COMPOSER_SEND_ERROR',
-        details: {'error': e.toString()},
+        details: {'errorType': e.runtimeType.toString()},
       );
       return false;
     } finally {
@@ -2242,13 +2561,19 @@ class _FeedWiredState extends State<FeedWired>
   /// 134-P5 (TC-30): re-invoke the send for a failed/pending session reply.
   Future<void> _onRetrySend(String threadId, FeedSessionReply reply) async {
     _clearSessionOutgoingFailed(threadId, reply.messageId);
-    final ok = threadId.startsWith('group:')
-        ? await _sendGroupComposerReply(
-            threadId.substring('group:'.length),
-            reply.text,
-          )
-        : await _sendContactComposerReply(threadId, reply.text);
-    if (!ok) _markSessionOutgoingFailed(threadId, reply.messageId);
+    var authorityId = reply.messageId;
+    late final bool ok;
+    if (threadId.startsWith('group:')) {
+      ok = await _sendGroupComposerReply(
+        threadId.substring('group:'.length),
+        reply.text,
+      );
+    } else {
+      final result = await _retryContactComposerReply(threadId, reply);
+      ok = result.ok;
+      authorityId = result.messageId;
+    }
+    if (!ok) _markSessionOutgoingFailed(threadId, authorityId);
   }
 
   /// Opens the full conversation for a focused thread id (1:1 / system → the

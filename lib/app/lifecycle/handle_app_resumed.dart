@@ -85,6 +85,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryIncompleteGroupDownloadsFn, // Plan 269
   Future<int> Function()? retryFailedGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteUploadsFn, // Part G -- NEW
+  Future<int> Function()? drainDirectInboxCustodyOutboxFn,
   Future<int> Function()? retryFailedMessagesFn, // Parts B/C
   Future<int> Function()? retryUnackedMessagesFn, // existing
   Future<int> Function()? verifyInboxCustodyFn,
@@ -703,19 +704,32 @@ Future<bool?> handleAppResumed({
     if (contactRepo != null && identityRepo != null) {
       final retryStart = DateTime.now();
       debugPrint('[RESUME] Step 4: retryIncompleteKeyExchanges() starting...');
-      final retried = retryIncompleteKeyExchangesFn != null
-          ? await retryIncompleteKeyExchangesFn()
-          : await retryIncompleteKeyExchanges(
-              contactRepo: contactRepo,
-              identityRepo: identityRepo,
-              p2pService: p2pService,
-              bridge: bridge,
-            );
-      final retryMs = DateTime.now().difference(retryStart).inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 4: retryIncompleteKeyExchanges() done '
-        '(retried=$retried, took ${retryMs}ms)',
-      );
+      try {
+        final retried = retryIncompleteKeyExchangesFn != null
+            ? await retryIncompleteKeyExchangesFn()
+            : await retryIncompleteKeyExchanges(
+                contactRepo: contactRepo,
+                identityRepo: identityRepo,
+                p2pService: p2pService,
+                bridge: bridge,
+              );
+        final retryMs = DateTime.now().difference(retryStart).inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 4: retryIncompleteKeyExchanges() done '
+          '(retried=$retried, took ${retryMs}ms)',
+        );
+      } catch (e) {
+        final retryMs = DateTime.now().difference(retryStart).inMilliseconds;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_KEY_EXCHANGES_RESUME_ERROR',
+          details: {'errorType': e.runtimeType.toString()},
+        );
+        debugPrint(
+          '[RESUME] Step 4: retryIncompleteKeyExchanges() error '
+          'after ${retryMs}ms (${e.runtimeType})',
+        );
+      }
     }
 
     if (nearbyLocationService != null) {
@@ -740,27 +754,57 @@ Future<bool?> handleAppResumed({
     if (retryPendingPostMediaUploads != null) {
       final mediaRetryStart = DateTime.now();
       debugPrint('[RESUME] Step 6: retryPendingPostMediaUploads() starting...');
-      final retried = await retryPendingPostMediaUploads();
-      final mediaRetryMs = DateTime.now()
-          .difference(mediaRetryStart)
-          .inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 6: retryPendingPostMediaUploads() done '
-        '(retried=$retried, took ${mediaRetryMs}ms)',
-      );
+      try {
+        final retried = await retryPendingPostMediaUploads();
+        final mediaRetryMs = DateTime.now()
+            .difference(mediaRetryStart)
+            .inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 6: retryPendingPostMediaUploads() done '
+          '(retried=$retried, took ${mediaRetryMs}ms)',
+        );
+      } catch (e) {
+        final mediaRetryMs = DateTime.now()
+            .difference(mediaRetryStart)
+            .inMilliseconds;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_PENDING_POST_MEDIA_UPLOADS_RESUME_ERROR',
+          details: {'errorType': e.runtimeType.toString()},
+        );
+        debugPrint(
+          '[RESUME] Step 6: retryPendingPostMediaUploads() error '
+          'after ${mediaRetryMs}ms (${e.runtimeType})',
+        );
+      }
     }
 
     if (retryPendingPostDeliveries != null) {
       final postRetryStart = DateTime.now();
       debugPrint('[RESUME] Step 7: retryPendingPostDeliveries() starting...');
-      final retried = await retryPendingPostDeliveries();
-      final postRetryMs = DateTime.now()
-          .difference(postRetryStart)
-          .inMilliseconds;
-      debugPrint(
-        '[RESUME] Step 7: retryPendingPostDeliveries() done '
-        '(retried=$retried, took ${postRetryMs}ms)',
-      );
+      try {
+        final retried = await retryPendingPostDeliveries();
+        final postRetryMs = DateTime.now()
+            .difference(postRetryStart)
+            .inMilliseconds;
+        debugPrint(
+          '[RESUME] Step 7: retryPendingPostDeliveries() done '
+          '(retried=$retried, took ${postRetryMs}ms)',
+        );
+      } catch (e) {
+        final postRetryMs = DateTime.now()
+            .difference(postRetryStart)
+            .inMilliseconds;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_PENDING_POST_DELIVERIES_RESUME_ERROR',
+          details: {'errorType': e.runtimeType.toString()},
+        );
+        debugPrint(
+          '[RESUME] Step 7: retryPendingPostDeliveries() error '
+          'after ${postRetryMs}ms (${e.runtimeType})',
+        );
+      }
     }
 
     // Step 8 (NEW): Message recovery sweep -- strict ordering required.
@@ -768,9 +812,10 @@ Future<bool?> handleAppResumed({
     // ORDERING CONTRACT (see Part D top-level callout):
     //   1. recoverStuckSendingMessages  -- 'sending' -> 'failed'
     //   2. retryIncompleteUploads       -- re-upload 'upload_pending' attachments
-    //   3. retryFailedMessages          -- retry 'failed' messages (now with uploaded media)
-    //   4. retryUnackedMessages         -- retry 'sent' but unacked messages
-    //   5. verifyInboxCustody           -- re-prove unconfirmed inbox custody
+    //   3. drainDirectInboxCustody      -- replay immutable sender custody
+    //   4. retryFailedMessages          -- retry 'failed' messages (now with uploaded media)
+    //   5. retryUnackedMessages         -- retry 'sent' but unacked messages
+    //   6. verifyInboxCustody           -- re-prove unconfirmed inbox custody
     //
     // Each step is fault-isolated: a throw in step N does not skip step N+1.
 
@@ -814,6 +859,32 @@ Future<bool?> handleAppResumed({
         // Non-fatal: continue to retryFailedMessages -- messages without
         // completed uploads will be retried as text-only or skipped by
         // Part F's decision tree, which is still better than not retrying at all.
+      }
+    }
+
+    // Step 8b.1: Retry immutable direct-text relay custody before either message
+    // rebuild family. This is independently fault-isolated so one poison/drain
+    // failure cannot suppress failed or unacked recovery on resume.
+    if (drainDirectInboxCustodyOutboxFn != null) {
+      try {
+        final count = await drainDirectInboxCustodyOutboxFn();
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 8b.1: drainDirectInboxCustodyOutbox=$count',
+          );
+        }
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DRAIN_DIRECT_INBOX_CUSTODY_RESUME_ERROR',
+          details: {'errorType': e.runtimeType.toString()},
+        );
+        if (kDebugMode) {
+          debugPrint(
+            '[RESUME] Step 8b.1: drainDirectInboxCustodyOutbox ERROR '
+            '(${e.runtimeType})',
+          );
+        }
       }
     }
 

@@ -112,10 +112,10 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) (
 	entry = ensureInboxMessageID(entry)
 	messages := b.inner.pruneExpiredForPeerLocked(toPeerId)
 
-	// Extract messageId for dedup.
-	msgId := extractMessageId(entry.Message)
-	if msgId != "" {
-		if ids, ok := b.inner.messageIds[toPeerId]; ok && ids[msgId] {
+	// Extract the direct-inbox custody identity for dedup.
+	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
+	if dedupeKey != "" {
+		if keys, ok := b.inner.dedupeKeys[toPeerId]; ok && keys[dedupeKey] {
 			return InboxStoreResultDuplicate, nil
 		}
 	}
@@ -126,18 +126,18 @@ func (b *memoryInboxBackendLimited) Store(toPeerId string, entry inboxMessage) (
 		overflow := len(messages) - b.maxPerPeer + 1
 		inboxCappedCounter.Add(float64(overflow))
 		messages = messages[overflow:]
-		b.inner.rebuildMessageIds(toPeerId, messages)
+		b.inner.rebuildDedupeKeys(toPeerId, messages)
 	}
 
 	messages = append(messages, entry)
 	b.inner.store[toPeerId] = messages
 
-	// Track messageId
-	if msgId != "" {
-		if b.inner.messageIds[toPeerId] == nil {
-			b.inner.messageIds[toPeerId] = make(map[string]bool)
+	// Track the custody identity.
+	if dedupeKey != "" {
+		if b.inner.dedupeKeys[toPeerId] == nil {
+			b.inner.dedupeKeys[toPeerId] = make(map[string]bool)
 		}
-		b.inner.messageIds[toPeerId][msgId] = true
+		b.inner.dedupeKeys[toPeerId][dedupeKey] = true
 	}
 
 	return InboxStoreResultStored, nil

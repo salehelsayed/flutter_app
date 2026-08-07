@@ -31,6 +31,7 @@ import 'dart:io';
 import '../test/shared/fakes/in_memory_inbox_staging_repository.dart';
 import '../test/shared/fakes/in_memory_post_repository.dart';
 import '../test/shared/fakes/in_memory_posts_privacy_settings_repository.dart';
+import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/fake_secure_key_store.dart';
 import '_support/test_db_seeder.dart';
 import '../test/shared/fakes/in_memory_feed_cleared_repository.dart';
@@ -117,6 +118,7 @@ void main() {
       dbDeleteRequest: (peerId) => dbDeleteRequest(db, peerId),
       dbRequestExists: (peerId) => dbRequestExists(db, peerId),
     );
+    final custodyDb = DirectInboxCustodyDbBindings(db);
     final messageRepository = MessageRepositoryImpl(
       dbInsertMessage: (row) => dbInsertMessage(db, row),
       dbLoadMessagesForContact: (contactPeerId) =>
@@ -168,6 +170,12 @@ void main() {
               ),
       dbUpdateWireEnvelope: (id, wireEnvelope) =>
           dbUpdateWireEnvelope(db, id, wireEnvelope),
+      dbStageOutgoingDirectTextInboxCustody: custodyDb.stage,
+      dbLoadDirectInboxCustodyOutbox: custodyDb.load,
+      dbLoadDirectInboxCustodyOutboxForMessage: custodyDb.loadForMessage,
+      dbRecordDirectInboxCustodyFailureIfExact: custodyDb.recordFailureIfExact,
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          custodyDb.completeAcceptedIfExact,
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(

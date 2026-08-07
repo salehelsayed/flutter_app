@@ -16,6 +16,7 @@ import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contact_requests_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/canonical_notification_badge_state_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reaction_terminal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_read_acknowledgement_db_helpers.dart';
@@ -146,6 +147,7 @@ import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_direct_private_committed_pending_cleanup.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -1147,6 +1149,66 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 stagedRow: stagedRow,
                 kind: kind,
               ),
+      dbStageOutgoingDirectTextInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required messageId,
+            required incarnationId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectTextInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            incarnationId: incarnationId,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbLoadDirectInboxCustodyOutbox: ({limit = 50}) =>
+          dbLoadDirectInboxCustodyOutbox(db, limit: limit),
+      dbLoadDirectInboxCustodyOutboxForMessage:
+          ({required recipientPeerId, required messageId}) =>
+              dbLoadDirectInboxCustodyOutboxForMessage(
+                db,
+                recipientPeerId: recipientPeerId,
+                messageId: messageId,
+              ),
+      dbRecordDirectInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required messageId,
+            required expectedIncarnationId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) => dbRecordDirectInboxCustodyFailureIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            expectedIncarnationId: expectedIncarnationId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            errorCode: errorCode,
+            attemptedAt: attemptedAt,
+          ),
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required messageId,
+            required expectedIncarnationId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) => dbCompleteAcceptedDirectInboxCustodyIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            messageId: messageId,
+            expectedIncarnationId: expectedIncarnationId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            relayExpiresAt: relayExpiresAt,
+          ),
       dbSettleOutgoingOrdinaryTransport:
           ({
             required messageId,
@@ -5696,6 +5758,18 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       notificationService: notificationService,
     );
 
+    // TC-342-07: one production closure owns the direct-text custody drain for
+    // every lifecycle trigger. Both the background retrier and app-resume root
+    // receive this same capable repository + detailed relay-store binding.
+    Future<int> drainDirectTextInboxCustody() => runAccountRuntimeNetworkAction(
+      operation: 'direct_text_inbox_custody_drain',
+      blockedValue: 0,
+      action: () => drainDirectInboxCustodyOutbox(
+        custodyRepository: messageRepository,
+        storeInInboxDetailed: p2pService.storeInInboxDetailed,
+      ),
+    );
+
     // Create pending message retrier
     final pendingMessageRetrier = PendingMessageRetrier(
       p2pService: p2pService,
@@ -5898,6 +5972,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // Finding 05 Phase 4 (P1.6): jitter the background retry cadence in prod so
       // reconnecting clients do not stampede the relay in lockstep.
       jitterRandom: Random(),
+      drainDirectInboxCustodyOutboxFn: drainDirectTextInboxCustody,
       verifyInboxCustodyFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_inbox_custody_verify',
         blockedValue: 0,
@@ -6341,6 +6416,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         profileUpdateListener: profileUpdateListener,
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
+        drainDirectInboxCustodyOutbox: drainDirectTextInboxCustody,
         pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
         pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,
         pendingPostFollowOnRetrier: pendingPostFollowOnRetrier,

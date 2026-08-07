@@ -388,6 +388,7 @@ class MyApp extends StatefulWidget {
   final ProfileUpdateListener profileUpdateListener;
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
+  final Future<int> Function()? drainDirectInboxCustodyOutbox;
   final PendingPostMediaUploadRetrier pendingPostMediaUploadRetrier;
   final PendingPostDeliveryRetrier pendingPostDeliveryRetrier;
   final PendingPostFollowOnRetrier pendingPostFollowOnRetrier;
@@ -510,6 +511,7 @@ class MyApp extends StatefulWidget {
     required this.profileUpdateListener,
     required this.messageRouter,
     required this.pendingMessageRetrier,
+    this.drainDirectInboxCustodyOutbox,
     required this.pendingPostMediaUploadRetrier,
     required this.pendingPostDeliveryRetrier,
     required this.pendingPostFollowOnRetrier,
@@ -2362,6 +2364,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           releaseUploadLease: mediaUploadInFlightTracker.release,
           requireOsConnectivity: true,
         ),
+        drainDirectInboxCustodyOutboxFn: widget.drainDirectInboxCustodyOutbox,
         retryFailedMessagesFn: () => retryFailedMessages(
           messageRepo: widget.messageRepository,
           identityRepo: widget.repository,
@@ -2370,6 +2373,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           bridge: widget.bridge,
           mediaAttachmentRepo: widget.mediaAttachmentRepository,
           mediaFileManager: widget.mediaFileManager,
+          // Resume step 8b.1 has already run the fair global custody drain.
+          // A retained exact row remains authoritative without a second store.
+          // Lightweight widget harnesses without that callback keep the
+          // standalone retry behavior.
+          retryDirectInboxCustody: widget.drainDirectInboxCustodyOutbox == null,
         ),
         retryUnackedMessagesFn: () => retryUnackedMessages(
           messageRepo: widget.messageRepository,

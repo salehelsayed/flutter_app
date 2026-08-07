@@ -525,11 +525,13 @@ ChatMessage _makeChatMessage({
 
 ChatMessage _makeV2EncryptedChatMessage({
   required String from,
+  String id = 'v2-fixture-message',
   String? confirmNonce,
 }) {
   final json = jsonEncode({
     'type': 'chat_message',
     'version': '2',
+    'id': id,
     'senderPeerId': from,
     'encrypted': {
       'kem': 'kem-blob',
@@ -674,6 +676,7 @@ void main() {
       final outcome = await listener.processIncomingMessage(
         _makeV2EncryptedChatMessage(
           from: senderPeerId,
+          id: 'msg-prefetch-hit-001',
         ).copyWith(predecryptedText: inner),
       );
 
@@ -1159,6 +1162,7 @@ void main() {
         final outcome = await listener.processIncomingMessage(
           _makeV2EncryptedChatMessage(
             from: senderPeerId,
+            id: 'private-listener-1',
           ).copyWith(predecryptedText: inner),
         );
         await Future<void>.delayed(const Duration(milliseconds: 100));
@@ -1862,7 +1866,7 @@ void main() {
         for (var index = 0; index < policies.length; index++) {
           final id = 'private-notification-$index';
           final outcome = await listener.processIncomingMessage(
-            _makeV2EncryptedChatMessage(from: senderPeerId).copyWith(
+            _makeV2EncryptedChatMessage(from: senderPeerId, id: id).copyWith(
               predecryptedText: jsonEncode({
                 'id': id,
                 'text': index == 0 ? '' : 'future private caption',
@@ -2323,7 +2327,10 @@ void main() {
 
         for (var index = 0; index < policies.length; index++) {
           final outcome = await listener.processIncomingMessage(
-            _makeV2EncryptedChatMessage(from: senderPeerId).copyWith(
+            _makeV2EncryptedChatMessage(
+              from: senderPeerId,
+              id: 'private-auto-gate-$index',
+            ).copyWith(
               predecryptedText: jsonEncode({
                 'id': 'private-auto-gate-$index',
                 'text': '',

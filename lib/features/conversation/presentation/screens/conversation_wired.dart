@@ -123,6 +123,7 @@ typedef SendChatMessageFn =
       required String senderPeerId,
       required String senderUsername,
       String? messageId,
+      required bool preassignedMessageIdIsFresh,
       String? timestamp,
       Bridge? bridge,
       String? recipientMlKemPublicKey,
@@ -3338,6 +3339,9 @@ class _ConversationWiredState extends State<ConversationWired>
         privateMediaPolicy: privateMediaPolicy,
         privateMediaState: privateMediaPolicy.initialState,
       );
+      final stagesFreshDirectTextCustody =
+          !hasAttachments &&
+          privateMediaPolicy.mode == PrivateMediaMode.ordinary;
 
       if (mounted) {
         setState(() {
@@ -3347,45 +3351,52 @@ class _ConversationWiredState extends State<ConversationWired>
       }
 
       try {
-        if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
-          final mediaRuntime = widget.mediaAttachmentRepo;
-          final contactRepository = widget.contactRepo;
-          if (mediaRuntime is! DirectPrivateMediaCleanupRuntime ||
-              contactRepository == null) {
-            throw StateError(
-              'private parent publication requires contact and lifecycle authority',
+        // Fresh ordinary text must reach sendChatMessage with no durable
+        // predecessor: its production repository owns the first message row
+        // and immutable custody row in one transaction. The bubble above stays
+        // optimistic in memory. Media/private flows retain their established
+        // pre-save and attachment-lifecycle authority.
+        if (!stagesFreshDirectTextCustody) {
+          if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
+            final mediaRuntime = widget.mediaAttachmentRepo;
+            final contactRepository = widget.contactRepo;
+            if (mediaRuntime is! DirectPrivateMediaCleanupRuntime ||
+                contactRepository == null) {
+              throw StateError(
+                'private parent publication requires contact and lifecycle authority',
+              );
+            }
+            final privateMediaRuntime =
+                mediaRuntime as DirectPrivateMediaCleanupRuntime;
+
+            // Contact deletion inventories messages, removes them, and finally
+            // removes the contact while holding this same global lock. Publish
+            // the first private parent under that authority and re-read contact
+            // existence only after acquiring it. Therefore either publication
+            // wins and the later deletion inventories/removes the parent, or
+            // deletion wins and this publication refuses instead of resurrecting
+            // a row from the screen's stale ContactModel snapshot.
+            await privateMediaRuntime.directPrivateMediaLifecycleLock
+                .synchronizedAll(() async {
+                  final contactStillExists = await contactRepository
+                      .contactExists(optimisticMessage.contactPeerId);
+                  if (!contactStillExists) {
+                    throw StateError(
+                      'private parent publication refused after contact removal',
+                    );
+                  }
+                  await widget.messageRepo.saveMessage(optimisticMessage);
+                });
+          } else {
+            await widget.messageRepo.saveMessage(optimisticMessage);
+          }
+          if (!_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
+            await _persistOptimisticAttachments(
+              optimisticMessage.id,
+              optimisticMedia,
+              errorEvent: 'CONV_FL_OPTIMISTIC_ATTACHMENT_SAVE_ERROR',
             );
           }
-          final privateMediaRuntime =
-              mediaRuntime as DirectPrivateMediaCleanupRuntime;
-
-          // Contact deletion inventories messages, removes them, and finally
-          // removes the contact while holding this same global lock. Publish
-          // the first private parent under that authority and re-read contact
-          // existence only after acquiring it. Therefore either publication
-          // wins and the later deletion inventories/removes the parent, or
-          // deletion wins and this publication refuses instead of resurrecting
-          // a row from the screen's stale ContactModel snapshot.
-          await privateMediaRuntime.directPrivateMediaLifecycleLock
-              .synchronizedAll(() async {
-                final contactStillExists = await contactRepository
-                    .contactExists(optimisticMessage.contactPeerId);
-                if (!contactStillExists) {
-                  throw StateError(
-                    'private parent publication refused after contact removal',
-                  );
-                }
-                await widget.messageRepo.saveMessage(optimisticMessage);
-              });
-        } else {
-          await widget.messageRepo.saveMessage(optimisticMessage);
-        }
-        if (!_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
-          await _persistOptimisticAttachments(
-            optimisticMessage.id,
-            optimisticMedia,
-            errorEvent: 'CONV_FL_OPTIMISTIC_ATTACHMENT_SAVE_ERROR',
-          );
         }
       } catch (e) {
         emitFlowEvent(
@@ -3396,7 +3407,7 @@ class _ConversationWiredState extends State<ConversationWired>
         if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
           // A private pending file must never exist without its durable parent
           // policy row. Abort before registry claim or plaintext copy; the
-          // ordinary optimistic-send behavior remains unchanged.
+          // ordinary-media optimistic-save behavior remains unchanged.
           await _restoreComposerSnapshot(
             composerSnapshot,
             optimisticMessageId: optimisticMessage.id,
@@ -3429,18 +3440,17 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
 
-      // 170-S2: the message is now durably optimistic (inserted + locally
-      // saved), so release the composer HERE rather than after the network
-      // round-trip. Keeping `_isSending` true through the multi-second
-      // direct->relay->inbox cascade below is what froze the Send button
-      // (compose_area.dart gates the Send onTap on `!isSending`) and blocked a
-      // second message. The remaining upload + `sendChatMessageFn` continue to
-      // run on this already fire-and-forget `_onSend` future; the bubble still
-      // drives sending->sent/failed below and the outer finally still resets
-      // the flag defensively. The top-of-method re-entrancy guard stays
-      // effective for a same-frame double tap because this release only lands
-      // once the optimistic save completes (one pump later) — and the
-      // compose_area controller-clear already swallows the duplicate tap. See
+      // 170-S2: media/private messages are now durably optimistic, while fresh
+      // ordinary text is ready for the atomic message-plus-custody stage in
+      // `sendChatMessageFn` below. Release the composer here rather than after
+      // the network round-trip. Keeping `_isSending` true through the
+      // multi-second direct->relay->inbox cascade is what froze the Send button
+      // and blocked a second message. The remaining staging/upload/send work
+      // continues on this fire-and-forget `_onSend` future; the bubble still
+      // drives sending->sent/failed below and the outer finally resets the flag
+      // defensively. The same-frame re-entrancy guard remains effective because
+      // this release lands only after the preparation boundary completes, and
+      // the composer controller clear swallows the duplicate tap. See
       // conversation_wired_offline_send_ux_test.dart (TC-01 / TC-02).
       if (mounted) {
         setState(() => _isSending = false);
@@ -3747,6 +3757,7 @@ class _ConversationWiredState extends State<ConversationWired>
           senderPeerId: identity.peerId,
           senderUsername: identity.username,
           messageId: optimisticMessage.id,
+          preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
           timestamp: optimisticMessage.timestamp,
           bridge: widget.bridge,
           recipientMlKemPublicKey: _contact.mlKemPublicKey,

@@ -36,15 +36,21 @@ class InboxStoreOutcome {
       storeStatus: storeStatus,
       errorCode: errorCode,
     );
+    final rawExpiresAtMs =
+        _intField(response, 'expiresAtMs') ??
+        _intField(response, 'expires_at_ms');
 
     return InboxStoreOutcome(
       status: status,
       errorCode: errorCode,
       errorMessage: errorMessage,
       storeStatus: storeStatus,
-      expiresAtMs:
-          _intField(response, 'expiresAtMs') ??
-          _intField(response, 'expires_at_ms'),
+      // The Go bridge serializes an absent optional expiry as zero. Preserve
+      // that as "unknown" so accepted duplicate replays can still complete
+      // local custody instead of being rejected as a malformed timestamp.
+      expiresAtMs: rawExpiresAtMs != null && rawExpiresAtMs > 0
+          ? rawExpiresAtMs
+          : null,
       occupancy: _intField(response, 'occupancy'),
       capacity: _intField(response, 'capacity'),
     );

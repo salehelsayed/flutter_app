@@ -1306,6 +1306,35 @@ func extractMessageId(message string) string {
 	return ""
 }
 
+const (
+	directInboxTargetIDDedupePrefix    = "target-id:"
+	directInboxEditEventIDDedupePrefix = "edit-event-id:"
+)
+
+// extractDirectInboxDedupeKey returns the relay-custody identity for a direct
+// inbox envelope. It is deliberately separate from extractMessageId: push
+// routing must continue to expose the authored chat target ID as message_id,
+// while distinct edits of that target need distinct custody entries.
+//
+// New chat edits advertise an additive, authenticated eventId at the opaque
+// envelope boundary. A nonblank eventId is namespaced away from target IDs so
+// even equal raw strings cannot collide across the two identity kinds. Legacy
+// edits have no eventId and retain the historical target-ID dedupe semantics.
+func extractDirectInboxDedupeKey(message string) string {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err == nil &&
+		envelope["type"] == "chat_message" {
+		if eventID, ok := envelope["eventId"].(string); ok && strings.TrimSpace(eventID) != "" {
+			return directInboxEditEventIDDedupePrefix + eventID
+		}
+	}
+
+	if messageID := extractMessageId(message); messageID != "" {
+		return directInboxTargetIDDedupePrefix + messageID
+	}
+	return ""
+}
+
 func trimmedString(raw interface{}) string {
 	value, ok := raw.(string)
 	if !ok {

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
+import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
@@ -9,8 +10,137 @@ import 'package:flutter_test/flutter_test.dart';
 
 const _productionPath =
     'lib/app/bootstrap/production_application_bootstrap.dart';
+const _applicationRootPath = 'lib/app/application_root.dart';
 const _handlerPath =
     'lib/features/push/application/background_message_handler.dart';
+
+enum _SendChatMessageCallerKind {
+  generatedIdFresh,
+  preassignedIdFresh,
+  excludedEdit,
+  excludedRetry,
+  excludedMedia,
+  excludedVoice,
+}
+
+const _expectedSendChatMessageCallers =
+    <
+      String,
+      ({_SendChatMessageCallerKind kind, String callee, String? freshIntent})
+    >{
+      'lib/core/debug/intro_e2e_runner.dart': (
+        kind: _SendChatMessageCallerKind.generatedIdFresh,
+        callee: 'sendChatMessage',
+        freshIntent: null,
+      ),
+      'lib/core/debug/keepalive_drop_e2e.dart': (
+        kind: _SendChatMessageCallerKind.generatedIdFresh,
+        callee: 'sendChatMessage',
+        freshIntent: null,
+      ),
+      'lib/features/conversation/application/'
+          'retry_failed_messages_use_case.dart': (
+        kind: _SendChatMessageCallerKind.excludedRetry,
+        callee: 'sendChatMessage',
+        freshIntent: null,
+      ),
+      'lib/features/conversation/application/'
+          'retry_incomplete_uploads_use_case.dart': (
+        kind: _SendChatMessageCallerKind.excludedMedia,
+        callee: 'sendChatMessage',
+        freshIntent: null,
+      ),
+      'lib/features/conversation/application/send_chat_message_use_case.dart': (
+        kind: _SendChatMessageCallerKind.excludedEdit,
+        callee: 'sendChatMessage',
+        freshIntent: null,
+      ),
+      'lib/features/conversation/application/send_voice_message_use_case.dart':
+          (
+            kind: _SendChatMessageCallerKind.excludedVoice,
+            callee: 'sendChatMessage',
+            freshIntent: 'preassignedMessageIdIsFresh',
+          ),
+      'lib/features/conversation/presentation/screens/conversation_wired.dart':
+          (
+            kind: _SendChatMessageCallerKind.preassignedIdFresh,
+            callee: 'sendChatMessageFn',
+            freshIntent: 'stagesFreshDirectTextCustody',
+          ),
+      'lib/features/feed/presentation/screens/feed_wired.dart': (
+        kind: _SendChatMessageCallerKind.preassignedIdFresh,
+        callee: 'sendChatMessage',
+        freshIntent: 'true',
+      ),
+      'lib/features/share/application/share_batch_delivery_coordinator.dart': (
+        kind: _SendChatMessageCallerKind.generatedIdFresh,
+        callee: 'sendChatMessage',
+        freshIntent: null,
+      ),
+    };
+
+final class _SendChatMessageInvocationCollector
+    extends RecursiveAstVisitor<void> {
+  final invocations = <MethodInvocation>[];
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    if (node.methodName.name case 'sendChatMessage' || 'sendChatMessageFn') {
+      invocations.add(node);
+    }
+    super.visitMethodInvocation(node);
+  }
+}
+
+List<
+  ({String path, int line, String callee, Map<String, String> namedArguments})
+>
+_discoverSendChatMessageInvocations() {
+  final paths =
+      Directory('lib')
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .map((file) => file.path.replaceAll('\\', '/'))
+          .where((path) => path.endsWith('.dart'))
+          .toList(growable: false)
+        ..sort();
+  final discovered =
+      <
+        ({
+          String path,
+          int line,
+          String callee,
+          Map<String, String> namedArguments,
+        })
+      >[];
+  for (final path in paths) {
+    final source = File(path).readAsStringSync();
+    if (!RegExp(r'\bsendChatMessage(?:Fn)?\s*\(').hasMatch(source)) {
+      continue;
+    }
+    final parsed = parseString(content: source, path: path);
+    final collector = _SendChatMessageInvocationCollector();
+    parsed.unit.accept(collector);
+    for (final invocation in collector.invocations) {
+      discovered.add((
+        path: path,
+        line: parsed.lineInfo.getLocation(invocation.offset).lineNumber,
+        callee: invocation.methodName.name,
+        namedArguments: <String, String>{
+          for (final argument
+              in invocation.argumentList.arguments.whereType<NamedExpression>())
+            argument.name.label.name: argument.expression.toSource(),
+        },
+      ));
+    }
+  }
+  return discovered;
+}
+
+String _sendCallerLabel(
+  ({String path, int line, String callee, Map<String, String> namedArguments})
+  caller,
+) => '${caller.path}:${caller.line} (${caller.callee})';
 
 ClassDeclaration _productionClass(String source) {
   final unit = parseString(content: source, path: _productionPath).unit;
@@ -74,6 +204,183 @@ void main() {
     prepared.afterRunApp();
     expect(normalPrepareCalls, 0);
   });
+
+  test(
+    'TC-342-07 production wires direct custody drain and capable message repository',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+      final applicationRoot = File(_applicationRootPath).readAsStringSync();
+
+      expect(
+        'Future<int> drainDirectTextInboxCustody()'.allMatches(production),
+        hasLength(1),
+        reason: 'production must construct one shared lifecycle closure',
+      );
+      expect(production, contains('custodyRepository: messageRepository'));
+      for (final binding in const <String>[
+        'dbStageOutgoingDirectTextInboxCustody:',
+        'dbLoadDirectInboxCustodyOutbox:',
+        'dbLoadDirectInboxCustodyOutboxForMessage:',
+        'dbRecordDirectInboxCustodyFailureIfExact:',
+        'dbCompleteAcceptedDirectInboxCustodyIfExact:',
+      ]) {
+        expect(
+          binding.allMatches(production),
+          hasLength(1),
+          reason: 'production must wire exactly one complete $binding seam',
+        );
+      }
+      expect(
+        production,
+        contains('storeInInboxDetailed: p2pService.storeInInboxDetailed'),
+      );
+      expect(
+        'drainDirectInboxCustodyOutboxFn: drainDirectTextInboxCustody'
+            .allMatches(production),
+        hasLength(1),
+        reason: 'the background retrier must receive the production drain',
+      );
+      expect(
+        'drainDirectInboxCustodyOutbox: drainDirectTextInboxCustody'.allMatches(
+          production,
+        ),
+        hasLength(1),
+        reason: 'the application root must receive the same closure for resume',
+      );
+      expect(
+        applicationRoot,
+        contains(
+          'drainDirectInboxCustodyOutboxFn: '
+          'widget.drainDirectInboxCustodyOutbox',
+        ),
+      );
+    },
+  );
+
+  test(
+    'TC-342-07 app-owned sendChatMessage caller census classifies custody intent',
+    () {
+      final callers = _discoverSendChatMessageInvocations();
+      final unexpected = callers
+          .where(
+            (caller) =>
+                !_expectedSendChatMessageCallers.containsKey(caller.path),
+          )
+          .map(_sendCallerLabel)
+          .toList(growable: false);
+      expect(
+        unexpected,
+        isEmpty,
+        reason:
+            'every new app-owned sendChatMessage caller must declare whether '
+            'it authors a generated-ID fresh attempt, explicitly opts a '
+            'preassigned fresh ID into custody, or is an excluded existing '
+            'edit/retry/media/voice attempt',
+      );
+      expect(
+        callers,
+        hasLength(_expectedSendChatMessageCallers.length),
+        reason:
+            'the exact caller inventory must reject missing and duplicate '
+            'call sites as well as new files',
+      );
+
+      for (final expected in _expectedSendChatMessageCallers.entries) {
+        final matches = callers
+            .where((caller) => caller.path == expected.key)
+            .toList(growable: false);
+        expect(
+          matches,
+          hasLength(1),
+          reason: '${expected.key} must own exactly one classified invocation',
+        );
+        final caller = matches.single;
+        final arguments = caller.namedArguments;
+        expect(
+          caller.callee,
+          expected.value.callee,
+          reason: _sendCallerLabel(caller),
+        );
+
+        switch (expected.value.kind) {
+          case _SendChatMessageCallerKind.generatedIdFresh:
+            expect(
+              arguments,
+              isNot(contains('messageId')),
+              reason:
+                  '${_sendCallerLabel(caller)} must let sendChatMessage '
+                  'generate the fresh attempt ID',
+            );
+            expect(
+              arguments,
+              isNot(contains('preassignedMessageIdIsFresh')),
+              reason: _sendCallerLabel(caller),
+            );
+            expect(arguments, isNot(contains('action')));
+          case _SendChatMessageCallerKind.preassignedIdFresh:
+            expect(
+              arguments,
+              contains('messageId'),
+              reason:
+                  '${_sendCallerLabel(caller)} is the reviewed preassigned-ID '
+                  'fresh producer',
+            );
+            expect(
+              arguments['preassignedMessageIdIsFresh'],
+              expected.value.freshIntent,
+              reason:
+                  '${_sendCallerLabel(caller)} must carry explicit custody '
+                  'intent whenever it preassigns a fresh message ID',
+            );
+            expect(arguments, isNot(contains('action')));
+          case _SendChatMessageCallerKind.excludedEdit:
+            expect(arguments['action'], 'MessagePayload.actionEdit');
+            expect(arguments, contains('messageId'));
+            expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
+          case _SendChatMessageCallerKind.excludedRetry:
+            expect(arguments['action'], 'retryAction');
+            expect(arguments, contains('messageId'));
+            expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
+          case _SendChatMessageCallerKind.excludedMedia:
+            expect(arguments['mediaAttachments'], 'fullAttachmentList');
+            expect(arguments, contains('messageId'));
+            expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
+          case _SendChatMessageCallerKind.excludedVoice:
+            expect(arguments['mediaAttachments'], '[uploaded]');
+            expect(arguments, contains('messageId'));
+            expect(
+              arguments['preassignedMessageIdIsFresh'],
+              expected.value.freshIntent,
+            );
+        }
+      }
+
+      final preassignedWithoutFreshIntent = callers
+          .where(
+            (caller) =>
+                caller.namedArguments.containsKey('messageId') &&
+                !caller.namedArguments.containsKey(
+                  'preassignedMessageIdIsFresh',
+                ),
+          )
+          .map((caller) => caller.path)
+          .toSet();
+      expect(
+        preassignedWithoutFreshIntent,
+        {
+          'lib/features/conversation/application/'
+              'retry_failed_messages_use_case.dart',
+          'lib/features/conversation/application/'
+              'retry_incomplete_uploads_use_case.dart',
+          'lib/features/conversation/application/'
+              'send_chat_message_use_case.dart',
+        },
+        reason:
+            'only classified existing edit/retry/media attempts may pass a '
+            'messageId without explicit fresh-custody intent',
+      );
+    },
+  );
 
   test(
     'DTR-14 production bootstrap owns each reachable phase exactly once',

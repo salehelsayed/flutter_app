@@ -4,8 +4,10 @@ import 'conversation_message.dart';
 
 /// Repository-level result for one guarded ordinary outgoing mutation.
 ///
-/// [message] is always reloaded from durable storage. It is null after a
-/// physical removal and is never synthesized from the caller's stale candidate.
+/// [message] is normally reloaded from durable storage. After an already-
+/// committed direct-text custody stage whose best-effort publication reload
+/// fails, it may be the exact staged snapshot that the DB helper authorized.
+/// It is null after a physical removal.
 class OutgoingOrdinaryMutationResult {
   const OutgoingOrdinaryMutationResult({
     required this.outcome,

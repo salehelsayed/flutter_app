@@ -1619,6 +1619,7 @@ void main() {
               required senderPeerId,
               required senderUsername,
               messageId,
+              required bool preassignedMessageIdIsFresh,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -1661,6 +1662,7 @@ void main() {
                 senderPeerId: senderPeerId,
                 senderUsername: senderUsername,
                 messageId: messageId,
+                preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
                 timestamp: timestamp,
                 bridge: bridge,
                 recipientMlKemPublicKey: recipientMlKemPublicKey,
@@ -1819,6 +1821,7 @@ void main() {
               required senderPeerId,
               required senderUsername,
               messageId,
+              required bool preassignedMessageIdIsFresh,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -1837,6 +1840,7 @@ void main() {
                 senderPeerId: senderPeerId,
                 senderUsername: senderUsername,
                 messageId: messageId,
+                preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
                 timestamp: timestamp,
                 bridge: bridge,
                 recipientMlKemPublicKey: recipientMlKemPublicKey,
@@ -1952,6 +1956,7 @@ void main() {
               required senderPeerId,
               required senderUsername,
               messageId,
+              required bool preassignedMessageIdIsFresh,
               timestamp,
               bridge,
               recipientMlKemPublicKey,
@@ -1970,6 +1975,7 @@ void main() {
                 senderPeerId: senderPeerId,
                 senderUsername: senderUsername,
                 messageId: messageId,
+                preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
                 timestamp: timestamp,
                 bridge: bridge,
                 recipientMlKemPublicKey: recipientMlKemPublicKey,
@@ -2053,7 +2059,7 @@ void main() {
     });
 
     testWidgets(
-      'sanitized optimistic text stays consistent before and after persistence',
+      'TC-342-03e canonical fresh text stays memory-optimistic and enters send as fresh',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
         final messageRepo = FakeMessageRepository();
@@ -2065,6 +2071,7 @@ void main() {
         final sendGate = Completer<void>();
         String? capturedText;
         String? capturedMessageId;
+        bool? capturedPreassignedMessageIdIsFresh;
 
         Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
           required P2PService p2pService,
@@ -2074,6 +2081,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -2085,6 +2093,7 @@ void main() {
         }) async {
           capturedText = text;
           capturedMessageId = messageId;
+          capturedPreassignedMessageIdIsFresh = preassignedMessageIdIsFresh;
           await sendGate.future;
 
           final delivered = ConversationMessage(
@@ -2118,11 +2127,16 @@ void main() {
         await tester.pump();
 
         expect(capturedText, sanitizedText);
+        expect(capturedPreassignedMessageIdIsFresh, isTrue);
         expect(find.text(rawText), findsNothing);
         expect(find.text(sanitizedText), findsOneWidget);
-        expect(messageRepo.store, hasLength(1));
-        expect(messageRepo.store.values.single.text, sanitizedText);
-        expect(messageRepo.store.values.single.status, 'sending');
+        expect(
+          messageRepo.store,
+          isEmpty,
+          reason:
+              'fresh text must have no durable predecessor before the atomic '
+              'message-plus-custody stage owned by sendChatMessage',
+        );
 
         sendGate.complete();
         await tester.pump();
@@ -2281,6 +2295,7 @@ void main() {
         required String senderPeerId,
         required String senderUsername,
         String? messageId,
+        required bool preassignedMessageIdIsFresh,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -2339,65 +2354,80 @@ void main() {
       expect(messageRepo.store[sentMessageId!]!.status, 'delivered');
     });
 
-    testWidgets('marks optimistic message as failed when send returns null', (
-      tester,
-    ) async {
-      final identityRepo = FakeIdentityRepository(makeIdentity());
-      final messageRepo = FakeMessageRepository();
-      final chatListener = ChatMessageListener(
-        chatMessageStream: const Stream.empty(),
-        messageRepo: messageRepo,
-        contactRepo: FakeContactRepository(),
-      );
+    testWidgets(
+      'restores draft and removes fresh memory-only optimism when send returns null without custody authority',
+      (tester) async {
+        final identityRepo = FakeIdentityRepository(makeIdentity());
+        final messageRepo = FakeMessageRepository();
+        final chatListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messageRepo,
+          contactRepo: FakeContactRepository(),
+        );
 
-      final gate = Completer<void>();
-      String? sentMessageId;
+        final gate = Completer<void>();
+        String? sentMessageId;
+        bool? sentMessageIdIsFresh;
 
-      Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
-        required P2PService p2pService,
-        required MessageRepository messageRepo,
-        required String targetPeerId,
-        required String text,
-        required String senderPeerId,
-        required String senderUsername,
-        String? messageId,
-        String? timestamp,
-        Bridge? bridge,
-        String? recipientMlKemPublicKey,
-        String? quotedMessageId,
-        List<MediaAttachment>? mediaAttachments,
-        PrivateMediaPolicy? privateMediaPolicy,
-        MediaAttachmentRepository? mediaAttachmentRepo,
-        TransportMetrics? transportMetrics,
-      }) async {
-        sentMessageId = messageId;
-        await gate.future;
-        return (SendChatMessageResult.nodeNotRunning, null);
-      }
+        Future<(SendChatMessageResult, ConversationMessage?)> sendFn({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          required bool preassignedMessageIdIsFresh,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sentMessageId = messageId;
+          sentMessageIdIsFresh = preassignedMessageIdIsFresh;
+          await gate.future;
+          return (SendChatMessageResult.nodeNotRunning, null);
+        }
 
-      await pumpScreen(
-        tester,
-        identityRepo: identityRepo,
-        messageRepo: messageRepo,
-        chatListener: chatListener,
-        sendFn: sendFn,
-      );
+        await pumpScreen(
+          tester,
+          identityRepo: identityRepo,
+          messageRepo: messageRepo,
+          chatListener: chatListener,
+          sendFn: sendFn,
+        );
 
-      await tester.enterText(find.byType(TextField), 'Fail me');
-      await tester.pump(const Duration(milliseconds: 300));
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await tester.pump();
+        await tester.enterText(find.byType(TextField), 'Fail me');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump();
 
-      expect(find.text('Fail me'), findsOneWidget);
-      // 184: in-flight ('sending') shows a single tick on 1:1 (clock→tick).
-      expect(find.byIcon(Icons.done_rounded), findsOneWidget);
+        expect(find.text('Fail me'), findsOneWidget);
+        expect(messageRepo.store, isEmpty);
+        // 184: in-flight ('sending') shows a single tick on 1:1 (clock→tick).
+        expect(find.byIcon(Icons.done_rounded), findsOneWidget);
 
-      gate.complete();
-      await tester.pump(const Duration(milliseconds: 50));
+        gate.complete();
+        await tester.pump();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump();
 
-      expect(find.byIcon(Icons.error_outline_rounded), findsOneWidget);
-      expect(messageRepo.store[sentMessageId!]!.status, 'failed');
-    });
+        expect(sentMessageId, isNotNull);
+        expect(sentMessageIdIsFresh, isTrue);
+        expect(find.text('Fail me'), findsOneWidget);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller!.text,
+          'Fail me',
+        );
+        expect(find.byIcon(Icons.error_outline_rounded), findsNothing);
+        expect(messageRepo.store[sentMessageId!], isNull);
+      },
+    );
 
     testWidgets(
       'sending unchanged restored failed text retries the original row',
@@ -2427,6 +2457,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -2537,6 +2568,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -2640,6 +2672,7 @@ void main() {
         required String senderPeerId,
         required String senderUsername,
         String? messageId,
+        required bool preassignedMessageIdIsFresh,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -2902,6 +2935,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -3477,6 +3511,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -3701,6 +3736,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -3822,6 +3858,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -3936,6 +3973,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -4061,6 +4099,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -4185,6 +4224,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -4332,6 +4372,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -4409,6 +4450,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -6562,6 +6604,7 @@ void main() {
         required String senderPeerId,
         required String senderUsername,
         String? messageId,
+        required bool preassignedMessageIdIsFresh,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -6631,6 +6674,7 @@ void main() {
         required String senderPeerId,
         required String senderUsername,
         String? messageId,
+        required bool preassignedMessageIdIsFresh,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -6693,6 +6737,7 @@ void main() {
         required String senderPeerId,
         required String senderUsername,
         String? messageId,
+        required bool preassignedMessageIdIsFresh,
         String? timestamp,
         Bridge? bridge,
         String? recipientMlKemPublicKey,
@@ -6783,6 +6828,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -6874,6 +6920,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -9725,6 +9772,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -9743,6 +9791,7 @@ void main() {
             senderPeerId: senderPeerId,
             senderUsername: senderUsername,
             messageId: messageId,
+            preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
             timestamp: timestamp,
             bridge: bridge,
             recipientMlKemPublicKey: recipientMlKemPublicKey,
@@ -9881,6 +9930,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -9899,6 +9949,7 @@ void main() {
             senderPeerId: senderPeerId,
             senderUsername: senderUsername,
             messageId: messageId,
+            preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
             timestamp: timestamp,
             bridge: bridge,
             recipientMlKemPublicKey: recipientMlKemPublicKey,
@@ -10520,6 +10571,7 @@ void main() {
           required String senderPeerId,
           required String senderUsername,
           String? messageId,
+          required bool preassignedMessageIdIsFresh,
           String? timestamp,
           Bridge? bridge,
           String? recipientMlKemPublicKey,
@@ -12024,6 +12076,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   required String senderPeerId,
   required String senderUsername,
   String? messageId,
+  required bool preassignedMessageIdIsFresh,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
@@ -12128,6 +12181,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _throwingSendFn({
   required String senderPeerId,
   required String senderUsername,
   String? messageId,
+  required bool preassignedMessageIdIsFresh,
   String? timestamp,
   Bridge? bridge,
   String? recipientMlKemPublicKey,

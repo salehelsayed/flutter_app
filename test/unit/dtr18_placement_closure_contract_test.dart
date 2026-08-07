@@ -33,7 +33,7 @@ const _relocations = <String, List<String>>{
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/message_repository_impl.dart',
-    '23db20fa4733869ad545dd48a3672dbac761da11105ca1732b74ec43281fb9c9',
+    'eb65db5410aaaf3224c5d77cd846f0c37c4148f2e37df2ad3c89980546f4e51e',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

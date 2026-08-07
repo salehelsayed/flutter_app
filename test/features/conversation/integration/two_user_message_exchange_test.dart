@@ -27,6 +27,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
@@ -284,8 +285,15 @@ class FakeP2PService implements P2PService {
 
 // ─── In-memory Message Repository ───────────────────────────────────
 class InMemoryMessageRepository
-    implements MessageRepository, OutgoingTransportMutationRepository {
+    implements
+        MessageRepository,
+        OutgoingTransportMutationRepository,
+        OutgoingDirectTextInboxCustodyRepository {
   final Map<String, ConversationMessage> _messages = {};
+  final Map<String, DirectInboxCustodyOutboxEntry> _directCustodyRows = {};
+
+  @override
+  bool get supportsDirectTextInboxCustody => true;
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
@@ -661,6 +669,177 @@ class InMemoryMessageRepository
     );
     _messages[messageId] = applied;
     return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, applied);
+  }
+
+  String _directCustodyKey(String recipientPeerId, String messageId) =>
+      '$recipientPeerId\u0000$messageId';
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String incarnationId,
+    required String wireEnvelope,
+  }) async {
+    final key = _directCustodyKey(recipientPeerId, staged.id);
+    final current = _messages[staged.id];
+    final custody = _directCustodyRows[key];
+    final validFreshAuthority =
+        kind == OutgoingOrdinaryAttemptKind.fresh &&
+        expected == null &&
+        !staged.isIncoming &&
+        staged.contactPeerId == recipientPeerId &&
+        staged.wireEnvelope == wireEnvelope &&
+        incarnationId.length == 32 &&
+        wireEnvelope.isNotEmpty;
+    if (!validFreshAuthority) {
+      return _ordinaryResult(OutgoingOrdinaryMutationOutcome.refused, current);
+    }
+    if (current != null || custody != null) {
+      final exact =
+          current != null &&
+          custody != null &&
+          _sameMessageSnapshot(current, staged) &&
+          custody.incarnationId == incarnationId &&
+          custody.wireEnvelope == wireEnvelope;
+      return _ordinaryResult(
+        exact
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.refused,
+        current,
+      );
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    _messages[staged.id] = staged;
+    _directCustodyRows[key] = DirectInboxCustodyOutboxEntry(
+      recipientPeerId: recipientPeerId,
+      messageId: staged.id,
+      incarnationId: incarnationId,
+      wireEnvelope: wireEnvelope,
+      retryCount: 0,
+      lastAttemptAt: null,
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    return _ordinaryResult(OutgoingOrdinaryMutationOutcome.applied, staged);
+  }
+
+  @override
+  Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
+    int limit = 50,
+  }) async {
+    final rows = _directCustodyRows.values.toList()
+      ..sort((left, right) {
+        if (left.lastAttemptAt == null && right.lastAttemptAt != null) {
+          return -1;
+        }
+        if (left.lastAttemptAt != null && right.lastAttemptAt == null) {
+          return 1;
+        }
+        final byAttempt = (left.lastAttemptAt ?? '').compareTo(
+          right.lastAttemptAt ?? '',
+        );
+        if (byAttempt != 0) return byAttempt;
+        final byCreated = left.createdAt.compareTo(right.createdAt);
+        if (byCreated != 0) return byCreated;
+        final byPeer = left.recipientPeerId.compareTo(right.recipientPeerId);
+        return byPeer != 0 ? byPeer : left.messageId.compareTo(right.messageId);
+      });
+    final bounded = limit < 0 ? 0 : (limit > 50 ? 50 : limit);
+    return rows.take(bounded).toList(growable: false);
+  }
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyForMessage({
+    required String recipientPeerId,
+    required String messageId,
+  }) async => _directCustodyRows[_directCustodyKey(recipientPeerId, messageId)];
+
+  @override
+  Future<bool> recordDirectInboxCustodyFailureIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    if (!DirectInboxCustodyErrorCode.values.contains(errorCode)) return false;
+    final key = _directCustodyKey(expected.recipientPeerId, expected.messageId);
+    final current = _directCustodyRows[key];
+    if (current == null ||
+        current.incarnationId != expected.incarnationId ||
+        current.wireEnvelope != expected.wireEnvelope) {
+      return false;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    _directCustodyRows[key] = current.copyWith(
+      retryCount: current.retryCount + 1,
+      lastAttemptAt: now,
+      lastErrorCode: errorCode,
+      updatedAt: now,
+    );
+    return true;
+  }
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final key = _directCustodyKey(expected.recipientPeerId, expected.messageId);
+    final custody = _directCustodyRows[key];
+    if (custody == null ||
+        custody.incarnationId != expected.incarnationId ||
+        custody.wireEnvelope != expected.wireEnvelope) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.stale,
+        message: null,
+      );
+    }
+
+    final current = _messages[expected.messageId];
+    _directCustodyRows.remove(key);
+    if (current == null) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messageRemoved,
+        message: null,
+      );
+    }
+    if (!const <String>{
+          'sending',
+          'sent',
+          'failed',
+          'inboxed',
+        }.contains(current.status) ||
+        current.isDeleted ||
+        current.hiddenAt != null) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
+        message: current,
+      );
+    }
+    if (current.status == 'inboxed' &&
+        current.transport == 'inbox' &&
+        (relayExpiresAt == null || current.relayExpiresAt == relayExpiresAt)) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
+        message: current,
+      );
+    }
+
+    final advanced = current.copyWith(
+      status: 'inboxed',
+      transport: 'inbox',
+      relayExpiresAt: relayExpiresAt,
+      custodyCheckedAt: null,
+    );
+    _messages[current.id] = advanced;
+    return DirectInboxCustodyCompletionResult(
+      outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
+      message: advanced,
+    );
   }
 
   OutgoingOrdinaryMutationResult _ordinaryResult(

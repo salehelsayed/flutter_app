@@ -1842,7 +1842,7 @@ flutter:
       'lib/core/bridge/bridge_group_helpers.dart':
           'Future<void> callGroupLeave(',
       'lib/core/database/app_database_version.dart':
-          'const int currentIdentityDatabaseVersion = 107;',
+          'const int currentIdentityDatabaseVersion = 108;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

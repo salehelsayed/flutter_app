@@ -259,6 +259,41 @@ handleIncomingChatMessage({
     return (HandleChatMessageResult.notChatMessage, null, null);
   }
 
+  // TC-342-08: the cleartext v2 target id and optional mutation event id must
+  // each agree with their authenticated inner authority before any side effect.
+  // Fresh sends use only the authored message id. Edits additionally carry a
+  // distinct event id so relay dedupe cannot confuse their ciphertext with the
+  // initial send; legacy edits without that additive field remain readable.
+  final outerEnvelopeId = v2Envelope?['id'];
+  final outerEventId = v2Envelope?['eventId'];
+  final payloadEventId = payload.eventId;
+  final hasMutationEventId = outerEventId != null || payloadEventId != null;
+  final mutationEventIdValid =
+      !hasMutationEventId ||
+      (payload.isEdit &&
+          outerEventId is String &&
+          outerEventId.trim().isNotEmpty &&
+          outerEventId == payloadEventId);
+  if (v2Envelope != null &&
+      (outerEnvelopeId != payload.id || !mutationEventIdValid)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_ID_MISMATCH',
+      details: {
+        'reason': outerEnvelopeId != payload.id ? 'target_id' : 'event_id',
+        'envelopeId': outerEnvelopeId is String
+            ? (outerEnvelopeId.length > 8
+                  ? outerEnvelopeId.substring(0, 8)
+                  : outerEnvelopeId)
+            : '<missing>',
+        'payloadId': payload.id.length > 8
+            ? payload.id.substring(0, 8)
+            : payload.id,
+      },
+    );
+    return (HandleChatMessageResult.unauthorized, null, null);
+  }
+
   // Sanitize incoming text and username to strip bidi control characters
   final incomingPrivateMediaPolicy = payload.privateMediaPolicy;
   payload = MessagePayload(
@@ -270,6 +305,7 @@ handleIncomingChatMessage({
     senderUsername: sanitizeUsername(payload.senderUsername),
     timestamp: payload.timestamp,
     action: payload.action,
+    eventId: payload.eventId,
     editedAt: payload.editedAt,
     quotedMessageId: payload.quotedMessageId,
     media: payload.media,
