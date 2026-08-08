@@ -75,6 +75,136 @@ func TestProtocolIDContract_Frozen(t *testing.T) {
 	}
 }
 
+// TestMediaCustodyAdditiveWireContract freezes Plan 346's protected-media
+// fields as an additive extension of /mknoon/media/1.0.0. Legacy clients omit
+// all custody fields and continue to use the existing actions; strict clients
+// require every proof discriminator below and must never infer custody from a
+// broad legacy OK response.
+func TestMediaCustodyAdditiveWireContract(t *testing.T) {
+	if got, want := string(MediaProtocol), "/mknoon/media/1.0.0"; got != want {
+		t.Fatalf("media protocol = %q, want frozen %q", got, want)
+	}
+
+	request := mediaRequest{
+		Action:          "upload_custody_v1",
+		ID:              "blob-contract",
+		To:              "recipient",
+		Owner:           "profile-owner",
+		Size:            17,
+		Mime:            "application/octet-stream",
+		AllowedPeers:    []string{"allowed"},
+		CustodyKind:     "direct_media_blob_v1",
+		CustodyContract: "ack_or_expiry_v1",
+		ContentHash:     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ExpiresAtMs:     1234,
+	}
+	assertJSONKeySet(t, "media request", request, []string{
+		"action",
+		"allowedPeers",
+		"contentHash",
+		"custodyContract",
+		"custodyKind",
+		"expiresAtMs",
+		"id",
+		"mime",
+		"owner",
+		"size",
+		"to",
+	})
+
+	response := mediaResponse{
+		Status:          "OK",
+		Error:           "error",
+		ErrorCode:       "MEDIA_CUSTODY_INELIGIBLE",
+		ID:              "blob-contract",
+		Mime:            "application/octet-stream",
+		Size:            17,
+		Blobs:           []*mediaMeta{{ID: "legacy"}},
+		CustodyKind:     "direct_media_blob_v1",
+		CustodyContract: "ack_or_expiry_v1",
+		ContentHash:     "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+		ExpiresAtMs:     1234,
+		StoreStatus:     "stored",
+		AckStatus:       "acked",
+	}
+	assertJSONKeySet(t, "media response", response, []string{
+		"ackStatus",
+		"blobs",
+		"contentHash",
+		"custodyContract",
+		"custodyKind",
+		"error",
+		"errorCode",
+		"expiresAtMs",
+		"id",
+		"mime",
+		"size",
+		"status",
+		"storeStatus",
+	})
+
+	legacyRequest, err := json.Marshal(mediaRequest{
+		Action: "upload",
+		ID:     "legacy",
+		To:     "recipient",
+		Size:   1,
+		Mime:   "image/jpeg",
+	})
+	if err != nil {
+		t.Fatalf("marshal legacy media request: %v", err)
+	}
+	for _, forbidden := range []string{
+		"custodyKind", "custodyContract", "contentHash", "expiresAtMs",
+	} {
+		if json.Valid(legacyRequest) && stringContainsJSONKey(legacyRequest, forbidden) {
+			t.Fatalf("legacy media request unexpectedly emits %q: %s", forbidden, legacyRequest)
+		}
+	}
+
+	legacyResponse, err := json.Marshal(mediaResponse{Status: "OK", ID: "legacy"})
+	if err != nil {
+		t.Fatalf("marshal legacy media response: %v", err)
+	}
+	for _, forbidden := range []string{
+		"errorCode", "custodyKind", "custodyContract", "contentHash",
+		"expiresAtMs", "storeStatus", "ackStatus",
+	} {
+		if stringContainsJSONKey(legacyResponse, forbidden) {
+			t.Fatalf("legacy media response unexpectedly emits %q: %s", forbidden, legacyResponse)
+		}
+	}
+}
+
+func assertJSONKeySet(t *testing.T, name string, value interface{}, want []string) {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatalf("marshal %s: %v", name, err)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("decode %s: %v", name, err)
+	}
+	got := make([]string, 0, len(decoded))
+	for key := range decoded {
+		got = append(got, key)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("%s JSON keys changed: got %v, want %v", name, got, want)
+	}
+}
+
+func stringContainsJSONKey(data []byte, key string) bool {
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return false
+	}
+	_, ok := decoded[key]
+	return ok
+}
+
 // TestResponseKeyContract_Frozen pins the exact set of JSON keys the relay's
 // inboxResponse can emit. Old clients zero-fill missing keys and ignore unknown
 // ones, so a RENAME silently gives every un-updated client an empty value.

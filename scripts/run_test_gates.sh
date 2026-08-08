@@ -1197,6 +1197,68 @@ run_ack_custody_go_gate() {
   bash scripts/test/go_binding_staleness_contract_test.sh
 }
 
+# Plan 346: direct-media blob custody has its own process, native selector,
+# bridge, mixed-relay, and rollout contract. Keep every tagged parent
+# discoverable and require an explicit non-skipped PASS so a missing fixture or
+# build tag cannot make the curated gate pass vacuously.
+run_media_custody_go_gate() {
+  echo "=== Direct Media Blob ACK-or-Expiry Custody Go Gate ==="
+
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test . \
+      -list '^TestRelayNotificationClosure_DirectMediaBlobCustody' | \
+      rg '^TestRelayNotificationClosure_DirectMediaBlobCustody' | \
+      awk 'END { exit NR == 11 ? 0 : 1 }')
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test -race . \
+      -run '^TestRelayNotificationClosure_DirectMediaBlobCustody' \
+      -count=1 -v | \
+      rg '^--- PASS: TestRelayNotificationClosure_DirectMediaBlobCustody' | \
+      awk 'END { exit NR == 11 ? 0 : 1 }')
+
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+      -list '^TestDirectMediaBlobCustodySurvivesRelayProcessHandoff$' | \
+      rg -x 'TestDirectMediaBlobCustodySurvivesRelayProcessHandoff')
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
+      -run '^TestDirectMediaBlobCustodySurvivesRelayProcessHandoff$' \
+      -count=1 -v | \
+      rg '^--- PASS: TestDirectMediaBlobCustodySurvivesRelayProcessHandoff \(')
+
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./node \
+      -list '^TestMediaCustody(UploadPhaseAwareRelaySelection|StrictDownloadSelectsExactProof|AckPinsSourceRelayAndRequiresExactProof)$' | \
+      rg '^TestMediaCustody' | \
+      awk 'END { exit NR == 3 ? 0 : 1 }')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./node \
+      -run '^TestMediaCustody(UploadPhaseAwareRelaySelection|StrictDownloadSelectsExactProof|AckPinsSourceRelayAndRequiresExactProof)$' \
+      -count=1 -v | \
+      rg '^--- PASS: TestMediaCustody' | \
+      awk 'END { exit NR == 3 ? 0 : 1 }')
+
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+      -list '^TestDispatchMediaCustodyContract$' | \
+      rg -x 'TestDispatchMediaCustodyContract')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+      -run '^TestDispatchMediaCustodyContract$' -count=1 -v | \
+      rg '^--- PASS: TestDispatchMediaCustodyContract \(')
+
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+      -list '^TestMediaCustodyMixedRelayMatrix$' | \
+      rg -x 'TestMediaCustodyMixedRelayMatrix')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \
+      -run '^TestMediaCustodyMixedRelayMatrix$' -count=1 -v | \
+      rg '^--- PASS: TestMediaCustodyMixedRelayMatrix \(')
+
+  bash scripts/test/relay_media_custody_contract_test.sh
+}
+
 run_relay_all_go_gate() {
   echo "=== Relay Full Go Gate ==="
   run_relay_toolchain_contract_gate
@@ -1649,6 +1711,7 @@ main() {
         run_gate_command "1:1 Reliability Gate" "${ONE_TO_ONE_TESTS[@]}"
         run_relay_notification_go_gate
         run_ack_custody_go_gate
+        run_media_custody_go_gate
       else
         ./scripts/run_host_test_gates.sh 1to1 "${gate_args[@]}"
       fi
@@ -1712,6 +1775,7 @@ main() {
       run_group_forwarding_go_bridge_gate
       run_relay_all_go_gate
       run_ack_custody_go_gate
+      run_media_custody_go_gate
       run_gate_command "Posts / Privacy Gate" "${POSTS_TESTS[@]}"
       run_transport_gate
       run_gate_command "Runtime Telemetry Gate" "${RUNTIME_TELEMETRY_TESTS[@]}"

@@ -47,6 +47,31 @@ var mediaDiskBytes = promauto.NewGauge(prometheus.GaugeOpts{
 	Help: "Total media folder size in bytes.",
 })
 
+var mediaCustodyContractInfo = promauto.NewGaugeVec(prometheus.GaugeOpts{
+	Name: "relay_media_custody_contract_info",
+	Help: "Protected direct-media blob custody contract revision supported by this relay binary.",
+}, []string{"revision"})
+
+var mediaCustodyAdmissionEnabledGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_media_custody_admission_enabled",
+	Help: "1 when new protected direct-media blobs are admitted; download, ACK, expiry, and reconciliation remain active while off.",
+})
+
+var mediaCustodyBlobsPendingGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_media_custody_blobs_pending",
+	Help: "Authoritative protected direct-media blobs pending recipient ACK or expiry.",
+})
+
+var mediaCustodyBytesPendingGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_media_custody_bytes_pending",
+	Help: "Ciphertext bytes held by protected direct-media blobs pending recipient ACK or expiry.",
+})
+
+var mediaCustodyTombstonesGauge = promauto.NewGauge(prometheus.GaugeOpts{
+	Name: "relay_media_custody_tombstones",
+	Help: "Durable protected direct-media ACK tombstones retained until original expiry.",
+})
+
 var profileCountGauge = promauto.NewGauge(prometheus.GaugeOpts{
 	Name: "relay_profile_count",
 	Help: "Profile files currently on disk.",
@@ -196,6 +221,64 @@ func recordInboxExpiredPruned(count int) {
 }
 
 // Media counters
+
+const (
+	mediaCustodyMetricStored           = "stored"
+	mediaCustodyMetricDuplicate        = "duplicate"
+	mediaCustodyMetricRejectedFull     = "rejected_full"
+	mediaCustodyMetricIdentityConflict = "identity_conflict"
+	mediaCustodyMetricAcked            = "acked"
+	mediaCustodyMetricAlreadyAcked     = "already_acked"
+	mediaCustodyMetricExpired          = "expired"
+	mediaCustodyMetricCleanupPending   = "cleanup_pending"
+	mediaCustodyMetricDisabled         = "disabled"
+	mediaCustodyMetricIneligible       = "ineligible"
+	mediaCustodyMetricHashMismatch     = "hash_mismatch"
+	mediaCustodyMetricFailed           = "failed"
+)
+
+var mediaCustodyOutcomesCounter = promauto.NewCounterVec(prometheus.CounterOpts{
+	Name: "relay_media_custody_outcomes_total",
+	Help: "Protected direct-media custody outcomes by fixed result class.",
+}, []string{"outcome"})
+
+func init() {
+	mediaCustodyContractInfo.WithLabelValues(directMediaBlobCustodyContract).Set(1)
+	for _, outcome := range []string{
+		mediaCustodyMetricStored,
+		mediaCustodyMetricDuplicate,
+		mediaCustodyMetricRejectedFull,
+		mediaCustodyMetricIdentityConflict,
+		mediaCustodyMetricAcked,
+		mediaCustodyMetricAlreadyAcked,
+		mediaCustodyMetricExpired,
+		mediaCustodyMetricCleanupPending,
+		mediaCustodyMetricDisabled,
+		mediaCustodyMetricIneligible,
+		mediaCustodyMetricHashMismatch,
+		mediaCustodyMetricFailed,
+	} {
+		mediaCustodyOutcomesCounter.WithLabelValues(outcome).Add(0)
+	}
+}
+
+func setMediaCustodyAdmissionGauge(enabled bool) {
+	if enabled {
+		mediaCustodyAdmissionEnabledGauge.Set(1)
+		return
+	}
+	mediaCustodyAdmissionEnabledGauge.Set(0)
+}
+
+func setMediaCustodyStateGauges(pending int, pendingBytes int64, tombstones int) {
+	mediaCustodyBlobsPendingGauge.Set(float64(pending))
+	mediaCustodyBytesPendingGauge.Set(float64(pendingBytes))
+	mediaCustodyTombstonesGauge.Set(float64(tombstones))
+}
+
+func recordMediaCustodyOutcome(outcome string) {
+	mediaCustodyOutcomesCounter.WithLabelValues(outcome).Inc()
+}
 
 var mediaUploadedCounter = promauto.NewCounter(prometheus.CounterOpts{
 	Name: "relay_media_uploaded_total",

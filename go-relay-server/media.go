@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -52,20 +53,38 @@ type MediaStore struct {
 	byPeer  map[string][]string   // recipient peerId → list of blob IDs
 	dataDir string
 
+	// laneMu serializes legacy/protected identity decisions. Blob bodies stream
+	// outside it; legacyReservations and custody reservations keep the ID owned
+	// until the corresponding commit decision is published.
+	laneMu             sync.Mutex
+	legacyReservations map[string]int
+	custody            *directMediaBlobCustodyStore
+	// legacyAfterBlobRenameForTest is a same-package deterministic race seam.
+	// Production leaves it nil.
+	legacyAfterBlobRenameForTest            func()
+	legacyAfterDownloadAuthorizationForTest func()
+	legacyAfterDeleteAuthorizationForTest   func()
+
 	cancelCleanup context.CancelFunc
 }
 
-func NewMediaStore(dataDir string) *MediaStore {
+func NewMediaStore(dataDir string) (*MediaStore, error) {
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
-		log.Printf("[MEDIA] Warning: could not create data dir %s: %v", dataDir, err)
+		return nil, fmt.Errorf("create media data dir %s: %w", dataDir, err)
 	}
 	ms := &MediaStore{
-		index:   make(map[string]*mediaMeta),
-		byPeer:  make(map[string][]string),
-		dataDir: dataDir,
+		index:              make(map[string]*mediaMeta),
+		byPeer:             make(map[string][]string),
+		dataDir:            dataDir,
+		legacyReservations: make(map[string]int),
 	}
 	ms.loadMetadata()
-	return ms
+	custody, err := newDirectMediaBlobCustodyStore(ms)
+	if err != nil {
+		return nil, fmt.Errorf("open direct media blob custody store: %w", err)
+	}
+	ms.custody = custody
+	return ms, nil
 }
 
 func (ms *MediaStore) StartCleanup(ctx context.Context) {
@@ -92,8 +111,8 @@ func (ms *MediaStore) StopCleanup() {
 }
 
 func (ms *MediaStore) cleanupExpired() {
+	ms.laneMu.Lock()
 	ms.mu.Lock()
-	defer ms.mu.Unlock()
 
 	now := time.Now().UnixMilli()
 	cutoff := now - mediaTTL.Milliseconds()
@@ -112,6 +131,11 @@ func (ms *MediaStore) cleanupExpired() {
 
 	if removed > 0 {
 		log.Printf("[MEDIA] Cleanup: removed %d expired blob(s)", removed)
+	}
+	ms.mu.Unlock()
+	ms.laneMu.Unlock()
+	if ms.custody != nil {
+		ms.custody.cleanupExpired()
 	}
 }
 
@@ -155,6 +179,25 @@ func (ms *MediaStore) store(meta *mediaMeta) (int, error) {
 		log.Printf("[MEDIA] Pruned %d blob(s) for peer %s", removed, meta.To[:min(20, len(meta.To))])
 	}
 	return removed, nil
+}
+
+// commitLegacyUpload publishes the final legacy blob rename and metadata under
+// the lane lock. Cleanup/delete use the same lock, so they cannot observe the
+// new bytes through stale same-ID metadata and remove them before the new
+// sidecar/index entry becomes authoritative.
+func (ms *MediaStore) commitLegacyUpload(tmpPath, path string, meta *mediaMeta) (int, error) {
+	ms.laneMu.Lock()
+	defer ms.laneMu.Unlock()
+	if meta == nil || ms.legacyReservations[meta.ID] <= 0 {
+		return 0, fmt.Errorf("legacy media id is not reserved")
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return 0, fmt.Errorf("commit legacy blob: %w", err)
+	}
+	if ms.legacyAfterBlobRenameForTest != nil {
+		ms.legacyAfterBlobRenameForTest()
+	}
+	return ms.store(meta)
 }
 
 func (ms *MediaStore) prunePeerLocked(peerID string) int {
@@ -209,9 +252,91 @@ func (ms *MediaStore) lookup(id string) *mediaMeta {
 }
 
 func (ms *MediaStore) remove(id string) {
+	ms.laneMu.Lock()
+	defer ms.laneMu.Unlock()
 	ms.mu.Lock()
 	defer ms.mu.Unlock()
 	ms.removeLocked(id)
+}
+
+var (
+	errLegacyMediaNotFound      = errors.New("legacy media not found")
+	errLegacyMediaNotAuthorized = errors.New("legacy media not authorized")
+	errLegacyMediaProtected     = errors.New("legacy media ID is protected")
+)
+
+func (ms *MediaStore) protectedMediaIDLaneLocked(id string) bool {
+	if ms.custody == nil {
+		return false
+	}
+	ms.custody.mu.Lock()
+	defer ms.custody.mu.Unlock()
+	return ms.custody.protectedIDLocked(id)
+}
+
+// openLegacyMediaForDownload resolves authorization and opens the selected
+// inode under the lane lock. A same-ID replacement may proceed after return,
+// but the already-open descriptor continues to represent the row that was
+// authorized rather than replacement bytes/recipient metadata.
+func (ms *MediaStore) openLegacyMediaForDownload(id, remotePeer string) (*mediaMeta, *os.File, error) {
+	ms.laneMu.Lock()
+	defer ms.laneMu.Unlock()
+	if ms.protectedMediaIDLaneLocked(id) {
+		return nil, nil, errLegacyMediaProtected
+	}
+	ms.mu.RLock()
+	defer ms.mu.RUnlock()
+	meta := ms.index[id]
+	if meta == nil {
+		return nil, nil, errLegacyMediaNotFound
+	}
+	if len(meta.AllowedPeers) > 0 {
+		if !containsPeer(meta.AllowedPeers, remotePeer) {
+			return nil, nil, errLegacyMediaNotAuthorized
+		}
+	} else if meta.To != remotePeer {
+		return nil, nil, errLegacyMediaNotAuthorized
+	}
+	if ms.legacyAfterDownloadAuthorizationForTest != nil {
+		ms.legacyAfterDownloadAuthorizationForTest()
+	}
+	f, err := os.Open(ms.blobPath(meta.To, meta.ID))
+	if err != nil {
+		return nil, nil, err
+	}
+	copyMeta := *meta
+	copyMeta.AllowedPeers = append([]string(nil), meta.AllowedPeers...)
+	return &copyMeta, f, nil
+}
+
+// deleteLegacyMediaAuthorized makes the protected-lane check, current-row
+// authorization, and deletion one linearizable decision. This prevents an old
+// recipient from deleting a same-ID replacement committed for someone else.
+func (ms *MediaStore) deleteLegacyMediaAuthorized(id, remotePeer string) (int64, error) {
+	ms.laneMu.Lock()
+	defer ms.laneMu.Unlock()
+	if ms.protectedMediaIDLaneLocked(id) {
+		return 0, errLegacyMediaProtected
+	}
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	meta := ms.index[id]
+	if meta == nil {
+		return 0, errLegacyMediaNotFound
+	}
+	if len(meta.AllowedPeers) > 0 {
+		if !containsPeer(meta.AllowedPeers, remotePeer) {
+			return 0, errLegacyMediaNotAuthorized
+		}
+	} else if meta.To != remotePeer {
+		return 0, errLegacyMediaNotAuthorized
+	}
+	if ms.legacyAfterDeleteAuthorizationForTest != nil {
+		ms.legacyAfterDeleteAuthorizationForTest()
+	}
+	size := meta.Size
+	ms.removeLocked(id)
+	return size, nil
 }
 
 // removeLocked deletes a blob from index, byPeer, and disk. Caller must hold mu.
@@ -330,6 +455,10 @@ func (ms *MediaStore) loadMetadata() {
 			log.Printf("[MEDIA] Ignoring incomplete metadata sidecar %s", path)
 			return nil
 		}
+		if !validLegacyMediaSegment(meta.ID) || !validLegacyMediaSegment(meta.To) {
+			log.Printf("[MEDIA] Ignoring unsafe metadata sidecar %s", path)
+			return nil
+		}
 		if _, err := os.Stat(ms.blobPath(meta.To, meta.ID)); err != nil {
 			log.Printf("[MEDIA] Ignoring metadata sidecar %s without blob: %v", path, err)
 			return nil
@@ -355,22 +484,33 @@ func (ms *MediaStore) loadMetadata() {
 // --- Request/response types ---
 
 type mediaRequest struct {
-	Action       string   `json:"action"`
-	ID           string   `json:"id,omitempty"`
-	To           string   `json:"to,omitempty"`
-	Owner        string   `json:"owner,omitempty"` // for profile_download
-	Size         int64    `json:"size,omitempty"`
-	Mime         string   `json:"mime,omitempty"`
-	AllowedPeers []string `json:"allowedPeers,omitempty"`
+	Action          string   `json:"action"`
+	ID              string   `json:"id,omitempty"`
+	To              string   `json:"to,omitempty"`
+	Owner           string   `json:"owner,omitempty"` // for profile_download
+	Size            int64    `json:"size,omitempty"`
+	Mime            string   `json:"mime,omitempty"`
+	AllowedPeers    []string `json:"allowedPeers,omitempty"`
+	CustodyKind     string   `json:"custodyKind,omitempty"`
+	CustodyContract string   `json:"custodyContract,omitempty"`
+	ContentHash     string   `json:"contentHash,omitempty"`
+	ExpiresAtMs     int64    `json:"expiresAtMs,omitempty"`
 }
 
 type mediaResponse struct {
-	Status string       `json:"status"`
-	Error  string       `json:"error,omitempty"`
-	ID     string       `json:"id,omitempty"`
-	Mime   string       `json:"mime,omitempty"`
-	Size   int64        `json:"size,omitempty"`
-	Blobs  []*mediaMeta `json:"blobs,omitempty"`
+	Status          string       `json:"status"`
+	Error           string       `json:"error,omitempty"`
+	ID              string       `json:"id,omitempty"`
+	Mime            string       `json:"mime,omitempty"`
+	Size            int64        `json:"size,omitempty"`
+	Blobs           []*mediaMeta `json:"blobs,omitempty"`
+	ErrorCode       string       `json:"errorCode,omitempty"`
+	StoreStatus     string       `json:"storeStatus,omitempty"`
+	AckStatus       string       `json:"ackStatus,omitempty"`
+	CustodyKind     string       `json:"custodyKind,omitempty"`
+	CustodyContract string       `json:"custodyContract,omitempty"`
+	ContentHash     string       `json:"contentHash,omitempty"`
+	ExpiresAtMs     int64        `json:"expiresAtMs,omitempty"`
 }
 
 // --- Stream handler ---
@@ -411,10 +551,18 @@ func HandleMediaStream(s network.Stream, media *MediaStore, profile *ProfileStor
 	switch req.Action {
 	case "upload":
 		handleMediaUpload(s, media, remotePeer, &req)
+	case mediaCustodyUploadAction:
+		handleDirectMediaBlobCustodyUpload(s, media, remotePeer, &req)
 	case "download":
-		handleMediaDownload(s, media, remotePeer, &req)
+		if hasDirectMediaBlobCustodyFields(&req) {
+			handleDirectMediaBlobCustodyDownload(s, media, remotePeer, &req)
+		} else {
+			handleMediaDownload(s, media, remotePeer, &req)
+		}
 	case "delete":
 		handleMediaDelete(s, media, remotePeer, &req)
+	case mediaCustodyAckAction:
+		handleDirectMediaBlobCustodyAck(s, media, remotePeer, &req)
 	case "list":
 		handleMediaList(s, media, remotePeer)
 	case "profile_upload":
@@ -439,6 +587,15 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: fmt.Sprintf("size %d exceeds max %d", req.Size, maxMediaSize)})
 		return
 	}
+	if !validLegacyMediaSegment(req.ID) || !validLegacyMediaSegment(req.To) {
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "invalid media path"})
+		return
+	}
+	if err := media.reserveLegacyMediaID(req.ID); err != nil {
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "media identity conflict"})
+		return
+	}
+	defer media.releaseLegacyMediaID(req.ID)
 
 	// Ensure recipient directory exists
 	dir := filepath.Join(media.dataDir, req.To)
@@ -476,13 +633,6 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 		return
 	}
 
-	if err := os.Rename(tmpPath, path); err != nil {
-		os.Remove(tmpPath)
-		log.Printf("[MEDIA] Failed to commit upload %s: %v", req.ID, err)
-		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
-		return
-	}
-
 	meta := &mediaMeta{
 		ID:           req.ID,
 		To:           req.To,
@@ -491,8 +641,9 @@ func handleMediaUpload(s network.Stream, media *MediaStore, remotePeer string, r
 		CreatedAt:    time.Now().UnixMilli(),
 		AllowedPeers: req.AllowedPeers,
 	}
-	if _, err := media.store(meta); err != nil {
-		log.Printf("[MEDIA] Failed to persist metadata for %s: %v", req.ID, err)
+	if _, err := media.commitLegacyUpload(tmpPath, path, meta); err != nil {
+		os.Remove(tmpPath)
+		log.Printf("[MEDIA] Failed to commit upload %s: %v", req.ID, err)
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
 		return
 	}
@@ -513,25 +664,21 @@ func handleMediaDownload(s network.Stream, media *MediaStore, remotePeer string,
 		return
 	}
 
-	meta := media.lookup(req.ID)
-	if meta == nil {
+	meta, f, err := media.openLegacyMediaForDownload(req.ID, remotePeer)
+	if errors.Is(err, errLegacyMediaNotFound) || errors.Is(err, errLegacyMediaProtected) {
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not found"})
 		return
 	}
-
-	// Authorization check: group mode (AllowedPeers) vs 1:1 mode (To)
-	isGroupMode := len(meta.AllowedPeers) > 0
-	if isGroupMode {
-		if !containsPeer(meta.AllowedPeers, remotePeer) {
-			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
-			return
-		}
-	} else {
-		if meta.To != remotePeer {
-			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
-			return
-		}
+	if errors.Is(err, errLegacyMediaNotAuthorized) {
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
+		return
 	}
+	if err != nil {
+		log.Printf("[MEDIA] Failed to open authorized blob %s: %v", req.ID, err)
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
+		return
+	}
+	defer f.Close()
 
 	// Send metadata response first
 	writeMediaResponse(s, mediaResponse{
@@ -540,15 +687,6 @@ func handleMediaDownload(s network.Stream, media *MediaStore, remotePeer string,
 		Mime:   meta.Mime,
 		Size:   meta.Size,
 	})
-
-	// Stream file data
-	path := media.blobPath(meta.To, meta.ID)
-	f, err := os.Open(path)
-	if err != nil {
-		log.Printf("[MEDIA] Failed to open file %s: %v", path, err)
-		return
-	}
-	defer f.Close()
 
 	written, err := io.Copy(s, f)
 	if err != nil {
@@ -570,28 +708,32 @@ func handleMediaDelete(s network.Stream, media *MediaStore, remotePeer string, r
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "missing required field: id"})
 		return
 	}
-
-	meta := media.lookup(req.ID)
-	if meta == nil {
+	if !validLegacyMediaSegment(req.ID) {
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "invalid media path"})
+		return
+	}
+	size, err := media.deleteLegacyMediaAuthorized(req.ID, remotePeer)
+	// A legacy ID-only rollback delete cannot acknowledge or remove protected
+	// custody. Preserve the legacy success shape without exposing protected state.
+	if errors.Is(err, errLegacyMediaProtected) {
+		writeMediaResponse(s, mediaResponse{Status: "OK"})
+		return
+	}
+	if errors.Is(err, errLegacyMediaNotFound) {
 		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not found"})
 		return
 	}
-
-	if len(meta.AllowedPeers) > 0 {
-		if !containsPeer(meta.AllowedPeers, remotePeer) {
-			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
-			return
-		}
-	} else {
-		if meta.To != remotePeer {
-			writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
-			return
-		}
+	if errors.Is(err, errLegacyMediaNotAuthorized) {
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "not authorized"})
+		return
+	}
+	if err != nil {
+		writeMediaResponse(s, mediaResponse{Status: "ERROR", Error: "server storage error"})
+		return
 	}
 
 	mediaDeletedCounter.WithLabelValues("explicit").Inc()
-	mediaDeletedBytesCounter.WithLabelValues("explicit").Add(float64(meta.Size))
-	media.remove(req.ID)
+	mediaDeletedBytesCounter.WithLabelValues("explicit").Add(float64(size))
 	writeMediaResponse(s, mediaResponse{Status: "OK"})
 	log.Printf("[MEDIA] Deleted blob %s for %s", req.ID, remotePeer[:min(20, len(remotePeer))])
 }
@@ -611,7 +753,7 @@ func containsPeer(peers []string, target string) bool {
 	return false
 }
 
-func writeMediaResponse(s network.Stream, resp mediaResponse) {
+func writeMediaResponse(s io.Writer, resp mediaResponse) {
 	data, err := json.Marshal(resp)
 	if err != nil {
 		streamErrorsCounter.WithLabelValues("media", "write").Inc()

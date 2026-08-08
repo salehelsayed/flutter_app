@@ -1137,6 +1137,9 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
   required String mime,
   required String filePath,
   List<String>? allowedPeers,
+  String? custodyContract,
+  String? custodyKind,
+  String? contentHash,
   int? payloadSizeBytes,
   Duration? stallTimeout,
   Duration? maxTimeout,
@@ -1156,18 +1159,29 @@ Future<Map<String, dynamic>> callP2PMediaUpload(
       'filePath': filePath,
       if (allowedPeers != null && allowedPeers.isNotEmpty)
         'allowedPeers': allowedPeers,
+      'custodyContract': ?custodyContract,
+      'custodyKind': ?custodyKind,
+      'contentHash': ?contentHash,
     },
   };
 
-  final response = await _sendMediaTransferWithWatchdog(
-    bridge: bridge,
-    request: request,
-    progressStream: mediaUploadProgressStream,
-    id: id,
-    stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
-    maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
-    watchdogLabel: 'media:upload',
-  );
+  final custodyRequested =
+      custodyContract != null || custodyKind != null || contentHash != null;
+  // Strict custody must return the native phase-aware typed result. An outer
+  // Dart timeout could otherwise fire after READY while the native commit (or
+  // its same-relay recovery probe) is still running.
+  final response = custodyRequested
+      ? jsonDecode(await bridge.send(jsonEncode(request)))
+            as Map<String, dynamic>
+      : await _sendMediaTransferWithWatchdog(
+          bridge: bridge,
+          request: request,
+          progressStream: mediaUploadProgressStream,
+          id: id,
+          stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
+          maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
+          watchdogLabel: 'media:upload',
+        );
 
   emitFlowEvent(
     layer: 'FL',
@@ -1256,6 +1270,12 @@ Future<Map<String, dynamic>> callP2PMediaDownload(
   Bridge bridge, {
   required String id,
   required String outputPath,
+  String? custodyContract,
+  String? custodyKind,
+  String? contentHash,
+  int? size,
+  String? mime,
+  int? expiresAtMs,
   int? payloadSizeBytes,
   Duration? stallTimeout,
   Duration? maxTimeout,
@@ -1268,18 +1288,37 @@ Future<Map<String, dynamic>> callP2PMediaDownload(
 
   final request = {
     'cmd': 'media:download',
-    'payload': {'id': id, 'outputPath': outputPath},
+    'payload': {
+      'id': id,
+      'outputPath': outputPath,
+      'custodyContract': ?custodyContract,
+      'custodyKind': ?custodyKind,
+      'contentHash': ?contentHash,
+      'size': ?size,
+      'mime': ?mime,
+      'expiresAtMs': ?expiresAtMs,
+    },
   };
 
-  final response = await _sendMediaTransferWithWatchdog(
-    bridge: bridge,
-    request: request,
-    progressStream: mediaDownloadProgressStream,
-    id: id,
-    stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
-    maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
-    watchdogLabel: 'media:download',
-  );
+  final custodyRequested =
+      custodyContract != null ||
+      custodyKind != null ||
+      contentHash != null ||
+      size != null ||
+      mime != null ||
+      expiresAtMs != null;
+  final response = custodyRequested
+      ? jsonDecode(await bridge.send(jsonEncode(request)))
+            as Map<String, dynamic>
+      : await _sendMediaTransferWithWatchdog(
+          bridge: bridge,
+          request: request,
+          progressStream: mediaDownloadProgressStream,
+          id: id,
+          stallTimeout: stallTimeout ?? mediaTransferDefaultStallTimeout,
+          maxTimeout: maxTimeout ?? mediaTransferMaxTimeout(payloadSizeBytes),
+          watchdogLabel: 'media:download',
+        );
   final responseDetails = <String, dynamic>{
     'ok': response['ok'],
     'id': response['id'],
@@ -1316,6 +1355,13 @@ Future<Map<String, dynamic>> callP2PMediaDownload(
 Future<Map<String, dynamic>> callP2PMediaDelete(
   Bridge bridge, {
   required String id,
+  String? custodyContract,
+  String? custodyKind,
+  String? contentHash,
+  int? size,
+  String? mime,
+  int? expiresAtMs,
+  String? custodyRelayPeerId,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -1325,12 +1371,33 @@ Future<Map<String, dynamic>> callP2PMediaDelete(
 
   final request = {
     'cmd': 'media:delete',
-    'payload': {'id': id},
+    'payload': {
+      'id': id,
+      'custodyContract': ?custodyContract,
+      'custodyKind': ?custodyKind,
+      'contentHash': ?contentHash,
+      'size': ?size,
+      'mime': ?mime,
+      'expiresAtMs': ?expiresAtMs,
+      'custodyRelayPeerId': ?custodyRelayPeerId,
+    },
   };
 
-  final responseJson = await bridge
-      .send(jsonEncode(request))
-      .timeout(const Duration(seconds: 15));
+  final custodyRequested =
+      custodyContract != null ||
+      custodyKind != null ||
+      contentHash != null ||
+      size != null ||
+      mime != null ||
+      expiresAtMs != null ||
+      custodyRelayPeerId != null;
+  // Native pins strict ACK to the proof source and owns its sibling retries;
+  // preserve that typed result instead of pre-empting it with a Dart timeout.
+  final responseJson = custodyRequested
+      ? await bridge.send(jsonEncode(request))
+      : await bridge
+            .send(jsonEncode(request))
+            .timeout(const Duration(seconds: 15));
   final response = jsonDecode(responseJson) as Map<String, dynamic>;
 
   emitFlowEvent(

@@ -94,7 +94,10 @@ func setupTestEnv(t *testing.T) *testEnv {
 	}
 
 	dataDir := t.TempDir()
-	media := NewMediaStore(dataDir)
+	media, err := NewMediaStore(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	profile := NewProfileStore(filepath.Join(dataDir, "profiles"))
 
 	server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
@@ -154,7 +157,10 @@ func TestMediaStoreSurvivesRestart(t *testing.T) {
 
 	env.upload(t, env.sender, "restart-blob", recipientStr, "image/jpeg", blobData)
 
-	rebuilt := NewMediaStore(env.media.dataDir)
+	rebuilt, err := NewMediaStore(env.media.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if meta := rebuilt.lookup("restart-blob"); meta == nil {
 		t.Fatal("expected rebuilt media store to load metadata after restart")
 	}
@@ -248,7 +254,10 @@ func TestMediaStoreIgnoresCorruptSidecarAndKeepsServingValidEntries(t *testing.T
 		t.Fatalf("write corrupt sidecar: %v", err)
 	}
 
-	rebuilt := NewMediaStore(env.media.dataDir)
+	rebuilt, err := NewMediaStore(env.media.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if meta := rebuilt.lookup("valid-sidecar"); meta == nil {
 		t.Fatal("valid metadata should load even when another sidecar is corrupt")
 	}
@@ -1088,7 +1097,10 @@ func TestMediaSidecarAtRestOmitsSender(t *testing.T) {
 
 	// Restart the store over the same dataDir and swap it into the
 	// handler: download and ack-delete must still authorize via To.
-	rebuilt := NewMediaStore(env.media.dataDir)
+	rebuilt, err := NewMediaStore(env.media.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	env.server.SetStreamHandler(MediaProtocol, func(s network.Stream) {
 		HandleMediaStream(s, rebuilt, env.profile)
 	})
@@ -1129,7 +1141,10 @@ func TestMediaStoreLoadsLegacySidecarWithFromField(t *testing.T) {
 		t.Fatalf("write legacy sidecar: %v", err)
 	}
 
-	rebuilt := NewMediaStore(env.media.dataDir)
+	rebuilt, err := NewMediaStore(env.media.dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if rebuilt.lookup("legacy-blob") == nil {
 		t.Fatal("legacy sidecar containing `from` failed to load")
 	}

@@ -891,6 +891,78 @@ void main() {
       expect(payload['mime'], equals('image/jpeg'));
       expect(payload['filePath'], equals('/tmp/photo.jpg'));
     });
+
+    test('media custody upload carries explicit exact contract', () async {
+      const hash =
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      bridge.nextResponse = {
+        'ok': true,
+        'id': 'custody-upload',
+        'storeStatus': 'stored',
+        'custodyKind': 'direct_media_blob_v1',
+        'custodyContract': 'ack_or_expiry_v1',
+        'contentHash': hash,
+        'size': 4096,
+        'mime': 'application/octet-stream',
+        'expiresAtMs': 123456,
+        'custodyRelayPeerId': 'relay-source',
+      };
+
+      final result = await callP2PMediaUpload(
+        bridge,
+        id: 'custody-upload',
+        toPeerId: 'recipient',
+        mime: 'application/octet-stream',
+        filePath: '/tmp/encrypted.bin',
+        custodyKind: 'direct_media_blob_v1',
+        custodyContract: 'ack_or_expiry_v1',
+        contentHash: hash,
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['custodyKind'], 'direct_media_blob_v1');
+      expect(payload['custodyContract'], 'ack_or_expiry_v1');
+      expect(payload['contentHash'], hash);
+      expect(payload, isNot(contains('expiresAtMs')));
+      expect(result['storeStatus'], 'stored');
+      expect(result['expiresAtMs'], 123456);
+      expect(result['custodyRelayPeerId'], 'relay-source');
+    });
+
+    test(
+      'media custody upload bypasses short Dart watchdogs and preserves native result',
+      () async {
+        const hash =
+            'abababababababababababababababababababababababababababababababab';
+        final nativeResult = <String, dynamic>{
+          'ok': false,
+          'id': 'custody-upload-slow',
+          'errorCode': 'MEDIA_CUSTODY_COMMIT_INDETERMINATE',
+          'errorMessage': 'native operation completed after recovery probe',
+          'custodyRelayPeerId': 'relay-selected',
+        };
+        final slow = _SlowBridge(
+          delay: const Duration(milliseconds: 80),
+          response: nativeResult,
+        );
+
+        final result = await callP2PMediaUpload(
+          slow,
+          id: 'custody-upload-slow',
+          toPeerId: 'recipient',
+          mime: 'application/octet-stream',
+          filePath: '/tmp/custody-upload-slow.enc',
+          custodyKind: 'direct_media_blob_v1',
+          custodyContract: 'ack_or_expiry_v1',
+          contentHash: hash,
+          stallTimeout: const Duration(milliseconds: 10),
+          maxTimeout: const Duration(milliseconds: 20),
+        );
+
+        expect(result, equals(nativeResult));
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------
@@ -957,6 +1029,83 @@ void main() {
         expect(details['streamTransport'], 'direct');
         expect(details['servedByPhone'], isFalse);
         expect(details['routedViaRelayStore'], isTrue);
+      },
+    );
+
+    test(
+      'media custody download carries exact contract and source relay',
+      () async {
+        const hash =
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+        bridge.nextResponse = {
+          'ok': true,
+          'id': 'custody-download',
+          'custodyKind': 'direct_media_blob_v1',
+          'custodyContract': 'ack_or_expiry_v1',
+          'contentHash': hash,
+          'size': 2048,
+          'mime': 'application/octet-stream',
+          'expiresAtMs': 987654,
+          'custodyRelayPeerId': 'relay-proof-source',
+        };
+
+        final result = await callP2PMediaDownload(
+          bridge,
+          id: 'custody-download',
+          outputPath: '/tmp/custody-download.bin',
+          custodyKind: 'direct_media_blob_v1',
+          custodyContract: 'ack_or_expiry_v1',
+          contentHash: hash,
+          size: 2048,
+          mime: 'application/octet-stream',
+          expiresAtMs: 987654,
+        );
+
+        final payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['custodyKind'], 'direct_media_blob_v1');
+        expect(payload['custodyContract'], 'ack_or_expiry_v1');
+        expect(payload['contentHash'], hash);
+        expect(payload['size'], 2048);
+        expect(payload['mime'], 'application/octet-stream');
+        expect(payload['expiresAtMs'], 987654);
+        expect(payload, isNot(contains('custodyRelayPeerId')));
+        expect(result['custodyRelayPeerId'], 'relay-proof-source');
+      },
+    );
+
+    test(
+      'media custody download bypasses short Dart watchdogs and preserves native result',
+      () async {
+        const hash =
+            'bcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbcbc';
+        final nativeResult = <String, dynamic>{
+          'ok': false,
+          'id': 'custody-download-slow',
+          'errorCode': 'MEDIA_CUSTODY_HASH_MISMATCH',
+          'errorMessage': 'native streamed hash mismatch',
+          'custodyRelayPeerId': 'relay-proof-source',
+        };
+        final slow = _SlowBridge(
+          delay: const Duration(milliseconds: 80),
+          response: nativeResult,
+        );
+
+        final result = await callP2PMediaDownload(
+          slow,
+          id: 'custody-download-slow',
+          outputPath: '/tmp/custody-download-slow.enc',
+          custodyKind: 'direct_media_blob_v1',
+          custodyContract: 'ack_or_expiry_v1',
+          contentHash: hash,
+          size: 2048,
+          mime: 'application/octet-stream',
+          expiresAtMs: 987654,
+          stallTimeout: const Duration(milliseconds: 10),
+          maxTimeout: const Duration(milliseconds: 20),
+        );
+
+        expect(result, equals(nativeResult));
       },
     );
 
@@ -1059,6 +1208,163 @@ void main() {
           bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
       expect(payload['id'], equals('uuid-789'));
     });
+
+    test('media custody ack carries hash and source relay', () async {
+      const hash =
+          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+      bridge.nextResponse = {
+        'ok': true,
+        'id': 'custody-ack',
+        'ackStatus': 'acked',
+        'custodyKind': 'direct_media_blob_v1',
+        'custodyContract': 'ack_or_expiry_v1',
+        'contentHash': hash,
+        'size': 512,
+        'mime': 'application/octet-stream',
+        'expiresAtMs': 765432,
+        'custodyRelayPeerId': 'relay-proof-source',
+      };
+
+      final result = await callP2PMediaDelete(
+        bridge,
+        id: 'custody-ack',
+        custodyKind: 'direct_media_blob_v1',
+        custodyContract: 'ack_or_expiry_v1',
+        contentHash: hash,
+        size: 512,
+        mime: 'application/octet-stream',
+        expiresAtMs: 765432,
+        custodyRelayPeerId: 'relay-proof-source',
+      );
+
+      final payload =
+          bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+      expect(payload['contentHash'], hash);
+      expect(payload['custodyRelayPeerId'], 'relay-proof-source');
+      expect(payload['expiresAtMs'], 765432);
+      expect(result['ackStatus'], 'acked');
+    });
+
+    test(
+      'media custody ack bypasses legacy timeout and preserves native result',
+      () {
+        fakeAsync((async) {
+          const hash =
+              'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+          final nativeResult = <String, dynamic>{
+            'ok': false,
+            'id': 'custody-ack-slow',
+            'errorCode': 'MEDIA_CUSTODY_CLEANUP_PENDING',
+            'errorMessage': 'native cleanup remains pending',
+            'custodyRelayPeerId': 'relay-proof-source',
+          };
+          final slow = _SlowBridge(
+            delay: const Duration(seconds: 16),
+            response: nativeResult,
+          );
+          Map<String, dynamic>? result;
+          Object? error;
+
+          callP2PMediaDelete(
+            slow,
+            id: 'custody-ack-slow',
+            custodyKind: 'direct_media_blob_v1',
+            custodyContract: 'ack_or_expiry_v1',
+            contentHash: hash,
+            size: 512,
+            mime: 'application/octet-stream',
+            expiresAtMs: 765432,
+            custodyRelayPeerId: 'relay-proof-source',
+          ).then<void>(
+            (value) => result = value,
+            onError: (Object value) => error = value,
+          );
+
+          async.flushMicrotasks();
+          async.elapse(const Duration(milliseconds: 15001));
+          async.flushMicrotasks();
+          expect(error, isNull);
+          expect(result, isNull);
+
+          async.elapse(const Duration(milliseconds: 999));
+          async.flushMicrotasks();
+          expect(error, isNull);
+          expect(result, equals(nativeResult));
+        });
+      },
+    );
+  });
+
+  test('legacy media commands omit custody fields', () async {
+    const custodyKeys = {
+      'custodyKind',
+      'custodyContract',
+      'contentHash',
+      'size',
+      'expiresAtMs',
+      'custodyRelayPeerId',
+    };
+
+    bridge.nextResponse = {'ok': true, 'id': 'legacy-upload'};
+    await callP2PMediaUpload(
+      bridge,
+      id: 'legacy-upload',
+      toPeerId: 'recipient',
+      mime: 'application/octet-stream',
+      filePath: '/tmp/legacy-upload.bin',
+    );
+    var payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+    expect(payload.keys.toSet().intersection(custodyKeys), isEmpty);
+    expect(
+      payload,
+      equals({
+        'id': 'legacy-upload',
+        'to': 'recipient',
+        'mime': 'application/octet-stream',
+        'filePath': '/tmp/legacy-upload.bin',
+      }),
+    );
+    expect(
+      bridge.lastRawRequest,
+      '{"cmd":"media:upload","payload":{"id":"legacy-upload","to":"recipient",'
+      '"mime":"application/octet-stream","filePath":"/tmp/legacy-upload.bin"}}',
+    );
+
+    bridge.nextResponse = {
+      'ok': true,
+      'id': 'legacy-download',
+      'mime': 'application/octet-stream',
+      'size': 7,
+    };
+    await callP2PMediaDownload(
+      bridge,
+      id: 'legacy-download',
+      outputPath: '/tmp/legacy-download.bin',
+    );
+    payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+    expect(payload.keys.toSet().intersection(custodyKeys), isEmpty);
+    expect(
+      payload,
+      equals({
+        'id': 'legacy-download',
+        'outputPath': '/tmp/legacy-download.bin',
+      }),
+    );
+    expect(
+      bridge.lastRawRequest,
+      '{"cmd":"media:download","payload":{"id":"legacy-download",'
+      '"outputPath":"/tmp/legacy-download.bin"}}',
+    );
+
+    bridge.nextResponse = {'ok': true};
+    await callP2PMediaDelete(bridge, id: 'legacy-delete');
+    payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+    expect(payload.keys.toSet().intersection(custodyKeys), isEmpty);
+    expect(payload, equals({'id': 'legacy-delete'}));
+    expect(
+      bridge.lastRawRequest,
+      '{"cmd":"media:delete","payload":{"id":"legacy-delete"}}',
+    );
   });
 
   // ---------------------------------------------------------------------------

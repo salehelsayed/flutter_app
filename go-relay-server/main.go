@@ -119,7 +119,16 @@ func main() {
 		groupInbox.groupReactionPushEnabled,
 		groupReactionPushEnabledEnv,
 	)
-	media := NewMediaStore(storageCfg.MediaDir)
+	media, err := NewMediaStore(storageCfg.MediaDir)
+	if err != nil {
+		log.Fatalf("Failed to initialize media store: %v", err)
+	}
+	log.Printf(
+		"[MEDIA_CUSTODY] contract=%s admission_enabled=%v (default off; %s)",
+		directMediaBlobCustodyContract,
+		media.DirectMediaBlobCustodyAdmissionEnabled(),
+		mediaCustodyAdmissionEnabledEnv,
+	)
 	media.StartCleanup(ctx)
 	profile := NewProfileStore(storageCfg.ProfileDir)
 	biz = newBusinessMetrics()

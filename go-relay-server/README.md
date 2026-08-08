@@ -86,3 +86,57 @@ The fixed-cardinality Prometheus surface is:
 Store result labels are limited to `stored`, `duplicate`, `rejected_full`,
 `disabled`, `identity_conflict`, `ineligible`, and `failed`. Peer IDs,
 entry IDs, and envelopes must never be metric labels.
+
+## Direct media blob ACK-or-expiry custody
+
+The protected direct-media blob lane is additive and keeps the frozen
+`/mknoon/media/1.0.0` protocol. It adds `upload_custody_v1` and
+`ack_custody_v1`; the existing `download` action becomes strict only when the
+complete custody tuple is present. Legacy upload, download, delete, and list
+requests remain legacy. There is no protected list action.
+
+Successful strict operations prove `custodyKind: "direct_media_blob_v1"` and
+`custodyContract: "ack_or_expiry_v1"` together with the canonical recipient,
+blob ID, lowercase ciphertext SHA-256, ciphertext size, MIME, and original
+expiry. A completed download is non-destructive. Only an exact ACK from the
+authenticated recipient retires the blob before expiry, and that ACK is pinned
+by the client to the relay that supplied the strict download proof.
+
+Protected files and commit markers live below the isolated
+`<media-root>/.custody-v1/` subtree. This is a single-writer filesystem design:
+do not mount one media directory into concurrent relay processes. One relay
+holds the accepted blob; the contract does not replicate or fan out protected
+bytes across relays.
+
+Admission is deliberately default-off:
+
+```text
+DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED=false
+```
+
+With admission off, a relay rejects only new strict uploads before body
+transfer. It still reconciles, downloads, ACKs, expires, and retries cleanup for
+already committed protected state. Turning admission off is therefore the
+drain control, not permission to delete the `.custody-v1` subtree.
+
+Use a relay-first rollout: deploy the upgraded binary to every relay with
+admission off, verify filesystem ownership/capacity and reconstructed gauges,
+then enable admission only after the upgraded fleet is ready. Capable clients
+come after that relay wave. Once any strict blob has been admitted, do not roll
+back to an old binary, which cannot drain protected state. Turn admission off
+and roll forward with an upgraded binary instead. This repository change does
+not enable production admission or add a feature caller.
+
+The fixed-cardinality Prometheus surface is:
+
+- `relay_media_custody_contract_info{revision="ack_or_expiry_v1"}`
+- `relay_media_custody_admission_enabled`
+- `relay_media_custody_blobs_pending`
+- `relay_media_custody_bytes_pending`
+- `relay_media_custody_tombstones`
+- `relay_media_custody_outcomes_total{outcome="..."}`
+
+Outcome labels are bounded implementation constants covering stored,
+duplicate, full, conflict, ACK, already-ACKed, expiry, and cleanup states.
+Peer IDs, blob IDs, hashes, MIME values, and other request data must never be
+metric labels.

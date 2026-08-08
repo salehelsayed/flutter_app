@@ -33,6 +33,7 @@ var (
 	singletonCallbackAdapter          *nodeCallbackAdapter
 	nodeMu                            sync.Mutex
 	errInvalidInboxAckCustodyContract = errors.New("invalid inbox ACK custody contract")
+	errInvalidMediaCustodyContract    = errors.New("invalid media custody contract")
 )
 
 // nodeCallbackAdapter adapts bridge.EventCallback to node.EventCallback.
@@ -1600,6 +1601,124 @@ func InboxUnregisterToken(paramsJSON string) (result string) {
 
 // --- Media ---
 
+type mediaCustodyBridgeSelection struct {
+	CustodyContract    string
+	CustodyKind        string
+	ContentHash        string
+	Size               int64
+	Mime               string
+	ExpiresAtMs        int64
+	CustodyRelayPeerId string
+}
+
+const (
+	mediaCustodyBridgeUpload   = "upload"
+	mediaCustodyBridgeDownload = "download"
+	mediaCustodyBridgeAck      = "ack"
+)
+
+func (selection mediaCustodyBridgeSelection) requested() bool {
+	return selection.CustodyContract != "" || selection.CustodyKind != "" ||
+		selection.ContentHash != "" || selection.Size != 0 || selection.Mime != "" ||
+		selection.ExpiresAtMs != 0 || selection.CustodyRelayPeerId != ""
+}
+
+// dispatchMediaCustodyContract is the pure bridge selection seam. An entirely
+// absent strict tuple preserves the legacy call. Partial or unknown tuples fail
+// before either closure runs, preventing accidental fallback to destructive
+// legacy delete or proof-less media transfer.
+func dispatchMediaCustodyContract[T any](
+	operation string,
+	selection mediaCustodyBridgeSelection,
+	legacy func() (T, error),
+	strict func() (T, error),
+) (T, error) {
+	if !selection.requested() {
+		return legacy()
+	}
+	valid := selection.CustodyContract == node.AckOrExpiryCustodyContract &&
+		selection.CustodyKind == node.CustodyKindDirectMediaBlobV1 &&
+		selection.ContentHash != ""
+	switch operation {
+	case mediaCustodyBridgeUpload:
+		valid = valid && selection.Size == 0 && selection.Mime == "" &&
+			selection.ExpiresAtMs == 0 && selection.CustodyRelayPeerId == ""
+	case mediaCustodyBridgeDownload:
+		valid = valid && selection.Size > 0 && selection.Mime != "" &&
+			selection.ExpiresAtMs > 0 && selection.CustodyRelayPeerId == ""
+	case mediaCustodyBridgeAck:
+		valid = valid && selection.Size > 0 && selection.Mime != "" &&
+			selection.ExpiresAtMs > 0 && selection.CustodyRelayPeerId != ""
+	default:
+		valid = false
+	}
+	if !valid {
+		var zero T
+		return zero, fmt.Errorf(
+			"%w: operation=%q contract=%q kind=%q",
+			errInvalidMediaCustodyContract,
+			operation,
+			selection.CustodyContract,
+			selection.CustodyKind,
+		)
+	}
+	return strict()
+}
+
+func addMediaCustodyResultFields(response map[string]interface{}, outcome node.MediaCustodyResult) {
+	if outcome.ID != "" {
+		response["id"] = outcome.ID
+	}
+	if outcome.CustodyKind != "" {
+		response["custodyKind"] = outcome.CustodyKind
+	}
+	if outcome.CustodyContract != "" {
+		response["custodyContract"] = outcome.CustodyContract
+	}
+	if outcome.ContentHash != "" {
+		response["contentHash"] = outcome.ContentHash
+	}
+	if outcome.Size != 0 {
+		response["size"] = outcome.Size
+	}
+	if outcome.Mime != "" {
+		response["mime"] = outcome.Mime
+	}
+	if outcome.ExpiresAtMs != 0 {
+		response["expiresAtMs"] = outcome.ExpiresAtMs
+	}
+	if outcome.StoreStatus != "" {
+		response["storeStatus"] = outcome.StoreStatus
+	}
+	if outcome.AckStatus != "" {
+		response["ackStatus"] = outcome.AckStatus
+	}
+	if outcome.CustodyRelayPeerId != "" {
+		response["custodyRelayPeerId"] = outcome.CustodyRelayPeerId
+	}
+}
+
+func mediaCustodyBridgeResponse(outcome node.MediaCustodyResult, err error) string {
+	response := map[string]interface{}{"ok": err == nil}
+	addMediaCustodyResultFields(response, outcome)
+	if err != nil {
+		code := outcome.ErrorCode
+		if code == "" {
+			code = "MEDIA_ERROR"
+		}
+		response["errorCode"] = code
+		response["errorMessage"] = err.Error()
+	}
+	return okJSON(response)
+}
+
+func invalidMediaCustodyBridgeResponse(err error) string {
+	return mediaCustodyBridgeResponse(node.MediaCustodyResult{
+		ErrorCode:    node.MediaCustodyIneligibleCode,
+		ErrorMessage: err.Error(),
+	}, err)
+}
+
 // MediaUpload uploads a file to the relay's media store.
 // Input JSON: { "id": "...", "to": "...", "mime": "...", "filePath": "..." }
 // Returns JSON: { "ok": true, "id": "..." }
@@ -1619,11 +1738,17 @@ func MediaUpload(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		ID           string   `json:"id"`
-		To           string   `json:"to"`
-		Mime         string   `json:"mime"`
-		FilePath     string   `json:"filePath"`
-		AllowedPeers []string `json:"allowedPeers,omitempty"`
+		ID                 string   `json:"id"`
+		To                 string   `json:"to"`
+		Mime               string   `json:"mime"`
+		FilePath           string   `json:"filePath"`
+		AllowedPeers       []string `json:"allowedPeers,omitempty"`
+		CustodyKind        string   `json:"custodyKind"`
+		CustodyContract    string   `json:"custodyContract"`
+		ContentHash        string   `json:"contentHash"`
+		Size               int64    `json:"size"`
+		ExpiresAtMs        int64    `json:"expiresAtMs"`
+		CustodyRelayPeerId string   `json:"custodyRelayPeerId"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1632,7 +1757,47 @@ func MediaUpload(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing id, to, or filePath")
 	}
 
-	if err := n.MediaUpload(params.ID, params.To, params.Mime, params.FilePath, params.AllowedPeers); err != nil {
+	selection := mediaCustodyBridgeSelection{
+		CustodyContract:    params.CustodyContract,
+		CustodyKind:        params.CustodyKind,
+		ContentHash:        params.ContentHash,
+		Size:               params.Size,
+		ExpiresAtMs:        params.ExpiresAtMs,
+		CustodyRelayPeerId: params.CustodyRelayPeerId,
+	}
+	if selection.requested() && len(params.AllowedPeers) != 0 {
+		return invalidMediaCustodyBridgeResponse(fmt.Errorf(
+			"%w: strict direct media custody does not accept allowedPeers",
+			errInvalidMediaCustodyContract,
+		))
+	}
+	outcome, err := dispatchMediaCustodyContract(
+		mediaCustodyBridgeUpload,
+		selection,
+		func() (node.MediaCustodyResult, error) {
+			return node.MediaCustodyResult{}, n.MediaUpload(
+				params.ID, params.To, params.Mime, params.FilePath, params.AllowedPeers,
+			)
+		},
+		func() (node.MediaCustodyResult, error) {
+			return n.MediaUploadCustody(
+				params.ID,
+				params.To,
+				params.Mime,
+				params.FilePath,
+				params.CustodyKind,
+				params.CustodyContract,
+				params.ContentHash,
+			)
+		},
+	)
+	if errors.Is(err, errInvalidMediaCustodyContract) {
+		return invalidMediaCustodyBridgeResponse(err)
+	}
+	if selection.requested() {
+		return mediaCustodyBridgeResponse(outcome, err)
+	}
+	if err != nil {
 		return errJSON("MEDIA_ERROR", err.Error())
 	}
 
@@ -1661,8 +1826,14 @@ func MediaDownload(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		ID         string `json:"id"`
-		OutputPath string `json:"outputPath"`
+		ID              string `json:"id"`
+		OutputPath      string `json:"outputPath"`
+		CustodyKind     string `json:"custodyKind"`
+		CustodyContract string `json:"custodyContract"`
+		ContentHash     string `json:"contentHash"`
+		Size            int64  `json:"size"`
+		Mime            string `json:"mime"`
+		ExpiresAtMs     int64  `json:"expiresAtMs"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1671,12 +1842,56 @@ func MediaDownload(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing id or outputPath")
 	}
 
-	download, err := n.MediaDownload(params.ID, params.OutputPath)
+	selection := mediaCustodyBridgeSelection{
+		CustodyContract: params.CustodyContract,
+		CustodyKind:     params.CustodyKind,
+		ContentHash:     params.ContentHash,
+		Size:            params.Size,
+		Mime:            params.Mime,
+		ExpiresAtMs:     params.ExpiresAtMs,
+	}
+	download, err := dispatchMediaCustodyContract(
+		mediaCustodyBridgeDownload,
+		selection,
+		func() (node.MediaDownloadResult, error) {
+			return n.MediaDownload(params.ID, params.OutputPath)
+		},
+		func() (node.MediaDownloadResult, error) {
+			return n.MediaDownloadCustody(
+				params.ID,
+				params.OutputPath,
+				params.CustodyKind,
+				params.CustodyContract,
+				params.ContentHash,
+				params.Size,
+				params.Mime,
+				params.ExpiresAtMs,
+			)
+		},
+	)
+	if errors.Is(err, errInvalidMediaCustodyContract) {
+		return invalidMediaCustodyBridgeResponse(err)
+	}
+	if selection.requested() && err != nil {
+		outcome := node.MediaCustodyResult{
+			ID:                 params.ID,
+			CustodyKind:        download.CustodyKind,
+			CustodyContract:    download.CustodyContract,
+			ContentHash:        download.ContentHash,
+			Size:               download.Size,
+			Mime:               download.Mime,
+			ExpiresAtMs:        download.ExpiresAtMs,
+			ErrorCode:          download.ErrorCode,
+			ErrorMessage:       download.ErrorMessage,
+			CustodyRelayPeerId: download.CustodyRelayPeerId,
+		}
+		return mediaCustodyBridgeResponse(outcome, err)
+	}
 	if err != nil {
 		return errJSON("MEDIA_ERROR", err.Error())
 	}
 
-	return okJSON(map[string]interface{}{
+	response := map[string]interface{}{
 		"ok":                  true,
 		"id":                  params.ID,
 		"mime":                download.Mime,
@@ -1687,7 +1902,20 @@ func MediaDownload(paramsJSON string) (result string) {
 		"streamTransport":     download.StreamTransport,
 		"servedByPhone":       download.ServedByPhone,
 		"routedViaRelayStore": download.RoutedViaRelayStore,
-	})
+	}
+	if selection.requested() {
+		addMediaCustodyResultFields(response, node.MediaCustodyResult{
+			ID:                 params.ID,
+			CustodyKind:        download.CustodyKind,
+			CustodyContract:    download.CustodyContract,
+			ContentHash:        download.ContentHash,
+			Size:               download.Size,
+			Mime:               download.Mime,
+			ExpiresAtMs:        download.ExpiresAtMs,
+			CustodyRelayPeerId: download.CustodyRelayPeerId,
+		})
+	}
+	return okJSON(response)
 }
 
 // MediaDelete deletes a blob from the relay's media store.
@@ -1709,7 +1937,14 @@ func MediaDelete(paramsJSON string) (result string) {
 	}
 
 	var params struct {
-		ID string `json:"id"`
+		ID                 string `json:"id"`
+		CustodyKind        string `json:"custodyKind"`
+		CustodyContract    string `json:"custodyContract"`
+		ContentHash        string `json:"contentHash"`
+		Size               int64  `json:"size"`
+		Mime               string `json:"mime"`
+		ExpiresAtMs        int64  `json:"expiresAtMs"`
+		CustodyRelayPeerId string `json:"custodyRelayPeerId"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
@@ -1718,7 +1953,41 @@ func MediaDelete(paramsJSON string) (result string) {
 		return errJSON("INVALID_INPUT", "missing id")
 	}
 
-	if err := n.MediaDelete(params.ID); err != nil {
+	selection := mediaCustodyBridgeSelection{
+		CustodyContract:    params.CustodyContract,
+		CustodyKind:        params.CustodyKind,
+		ContentHash:        params.ContentHash,
+		Size:               params.Size,
+		Mime:               params.Mime,
+		ExpiresAtMs:        params.ExpiresAtMs,
+		CustodyRelayPeerId: params.CustodyRelayPeerId,
+	}
+	outcome, err := dispatchMediaCustodyContract(
+		mediaCustodyBridgeAck,
+		selection,
+		func() (node.MediaCustodyResult, error) {
+			return node.MediaCustodyResult{}, n.MediaDelete(params.ID)
+		},
+		func() (node.MediaCustodyResult, error) {
+			return n.MediaAckCustody(
+				params.ID,
+				params.CustodyKind,
+				params.CustodyContract,
+				params.ContentHash,
+				params.Size,
+				params.Mime,
+				params.ExpiresAtMs,
+				params.CustodyRelayPeerId,
+			)
+		},
+	)
+	if errors.Is(err, errInvalidMediaCustodyContract) {
+		return invalidMediaCustodyBridgeResponse(err)
+	}
+	if selection.requested() {
+		return mediaCustodyBridgeResponse(outcome, err)
+	}
+	if err != nil {
 		return errJSON("MEDIA_ERROR", err.Error())
 	}
 
