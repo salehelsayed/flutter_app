@@ -22,6 +22,7 @@ const _implements = <String>[
   'P2PService',
   'DetailedInboxStore',
   'AckOrExpiryInboxStore',
+  'MediaExpiryBoundedInboxStore',
   'ReadinessProofRecorder',
   'P2PFullInboxDrain',
   'DurableLanSender',
@@ -97,6 +98,7 @@ const _publicMethods = <String>{
   'storeInInbox',
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
+  'storeInMediaExpiryBoundedInboxDetailed',
   'retrieveInbox',
   'registerPushToken',
   'lastRecoveryMethod',
@@ -175,6 +177,7 @@ const _inboxMethods = <String>{
   'storeInInbox',
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
+  'storeInMediaExpiryBoundedInboxDetailed',
   '_waitForNodeStart',
   '_inboxStoreReadinessFailure',
   'retrieveInbox',
@@ -189,6 +192,7 @@ const _inboxDelegates = <String>{
   'storeInInbox',
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
+  'storeInMediaExpiryBoundedInboxDetailed',
   'retrieveInbox',
   'drainOfflineInbox',
   'drainOfflineInboxFully',
@@ -587,7 +591,7 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 
 // Token/AST fingerprint of the complete public/static facade declaration. It
 // excludes bodies, so moving decisions behind coordinators does not change it.
-const _expectedFacadeApiFingerprint = 'c257b0ef';
+const _expectedFacadeApiFingerprint = '5e986c98';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(

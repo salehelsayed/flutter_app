@@ -135,7 +135,7 @@ void main() {
       await runProductionOnUpgrade(db, 100, 101);
       await runGroupPrivateMediaLifecycleMigration(db);
 
-      expect(currentIdentityDatabaseVersion, 110);
+      expect(currentIdentityDatabaseVersion, 111);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -156,6 +156,7 @@ void main() {
         expect(registry.where((entry) => entry.version == 108), hasLength(1));
         expect(registry.where((entry) => entry.version == 109), hasLength(1));
         expect(registry.where((entry) => entry.version == 110), hasLength(1));
+        expect(registry.where((entry) => entry.version == 111), hasLength(1));
         expect(index101, index100 + 1);
         expect(index102, index101 + 1);
         expect(index103, index102 + 1);
@@ -166,13 +167,15 @@ void main() {
         final index108 = registry.indexWhere((entry) => entry.version == 108);
         final index109 = registry.indexWhere((entry) => entry.version == 109);
         final index110 = registry.indexWhere((entry) => entry.version == 110);
+        final index111 = registry.indexWhere((entry) => entry.version == 111);
         expect(index105, index104 + 1);
         expect(index106, index105 + 1);
         expect(index107, index106 + 1);
         expect(index108, index107 + 1);
         expect(index109, index108 + 1);
         expect(index110, index109 + 1);
-        expect(index110, registry.length - 1);
+        expect(index111, index110 + 1);
+        expect(index111, registry.length - 1);
         expect(
           registry[index100].run,
           same(runDirectPrivateMediaLifecycleMigration),
@@ -183,6 +186,7 @@ void main() {
           '109_direct_reaction_inbox_custody_outbox',
         );
         expect(registry[index110].name, '110_direct_media_custody_intent');
+        expect(registry[index111].name, '111_direct_media_blob_custody');
         expect(registry[index101].name, '101_group_private_media_lifecycle');
         expect(
           registry[index101].run,

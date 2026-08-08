@@ -412,6 +412,70 @@ void main() {
     },
   );
 
+  test('TC-347-07b production composes one blob custody drain', () {
+    final production = File(_productionPath).readAsStringSync();
+    final normalMethod = _method(
+      _productionClass(production),
+      '_prepareNormalApplication',
+    );
+    final localBodies = _localFunctionBodies(normalMethod);
+
+    expect(
+      'final directMediaBlobCustodyDrain ='.allMatches(production),
+      hasLength(1),
+      reason: 'production must construct one shared v111 lifecycle owner',
+    );
+    expect('DirectMediaBlobCustodyDrain('.allMatches(production), hasLength(1));
+    expect(
+      'StrictDirectMediaBlobDownloadAckOwner('.allMatches(production),
+      hasLength(1),
+      reason: 'download and lifecycle ACK retry share one strict native owner',
+    );
+    final localCleanup = localBodies['cleanupDirectMediaBlobCustodyLocally']!;
+    final networkDrain = localBodies['drainDirectMediaBlobCustody']!;
+    expect(localCleanup, contains('directMediaBlobCustodyDrain'));
+    expect(localCleanup, contains('runLocalCleanupBounded()'));
+    expect(networkDrain, contains('directMediaBlobCustodyDrain'));
+    expect(networkDrain, contains('runNetworkBounded()'));
+
+    for (final binding in const <String>[
+      'dbStageOutgoingDirectMediaBlobGeneration:',
+      'dbStageIncomingDirectMediaBlobCustody:',
+      'dbCommitIncomingDirectMediaBlobLocalPath:',
+      'dbDeleteIncomingDirectMediaBlobAckPendingIfExact:',
+      'dbDeleteIncomingDirectMediaBlobIfExpired:',
+    ]) {
+      expect(
+        binding.allMatches(production),
+        hasLength(1),
+        reason: 'production must wire one exact $binding delegate',
+      );
+    }
+    expect(
+      'drainDirectMediaBlobCustodyFn:'.allMatches(production),
+      hasLength(1),
+      reason: 'the background retrier receives the one network drain closure',
+    );
+    expect(
+      'drainDirectMediaBlobCustody: drainDirectMediaBlobCustody'.allMatches(
+        production,
+      ),
+      hasLength(1),
+      reason: 'resume receives that same network drain closure',
+    );
+    expect(
+      'directMediaBlobLocalCleanup: cleanupDirectMediaBlobCustodyLocally'
+          .allMatches(production),
+      hasLength(1),
+      reason: 'resume receives the local-only sibling on the same drain',
+    );
+    expect(
+      "'direct_media_blob_local_cleanup'".allMatches(production),
+      hasLength(1),
+      reason: 'cold-start local cleanup is composed exactly once',
+    );
+  });
+
   test(
     'TC-343-06a direct reaction caller census stays on the capable wired route',
     () {

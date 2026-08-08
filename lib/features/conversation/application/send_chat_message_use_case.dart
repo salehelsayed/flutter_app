@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -301,9 +302,19 @@ const Set<String> _directMediaCustodyTypes = <String>{
 bool _isCompleteDirectMediaCustodyCandidate(
   MediaAttachment attachment, {
   required String messageId,
+  bool allowPreparedPendingPath = false,
 }) {
   final localPath = attachment.localPath?.trim();
   final normalizedPath = localPath?.replaceAll('\\', '/');
+  final usesPendingPath =
+      normalizedPath?.startsWith('pending_uploads/') == true ||
+      normalizedPath?.contains('/pending_uploads/') == true;
+  final expectedPendingPath =
+      MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachment.id,
+        mime: attachment.mime,
+      ).replaceAll('\\', '/');
   return attachment.id.isNotEmpty &&
       attachment.messageId == messageId &&
       attachment.ownerLane == MediaOwnerLane.direct &&
@@ -316,8 +327,9 @@ bool _isCompleteDirectMediaCustodyCandidate(
       attachment.createdAt.trim().isNotEmpty &&
       localPath != null &&
       localPath.isNotEmpty &&
-      !normalizedPath!.startsWith('pending_uploads/') &&
-      !normalizedPath.contains('/pending_uploads/') &&
+      (!usesPendingPath ||
+          (allowPreparedPendingPath &&
+              normalizedPath == expectedPendingPath)) &&
       _directMediaCustodySha256.hasMatch(attachment.contentHash ?? '') &&
       (attachment.thumbnailHash == null ||
           _directMediaCustodySha256.hasMatch(attachment.thumbnailHash!)) &&
@@ -380,6 +392,7 @@ bool _isExactPreparedDirectMediaPreflightProjection({
   required String messageId,
   required List<MediaAttachment> durable,
   required List<MediaAttachment> candidates,
+  required bool allowPreparedPendingPath,
 }) {
   if (durable.length != candidates.length) return false;
   final candidatesById = <String, MediaAttachment>{
@@ -393,6 +406,7 @@ bool _isExactPreparedDirectMediaPreflightProjection({
         !_isCompleteDirectMediaCustodyCandidate(
           candidate,
           messageId: messageId,
+          allowPreparedPendingPath: allowPreparedPendingPath,
         )) {
       return false;
     }
@@ -400,6 +414,25 @@ bool _isExactPreparedDirectMediaPreflightProjection({
       if (!_sameCompletedDirectMediaAttempt(persisted, candidate)) return false;
       continue;
     }
+    final strictCommitment = candidate.blobCustody;
+    final isPublishedStrictGeneration =
+        persisted.downloadStatus == 'upload_pending' &&
+        candidate.downloadStatus == 'done' &&
+        strictCommitment != null &&
+        strictCommitment.isValid &&
+        strictCommitment.contentHash == persisted.contentHash &&
+        persisted.contentHash == candidate.contentHash &&
+        persisted.thumbnailHash == candidate.thumbnailHash &&
+        persisted.localPath == candidate.localPath &&
+        (persisted.uploadRetryCount ?? 0) ==
+            (candidate.uploadRetryCount ?? 0) &&
+        (persisted.downloadRetryCount ?? 0) ==
+            (candidate.downloadRetryCount ?? 0) &&
+        persisted.encryptionKeyBase64 == candidate.encryptionKeyBase64 &&
+        persisted.encryptionNonce == candidate.encryptionNonce &&
+        persisted.encryptionScheme == candidate.encryptionScheme &&
+        _samePreparedDirectMediaStableIdentity(persisted, candidate);
+    if (isPublishedStrictGeneration) continue;
     final expectedPendingPath =
         MediaFilePathConvention.relativePathForPendingUpload(
           messageId: messageId,
@@ -539,6 +572,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
   StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
   void Function(String messageId)? onDirectTextCustodyStaged,
 }) async {
   final sendStopwatch = clock.stopwatch()..start();
@@ -549,6 +584,17 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final sanitizedText = sanitizeMessageText(text);
   final hasAttachments =
       mediaAttachments != null && mediaAttachments.isNotEmpty;
+  final hasAnyStrictBlobCommitment =
+      hasAttachments &&
+      mediaAttachments.any((attachment) => attachment.blobCustody != null);
+  final hasCompleteStrictBlobManifest =
+      hasAttachments &&
+      mediaAttachments.every((attachment) {
+        final commitment = attachment.blobCustody;
+        return commitment != null &&
+            commitment.isValid &&
+            commitment.contentHash == attachment.contentHash;
+      });
   final detailedInboxStore = p2pService is DetailedInboxStore
       ? p2pService as DetailedInboxStore
       : null;
@@ -560,6 +606,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final effectiveStoreInAckCustodyInboxDetailed =
       storeInAckCustodyInboxDetailed ??
       ackCustodyInboxStore?.storeInAckCustodyInboxDetailed;
+  final mediaExpiryBoundedInboxStore =
+      p2pService is MediaExpiryBoundedInboxStore
+      ? p2pService as MediaExpiryBoundedInboxStore
+      : null;
+  final effectiveStoreInMediaExpiryBoundedInboxDetailed =
+      storeInMediaExpiryBoundedInboxDetailed ??
+      mediaExpiryBoundedInboxStore?.storeInMediaExpiryBoundedInboxDetailed;
   var connectionReused = false;
   var sendPath = 'unknown';
   Map<String, int> stepTimings = {};
@@ -627,6 +680,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       entry: custody,
       custodyRepository: directTextCustodyRepo!,
       storeInAckCustodyInboxDetailed: strictStore,
+      storeInMediaExpiryBoundedInboxDetailed:
+          effectiveStoreInMediaExpiryBoundedInboxDetailed,
     );
     if (!attempt.completed) {
       emitSendTiming(outcome: 'custody_owner_retained');
@@ -853,7 +908,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // so invalid blob metadata cannot be masked as a repository-composition
   // failure and no envelope/encryption work can begin.
   final mediaGateReason = preexistingDirectMediaCustody == null
-      ? _sanitizeDirectMediaAttachments(mediaAttachments)
+      ? hasAnyStrictBlobCommitment && !hasCompleteStrictBlobManifest
+            ? 'partial_blob_custody_manifest'
+            : _sanitizeDirectMediaAttachments(mediaAttachments)
       : null;
   if (mediaGateReason != null) {
     emitFlowEvent(
@@ -883,9 +940,25 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     ownsDirectInboxCustody = true;
   }
 
+  // A strict-looking wire commitment is authorized only by a fresh Plan 347
+  // acquisition, an exact prepared intent, or an immutable v108 replay. An
+  // existing/pre-v111 row without that authority must never fall through to
+  // the legacy media staging transaction, which cannot bind or validate v111.
+  if (hasAnyStrictBlobCommitment && !ownsDirectMediaInboxCustody) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_MEDIA_CUSTODY_PREFLIGHT_REFUSED',
+      details: const {'reason': 'strict_manifest_without_owned_custody'},
+    );
+    emitSendTiming(outcome: 'media_custody_preflight_refused');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
   final missingStrictMediaCustodyStore =
       ownsDirectMediaInboxCustody &&
-      effectiveStoreInAckCustodyInboxDetailed == null;
+      (effectiveStoreInAckCustodyInboxDetailed == null ||
+          (hasCompleteStrictBlobManifest &&
+              effectiveStoreInMediaExpiryBoundedInboxDetailed == null));
 
   if (ownsDirectInboxCustody &&
       (ordinaryMutationRepo == null ||
@@ -997,6 +1070,22 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         ),
       )
       .toList();
+  final strictWireManifest = hasCompleteStrictBlobManifest
+      ? normalizedAttachments!
+            .map(
+              (attachment) => DirectMediaBlobManifestProjection(
+                attachmentId: attachment.id,
+                commitment: attachment.blobCustody!,
+              ),
+            )
+            .toList(growable: false)
+      : null;
+  final wireMediaBlobManifestHash = strictWireManifest == null
+      ? null
+      : computeDirectMediaBlobManifestHash(strictWireManifest);
+  final wireMediaBlobExpiresAtMs = strictWireManifest == null
+      ? null
+      : earliestDirectMediaBlobExpiryMs(strictWireManifest);
 
   // A prepared media send is authorized by durable provenance, never by the
   // caller's flag or its in-memory attachment list. Reload the parent and the
@@ -1005,6 +1094,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (ownsDirectMediaInboxCustody && replayedDirectMediaCustody == null) {
     final candidates = normalizedAttachments ?? const <MediaAttachment>[];
     final candidateIds = candidates.map((attachment) => attachment.id).toSet();
+    final allowPreparedPendingPath =
+        attemptKind == OutgoingOrdinaryAttemptKind.existing &&
+        existingOutgoing?.directMediaCustodyIntentId != null &&
+        hasCompleteStrictBlobManifest;
     var preflightValid =
         candidates.isNotEmpty &&
         candidateIds.length == candidates.length &&
@@ -1013,6 +1106,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           (attachment) => _isCompleteDirectMediaCustodyCandidate(
             attachment,
             messageId: resolvedMessageId,
+            allowPreparedPendingPath: allowPreparedPendingPath,
           ),
         );
 
@@ -1082,6 +1176,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               messageId: resolvedMessageId,
               durable: durableAttachments,
               candidates: candidates,
+              allowPreparedPendingPath: allowPreparedPendingPath,
             );
         if (preflightValid) existingOutgoing = durableParent;
       } catch (_) {
@@ -1317,6 +1412,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               kind: attemptKind,
               recipientPeerId: targetPeerId,
               wireEnvelope: jsonString,
+              wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+              wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
             );
         stagedOutcome = staged.outcome;
         stagedMessage = staged.message;
@@ -1586,8 +1683,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     var storeThrew = false;
     try {
       final ackCustodyStore = effectiveStoreInAckCustodyInboxDetailed;
+      final mediaCustodyStore = effectiveStoreInMediaExpiryBoundedInboxDetailed;
       final detailedStore = effectiveStoreInInboxDetailed;
-      if (ownsDirectInboxCustody && ackCustodyStore != null) {
+      final strictBlobExpiry = stagedDirectInboxCustody?.mediaBlobExpiresAtMs;
+      if (ownsDirectInboxCustody &&
+          strictBlobExpiry != null &&
+          mediaCustodyStore != null) {
+        outcome = await mediaCustodyStore(
+          targetPeerId,
+          jsonString,
+          custodyExpiresAtOrBeforeMs: strictBlobExpiry,
+          timeoutMs: interactiveInboxBudget.inMilliseconds,
+        );
+      } else if (ownsDirectInboxCustody && strictBlobExpiry != null) {
+        outcome = const InboxStoreOutcome(
+          status: InboxStoreStatus.failed,
+          errorCode: 'MEDIA_EXPIRY_BOUNDED_STORE_UNAVAILABLE',
+        );
+      } else if (ownsDirectInboxCustody && ackCustodyStore != null) {
         outcome = await ackCustodyStore(
           targetPeerId,
           jsonString,
@@ -1614,6 +1727,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         outcome = InboxStoreOutcome(
           status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
           errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+        );
+      }
+      if (strictBlobExpiry != null &&
+          outcome.ackOrExpiryAccepted &&
+          (outcome.expiresAtMs == null ||
+              outcome.expiresAtMs! <= 0 ||
+              outcome.expiresAtMs! > strictBlobExpiry)) {
+        outcome = const InboxStoreOutcome(
+          status: InboxStoreStatus.failed,
+          errorCode: 'MEDIA_EXPIRY_PROOF_INVALID',
         );
       }
     } catch (error) {

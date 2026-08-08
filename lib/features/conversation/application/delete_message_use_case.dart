@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:clock/clock.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -120,6 +122,17 @@ Future<int> deleteMessageForMe({
     return 1;
   }
 
+  if (!await _authorizeOutgoingDirectMediaBlobParentDeletion(
+    messageId: currentMessage.id,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_ME_BLOB_CUSTODY_RETAINED',
+      details: {'id': _messageIdPreview(currentMessage.id)},
+    );
+    return 0;
+  }
   await cleanupDeletedMessageArtifacts(
     message: currentMessage,
     reactionRepo: reactionRepo,
@@ -363,6 +376,20 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     );
     emitDeleteTiming(outcome: 'encrypt_error');
     return (SendChatMessageResult.sendFailed, null);
+  }
+
+  if (!requiresPrivateTerminalCleanup &&
+      !await _authorizeOutgoingDirectMediaBlobParentDeletion(
+        messageId: currentMessage.id,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_BLOB_CUSTODY_RETAINED',
+      details: {'id': _messageIdPreview(currentMessage.id)},
+    );
+    emitDeleteTiming(outcome: 'blob_custody_retained');
+    return (SendChatMessageResult.invalidMessage, null);
   }
 
   final builtPendingTombstone = buildDeletedMessageTombstone(
@@ -801,6 +828,55 @@ Future<void> cleanupDeletedMessageArtifacts({
     );
     await mediaFileManager.deleteFile(thumbnailPath);
   }
+}
+
+Future<bool> _authorizeOutgoingDirectMediaBlobParentDeletion({
+  required String messageId,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  if (mediaAttachmentRepo is! DirectMediaBlobCustodyRepository) return true;
+  final custodyRepository =
+      mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+  if (!custodyRepository.supportsDirectMediaBlobCustody) return true;
+  if (mediaAttachmentRepo
+      is! OutgoingDirectMediaBlobTerminalizationRepository) {
+    return false;
+  }
+  final terminalizationRepository =
+      mediaAttachmentRepo as OutgoingDirectMediaBlobTerminalizationRepository;
+  if (!terminalizationRepository
+      .supportsOutgoingDirectMediaBlobTerminalization) {
+    return false;
+  }
+  return custodyRepository.runDirectMediaBlobCustodyLifecycle(() async {
+    final rows = await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+      messageId,
+    );
+    final outgoingRows = rows
+        .where(
+          (row) => row.direction == DirectMediaBlobCustodyDirection.outgoing,
+        )
+        .toList(growable: false);
+    if (outgoingRows.length != rows.length) return false;
+    if (outgoingRows.isNotEmpty) {
+      final outcome = await terminalizationRepository
+          .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+            expectedRows: outgoingRows,
+            reason: DirectMediaBlobTerminalizationReason.explicitCancellation,
+            nowMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+          );
+      if (!outcome.permitsParentDeletion) return false;
+    }
+
+    // Publish a durable cancellation marker while the same exclusive lease is
+    // still held. If no v111 row existed at the first read, a fresh producer
+    // entering afterwards must fail its exact attachment projection check.
+    await mediaAttachmentRepo!.markUploadPendingAttachmentsFailedForMessage(
+      messageId,
+      owner: MediaOwnerLane.direct,
+    );
+    return true;
+  });
 }
 
 Future<void> _bestEffortCleanup({

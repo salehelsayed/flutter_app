@@ -2,12 +2,16 @@ import 'dart:io';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/gestures.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -18,6 +22,7 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -40,11 +45,13 @@ import 'package:flutter_app/features/conversation/application/remove_reaction_us
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/date_separator.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
@@ -209,6 +216,103 @@ const _tinyGifBytes = <int>[
 
 const _gifReplacementPolicyTestName =
     'replacing a private image draft with GIF resets to keep in chat before optimistic persistence';
+
+class _StrictComposerMediaRepository extends FakeMediaAttachmentRepository
+    implements DirectMediaBlobCustodyRepository {
+  final Map<String, DirectMediaBlobCustodyRow> rows =
+      <String, DirectMediaBlobCustodyRow>{};
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    final current = await getAttachmentsForMessage(
+      expectedParent.id,
+      owner: MediaOwnerLane.direct,
+    );
+    final currentIds = current.map((attachment) => attachment.id).toSet();
+    final expectedIds = expectedAttachments
+        .map((attachment) => attachment.id)
+        .toSet();
+    if (rows.isNotEmpty ||
+        preparedAttachments.isEmpty ||
+        currentIds.length != expectedIds.length ||
+        !currentIds.containsAll(expectedIds) ||
+        preparedAttachments.length != custodyRows.length) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+    seed(preparedAttachments);
+    for (final row in custodyRows) {
+      rows[row.attachmentId] = row;
+    }
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.applied,
+      attachments: preparedAttachments,
+      custodyRows: custodyRows,
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => rows[attachmentId];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => rows.values
+      .where((row) => row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => rows.values
+      .where((row) => states.contains(row.state))
+      .take(limit)
+      .toList(growable: false);
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final current = rows[expected.attachmentId];
+    if (current == null ||
+        !current.exactDatabaseProjectionMatches(expected) ||
+        !expected.canTransitionTo(next)) {
+      return false;
+    }
+    rows[expected.attachmentId] = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+}
+
+class _SynchronousUploadWakeLockDriver implements UploadWakeLockDriver {
+  @override
+  Future<void> enable() => SynchronousFuture<void>(null);
+
+  @override
+  Future<void> disable() => SynchronousFuture<void>(null);
+}
 
 class FakeIdentityRepository implements IdentityRepository {
   IdentityModel? identity;
@@ -1421,6 +1525,34 @@ void main() {
     );
   }
 
+  PreparedDirectMediaBlobCustodyCoordinator strictComposerCoordinator({
+    required DirectMediaBlobCustodyRepository repository,
+    required Directory artifactRoot,
+    required DirectMediaBlobStrictUploadFn strictUpload,
+  }) {
+    return PreparedDirectMediaBlobCustodyCoordinator(
+      repository: repository,
+      artifactStore: DirectMediaBlobArtifactStore(
+        documentsDirectoryProvider: () async => artifactRoot,
+      ),
+      prepareArtifact:
+          ({required Bridge bridge, required String localFilePath}) async {
+            final bytes = File(localFilePath).readAsBytesSync();
+            final encryptedPath = '$localFilePath.plan347-test.enc';
+            File(encryptedPath).writeAsBytesSync(bytes, flush: true);
+            return EncryptedMediaArtifact(
+              encryptedPath: encryptedPath,
+              keyBase64: 'plan347-test-key-$localFilePath',
+              nonce: 'plan347-test-nonce-$localFilePath',
+              scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              contentHash: sha256.convert(bytes).toString(),
+              plaintextSize: bytes.length,
+            );
+          },
+      strictUpload: strictUpload,
+    );
+  }
+
   Future<void> pumpScreen(
     WidgetTester tester, {
     required FakeIdentityRepository identityRepo,
@@ -1461,6 +1593,8 @@ void main() {
     ThemeData? themeOverride,
     MediaAutoDownloadDecider? autoDownloadDecider,
     ReceivedMediaActionController? receivedMediaActionController,
+    PreparedDirectMediaBlobCustodyCoordinator?
+    preparedDirectMediaBlobCustodyCoordinator,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1511,6 +1645,8 @@ void main() {
           maxAttachmentBudgetBytes: maxAttachmentBudgetBytes,
           autoDownloadDecider: autoDownloadDecider,
           receivedMediaActionController: receivedMediaActionController,
+          preparedDirectMediaBlobCustodyCoordinator:
+              preparedDirectMediaBlobCustodyCoordinator,
         ),
       ),
     );
@@ -1832,6 +1968,249 @@ void main() {
   });
 
   group('ConversationWired optimistic send', () {
+    Future<void> runStrictComposerScenario(WidgetTester tester) async {
+      installPrivateMediaProtectionEventChannelStub(tester);
+      flowEventLoggingEnabled = true;
+      UploadWakeLockController.debugReset(
+        driver: _SynchronousUploadWakeLockDriver(),
+      );
+      final tempDir = Directory.systemTemp.createTempSync(
+        'conv_347_strict_composer_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final first = File('${tempDir.path}/first.png')
+        ..writeAsBytesSync(_tinyPngBytes);
+      final second = File('${tempDir.path}/second.png')
+        ..writeAsBytesSync(<int>[..._tinyPngBytes, 0x01]);
+      final repository = _StrictComposerMediaRepository();
+      final DirectMediaBlobCustodyRepository blobRepository = repository;
+      final messages = FakeMessageRepository();
+      final manager = TrackingDurableConversationMediaFileManager(tempDir);
+      final networkOrder = <String>[];
+      var firstNetworkSawCompleteGeneration = false;
+      var legacyUploadCalls = 0;
+      var sendCalls = 0;
+      List<MediaAttachment>? sentAttachments;
+      final scenarioBridge = FakeBridge();
+
+      final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+        repository: blobRepository,
+        artifactStore: DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => tempDir,
+        ),
+        prepareArtifact:
+            ({required Bridge bridge, required String localFilePath}) async {
+              final ciphertextPath = '$localFilePath.strict.enc';
+              final bytes = File(localFilePath).readAsBytesSync();
+              File(ciphertextPath).writeAsBytesSync(bytes, flush: true);
+              return EncryptedMediaArtifact(
+                encryptedPath: ciphertextPath,
+                keyBase64: 'strict-composer-key-$localFilePath',
+                nonce: 'strict-composer-nonce-$localFilePath',
+                scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                contentHash: sha256.convert(bytes).toString(),
+                plaintextSize: bytes.length,
+              );
+            },
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              final rows = await blobRepository
+                  .loadDirectMediaBlobCustodyByStates(
+                    <DirectMediaBlobCustodyState>{
+                      DirectMediaBlobCustodyState.outgoingPrepared,
+                      DirectMediaBlobCustodyState.outgoingStored,
+                    },
+                  );
+              expect(rows, hasLength(2));
+              final durableAttachments = await repository
+                  .getAttachmentsForMessage(
+                    rows.first.messageId,
+                    owner: MediaOwnerLane.direct,
+                  );
+              expect(durableAttachments, hasLength(2));
+              expect(
+                durableAttachments.every(
+                  (attachment) =>
+                      attachment.downloadStatus == 'upload_pending' &&
+                      attachment.contentHash != null &&
+                      attachment.encryptionKeyBase64 != null &&
+                      attachment.encryptionNonce != null,
+                ),
+                isTrue,
+              );
+              if (networkOrder.isEmpty) {
+                firstNetworkSawCompleteGeneration = true;
+              }
+              networkOrder.add('strict:$attachmentId');
+              expect(
+                sha256
+                    .convert(File(ciphertextPath).readAsBytesSync())
+                    .toString(),
+                contentHash,
+              );
+              return <String, dynamic>{
+                'ok': true,
+                'id': attachmentId,
+                'storeStatus': 'stored',
+                'custodyKind': 'direct_media_blob_v1',
+                'custodyContract': 'ack_or_expiry_v1',
+                'contentHash': contentHash,
+                'size': ciphertextSize,
+                'mime': 'application/octet-stream',
+                'expiresAtMs': 2000000000000 + networkOrder.length,
+                'custodyRelayPeerId': 'relay-347',
+              };
+            },
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn:
+            ({
+              required p2pService,
+              required messageRepo,
+              required targetPeerId,
+              required text,
+              required senderPeerId,
+              required senderUsername,
+              messageId,
+              required bool preassignedMessageIdIsFresh,
+              timestamp,
+              bridge,
+              recipientMlKemPublicKey,
+              quotedMessageId,
+              mediaAttachments,
+              privateMediaPolicy,
+              mediaAttachmentRepo,
+              transportMetrics,
+            }) async {
+              sendCalls++;
+              networkOrder.add('envelope');
+              sentAttachments = List<MediaAttachment>.from(
+                mediaAttachments ?? const <MediaAttachment>[],
+              );
+              return (
+                SendChatMessageResult.success,
+                await messageRepo.getMessage(messageId!),
+              );
+            },
+        bridge: scenarioBridge,
+        mediaAttachmentRepo: repository,
+        mediaFileManager: manager,
+        typedUploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              blobId,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) async {
+              legacyUploadCalls++;
+              return const UploadMediaFailed(
+                stage: UploadMediaStage.transport,
+                disposition: UploadMediaDisposition.terminal,
+                errorCode: 'LEGACY_UPLOAD_MUST_NOT_RUN',
+              );
+            },
+        initialAttachments: <File>[first, second],
+        preparedDirectMediaBlobCustodyCoordinator: coordinator,
+      );
+      await tester.enterText(find.byType(TextField), 'Strict pair');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final sendDeadline = Stopwatch()..start();
+        while (sendCalls == 0 &&
+            legacyUploadCalls == 0 &&
+            sendDeadline.elapsed < const Duration(seconds: 5)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
+
+      expect(
+        legacyUploadCalls,
+        0,
+        reason:
+            'strict selection fell through; blobRows=${repository.rows.length}',
+      );
+      expect(
+        sendCalls,
+        1,
+        reason:
+            'strict coordinator retained/refused; blobRows='
+            '${repository.rows.values.map((row) => row.state.name).toList()} '
+            'networkOrder=$networkOrder parentSaves='
+            '${messages.saveMessageCallCount} mediaSaves='
+            '${repository.allSavedAttachments.length} copies='
+            '${manager.copyCalls} bridge=${scenarioBridge.commandLog}',
+      );
+      expect(firstNetworkSawCompleteGeneration, isTrue);
+      expect(networkOrder, hasLength(3));
+      expect(
+        networkOrder.take(2).every((entry) => entry.startsWith('strict:')),
+        isTrue,
+      );
+      expect(networkOrder.last, 'envelope');
+      expect(sentAttachments, hasLength(2));
+      expect(
+        sentAttachments!.every(
+          (attachment) =>
+              attachment.downloadStatus == 'done' &&
+              attachment.blobCustody?.isValid == true,
+        ),
+        isTrue,
+      );
+      final messageId = sentAttachments!.first.messageId;
+      final rows = await blobRepository.loadDirectMediaBlobCustodyForMessage(
+        messageId,
+      );
+      expect(rows, hasLength(2));
+      expect(
+        rows.every(
+          (row) => row.state == DirectMediaBlobCustodyState.outgoingStored,
+        ),
+        isTrue,
+      );
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    testWidgets(
+      'TC-347-02e complete strict manifest publishes before first network',
+      runStrictComposerScenario,
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    testWidgets(
+      'TC-347-08 prepared ordinary composer selects strict blob coordinator',
+      runStrictComposerScenario,
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
     testWidgets(
       'TC-345-05 ordinary media and voice persist manifest-bound custody intent before upload',
       (tester) async {
@@ -2257,6 +2636,30 @@ void main() {
       String? privateMessageId;
       String? privateAttachmentId;
       String? latestAttachmentId;
+      final strictCoordinator = strictComposerCoordinator(
+        repository: fixture.repo as DirectMediaBlobCustodyRepository,
+        artifactRoot: tempDir,
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async => <String, dynamic>{
+              'ok': true,
+              'id': attachmentId,
+              'storeStatus': 'stored',
+              'custodyKind': 'direct_media_blob_v1',
+              'custodyContract': 'ack_or_expiry_v1',
+              'contentHash': contentHash,
+              'size': ciphertextSize,
+              'mime': 'application/octet-stream',
+              'expiresAtMs': 2000000000000,
+              'custodyRelayPeerId': 'relay-policy-test',
+            },
+      );
 
       await pumpScreen(
         tester,
@@ -2269,6 +2672,7 @@ void main() {
         bridge: FakeBridge(),
         mediaAttachmentRepo: fixture.repo,
         mediaFileManager: durableMediaFileManager,
+        preparedDirectMediaBlobCustodyCoordinator: strictCoordinator,
         uploadMediaFn:
             ({
               required bridge,
@@ -2435,7 +2839,14 @@ void main() {
         reason: 'a replacement GIF remains ordinary-only in the composer',
       );
 
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final deadline = Stopwatch()..start();
+        while (completedSends < 2 &&
+            deadline.elapsed < const Duration(seconds: 5)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
       await pumpUntilAsyncIo(tester, () => completedSends == 2);
       await pumpUntilAsyncIo(tester, () {
         final attachmentId = latestAttachmentId;
@@ -2475,6 +2886,23 @@ void main() {
       var uploadCalls = 0;
       var sendCalls = 0;
       String? attemptedAttachmentId;
+      final strictCoordinator = strictComposerCoordinator(
+        repository: fixture.repo as DirectMediaBlobCustodyRepository,
+        artifactRoot: tempDir,
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              uploadCalls++;
+              attemptedAttachmentId = attachmentId;
+              throw StateError('retain strict upload for stale-policy proof');
+            },
+      );
       debugConversationWiredInitialPrivateMediaPolicy =
           const PrivateMediaPolicy.viewOnce();
       addTearDown(() => debugConversationWiredInitialPrivateMediaPolicy = null);
@@ -2495,6 +2923,7 @@ void main() {
         bridge: FakeBridge(),
         mediaAttachmentRepo: fixture.repo,
         mediaFileManager: durableMediaFileManager,
+        preparedDirectMediaBlobCustodyCoordinator: strictCoordinator,
         uploadMediaFn:
             ({
               required bridge,
@@ -2580,7 +3009,14 @@ void main() {
         reason: 'the rejected tap must not publish an optimistic parent',
       );
 
-      await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final deadline = Stopwatch()..start();
+        while (uploadCalls == 0 &&
+            deadline.elapsed < const Duration(seconds: 5)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+        }
+      });
       await pumpUntilAsyncIo(tester, () => uploadCalls == 1);
       await pumpUntilAsyncIo(tester, () {
         final attachmentId = attemptedAttachmentId;
@@ -2591,6 +3027,10 @@ void main() {
 
       expect(uploadCalls, 1);
       expect(sendCalls, 0);
+
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump(const Duration(milliseconds: 1));
     });
 
     testWidgets('failed private upload restores the exact selected policy', (

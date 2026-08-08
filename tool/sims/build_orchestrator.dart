@@ -1174,6 +1174,7 @@ final class SimsBuildOrchestrator {
   String _entrypointFor(BuildProfileSpec profile) => switch (profile.id) {
     'android.e2e.standard' => 'integration_test/sims_dispatcher.dart',
     'android.e2e.main' => 'lib/main.dart',
+    'android.e2e.direct_media_custody' => 'lib/main.dart',
     _androidGroupMedia269ProfileId => 'lib/main.dart',
     'ios.simulator.e2e' =>
       'integration_test/group_multi_party_device_real_harness.dart',

@@ -699,6 +699,40 @@ void main() {
         expect(payload['custodyKind'], 'direct_text_v108');
       },
     );
+
+    test(
+      'TC-347-05 inbox custody media expiry ceiling is exact and optional',
+      () async {
+        bridge.nextResponse = <String, dynamic>{
+          'ok': true,
+          'storeStatus': 'stored',
+          'custodyContract': 'ack_or_expiry_v1',
+          'expiresAtMs': 2000000123456,
+        };
+
+        await callP2PInboxStore(
+          bridge,
+          toPeerId: 'recipient',
+          message: 'legacy-text-envelope',
+          custodyContract: 'ack_or_expiry_v1',
+          custodyKind: 'direct_text_v108',
+        );
+        var payload =
+            bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload, isNot(contains('custodyExpiresAtOrBeforeMs')));
+
+        await callP2PInboxStore(
+          bridge,
+          toPeerId: 'recipient',
+          message: 'strict-media-envelope',
+          custodyContract: 'ack_or_expiry_v1',
+          custodyKind: 'direct_text_v108',
+          custodyExpiresAtOrBeforeMs: 2000000123456,
+        );
+        payload = bridge.lastParsedRequest!['payload'] as Map<String, dynamic>;
+        expect(payload['custodyExpiresAtOrBeforeMs'], 2000000123456);
+      },
+    );
   });
 
   // ---------------------------------------------------------------------------

@@ -11,6 +11,8 @@ DirectInboxCustodyOutboxEntry _entry(
   String id, {
   String? lastAttemptAt,
   int retryCount = 0,
+  String? mediaBlobManifestHash,
+  int? mediaBlobExpiresAtMs,
 }) => DirectInboxCustodyOutboxEntry(
   recipientPeerId: 'peer-$id',
   messageId: id,
@@ -19,6 +21,8 @@ DirectInboxCustodyOutboxEntry _entry(
   retryCount: retryCount,
   lastAttemptAt: lastAttemptAt,
   lastErrorCode: null,
+  mediaBlobManifestHash: mediaBlobManifestHash,
+  mediaBlobExpiresAtMs: mediaBlobExpiresAtMs,
   createdAt: '2026-08-06T10:00:00.000Z',
   updatedAt: '2026-08-06T10:00:00.000Z',
 );
@@ -177,6 +181,125 @@ final class _InMemoryCustodyRepository
 }
 
 void main() {
+  test(
+    'TC-347-05b media v108 retires only on envelope expiry at or before blob bound',
+    () async {
+      const manifestHash =
+          '3473473473473473473473473473473473473473473473473473473473473473';
+      const blobExpiry = 1999999999000;
+      final repository = _InMemoryCustodyRepository();
+      final exact = _entry(
+        'strict-exact',
+        mediaBlobManifestHash: manifestHash,
+        mediaBlobExpiresAtMs: blobExpiry,
+      );
+      repository.seed(exact, messageStatus: 'failed');
+      var legacyCalls = 0;
+      var boundedCalls = 0;
+
+      final completed = await drainDirectInboxCustodyOutboxForMessage(
+        custodyRepository: repository,
+        storeInAckCustodyInboxDetailed:
+            (peerId, envelope, {required custodyKind, timeoutMs}) async {
+              legacyCalls++;
+              return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+            },
+        storeInMediaExpiryBoundedInboxDetailed:
+            (
+              peerId,
+              envelope, {
+              required custodyExpiresAtOrBeforeMs,
+              timeoutMs,
+            }) async {
+              boundedCalls++;
+              expect(peerId, exact.recipientPeerId);
+              expect(envelope, exact.wireEnvelope);
+              expect(custodyExpiresAtOrBeforeMs, blobExpiry);
+              return const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+                expiresAtMs: blobExpiry,
+              );
+            },
+        recipientPeerId: exact.recipientPeerId,
+        messageId: exact.messageId,
+      );
+      expect(completed.completed, isTrue);
+      expect(repository.rows, isEmpty);
+      expect(repository.messages[exact.messageId]!.relayExpiresAt, blobExpiry);
+      expect(boundedCalls, 1);
+      expect(legacyCalls, 0);
+
+      for (final invalid in <({String id, int? expiry})>[
+        (id: 'strict-missing-proof', expiry: null),
+        (id: 'strict-later-proof', expiry: blobExpiry + 1),
+      ]) {
+        final retained = _entry(
+          invalid.id,
+          mediaBlobManifestHash: manifestHash,
+          mediaBlobExpiresAtMs: blobExpiry,
+        );
+        repository.seed(retained, messageStatus: 'failed');
+        final attempt = await drainDirectInboxCustodyOutboxForMessage(
+          custodyRepository: repository,
+          storeInAckCustodyInboxDetailed:
+              (peerId, envelope, {required custodyKind, timeoutMs}) async {
+                legacyCalls++;
+                return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+              },
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                envelope, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async => InboxStoreOutcome(
+                status: InboxStoreStatus.duplicate,
+                storeStatus: 'duplicate',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+                expiresAtMs: invalid.expiry,
+              ),
+          recipientPeerId: retained.recipientPeerId,
+          messageId: retained.messageId,
+        );
+        expect(attempt.completed, isFalse, reason: invalid.id);
+        expect(
+          repository.rows.values.any(
+            (entry) => entry.messageId == retained.messageId,
+          ),
+          isTrue,
+          reason: invalid.id,
+        );
+      }
+
+      final noCapability = _entry(
+        'strict-no-capability',
+        mediaBlobManifestHash: manifestHash,
+        mediaBlobExpiresAtMs: blobExpiry,
+      );
+      repository.seed(noCapability, messageStatus: 'failed');
+      final absentSibling = await drainDirectInboxCustodyOutboxForMessage(
+        custodyRepository: repository,
+        storeInAckCustodyInboxDetailed:
+            (peerId, envelope, {required custodyKind, timeoutMs}) async {
+              legacyCalls++;
+              return const InboxStoreOutcome(status: InboxStoreStatus.stored);
+            },
+        recipientPeerId: noCapability.recipientPeerId,
+        messageId: noCapability.messageId,
+      );
+      expect(absentSibling.completed, isFalse);
+      expect(legacyCalls, 0, reason: 'strict rows must never fall back');
+      expect(
+        repository.rows.values.any(
+          (entry) => entry.messageId == noCapability.messageId,
+        ),
+        isTrue,
+      );
+    },
+  );
+
   test('Plan 344 v108 drain retains generic stored without proof', () async {
     final repository = _InMemoryCustodyRepository();
     final pending = _entry('unproven');

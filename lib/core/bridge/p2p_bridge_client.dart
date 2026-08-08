@@ -788,6 +788,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
   String? wakeToken,
   String? custodyContract,
   String? custodyKind,
+  int? custodyExpiresAtOrBeforeMs,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -804,6 +805,7 @@ Future<Map<String, dynamic>> callP2PInboxStore(
       if (wakeToken != null && wakeToken.isNotEmpty) 'wakeToken': wakeToken,
       'custodyContract': ?custodyContract,
       'custodyKind': ?custodyKind,
+      'custodyExpiresAtOrBeforeMs': ?custodyExpiresAtOrBeforeMs,
     },
   };
 

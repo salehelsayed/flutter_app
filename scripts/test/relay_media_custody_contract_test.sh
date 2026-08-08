@@ -82,31 +82,18 @@ for parent_gate in 1to1 all; do
     fail "media-custody Go gate must run exactly once under $parent_gate"
 done
 
-# Plan 346 exposes a bridge/native primitive only. These exact strict-custody
-# tokens must stay out of feature production until a later, separately reviewed
-# adopter owns exact ciphertext reuse and envelope/blob expiry coupling. Keep
-# the tokens narrow: Plan 345 legitimately uses generic media-custody language.
-readonly STRICT_ADOPTER_TOKENS=(
-  direct_media_blob_v1
-  upload_custody_v1
-  ack_custody_v1
-  custodyRelayPeerId
-  MEDIA_CUSTODY_COMMIT_INDETERMINATE
+# Plan 347 has exactly two production owners of strict media network calls: the
+# prepared sender coordinator and the source-pinned receiver download/ACK
+# owner. Schema, transaction, lifecycle, and debug composition may understand
+# the typed commitment, but may not bypass either network owner.
+readonly STRICT_NETWORK_OWNERS=(
+  lib/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart
+  lib/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart
 )
-
-for token in "${STRICT_ADOPTER_TOKENS[@]}"; do
-  production_hits="$(
-    rg -n -F -g '!lib/core/bridge/p2p_bridge_client.dart' -- "$token" lib || true
-  )"
-  if [[ -n "$production_hits" ]]; then
-    printf '%s\n' "$production_hits" >&2
-    fail "strict relay-media custody token escaped its bridge boundary: $token"
-  fi
-done
 
 # Literal-token scanning alone can miss a caller that forwards strict values
 # through variables. Inspect every production call to the three media helpers
-# and reject any use of their new strict named arguments outside the bridge.
+# and require the exact owner set whenever strict named arguments are supplied.
 strict_helper_adopters="$({
   while IFS= read -r dart_file; do
     perl -0777 -ne '
@@ -119,9 +106,64 @@ strict_helper_adopters="$({
     ' "$dart_file"
   done < <(rg --files -g '*.dart' -g '!lib/core/bridge/p2p_bridge_client.dart' lib)
 } | sort -u)"
-if [[ -n "$strict_helper_adopters" ]]; then
+expected_strict_helper_adopters="$(
+  printf '%s\n' "${STRICT_NETWORK_OWNERS[@]}" | sort -u
+)"
+if [[ "$strict_helper_adopters" != "$expected_strict_helper_adopters" ]]; then
+  printf 'expected strict network owners:\n%s\n' \
+    "$expected_strict_helper_adopters" >&2
+  printf 'actual strict network owners:\n%s\n' \
+    "${strict_helper_adopters:-<none>}" >&2
+  fail 'strict relay-media custody network owner allowlist changed'
+fi
+
+# Keep the wider wire/schema vocabulary bounded to reviewed typed owners. This
+# is deliberately separate from the stricter network-helper allowlist above.
+readonly STRICT_SCHEMA_OWNERS=(
+  lib/core/bridge/p2p_bridge_client.dart
+  lib/core/database/direct_media_blob_custody.dart
+  lib/core/database/helpers/media_attachments_db_helpers.dart
+  lib/core/database/migrations/111_direct_media_blob_custody.dart
+  lib/debug/android_direct_media_blob_custody_e2e.dart
+  lib/core/media/direct_media_blob_custody.dart
+  lib/core/services/inbox_store_outcome.dart
+  lib/features/conversation/application/handle_incoming_chat_message_use_case.dart
+  lib/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart
+  lib/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart
+)
+schema_token_owners="$(
+  rg -l -g '*.dart' \
+    'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId' lib | sort -u
+)"
+expected_schema_token_owners="$(
+  printf '%s\n' "${STRICT_SCHEMA_OWNERS[@]}" | sort -u
+)"
+if [[ "$schema_token_owners" != "$expected_schema_token_owners" ]]; then
+  printf 'expected strict schema owners:\n%s\n' \
+    "$expected_schema_token_owners" >&2
+  printf 'actual strict schema owners:\n%s\n' \
+    "${schema_token_owners:-<none>}" >&2
+  fail 'strict relay-media custody schema owner allowlist changed'
+fi
+
+if rg -n -g '*.dart' \
+  'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId|blobCustody' \
+  lib/features/share lib/features/groups lib/features/posts >/dev/null; then
+  rg -n -g '*.dart' \
+    'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId|blobCustody' \
+    lib/features/share lib/features/groups lib/features/posts >&2 || true
+  fail 'excluded external-share/group/post producer adopted strict blob custody'
+fi
+
+require_fixed "'MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED'" \
+  lib/core/config/direct_media_blob_custody_client_flag.dart
+require_fixed 'defaultValue: false' \
+  lib/core/config/direct_media_blob_custody_client_flag.dart
+if rg -n -g '*.dart' \
+  'MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED|kDirectMediaBlobCustodyClientEnabled' \
+  lib/core/notifications lib/features/notifications 2>/dev/null; then
   printf '%s\n' "$strict_helper_adopters" >&2
-  fail 'strict relay-media custody arguments have a production helper adopter'
+  fail 'strict media custody selector became coupled to push/notification capability'
 fi
 
 # Make the guard non-vacuous: each protected wire/native token must exist at its
@@ -142,4 +184,4 @@ require_fixed 'MEDIA_CUSTODY_COMMIT_INDETERMINATE' go-mknoon/node/media.go
 
 jq empty "$DASHBOARD"
 
-printf 'PASS: relay media ACK-or-expiry custody rollout and no-adopter contract\n'
+printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347 adopter contract\n'

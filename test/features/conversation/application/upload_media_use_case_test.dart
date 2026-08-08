@@ -6,12 +6,20 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
@@ -28,6 +36,9 @@ class _FakeBridge implements Bridge {
   final List<String> commandLog = [];
   final List<String> generatedKeys = [];
   final Map<String, String> uploadedContentHashes = {};
+  final List<List<int>> uploadedBodies = <List<int>>[];
+  Map<String, dynamic> Function(Map<String, dynamic> payload)?
+  mediaUploadResponseBuilder;
   int sendCallCount = 0;
 
   @override
@@ -72,8 +83,13 @@ class _FakeBridge implements Bridge {
       final payload = lastRequest!['payload'] as Map<String, dynamic>;
       final filePath = payload['filePath'] as String?;
       if (filePath != null && File(filePath).existsSync()) {
+        uploadedBodies.add(await File(filePath).readAsBytes());
         uploadedContentHashes[filePath] =
             await GroupMediaIntegrityPolicy.computeFileSha256Hex(filePath);
+      }
+      final responseBuilder = mediaUploadResponseBuilder;
+      if (responseBuilder != null) {
+        return jsonEncode(responseBuilder(payload));
       }
     }
     return jsonEncode(uploadResponse);
@@ -1334,7 +1350,323 @@ void main() {
         expect(result!.localPath, tempFile.path);
       });
     });
+
+    test(
+      'TC-347-02b prepared LAN and strict relay bytes are identical',
+      () async {
+        final repository = _StrictBlobRepository();
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => tempDir,
+        );
+        final parent = _strictParent('lan-relay');
+        final attachment = _strictPendingAttachment('lan-relay');
+        final networkOrder = <String>[];
+        List<int>? lanBytes;
+        bridge.mediaUploadResponseBuilder = (payload) {
+          networkOrder.add('relay');
+          return _exactStrictReceipt(payload);
+        };
+
+        final result =
+            await PreparedDirectMediaBlobCustodyCoordinator(
+              repository: repository,
+              artifactStore: store,
+            ).prepareAndUploadFresh(
+              bridge: bridge,
+              identityPeerId: parent.senderPeerId,
+              recipientPeerId: parent.contactPeerId,
+              expectedParent: parent,
+              sources: <PreparedDirectMediaBlobSource>[
+                PreparedDirectMediaBlobSource(
+                  attachment: attachment,
+                  plaintextPath: tempFile.path,
+                ),
+              ],
+              onGenerationReady: (artifacts) async {
+                networkOrder.add('lan');
+                expect(repository.rows, hasLength(1));
+                lanBytes = await File(
+                  artifacts.single.absoluteCiphertextPath,
+                ).readAsBytes();
+              },
+            );
+
+        expect(result.isComplete, isTrue);
+        expect(networkOrder, <String>['lan', 'relay']);
+        expect(bridge.uploadedBodies, hasLength(1));
+        expect(lanBytes, bridge.uploadedBodies.single);
+        expect(
+          sha256.convert(lanBytes!).toString(),
+          result.attachments.single.blobCustody!.contentHash,
+        );
+      },
+    );
+
+    test(
+      'TC-347-03 strict prepared direct upload accepts exact relay proof',
+      () async {
+        Future<PreparedDirectMediaBlobUploadResult> runCase(
+          String suffix,
+          Map<String, dynamic> Function(Map<String, dynamic>) response,
+        ) async {
+          final source = File('${tempDir.path}/strict-$suffix.jpg');
+          await source.writeAsBytes(<int>[1, 3, 4, 7, 11, suffix.length]);
+          final caseBridge = _FakeBridge()
+            ..mediaUploadResponseBuilder = response;
+          return PreparedDirectMediaBlobCustodyCoordinator(
+            repository: _StrictBlobRepository(),
+            artifactStore: DirectMediaBlobArtifactStore(
+              documentsDirectoryProvider: () async => tempDir,
+            ),
+          ).prepareAndUploadFresh(
+            bridge: caseBridge,
+            identityPeerId: 'sender-347',
+            recipientPeerId: 'recipient-347',
+            expectedParent: _strictParent(suffix),
+            sources: <PreparedDirectMediaBlobSource>[
+              PreparedDirectMediaBlobSource(
+                attachment: _strictPendingAttachment(suffix),
+                plaintextPath: source.path,
+              ),
+            ],
+          );
+        }
+
+        Map<String, dynamic> exact(Map<String, dynamic> payload) {
+          expect(payload.keys.toSet(), <String>{
+            'id',
+            'to',
+            'mime',
+            'filePath',
+            'custodyContract',
+            'custodyKind',
+            'contentHash',
+          });
+          expect(payload['mime'], 'application/octet-stream');
+          expect(payload['custodyKind'], 'direct_media_blob_v1');
+          expect(payload['custodyContract'], 'ack_or_expiry_v1');
+          expect(
+            payload['contentHash'],
+            sha256
+                .convert(File(payload['filePath'] as String).readAsBytesSync())
+                .toString(),
+          );
+          return _exactStrictReceipt(payload);
+        }
+
+        final accepted = await runCase('exact', exact);
+        expect(accepted.isComplete, isTrue);
+        expect(accepted.attachments.single.downloadStatus, 'done');
+        expect(accepted.attachments.single.blobCustody!.isValid, isTrue);
+
+        final invalidMutations = <String, void Function(Map<String, dynamic>)>{
+          'broad-ok': (receipt) => receipt.remove('storeStatus'),
+          'wrong-id': (receipt) => receipt['id'] = 'crossed',
+          'wrong-kind': (receipt) => receipt['custodyKind'] = 'other',
+          'wrong-contract': (receipt) => receipt['custodyContract'] = 'other',
+          'wrong-hash': (receipt) => receipt['contentHash'] = '0' * 64,
+          'plaintext-size': (receipt) => receipt['size'] = 6,
+          'real-mime': (receipt) => receipt['mime'] = 'image/jpeg',
+          'missing-expiry': (receipt) => receipt.remove('expiresAtMs'),
+          'missing-relay': (receipt) => receipt.remove('custodyRelayPeerId'),
+        };
+        for (final entry in invalidMutations.entries) {
+          final retained = await runCase(entry.key, (payload) {
+            final receipt = _exactStrictReceipt(payload);
+            entry.value(receipt);
+            return receipt;
+          });
+          expect(
+            retained.state,
+            PreparedDirectMediaBlobUploadState.retained,
+            reason: entry.key,
+          );
+        }
+      },
+    );
+
+    test(
+      'TC-347-08e disabled and excluded callers preserve legacy bytes',
+      () async {
+        final direct = await _legacyUploadMedia(
+          bridge: bridge,
+          localFilePath: tempFile.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'direct-peer',
+          blobId: 'legacy-direct-347',
+        );
+        final directUpload = bridge.requests.singleWhere(
+          (request) => request['cmd'] == 'media:upload',
+        );
+        final directPayload = directUpload['payload'] as Map<String, dynamic>;
+        expect(direct, isNotNull);
+        expect(directPayload['mime'], 'application/octet-stream');
+        expect(directPayload, isNot(contains('custodyKind')));
+        expect(directPayload, isNot(contains('custodyContract')));
+        expect(directPayload, isNot(contains('contentHash')));
+
+        final excludedBridge = _FakeBridge();
+        final excludedSource = File('${tempDir.path}/excluded-group.jpg');
+        await excludedSource.writeAsBytes(<int>[
+          0xff,
+          0xd8,
+          0xff,
+          ...List<int>.filled(32, 0x7a),
+        ]);
+        final group = await _legacyUploadMedia(
+          bridge: excludedBridge,
+          localFilePath: excludedSource.path,
+          mime: 'image/jpeg',
+          recipientPeerId: 'group-347',
+          allowedPeers: const <String>['peer-a', 'peer-b'],
+          blobId: 'legacy-group-347',
+        );
+        final groupUpload = excludedBridge.requests.singleWhere(
+          (request) => request['cmd'] == 'media:upload',
+        );
+        final groupPayload = groupUpload['payload'] as Map<String, dynamic>;
+        expect(group, isNotNull);
+        expect(groupPayload['mime'], 'image/jpeg');
+        expect(groupPayload['allowedPeers'], <String>['peer-a', 'peer-b']);
+        expect(groupPayload, isNot(contains('custodyKind')));
+        expect(groupPayload, isNot(contains('custodyContract')));
+      },
+    );
   });
+}
+
+ConversationMessage _strictParent(String suffix) => ConversationMessage(
+  id: 'message-$suffix',
+  contactPeerId: 'recipient-347',
+  senderPeerId: 'sender-347',
+  text: '',
+  timestamp: '2026-08-08T12:00:00.000Z',
+  status: 'sending',
+  isIncoming: false,
+  createdAt: '2026-08-08T12:00:00.000Z',
+  directMediaCustodyIntentId: 'intent-$suffix',
+);
+
+MediaAttachment _strictPendingAttachment(String suffix) => MediaAttachment(
+  id: 'attachment-$suffix',
+  messageId: 'message-$suffix',
+  mime: 'image/jpeg',
+  size: 6,
+  mediaType: 'image',
+  localPath: MediaFilePathConvention.relativePathForPendingUpload(
+    messageId: 'message-$suffix',
+    attachmentId: 'attachment-$suffix',
+    mime: 'image/jpeg',
+  ),
+  downloadStatus: 'upload_pending',
+  createdAt: '2026-08-08T12:00:00.000Z',
+  ownerLane: MediaOwnerLane.direct,
+);
+
+Map<String, dynamic> _exactStrictReceipt(Map<String, dynamic> payload) =>
+    <String, dynamic>{
+      'ok': true,
+      'id': payload['id'],
+      'storeStatus': 'stored',
+      'custodyKind': payload['custodyKind'],
+      'custodyContract': payload['custodyContract'],
+      'contentHash': payload['contentHash'],
+      'size': File(payload['filePath'] as String).lengthSync(),
+      'mime': payload['mime'],
+      'expiresAtMs': DateTime.utc(2026, 8, 9).millisecondsSinceEpoch,
+      'custodyRelayPeerId': 'relay-347',
+    };
+
+final class _StrictBlobRepository implements DirectMediaBlobCustodyRepository {
+  final Map<String, DirectMediaBlobCustodyRow> rows =
+      <String, DirectMediaBlobCustodyRow>{};
+  final Map<String, MediaAttachment> attachments = <String, MediaAttachment>{};
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    if (rows.isNotEmpty) {
+      return DirectMediaBlobGenerationStageResult(
+        outcome: DirectMediaBlobGenerationStageOutcome.idempotent,
+        attachments: attachments.values.toList(growable: false),
+        custodyRows: rows.values.toList(growable: false),
+      );
+    }
+    for (final attachment in preparedAttachments) {
+      attachments[attachment.id] = attachment;
+    }
+    for (final row in custodyRows) {
+      rows[row.attachmentId] = row;
+    }
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.applied,
+      attachments: preparedAttachments,
+      custodyRows: custodyRows,
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => rows[attachmentId];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => rows.values
+      .where((row) => row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => rows.values
+      .where((row) => states.contains(row.state))
+      .take(limit)
+      .toList(growable: false);
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final current = rows[expected.attachmentId];
+    if (current == null ||
+        !current.exactDatabaseProjectionMatches(expected) ||
+        !expected.canTransitionTo(next)) {
+      return false;
+    }
+    rows[expected.attachmentId] = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async {
+    final current = rows[expected.attachmentId];
+    if (current == null ||
+        !current.exactDatabaseProjectionMatches(expected) ||
+        current.state != DirectMediaBlobCustodyState.outgoingCleanupPending) {
+      return false;
+    }
+    rows.remove(expected.attachmentId);
+    return true;
+  }
 }
 
 /// Fake media file manager that uses a temp directory as base path.

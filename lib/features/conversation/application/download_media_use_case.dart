@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
@@ -23,6 +24,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_message_re
 import 'package:path/path.dart' as p;
 
 import 'private_media_action_eligibility.dart';
+import 'strict_direct_media_blob_download_ack_owner.dart';
 
 /// Downloads a media blob from the relay and saves it locally.
 ///
@@ -721,6 +723,47 @@ Future<MediaAttachment?> downloadMedia({
             mediaAttachmentRepo
                 as OrdinaryGroupExplicitMediaDownloadStateRepository;
       }
+    }
+  }
+  if (owner == MediaOwnerLane.direct &&
+      !enforceGroupMediaPolicy &&
+      !requiresDirectPrivateCommit &&
+      mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
+      mediaAttachmentRepo is IncomingDirectMediaBlobCustodyRepository) {
+    final custody =
+        await (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+    if (custody != null &&
+        custody.direction == DirectMediaBlobCustodyDirection.incoming) {
+      return StrictDirectMediaBlobDownloadAckOwner(
+        bridge: bridge,
+        mediaAttachmentRepository: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        now: () =>
+            DateTime.fromMillisecondsSinceEpoch(currentNowMs(), isUtc: true),
+      ).downloadAndAcknowledge(
+        attachment: attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        contactPeerId: contactPeerId,
+      );
+    }
+    // Public strict authority and its local one-way adoption fingerprint must
+    // never cross into the proof-less legacy download/delete path, even after
+    // exact ACK or expiry convergence has removed v111.
+    if (attachment.blobCustody != null ||
+        attachment.directMediaBlobCustodyFingerprint != null) {
+      return null;
+    }
+    final currentAttachments = await mediaAttachmentRepo
+        .getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.direct,
+        );
+    if (currentAttachments.any(
+      (candidate) =>
+          candidate.id == attachment.id &&
+          candidate.directMediaBlobCustodyFingerprint != null,
+    )) {
+      return null;
     }
   }
   final inFlightKey = _MediaDownloadInFlightKey(

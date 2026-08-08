@@ -104,6 +104,13 @@ assert_capability \
   major \
   android.e2e.wake_token \
   android-physical+android-emulator
+assert_capability \
+  implemented \
+  "$registry" \
+  android.direct_media_blob_custody \
+  major \
+  android.e2e.direct_media_custody \
+  android-physical+android-emulator
 
 for path in \
   integration_test/connectivity_restore_inbox_drain_proof_test.dart \
@@ -137,6 +144,13 @@ assert_not_executable "$registry"
 # a second device PASS row.
 support_paths=(
   integration_test/scripts/run_1to1_device_real.dart
+  integration_test/scripts/run_direct_media_blob_custody_sims.dart
+  integration_test/scripts/android_direct_media_blob_custody_campaign.dart
+  integration_test/scripts/android_direct_media_blob_custody_device_action.dart
+  integration_test/support/android_direct_media_blob_custody_campaign_contract.dart
+  integration_test/support/android_direct_media_blob_custody_evidence.dart
+  lib/debug/android_direct_media_blob_custody_e2e.dart
+  lib/core/debug/android_direct_media_blob_custody_e2e_protocol.dart
   integration_test/scripts/run_group_multi_party_sims.dart
   integration_test/scripts/run_group_notification_projection_android.dart
   integration_test/scripts/group_notification_projection_android_criteria.dart

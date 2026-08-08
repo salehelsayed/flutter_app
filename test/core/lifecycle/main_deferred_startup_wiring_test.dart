@@ -109,6 +109,8 @@ void main() {
       const asyncSteps = <String, String>{
         'private_media_cold_recovery':
             'await ensurePrivateMediaColdRecovery();',
+        'direct_media_blob_local_cleanup':
+            'cleanupDirectMediaBlobCustodyLocally',
         'group_context_backfill': 'await groupContextBackfill;',
         'group_reaction_comparand_backfill':
             'await groupReactionComparandBackfill;',

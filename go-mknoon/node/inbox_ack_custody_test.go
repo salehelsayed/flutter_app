@@ -257,6 +257,131 @@ func TestInboxAckCustodyMixedRelayAndProofContract(t *testing.T) {
 	})
 }
 
+func TestInboxAckCustodyMediaExpiryCeiling(t *testing.T) {
+	const ceiling int64 = 2_000_000_123_456
+
+	t.Run("exact ceiling is sent and exact relay proof is required", func(t *testing.T) {
+		relay := startAckCustodyTestRelay(t, func(req inboxRequest) string {
+			if req.Action != inboxStoreAckCustodyAction ||
+				req.CustodyContract != AckOrExpiryCustodyContract ||
+				req.CustodyKind != CustodyKindDirectTextV108 ||
+				req.CustodyExpiresAtOrBeforeMs != ceiling {
+				t.Fatalf("media expiry request = %#v", req)
+			}
+			return fmt.Sprintf(
+				`{"status":"OK","storeStatus":"stored","custodyContract":"ack_or_expiry_v1","expiresAtMs":%d}`,
+				ceiling,
+			)
+		})
+		n := startLocalNodeForMultiRelayTest(t)
+		configureAckCustodyTestRelays(t, n, relay)
+		outcome, err := n.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+			generatePeerIDStr(t),
+			"media-envelope",
+			1000,
+			"wake-token",
+			CustodyKindDirectTextV108,
+			ceiling,
+		)
+		if err != nil || outcome.ExpiresAtMs != ceiling ||
+			outcome.CustodyContract != AckOrExpiryCustodyContract {
+			t.Fatalf("exact media expiry outcome=%#v err=%v", outcome, err)
+		}
+	})
+
+	t.Run("mutated or missing proof is retryable but never accepted", func(t *testing.T) {
+		first := startAckCustodyTestRelay(t, func(inboxRequest) string {
+			return fmt.Sprintf(
+				`{"status":"OK","storeStatus":"stored","custodyContract":"ack_or_expiry_v1","expiresAtMs":%d}`,
+				ceiling+1,
+			)
+		})
+		second := startAckCustodyTestRelay(t, func(inboxRequest) string {
+			return fmt.Sprintf(
+				`{"status":"OK","storeStatus":"duplicate","custodyContract":"ack_or_expiry_v1","expiresAtMs":%d}`,
+				ceiling,
+			)
+		})
+		n := startLocalNodeForMultiRelayTest(t)
+		configureAckCustodyTestRelays(t, n, first, second)
+		outcome, err := n.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+			generatePeerIDStr(t),
+			"media-envelope",
+			1000,
+			"",
+			CustodyKindDirectTextV108,
+			ceiling,
+		)
+		if err != nil || outcome.StoreStatus != "duplicate" || outcome.ExpiresAtMs != ceiling {
+			t.Fatalf("retry after mutated expiry outcome=%#v err=%v", outcome, err)
+		}
+		if len(first.snapshotActions()) != 1 || len(second.snapshotActions()) != 1 {
+			t.Fatal("mutated proof did not advance exactly once to the next relay")
+		}
+
+		missing := startAckCustodyTestRelay(t, func(inboxRequest) string {
+			return `{"status":"OK","storeStatus":"stored","custodyContract":"ack_or_expiry_v1"}`
+		})
+		missingNode := startLocalNodeForMultiRelayTest(t)
+		configureAckCustodyTestRelays(t, missingNode, missing)
+		if _, err := missingNode.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+			generatePeerIDStr(t),
+			"media-envelope",
+			1000,
+			"",
+			CustodyKindDirectTextV108,
+			ceiling,
+		); !errors.Is(err, ErrInboxCustodyInvalidReceipt) {
+			t.Fatalf("missing media expiry proof error = %v", err)
+		}
+	})
+
+	t.Run("omission preserves the existing request and invalid media selectors stop locally", func(t *testing.T) {
+		relay := startAckCustodyTestRelay(t, func(req inboxRequest) string {
+			if req.CustodyExpiresAtOrBeforeMs != 0 {
+				t.Fatalf("legacy strict request gained expiry ceiling: %#v", req)
+			}
+			return `{"status":"OK","storeStatus":"stored","custodyContract":"ack_or_expiry_v1"}`
+		})
+		n := startLocalNodeForMultiRelayTest(t)
+		configureAckCustodyTestRelays(t, n, relay)
+		if _, err := n.InboxStoreAckCustodyDetailedWithWakeToken(
+			generatePeerIDStr(t),
+			"text-envelope",
+			1000,
+			"",
+			CustodyKindDirectTextV108,
+		); err != nil {
+			t.Fatalf("omitted ceiling store: %v", err)
+		}
+
+		before := len(relay.snapshotActions())
+		for _, tc := range []struct {
+			kind    string
+			ceiling int64
+		}{
+			{kind: CustodyKindDirectTextV108, ceiling: 0},
+			{kind: CustodyKindDirectTextV108, ceiling: -1},
+			{kind: CustodyKindDirectReactionV109, ceiling: ceiling},
+		} {
+			_, err := n.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+				generatePeerIDStr(t),
+				"excluded-envelope",
+				1000,
+				"",
+				tc.kind,
+				tc.ceiling,
+			)
+			if !errors.Is(err, ErrInboxCustodyIneligible) {
+				t.Fatalf("kind=%q ceiling=%d err=%v", tc.kind, tc.ceiling, err)
+			}
+		}
+		if got := len(relay.snapshotActions()); got != before {
+			t.Fatalf("invalid media selectors reached relay: before=%d after=%d", before, got)
+		}
+	})
+}
+
 func TestInboxAckCustodyReceiveFanoutContract(t *testing.T) {
 	t.Run("fanout concurrency is bounded", func(t *testing.T) {
 		relays := make([]RelayInfo, 9)

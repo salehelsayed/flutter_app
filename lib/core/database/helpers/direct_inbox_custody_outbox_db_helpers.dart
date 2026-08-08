@@ -5,7 +5,10 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
 import '../direct_inbox_custody_outbox_contract.dart';
+import '../direct_media_blob_custody.dart';
 import '../outgoing_transport_mutation.dart';
+import '../../media/direct_media_blob_custody.dart';
+import 'direct_media_blob_custody_db_helpers.dart';
 import 'messages_db_helpers.dart';
 
 const String _table = 'direct_inbox_custody_outbox';
@@ -257,6 +260,65 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
       return DirectInboxCustodyCompletionOutcome.stale;
     }
     final custody = custodyRows.single;
+    final mediaBlobManifestHash =
+        custody['media_blob_manifest_hash'] as String?;
+    final mediaBlobExpiresAtMs = (custody['media_blob_expires_at_ms'] as num?)
+        ?.toInt();
+    final hasStrictBlobBinding =
+        mediaBlobManifestHash != null && mediaBlobExpiresAtMs != null;
+    if ((mediaBlobManifestHash == null) != (mediaBlobExpiresAtMs == null)) {
+      return DirectInboxCustodyCompletionOutcome.stale;
+    }
+    List<DirectMediaBlobCustodyRow> strictBlobRows = const [];
+    if (hasStrictBlobBinding) {
+      if (relayExpiresAt == null ||
+          relayExpiresAt <= 0 ||
+          relayExpiresAt > mediaBlobExpiresAtMs) {
+        return DirectInboxCustodyCompletionOutcome.stale;
+      }
+      final rawMessageBlobRows = await txn.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ? AND direction = ?',
+        whereArgs: <Object?>[
+          messageId,
+          DirectMediaBlobCustodyDirection.outgoing.dbValue,
+        ],
+        orderBy: 'attachment_id ASC',
+      );
+      try {
+        strictBlobRows = rawMessageBlobRows
+            .map(DirectMediaBlobCustodyRow.fromMap)
+            .toList(growable: false);
+      } on FormatException {
+        return DirectInboxCustodyCompletionOutcome.stale;
+      }
+      if (strictBlobRows.isEmpty ||
+          strictBlobRows.any(
+            (row) =>
+                row.state != DirectMediaBlobCustodyState.outgoingStored ||
+                row.inboxCustodyIncarnationId != expectedIncarnationId ||
+                row.expiresAtMs == null,
+          )) {
+        return DirectInboxCustodyCompletionOutcome.stale;
+      }
+      final manifest = strictBlobRows
+          .map(
+            (row) => DirectMediaBlobManifestProjection(
+              attachmentId: row.attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: row.contentHash,
+                ciphertextSize: row.ciphertextSize,
+                expiresAtMs: row.expiresAtMs!,
+              ),
+            ),
+          )
+          .toList(growable: false);
+      if (computeDirectMediaBlobManifestHash(manifest) !=
+              mediaBlobManifestHash ||
+          earliestDirectMediaBlobExpiryMs(manifest) != mediaBlobExpiresAtMs) {
+        return DirectInboxCustodyCompletionOutcome.stale;
+      }
+    }
 
     final messageRows = await txn.query(
       'messages',
@@ -355,6 +417,26 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
       throw StateError(
         'direct inbox custody completion lost its exact incarnation',
       );
+    }
+    if (strictBlobRows.isNotEmpty) {
+      final completedAt = DateTime.now().toUtc().toIso8601String();
+      for (final row in strictBlobRows) {
+        final cleanup = row.copyWith(
+          state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+          updatedAt: completedAt,
+        );
+        final changed =
+            await dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
+              txn,
+              expected: row,
+              next: cleanup,
+            );
+        if (!changed) {
+          throw StateError(
+            'direct inbox custody completion lost strict blob authority',
+          );
+        }
+      }
     }
     return outcome;
   });

@@ -16,6 +16,8 @@ class DirectInboxCustodyOutboxEntry {
     required this.retryCount,
     required this.lastAttemptAt,
     required this.lastErrorCode,
+    this.mediaBlobManifestHash,
+    this.mediaBlobExpiresAtMs,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -27,6 +29,8 @@ class DirectInboxCustodyOutboxEntry {
   final int retryCount;
   final String? lastAttemptAt;
   final String? lastErrorCode;
+  final String? mediaBlobManifestHash;
+  final int? mediaBlobExpiresAtMs;
   final String createdAt;
   final String updatedAt;
 
@@ -39,6 +43,9 @@ class DirectInboxCustodyOutboxEntry {
         retryCount: (map['retry_count'] as num).toInt(),
         lastAttemptAt: map['last_attempt_at'] as String?,
         lastErrorCode: map['last_error_code'] as String?,
+        mediaBlobManifestHash: map['media_blob_manifest_hash'] as String?,
+        mediaBlobExpiresAtMs: (map['media_blob_expires_at_ms'] as num?)
+            ?.toInt(),
         createdAt: map['created_at'] as String,
         updatedAt: map['updated_at'] as String,
       );
@@ -51,6 +58,8 @@ class DirectInboxCustodyOutboxEntry {
     'retry_count': retryCount,
     'last_attempt_at': lastAttemptAt,
     'last_error_code': lastErrorCode,
+    'media_blob_manifest_hash': mediaBlobManifestHash,
+    'media_blob_expires_at_ms': mediaBlobExpiresAtMs,
     'created_at': createdAt,
     'updated_at': updatedAt,
   };
@@ -63,6 +72,8 @@ class DirectInboxCustodyOutboxEntry {
     int? retryCount,
     Object? lastAttemptAt = _unset,
     Object? lastErrorCode = _unset,
+    Object? mediaBlobManifestHash = _unset,
+    Object? mediaBlobExpiresAtMs = _unset,
     String? createdAt,
     String? updatedAt,
   }) => DirectInboxCustodyOutboxEntry(
@@ -77,6 +88,12 @@ class DirectInboxCustodyOutboxEntry {
     lastErrorCode: identical(lastErrorCode, _unset)
         ? this.lastErrorCode
         : lastErrorCode as String?,
+    mediaBlobManifestHash: identical(mediaBlobManifestHash, _unset)
+        ? this.mediaBlobManifestHash
+        : mediaBlobManifestHash as String?,
+    mediaBlobExpiresAtMs: identical(mediaBlobExpiresAtMs, _unset)
+        ? this.mediaBlobExpiresAtMs
+        : mediaBlobExpiresAtMs as int?,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );

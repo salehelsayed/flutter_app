@@ -1,7 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -15,6 +19,7 @@ import 'package:flutter_app/features/conversation/domain/models/audio_recording.
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -187,6 +192,8 @@ class _FakeMediaAttachmentRepository
     required OutgoingOrdinaryAttemptKind kind,
     required String recipientPeerId,
     required String wireEnvelope,
+    String? wireMediaBlobManifestHash,
+    int? wireMediaBlobExpiresAtMs,
   }) async {
     directMediaCustodyStageCalls++;
     final messageRepository = directMediaCustodyMessageRepository;
@@ -399,6 +406,8 @@ class _PreparedVoiceCustodyRepository extends _FakeMediaAttachmentRepository
     required OutgoingOrdinaryAttemptKind kind,
     required String recipientPeerId,
     required String wireEnvelope,
+    String? wireMediaBlobManifestHash,
+    int? wireMediaBlobExpiresAtMs,
   }) async {
     directMediaCustodyStageCalls++;
     if (kind != OutgoingOrdinaryAttemptKind.existing ||
@@ -467,6 +476,123 @@ class _PreparedVoiceCustodyRepository extends _FakeMediaAttachmentRepository
   }
 }
 
+class _TestDirectMediaBlobState {
+  final Map<String, DirectMediaBlobCustodyRow> rows =
+      <String, DirectMediaBlobCustodyRow>{};
+}
+
+class _StrictPreparedVoiceCustodyRepository
+    extends _PreparedVoiceCustodyRepository
+    implements DirectMediaBlobCustodyRepository {
+  _StrictPreparedVoiceCustodyRepository(
+    super.messageRepository,
+    this.blobState,
+  );
+
+  final _TestDirectMediaBlobState blobState;
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    if (expectedAttachments.length != preparedAttachments.length ||
+        preparedAttachments.length != custodyRows.length ||
+        preparedAttachments.isEmpty) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+    if (blobState.rows.isNotEmpty) {
+      final winnerRows = blobState.rows.values
+          .where((row) => row.messageId == expectedParent.id)
+          .toList(growable: false);
+      final winnerAttachments = saved
+          .where((attachment) => attachment.messageId == expectedParent.id)
+          .toList(growable: false);
+      if (winnerRows.length != custodyRows.length ||
+          winnerAttachments.length != preparedAttachments.length) {
+        return const DirectMediaBlobGenerationStageResult.refused();
+      }
+      return DirectMediaBlobGenerationStageResult(
+        outcome: DirectMediaBlobGenerationStageOutcome.idempotent,
+        attachments: winnerAttachments,
+        custodyRows: winnerRows,
+      );
+    }
+    saved
+      ..removeWhere((attachment) => attachment.messageId == expectedParent.id)
+      ..addAll(preparedAttachments);
+    for (final row in custodyRows) {
+      blobState.rows[row.attachmentId] = row;
+    }
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.applied,
+      attachments: List<MediaAttachment>.from(preparedAttachments),
+      custodyRows: List<DirectMediaBlobCustodyRow>.from(custodyRows),
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => blobState.rows[attachmentId];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => blobState.rows.values
+      .where((row) => row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => blobState.rows.values
+      .where((row) => states.contains(row.state))
+      .take(limit)
+      .toList(growable: false);
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final current = blobState.rows[expected.attachmentId];
+    if (current == null ||
+        !current.exactDatabaseProjectionMatches(expected) ||
+        !expected.canTransitionTo(next)) {
+      return false;
+    }
+    blobState.rows[expected.attachmentId] = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async {
+    final current = blobState.rows[expected.attachmentId];
+    if (current == null ||
+        current.state != DirectMediaBlobCustodyState.outgoingCleanupPending ||
+        !current.exactDatabaseProjectionMatches(expected)) {
+      return false;
+    }
+    blobState.rows.remove(expected.attachmentId);
+    return true;
+  }
+}
+
 bool _sameTestDatabaseMap(
   Map<String, Object?> expected,
   Map<String, Object?> current,
@@ -499,6 +625,67 @@ class _CustodyDisappearsBeforeCompletionRepository
       relayExpiresAt: relayExpiresAt,
     );
   }
+}
+
+class _CiphertextCapturingVoiceBridge extends FakeBridge {
+  _CiphertextCapturingVoiceBridge({super.initialResponses});
+
+  final List<List<int>> uploadedCiphertexts = <List<int>>[];
+  final List<String> uploadedBlobIds = <String>[];
+  final List<String> uploadedCiphertextPaths = <String>[];
+  final List<({String keyBase64, String nonce})> encryptionProofs =
+      <({String keyBase64, String nonce})>[];
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    final command = request['cmd'] as String?;
+    final payload = request['payload'] as Map<String, dynamic>?;
+    if (command == 'media:upload' && payload != null) {
+      final ciphertextPath = payload['filePath'] as String;
+      uploadedBlobIds.add(payload['id'] as String);
+      uploadedCiphertextPaths.add(ciphertextPath);
+      uploadedCiphertexts.add(File(ciphertextPath).readAsBytesSync());
+    }
+
+    final response = await super.send(message);
+    if (command == 'media:upload' && payload != null) {
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      if (decoded['ok'] == true && payload['custodyContract'] != null) {
+        return jsonEncode(<String, dynamic>{
+          ...decoded,
+          'id': payload['id'],
+          'storeStatus': 'stored',
+          'custodyKind': payload['custodyKind'],
+          'custodyContract': payload['custodyContract'],
+          'contentHash': payload['contentHash'],
+          'size': File(payload['filePath'] as String).lengthSync(),
+          'mime': payload['mime'],
+          'expiresAtMs': DateTime.now()
+              .toUtc()
+              .add(const Duration(days: 1))
+              .millisecondsSinceEpoch,
+          'custodyRelayPeerId': 'relay-347',
+        });
+      }
+    }
+    if (command == 'blob:encrypt' && payload != null) {
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      encryptionProofs.add((
+        keyBase64: payload['keyBase64'] as String,
+        nonce: decoded['nonce'] as String,
+      ));
+    }
+    return response;
+  }
+}
+
+bool _sameBytes(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 void main() {
@@ -659,6 +846,306 @@ void main() {
     });
 
     group('upload and send', () {
+      test(
+        'TC-347-02 fresh prepared voice ambiguity then restart reuses one durable ciphertext',
+        () async {
+          const messageId = 'voice-347-ambiguous-restart';
+          const attachmentId = 'voice-347-ambiguous-restart-attachment';
+          const authoredAt = '2026-08-08T12:00:00.000Z';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: const <String>[attachmentId],
+          );
+          final recording = createRecording(
+            filePath: '${tempDir.path}/voice_347_ambiguous_restart.m4a',
+          );
+          final preparedParent = ConversationMessage(
+            id: messageId,
+            contactPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            text: '',
+            timestamp: authoredAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: authoredAt,
+            directMediaCustodyIntentId: intent,
+          );
+          final preparedAttachment = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: recording.mime,
+            size: recording.sizeBytes,
+            mediaType: 'audio',
+            durationMs: recording.durationMs,
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: recording.mime,
+            ),
+            downloadStatus: 'upload_pending',
+            createdAt: authoredAt,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final firstMessages = FakeMessageRepository()
+            ..existingMessages[messageId] = preparedParent;
+          final blobState = _TestDirectMediaBlobState();
+          final artifactStore = DirectMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async =>
+                Directory('${tempDir.path}/plan347-custody'),
+          );
+          final firstMedia = _StrictPreparedVoiceCustodyRepository(
+            firstMessages,
+            blobState,
+          )..saved.add(preparedAttachment);
+          final rawBridge =
+              _CiphertextCapturingVoiceBridge(
+                  initialResponses: {
+                    'message.encrypt': {
+                      'ok': true,
+                      'kem': 'fake-kem',
+                      'ciphertext': 'fake-ct',
+                      'nonce': 'fake-nonce',
+                    },
+                  },
+                )
+                ..responseSequences['media:upload'] = <Map<String, dynamic>>[
+                  {
+                    'ok': false,
+                    'errorCode': 'MEDIA_ERROR',
+                    'errorMessage': 'connection reset after request body',
+                  },
+                  {'ok': true},
+                ];
+
+          final (firstResult, _) = await sendVoiceMessage(
+            p2pService: FakeP2PService(),
+            messageRepo: firstMessages,
+            targetPeerId: preparedParent.contactPeerId,
+            senderPeerId: preparedParent.senderPeerId,
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: rawBridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: firstMedia,
+            mediaFileManager: FakeMediaFileManager(),
+            messageId: messageId,
+            timestamp: authoredAt,
+            blobId: attachmentId,
+            uploadMediaFn: uploadMedia,
+            directMediaBlobArtifactStore: artifactStore,
+          );
+          expect(firstResult, SendVoiceMessageResult.uploadQueued);
+          expect(rawBridge.uploadedCiphertexts, hasLength(1));
+          final firstCiphertextWasRetained = File(
+            rawBridge.uploadedCiphertextPaths.single,
+          ).existsSync();
+
+          // Model a process restart from only the durable Plan 345 projection.
+          // The recorder source remains present but no longer contains the bytes
+          // that produced the relay's possibly committed first request.
+          final restartedParent = ConversationMessage.fromMap(
+            Map<String, dynamic>.from(
+              firstMessages.existingMessages[messageId]!.toMap(),
+            ),
+          );
+          final restartedAttachment = MediaAttachment.fromMap(
+            Map<String, dynamic>.from(firstMedia.saved.single.toMap()),
+          );
+          File(recording.filePath).writeAsBytesSync(
+            List<int>.filled(recording.sizeBytes, 7),
+            flush: true,
+          );
+          final restartedMessages = FakeMessageRepository()
+            ..existingMessages[messageId] = restartedParent;
+          final restartedMedia = _StrictPreparedVoiceCustodyRepository(
+            restartedMessages,
+            blobState,
+          )..saved.add(restartedAttachment);
+
+          await sendVoiceMessage(
+            p2pService: FakeP2PService(
+              currentState: const NodeState(
+                isStarted: false,
+                peerId: 'my-peer',
+              ),
+            ),
+            messageRepo: restartedMessages,
+            targetPeerId: restartedParent.contactPeerId,
+            senderPeerId: restartedParent.senderPeerId,
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: rawBridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: restartedMedia,
+            mediaFileManager: FakeMediaFileManager(),
+            messageId: messageId,
+            timestamp: authoredAt,
+            blobId: attachmentId,
+            uploadMediaFn: uploadMedia,
+            directMediaBlobArtifactStore: artifactStore,
+          );
+
+          final persisted = restartedMedia.saved.single;
+          final hasTwoUploads = rawBridge.uploadedCiphertexts.length == 2;
+          final firstCiphertext = rawBridge.uploadedCiphertexts.first;
+          final firstProof = rawBridge.encryptionProofs.first;
+          expect(
+            <String, Object>{
+              'uploadCount': rawBridge.uploadedCiphertexts.length,
+              'stableBlobIds': rawBridge.uploadedBlobIds,
+              'firstCiphertextRetainedAfterAmbiguity':
+                  firstCiphertextWasRetained,
+              'ciphertextReusedAfterRestart':
+                  hasTwoUploads &&
+                  _sameBytes(firstCiphertext, rawBridge.uploadedCiphertexts[1]),
+              'persistedHashMatchesFirstCiphertext':
+                  persisted.contentHash ==
+                  sha256.convert(firstCiphertext).toString(),
+              'persistedKeyMatchesFirstGeneration':
+                  persisted.encryptionKeyBase64 == firstProof.keyBase64,
+              'persistedNonceMatchesFirstGeneration':
+                  persisted.encryptionNonce == firstProof.nonce,
+            },
+            <String, Object>{
+              'uploadCount': 2,
+              'stableBlobIds': const <String>[attachmentId, attachmentId],
+              'firstCiphertextRetainedAfterAmbiguity': true,
+              'ciphertextReusedAfterRestart': true,
+              'persistedHashMatchesFirstCiphertext': true,
+              'persistedKeyMatchesFirstGeneration': true,
+              'persistedNonceMatchesFirstGeneration': true,
+            },
+            reason:
+                'a prepared voice retry must reopen the exact ciphertext and '
+                'crypto generation that may already be committed at the relay',
+          );
+        },
+        skip: !kDirectMediaBlobCustodyClientEnabled,
+      );
+
+      test(
+        'TC-347-08b prepared ordinary voice selects strict blob coordinator',
+        () async {
+          const messageId = 'voice-347-strict-selector';
+          const attachmentId = 'voice-347-strict-selector-attachment';
+          const authoredAt = '2026-08-08T12:30:00.000Z';
+          final recording = createRecording(
+            filePath: '${tempDir.path}/voice_347_strict_selector.m4a',
+          );
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: const <String>[attachmentId],
+          );
+          final parent = ConversationMessage(
+            id: messageId,
+            contactPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            text: '',
+            timestamp: authoredAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: authoredAt,
+            directMediaCustodyIntentId: intent,
+          );
+          final pending = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: recording.mime,
+            size: recording.sizeBytes,
+            mediaType: 'audio',
+            durationMs: recording.durationMs,
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: recording.mime,
+            ),
+            downloadStatus: 'upload_pending',
+            createdAt: authoredAt,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final messages = FakeMessageRepository()
+            ..existingMessages[messageId] = parent;
+          final blobState = _TestDirectMediaBlobState();
+          final media = _StrictPreparedVoiceCustodyRepository(
+            messages,
+            blobState,
+          )..saved.add(pending);
+          final strictBridge = _CiphertextCapturingVoiceBridge(
+            initialResponses: const <String, Map<String, dynamic>>{
+              'message.encrypt': <String, dynamic>{
+                'ok': true,
+                'kem': 'fake-kem',
+                'ciphertext': 'fake-ct',
+                'nonce': 'fake-nonce',
+              },
+              'media:upload': <String, dynamic>{'ok': true},
+            },
+          );
+          var legacyUploadCalls = 0;
+          Future<UploadMediaOutcome> legacyMustNotRun({
+            required Bridge bridge,
+            required String localFilePath,
+            required String mime,
+            required String recipientPeerId,
+            MediaFileManager? mediaFileManager,
+            int? width,
+            int? height,
+            int? durationMs,
+            List<double>? waveform,
+            List<String>? allowedPeers,
+            String? blobId,
+            bool deleteSourceWhenDone = false,
+            EncryptedMediaArtifact? preparedArtifact,
+          }) async {
+            legacyUploadCalls++;
+            return const UploadMediaFailed(
+              stage: UploadMediaStage.transport,
+              disposition: UploadMediaDisposition.terminal,
+              errorCode: 'LEGACY_UPLOAD_MUST_NOT_RUN',
+            );
+          }
+
+          await sendVoiceMessage(
+            p2pService: FakeP2PService(
+              currentState: const NodeState(
+                isStarted: false,
+                peerId: 'my-peer',
+              ),
+            ),
+            messageRepo: messages,
+            targetPeerId: parent.contactPeerId,
+            senderPeerId: parent.senderPeerId,
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: strictBridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: media,
+            mediaFileManager: FakeMediaFileManager(),
+            messageId: messageId,
+            timestamp: authoredAt,
+            blobId: attachmentId,
+            uploadMediaFn: legacyMustNotRun,
+            directMediaBlobArtifactStore: DirectMediaBlobArtifactStore(
+              documentsDirectoryProvider: () async =>
+                  Directory('${tempDir.path}/plan347-selector-custody'),
+            ),
+          );
+
+          expect(legacyUploadCalls, 0);
+          expect(strictBridge.uploadedBlobIds, const <String>[attachmentId]);
+          expect(strictBridge.uploadedCiphertexts, hasLength(1));
+          expect(blobState.rows, hasLength(1));
+          expect(
+            blobState.rows[attachmentId]?.state,
+            DirectMediaBlobCustodyState.outgoingStored,
+          );
+          expect(media.saved.single.contentHash, isNotNull);
+          expect(media.saved.single.encryptionKeyBase64, isNotNull);
+          expect(media.saved.single.encryptionNonce, isNotNull);
+        },
+        skip: !kDirectMediaBlobCustodyClientEnabled,
+      );
+
       test(
         'TC-345-06 prepared voice delegates uploaded audio to exact v108 media custody',
         () async {

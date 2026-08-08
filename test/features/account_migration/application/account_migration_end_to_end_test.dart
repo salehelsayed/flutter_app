@@ -23,6 +23,8 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart'
+    show kDirectMediaBlobArtifactRootDirectory;
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_bundle_transfer.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_local_transfer_runtime.dart';
@@ -145,8 +147,62 @@ void main() {
         Map<String, dynamic>.from(event['details'] as Map);
 
     test(
-      'moves the full account old phone → new phone over the real wire',
+      'TC-347-07 moves the full account and exact blob custody row file binding',
       () async {
+        const custodyCiphertext = 'exact-retained-custody-ciphertext';
+        final custodyIdentityScope = migrationTransferSha256Hex(
+          utf8.encode('old-peer'),
+        );
+        final custodyRelativePath = p.posix.join(
+          kDirectMediaBlobArtifactRootDirectory,
+          custodyIdentityScope,
+          'attachment-347.blob',
+        );
+        final custodyContentHash = migrationTransferSha256Hex(
+          utf8.encode(custodyCiphertext),
+        );
+        const custodyIncarnation = '34734734734734734734734734734734';
+        const custodyManifestHash =
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+        const custodyExpiresAtMs = 2000000000000;
+        final boundV108Row = <String, Object?>{
+          'recipient_peer_id': 'peer-bob',
+          'message_id': 'message-1',
+          'incarnation_id': custodyIncarnation,
+          'wire_envelope': '{"type":"chat_message","id":"message-1"}',
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': '2026-06-10T08:00:00.000Z',
+          'updated_at': '2026-06-10T08:01:00.000Z',
+          'media_blob_expires_at_ms': custodyExpiresAtMs,
+          'media_blob_manifest_hash': custodyManifestHash,
+        };
+        final custodyRow = <String, Object?>{
+          'attachment_id': 'attachment-347',
+          'message_id': 'message-1',
+          'direction': 'outgoing',
+          'state': 'outgoing_stored',
+          'inbox_custody_incarnation_id': custodyIncarnation,
+          'recipient_peer_id': 'peer-bob',
+          'ciphertext_relative_path': custodyRelativePath,
+          'custody_kind': 'direct_media_blob_v1',
+          'custody_contract': 'ack_or_expiry_v1',
+          'content_hash': custodyContentHash,
+          'ciphertext_size': custodyCiphertext.length,
+          'transport_mime': 'application/octet-stream',
+          'expires_at_ms': custodyExpiresAtMs,
+          'custody_relay_peer_id': 'relay-347',
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'next_attempt_at': null,
+          'created_at': '2026-06-10T08:00:00.000Z',
+          'updated_at': '2026-06-10T08:01:00.000Z',
+        };
+        await sourceDb.insert('direct_inbox_custody_outbox', boundV108Row);
+        await sourceDb.insert('direct_media_blob_custody', custodyRow);
+        await _writeRelative(tempDir, custodyRelativePath, custodyCiphertext);
+
         // ---------- new phone ----------
         final output = await _savePendingSession(pairingRepo);
         final destinationDocumentsPath = p.join(
@@ -348,9 +404,10 @@ void main() {
         }
 
         // ---------- files byte-identical on the new phone ----------
-        for (final relativePath in const [
+        for (final relativePath in <String>[
           'media/peer-bob/blob-imported.jpg',
           'media/group-1/blob-group.jpg.enc',
+          custodyRelativePath,
         ]) {
           final sourceBytes = await File(
             p.join(tempDir.path, relativePath),
@@ -395,6 +452,14 @@ void main() {
         );
         expect(await activeDb.query('messages'), hasLength(1));
         expect(await activeDb.query('group_messages'), hasLength(1));
+        expect(
+          await activeDb.query('direct_inbox_custody_outbox'),
+          <Map<String, Object?>>[boundV108Row],
+        );
+        expect(
+          await activeDb.query('direct_media_blob_custody'),
+          <Map<String, Object?>>[custodyRow],
+        );
 
         // ---------- secrets promoted; new phone keeps its own DB key ----------
         expect(
@@ -429,7 +494,27 @@ void main() {
         expect(sourceAudit['relayMediaDownloadCount'], 0);
         expect(sourceAudit['relayDependencyRisk'], false);
         expect(sourceAudit['blockingIssueCount'], 0);
-        expect(sourceAudit['fileEntryCount'], 2);
+        expect(sourceAudit['fileEntryCount'], 3);
+
+        final rowsLoaded = detailsOf(
+          eventsNamed('ACCOUNT_MIGRATION_BUNDLE_SOURCE_ROWS_LOADED').single,
+        );
+        expect(rowsLoaded['directMediaBlobCustodyCount'], 1);
+        final payloadBuilt = detailsOf(
+          eventsNamed(
+            'ACCOUNT_MIGRATION_BUNDLE_SOURCE_FILE_PAYLOAD_BUILT',
+          ).single,
+        );
+        expect(
+          payloadBuilt['fileEntryCountsByKind'],
+          containsPair('directMediaBlobCustody', 1),
+        );
+        final sourceCustodyTelemetry = (payloadBuilt['fileEntries'] as List)
+            .whereType<Map>()
+            .singleWhere((entry) => entry['kind'] == 'directMediaBlobCustody');
+        expect(sourceCustodyTelemetry, isNot(contains('relativePath')));
+        expect(sourceCustodyTelemetry, isNot(contains('sourceId')));
+        expect(sourceCustodyTelemetry, isNot(contains('sha256Prefix')));
 
         final importAudit = detailsOf(
           eventsNamed(
@@ -437,7 +522,16 @@ void main() {
           ).single,
         );
         expect(importAudit['relayMediaDownloadCount'], 0);
-        expect(importAudit['writtenCount'], 2);
+        expect(importAudit['writtenCount'], 3);
+        final receiverWritten = detailsOf(
+          eventsNamed('ACCOUNT_MIGRATION_BUNDLE_IMPORT_FILES_WRITTEN').single,
+        );
+        final receiverCustodyTelemetry = (receiverWritten['entries'] as List)
+            .whereType<Map>()
+            .singleWhere((entry) => entry['kind'] == 'directMediaBlobCustody');
+        expect(receiverCustodyTelemetry, isNot(contains('relativePath')));
+        expect(receiverCustodyTelemetry, isNot(contains('sourceId')));
+        expect(receiverCustodyTelemetry, isNot(contains('sha256Prefix')));
 
         // ---------- receiver stage ordering ----------
         // P2-5: complete() shrank to a ledger check + staged-DB validation —
@@ -1213,6 +1307,45 @@ CREATE TABLE group_keys (
   encrypted_key TEXT NOT NULL,
   created_at TEXT NOT NULL,
   PRIMARY KEY (group_id, key_generation)
+)
+''');
+  await db.execute('''
+CREATE TABLE direct_inbox_custody_outbox (
+  recipient_peer_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  incarnation_id TEXT NOT NULL,
+  wire_envelope TEXT NOT NULL,
+  retry_count INTEGER NOT NULL,
+  last_attempt_at TEXT,
+  last_error_code TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  media_blob_expires_at_ms INTEGER,
+  media_blob_manifest_hash TEXT,
+  PRIMARY KEY (recipient_peer_id, message_id)
+)
+''');
+  await db.execute('''
+CREATE TABLE direct_media_blob_custody (
+  attachment_id TEXT PRIMARY KEY,
+  message_id TEXT NOT NULL,
+  direction TEXT NOT NULL,
+  state TEXT NOT NULL,
+  inbox_custody_incarnation_id TEXT,
+  recipient_peer_id TEXT,
+  ciphertext_relative_path TEXT,
+  custody_kind TEXT NOT NULL,
+  custody_contract TEXT NOT NULL,
+  content_hash TEXT NOT NULL,
+  ciphertext_size INTEGER NOT NULL,
+  transport_mime TEXT NOT NULL,
+  expires_at_ms INTEGER,
+  custody_relay_peer_id TEXT,
+  retry_count INTEGER NOT NULL,
+  last_attempt_at TEXT,
+  next_attempt_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
 )
 ''');
 }

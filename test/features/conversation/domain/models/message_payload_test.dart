@@ -1,6 +1,9 @@
 import 'dart:convert';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 
 void main() {
@@ -571,6 +574,90 @@ void main() {
     });
 
     group('media', () {
+      test('TC-347-04 blob custody canonical wire and manifest hash', () {
+        final a = DirectMediaBlobCustodyCommitment(
+          contentHash: 'a' * 64,
+          ciphertextSize: 101,
+          expiresAtMs: 2000,
+        );
+        final b = DirectMediaBlobCustodyCommitment(
+          contentHash: 'b' * 64,
+          ciphertextSize: 202,
+          expiresAtMs: 3000,
+        );
+        final attachment = MediaAttachment(
+          id: 'blob-a',
+          messageId: 'message-347',
+          mime: 'image/jpeg',
+          size: 7,
+          mediaType: 'image',
+          localPath: '/private/path-that-must-not-be-public',
+          downloadStatus: 'done',
+          createdAt: '2026-08-08T00:00:00.000Z',
+          encryptionKeyBase64: 'secret-key',
+          encryptionNonce: 'secret-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+          blobCustody: a,
+        );
+
+        final wire = attachment.toJson();
+        expect(wire['size'], 7, reason: 'plaintext size remains unchanged');
+        expect(wire['blobCustody'], <String, Object>{
+          'kind': kDirectMediaBlobCustodyKind,
+          'contract': kDirectMediaBlobCustodyContract,
+          'contentHash': 'a' * 64,
+          'ciphertextSize': 101,
+          'transportMime': kDirectMediaBlobTransportMime,
+          'expiresAtMs': 2000,
+        });
+        expect(jsonEncode(wire), isNot(contains('/private/path')));
+        expect(jsonEncode(wire), isNot(contains('relay')));
+        expect(
+          MediaAttachment.fromJson(wire).blobCustody!.contentHash,
+          'a' * 64,
+        );
+
+        final reverseOrder = <DirectMediaBlobManifestProjection>[
+          DirectMediaBlobManifestProjection(
+            attachmentId: 'blob-b',
+            commitment: b,
+          ),
+          DirectMediaBlobManifestProjection(
+            attachmentId: 'blob-a',
+            commitment: a,
+          ),
+        ];
+        final forwardOrder = reverseOrder.reversed.toList(growable: false);
+        const expected =
+            'a0e9b0a829a33d4298f90f3e067e1bd5ee9c2d6e5f4452225c197f4ca653fab2';
+        expect(computeDirectMediaBlobManifestHash(reverseOrder), expected);
+        expect(computeDirectMediaBlobManifestHash(forwardOrder), expected);
+        expect(earliestDirectMediaBlobExpiryMs(reverseOrder), 2000);
+
+        final injected = Map<String, Object?>.from(wire['blobCustody']! as Map)
+          ..['relayPeerId'] = 'must-not-be-accepted';
+        expect(
+          () => DirectMediaBlobCustodyCommitment.fromJson(injected),
+          throwsFormatException,
+        );
+        expect(
+          () => computeDirectMediaBlobManifestHash(
+            <DirectMediaBlobManifestProjection>[
+              DirectMediaBlobManifestProjection(
+                attachmentId: 'blob-a',
+                commitment: a,
+              ),
+              DirectMediaBlobManifestProjection(
+                attachmentId: 'blob-a',
+                commitment: b,
+              ),
+            ],
+          ),
+          throwsFormatException,
+        );
+      });
+
       final mediaArray = [
         {
           'id': 'blob-001',

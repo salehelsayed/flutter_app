@@ -3,12 +3,17 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
@@ -820,6 +825,638 @@ void main() {
       'duration_ms': durationMs,
       'waveform': waveform,
     };
+
+    test(
+      'TC-347-04 strict blob manifest binds and completes exact v108 atomically',
+      () async {
+        const nowMs = 1900000000000;
+
+        Future<
+          ({
+            List<Map<String, Object?>> attachments,
+            Map<String, Object?> expected,
+            String intent,
+            List<DirectMediaBlobManifestProjection> manifest,
+            String messageId,
+            String recipientPeerId,
+            Map<String, Object?> staged,
+            String wireEnvelope,
+          })
+        >
+        seedStrictAttempt(String suffix) async {
+          final messageId = 'tc347-manifest-$suffix';
+          final recipientPeerId = 'tc347-recipient-$suffix';
+          final attachmentIds = <String>['$messageId-a', '$messageId-b'];
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: attachmentIds,
+          );
+          final expectedParent = ConversationMessage(
+            id: messageId,
+            contactPeerId: recipientPeerId,
+            senderPeerId: 'peer-local',
+            text: 'strict manifest',
+            timestamp: '2026-08-08T12:00:00.000Z',
+            status: 'sending',
+            isIncoming: false,
+            createdAt: '2026-08-08T12:00:00.000Z',
+            directMediaCustodyIntentId: intent,
+          );
+          final wireEnvelope = envelope(messageId);
+          final stagedParent = expectedParent.copyWith(
+            wireEnvelope: wireEnvelope,
+            directMediaCustodyIntentId: null,
+          );
+          final attachments = <Map<String, Object?>>[];
+          final manifest = <DirectMediaBlobManifestProjection>[];
+          await db.insert('messages', expectedParent.toMap());
+          for (var index = 0; index < attachmentIds.length; index++) {
+            final attachmentId = attachmentIds[index];
+            final contentHash = index == 0 ? '1' * 64 : '2' * 64;
+            final ciphertextSize = 41 + index;
+            final expiresAtMs = nowMs + 60000 + (index * 1000);
+            final attachment = <String, Object?>{
+              ...completedAttachment(
+                messageId: messageId,
+                attachmentId: attachmentId,
+              ),
+              'content_hash': contentHash,
+            };
+            attachments.add(attachment);
+            await dbInsertMediaAttachment(db, attachment);
+            final row = DirectMediaBlobCustodyRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: DirectMediaBlobCustodyState.outgoingStored,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: recipientPeerId,
+              ciphertextRelativePath:
+                  'direct_media_blob_custody_v1/${'a' * 64}/$attachmentId.blob',
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              expiresAtMs: expiresAtMs,
+              custodyRelayPeerId: 'relay-$suffix-$index',
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: '2026-08-08T12:00:01.000Z',
+              updatedAt: '2026-08-08T12:00:01.000Z',
+            );
+            await db.insert(kDirectMediaBlobCustodyTable, row.toMap());
+            manifest.add(
+              DirectMediaBlobManifestProjection(
+                attachmentId: attachmentId,
+                commitment: DirectMediaBlobCustodyCommitment(
+                  contentHash: contentHash,
+                  ciphertextSize: ciphertextSize,
+                  expiresAtMs: expiresAtMs,
+                ),
+              ),
+            );
+          }
+          return (
+            attachments: attachments,
+            expected: expectedParent.toMap(),
+            intent: intent,
+            manifest: manifest,
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            staged: stagedParent.toMap(),
+            wireEnvelope: wireEnvelope,
+          );
+        }
+
+        Future<void> expectNoBinding(String messageId) async {
+          expect(
+            await db.query(
+              'direct_inbox_custody_outbox',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+          final rows = await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          expect(rows, hasLength(2));
+          expect(
+            rows.every((row) => row['inbox_custody_incarnation_id'] == null),
+            isTrue,
+          );
+          expect(
+            (await db.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            )).single['direct_media_custody_intent_id'],
+            isNotNull,
+          );
+        }
+
+        final stripped = await seedStrictAttempt('stripped');
+        final strippedResult = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: stripped.expected,
+          stagedRow: stripped.staged,
+          attachmentRows: stripped.attachments,
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: stripped.recipientPeerId,
+          wireEnvelope: stripped.wireEnvelope,
+          nowMs: nowMs,
+        );
+        expect(strippedResult.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        await expectNoBinding(stripped.messageId);
+
+        final wrongSize = await seedStrictAttempt('wrong-size');
+        final wrongSizeManifest = <DirectMediaBlobManifestProjection>[
+          for (var index = 0; index < wrongSize.manifest.length; index++)
+            DirectMediaBlobManifestProjection(
+              attachmentId: wrongSize.manifest[index].attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: wrongSize.manifest[index].commitment.contentHash,
+                ciphertextSize:
+                    wrongSize.manifest[index].commitment.ciphertextSize +
+                    (index == 0 ? 1 : 0),
+                expiresAtMs: wrongSize.manifest[index].commitment.expiresAtMs,
+              ),
+            ),
+        ];
+        final wrongSizeResult = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: wrongSize.expected,
+          stagedRow: wrongSize.staged,
+          attachmentRows: wrongSize.attachments,
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: wrongSize.recipientPeerId,
+          wireEnvelope: wrongSize.wireEnvelope,
+          wireMediaBlobManifestHash: computeDirectMediaBlobManifestHash(
+            wrongSizeManifest,
+          ),
+          wireMediaBlobExpiresAtMs: earliestDirectMediaBlobExpiryMs(
+            wrongSizeManifest,
+          ),
+          nowMs: nowMs,
+        );
+        expect(
+          wrongSizeResult.outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        await expectNoBinding(wrongSize.messageId);
+
+        final wrongExpiry = await seedStrictAttempt('wrong-expiry');
+        final wrongExpiryManifest = <DirectMediaBlobManifestProjection>[
+          for (var index = 0; index < wrongExpiry.manifest.length; index++)
+            DirectMediaBlobManifestProjection(
+              attachmentId: wrongExpiry.manifest[index].attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: wrongExpiry.manifest[index].commitment.contentHash,
+                ciphertextSize:
+                    wrongExpiry.manifest[index].commitment.ciphertextSize,
+                expiresAtMs:
+                    wrongExpiry.manifest[index].commitment.expiresAtMs +
+                    (index == 0 ? 1 : 0),
+              ),
+            ),
+        ];
+        final wrongExpiryResult = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: wrongExpiry.expected,
+          stagedRow: wrongExpiry.staged,
+          attachmentRows: wrongExpiry.attachments,
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: wrongExpiry.recipientPeerId,
+          wireEnvelope: wrongExpiry.wireEnvelope,
+          wireMediaBlobManifestHash: computeDirectMediaBlobManifestHash(
+            wrongExpiryManifest,
+          ),
+          wireMediaBlobExpiresAtMs: earliestDirectMediaBlobExpiryMs(
+            wrongExpiryManifest,
+          ),
+          nowMs: nowMs,
+        );
+        expect(
+          wrongExpiryResult.outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        await expectNoBinding(wrongExpiry.messageId);
+
+        final exact = await seedStrictAttempt('exact');
+        final exactManifestHash = computeDirectMediaBlobManifestHash(
+          exact.manifest,
+        );
+        final exactExpiry = earliestDirectMediaBlobExpiryMs(exact.manifest);
+        final applied = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: exact.expected,
+          stagedRow: exact.staged,
+          attachmentRows: exact.attachments,
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: exact.recipientPeerId,
+          wireEnvelope: exact.wireEnvelope,
+          wireMediaBlobManifestHash: exactManifestHash,
+          wireMediaBlobExpiresAtMs: exactExpiry,
+          nowMs: nowMs,
+        );
+        expect(applied.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(applied.custodyRow, isNotNull);
+        expect(
+          applied.custodyRow!['media_blob_manifest_hash'],
+          exactManifestHash,
+        );
+        expect(applied.custodyRow!['media_blob_expires_at_ms'], exactExpiry);
+        expect(applied.custodyRow!['incarnation_id'], exact.intent);
+        final boundRows = await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[exact.messageId],
+        );
+        expect(boundRows, hasLength(2));
+        expect(
+          boundRows.every(
+            (row) => row['inbox_custody_incarnation_id'] == exact.intent,
+          ),
+          isTrue,
+        );
+
+        final completion = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: exact.recipientPeerId,
+          messageId: exact.messageId,
+          expectedIncarnationId: exact.intent,
+          expectedWireEnvelope: exact.wireEnvelope,
+          relayExpiresAt: exactExpiry,
+        );
+        expect(completion, isNot(DirectInboxCustodyCompletionOutcome.stale));
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          ),
+          isEmpty,
+        );
+        final cleanupRows = await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[exact.messageId],
+        );
+        expect(
+          cleanupRows.every(
+            (row) =>
+                row['state'] ==
+                DirectMediaBlobCustodyState.outgoingCleanupPending.dbValue,
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'TC-347-09 stored v111 pending projection atomically binds v108',
+      () async {
+        const nowMs = 1900000000000;
+
+        Future<
+          ({
+            List<String> attachmentIds,
+            List<Map<String, Object?>> candidates,
+            Map<String, Object?> expected,
+            int expiresAtMs,
+            String intent,
+            String manifestHash,
+            String messageId,
+            String recipientPeerId,
+            Map<String, Object?> staged,
+            String wireEnvelope,
+          })
+        >
+        seedStoredRestart(
+          String suffix, {
+          bool insertCustody = true,
+          DirectMediaBlobCustodyState custodyState =
+              DirectMediaBlobCustodyState.outgoingStored,
+          bool persistedSiblingPath = false,
+        }) async {
+          final messageId = 'tc347-stored-restart-$suffix';
+          final recipientPeerId = 'tc347-stored-peer-$suffix';
+          final attachmentIds = <String>['$messageId-a', '$messageId-b'];
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: attachmentIds,
+          );
+          final expectedParent = ConversationMessage(
+            id: messageId,
+            contactPeerId: recipientPeerId,
+            senderPeerId: 'peer-local',
+            text: 'stored restart',
+            timestamp: '2026-08-08T13:00:00.000Z',
+            status: 'sending',
+            isIncoming: false,
+            createdAt: '2026-08-08T13:00:00.000Z',
+            directMediaCustodyIntentId: intent,
+          );
+          final wireEnvelope = envelope(messageId);
+          final stagedParent = expectedParent.copyWith(
+            wireEnvelope: wireEnvelope,
+            directMediaCustodyIntentId: null,
+          );
+          await db.insert('messages', expectedParent.toMap());
+
+          final manifest = <DirectMediaBlobManifestProjection>[];
+          for (var index = 0; index < attachmentIds.length; index++) {
+            final attachmentId = attachmentIds[index];
+            final contentHash = index == 0 ? '3' * 64 : '4' * 64;
+            final expiry = nowMs + 90000 + (index * 1000);
+            final canonicalPending =
+                MediaFilePathConvention.relativePathForPendingUpload(
+                  messageId: messageId,
+                  attachmentId: attachmentId,
+                  mime: 'audio/mp4',
+                );
+            final siblingPending =
+                MediaFilePathConvention.relativePathForPendingUpload(
+                  messageId: messageId,
+                  attachmentId: attachmentIds[1],
+                  mime: 'audio/mp4',
+                );
+            final persisted = <String, Object?>{
+              ...completedAttachment(
+                messageId: messageId,
+                attachmentId: attachmentId,
+              ),
+              'local_path': persistedSiblingPath && index == 0
+                  ? siblingPending
+                  : canonicalPending,
+              'download_status': 'upload_pending',
+              'upload_retry_count': 2,
+              'download_retry_count': 1,
+              'content_hash': contentHash,
+              'encryption_nonce': 'stored-nonce-$suffix-$index',
+            };
+            await dbInsertMediaAttachment(db, persisted);
+            if (insertCustody) {
+              final stored =
+                  custodyState == DirectMediaBlobCustodyState.outgoingStored;
+              final custody = DirectMediaBlobCustodyRow(
+                attachmentId: attachmentId,
+                messageId: messageId,
+                direction: DirectMediaBlobCustodyDirection.outgoing,
+                state: custodyState,
+                inboxCustodyIncarnationId: null,
+                recipientPeerId: recipientPeerId,
+                ciphertextRelativePath:
+                    'direct_media_blob_custody_v1/${'b' * 64}/$attachmentId.blob',
+                contentHash: contentHash,
+                ciphertextSize: 81 + index,
+                expiresAtMs: stored ? expiry : null,
+                custodyRelayPeerId: stored ? 'relay-$suffix-$index' : null,
+                lastAttemptAt: null,
+                nextAttemptAt: null,
+                createdAt: '2026-08-08T13:00:01.000Z',
+                updatedAt: '2026-08-08T13:00:01.000Z',
+              );
+              await db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+            }
+            manifest.add(
+              DirectMediaBlobManifestProjection(
+                attachmentId: attachmentId,
+                commitment: DirectMediaBlobCustodyCommitment(
+                  contentHash: contentHash,
+                  ciphertextSize: 81 + index,
+                  expiresAtMs: expiry,
+                ),
+              ),
+            );
+          }
+
+          final persistedRows = await db.rawQuery(
+            'SELECT * FROM media_attachments WHERE message_id = ? '
+            'AND owner_lane = ? ORDER BY id',
+            <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+          );
+          final candidates = persistedRows
+              .map((row) {
+                final candidate = Map<String, Object?>.from(row)
+                  ..['download_status'] = 'done';
+                candidate['local_path'] =
+                    MediaFilePathConvention.relativePathForPendingUpload(
+                      messageId: messageId,
+                      attachmentId: candidate['id']! as String,
+                      mime: candidate['mime']! as String,
+                    );
+                return candidate;
+              })
+              .toList(growable: false);
+          return (
+            attachmentIds: attachmentIds,
+            candidates: candidates,
+            expected: expectedParent.toMap(),
+            expiresAtMs: earliestDirectMediaBlobExpiryMs(manifest),
+            intent: intent,
+            manifestHash: computeDirectMediaBlobManifestHash(manifest),
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            staged: stagedParent.toMap(),
+            wireEnvelope: wireEnvelope,
+          );
+        }
+
+        Future<Map<String, Object?>> snapshot(String messageId) async =>
+            <String, Object?>{
+              'parent': await db.query(
+                'messages',
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+              ),
+              'attachments': await db.rawQuery(
+                'SELECT * FROM media_attachments WHERE message_id = ? '
+                'ORDER BY id',
+                <Object?>[messageId],
+              ),
+              'blobCustody': await db.rawQuery(
+                'SELECT * FROM $kDirectMediaBlobCustodyTable '
+                'WHERE message_id = ? ORDER BY attachment_id',
+                <Object?>[messageId],
+              ),
+              'inboxCustody': await db.rawQuery(
+                'SELECT * FROM direct_inbox_custody_outbox '
+                'WHERE message_id = ? ORDER BY recipient_peer_id',
+                <Object?>[messageId],
+              ),
+            };
+
+        Future<void> expectAtomicRefusal(
+          ({
+            List<String> attachmentIds,
+            List<Map<String, Object?>> candidates,
+            Map<String, Object?> expected,
+            int expiresAtMs,
+            String intent,
+            String manifestHash,
+            String messageId,
+            String recipientPeerId,
+            Map<String, Object?> staged,
+            String wireEnvelope,
+          })
+          seeded, {
+          List<Map<String, Object?>>? candidates,
+          String? manifestHash,
+          int? expiresAtMs,
+        }) async {
+          final before = await snapshot(seeded.messageId);
+          final result = await dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: seeded.expected,
+            stagedRow: seeded.staged,
+            attachmentRows: candidates ?? seeded.candidates,
+            kind: OutgoingOrdinaryAttemptKind.existing,
+            recipientPeerId: seeded.recipientPeerId,
+            wireEnvelope: seeded.wireEnvelope,
+            wireMediaBlobManifestHash: manifestHash ?? seeded.manifestHash,
+            wireMediaBlobExpiresAtMs: expiresAtMs ?? seeded.expiresAtMs,
+            nowMs: nowMs,
+          );
+          expect(result.outcome, OutgoingOrdinaryMutationOutcome.refused);
+          expect(await snapshot(seeded.messageId), before);
+        }
+
+        await expectAtomicRefusal(
+          await seedStoredRestart('absent-v111', insertCustody: false),
+        );
+        await expectAtomicRefusal(
+          await seedStoredRestart(
+            'outgoing-prepared',
+            custodyState: DirectMediaBlobCustodyState.outgoingPrepared,
+          ),
+        );
+        await expectAtomicRefusal(
+          await seedStoredRestart(
+            'persisted-sibling-path',
+            persistedSiblingPath: true,
+          ),
+        );
+
+        final siblingCandidate = await seedStoredRestart(
+          'candidate-sibling-path',
+        );
+        final siblingCandidates = siblingCandidate.candidates
+            .map(Map<String, Object?>.from)
+            .toList(growable: false);
+        siblingCandidates.first['local_path'] =
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: siblingCandidate.messageId,
+              attachmentId: siblingCandidate.attachmentIds.last,
+              mime: siblingCandidates.first['mime']! as String,
+            );
+        await expectAtomicRefusal(
+          siblingCandidate,
+          candidates: siblingCandidates,
+        );
+
+        final crossedNonce = await seedStoredRestart('crossed-nonce');
+        final crossedNonceCandidates = crossedNonce.candidates
+            .map(Map<String, Object?>.from)
+            .toList(growable: false);
+        crossedNonceCandidates.first['encryption_nonce'] = 'crossed-nonce';
+        await expectAtomicRefusal(
+          crossedNonce,
+          candidates: crossedNonceCandidates,
+        );
+
+        final crossedHash = await seedStoredRestart('crossed-hash');
+        final crossedHashCandidates = crossedHash.candidates
+            .map(Map<String, Object?>.from)
+            .toList(growable: false);
+        crossedHashCandidates.first['content_hash'] = '5' * 64;
+        await expectAtomicRefusal(
+          crossedHash,
+          candidates: crossedHashCandidates,
+        );
+
+        final crossedRetry = await seedStoredRestart('crossed-retry');
+        final crossedRetryCandidates = crossedRetry.candidates
+            .map(Map<String, Object?>.from)
+            .toList(growable: false);
+        crossedRetryCandidates.first['upload_retry_count'] = 3;
+        await expectAtomicRefusal(
+          crossedRetry,
+          candidates: crossedRetryCandidates,
+        );
+
+        final wrongManifest = await seedStoredRestart('wrong-manifest');
+        final replacementPrefix = wrongManifest.manifestHash.startsWith('0')
+            ? '1'
+            : '0';
+        await expectAtomicRefusal(
+          wrongManifest,
+          manifestHash:
+              '$replacementPrefix${wrongManifest.manifestHash.substring(1)}',
+        );
+
+        final wrongExpiry = await seedStoredRestart('wrong-expiry');
+        await expectAtomicRefusal(
+          wrongExpiry,
+          expiresAtMs: wrongExpiry.expiresAtMs + 1,
+        );
+
+        final exact = await seedStoredRestart('exact');
+        final applied = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: exact.expected,
+          stagedRow: exact.staged,
+          attachmentRows: exact.candidates,
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: exact.recipientPeerId,
+          wireEnvelope: exact.wireEnvelope,
+          wireMediaBlobManifestHash: exact.manifestHash,
+          wireMediaBlobExpiresAtMs: exact.expiresAtMs,
+          nowMs: nowMs,
+        );
+        expect(applied.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(applied.custodyRow?['incarnation_id'], exact.intent);
+        expect(
+          applied.custodyRow?['media_blob_manifest_hash'],
+          exact.manifestHash,
+        );
+        expect(
+          applied.custodyRow?['media_blob_expires_at_ms'],
+          exact.expiresAtMs,
+        );
+
+        final committedAttachments = await db.rawQuery(
+          'SELECT * FROM media_attachments WHERE message_id = ? ORDER BY id',
+          <Object?>[exact.messageId],
+        );
+        expect(committedAttachments, hasLength(exact.attachmentIds.length));
+        for (final row in committedAttachments) {
+          expect(row['download_status'], 'done');
+          expect(
+            row['local_path'],
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: exact.messageId,
+              attachmentId: row['id']! as String,
+              mime: row['mime']! as String,
+            ),
+          );
+          expect(row['upload_retry_count'], 2);
+          expect(row['download_retry_count'], 1);
+        }
+        final boundRows = await db.rawQuery(
+          'SELECT * FROM $kDirectMediaBlobCustodyTable '
+          'WHERE message_id = ? ORDER BY attachment_id',
+          <Object?>[exact.messageId],
+        );
+        expect(boundRows, hasLength(exact.attachmentIds.length));
+        expect(
+          boundRows.every(
+            (row) => row['inbox_custody_incarnation_id'] == exact.intent,
+          ),
+          isTrue,
+        );
+      },
+    );
 
     test(
       'TC-345 final DB authority rejects MIME/type, negative dimensions, and malformed waveform metadata',

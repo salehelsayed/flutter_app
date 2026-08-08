@@ -129,16 +129,21 @@ const _closureConsumerUriRewrites = <String, String>{
       'post_repository_impl.dart',
 };
 
+// Plan 347 deliberately adds local cleanup plus the exact custody drain ahead
+// of mutable upload retry; the DTR-18 relocation and feature-import floor stay
+// unchanged.
 const _resumeSha256 =
-    'cb95d313e272726a8e41efa64242b4fab5990c86e73eed205ea65cd363dabcf1';
+    '019ed707358a864cbee8021f4881bbe6b3e45ec4e39bf8adc2d334261a05814c';
 const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
+// Plan 347's reviewed composition delta wires the same cleanup/drain through
+// MyApp and production bootstrap. Posts adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
-    '2b23442774fc0075c8b65caeed6aedb836503d597a07ffb87caf176777d26123';
+    '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
 const _productionBootstrapNormalizedSha256 =
-    '821d42ed2a9aefbfefc25a3a58d642d5260afc67ef918d1df623117b745e8915';
+    'c61e5486dd7af8e9f83422a7426bcfc8d8848e13ce02b5de1e9d5a4ba86c42e0';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

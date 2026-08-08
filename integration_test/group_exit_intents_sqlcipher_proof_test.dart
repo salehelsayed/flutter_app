@@ -141,7 +141,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 110);
+        expect(currentIdentityDatabaseVersion, 111);
         expect(await _userVersion(db), 103);
         expect(await _cipherVersion(db), isNotEmpty);
         final entry = productionUpgradeMigrations.singleWhere(
@@ -238,23 +238,31 @@ void main() {
           throwsA(anything),
         );
 
-        // Reopen at v103 after both refusals: version, predecessor rows, and
-        // the exact queued intent all remain durable.
+        // Reopen through the current production registry after both refusals:
+        // the historical v103 authority remains exact while this sentinel
+        // deliberately advances its current-schema pin through v111.
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
-          version: 103,
+          version: currentIdentityDatabaseVersion,
           singleInstance: false,
           onCreate: runProductionOnCreate,
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 103);
+        expect(await _userVersion(db), 111);
         expect(await _cipherVersion(db), isNotEmpty);
         expect((await db.query('group_exit_intents')).single, queued);
         expect(await db.query('groups'), legacyGroups);
         expect(await db.query('group_members'), legacyMembers);
         expect(await db.query('pending_group_broadcasts'), legacyBroadcasts);
+        expect(
+          await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'direct_media_blob_custody'",
+          ),
+          hasLength(1),
+        );
         await db.close();
         db = null;
 

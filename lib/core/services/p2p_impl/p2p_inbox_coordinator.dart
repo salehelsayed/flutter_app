@@ -17,6 +17,7 @@ class _P2PInboxPort {
     String? wakeToken,
     String? custodyContract,
     String? custodyKind,
+    int? custodyExpiresAtOrBeforeMs,
   })
   storeInbox;
   final Future<Map<String, dynamic>> Function({int? timeoutMs}) retrieveInbox;
@@ -1707,12 +1708,36 @@ class _P2PInboxCoordinator {
     custodyKind: custodyKind,
   );
 
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) => _storeInInboxDetailed(
+    toPeerId,
+    message,
+    timeoutMs: timeoutMs,
+    custodyKind: AckCustodyKind.directTextV108,
+    custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+  );
+
   Future<InboxStoreOutcome> _storeInInboxDetailed(
     String toPeerId,
     String message, {
     int? timeoutMs,
     AckCustodyKind? custodyKind,
+    int? custodyExpiresAtOrBeforeMs,
   }) async {
+    if (custodyExpiresAtOrBeforeMs != null &&
+        (custodyKind != AckCustodyKind.directTextV108 ||
+            custodyExpiresAtOrBeforeMs <= 0)) {
+      return const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'CUSTODY_INELIGIBLE',
+        errorMessage:
+            'Media expiry custody requires direct_text_v108 and a positive ceiling',
+      );
+    }
     if (!await _port.allowsAccountNetworkSideEffects('p2p_store_inbox')) {
       return const InboxStoreOutcome(status: InboxStoreStatus.failed);
     }
@@ -1762,10 +1787,25 @@ class _P2PInboxCoordinator {
             ? null
             : ackOrExpiryInboxCustodyContract,
         custodyKind: custodyKind?.wireValue,
+        custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
       );
-      final outcome = custodyKind == null
+      var outcome = custodyKind == null
           ? InboxStoreOutcome.fromBridgeResponse(response)
           : InboxStoreOutcome.fromAckOrExpiryBridgeResponse(response);
+      if (custodyExpiresAtOrBeforeMs != null &&
+          (!outcome.ackOrExpiryAccepted ||
+              outcome.expiresAtMs != custodyExpiresAtOrBeforeMs)) {
+        outcome = InboxStoreOutcome(
+          status: InboxStoreStatus.failed,
+          errorCode: 'CUSTODY_EXPIRY_PROOF_MISSING_OR_INVALID',
+          errorMessage: outcome.errorMessage,
+          storeStatus: outcome.storeStatus,
+          expiresAtMs: outcome.expiresAtMs,
+          occupancy: outcome.occupancy,
+          capacity: outcome.capacity,
+          custodyContract: outcome.custodyContract,
+        );
+      }
       final wakeTokenObserver = _acceptedInboxWakeTokenHashObserver;
       if (outcome.accepted &&
           wakeTokenObserver != null &&

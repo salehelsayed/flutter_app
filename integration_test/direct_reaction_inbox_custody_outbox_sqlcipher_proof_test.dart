@@ -6,6 +6,7 @@ import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_
 import 'package:flutter_app/core/database/migrations/109_direct_reaction_inbox_custody_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
@@ -39,8 +40,10 @@ void main() {
         isTrue,
         reason: 'TC-343-10 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 110);
+      expect(currentIdentityDatabaseVersion, 111);
 
+      final previousFlowEventLoggingEnabled = flowEventLoggingEnabled;
+      flowEventLoggingEnabled = false;
       final temp = await Directory.systemTemp.createTemp(
         'direct_reaction_custody_sqlcipher_',
       );
@@ -74,7 +77,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v108-through-v109-to-current-v110';
+        proofStage = 'upgrade-v108-through-v109-to-current-v111';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -84,11 +87,16 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 110);
+        expect(await _userVersion(db), 111);
         expect(await _cipherVersion(db), isNotEmpty);
+        final currentTextCustody = <String, Object?>{
+          ...textCustody,
+          'media_blob_expires_at_ms': null,
+          'media_blob_manifest_hash': null,
+        };
         expect(
           await db.query('direct_inbox_custody_outbox'),
-          <Map<String, Object?>>[textCustody],
+          <Map<String, Object?>>[currentTextCustody],
         );
         expect(
           await db.query('direct_reaction_inbox_custody_outbox'),
@@ -306,19 +314,19 @@ END
         expect(await db.query('direct_reaction_inbox_custody_outbox'), isEmpty);
         expect(
           await db.query('direct_inbox_custody_outbox'),
-          <Map<String, Object?>>[textCustody],
+          <Map<String, Object?>>[currentTextCustody],
         );
         final convergedSnapshot = await _authoritySnapshot(db);
 
         proofStage = 'second-production-migration-pass-is-stable';
         await runProductionOnUpgrade(db, 108, 109);
         await runDirectReactionInboxCustodyOutboxMigration(db);
-        expect(await _userVersion(db), 110);
+        expect(await _userVersion(db), 111);
         expect(await _authoritySnapshot(db), convergedSnapshot);
         await db.close();
         db = null;
 
-        proofStage = 'v110-to-v108-downgrade-refusal';
+        proofStage = 'v111-to-v108-downgrade-refusal';
         await expectLater(
           sqlcipher.openDatabase(
             path,
@@ -332,7 +340,7 @@ END
           throwsA(anything),
         );
 
-        proofStage = 'correct-current-v110-reopen-unchanged-after-refusal';
+        proofStage = 'correct-current-v111-reopen-unchanged-after-refusal';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -342,11 +350,12 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 110);
+        expect(await _userVersion(db), 111);
         expect(await _authoritySnapshot(db), convergedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-343-10 failed at $proofStage: $error\n$stackTrace');
       } finally {
+        flowEventLoggingEnabled = previousFlowEventLoggingEnabled;
         if (db != null && db.isOpen) await db.close();
         if (await temp.exists()) await temp.delete(recursive: true);
       }

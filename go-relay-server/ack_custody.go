@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 )
 
 const (
@@ -75,6 +76,52 @@ func loadAckCustodyAdmissionEnabledFromEnv() bool {
 	default:
 		return false
 	}
+}
+
+func (is *InboxStore) ackCustodyNow() time.Time {
+	if is != nil && is.now != nil {
+		return is.now()
+	}
+	return time.Now()
+}
+
+// SetAckCustodyNowForTest keeps the relay handler and Redis pruning on the same
+// deterministic clock. Production never calls this seam.
+func (is *InboxStore) SetAckCustodyNowForTest(now func() time.Time) {
+	if is == nil {
+		return
+	}
+	if now == nil {
+		now = time.Now
+	}
+	is.now = now
+	if backend, ok := is.backend.(*redisInboxBackend); ok {
+		backend.now = now
+	}
+}
+
+func validAckCustodyExpiryCeiling(
+	custodyKind string,
+	ceiling *int64,
+	now time.Time,
+) bool {
+	if ceiling == nil {
+		return true
+	}
+	// The additive bound belongs only to v108 direct-media envelopes. Reactions
+	// and every legacy action retain their frozen timestamp-derived lifetime.
+	if custodyKind != ackCustodyDirectTextKind {
+		return false
+	}
+	nowMs := now.UnixMilli()
+	return *ceiling > nowMs && *ceiling <= now.Add(maxMessageAge).UnixMilli()
+}
+
+func ackCustodyEntryExpiresAtMs(entry inboxMessage) int64 {
+	if entry.ExpiresAtMs > 0 {
+		return entry.ExpiresAtMs
+	}
+	return entry.Timestamp + maxMessageAge.Milliseconds()
 }
 
 // extractAckCustodyDedupeKey is intentionally narrower than the legacy direct

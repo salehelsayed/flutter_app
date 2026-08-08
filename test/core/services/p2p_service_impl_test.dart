@@ -367,6 +367,43 @@ void main() {
   });
 
   test(
+    'TC-347-05 media expiry-bounded capability requires exact relay expiry proof',
+    () async {
+      const ceiling = 2000000123456;
+      for (final returnedExpiry in <int?>[null, ceiling + 1, ceiling]) {
+        bridge.whenCommand(
+          'inbox:store',
+          (_) => jsonEncode({
+            'ok': true,
+            'storeStatus': 'stored',
+            'custodyContract': ackOrExpiryInboxCustodyContract,
+            'expiresAtMs': ?returnedExpiry,
+          }),
+        );
+
+        final outcome = await service.storeInMediaExpiryBoundedInboxDetailed(
+          'remote-peer',
+          'strict-media-envelope',
+          custodyExpiresAtOrBeforeMs: ceiling,
+        );
+        expect(
+          outcome.ackOrExpiryAccepted,
+          returnedExpiry == ceiling,
+          reason: 'returned expiry $returnedExpiry',
+        );
+        if (returnedExpiry != ceiling) {
+          expect(outcome.errorCode, 'CUSTODY_EXPIRY_PROOF_MISSING_OR_INVALID');
+        }
+      }
+
+      final payload = bridge.payloadsFor('inbox:store').last!;
+      expect(payload['custodyContract'], ackOrExpiryInboxCustodyContract);
+      expect(payload['custodyKind'], 'direct_text_v108');
+      expect(payload['custodyExpiresAtOrBeforeMs'], ceiling);
+    },
+  );
+
+  test(
     'ack-or-expiry retrieve and ACK reject missing or mutated proof',
     () async {
       for (final phase in <String>['retrieve', 'ack']) {

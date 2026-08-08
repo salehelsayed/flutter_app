@@ -4,8 +4,12 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
+import 'package:flutter_app/core/media/group_media_integrity_policy.dart'
+    show kMediaDownloadStatusDone;
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -62,6 +66,10 @@ enum HandleChatMessageResult {
 
   /// Edit was ignored because it is stale, duplicate, or targets a deleted row.
   ignoredEdit,
+
+  /// A strict blob commitment was partial, crossed, or could not be staged by
+  /// the required all-or-zero receiver authority.
+  strictMediaCustodyRefused,
 }
 
 typedef StageDirectMessageNotificationDisplayCustody =
@@ -313,6 +321,10 @@ handleIncomingChatMessage({
     isForwarded: payload.isForwarded,
     privateMediaPolicy: incomingPrivateMediaPolicy,
   );
+  final strictMediaProjection = _parseStrictIncomingMediaProjection(payload);
+  if (strictMediaProjection.selected && !strictMediaProjection.isValid) {
+    return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+  }
 
   // 2a. Require the stream sender and decrypted payload sender to agree.
   final senderMismatch =
@@ -383,12 +395,23 @@ handleIncomingChatMessage({
         },
       );
     }
-    await _repairDuplicateReplayMedia(
-      payload: payload,
-      existingParent: existingMessage,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      mediaFileManager: mediaFileManager,
-    );
+    if (strictMediaProjection.selected) {
+      final exact = await _isExactStrictIncomingDuplicate(
+        messageId: payload.id,
+        projection: strictMediaProjection,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+      );
+      if (!exact) {
+        return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+      }
+    } else {
+      await _repairDuplicateReplayMedia(
+        payload: payload,
+        existingParent: existingMessage,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_RECEIVE_DUPLICATE',
@@ -540,24 +563,6 @@ handleIncomingChatMessage({
     }
   }
 
-  // 4. Detect + persist contact name change
-  ContactModel? updatedContact;
-  if (contact.username != payload.senderUsername) {
-    updatedContact = contact.copyWith(username: payload.senderUsername);
-    await contactRepo.addContact(updatedContact);
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_CONTACT_NAME_UPDATED',
-      details: {
-        'peerId': contact.peerId.length > 10
-            ? contact.peerId.substring(0, 10)
-            : contact.peerId,
-        'oldName': contact.username,
-        'newName': payload.senderUsername,
-      },
-    );
-  }
-
   // 5. Persist message
   final resultAfterSave = shouldPreserveDeletedPlaceholder
       ? HandleChatMessageResult.duplicate
@@ -604,16 +609,88 @@ handleIncomingChatMessage({
     candidateMessage,
     existingMessage: existingMessage,
   );
-  if (resultAfterSave == HandleChatMessageResult.chatMessage) {
-    // Marker first: a process death after the next line but before the
-    // canonical save leaves a not-ready row; canonical mutation cannot commit
-    // without prior recoverable display custody.
+  final parsedAttachments = <MediaAttachment>[];
+  if (strictMediaProjection.selected) {
+    final incomingMessageRepo =
+        messageRepo is IncomingDirectMessagePublicationRepository
+        ? messageRepo as IncomingDirectMessagePublicationRepository
+        : null;
+    final incomingMediaRepo =
+        mediaAttachmentRepo is IncomingDirectMediaBlobCustodyRepository
+        ? mediaAttachmentRepo as IncomingDirectMediaBlobCustodyRepository
+        : null;
+    if (resultAfterSave != HandleChatMessageResult.chatMessage ||
+        incomingMessageRepo == null ||
+        incomingMediaRepo == null ||
+        !incomingMediaRepo.supportsIncomingDirectMediaBlobCustody) {
+      return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    // Capture the promoted payload identity before entering closures. Dart
+    // cannot retain promotion of the nullable parse result across callbacks.
+    final strictMessageId = payload.id;
+    final strictAttachments = strictMediaProjection.attachments
+        .map(
+          (attachment) => attachment.copyWith(
+            messageId: strictMessageId,
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        )
+        .toList(growable: false);
+    final custodyRows = strictAttachments
+        .map((attachment) {
+          final commitment = attachment.blobCustody!;
+          return DirectMediaBlobCustodyRow(
+            attachmentId: attachment.id,
+            messageId: strictMessageId,
+            direction: DirectMediaBlobCustodyDirection.incoming,
+            state: DirectMediaBlobCustodyState.incomingCommitted,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: null,
+            ciphertextRelativePath: null,
+            custodyKind: commitment.kind,
+            custodyContract: commitment.contract,
+            contentHash: commitment.contentHash,
+            ciphertextSize: commitment.ciphertextSize,
+            transportMime: commitment.transportMime,
+            expiresAtMs: commitment.expiresAtMs,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: now,
+            updatedAt: now,
+          );
+        })
+        .toList(growable: false);
+    final staged = await incomingMediaRepo.stageIncomingDirectMediaBlobCustody(
+      message: conversationMessage,
+      attachments: strictAttachments,
+      custodyRows: custodyRows,
+    );
+    if (!staged.outcome.isDurable) {
+      return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+    }
+    parsedAttachments.addAll(strictAttachments);
+    // The complete parent/attachment/v111 transaction is already durable.
+    // Every observable side effect starts only after that boundary.
     await stageNotificationDisplayCustody?.call(conversationMessage);
+    await incomingMessageRepo.publishIncomingDirectMediaMessage(
+      message: conversationMessage,
+      attachments: strictAttachments,
+    );
+    await maybeSendDeliveryReceipt(payload.id);
+  } else {
+    if (resultAfterSave == HandleChatMessageResult.chatMessage) {
+      // Marker first: a process death after the next line but before the
+      // canonical save leaves a not-ready row; canonical mutation cannot commit
+      // without prior recoverable display custody.
+      await stageNotificationDisplayCustody?.call(conversationMessage);
+    }
+    await messageRepo.saveMessage(conversationMessage);
+    // 115 P2: the message is durably persisted — confirm custody to the
+    // sender (relay-drain arrivals only, per the origin contract).
+    await maybeSendDeliveryReceipt(payload.id);
   }
-  await messageRepo.saveMessage(conversationMessage);
-  // 115 P2: the message is durably persisted — confirm custody to the
-  // sender (relay-drain arrivals only, per the origin contract).
-  await maybeSendDeliveryReceipt(payload.id);
   if (shouldMaterializeDeferredEdit) {
     emitFlowEvent(
       layer: 'FL',
@@ -629,9 +706,9 @@ handleIncomingChatMessage({
     );
   }
 
-  // 6. Persist media attachment metadata and collect parsed attachments
-  final parsedAttachments = <MediaAttachment>[];
-  if (!shouldPreserveDeletedPlaceholder &&
+  // 6. Persist legacy media attachment metadata and collect parsed attachments.
+  if (!strictMediaProjection.selected &&
+      !shouldPreserveDeletedPlaceholder &&
       mediaAttachmentRepo != null &&
       payload.media != null) {
     for (final mediaJson in payload.media!) {
@@ -650,6 +727,25 @@ handleIncomingChatMessage({
       );
       if (saved) parsedAttachments.add(attachment);
     }
+  }
+
+  // 4. Contact metadata is independent from message custody, but must not be
+  // observable before a strict message's complete atomic stage.
+  ContactModel? updatedContact;
+  if (contact.username != payload.senderUsername) {
+    updatedContact = contact.copyWith(username: payload.senderUsername);
+    await contactRepo.addContact(updatedContact);
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_CONTACT_NAME_UPDATED',
+      details: {
+        'peerId': contact.peerId.length > 10
+            ? contact.peerId.substring(0, 10)
+            : contact.peerId,
+        'oldName': contact.username,
+        'newName': payload.senderUsername,
+      },
+    );
   }
   if (resultAfterSave == HandleChatMessageResult.chatMessage) {
     // Attachment metadata is part of the canonical notification snapshot.
@@ -852,6 +948,144 @@ Future<String?> predecryptStagedInboxChatEntry({
     ownMlKemSecretKey: secret,
     fallbackMlKemSecretKeys: await loadOwnMlKemSecretKeyRing(),
   );
+}
+
+final class _StrictIncomingMediaProjection {
+  const _StrictIncomingMediaProjection.none()
+    : selected = false,
+      isValid = true,
+      attachments = const <MediaAttachment>[];
+
+  const _StrictIncomingMediaProjection.invalid()
+    : selected = true,
+      isValid = false,
+      attachments = const <MediaAttachment>[];
+
+  const _StrictIncomingMediaProjection.valid(this.attachments)
+    : selected = true,
+      isValid = true;
+
+  final bool selected;
+  final bool isValid;
+  final List<MediaAttachment> attachments;
+}
+
+_StrictIncomingMediaProjection _parseStrictIncomingMediaProjection(
+  MessagePayload payload,
+) {
+  final media = payload.media;
+  if (media == null || media.isEmpty) {
+    return const _StrictIncomingMediaProjection.none();
+  }
+  final strictCount = media
+      .where((item) => item.containsKey('blobCustody'))
+      .length;
+  if (strictCount == 0) return const _StrictIncomingMediaProjection.none();
+  if (strictCount != media.length ||
+      payload.isEdit ||
+      payload.privateMediaPolicy.requiresRedaction) {
+    return const _StrictIncomingMediaProjection.invalid();
+  }
+  try {
+    final attachments = media
+        .map(MediaAttachment.fromJson)
+        .toList(growable: false);
+    final ids = attachments.map((attachment) => attachment.id).toSet();
+    final valid =
+        ids.length == attachments.length &&
+        !ids.contains('') &&
+        attachments.every((attachment) {
+          final commitment = attachment.blobCustody;
+          return commitment != null &&
+              commitment.isValid &&
+              attachment.size > 0 &&
+              attachment.contentHash == commitment.contentHash &&
+              attachment.hasEncryptionMetadata;
+        });
+    return valid
+        ? _StrictIncomingMediaProjection.valid(attachments)
+        : const _StrictIncomingMediaProjection.invalid();
+  } on Object {
+    return const _StrictIncomingMediaProjection.invalid();
+  }
+}
+
+Future<bool> _isExactStrictIncomingDuplicate({
+  required String messageId,
+  required _StrictIncomingMediaProjection projection,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  if (!projection.isValid || mediaAttachmentRepo == null) {
+    return false;
+  }
+  final attachmentRepo = mediaAttachmentRepo;
+  if (attachmentRepo is! DirectMediaBlobCustodyRepository) return false;
+  final custodyRepo = attachmentRepo as DirectMediaBlobCustodyRepository;
+  final persistedAttachments = await attachmentRepo.getAttachmentsForMessage(
+    messageId,
+    owner: MediaOwnerLane.direct,
+  );
+  if (persistedAttachments.length != projection.attachments.length) {
+    return false;
+  }
+  final persistedById = <String, MediaAttachment>{
+    for (final attachment in persistedAttachments) attachment.id: attachment,
+  };
+  for (final incoming in projection.attachments) {
+    final persisted = persistedById[incoming.id];
+    if (persisted == null ||
+        persisted.messageId != messageId ||
+        persisted.mime != incoming.mime ||
+        persisted.size != incoming.size ||
+        persisted.mediaType != incoming.mediaType ||
+        persisted.width != incoming.width ||
+        persisted.height != incoming.height ||
+        persisted.durationMs != incoming.durationMs ||
+        persisted.contentHash != incoming.contentHash ||
+        persisted.thumbnailHash != incoming.thumbnailHash ||
+        persisted.encryptionKeyBase64 != incoming.encryptionKeyBase64 ||
+        persisted.encryptionNonce != incoming.encryptionNonce ||
+        persisted.encryptionScheme != incoming.encryptionScheme ||
+        persisted.directMediaBlobCustodyFingerprint !=
+            computeDirectMediaBlobCommitmentFingerprint(
+              attachmentId: incoming.id,
+              commitment: incoming.blobCustody!,
+            )) {
+      return false;
+    }
+  }
+
+  final custodyRows = await custodyRepo.loadDirectMediaBlobCustodyForMessage(
+    messageId,
+  );
+  if (custodyRows.isEmpty) {
+    // A completed exact ACK removes v111 but retains the durable local media
+    // and its one-way exact commitment fingerprint checked above.
+    return persistedAttachments.every(
+      (attachment) =>
+          attachment.downloadStatus == kMediaDownloadStatusDone &&
+          attachment.localPath != null &&
+          attachment.localPath!.isNotEmpty,
+    );
+  }
+  if (custodyRows.length != projection.attachments.length) return false;
+  final custodyById = <String, DirectMediaBlobCustodyRow>{
+    for (final row in custodyRows) row.attachmentId: row,
+  };
+  return projection.attachments.every((attachment) {
+    final commitment = attachment.blobCustody!;
+    final row = custodyById[attachment.id];
+    return row != null &&
+        row.direction == DirectMediaBlobCustodyDirection.incoming &&
+        (row.state == DirectMediaBlobCustodyState.incomingCommitted ||
+            row.state == DirectMediaBlobCustodyState.incomingAckPending) &&
+        row.contentHash == commitment.contentHash &&
+        row.ciphertextSize == commitment.ciphertextSize &&
+        row.custodyKind == commitment.kind &&
+        row.custodyContract == commitment.contract &&
+        row.transportMime == commitment.transportMime &&
+        row.expiresAtMs == commitment.expiresAtMs;
+  });
 }
 
 Future<void> _repairDuplicateReplayMedia({

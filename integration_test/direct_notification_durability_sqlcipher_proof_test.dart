@@ -41,6 +41,9 @@ const _currentDirectIndexes = <String>{
   ..._v107Indexes,
   'idx_direct_inbox_custody_outbox_fair_load',
   'idx_direct_reaction_inbox_custody_outbox_fair_load',
+  'idx_direct_media_blob_custody_inbox_incarnation',
+  'idx_direct_media_blob_custody_message',
+  'idx_direct_media_blob_custody_state_retry',
 };
 
 const _v107Triggers = <String>{
@@ -83,7 +86,7 @@ Future<Set<String>> _schemaObjectNames(
 )).map((row) => row['name'] as String).toSet();
 
 Future<void> _expectV107Artifacts(sqlcipher.Database db) async {
-  expect(await _userVersion(db), 110);
+  expect(await _userVersion(db), 111);
   expect(await _cipherVersion(db), isNotEmpty);
   expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
     'event_id',
@@ -369,7 +372,7 @@ void main() {
   testWidgets(
     'TC-331-22 real SQLCipher v106 to current preserves typed direct and group authority across refusal and reopen',
     (_) async {
-      expect(currentIdentityDatabaseVersion, 110);
+      expect(currentIdentityDatabaseVersion, 111);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_notification_durability_sqlcipher_',
@@ -408,7 +411,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v106-to-current-v110';
+        proofStage = 'upgrade-v106-to-current-v111';
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
@@ -557,7 +560,7 @@ void main() {
           }
         }(), throwsA(anything));
 
-        proofStage = 'v110-to-v106-downgrade-refusal';
+        proofStage = 'v111-to-v106-downgrade-refusal';
         await expectLater(
           sqlcipher.openDatabase(
             upgradePath,
@@ -569,7 +572,7 @@ void main() {
           throwsA(anything),
         );
 
-        proofStage = 'reopen-current-v110-after-refusals';
+        proofStage = 'reopen-current-v111-after-refusals';
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
@@ -593,7 +596,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'fresh-current-v110-database';
+        proofStage = 'fresh-current-v111-database';
         db = await sqlcipher.openDatabase(
           freshPath,
           password: password,

@@ -35,4 +35,7 @@
 // 345: DB v110 adds a nullable, manifest-bound local custody intent for newly
 // prepared ordinary direct media. Historical messages are not backfilled,
 // and v110 remains a one-way schema floor.
-const int currentIdentityDatabaseVersion = 110;
+// 347: DB v111 adds independent exact-blob custody plus nullable manifest hash
+// and earliest-expiry bindings on v108. Historical rows are not promoted, and
+// v111 remains a one-way schema floor.
+const int currentIdentityDatabaseVersion = 111;

@@ -103,20 +103,21 @@ void main() {
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
         104,
       );
-      expect(currentIdentityDatabaseVersion, 110);
+      expect(currentIdentityDatabaseVersion, 111);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
       ]) {
         expect(registry.where((entry) => entry.version == 104), hasLength(1));
-        expect(registry.last.version, 110);
-        expect(registry.last.name, '110_direct_media_custody_intent');
-        expect(registry[registry.length - 2].version, 109);
-        expect(registry[registry.length - 3].version, 108);
-        expect(registry[registry.length - 4].version, 107);
-        expect(registry[registry.length - 5].version, 106);
-        expect(registry[registry.length - 6].version, 105);
-        expect(registry[registry.length - 7].version, 104);
+        expect(registry.last.version, 111);
+        expect(registry.last.name, '111_direct_media_blob_custody');
+        expect(registry[registry.length - 2].version, 110);
+        expect(registry[registry.length - 3].version, 109);
+        expect(registry[registry.length - 4].version, 108);
+        expect(registry[registry.length - 5].version, 107);
+        expect(registry[registry.length - 6].version, 106);
+        expect(registry[registry.length - 7].version, 105);
+        expect(registry[registry.length - 8].version, 104);
       }
 
       expect(await db.query('group_exit_diagnostics'), isEmpty);

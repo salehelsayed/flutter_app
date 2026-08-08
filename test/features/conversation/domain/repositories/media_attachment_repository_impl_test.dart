@@ -2,9 +2,12 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
@@ -12,9 +15,17 @@ import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_media_blob_custody_use_case.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
@@ -23,6 +34,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
+import '../../../../shared/fakes/recording_fake_bridge.dart';
 
 class _FailFirstDeleteSecureKeyStore extends RecordingSecureKeyStore {
   String? failOnceFor;
@@ -141,7 +153,1791 @@ void main() {
   Future<void> saveDirect(MediaAttachment attachment) =>
       fixture.repo.saveAttachment(attachment, owner: MediaOwnerLane.direct);
 
+  Future<
+    ({
+      ConversationMessage parent,
+      List<MediaAttachment> attachments,
+      List<DirectMediaBlobCustodyRow> rows,
+      List<DirectMediaBlobArtifact> artifacts,
+    })
+  >
+  stageOutgoingBlobGeneration({
+    required DirectMediaBlobArtifactStore store,
+    required Directory sourceDirectory,
+    required String identityPeerId,
+    required String messageId,
+    required List<String> attachmentIds,
+    String createdAt = '2026-08-08T11:00:00.000Z',
+  }) async {
+    final parent = ConversationMessage(
+      id: messageId,
+      contactPeerId: 'tc347-terminal-recipient',
+      senderPeerId: identityPeerId,
+      text: 'terminalization fixture',
+      timestamp: createdAt,
+      status: 'sending',
+      isIncoming: false,
+      createdAt: createdAt,
+      directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+        messageId: messageId,
+        attachmentIds: attachmentIds,
+      ),
+    );
+    final pending = <MediaAttachment>[];
+    final prepared = <MediaAttachment>[];
+    final rows = <DirectMediaBlobCustodyRow>[];
+    final artifacts = <DirectMediaBlobArtifact>[];
+    for (var index = 0; index < attachmentIds.length; index++) {
+      final attachmentId = attachmentIds[index];
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 40 + index,
+        mediaType: 'image',
+        localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+        downloadStatus: 'upload_pending',
+        createdAt: createdAt,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final source = File(
+        '${sourceDirectory.path}/$messageId-$attachmentId.enc',
+      );
+      final bytes = <int>[11 + index, 21 + index, 31 + index, 41 + index];
+      await source.writeAsBytes(bytes, flush: true);
+      addTearDown(() async {
+        if (await source.exists()) await source.delete();
+      });
+      final hash = sha256.convert(bytes).toString();
+      final artifact = await store.persistCandidate(
+        identityPeerId: identityPeerId,
+        attachmentId: attachmentId,
+        encryptedSourcePath: source.path,
+        expectedContentHash: hash,
+      );
+      pending.add(attachment);
+      prepared.add(
+        attachment.copyWith(
+          contentHash: hash,
+          encryptionKeyBase64: 'tc347-terminal-key-$attachmentId',
+          encryptionNonce: 'tc347-terminal-nonce-$attachmentId',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+      );
+      rows.add(
+        DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: parent.contactPeerId,
+          ciphertextRelativePath: artifact.relativePath,
+          contentHash: artifact.contentHash,
+          ciphertextSize: artifact.ciphertextSize,
+          expiresAtMs: null,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+      );
+      artifacts.add(artifact);
+    }
+    await fixture.messageRepo.saveMessage(parent);
+    for (final attachment in pending) {
+      await fixture.repo.saveAttachment(
+        attachment,
+        owner: MediaOwnerLane.direct,
+      );
+    }
+    final staged = await (fixture.repo as DirectMediaBlobCustodyRepository)
+        .stageOutgoingDirectMediaBlobGeneration(
+          expectedParent: parent,
+          expectedAttachments: pending,
+          preparedAttachments: prepared,
+          custodyRows: rows,
+        );
+    expect(staged.outcome.name, 'applied');
+    return (
+      parent: parent,
+      attachments: staged.attachments,
+      rows: staged.custodyRows,
+      artifacts: artifacts,
+    );
+  }
+
   group('MediaAttachmentRepositoryImpl', () {
+    test(
+      'TC-347-02c concurrent preparers adopt one artifact generation',
+      () async {
+        final documents = await Directory.systemTemp.createTemp(
+          'tc347-concurrent-generation-',
+        );
+        addTearDown(() => documents.delete(recursive: true));
+        const messageId = 'tc347-concurrent-parent';
+        const attachmentId = 'tc347-concurrent-attachment';
+        const identityPeerId = 'tc347-concurrent-identity';
+        const createdAt = '2026-08-08T09:00:00.000Z';
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final parent = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'tc347-concurrent-recipient',
+          senderPeerId: 'tc347-local',
+          text: 'one generation',
+          timestamp: createdAt,
+          status: 'sending',
+          isIncoming: false,
+          createdAt: createdAt,
+          directMediaCustodyIntentId: intent,
+        );
+        const pending = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 23,
+          mediaType: 'image',
+          localPath:
+              'pending_uploads/tc347-concurrent-parent/tc347-concurrent-attachment.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: createdAt,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        await fixture.messageRepo.saveMessage(parent);
+        await fixture.repo.saveAttachment(
+          pending,
+          owner: MediaOwnerLane.direct,
+        );
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => documents,
+        );
+
+        Future<
+          ({
+            DirectMediaBlobArtifact artifact,
+            MediaAttachment prepared,
+            DirectMediaBlobCustodyRow custody,
+            String key,
+          })
+        >
+        candidate(String suffix, List<int> bytes) async {
+          final source = File('${documents.path}/candidate-$suffix.enc');
+          await source.writeAsBytes(bytes, flush: true);
+          final hash = sha256.convert(bytes).toString();
+          final artifact = await store.persistCandidate(
+            identityPeerId: identityPeerId,
+            attachmentId: attachmentId,
+            encryptedSourcePath: source.path,
+            expectedContentHash: hash,
+          );
+          final key = 'tc347-key-$suffix';
+          return (
+            artifact: artifact,
+            prepared: pending.copyWith(
+              contentHash: hash,
+              encryptionKeyBase64: key,
+              encryptionNonce: 'tc347-nonce-$suffix',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            custody: DirectMediaBlobCustodyRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: DirectMediaBlobCustodyState.outgoingPrepared,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: parent.contactPeerId,
+              ciphertextRelativePath: artifact.relativePath,
+              contentHash: hash,
+              ciphertextSize: bytes.length,
+              expiresAtMs: null,
+              custodyRelayPeerId: null,
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: createdAt,
+              updatedAt: createdAt,
+            ),
+            key: key,
+          );
+        }
+
+        final first = await candidate('first', const <int>[1, 2, 3, 4]);
+        final second = await candidate('second', const <int>[4, 3, 2, 1]);
+        final custodyRepository =
+            fixture.repo as DirectMediaBlobCustodyRepository;
+        final results = await Future.wait([
+          custodyRepository.stageOutgoingDirectMediaBlobGeneration(
+            expectedParent: parent,
+            expectedAttachments: const <MediaAttachment>[pending],
+            preparedAttachments: <MediaAttachment>[first.prepared],
+            custodyRows: <DirectMediaBlobCustodyRow>[first.custody],
+          ),
+          custodyRepository.stageOutgoingDirectMediaBlobGeneration(
+            expectedParent: parent,
+            expectedAttachments: const <MediaAttachment>[pending],
+            preparedAttachments: <MediaAttachment>[second.prepared],
+            custodyRows: <DirectMediaBlobCustodyRow>[second.custody],
+          ),
+        ]);
+
+        expect(results.map((result) => result.outcome.name).toSet(), {
+          'applied',
+          'idempotent',
+        });
+        final winnerIndex = results.indexWhere(
+          (result) => result.outcome.name == 'applied',
+        );
+        final winner = winnerIndex == 0 ? first : second;
+        final loser = winnerIndex == 0 ? second : first;
+        for (final result in results) {
+          expect(result.attachments, hasLength(1));
+          expect(
+            result.attachments.single.contentHash,
+            winner.artifact.contentHash,
+          );
+          expect(result.custodyRows, hasLength(1));
+          expect(
+            result.custodyRows.single.ciphertextRelativePath,
+            winner.artifact.relativePath,
+          );
+        }
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          winner.key,
+          reason: 'the idempotent loser must restore the winning stable key',
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys,
+          <String>[mediaAttachmentEncryptionKeyStoreName(attachmentId)],
+          reason:
+              'DB winner preflight must adopt before the losing candidate can '
+              'write the stable key slot',
+        );
+        expect(
+          await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: const <Object?>[messageId],
+          ),
+          hasLength(1),
+        );
+
+        final cleanup = await custodyRepository
+            .runDirectMediaBlobCustodyLifecycle(() async {
+              final rows = await custodyRepository
+                  .loadDirectMediaBlobCustodyForMessage(messageId);
+              return store.cleanupUnreferencedArtifacts(
+                identityPeerId: identityPeerId,
+                referencedRelativePaths: rows
+                    .map((row) => row.ciphertextRelativePath!)
+                    .toSet(),
+              );
+            });
+        expect(cleanup.deleted, 1);
+        expect(cleanup.retained, 1);
+        expect(File(winner.artifact.absolutePath).existsSync(), isTrue);
+        expect(File(loser.artifact.absolutePath).existsSync(), isFalse);
+      },
+    );
+
+    test(
+      'TC-347-02f post-commit hydration error retains referenced generation',
+      () async {
+        await fixture.dispose();
+        final secureStore = _FailingSnapshotSecureKeyStore();
+        fixture = await MediaRepositoryRealDbFixture.create(
+          secureKeyStore: secureStore,
+        );
+        final documents = await Directory.systemTemp.createTemp(
+          'tc347-post-commit-retain-',
+        );
+        addTearDown(() => documents.delete(recursive: true));
+        const identityPeerId = 'tc347-post-commit-identity';
+        const messageId = 'tc347-post-commit-message';
+        const attachmentId = 'tc347-post-commit-attachment';
+        const createdAt = '2026-08-08T09:05:00.000Z';
+        final now = DateTime.utc(2026, 8, 8, 9, 5);
+        final parent = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'tc347-post-commit-recipient',
+          senderPeerId: identityPeerId,
+          text: 'retain committed candidate',
+          timestamp: createdAt,
+          status: 'sending',
+          isIncoming: false,
+          createdAt: createdAt,
+          directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: const <String>[attachmentId],
+          ),
+        );
+        const pending = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 4,
+          mediaType: 'image',
+          localPath:
+              'pending_uploads/tc347-post-commit-message/tc347-post-commit-attachment.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: createdAt,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        await fixture.messageRepo.saveMessage(parent);
+        await fixture.repo.saveAttachment(
+          pending,
+          owner: MediaOwnerLane.direct,
+        );
+        final encryptedTemp = File('${documents.path}/post-commit.enc');
+        const ciphertext = <int>[7, 4, 7, 2, 9, 1];
+        await encryptedTemp.writeAsBytes(ciphertext, flush: true);
+        final contentHash = sha256.convert(ciphertext).toString();
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => documents,
+        );
+        final custodyRepository =
+            fixture.repo as DirectMediaBlobCustodyRepository;
+        var strictUploadCalls = 0;
+        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                strictUploadCalls++;
+                return const <String, dynamic>{};
+              },
+          clock: () => now,
+        );
+
+        secureStore.failRead = true;
+        final first = await coordinator.prepareAndUploadFresh(
+          bridge: RecordingFakeBridge(),
+          identityPeerId: identityPeerId,
+          recipientPeerId: parent.contactPeerId,
+          expectedParent: parent,
+          sources: <PreparedDirectMediaBlobSource>[
+            PreparedDirectMediaBlobSource(
+              attachment: pending,
+              plaintextPath: '${documents.path}/unused.jpg',
+              preparedArtifact: EncryptedMediaArtifact(
+                encryptedPath: encryptedTemp.path,
+                keyBase64: 'tc347-post-commit-key',
+                nonce: 'tc347-post-commit-nonce',
+                scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                contentHash: contentHash,
+                plaintextSize: pending.size,
+              ),
+            ),
+          ],
+        );
+        expect(first.state, PreparedDirectMediaBlobUploadState.refused);
+        expect(strictUploadCalls, 0);
+
+        secureStore.failRead = false;
+        final rows = await custodyRepository
+            .loadDirectMediaBlobCustodyForMessage(messageId);
+        expect(rows, hasLength(1));
+        expect(rows.single.state, DirectMediaBlobCustodyState.outgoingPrepared);
+        final retained = await store.verifyOwnedArtifact(
+          identityPeerId: identityPeerId,
+          relativePath: rows.single.ciphertextRelativePath!,
+          expectedContentHash: rows.single.contentHash,
+          expectedCiphertextSize: rows.single.ciphertextSize,
+        );
+        expect(retained, isNotNull);
+        expect(await encryptedTemp.exists(), isFalse);
+
+        final persistedAttachments = await fixture.repo
+            .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
+        expect(persistedAttachments, hasLength(1));
+        final recovered =
+            await PreparedDirectMediaBlobCustodyCoordinator(
+              repository: custodyRepository,
+              artifactStore: store,
+              strictUpload:
+                  ({
+                    required bridge,
+                    required attachmentId,
+                    required recipientPeerId,
+                    required ciphertextPath,
+                    required contentHash,
+                    required ciphertextSize,
+                  }) async {
+                    strictUploadCalls++;
+                    return <String, dynamic>{
+                      'ok': true,
+                      'id': attachmentId,
+                      'storeStatus': 'stored',
+                      'custodyKind': kDirectMediaBlobCustodyKind,
+                      'custodyContract': kDirectMediaBlobCustodyContract,
+                      'contentHash': contentHash,
+                      'size': ciphertextSize,
+                      'mime': kDirectMediaBlobTransportMime,
+                      'expiresAtMs': now
+                          .add(const Duration(hours: 1))
+                          .millisecondsSinceEpoch,
+                      'custodyRelayPeerId': 'tc347-post-commit-relay',
+                    };
+                  },
+              clock: () => now,
+            ).reopenAndUpload(
+              bridge: RecordingFakeBridge(),
+              identityPeerId: identityPeerId,
+              recipientPeerId: parent.contactPeerId,
+              expectedParent: parent,
+              expectedAttachments: persistedAttachments,
+            );
+        expect(recovered.state, PreparedDirectMediaBlobUploadState.complete);
+        expect(strictUploadCalls, 1);
+      },
+    );
+
+    test('TC-347-02d active blob generation rejects generic crypto mutation', () async {
+      const messageId = 'tc347-generic-mutation-parent';
+      const attachmentId = 'tc347-generic-mutation-attachment';
+      const createdAt = '2026-08-08T09:10:00.000Z';
+      final parent = ConversationMessage(
+        id: messageId,
+        contactPeerId: 'tc347-generic-recipient',
+        senderPeerId: 'tc347-local',
+        text: 'immutable generation',
+        timestamp: createdAt,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: createdAt,
+        directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        ),
+      );
+      const pending = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 29,
+        mediaType: 'image',
+        localPath:
+            'pending_uploads/tc347-generic-mutation-parent/tc347-generic-mutation-attachment.jpg',
+        downloadStatus: 'upload_pending',
+        createdAt: createdAt,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      const winnerHash =
+          'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      const winnerKey = 'tc347-generic-winner-key';
+      final winnerAttachment = pending.copyWith(
+        contentHash: winnerHash,
+        encryptionKeyBase64: winnerKey,
+        encryptionNonce: 'tc347-generic-winner-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final winnerCustody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.outgoing,
+        state: DirectMediaBlobCustodyState.outgoingPrepared,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: parent.contactPeerId,
+        ciphertextRelativePath:
+            'direct_media_blob_custody_v1/${'e' * 64}/winner.blob',
+        contentHash: winnerHash,
+        ciphertextSize: 47,
+        expiresAtMs: null,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      await fixture.messageRepo.saveMessage(parent);
+      await fixture.repo.saveAttachment(pending, owner: MediaOwnerLane.direct);
+      final custodyRepository =
+          fixture.repo as DirectMediaBlobCustodyRepository;
+      expect(
+        (await custodyRepository.stageOutgoingDirectMediaBlobGeneration(
+          expectedParent: parent,
+          expectedAttachments: const <MediaAttachment>[pending],
+          preparedAttachments: <MediaAttachment>[winnerAttachment],
+          custodyRows: <DirectMediaBlobCustodyRow>[winnerCustody],
+        )).outcome.name,
+        'applied',
+      );
+      final exactWinnerRow = Map<String, Object?>.from(
+        (await rawRow(attachmentId))!,
+      );
+      final secureWritesAfterWinner = fixture.secureKeyStore.writtenKeys.length;
+
+      await fixture.repo.saveAttachment(
+        winnerAttachment.copyWith(
+          downloadStatus: 'done',
+          localPath: 'media/tc347-generic-recipient/$attachmentId.jpg',
+          contentHash:
+              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          encryptionKeyBase64: 'tc347-attacker-key',
+          encryptionNonce: 'tc347-attacker-nonce',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+
+      expect(
+        await rawRow(attachmentId),
+        exactWinnerRow,
+        reason:
+            'an active v111 generation owns hash, key, nonce, and pending path',
+      );
+      expect(
+        fixture.secureKeyStore.writtenKeys.length,
+        secureWritesAfterWinner,
+        reason: 'generic rejection must happen before secure-key mutation',
+      );
+      expect(
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        winnerKey,
+      );
+      final custodyAfter = await custodyRepository
+          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+      expect(
+        custodyAfter!.exactDatabaseProjectionMatches(winnerCustody),
+        isTrue,
+      );
+
+      // The arbitration is scoped to active v111 authority. A historical
+      // ordinary retry with no blob row keeps its established generic
+      // upload_pending -> done completion behavior.
+      const legacyMessageId = 'tc347-generic-legacy-parent';
+      const legacyAttachmentId = 'tc347-generic-legacy-attachment';
+      final legacyParent = ConversationMessage(
+        id: legacyMessageId,
+        contactPeerId: 'tc347-generic-legacy-recipient',
+        senderPeerId: 'tc347-local',
+        text: 'legacy retry',
+        timestamp: createdAt,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: createdAt,
+      );
+      const legacyPending = MediaAttachment(
+        id: legacyAttachmentId,
+        messageId: legacyMessageId,
+        mime: 'image/jpeg',
+        size: 31,
+        mediaType: 'image',
+        localPath:
+            'pending_uploads/tc347-generic-legacy-parent/tc347-generic-legacy-attachment.jpg',
+        downloadStatus: 'upload_pending',
+        createdAt: createdAt,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      await fixture.messageRepo.saveMessage(legacyParent);
+      await fixture.repo.saveAttachment(
+        legacyPending,
+        owner: MediaOwnerLane.direct,
+      );
+      await fixture.repo.saveAttachment(
+        legacyPending.copyWith(
+          downloadStatus: 'done',
+          localPath:
+              'media/tc347-generic-legacy-recipient/$legacyAttachmentId.jpg',
+          contentHash: 'a' * 64,
+          encryptionKeyBase64: 'tc347-generic-legacy-key',
+          encryptionNonce: 'tc347-generic-legacy-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      final legacyCompleted = await rawRow(legacyAttachmentId);
+      expect(legacyCompleted!['download_status'], 'done');
+      expect(legacyCompleted['content_hash'], 'a' * 64);
+      expect(
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(legacyAttachmentId),
+        ),
+        'tc347-generic-legacy-key',
+      );
+    });
+
+    test(
+      'TC-347-06 incoming strict parent attachments and custody commit atomically',
+      () async {
+        const messageId = 'tc347-incoming-atomic';
+        const contactPeerId = 'tc347-sender';
+        const createdAt = '2026-08-08T10:00:00.000Z';
+        const expiresAtMs = 1_900_000_000_000;
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: contactPeerId,
+          senderPeerId: contactPeerId,
+          text: 'strict incoming media',
+          timestamp: createdAt,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: createdAt,
+        );
+
+        MediaAttachment attachment(String id, String hash, int cipherSize) {
+          return MediaAttachment(
+            id: id,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 17,
+            mediaType: 'image',
+            downloadStatus: 'pending',
+            createdAt: createdAt,
+            contentHash: hash,
+            encryptionKeyBase64: 'raw-key-$id',
+            encryptionNonce: 'nonce-$id',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            blobCustody: DirectMediaBlobCustodyCommitment(
+              contentHash: hash,
+              ciphertextSize: cipherSize,
+              expiresAtMs: expiresAtMs,
+            ),
+            ownerLane: MediaOwnerLane.direct,
+          );
+        }
+
+        DirectMediaBlobCustodyRow custody(
+          MediaAttachment attachment,
+          int cipherSize,
+        ) {
+          return DirectMediaBlobCustodyRow(
+            attachmentId: attachment.id,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.incoming,
+            state: DirectMediaBlobCustodyState.incomingCommitted,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: null,
+            ciphertextRelativePath: null,
+            contentHash: attachment.contentHash!,
+            ciphertextSize: cipherSize,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          );
+        }
+
+        final first = attachment('tc347-incoming-a', 'a' * 64, 31);
+        final second = attachment('tc347-incoming-b', 'b' * 64, 37);
+        final rows = <DirectMediaBlobCustodyRow>[
+          custody(first, 31),
+          custody(second, 37),
+        ];
+        final incoming =
+            fixture.repo as IncomingDirectMediaBlobCustodyRepository;
+
+        final staged = await incoming.stageIncomingDirectMediaBlobCustody(
+          message: message,
+          attachments: <MediaAttachment>[first, second],
+          custodyRows: rows,
+        );
+        expect(staged.outcome.name, 'applied');
+        expect(staged.attachments.map((value) => value.id).toSet(), {
+          first.id,
+          second.id,
+        });
+        expect(
+          await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(1),
+        );
+        expect(
+          await fixture.db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(2),
+        );
+        expect(
+          await fixture.db.query(
+            'direct_media_blob_custody',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(2),
+        );
+
+        final replay = await incoming.stageIncomingDirectMediaBlobCustody(
+          message: message,
+          attachments: <MediaAttachment>[first, second],
+          custodyRows: rows,
+        );
+        expect(replay.outcome.name, 'idempotent');
+
+        final crossed = first.copyWith(
+          blobCustody: const DirectMediaBlobCustodyCommitment(
+            contentHash:
+                'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+            ciphertextSize: 31,
+            expiresAtMs: expiresAtMs,
+          ),
+        );
+        final refused = await incoming.stageIncomingDirectMediaBlobCustody(
+          message: message,
+          attachments: <MediaAttachment>[crossed, second],
+          custodyRows: rows,
+        );
+        expect(refused.outcome.name, 'refused');
+        expect(
+          await fixture.db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(2),
+          reason: 'a crossed replay must neither patch nor prefix-stage rows',
+        );
+      },
+    );
+
+    test(
+      'TC-347-06c incoming ACK obligation survives restart and parent deletion',
+      () async {
+        final temp = await Directory.systemTemp.createTemp(
+          'tc347-incoming-ack-restart-',
+        );
+        addTearDown(() => temp.delete(recursive: true));
+        var restarted = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${temp.path}/identity.db',
+        );
+        try {
+          const messageId = 'tc347-incoming-restart';
+          const attachmentId = 'tc347-incoming-restart-blob';
+          const contactPeerId = 'tc347-restart-sender';
+          const hash =
+              'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+          const createdAt = '2026-08-08T10:10:00.000Z';
+          const expiresAtMs = 1_900_000_100_000;
+          const commitment = DirectMediaBlobCustodyCommitment(
+            contentHash: hash,
+            ciphertextSize: 41,
+            expiresAtMs: expiresAtMs,
+          );
+          const attachment = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 19,
+            mediaType: 'image',
+            downloadStatus: 'pending',
+            createdAt: createdAt,
+            contentHash: hash,
+            encryptionKeyBase64: 'tc347-restart-key',
+            encryptionNonce: 'tc347-restart-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            blobCustody: commitment,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final message = ConversationMessage(
+            id: messageId,
+            contactPeerId: contactPeerId,
+            senderPeerId: contactPeerId,
+            text: '',
+            timestamp: createdAt,
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: createdAt,
+          );
+          final committed = DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.incoming,
+            state: DirectMediaBlobCustodyState.incomingCommitted,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: null,
+            ciphertextRelativePath: null,
+            contentHash: hash,
+            ciphertextSize: 41,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          );
+          final incoming =
+              restarted.repo as IncomingDirectMediaBlobCustodyRepository;
+          expect(
+            (await incoming.stageIncomingDirectMediaBlobCustody(
+              message: message,
+              attachments: const <MediaAttachment>[attachment],
+              custodyRows: <DirectMediaBlobCustodyRow>[committed],
+            )).outcome.name,
+            'applied',
+          );
+          expect(
+            await incoming.commitIncomingDirectMediaBlobLocalPath(
+              expectedAttachment: attachment,
+              expectedCustody: committed,
+              localPath: 'media/$contactPeerId/$attachmentId.jpg',
+              sourceRelayPeerId: 'relay-source-exact',
+              updatedAt: '2026-08-08T10:10:01.000Z',
+            ),
+            isTrue,
+          );
+          final pendingBeforeDelete =
+              await (restarted.repo as DirectMediaBlobCustodyRepository)
+                  .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+          expect(
+            pendingBeforeDelete!.state,
+            DirectMediaBlobCustodyState.incomingAckPending,
+          );
+
+          await restarted.db.delete(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[messageId],
+          );
+          restarted = await restarted.reopen();
+          final afterRestart =
+              await (restarted.repo as DirectMediaBlobCustodyRepository)
+                  .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+          expect(afterRestart, isNotNull);
+          expect(
+            afterRestart!.state,
+            DirectMediaBlobCustodyState.incomingAckPending,
+          );
+          expect(afterRestart.custodyRelayPeerId, 'relay-source-exact');
+          expect(
+            await (restarted.repo as IncomingDirectMediaBlobCustodyRepository)
+                .deleteIncomingDirectMediaBlobAckIfExact(afterRestart),
+            isTrue,
+          );
+        } finally {
+          await restarted.dispose();
+        }
+      },
+    );
+
+    test(
+      'TC-347-07 blob custody lifecycle and authority-safe cleanup',
+      () async {
+        final documents = await Directory.systemTemp.createTemp(
+          'tc347-custody-cleanup-',
+        );
+        addTearDown(() => documents.delete(recursive: true));
+        const identityPeerId = 'tc347-cleanup-identity';
+        const messageId = 'tc347-cleanup-message';
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => documents,
+        );
+        final custodyRepo = fixture.repo as DirectMediaBlobCustodyRepository;
+        final candidateReady = Completer<DirectMediaBlobArtifact>();
+        final allowRowPublication = Completer<void>();
+
+        Future<DirectMediaBlobArtifact> sourceAndCandidate(
+          String name,
+          List<int> bytes,
+        ) async {
+          final source = File('${documents.path}/$name.enc');
+          await source.writeAsBytes(bytes, flush: true);
+          return store.persistCandidate(
+            identityPeerId: identityPeerId,
+            attachmentId: name,
+            encryptedSourcePath: source.path,
+            expectedContentHash: sha256.convert(bytes).toString(),
+          );
+        }
+
+        DirectMediaBlobCustodyRow outgoingRow({
+          required String attachmentId,
+          required DirectMediaBlobArtifact artifact,
+          required DirectMediaBlobCustodyState state,
+        }) {
+          return DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: state,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: 'tc347-cleanup-recipient',
+            ciphertextRelativePath: artifact.relativePath,
+            contentHash: artifact.contentHash,
+            ciphertextSize: artifact.ciphertextSize,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: '2026-08-08T10:20:00.000Z',
+            updatedAt: '2026-08-08T10:20:00.000Z',
+          );
+        }
+
+        final publication = custodyRepo.runDirectMediaBlobCustodyLifecycle(
+          () async {
+            final artifact = await sourceAndCandidate(
+              'file-before-row',
+              const <int>[1, 3, 5, 7],
+            );
+            candidateReady.complete(artifact);
+            await allowRowPublication.future;
+            await fixture.db.insert(
+              kDirectMediaBlobCustodyTable,
+              outgoingRow(
+                attachmentId: 'file-before-row',
+                artifact: artifact,
+                state: DirectMediaBlobCustodyState.outgoingPrepared,
+              ).toMap(),
+            );
+            return artifact;
+          },
+        );
+        final publishedArtifact = await candidateReady.future;
+        final concurrentCleanup = custodyRepo
+            .runDirectMediaBlobCustodyLifecycle(() async {
+              final rows = await custodyRepo.loadDirectMediaBlobCustodyByStates(
+                const <DirectMediaBlobCustodyState>{
+                  DirectMediaBlobCustodyState.outgoingPrepared,
+                },
+              );
+              return store.cleanupUnreferencedArtifacts(
+                identityPeerId: identityPeerId,
+                referencedRelativePaths: rows
+                    .map((row) => row.ciphertextRelativePath!)
+                    .toSet(),
+              );
+            });
+        allowRowPublication.complete();
+        await publication;
+        final cleanupAfterPublication = await concurrentCleanup;
+        expect(cleanupAfterPublication.deleted, 0);
+        expect(File(publishedArtifact.absolutePath).existsSync(), isTrue);
+
+        final orphan = await sourceAndCandidate(
+          'orphan-after-crash',
+          const <int>[2, 4, 6, 8],
+        );
+        final orphanCleanup = await custodyRepo
+            .runDirectMediaBlobCustodyLifecycle(() async {
+              final rows = await custodyRepo.loadDirectMediaBlobCustodyByStates(
+                const <DirectMediaBlobCustodyState>{
+                  DirectMediaBlobCustodyState.outgoingPrepared,
+                },
+              );
+              return store.cleanupUnreferencedArtifacts(
+                identityPeerId: identityPeerId,
+                referencedRelativePaths: rows
+                    .map((row) => row.ciphertextRelativePath!)
+                    .toSet(),
+              );
+            });
+        expect(orphanCleanup.deleted, 1);
+        expect(File(orphan.absolutePath).existsSync(), isFalse);
+
+        final cleanupArtifact = await sourceAndCandidate(
+          'cleanup-pending',
+          const <int>[9, 8, 7, 6],
+        );
+        final cleanupRow = outgoingRow(
+          attachmentId: 'cleanup-pending',
+          artifact: cleanupArtifact,
+          state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        );
+        await fixture.db.insert(
+          kDirectMediaBlobCustodyTable,
+          cleanupRow.toMap(),
+        );
+        final removed = await custodyRepo.runDirectMediaBlobCustodyLifecycle(
+          () async {
+            if (!await store.deleteOwnedArtifact(
+              identityPeerId: identityPeerId,
+              relativePath: cleanupArtifact.relativePath,
+            )) {
+              return false;
+            }
+            return custodyRepo.deleteDirectMediaBlobCleanupPendingIfExact(
+              cleanupRow,
+            );
+          },
+        );
+        expect(removed, isTrue);
+        expect(File(cleanupArtifact.absolutePath).existsSync(), isFalse);
+        expect(
+          await custodyRepo.loadDirectMediaBlobCustodyForAttachment(
+            cleanupRow.attachmentId,
+          ),
+          isNull,
+        );
+      },
+    );
+
+    test(
+      'TC-347-07d cancellation and missing parent terminalize complete generation',
+      () async {
+        final documents = await Directory.systemTemp.createTemp(
+          'tc347-terminal-cancel-',
+        );
+        addTearDown(() => documents.delete(recursive: true));
+        const identityPeerId = 'tc347-terminal-identity';
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => documents,
+        );
+        final custodyRepository =
+            fixture.repo as DirectMediaBlobCustodyRepository;
+        final terminalizationRepository =
+            fixture.repo as OutgoingDirectMediaBlobTerminalizationRepository;
+        final generation = await stageOutgoingBlobGeneration(
+          store: store,
+          sourceDirectory: documents,
+          identityPeerId: identityPeerId,
+          messageId: 'tc347-cancel-complete-parent',
+          attachmentIds: const <String>[
+            'tc347-cancel-complete-a',
+            'tc347-cancel-complete-b',
+          ],
+        );
+        final now = DateTime.utc(2026, 8, 8, 11, 30);
+
+        expect(
+          await terminalizationRepository
+              .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                expectedRows: <DirectMediaBlobCustodyRow>[
+                  generation.rows.first,
+                ],
+                reason:
+                    DirectMediaBlobTerminalizationReason.explicitCancellation,
+                nowMs: now.millisecondsSinceEpoch,
+              ),
+          DirectMediaBlobTerminalizationOutcome.refused,
+          reason: 'a strict generation cannot be terminalized as a prefix',
+        );
+        final forbiddenSingleRowCleanup = generation.rows.first.copyWith(
+          state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+          updatedAt: now.toIso8601String(),
+        );
+        expect(
+          await custodyRepository.transitionDirectMediaBlobCustodyIfExact(
+            expected: generation.rows.first,
+            next: forbiddenSingleRowCleanup,
+          ),
+          isFalse,
+          reason: 'the raw public per-row transition has no cleanup authority',
+        );
+        expect(
+          (await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            generation.parent.id,
+          )).map((row) => row.state),
+          everyElement(DirectMediaBlobCustodyState.outgoingPrepared),
+        );
+
+        expect(
+          await terminalizationRepository
+              .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                expectedRows: generation.rows,
+                reason:
+                    DirectMediaBlobTerminalizationReason.explicitCancellation,
+                nowMs: now.millisecondsSinceEpoch,
+              ),
+          DirectMediaBlobTerminalizationOutcome.applied,
+        );
+        final cleanupRows = await custodyRepository
+            .loadDirectMediaBlobCustodyForMessage(generation.parent.id);
+        expect(cleanupRows, hasLength(2));
+        expect(
+          cleanupRows.map((row) => row.state),
+          everyElement(DirectMediaBlobCustodyState.outgoingCleanupPending),
+        );
+        for (final artifact in generation.artifacts) {
+          expect(
+            File(artifact.absolutePath).existsSync(),
+            isTrue,
+            reason: 'terminal commit must precede lifecycle unlink',
+          );
+        }
+
+        var strictUploadCalls = 0;
+        final bridge = RecordingFakeBridge();
+        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                strictUploadCalls++;
+                return const <String, dynamic>{};
+              },
+          clock: () => now,
+        );
+        final reopen = await coordinator.reopenAndUpload(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: generation.parent.contactPeerId,
+          expectedParent: generation.parent,
+          expectedAttachments: generation.attachments,
+        );
+        expect(reopen.state, PreparedDirectMediaBlobUploadState.refused);
+        expect(strictUploadCalls, 0);
+
+        final drain = DirectMediaBlobCustodyDrain(
+          repository: custodyRepository,
+          incomingRepository:
+              fixture.repo as IncomingDirectMediaBlobCustodyRepository,
+          artifactStore: store,
+          identityPeerId: () async => identityPeerId,
+          strictDownloadAckOwner: StrictDirectMediaBlobDownloadAckOwner(
+            bridge: bridge,
+            mediaAttachmentRepository: fixture.repo,
+            mediaFileManager: MediaFileManager(),
+          ),
+          now: () => now,
+        );
+        final cancelledCleanup = await drain.runLocalCleanupBounded();
+        expect(cancelledCleanup.failed, 0);
+        expect(
+          await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            generation.parent.id,
+          ),
+          isEmpty,
+        );
+        for (final artifact in generation.artifacts) {
+          expect(File(artifact.absolutePath).existsSync(), isFalse);
+        }
+
+        // Simulate a crash between an ordinary parent delete and the next
+        // lifecycle pass. v111 has no parent FK, so recovery must qualify the
+        // complete surviving generation before it can unlink the artifact.
+        final missingParentGeneration = await stageOutgoingBlobGeneration(
+          store: store,
+          sourceDirectory: documents,
+          identityPeerId: identityPeerId,
+          messageId: 'tc347-missing-parent-recovery',
+          attachmentIds: const <String>['tc347-missing-parent-blob'],
+        );
+        expect(
+          await fixture.db.delete(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[missingParentGeneration.parent.id],
+          ),
+          1,
+        );
+        expect(
+          await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            missingParentGeneration.parent.id,
+          ),
+          hasLength(1),
+        );
+        final missingParentCleanup = await drain.runLocalCleanupBounded();
+        expect(missingParentCleanup.failed, 0);
+        expect(
+          await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            missingParentGeneration.parent.id,
+          ),
+          isEmpty,
+        );
+        expect(
+          File(
+            missingParentGeneration.artifacts.single.absolutePath,
+          ).existsSync(),
+          isFalse,
+        );
+
+        // Exact v108 custody is independent authority: explicit local
+        // cancellation must not publish cleanup while that binding exists.
+        final boundGeneration = await stageOutgoingBlobGeneration(
+          store: store,
+          sourceDirectory: documents,
+          identityPeerId: identityPeerId,
+          messageId: 'tc347-bound-parent',
+          attachmentIds: const <String>['tc347-bound-blob'],
+        );
+        const incarnationId = '1234567890abcdef1234567890abcdef';
+        final proofExpiry = now.add(const Duration(hours: 1));
+        final stored = boundGeneration.rows.single.copyWith(
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          expiresAtMs: proofExpiry.millisecondsSinceEpoch,
+          custodyRelayPeerId: 'tc347-proof-relay',
+          updatedAt: now.toIso8601String(),
+        );
+        expect(
+          await custodyRepository.transitionDirectMediaBlobCustodyIfExact(
+            expected: boundGeneration.rows.single,
+            next: stored,
+          ),
+          isTrue,
+        );
+        await fixture.db.insert('direct_inbox_custody_outbox', {
+          'recipient_peer_id': boundGeneration.parent.contactPeerId,
+          'message_id': boundGeneration.parent.id,
+          'incarnation_id': incarnationId,
+          'wire_envelope': '{"type":"encrypted","payload":"opaque"}',
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'media_blob_manifest_hash': 'a' * 64,
+          'media_blob_expires_at_ms': proofExpiry.millisecondsSinceEpoch,
+          'created_at': now.toIso8601String(),
+          'updated_at': now.toIso8601String(),
+        });
+        final bound = stored.copyWith(
+          inboxCustodyIncarnationId: incarnationId,
+          updatedAt: now.add(const Duration(seconds: 1)).toIso8601String(),
+        );
+        expect(
+          await fixture.db.transaction(
+            (txn) => dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
+              txn,
+              expected: stored,
+              next: bound,
+            ),
+          ),
+          isTrue,
+        );
+        expect(
+          await terminalizationRepository
+              .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                expectedRows: <DirectMediaBlobCustodyRow>[bound],
+                reason:
+                    DirectMediaBlobTerminalizationReason.explicitCancellation,
+                nowMs: now.millisecondsSinceEpoch,
+              ),
+          DirectMediaBlobTerminalizationOutcome.blockedByV108,
+        );
+        expect(
+          (await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            boundGeneration.parent.id,
+          )).single.state,
+          DirectMediaBlobCustodyState.outgoingStored,
+        );
+        expect(
+          File(boundGeneration.artifacts.single.absolutePath).existsSync(),
+          isTrue,
+        );
+      },
+    );
+
+    test(
+      'TC-347-07e expired unbound proof terminalizes and cannot reopen',
+      () async {
+        final documents = await Directory.systemTemp.createTemp(
+          'tc347-terminal-expiry-',
+        );
+        addTearDown(() => documents.delete(recursive: true));
+        const identityPeerId = 'tc347-expiry-identity';
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => documents,
+        );
+        final custodyRepository =
+            fixture.repo as DirectMediaBlobCustodyRepository;
+        final generation = await stageOutgoingBlobGeneration(
+          store: store,
+          sourceDirectory: documents,
+          identityPeerId: identityPeerId,
+          messageId: 'tc347-expiry-parent',
+          attachmentIds: const <String>['tc347-expiry-a', 'tc347-expiry-b'],
+        );
+        var currentNow = DateTime.utc(2026, 8, 8, 12);
+        final expiries = <int>[
+          currentNow
+              .subtract(const Duration(seconds: 1))
+              .millisecondsSinceEpoch,
+          currentNow.add(const Duration(minutes: 1)).millisecondsSinceEpoch,
+        ];
+        for (var index = 0; index < generation.rows.length; index++) {
+          final stored = generation.rows[index].copyWith(
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            expiresAtMs: expiries[index],
+            custodyRelayPeerId: 'tc347-expiry-relay',
+            updatedAt: currentNow.toIso8601String(),
+          );
+          expect(
+            await custodyRepository.transitionDirectMediaBlobCustodyIfExact(
+              expected: generation.rows[index],
+              next: stored,
+            ),
+            isTrue,
+          );
+        }
+
+        var strictUploadCalls = 0;
+        final bridge = RecordingFakeBridge();
+        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                strictUploadCalls++;
+                return const <String, dynamic>{};
+              },
+          clock: () => currentNow,
+        );
+        expect(
+          (await coordinator.reopenAndUpload(
+            bridge: bridge,
+            identityPeerId: identityPeerId,
+            recipientPeerId: generation.parent.contactPeerId,
+            expectedParent: generation.parent,
+            expectedAttachments: generation.attachments,
+          )).state,
+          PreparedDirectMediaBlobUploadState.refused,
+          reason: 'one expired proof closes the complete generation to reopen',
+        );
+        expect(strictUploadCalls, 0);
+
+        final drain = DirectMediaBlobCustodyDrain(
+          repository: custodyRepository,
+          incomingRepository:
+              fixture.repo as IncomingDirectMediaBlobCustodyRepository,
+          artifactStore: store,
+          identityPeerId: () async => identityPeerId,
+          strictDownloadAckOwner: StrictDirectMediaBlobDownloadAckOwner(
+            bridge: bridge,
+            mediaAttachmentRepository: fixture.repo,
+            mediaFileManager: MediaFileManager(),
+          ),
+          now: () => currentNow,
+        );
+        final partialExpiry = await drain.runLocalCleanupBounded();
+        expect(partialExpiry.failed, 0);
+        expect(
+          await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            generation.parent.id,
+          ),
+          isEmpty,
+          reason:
+              'the earliest expired proof terminalizes the complete generation',
+        );
+        for (final artifact in generation.artifacts) {
+          expect(File(artifact.absolutePath).existsSync(), isFalse);
+        }
+
+        currentNow = currentNow.add(const Duration(minutes: 2));
+        final completeExpiry = await drain.runLocalCleanupBounded();
+        expect(completeExpiry.failed, 0);
+        expect(
+          await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            generation.parent.id,
+          ),
+          isEmpty,
+        );
+        for (final artifact in generation.artifacts) {
+          expect(File(artifact.absolutePath).existsSync(), isFalse);
+        }
+        expect(
+          (await coordinator.reopenAndUpload(
+            bridge: bridge,
+            identityPeerId: identityPeerId,
+            recipientPeerId: generation.parent.contactPeerId,
+            expectedParent: generation.parent,
+            expectedAttachments: generation.attachments,
+          )).state,
+          PreparedDirectMediaBlobUploadState.refused,
+        );
+        expect(strictUploadCalls, 0);
+      },
+    );
+
+    test(
+      'TC-347-07f lifecycle lease orders reopen terminalization and stored winner adoption',
+      () async {
+        final documents = await Directory.systemTemp.createTemp(
+          'tc347-lifecycle-ordering-',
+        );
+        addTearDown(() => documents.delete(recursive: true));
+        const identityPeerId = 'tc347-ordering-identity';
+        final now = DateTime.utc(2026, 8, 8, 13);
+        final expiresAtMs = now
+            .add(const Duration(hours: 1))
+            .millisecondsSinceEpoch;
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => documents,
+        );
+        final custodyRepository =
+            fixture.repo as DirectMediaBlobCustodyRepository;
+        final terminalizationRepository =
+            fixture.repo as OutgoingDirectMediaBlobTerminalizationRepository;
+
+        Map<String, dynamic> exactReceipt({
+          required String attachmentId,
+          required String contentHash,
+          required int ciphertextSize,
+          required String relayPeerId,
+        }) => <String, dynamic>{
+          'ok': true,
+          'id': attachmentId,
+          'storeStatus': 'stored',
+          'custodyKind': kDirectMediaBlobCustodyKind,
+          'custodyContract': kDirectMediaBlobCustodyContract,
+          'contentHash': contentHash,
+          'size': ciphertextSize,
+          'mime': kDirectMediaBlobTransportMime,
+          'expiresAtMs': expiresAtMs,
+          'custodyRelayPeerId': relayPeerId,
+        };
+
+        // Cancellation owns the lifecycle lease first. Reopen queues behind
+        // it, observes cleanup authority, and emits neither LAN nor relay work.
+        final cancellationGeneration = await stageOutgoingBlobGeneration(
+          store: store,
+          sourceDirectory: documents,
+          identityPeerId: identityPeerId,
+          messageId: 'tc347-order-cancellation-wins',
+          attachmentIds: const <String>['tc347-order-cancellation-blob'],
+        );
+        var cancelledLanCalls = 0;
+        var cancelledStrictCalls = 0;
+        final cancelledCoordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                cancelledStrictCalls++;
+                return exactReceipt(
+                  attachmentId: attachmentId,
+                  contentHash: contentHash,
+                  ciphertextSize: ciphertextSize,
+                  relayPeerId: 'tc347-cancel-unreachable-relay',
+                );
+              },
+          clock: () => now,
+        );
+        final cancellationCommitted = Completer<void>();
+        final releaseCancellationLease = Completer<void>();
+        final cancellationFuture = custodyRepository
+            .runDirectMediaBlobCustodyLifecycle(() async {
+              final outcome = await terminalizationRepository
+                  .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                    expectedRows: cancellationGeneration.rows,
+                    reason: DirectMediaBlobTerminalizationReason
+                        .explicitCancellation,
+                    nowMs: now.millisecondsSinceEpoch,
+                  );
+              cancellationCommitted.complete();
+              await releaseCancellationLease.future;
+              return outcome;
+            });
+        await cancellationCommitted.future.timeout(const Duration(seconds: 5));
+        var cancelledReopenFinished = false;
+        final cancelledReopenFuture = cancelledCoordinator
+            .reopenAndUpload(
+              bridge: RecordingFakeBridge(),
+              identityPeerId: identityPeerId,
+              recipientPeerId: cancellationGeneration.parent.contactPeerId,
+              expectedParent: cancellationGeneration.parent,
+              expectedAttachments: cancellationGeneration.attachments,
+              onGenerationReady: (_) async {
+                cancelledLanCalls++;
+              },
+            )
+            .whenComplete(() => cancelledReopenFinished = true);
+        await Future<void>.delayed(Duration.zero);
+        final cancellationHeldReopen = !cancelledReopenFinished;
+        final cancellationLanCallsWhileHeld = cancelledLanCalls;
+        final cancellationStrictCallsWhileHeld = cancelledStrictCalls;
+        releaseCancellationLease.complete();
+        expect(cancellationHeldReopen, isTrue);
+        expect(cancellationLanCallsWhileHeld, 0);
+        expect(cancellationStrictCallsWhileHeld, 0);
+        expect(
+          await cancellationFuture,
+          DirectMediaBlobTerminalizationOutcome.applied,
+        );
+        expect(
+          (await cancelledReopenFuture).state,
+          PreparedDirectMediaBlobUploadState.refused,
+        );
+        expect(cancelledLanCalls, 0);
+        expect(cancelledStrictCalls, 0);
+
+        // Reopen owns the lease first. Terminalization is queued while the
+        // exact strict call is in flight, then applies to its stored winner
+        // immediately after the upload owner releases the shared lease.
+        final uploadGeneration = await stageOutgoingBlobGeneration(
+          store: store,
+          sourceDirectory: documents,
+          identityPeerId: identityPeerId,
+          messageId: 'tc347-order-upload-wins',
+          attachmentIds: const <String>['tc347-order-upload-blob'],
+        );
+        const uploadRelayPeerId = 'tc347-order-upload-relay';
+        var uploadLanCalls = 0;
+        var uploadStrictCalls = 0;
+        final strictUploadEntered = Completer<void>();
+        final releaseStrictUpload = Completer<void>();
+        final uploadCoordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                uploadStrictCalls++;
+                strictUploadEntered.complete();
+                await releaseStrictUpload.future;
+                return exactReceipt(
+                  attachmentId: attachmentId,
+                  contentHash: contentHash,
+                  ciphertextSize: ciphertextSize,
+                  relayPeerId: uploadRelayPeerId,
+                );
+              },
+          clock: () => now,
+        );
+        final uploadFuture = uploadCoordinator.reopenAndUpload(
+          bridge: RecordingFakeBridge(),
+          identityPeerId: identityPeerId,
+          recipientPeerId: uploadGeneration.parent.contactPeerId,
+          expectedParent: uploadGeneration.parent,
+          expectedAttachments: uploadGeneration.attachments,
+          onGenerationReady: (_) async {
+            uploadLanCalls++;
+          },
+        );
+        await strictUploadEntered.future.timeout(const Duration(seconds: 5));
+        expect(uploadLanCalls, 1);
+        expect(uploadStrictCalls, 1);
+        final expectedStoredWinner = uploadGeneration.rows.single.copyWith(
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: uploadRelayPeerId,
+          updatedAt: now.toIso8601String(),
+        );
+        var uploadTerminalizationFinished = false;
+        final uploadTerminalizationFuture = terminalizationRepository
+            .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+              expectedRows: <DirectMediaBlobCustodyRow>[expectedStoredWinner],
+              reason: DirectMediaBlobTerminalizationReason.explicitCancellation,
+              nowMs: now.millisecondsSinceEpoch,
+            )
+            .whenComplete(() => uploadTerminalizationFinished = true);
+        await Future<void>.delayed(Duration.zero);
+        final uploadHeldTerminalization = !uploadTerminalizationFinished;
+        final stateWhileUploadHeld =
+            (await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+              uploadGeneration.parent.id,
+            )).single.state;
+        releaseStrictUpload.complete();
+        expect(uploadHeldTerminalization, isTrue);
+        expect(
+          stateWhileUploadHeld,
+          DirectMediaBlobCustodyState.outgoingPrepared,
+        );
+        expect(
+          (await uploadFuture).state,
+          PreparedDirectMediaBlobUploadState.complete,
+        );
+        expect(
+          await uploadTerminalizationFuture,
+          DirectMediaBlobTerminalizationOutcome.applied,
+        );
+        expect(uploadLanCalls, 1);
+        expect(uploadStrictCalls, 1);
+        expect(
+          (await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+            uploadGeneration.parent.id,
+          )).single.state,
+          DirectMediaBlobCustodyState.outgoingCleanupPending,
+        );
+
+        // Two fresh owners start concurrently. The first holds the lifecycle
+        // lease through strict upload and publishes outgoing_stored. The
+        // queued loser stages afterward, idempotently adopts that exact winner,
+        // and performs no second strict upload or stable-key overwrite.
+        const freshMessageId = 'tc347-order-fresh-stored-winner';
+        const freshAttachmentId = 'tc347-order-fresh-stored-blob';
+        const freshCreatedAt = '2026-08-08T13:00:00.000Z';
+        final freshParent = ConversationMessage(
+          id: freshMessageId,
+          contactPeerId: 'tc347-order-fresh-recipient',
+          senderPeerId: identityPeerId,
+          text: 'concurrent stored winner',
+          timestamp: freshCreatedAt,
+          status: 'sending',
+          isIncoming: false,
+          createdAt: freshCreatedAt,
+          directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+            messageId: freshMessageId,
+            attachmentIds: const <String>[freshAttachmentId],
+          ),
+        );
+        const freshPending = MediaAttachment(
+          id: freshAttachmentId,
+          messageId: freshMessageId,
+          mime: 'image/jpeg',
+          size: 5,
+          mediaType: 'image',
+          localPath:
+              'pending_uploads/tc347-order-fresh-stored-winner/tc347-order-fresh-stored-blob.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: freshCreatedAt,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        await fixture.messageRepo.saveMessage(freshParent);
+        await fixture.repo.saveAttachment(
+          freshPending,
+          owner: MediaOwnerLane.direct,
+        );
+        final winnerTemp = File('${documents.path}/fresh-winner.enc');
+        final loserTemp = File('${documents.path}/fresh-loser.enc');
+        const winnerBytes = <int>[1, 2, 3, 4, 5, 6];
+        const loserBytes = <int>[6, 5, 4, 3, 2, 1];
+        await winnerTemp.writeAsBytes(winnerBytes, flush: true);
+        await loserTemp.writeAsBytes(loserBytes, flush: true);
+        final winnerHash = sha256.convert(winnerBytes).toString();
+        final loserHash = sha256.convert(loserBytes).toString();
+        const winnerKey = 'tc347-order-fresh-winner-key';
+        final winnerSource = PreparedDirectMediaBlobSource(
+          attachment: freshPending,
+          plaintextPath: '${documents.path}/unused-winner.jpg',
+          preparedArtifact: EncryptedMediaArtifact(
+            encryptedPath: winnerTemp.path,
+            keyBase64: winnerKey,
+            nonce: 'tc347-order-fresh-winner-nonce',
+            scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            contentHash: winnerHash,
+            plaintextSize: freshPending.size,
+          ),
+        );
+        final loserSource = PreparedDirectMediaBlobSource(
+          attachment: freshPending,
+          plaintextPath: '${documents.path}/unused-loser.jpg',
+          preparedArtifact: EncryptedMediaArtifact(
+            encryptedPath: loserTemp.path,
+            keyBase64: 'tc347-order-fresh-loser-key',
+            nonce: 'tc347-order-fresh-loser-nonce',
+            scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            contentHash: loserHash,
+            plaintextSize: freshPending.size,
+          ),
+        );
+        var freshStrictCalls = 0;
+        final freshStrictEntered = Completer<void>();
+        final releaseFreshStrict = Completer<void>();
+        Future<Map<String, dynamic>> strictFreshUpload({
+          required bridge,
+          required String attachmentId,
+          required String recipientPeerId,
+          required String ciphertextPath,
+          required String contentHash,
+          required int ciphertextSize,
+        }) async {
+          freshStrictCalls++;
+          if (!freshStrictEntered.isCompleted) freshStrictEntered.complete();
+          await releaseFreshStrict.future;
+          return exactReceipt(
+            attachmentId: attachmentId,
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            relayPeerId: 'tc347-order-fresh-relay',
+          );
+        }
+
+        final winnerCoordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload: strictFreshUpload,
+          clock: () => now,
+        );
+        final loserCoordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: custodyRepository,
+          artifactStore: store,
+          strictUpload: strictFreshUpload,
+          clock: () => now,
+        );
+        final freshBridge = RecordingFakeBridge();
+        final winnerFuture = winnerCoordinator.prepareAndUploadFresh(
+          bridge: freshBridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: freshParent.contactPeerId,
+          expectedParent: freshParent,
+          sources: <PreparedDirectMediaBlobSource>[winnerSource],
+        );
+        await freshStrictEntered.future.timeout(const Duration(seconds: 5));
+        final writesAfterWinnerPublication =
+            fixture.secureKeyStore.writtenKeys.length;
+        var loserFinished = false;
+        final loserFuture = loserCoordinator
+            .prepareAndUploadFresh(
+              bridge: freshBridge,
+              identityPeerId: identityPeerId,
+              recipientPeerId: freshParent.contactPeerId,
+              expectedParent: freshParent,
+              sources: <PreparedDirectMediaBlobSource>[loserSource],
+            )
+            .whenComplete(() => loserFinished = true);
+        await Future<void>.delayed(Duration.zero);
+        final freshLoserWaited = !loserFinished;
+        final callsWhileWinnerHeldLease = freshStrictCalls;
+        releaseFreshStrict.complete();
+        expect(freshLoserWaited, isTrue);
+        expect(callsWhileWinnerHeldLease, 1);
+        expect(
+          (await winnerFuture).state,
+          PreparedDirectMediaBlobUploadState.complete,
+        );
+        expect(
+          (await loserFuture).state,
+          PreparedDirectMediaBlobUploadState.complete,
+          reason: 'the fresh loser must adopt the complete stored winner',
+        );
+        expect(freshStrictCalls, 1);
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesAfterWinnerPublication,
+          reason: 'stored-winner adoption must precede loser key mutation',
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(freshAttachmentId),
+          ),
+          winnerKey,
+        );
+        final storedWinner =
+            (await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+              freshMessageId,
+            )).single;
+        expect(storedWinner.state, DirectMediaBlobCustodyState.outgoingStored);
+        expect(storedWinner.contentHash, winnerHash);
+        expect(storedWinner.contentHash, isNot(loserHash));
+        expect(await loserTemp.exists(), isFalse);
+      },
+    );
+
     test(
       'ordinary media attempt stages parent and attachments atomically or writes nothing',
       () async {

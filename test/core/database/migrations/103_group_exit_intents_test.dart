@@ -104,9 +104,19 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 110);
-      expect(productionCreateMigrations.last.version, 110);
-      expect(productionUpgradeMigrations.last.version, 110);
+      expect(currentIdentityDatabaseVersion, 111);
+      expect(productionCreateMigrations.last.version, 111);
+      expect(productionUpgradeMigrations.last.version, 111);
+      expect(
+        productionCreateMigrations[productionCreateMigrations.length - 2]
+            .version,
+        110,
+      );
+      expect(
+        productionUpgradeMigrations[productionUpgradeMigrations.length - 2]
+            .version,
+        110,
+      );
       expect(
         productionUpgradeMigrations
             .singleWhere((entry) => entry.version == 103)
@@ -121,7 +131,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '110_direct_media_custody_intent',
+        '111_direct_media_blob_custody',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

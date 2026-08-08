@@ -11,6 +11,7 @@ import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -1242,6 +1243,8 @@ class _DirectMediaCustodyFakeRepository extends FakeMediaAttachmentRepository
 
   final FakeMessageRepository messageRepository;
   int stageCalls = 0;
+  String? stagedWireMediaBlobManifestHash;
+  int? stagedWireMediaBlobExpiresAtMs;
 
   @override
   bool get supportsDirectMediaInboxCustody => true;
@@ -1255,8 +1258,12 @@ class _DirectMediaCustodyFakeRepository extends FakeMediaAttachmentRepository
     required OutgoingOrdinaryAttemptKind kind,
     required String recipientPeerId,
     required String wireEnvelope,
+    String? wireMediaBlobManifestHash,
+    int? wireMediaBlobExpiresAtMs,
   }) async {
     stageCalls++;
+    stagedWireMediaBlobManifestHash = wireMediaBlobManifestHash;
+    stagedWireMediaBlobExpiresAtMs = wireMediaBlobExpiresAtMs;
     final stagedResult = await messageRepository.stageOutgoingOrdinaryAttempt(
       expected: expected,
       staged: staged,
@@ -1283,6 +1290,17 @@ class _DirectMediaCustodyFakeRepository extends FakeMediaAttachmentRepository
     final incarnation =
         expected?.directMediaCustodyIntentId ??
         stageCalls.toRadixString(16).padLeft(32, '0');
+    final strictManifest =
+        committedMedia.every((attachment) => attachment.blobCustody != null)
+        ? committedMedia
+              .map(
+                (attachment) => DirectMediaBlobManifestProjection(
+                  attachmentId: attachment.id,
+                  commitment: attachment.blobCustody!,
+                ),
+              )
+              .toList(growable: false)
+        : null;
     final custody = DirectInboxCustodyOutboxEntry(
       recipientPeerId: recipientPeerId,
       messageId: staged.id,
@@ -1293,6 +1311,12 @@ class _DirectMediaCustodyFakeRepository extends FakeMediaAttachmentRepository
       lastErrorCode: null,
       createdAt: committedMessage.createdAt,
       updatedAt: committedMessage.createdAt,
+      mediaBlobManifestHash: strictManifest == null
+          ? null
+          : computeDirectMediaBlobManifestHash(strictManifest),
+      mediaBlobExpiresAtMs: strictManifest == null
+          ? null
+          : earliestDirectMediaBlobExpiryMs(strictManifest),
     );
     messageRepository.directCustodyRows[messageRepository._custodyKey(
           recipientPeerId,
@@ -1669,6 +1693,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   TransportMetrics? transportMetrics,
   StoreInInboxDetailedFn? storeInInboxDetailed,
   StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
   bool? preassignedMessageIdIsFresh,
   void Function(String messageId)? onDirectTextCustodyStaged,
 }) {
@@ -1799,6 +1825,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     transportMetrics: transportMetrics,
     storeInInboxDetailed: storeInInboxDetailed,
     storeInAckCustodyInboxDetailed: strictStore,
+    storeInMediaExpiryBoundedInboxDetailed:
+        storeInMediaExpiryBoundedInboxDetailed,
     onDirectTextCustodyStaged: onDirectTextCustodyStaged,
   );
 }
@@ -2726,6 +2754,446 @@ void main() {
         expect(strictResult, SendChatMessageResult.success);
         expect(strictMessage?.status, 'inboxed');
         expect(strictMessages.directCustodyRows, isEmpty);
+      },
+    );
+
+    test(
+      'TC-347-04b strict ordinary media requires complete stored proof before egress',
+      () async {
+        const firstHash =
+            '1111111111111111111111111111111111111111111111111111111111111111';
+        const secondHash =
+            '2222222222222222222222222222222222222222222222222222222222222222';
+        const first = MediaAttachment(
+          id: 'strict-347-a',
+          messageId: '',
+          mime: 'image/png',
+          size: 21,
+          mediaType: 'image',
+          localPath: 'media/peer/strict-347-a.png',
+          downloadStatus: 'done',
+          createdAt: '2026-08-08T12:00:00.000Z',
+          contentHash: firstHash,
+          encryptionKeyBase64: 'key-a',
+          encryptionNonce: 'nonce-a',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          blobCustody: DirectMediaBlobCustodyCommitment(
+            contentHash: firstHash,
+            ciphertextSize: 37,
+            expiresAtMs: 2000000000000,
+          ),
+        );
+        const second = MediaAttachment(
+          id: 'strict-347-b',
+          messageId: '',
+          mime: 'application/pdf',
+          size: 22,
+          mediaType: 'file',
+          localPath: 'media/peer/strict-347-b.pdf',
+          downloadStatus: 'done',
+          createdAt: '2026-08-08T12:00:01.000Z',
+          contentHash: secondHash,
+          encryptionKeyBase64: 'key-b',
+          encryptionNonce: 'nonce-b',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          blobCustody: DirectMediaBlobCustodyCommitment(
+            contentHash: secondHash,
+            ciphertextSize: 38,
+            expiresAtMs: 2000000001000,
+          ),
+        );
+
+        final partialMessages = FakeMessageRepository();
+        final partialMedia = _DirectMediaCustodyFakeRepository(partialMessages);
+        final partialBridge = _CountingCryptoBridge();
+        final (partialResult, _) = await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: partialMessages,
+          targetPeerId: 'target-peer',
+          text: 'partial strict manifest',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: partialBridge,
+          mediaAttachments: <MediaAttachment>[
+            first,
+            second.copyWith(clearBlobCustody: true),
+          ],
+          mediaAttachmentRepo: partialMedia,
+        );
+        expect(partialResult, SendChatMessageResult.mediaEncryptionRequired);
+        expect(partialBridge.encryptCalls, 0);
+        expect(partialMedia.stageCalls, 0);
+
+        for (final malformed in <MediaAttachment>[
+          first.copyWith(
+            blobCustody: DirectMediaBlobCustodyCommitment(
+              contentHash: firstHash,
+              ciphertextSize: 0,
+              expiresAtMs: 2000000000000,
+            ),
+          ),
+          first.copyWith(
+            blobCustody: DirectMediaBlobCustodyCommitment(
+              contentHash: firstHash,
+              ciphertextSize: 37,
+              expiresAtMs: 0,
+            ),
+          ),
+          first.copyWith(
+            blobCustody: DirectMediaBlobCustodyCommitment(
+              contentHash: secondHash,
+              ciphertextSize: 37,
+              expiresAtMs: 2000000000000,
+            ),
+          ),
+        ]) {
+          final malformedMessages = FakeMessageRepository();
+          final malformedMedia = _DirectMediaCustodyFakeRepository(
+            malformedMessages,
+          );
+          final malformedBridge = _CountingCryptoBridge();
+          final (malformedResult, _) = await sendChatMessage(
+            p2pService: FakeP2PService(),
+            messageRepo: malformedMessages,
+            targetPeerId: 'target-peer',
+            text: 'malformed strict manifest',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            bridge: malformedBridge,
+            mediaAttachments: <MediaAttachment>[malformed, second],
+            mediaAttachmentRepo: malformedMedia,
+          );
+          expect(
+            malformedResult,
+            SendChatMessageResult.mediaEncryptionRequired,
+          );
+          expect(malformedBridge.encryptCalls, 0);
+          expect(malformedMedia.stageCalls, 0);
+        }
+
+        final missingStoreMessages = FakeMessageRepository();
+        final missingStoreMedia = _DirectMediaCustodyFakeRepository(
+          missingStoreMessages,
+        );
+        final missingStoreBridge = _CountingCryptoBridge();
+        final (missingStoreResult, _) = await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: missingStoreMessages,
+          targetPeerId: 'target-peer',
+          text: 'complete but no bounded store',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: missingStoreBridge,
+          mediaAttachments: const <MediaAttachment>[first, second],
+          mediaAttachmentRepo: missingStoreMedia,
+        );
+        expect(missingStoreResult, SendChatMessageResult.sendFailed);
+        expect(missingStoreBridge.encryptCalls, 0);
+        expect(missingStoreMedia.stageCalls, 0);
+
+        final messages = FakeMessageRepository();
+        final media = _DirectMediaCustodyFakeRepository(messages);
+        final service = FakeP2PService(
+          sendMessageResult: false,
+          sendMessageAcked: false,
+          useNullDiscover: true,
+          dialPeerResult: false,
+        );
+        var ackStoreCalls = 0;
+        var mediaStoreCalls = 0;
+        int? observedExpiryCeiling;
+        String? storedWire;
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          targetPeerId: 'target-peer',
+          text: 'complete strict manifest',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          mediaAttachments: const <MediaAttachment>[second, first],
+          mediaAttachmentRepo: media,
+          storeInAckCustodyInboxDetailed:
+              (peerId, wire, {required custodyKind, timeoutMs}) async {
+                ackStoreCalls++;
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                wire, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async {
+                mediaStoreCalls++;
+                observedExpiryCeiling = custodyExpiresAtOrBeforeMs;
+                storedWire = wire;
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                  expiresAtMs: 1999999999000,
+                );
+              },
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message?.status, 'inboxed');
+        expect(media.stageCalls, 1);
+        final exactWireManifest = <DirectMediaBlobManifestProjection>[
+          DirectMediaBlobManifestProjection(
+            attachmentId: first.id,
+            commitment: first.blobCustody!,
+          ),
+          DirectMediaBlobManifestProjection(
+            attachmentId: second.id,
+            commitment: second.blobCustody!,
+          ),
+        ];
+        expect(
+          media.stagedWireMediaBlobManifestHash,
+          computeDirectMediaBlobManifestHash(exactWireManifest),
+        );
+        expect(
+          media.stagedWireMediaBlobExpiresAtMs,
+          earliestDirectMediaBlobExpiryMs(exactWireManifest),
+        );
+        expect(mediaStoreCalls, 1);
+        expect(ackStoreCalls, 0);
+        expect(observedExpiryCeiling, 2000000000000);
+        final payload = decodeWirePayload(storedWire!);
+        final wireMedia = payload['media'] as List<dynamic>;
+        expect(wireMedia, hasLength(2));
+        expect(
+          wireMedia.every(
+            (entry) => (entry as Map<String, dynamic>)['blobCustody'] != null,
+          ),
+          isTrue,
+        );
+        expect(messages.directCustodyRows, isEmpty);
+      },
+    );
+
+    test(
+      'TC-347-09 sender restart permits exact published pending render source',
+      () async {
+        const messageId = 'strict-347-restart-message';
+        const attachmentId = 'strict-347-restart-attachment';
+        const createdAt = '2026-08-08T12:02:00.000Z';
+        const hash =
+            '3333333333333333333333333333333333333333333333333333333333333333';
+        final pendingPath =
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'audio/mp4',
+            );
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final published = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'audio/mp4',
+          size: 31,
+          mediaType: 'audio',
+          durationMs: 2000,
+          localPath: pendingPath,
+          downloadStatus: 'upload_pending',
+          createdAt: createdAt,
+          contentHash: hash,
+          encryptionKeyBase64: 'restart-key',
+          encryptionNonce: 'restart-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        final completed = published.copyWith(
+          downloadStatus: 'done',
+          blobCustody: const DirectMediaBlobCustodyCommitment(
+            contentHash: hash,
+            ciphertextSize: 47,
+            expiresAtMs: 2000000000000,
+          ),
+        );
+
+        Future<void> expectPublishedMutationRefused(
+          MediaAttachment candidate, {
+          bool seedParent = true,
+          bool keepIntent = true,
+        }) async {
+          final mutationMessages = FakeMessageRepository();
+          if (seedParent) {
+            mutationMessages.forceCurrent(
+              ConversationMessage(
+                id: messageId,
+                contactPeerId: 'target-peer',
+                senderPeerId: 'my-peer',
+                text: '',
+                timestamp: createdAt,
+                status: 'sending',
+                isIncoming: false,
+                createdAt: createdAt,
+                directMediaCustodyIntentId: keepIntent ? intent : null,
+              ),
+            );
+          }
+          final mutationMedia = _DirectMediaCustodyFakeRepository(
+            mutationMessages,
+          )..seed(<MediaAttachment>[published]);
+          final mutationBridge = _CountingCryptoBridge();
+          final (mutationResult, mutationMessage) = await sendChatMessage(
+            p2pService: FakeP2PService(),
+            messageRepo: mutationMessages,
+            targetPeerId: 'target-peer',
+            text: '',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            messageId: messageId,
+            preassignedMessageIdIsFresh: false,
+            timestamp: createdAt,
+            createdAt: createdAt,
+            bridge: mutationBridge,
+            mediaAttachments: <MediaAttachment>[candidate],
+            mediaAttachmentRepo: mutationMedia,
+            storeInMediaExpiryBoundedInboxDetailed:
+                (
+                  peerId,
+                  wire, {
+                  required custodyExpiresAtOrBeforeMs,
+                  timeoutMs,
+                }) async => const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                  expiresAtMs: 1999999999000,
+                ),
+          );
+          expect(mutationResult, SendChatMessageResult.sendFailed);
+          expect(mutationMessage, isNull);
+          expect(mutationBridge.encryptCalls, 0);
+          expect(mutationMedia.stageCalls, 0);
+        }
+
+        final messages = FakeMessageRepository()
+          ..forceCurrent(
+            ConversationMessage(
+              id: messageId,
+              contactPeerId: 'target-peer',
+              senderPeerId: 'my-peer',
+              text: '',
+              timestamp: createdAt,
+              status: 'sending',
+              isIncoming: false,
+              createdAt: createdAt,
+              directMediaCustodyIntentId: intent,
+            ),
+          );
+        final media = _DirectMediaCustodyFakeRepository(messages)
+          ..seed(<MediaAttachment>[published]);
+        var storeCalls = 0;
+
+        final (result, message) = await sendChatMessage(
+          p2pService: FakeP2PService(
+            sendMessageResult: false,
+            sendMessageAcked: false,
+            useNullDiscover: true,
+            dialPeerResult: false,
+          ),
+          messageRepo: messages,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: createdAt,
+          createdAt: createdAt,
+          mediaAttachments: <MediaAttachment>[completed],
+          mediaAttachmentRepo: media,
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                wire, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async {
+                storeCalls++;
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                  expiresAtMs: 1999999999000,
+                );
+              },
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message?.status, 'inboxed');
+        expect(media.stageCalls, 1);
+        expect(storeCalls, 1);
+        expect(messages.directCustodyRows, isEmpty);
+
+        for (final mutation in <MediaAttachment>[
+          completed.copyWith(encryptionKeyBase64: 'crossed-restart-key'),
+          completed.copyWith(encryptionNonce: 'crossed-restart-nonce'),
+          completed.copyWith(
+            thumbnailHash:
+                '4444444444444444444444444444444444444444444444444444444444444444',
+          ),
+          completed.copyWith(
+            localPath: 'pending_uploads/$messageId/sibling.m4a',
+          ),
+        ]) {
+          await expectPublishedMutationRefused(mutation);
+        }
+        await expectPublishedMutationRefused(completed, keepIntent: false);
+        await expectPublishedMutationRefused(completed, seedParent: false);
+
+        const freshMessageId = 'strict-347-unowned-pending';
+        const freshAttachmentId = 'strict-347-unowned-attachment';
+        final freshMessages = FakeMessageRepository();
+        final freshMedia = _DirectMediaCustodyFakeRepository(freshMessages);
+        final freshBridge = _CountingCryptoBridge();
+        final freshCandidate = completed.copyWith(
+          id: freshAttachmentId,
+          messageId: freshMessageId,
+          localPath: MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: freshMessageId,
+            attachmentId: freshAttachmentId,
+            mime: completed.mime,
+          ),
+        );
+        final (freshResult, freshMessage) = await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: freshMessages,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: freshMessageId,
+          preassignedMessageIdIsFresh: true,
+          timestamp: createdAt,
+          createdAt: createdAt,
+          bridge: freshBridge,
+          mediaAttachments: <MediaAttachment>[freshCandidate],
+          mediaAttachmentRepo: freshMedia,
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                wire, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async => const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+                expiresAtMs: 1999999999000,
+              ),
+        );
+        expect(freshResult, SendChatMessageResult.sendFailed);
+        expect(freshMessage, isNull);
+        expect(freshBridge.encryptCalls, 0);
+        expect(freshMedia.stageCalls, 0);
       },
     );
 

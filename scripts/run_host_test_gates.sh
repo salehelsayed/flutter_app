@@ -123,6 +123,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart"
   # 345: manifest-bound preparation authority for fresh ordinary direct media.
   "test/core/database/migrations/110_direct_media_custody_intent_test.dart"
+  "test/core/database/migrations/111_direct_media_blob_custody_test.dart"
+  "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart"
   "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"
   "test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart"
   "test/features/conversation/domain/repositories/reaction_repository_impl_test.dart"

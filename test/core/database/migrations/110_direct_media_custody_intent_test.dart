@@ -64,8 +64,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 110);
-      expect(await _userVersion(upgraded), 110);
+      expect(currentIdentityDatabaseVersion, 111);
+      expect(await _userVersion(upgraded), 111);
       expect(
         (await upgraded.query(
           'messages',
@@ -84,7 +84,7 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '110_direct_media_custody_intent');
         expect(entries.single.run, same(runDirectMediaCustodyIntentMigration));
-        expect(registry.last, same(entries.single));
+        expect(registry[registry.indexOf(entries.single) + 1].version, 111);
         final v109 = registry.indexWhere((entry) => entry.version == 109);
         expect(registry.indexOf(entries.single), v109 + 1);
       }
@@ -156,7 +156,7 @@ void main() {
       );
       await _expectExactColumn(fresh);
       await _expectNoIntentIndex(fresh);
-      expect(await _userVersion(fresh), 110);
+      expect(await _userVersion(fresh), 111);
       expect(await fresh.query('messages'), isEmpty);
       await fresh.close();
 
@@ -186,7 +186,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 110);
+      expect(await _userVersion(upgraded), 111);
       expect(await upgraded.query('messages'), snapshotBeforeDowngrade);
     },
   );

@@ -4,6 +4,12 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
+    show
+        DirectMediaBlobCustodyDirection,
+        DirectMediaBlobCustodyRow,
+        DirectMediaBlobCustodyState;
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +28,7 @@ import 'package:flutter_app/features/conversation/application/download_media_use
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart'
     as download_use_case
     show downloadMedia;
+import 'package:flutter_app/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -149,7 +156,7 @@ class _FakeBridge implements Bridge {
   final List<Map<String, dynamic>> deleteRequests = [];
   Map<String, dynamic> deleteResponse = {'ok': true};
   bool throwOnDelete = false;
-  void Function()? onDeleteRequest;
+  FutureOr<void> Function()? onDeleteRequest;
 
   @override
   Future<String> send(String message) async {
@@ -157,7 +164,7 @@ class _FakeBridge implements Bridge {
     commandLog.add(parsed['cmd'] as String);
     if (parsed['cmd'] == 'media:delete') {
       deleteRequests.add(parsed);
-      onDeleteRequest?.call();
+      await onDeleteRequest?.call();
       if (throwOnDelete) {
         throw Exception('delete exploded');
       }
@@ -4395,6 +4402,492 @@ void main() {
         },
       );
     });
+  });
+
+  group('Plan 347 strict ordinary direct media download', () {
+    Future<
+      (
+        MediaAttachment,
+        DirectMediaBlobCustodyRow,
+        _CanonicalPathFakeMediaFileManager,
+      )
+    >
+    stageIncoming({
+      required MediaRepositoryRealDbFixture fixture,
+      required String suffix,
+      required List<int> plaintext,
+      required int expiresAtMs,
+    }) async {
+      final messageId = 'tc347-download-message-$suffix';
+      final attachmentId = 'tc347-download-blob-$suffix';
+      const contactPeerId = 'tc347-download-sender';
+      final encrypted = _encryptedBytes(plaintext);
+      final contentHash = _hashBytes(encrypted);
+      final commitment = DirectMediaBlobCustodyCommitment(
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: expiresAtMs,
+      );
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: plaintext.length,
+        mediaType: 'image',
+        downloadStatus: kMediaDownloadStatusPending,
+        createdAt: '2026-08-08T11:00:00.000Z',
+        contentHash: contentHash,
+        encryptionKeyBase64: _mediaKey,
+        encryptionNonce: _mediaNonce,
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        blobCustody: commitment,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: expiresAtMs,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-08T11:00:00.000Z',
+        updatedAt: '2026-08-08T11:00:00.000Z',
+      );
+      final message = ConversationMessage(
+        id: messageId,
+        contactPeerId: contactPeerId,
+        senderPeerId: contactPeerId,
+        text: '',
+        timestamp: '2026-08-08T11:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-08-08T11:00:00.000Z',
+      );
+      final stage =
+          await (fixture.repo as IncomingDirectMediaBlobCustodyRepository)
+              .stageIncomingDirectMediaBlobCustody(
+                message: message,
+                attachments: <MediaAttachment>[attachment],
+                custodyRows: <DirectMediaBlobCustodyRow>[custody],
+              );
+      expect(stage.outcome.name, 'applied');
+      return (
+        attachment,
+        custody,
+        _CanonicalPathFakeMediaFileManager(tempDir.path),
+      );
+    }
+
+    test('TC-347-06b strict download commits before same-source ACK', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const expiresAtMs = 1_900_001_000_000;
+      final (attachment, custody, manager) = await stageIncoming(
+        fixture: fixture,
+        suffix: 'relay',
+        plaintext: _jpegBytes,
+        expiresAtMs: expiresAtMs,
+      );
+      final encrypted = _encryptedBytes(_jpegBytes);
+      bridge.downloadedBytes = encrypted;
+      bridge.downloadResponse = <String, dynamic>{
+        'ok': true,
+        'id': attachment.id,
+        'custodyKind': kDirectMediaBlobCustodyKind,
+        'custodyContract': kDirectMediaBlobCustodyContract,
+        'contentHash': custody.contentHash,
+        'size': encrypted.length,
+        'mime': kDirectMediaBlobTransportMime,
+        'expiresAtMs': expiresAtMs,
+        'custodyRelayPeerId': 'relay-source-tc347',
+      };
+      bridge.deleteResponse = <String, dynamic>{
+        'ok': true,
+        'id': attachment.id,
+        'ackStatus': 'acked',
+        'custodyKind': kDirectMediaBlobCustodyKind,
+        'custodyContract': kDirectMediaBlobCustodyContract,
+        'contentHash': custody.contentHash,
+        'size': encrypted.length,
+        'mime': kDirectMediaBlobTransportMime,
+        'expiresAtMs': expiresAtMs,
+        'custodyRelayPeerId': 'relay-source-tc347',
+      };
+      bridge.onDeleteRequest = () async {
+        final attachmentRows = await fixture.db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[attachment.id],
+        );
+        expect(attachmentRows, hasLength(1));
+        expect(
+          attachmentRows.single['download_status'],
+          kMediaDownloadStatusDone,
+        );
+        expect(attachmentRows.single['local_path'], isNotNull);
+        final pending = await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+        expect(
+          pending!.state,
+          DirectMediaBlobCustodyState.incomingAckPending,
+          reason: 'the source-pinned obligation must commit before ACK',
+        );
+        expect(pending.custodyRelayPeerId, 'relay-source-tc347');
+        final absolutePath = await manager.localPathForAttachment(
+          contactPeerId: 'tc347-download-sender',
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+      };
+
+      final downloaded = await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: manager,
+        attachment: attachment,
+        contactPeerId: 'tc347-download-sender',
+        owner: MediaOwnerLane.direct,
+        messageRepo: fixture.messageRepo,
+        nowMs: () => 1_800_000_000_000,
+      );
+      expect(downloaded, isNotNull);
+      expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+      expect(bridge.commandLog, <String>[
+        'media:download',
+        'blob:decrypt',
+        'media:delete',
+      ]);
+      expect(bridge.deleteRequests, hasLength(1));
+      expect(
+        await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForAttachment(attachment.id),
+        isNull,
+        reason: 'only the exact successful same-source ACK retires v111',
+      );
+    });
+
+    test(
+      'TC-347-06d verified LAN adoption suppresses strict ACK until expiry',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const expiresAtMs = 1_900_002_000_000;
+        final (attachment, custody, manager) = await stageIncoming(
+          fixture: fixture,
+          suffix: 'lan',
+          plaintext: _jpegBytes,
+          expiresAtMs: expiresAtMs,
+        );
+        final absolutePath = await manager.localPathForAttachment(
+          contactPeerId: 'tc347-download-sender',
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        final lanCiphertext = File('$absolutePath.enc');
+        await lanCiphertext.parent.create(recursive: true);
+        await lanCiphertext.writeAsBytes(
+          _encryptedBytes(_jpegBytes),
+          flush: true,
+        );
+
+        final adopted = await downloadMedia(
+          bridge: bridge,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          attachment: attachment,
+          contactPeerId: 'tc347-download-sender',
+          owner: MediaOwnerLane.direct,
+          messageRepo: fixture.messageRepo,
+          nowMs: () => expiresAtMs - 1,
+        );
+        expect(adopted, isNotNull);
+        expect(adopted!.downloadStatus, kMediaDownloadStatusDone);
+        expect(File(absolutePath).readAsBytesSync(), _jpegBytes);
+        expect(bridge.commandLog, <String>['blob:decrypt']);
+        expect(bridge.deleteRequests, isEmpty);
+        final retained =
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+        expect(retained, isNotNull);
+        expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
+        expect(retained.custodyRelayPeerId, isNull);
+        final incoming =
+            fixture.repo as IncomingDirectMediaBlobCustodyRepository;
+        expect(
+          await incoming.deleteIncomingDirectMediaBlobIfExpired(
+            expected: retained,
+            nowMs: expiresAtMs - 1,
+          ),
+          isFalse,
+        );
+        expect(
+          await incoming.deleteIncomingDirectMediaBlobIfExpired(
+            expected: retained,
+            nowMs: expiresAtMs,
+          ),
+          isTrue,
+        );
+        expect(bridge.deleteRequests, isEmpty);
+      },
+    );
+
+    test(
+      'TC-347-06j strict owners share one flight and observe durable ACK authority before ACK',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const expiresAtMs = 1_900_002_100_000;
+        final (attachment, custody, manager) = await stageIncoming(
+          fixture: fixture,
+          suffix: 'shared-owner',
+          plaintext: _jpegBytes,
+          expiresAtMs: expiresAtMs,
+        );
+        final encrypted = _encryptedBytes(_jpegBytes);
+        final enteredDownload = Completer<void>();
+        final releaseDownload = Completer<void>();
+        bridge
+          ..downloadedBytes = encrypted
+          ..downloadResponse = <String, dynamic>{
+            'ok': true,
+            'id': attachment.id,
+            'custodyKind': kDirectMediaBlobCustodyKind,
+            'custodyContract': kDirectMediaBlobCustodyContract,
+            'contentHash': custody.contentHash,
+            'size': encrypted.length,
+            'mime': kDirectMediaBlobTransportMime,
+            'expiresAtMs': expiresAtMs,
+            'custodyRelayPeerId': 'relay-shared-owner',
+          }
+          ..deleteResponse = <String, dynamic>{
+            'ok': true,
+            'id': attachment.id,
+            'ackStatus': 'acked',
+            'custodyKind': kDirectMediaBlobCustodyKind,
+            'custodyContract': kDirectMediaBlobCustodyContract,
+            'contentHash': custody.contentHash,
+            'size': encrypted.length,
+            'mime': kDirectMediaBlobTransportMime,
+            'expiresAtMs': expiresAtMs,
+            'custodyRelayPeerId': 'relay-shared-owner',
+          }
+          ..beforeDownloadResponse = (_) async {
+            if (!enteredDownload.isCompleted) enteredDownload.complete();
+            await releaseDownload.future;
+          };
+
+        final observations = <String>[];
+        final firstOwner = StrictDirectMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: fixture.repo,
+          mediaFileManager: manager,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            expiresAtMs - 1000,
+            isUtc: true,
+          ),
+          beforeSourcePinnedAck: (row) async {
+            observations.add('durable-ack-pending');
+            expect(row.state, DirectMediaBlobCustodyState.incomingAckPending);
+            final reloaded =
+                await (fixture.repo as DirectMediaBlobCustodyRepository)
+                    .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+            expect(reloaded, isNotNull);
+            expect(reloaded!.exactDatabaseProjectionMatches(row), isTrue);
+          },
+        );
+        final secondOwner = StrictDirectMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: fixture.repo,
+          mediaFileManager: manager,
+          now: () => DateTime.fromMillisecondsSinceEpoch(
+            expiresAtMs - 1000,
+            isUtc: true,
+          ),
+          beforeSourcePinnedAck: (_) {
+            observations.add('unexpected-second-owner-callback');
+          },
+        );
+        bridge.onDeleteRequest = () {
+          observations.add('source-pinned-ack');
+        };
+
+        final first = firstOwner.downloadAndAcknowledge(
+          attachment: attachment,
+          contactPeerId: 'tc347-download-sender',
+        );
+        await enteredDownload.future;
+        final second = secondOwner.downloadAndAcknowledge(
+          attachment: attachment,
+          contactPeerId: 'tc347-download-sender',
+        );
+        expect(identical(first, second), isTrue);
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(1),
+        );
+        releaseDownload.complete();
+
+        final results = await Future.wait(<Future<MediaAttachment?>>[
+          first,
+          second,
+        ]);
+        expect(results, everyElement(isNotNull));
+        expect(
+          bridge.commandLog.where((command) => command == 'media:download'),
+          hasLength(1),
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'media:delete'),
+          hasLength(1),
+        );
+        expect(observations, <String>[
+          'durable-ack-pending',
+          'source-pinned-ack',
+        ]);
+      },
+    );
+
+    test(
+      'TC-347-06k strict download rejects whitespace-padded source relay exactly',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const expiresAtMs = 1_900_002_200_000;
+        final (attachment, custody, manager) = await stageIncoming(
+          fixture: fixture,
+          suffix: 'padded-source',
+          plaintext: _jpegBytes,
+          expiresAtMs: expiresAtMs,
+        );
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+
+        for (final paddedSource in const <String>[
+          ' relay-padded-source',
+          'relay-padded-source ',
+        ]) {
+          bridge.downloadResponse = <String, dynamic>{
+            'ok': true,
+            'id': attachment.id,
+            'custodyKind': kDirectMediaBlobCustodyKind,
+            'custodyContract': kDirectMediaBlobCustodyContract,
+            'contentHash': custody.contentHash,
+            'size': encrypted.length,
+            'mime': kDirectMediaBlobTransportMime,
+            'expiresAtMs': expiresAtMs,
+            'custodyRelayPeerId': paddedSource,
+          };
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: manager,
+              attachment: attachment,
+              contactPeerId: 'tc347-download-sender',
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              nowMs: () => expiresAtMs - 1000,
+            ),
+            isNull,
+          );
+        }
+
+        expect(bridge.commandLog, <String>['media:download', 'media:download']);
+        final retained =
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+        expect(retained, isNotNull);
+        expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
+      },
+    );
+
+    test(
+      'TC-347-06l strict expiry atomically terminalizes and blocks legacy after restart',
+      () async {
+        var fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${tempDir.path}/tc347-strict-expiry.db',
+        );
+        try {
+          const expiresAtMs = 1_900_002_300_000;
+          final (attachment, custody, manager) = await stageIncoming(
+            fixture: fixture,
+            suffix: 'expiry-restart',
+            plaintext: _jpegBytes,
+            expiresAtMs: expiresAtMs,
+          );
+          final expectedFingerprint =
+              computeDirectMediaBlobCommitmentFingerprint(
+                attachmentId: attachment.id,
+                commitment: attachment.blobCustody!,
+              );
+          expect(
+            await (fixture.repo as IncomingDirectMediaBlobCustodyRepository)
+                .deleteIncomingDirectMediaBlobIfExpired(
+                  expected: custody,
+                  nowMs: expiresAtMs,
+                ),
+            isTrue,
+          );
+          final terminalRow = await fixture.rawAttachmentRow(attachment.id);
+          expect(terminalRow, isNotNull);
+          expect(
+            terminalRow!['download_status'],
+            kMediaDownloadStatusDownloadFailed,
+          );
+          expect(
+            terminalRow['direct_media_blob_custody_fingerprint'],
+            expectedFingerprint,
+          );
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(attachment.id),
+            isNull,
+          );
+
+          fixture = await fixture.reopen();
+          final afterRestart = (await fixture.repo.getAttachmentsForMessage(
+            attachment.messageId,
+            owner: MediaOwnerLane.direct,
+          )).single;
+          expect(
+            afterRestart.downloadStatus,
+            kMediaDownloadStatusDownloadFailed,
+          );
+          expect(
+            afterRestart.directMediaBlobCustodyFingerprint,
+            expectedFingerprint,
+          );
+
+          final staleProoflessUiCopy = afterRestart.copyWith(
+            clearDirectMediaBlobCustodyFingerprint: true,
+          );
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: manager,
+              attachment: staleProoflessUiCopy,
+              contactPeerId: 'tc347-download-sender',
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              nowMs: () => expiresAtMs + 1,
+            ),
+            isNull,
+          );
+          expect(bridge.commandLog, isEmpty);
+        } finally {
+          await fixture.dispose();
+        }
+      },
+    );
   });
 
   group('229 download/eviction CAS', () {

@@ -162,12 +162,17 @@ void main() {
     // availability check before its production-path outbox fixture runs; the
     // added reference is a null check, not a transport invocation. Plan 260's
     // typed upload-outcome adapter also wraps the former direct
-    // widget.uploadMediaFn invocation without adding another upload route.
+    // widget.uploadMediaFn invocation without adding another upload route. Plan
+    // 347 adds exactly two P2P references for strict direct-media blob custody:
+    // a local-peer check and the ciphertext-only LAN acceleration callback that
+    // runs after the complete generation is published and revalidated. Its one
+    // added bridge reference and one artifact-preparation seam supply that same
+    // strict coordinator. It does not add a received-media action route.
     // Save/Share/Info remain local-only Plan 231 actions. These exact counts
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
-      'widget.p2pService': 19,
-      'widget.bridge': 31,
+      'widget.p2pService': 21,
+      'widget.bridge': 32,
       'widget.sendChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
       'widget.deleteMessageForMeFn(': 1,
@@ -175,7 +180,7 @@ void main() {
       'widget.sendVoiceMessageFn(': 1,
       'widget.uploadMediaFn(': 0,
       'widget.downloadMediaFn(': 2,
-      'prepareEncryptedMediaArtifactFn': 4,
+      'prepareEncryptedMediaArtifactFn': 5,
       '.sendMessageWithReply(': 0,
       '.storeInInbox(': 0,
       'ShareTargetPicker': 1,
@@ -189,7 +194,8 @@ void main() {
         reason:
             'conversation_wired.dart transport call-site inventory drifted '
             'for "${entry.key}" — media actions must not add or reuse a '
-            'delivery seam outside the reviewed Plan 232 / Plan 249 routes',
+            'delivery seam outside the reviewed Plan 232 / Plan 249 / Plan '
+            '347 routes',
       );
     }
 

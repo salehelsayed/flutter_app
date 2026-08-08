@@ -35,6 +35,9 @@ const _currentDirectIndexes = <String>{
   ..._v107Indexes,
   'idx_direct_inbox_custody_outbox_fair_load',
   'idx_direct_reaction_inbox_custody_outbox_fair_load',
+  'idx_direct_media_blob_custody_inbox_incarnation',
+  'idx_direct_media_blob_custody_message',
+  'idx_direct_media_blob_custody_state_retry',
 };
 const _v107Triggers = <String>{
   'trg_direct_notification_read_ack_message_insert',
@@ -103,8 +106,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 110);
-      expect(await _userVersion(db), 110);
+      expect(currentIdentityDatabaseVersion, 111);
+      expect(await _userVersion(db), 111);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -116,7 +119,9 @@ void main() {
           entries.single.run,
           same(runDirectNotificationDurabilityMigration),
         );
-        expect(registry.last.version, 110);
+        expect(registry.last.version, 111);
+        expect(registry.last.name, '111_direct_media_blob_custody');
+        expect(registry[registry.length - 2].version, 110);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
@@ -458,7 +463,7 @@ void main() {
       addTearDown(() async {
         if (db.isOpen) await db.close();
       });
-      expect(await _userVersion(db), 110);
+      expect(await _userVersion(db), 111);
       expect(
         await dbLoadDirectNotificationReactionTerminalEvent(
           db,

@@ -8,6 +8,8 @@ import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e.dart';
 import 'package:flutter_app/core/debug/private_media_outbox_e2e_conversation.dart';
@@ -17,6 +19,8 @@ import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -58,6 +62,7 @@ import 'package:flutter_app/features/conversation/application/delete_message_use
 import 'package:flutter_app/features/orbit/presentation/widgets/confirmation_dialog.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/load_conversation_use_case.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
@@ -424,6 +429,8 @@ class ConversationWired extends StatefulWidget {
   /// real implementation does file I/O that cannot complete inside the
   /// testWidgets fake-async zone, so LAN-path widget tests stub this.
   final PrepareEncryptedMediaArtifactFn prepareEncryptedMediaArtifactFn;
+  final PreparedDirectMediaBlobCustodyCoordinator?
+  preparedDirectMediaBlobCustodyCoordinator;
   final DateTime? notificationTappedAt;
   final AppShellController? appShellController;
   final TransportMetrics? transportMetrics;
@@ -511,6 +518,7 @@ class ConversationWired extends StatefulWidget {
     this.removeReactionFn = removeReaction,
     this.downloadMediaFn = downloadMedia,
     this.prepareEncryptedMediaArtifactFn = prepareEncryptedMediaArtifact,
+    this.preparedDirectMediaBlobCustodyCoordinator,
     this.notificationTappedAt,
     this.appShellController,
     this.transportMetrics,
@@ -1456,40 +1464,98 @@ class _ConversationWiredState extends State<ConversationWired>
       return !_isOutgoingPrivateOneMoreLook(privateMediaPolicy);
     }
 
-    final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-      messageId,
-      owner: MediaOwnerLane.direct,
-    );
-    var pendingFound = false;
-    for (final attachment in attachments) {
-      if (attachment.downloadStatus != 'upload_pending') {
-        continue;
-      }
-      pendingFound = true;
-      final cancelled = attachment.copyWith(downloadStatus: 'upload_cancelled');
-      if (mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository) {
-        final privateMutationRepo =
-            mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository;
-        final result = await privateMutationRepo
-            .applyOutgoingDirectPrivateNonCompletionMutation(cancelled);
-        if (result ==
-            OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
-          continue;
-        }
-        if (result !=
-            OutgoingDirectPrivateNonCompletionMutationOutcome
-                .notPrivateParent) {
-          return false;
-        }
-      } else if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
+    Future<bool> applyCancellation() async {
+      if (!await _terminalizeOutgoingDirectMediaBlobForCancellation(
+        messageId,
+      )) {
         return false;
       }
-      await mediaAttachmentRepo.saveAttachment(
-        cancelled,
+
+      final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+        messageId,
         owner: MediaOwnerLane.direct,
       );
+      var pendingFound = false;
+      for (final attachment in attachments) {
+        if (attachment.downloadStatus != 'upload_pending') {
+          continue;
+        }
+        pendingFound = true;
+        final cancelled = attachment.copyWith(
+          downloadStatus: 'upload_cancelled',
+        );
+        if (mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository) {
+          final privateMutationRepo =
+              mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository;
+          final result = await privateMutationRepo
+              .applyOutgoingDirectPrivateNonCompletionMutation(cancelled);
+          if (result ==
+              OutgoingDirectPrivateNonCompletionMutationOutcome.applied) {
+            continue;
+          }
+          if (result !=
+              OutgoingDirectPrivateNonCompletionMutationOutcome
+                  .notPrivateParent) {
+            return false;
+          }
+        } else if (_isOutgoingPrivateOneMoreLook(privateMediaPolicy)) {
+          return false;
+        }
+        await mediaAttachmentRepo.saveAttachment(
+          cancelled,
+          owner: MediaOwnerLane.direct,
+        );
+      }
+      return pendingFound || !_isOutgoingPrivateOneMoreLook(privateMediaPolicy);
     }
-    return pendingFound || !_isOutgoingPrivateOneMoreLook(privateMediaPolicy);
+
+    if (mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
+      final custodyRepository =
+          mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+      if (custodyRepository.supportsDirectMediaBlobCustody) {
+        return custodyRepository.runDirectMediaBlobCustodyLifecycle(
+          applyCancellation,
+        );
+      }
+    }
+    return applyCancellation();
+  }
+
+  Future<bool> _terminalizeOutgoingDirectMediaBlobForCancellation(
+    String messageId,
+  ) async {
+    final repository = widget.mediaAttachmentRepo;
+    if (repository is! DirectMediaBlobCustodyRepository) return true;
+    final custodyRepository = repository as DirectMediaBlobCustodyRepository;
+    if (!custodyRepository.supportsDirectMediaBlobCustody) return true;
+    if (repository is! OutgoingDirectMediaBlobTerminalizationRepository) {
+      return false;
+    }
+    final terminalizationRepository =
+        repository as OutgoingDirectMediaBlobTerminalizationRepository;
+    if (!custodyRepository.supportsDirectMediaBlobCustody ||
+        !terminalizationRepository
+            .supportsOutgoingDirectMediaBlobTerminalization) {
+      return false;
+    }
+    return custodyRepository.runDirectMediaBlobCustodyLifecycle(() async {
+      final allRows = await custodyRepository
+          .loadDirectMediaBlobCustodyForMessage(messageId);
+      if (allRows.isEmpty) return true;
+      final outgoingRows = allRows
+          .where(
+            (row) => row.direction == DirectMediaBlobCustodyDirection.outgoing,
+          )
+          .toList(growable: false);
+      if (outgoingRows.length != allRows.length) return false;
+      final outcome = await terminalizationRepository
+          .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+            expectedRows: outgoingRows,
+            reason: DirectMediaBlobTerminalizationReason.explicitCancellation,
+            nowMs: DateTime.now().toUtc().millisecondsSinceEpoch,
+          );
+      return outcome.publishedCleanupAuthority;
+    });
   }
 
   Future<void> _hydrateInitialPendingMedia(
@@ -3810,217 +3876,312 @@ class _ConversationWiredState extends State<ConversationWired>
           try {
             uploadedAttachments = [];
             var relayTrackingStarted = false;
-            for (var index = 0; index < mediaToUpload.length; index++) {
-              if (await _cancelActiveAttachmentUploadIfRequested(
-                operation: uploadOperation,
-              )) {
-                return;
-              }
-              final media = mediaToUpload[index];
-              final preparedUpload = preparedUploads.length > index
-                  ? preparedUploads[index]
-                  : null;
-              final mime =
-                  preparedUpload?.pendingAttachment.mime ??
-                  _mimeFromPath(media.file.path);
-              final mediaId =
-                  preparedUpload?.pendingAttachment.id ??
-                  optimisticMedia?[index].id ??
-                  _uuid.v4();
-              final sourcePath =
-                  preparedUpload?.absoluteDurablePath ?? media.file.path;
-              final fileSize =
-                  preparedUpload?.source.budgetBytes ??
-                  File(sourcePath).lengthSync();
-
-              // Try local WiFi first, then keep relay upload as the durable
-              // recovery copy because local ACK does not prove DB persistence.
-              // 112 Phase 4: encrypt once — the LAN leg streams the SAME
-              // ciphertext artifact the relay upload below consumes, with an
-              // opaque transport mime (the real mime rides the envelope).
-              EncryptedMediaArtifact? preparedArtifact;
-              if (widget.p2pService.isLocalPeer(_contact.peerId) &&
-                  widget.bridge != null) {
-                try {
-                  preparedArtifact = await widget
-                      .prepareEncryptedMediaArtifactFn(
-                        bridge: widget.bridge!,
-                        localFilePath: sourcePath,
-                      );
-                  await widget.p2pService.sendLocalMedia(
-                    peerId: _contact.peerId,
-                    filePath: preparedArtifact.encryptedPath,
-                    mime: kOpaqueMediaTransportMime,
-                    mediaId: mediaId,
-                    fromPeerId: identity.peerId,
-                    durationMs: media.durationMs,
-                    enc: true,
-                    encScheme: preparedArtifact.scheme,
-                  );
-                } catch (_) {
-                  // Fail closed on the LAN leg — never fall back to raw
-                  // bytes; the relay upload below mints its own artifact.
-                  preparedArtifact = null;
-                }
-              }
-
-              if (!relayTrackingStarted) {
-                final remainingBytes = mediaToUpload
-                    .skip(index)
-                    .fold<int>(0, (sum, item) => sum + item.budgetBytes);
-                await _uploadActivityController.startTracking(
-                  uploadOperation,
-                  totalBytes: remainingBytes,
-                );
-                relayTrackingStarted = true;
-              }
-              _uploadActivityController.markUploadStarted(
+            final DirectMediaBlobCustodyRepository? blobCustodyRepository =
+                switch (widget.mediaAttachmentRepo) {
+                  DirectMediaBlobCustodyRepository repository
+                      when repository.supportsDirectMediaBlobCustody =>
+                    repository,
+                  _ => null,
+                };
+            final strictBlobSelected =
+                kDirectMediaBlobCustodyClientEnabled &&
+                privateTransferLease == null &&
+                manifestFailureParent != null &&
+                manifestFailureAttachments.length == mediaToUpload.length &&
+                preparedUploads.length == mediaToUpload.length &&
+                blobCustodyRepository != null;
+            if (strictBlobSelected) {
+              final totalBytes = mediaToUpload.fold<int>(
+                0,
+                (sum, item) => sum + item.budgetBytes,
+              );
+              await _uploadActivityController.startTracking(
                 uploadOperation,
-                mediaId,
+                totalBytes: totalBytes,
               );
-              final uploadOutcome = await runUploadMedia(
-                uploadMediaFn: widget.uploadMediaFn,
+              relayTrackingStarted = true;
+              for (final attachment in manifestFailureAttachments) {
+                _uploadActivityController.markUploadStarted(
+                  uploadOperation,
+                  attachment.id,
+                );
+              }
+              final coordinator =
+                  widget.preparedDirectMediaBlobCustodyCoordinator ??
+                  PreparedDirectMediaBlobCustodyCoordinator(
+                    repository: blobCustodyRepository,
+                    artifactStore: DirectMediaBlobArtifactStore(),
+                    prepareArtifact: widget.prepareEncryptedMediaArtifactFn,
+                  );
+              final expectedById = <String, MediaAttachment>{
+                for (final attachment in manifestFailureAttachments)
+                  attachment.id: attachment,
+              };
+              final strictResult = await coordinator.prepareAndUploadFresh(
                 bridge: widget.bridge!,
-                localFilePath: sourcePath,
-                mime: mime,
+                identityPeerId: identity.peerId,
                 recipientPeerId: _contact.peerId,
-                mediaFileManager: widget.mediaFileManager,
-                blobId: mediaId,
-                width: preparedUpload?.source.width ?? media.width,
-                height: preparedUpload?.source.height ?? media.height,
-                durationMs:
-                    preparedUpload?.source.durationMs ?? media.durationMs,
-                // After uploadMedia commits its canonical owned copy it may
-                // unlink this pending source. Finalization therefore trusts
-                // the canonical relative path returned by the upload result.
-                deleteSourceWhenDone:
-                    privateTransferLease == null &&
-                    optimisticMessage.directMediaCustodyIntentId == null,
-                preparedArtifact: preparedArtifact,
+                expectedParent: manifestFailureParent,
+                sources: preparedUploads
+                    .map(
+                      (plan) => PreparedDirectMediaBlobSource(
+                        attachment:
+                            expectedById[plan.pendingAttachment.id] ??
+                            plan.pendingAttachment,
+                        plaintextPath: plan.absoluteDurablePath,
+                      ),
+                    )
+                    .toList(growable: false),
+                onGenerationReady:
+                    widget.p2pService.isLocalPeer(_contact.peerId)
+                    ? (artifacts) async {
+                        for (final artifact in artifacts) {
+                          await widget.p2pService.sendLocalMedia(
+                            peerId: _contact.peerId,
+                            filePath: artifact.absoluteCiphertextPath,
+                            mime: kOpaqueMediaTransportMime,
+                            mediaId: artifact.attachment.id,
+                            fromPeerId: identity.peerId,
+                            durationMs: artifact.attachment.durationMs,
+                            enc: true,
+                            encScheme: artifact.attachment.encryptionScheme,
+                          );
+                        }
+                      }
+                    : null,
               );
-              final result = uploadOutcome.attachmentOrNull;
-
-              if (await _cancelActiveAttachmentUploadIfRequested(
-                operation: uploadOperation,
-              )) {
+              if (!strictResult.isComplete) {
+                await _uploadActivityController.complete(uploadOperation);
+                _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                if (mounted) _updateComposerState(isUploading: false);
                 return;
               }
-
-              if (result == null) {
-                if (relayTrackingStarted) {
-                  await _uploadActivityController.complete(uploadOperation);
-                }
-                final failure = uploadOutcome as UploadMediaFailed;
-                UploadRetryProjectionResult projected;
-                if (optimisticMessage.directMediaCustodyIntentId != null) {
-                  final expectedParent = manifestFailureParent;
-                  if (expectedParent == null ||
-                      manifestFailureAttachments.isEmpty) {
-                    projected = const UploadRetryProjectionResult.notApplied();
-                  } else {
-                    projected =
-                        await _projectManifestBoundComposerUploadFailure(
-                          expectedParent: expectedParent,
-                          expectedAttachments: manifestFailureAttachments,
-                          failedAttachmentId: mediaId,
-                          failure: failure,
-                        );
-                  }
-                  if (!projected.applied) {
-                    emitFlowEvent(
-                      layer: 'FL',
-                      event: 'CONV_FL_MEDIA_CUSTODY_FAILURE_REFUSED',
-                      details: const {},
-                    );
-                    await _restoreComposerSnapshot(
-                      composerSnapshot,
-                      optimisticMessageId: optimisticMessage.id,
-                      messenger: messenger,
-                      snackText: 'Failed to upload media. Try again.',
-                      transitionMessageToFailed: false,
-                    );
-                    return;
-                  }
-                } else {
-                  final projection = _uploadRetryProjection;
-                  if (projection == null) {
-                    await _restoreComposerSnapshot(
-                      composerSnapshot,
-                      optimisticMessageId: optimisticMessage.id,
-                      messenger: messenger,
-                      snackText: 'Failed to upload media. Try again.',
-                    );
-                    return;
-                  }
-                  projected = await projection.projectUploadFailure(
-                    messageId: optimisticMessage.id,
-                    attachmentId: mediaId,
-                    failure: failure,
-                  );
-                }
-                if (!projected.isTerminal) {
-                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
-                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
-                  if (mounted) {
-                    _updateComposerState(isUploading: false);
-                  }
+              uploadedAttachments.addAll(strictResult.attachments);
+              for (var index = 0; index < mediaToUpload.length; index++) {
+                _uploadActivityController.markUploadCompleted(
+                  uploadOperation,
+                  mediaToUpload[index].budgetBytes,
+                );
+              }
+            } else {
+              for (var index = 0; index < mediaToUpload.length; index++) {
+                if (await _cancelActiveAttachmentUploadIfRequested(
+                  operation: uploadOperation,
+                )) {
                   return;
                 }
-                await _restoreComposerAfterProjectedTerminal(
-                  composerSnapshot,
-                  optimisticMessageId: optimisticMessage.id,
-                  messenger: messenger,
-                  snackText: 'Failed to upload media. Try again.',
-                );
-                return;
-              }
-              _uploadActivityController.markUploadCompleted(
-                uploadOperation,
-                fileSize,
-              );
-              if (preparedUpload != null &&
-                  widget.mediaAttachmentRepo != null) {
-                final stableResult = await _finalizeUploadedAttachmentFromPlan(
-                  messageId: optimisticMessage.id,
-                  plan: preparedUpload,
-                  uploaded: result,
-                  trustUploadedLocalPath: privateTransferLease != null,
-                  enforceAuthoredIdentity:
-                      optimisticMessage.directMediaCustodyIntentId != null,
-                );
-                final transferLease = privateTransferLease;
-                if (transferLease != null) {
-                  uploadedAttachments.add(
-                    await _commitForegroundDirectPrivateCompletion(
-                      lease: transferLease,
-                      plan: preparedUpload,
-                      uploaded: stableResult,
-                    ),
-                  );
-                } else if (optimisticMessage.directMediaCustodyIntentId !=
-                    null) {
-                  // The v110 intent is exclusive preparation authority. Keep
-                  // its exact pending row untouched and carry upload-owned
-                  // completion fields directly to the combined parent +
-                  // attachments + v108 transaction below. This prevents a
-                  // generic save from laundering a crossed/deleted authored
-                  // row before final revalidation.
-                  uploadedAttachments.add(stableResult);
-                } else {
-                  await widget.mediaAttachmentRepo!.saveAttachment(
-                    stableResult,
-                    owner: MediaOwnerLane.direct,
-                  );
-                  uploadedAttachments.add(stableResult);
-                }
-              } else {
-                uploadedAttachments.add(result);
-              }
+                final media = mediaToUpload[index];
+                final preparedUpload = preparedUploads.length > index
+                    ? preparedUploads[index]
+                    : null;
+                final mime =
+                    preparedUpload?.pendingAttachment.mime ??
+                    _mimeFromPath(media.file.path);
+                final mediaId =
+                    preparedUpload?.pendingAttachment.id ??
+                    optimisticMedia?[index].id ??
+                    _uuid.v4();
+                final sourcePath =
+                    preparedUpload?.absoluteDurablePath ?? media.file.path;
+                final fileSize =
+                    preparedUpload?.source.budgetBytes ??
+                    File(sourcePath).lengthSync();
 
-              if (await _cancelActiveAttachmentUploadIfRequested(
-                operation: uploadOperation,
-              )) {
-                return;
+                // Try local WiFi first, then keep relay upload as the durable
+                // recovery copy because local ACK does not prove DB persistence.
+                // 112 Phase 4: encrypt once — the LAN leg streams the SAME
+                // ciphertext artifact the relay upload below consumes, with an
+                // opaque transport mime (the real mime rides the envelope).
+                EncryptedMediaArtifact? preparedArtifact;
+                if (widget.p2pService.isLocalPeer(_contact.peerId) &&
+                    widget.bridge != null) {
+                  try {
+                    preparedArtifact = await widget
+                        .prepareEncryptedMediaArtifactFn(
+                          bridge: widget.bridge!,
+                          localFilePath: sourcePath,
+                        );
+                    await widget.p2pService.sendLocalMedia(
+                      peerId: _contact.peerId,
+                      filePath: preparedArtifact.encryptedPath,
+                      mime: kOpaqueMediaTransportMime,
+                      mediaId: mediaId,
+                      fromPeerId: identity.peerId,
+                      durationMs: media.durationMs,
+                      enc: true,
+                      encScheme: preparedArtifact.scheme,
+                    );
+                  } catch (_) {
+                    // Fail closed on the LAN leg — never fall back to raw
+                    // bytes; the relay upload below mints its own artifact.
+                    preparedArtifact = null;
+                  }
+                }
+
+                if (!relayTrackingStarted) {
+                  final remainingBytes = mediaToUpload
+                      .skip(index)
+                      .fold<int>(0, (sum, item) => sum + item.budgetBytes);
+                  await _uploadActivityController.startTracking(
+                    uploadOperation,
+                    totalBytes: remainingBytes,
+                  );
+                  relayTrackingStarted = true;
+                }
+                _uploadActivityController.markUploadStarted(
+                  uploadOperation,
+                  mediaId,
+                );
+                final uploadOutcome = await runUploadMedia(
+                  uploadMediaFn: widget.uploadMediaFn,
+                  bridge: widget.bridge!,
+                  localFilePath: sourcePath,
+                  mime: mime,
+                  recipientPeerId: _contact.peerId,
+                  mediaFileManager: widget.mediaFileManager,
+                  blobId: mediaId,
+                  width: preparedUpload?.source.width ?? media.width,
+                  height: preparedUpload?.source.height ?? media.height,
+                  durationMs:
+                      preparedUpload?.source.durationMs ?? media.durationMs,
+                  // After uploadMedia commits its canonical owned copy it may
+                  // unlink this pending source. Finalization therefore trusts
+                  // the canonical relative path returned by the upload result.
+                  deleteSourceWhenDone:
+                      privateTransferLease == null &&
+                      optimisticMessage.directMediaCustodyIntentId == null,
+                  preparedArtifact: preparedArtifact,
+                );
+                final result = uploadOutcome.attachmentOrNull;
+
+                if (await _cancelActiveAttachmentUploadIfRequested(
+                  operation: uploadOperation,
+                )) {
+                  return;
+                }
+
+                if (result == null) {
+                  if (relayTrackingStarted) {
+                    await _uploadActivityController.complete(uploadOperation);
+                  }
+                  final failure = uploadOutcome as UploadMediaFailed;
+                  UploadRetryProjectionResult projected;
+                  if (optimisticMessage.directMediaCustodyIntentId != null) {
+                    final expectedParent = manifestFailureParent;
+                    if (expectedParent == null ||
+                        manifestFailureAttachments.isEmpty) {
+                      projected =
+                          const UploadRetryProjectionResult.notApplied();
+                    } else {
+                      projected =
+                          await _projectManifestBoundComposerUploadFailure(
+                            expectedParent: expectedParent,
+                            expectedAttachments: manifestFailureAttachments,
+                            failedAttachmentId: mediaId,
+                            failure: failure,
+                          );
+                    }
+                    if (!projected.applied) {
+                      emitFlowEvent(
+                        layer: 'FL',
+                        event: 'CONV_FL_MEDIA_CUSTODY_FAILURE_REFUSED',
+                        details: const {},
+                      );
+                      await _restoreComposerSnapshot(
+                        composerSnapshot,
+                        optimisticMessageId: optimisticMessage.id,
+                        messenger: messenger,
+                        snackText: 'Failed to upload media. Try again.',
+                        transitionMessageToFailed: false,
+                      );
+                      return;
+                    }
+                  } else {
+                    final projection = _uploadRetryProjection;
+                    if (projection == null) {
+                      await _restoreComposerSnapshot(
+                        composerSnapshot,
+                        optimisticMessageId: optimisticMessage.id,
+                        messenger: messenger,
+                        snackText: 'Failed to upload media. Try again.',
+                      );
+                      return;
+                    }
+                    projected = await projection.projectUploadFailure(
+                      messageId: optimisticMessage.id,
+                      attachmentId: mediaId,
+                      failure: failure,
+                    );
+                  }
+                  if (!projected.isTerminal) {
+                    _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                    await _refreshMessageWithHydratedMedia(
+                      optimisticMessage.id,
+                    );
+                    if (mounted) {
+                      _updateComposerState(isUploading: false);
+                    }
+                    return;
+                  }
+                  await _restoreComposerAfterProjectedTerminal(
+                    composerSnapshot,
+                    optimisticMessageId: optimisticMessage.id,
+                    messenger: messenger,
+                    snackText: 'Failed to upload media. Try again.',
+                  );
+                  return;
+                }
+                _uploadActivityController.markUploadCompleted(
+                  uploadOperation,
+                  fileSize,
+                );
+                if (preparedUpload != null &&
+                    widget.mediaAttachmentRepo != null) {
+                  final stableResult =
+                      await _finalizeUploadedAttachmentFromPlan(
+                        messageId: optimisticMessage.id,
+                        plan: preparedUpload,
+                        uploaded: result,
+                        trustUploadedLocalPath: privateTransferLease != null,
+                        enforceAuthoredIdentity:
+                            optimisticMessage.directMediaCustodyIntentId !=
+                            null,
+                      );
+                  final transferLease = privateTransferLease;
+                  if (transferLease != null) {
+                    uploadedAttachments.add(
+                      await _commitForegroundDirectPrivateCompletion(
+                        lease: transferLease,
+                        plan: preparedUpload,
+                        uploaded: stableResult,
+                      ),
+                    );
+                  } else if (optimisticMessage.directMediaCustodyIntentId !=
+                      null) {
+                    // The v110 intent is exclusive preparation authority. Keep
+                    // its exact pending row untouched and carry upload-owned
+                    // completion fields directly to the combined parent +
+                    // attachments + v108 transaction below. This prevents a
+                    // generic save from laundering a crossed/deleted authored
+                    // row before final revalidation.
+                    uploadedAttachments.add(stableResult);
+                  } else {
+                    await widget.mediaAttachmentRepo!.saveAttachment(
+                      stableResult,
+                      owner: MediaOwnerLane.direct,
+                    );
+                    uploadedAttachments.add(stableResult);
+                  }
+                } else {
+                  uploadedAttachments.add(result);
+                }
+
+                if (await _cancelActiveAttachmentUploadIfRequested(
+                  operation: uploadOperation,
+                )) {
+                  return;
+                }
               }
             }
             if (await _cancelActiveAttachmentUploadIfRequested(
@@ -4070,6 +4231,9 @@ class _ConversationWiredState extends State<ConversationWired>
         if (preparedUploads.isNotEmpty &&
             uploadedAttachments != null &&
             uploadedAttachments.length == mediaToUpload.length &&
+            !uploadedAttachments.any(
+              (attachment) => attachment.blobCustody != null,
+            ) &&
             privateTransferLease == null) {
           try {
             if (optimisticMessage.directMediaCustodyIntentId == null) {
@@ -4491,17 +4655,8 @@ class _ConversationWiredState extends State<ConversationWired>
   Future<void> _onDeleteFailedMedia(String messageId) async {
     final mediaAttachmentRepo = widget.mediaAttachmentRepo;
     final mediaFileManager = widget.mediaFileManager;
-    final storedAttachments =
-        await mediaAttachmentRepo?.getAttachmentsForMessage(
-          messageId,
-          owner: MediaOwnerLane.direct,
-        ) ??
-        const <MediaAttachment>[];
-    final storedPaths = storedAttachments.map(
-      (attachment) => attachment.localPath,
-    );
 
-    var useGenericDeletion = mediaAttachmentRepo != null;
+    final useGenericDeletion = mediaAttachmentRepo != null;
     if (mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository) {
       if (mediaFileManager == null ||
           mediaAttachmentRepo is! DirectPrivateMediaCleanupRuntime) {
@@ -4554,36 +4709,68 @@ class _ConversationWiredState extends State<ConversationWired>
       }
     }
 
+    var parentDeletedUnderBlobAuthority = false;
     if (useGenericDeletion) {
-      await mediaAttachmentRepo.markUploadPendingAttachmentsFailedForMessage(
-        messageId,
-        owner: MediaOwnerLane.direct,
-      );
-      // Ordinary-media cleanup keeps the attachment rows until plaintext
-      // deletion succeeds. Those rows are the durable authority for the
-      // exact pending paths; deleting them first would orphan plaintext when
-      // the filesystem operation throws. Outgoing protected/View-Once media
-      // has already returned through the typed branch above.
-      try {
-        await mediaFileManager?.deleteOwnedPendingUploadFilesForMessage(
-          messageId: messageId,
-          storedPaths: storedPaths,
+      final ordinaryRepository = mediaAttachmentRepo;
+      Future<bool> deleteOrdinaryMedia() async {
+        if (!await _terminalizeOutgoingDirectMediaBlobForCancellation(
+          messageId,
+        )) {
+          return false;
+        }
+        final storedAttachments = await ordinaryRepository
+            .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
+        await ordinaryRepository.markUploadPendingAttachmentsFailedForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
         );
-      } catch (error) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONV_FL_ORDINARY_PENDING_FILE_DELETE_ERROR',
-          details: {'error': error.runtimeType.toString()},
+        // Ordinary-media cleanup keeps the attachment rows until plaintext
+        // deletion succeeds. Those rows are the durable authority for the
+        // exact pending paths; deleting them first would orphan plaintext when
+        // the filesystem operation throws. Outgoing protected/View-Once media
+        // has already returned through the typed branch above.
+        try {
+          await mediaFileManager?.deleteOwnedPendingUploadFilesForMessage(
+            messageId: messageId,
+            storedPaths: storedAttachments.map(
+              (attachment) => attachment.localPath,
+            ),
+          );
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_ORDINARY_PENDING_FILE_DELETE_ERROR',
+            details: {'error': error.runtimeType.toString()},
+          );
+          return false;
+        }
+        final deleted = await ordinaryRepository.deleteAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
         );
-        return;
+        if (deleted != storedAttachments.length) return false;
+        await widget.messageRepo.deleteMessage(messageId);
+        return true;
       }
-      final deleted = await mediaAttachmentRepo.deleteAttachmentsForMessage(
-        messageId,
-        owner: MediaOwnerLane.direct,
-      );
-      if (deleted != storedAttachments.length) return;
+
+      late final bool deleted;
+      if (ordinaryRepository is DirectMediaBlobCustodyRepository) {
+        final custodyRepository =
+            ordinaryRepository as DirectMediaBlobCustodyRepository;
+        deleted = custodyRepository.supportsDirectMediaBlobCustody
+            ? await custodyRepository.runDirectMediaBlobCustodyLifecycle(
+                deleteOrdinaryMedia,
+              )
+            : await deleteOrdinaryMedia();
+      } else {
+        deleted = await deleteOrdinaryMedia();
+      }
+      if (!deleted) return;
+      parentDeletedUnderBlobAuthority = true;
     }
-    await widget.messageRepo.deleteMessage(messageId);
+    if (!parentDeletedUnderBlobAuthority) {
+      await widget.messageRepo.deleteMessage(messageId);
+    }
 
     _removeLocalMessage(messageId);
   }
@@ -5163,7 +5350,16 @@ class _ConversationWiredState extends State<ConversationWired>
       // artifact (opaque mime, no waveform in the cleartext offer; both
       // ride the encrypted envelope) and the relay upload reuses it.
       EncryptedMediaArtifact? voiceArtifact;
-      if (widget.p2pService.isLocalPeer(_contact.peerId) &&
+      final strictVoiceBlobSelected =
+          kDirectMediaBlobCustodyClientEnabled &&
+          switch (mediaAttachmentRepo) {
+            DirectMediaBlobCustodyRepository repository
+                when repository.supportsDirectMediaBlobCustody =>
+              true,
+            _ => false,
+          };
+      if (!strictVoiceBlobSelected &&
+          widget.p2pService.isLocalPeer(_contact.peerId) &&
           widget.bridge != null) {
         try {
           voiceArtifact = await widget.prepareEncryptedMediaArtifactFn(

@@ -109,6 +109,12 @@ record_archived_proof_requirements() {
     "android-native-bridge-relay" "android.e2e.wake_token" \
     "android-physical+android-emulator" \
     "manifest_owned_hash_only_registered_stored_attached_directionality_driver"
+  record_capability "implemented" "$registry" \
+    "android.direct_media_blob_custody" "major" "1to1" \
+    "android.two-peer.direct-media-blob-custody" \
+    "android.e2e.direct_media_custody" \
+    "android-physical+android-emulator" \
+    "manifest_owned_disposable_relay_restart_exact_bytes_source_pinned_ack_driver"
   record_capability "inactive" "$registry" \
     "vc02.dcutr_upgrade" "future" "voice-video-1to1" \
     "android-nat-relay" "android.e2e.standard" \
@@ -355,6 +361,14 @@ classify_path() {
       record "support" "$path" "support" "manifest-owned build-free physical-Android plus emulator hash-only wake-token directionality campaign"
       return
       ;;
+    integration_test/scripts/run_direct_media_blob_custody_sims.dart|\
+    integration_test/scripts/android_direct_media_blob_custody_campaign.dart|\
+    integration_test/scripts/android_direct_media_blob_custody_device_action.dart|\
+    integration_test/support/android_direct_media_blob_custody_campaign_contract.dart|\
+    integration_test/support/android_direct_media_blob_custody_evidence.dart)
+      record "support" "$path" "support" "347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract"
+      return
+      ;;
     integration_test/scripts/run_voice_message_sims.dart|\
     integration_test/scripts/android_voice_message_device_campaign.dart)
       record "support" "$path" "support" "manifest-owned prebuilt main-app physical-Android plus emulator voice-message campaign"
@@ -381,6 +395,11 @@ classify_path() {
     lib/core/debug/android_voice_message_e2e.dart|\
     lib/core/debug/android_voice_message_e2e_protocol.dart)
       record "support" "$path" "support" "debug-only main-app voice-message endpoint and pure host protocol"
+      return
+      ;;
+    lib/debug/android_direct_media_blob_custody_e2e.dart|\
+    lib/core/debug/android_direct_media_blob_custody_e2e_protocol.dart)
+      record "support" "$path" "support" "347 profile-gated direct-media custody endpoint and pure host protocol"
       return
       ;;
     integration_test/scripts/run_1to1_reaction_notification_device.dart)
@@ -683,6 +702,10 @@ discover_candidates() {
     find integration_test/scripts -maxdepth 1 -type f -print 2>/dev/null
     [ ! -f integration_test/support/group_media_android_disposable_app.dart ] ||
       printf '%s\n' integration_test/support/group_media_android_disposable_app.dart
+    [ ! -f integration_test/support/android_direct_media_blob_custody_evidence.dart ] ||
+      printf '%s\n' integration_test/support/android_direct_media_blob_custody_evidence.dart
+    [ ! -f integration_test/support/android_direct_media_blob_custody_campaign_contract.dart ] ||
+      printf '%s\n' integration_test/support/android_direct_media_blob_custody_campaign_contract.dart
     find scripts -maxdepth 1 -type f \( \
       -name '*simulator*.sh' -o \
       -name '*emulator*.sh' -o \
@@ -693,6 +716,7 @@ discover_candidates() {
     for path in \
       lib/core/debug/group_media_ios_disposable_profile.dart \
       lib/core/debug/group_media_ios_disposable_reset.dart \
+      lib/debug/android_direct_media_blob_custody_e2e.dart \
       lib/debug/group_notification_projection_e2e_action.dart; do
       [ ! -f "$path" ] || printf '%s\n' "$path"
     done

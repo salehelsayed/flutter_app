@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -9,6 +11,8 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 
 import '../models/media_attachment.dart';
 import '../models/conversation_message.dart';
+import '../models/direct_media_blob_generation_result.dart';
+import '../models/incoming_direct_media_blob_custody_result.dart';
 import '../models/media_library.dart';
 import '../models/media_preview_descriptor.dart';
 import '../models/media_storage.dart';
@@ -95,6 +99,99 @@ abstract class MediaAttachmentRepository {
   });
 }
 
+/// Independent durable authority for Plan 347 direct-media blob generations.
+///
+/// The lifecycle section covers candidate-file publication, compensated secure
+/// key writes, and the DB batch boundary. Retry callers can only load/reopen an
+/// existing complete generation; only a fresh prepared producer calls
+/// [stageOutgoingDirectMediaBlobGeneration].
+abstract interface class DirectMediaBlobCustodyRepository {
+  bool get supportsDirectMediaBlobCustody;
+
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(Future<T> Function() action);
+
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  });
+
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  );
+
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  );
+
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  });
+
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  });
+
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  );
+}
+
+/// Narrow authority that may publish cleanup for a complete outgoing v111
+/// generation after proving exact v108 absence and one terminal reason.
+///
+/// Keeping this separate from [DirectMediaBlobCustodyRepository] prevents
+/// upload/retry fakes from accidentally acquiring cancellation authority.
+abstract interface class OutgoingDirectMediaBlobTerminalizationRepository {
+  bool get supportsOutgoingDirectMediaBlobTerminalization;
+
+  Future<DirectMediaBlobTerminalizationOutcome>
+  terminalizeOutgoingDirectMediaBlobGenerationIfExact({
+    required List<DirectMediaBlobCustodyRow> expectedRows,
+    required DirectMediaBlobTerminalizationReason reason,
+    required int nowMs,
+  });
+}
+
+/// Receiver-only atomic authority for strict ordinary-direct media.
+///
+/// This is deliberately separate from [DirectMediaBlobCustodyRepository], so
+/// sender-only coordinators and their fakes do not acquire incoming methods.
+abstract interface class IncomingDirectMediaBlobCustodyRepository {
+  bool get supportsIncomingDirectMediaBlobCustody;
+
+  Future<IncomingDirectMediaBlobCustodyStageResult>
+  stageIncomingDirectMediaBlobCustody({
+    required ConversationMessage message,
+    required List<MediaAttachment> attachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  });
+
+  /// Commits an already-durable plaintext file and the exact ACK obligation in
+  /// one SQL transaction. A null [sourceRelayPeerId] is verified LAN adoption:
+  /// the row remains source-less `incoming_committed` until exact expiry.
+  Future<bool> commitIncomingDirectMediaBlobLocalPath({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String localPath,
+    required String? sourceRelayPeerId,
+    required String updatedAt,
+  });
+
+  Future<bool> deleteIncomingDirectMediaBlobAckIfExact(
+    DirectMediaBlobCustodyRow expected,
+  );
+
+  Future<bool> deleteIncomingDirectMediaBlobIfExpired({
+    required DirectMediaBlobCustodyRow expected,
+    required int nowMs,
+  });
+}
+
 /// Optional atomic staging authority for ordinary outgoing attempts that own
 /// direct attachment rows. The parent/envelope and the exact normalized media
 /// projection commit in one SQLite transaction or neither side changes.
@@ -125,6 +222,8 @@ abstract interface class OutgoingDirectMediaInboxCustodyStagingRepository {
     required OutgoingOrdinaryAttemptKind kind,
     required String recipientPeerId,
     required String wireEnvelope,
+    String? wireMediaBlobManifestHash,
+    int? wireMediaBlobExpiresAtMs,
   });
 }
 

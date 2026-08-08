@@ -34,6 +34,14 @@
       "declaredException": false
     },
     {
+      "id": "android.e2e.direct_media_custody",
+      "platform": "android",
+      "artifactKind": "universal-debug-apk",
+      "buildRequired": true,
+      "compileDefines": {"E2E_TEST_MODE": "true", "MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED": "true"},
+      "declaredException": false
+    },
+    {
       "id": "android.e2e.group_media_269",
       "platform": "android",
       "artifactKind": "universal-debug-apk",
@@ -349,6 +357,26 @@
       "declaredBuildException": false
     },
     {
+      "id": "build.android.e2e.direct_media_custody",
+      "owner": "sims-build-cache",
+      "proofBoundary": "build.android.e2e.direct-media-custody.attested",
+      "assertions": ["build.input_and_artifact_hash_attested", "build.direct_media_custody_selector_attested"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["1to1", "media", "transport"],
+      "required": true,
+      "command": ["@prepare-build", "android.e2e.direct_media_custody"],
+      "buildProfile": "android.e2e.direct_media_custody",
+      "dependencies": [],
+      "resources": [{"name": "build:android.e2e.direct_media_custody", "access": "write"}],
+      "targetCapabilities": ["host.android-sdk"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "sha256-attestation",
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
       "id": "build.android.e2e.group_media_269",
       "owner": "sims-build-cache",
       "proofBoundary": "build.android.e2e.group-media-269.attested",
@@ -607,6 +635,27 @@
       "allowedNaReason": "target_unavailable_by_project_policy",
       "artifactRequired": true,
       "artifactValidator": "validateVoiceMessageArtifact",
+      "automationReady": true,
+      "active": true,
+      "declaredBuildException": false
+    },
+    {
+      "id": "android.direct_media_blob_custody",
+      "owner": "conversation",
+      "proofBoundary": "android.two-peer.direct-media-blob-custody",
+      "assertions": ["direct_media.sender_restart_reopens_exact_ciphertext", "direct_media.receiver_reopens_exact_blob", "direct_media.v108_expiry_within_blob_bound", "direct_media.source_pinned_ack_retires_relay_authority"],
+      "lane": "reliability",
+      "modes": ["major", "full"],
+      "families": ["1to1", "media", "transport"],
+      "required": true,
+      "command": ["dart", "run", "integration_test/scripts/run_1to1_device_real.dart", "--scenario", "android.direct_media_blob_custody"],
+      "buildProfile": "android.e2e.direct_media_custody",
+      "dependencies": ["build.android.e2e.direct_media_custody"],
+      "resources": [{"name": "build:android.e2e.direct_media_custody", "access": "read"}, {"name": "device:android-physical", "access": "exclusive"}, {"name": "device:android-emulator", "access": "exclusive"}, {"name": "relay-mutation:local-direct-media-fixture", "access": "exclusive"}, {"name": "artifact:direct-media-custody", "access": "write"}],
+      "targetCapabilities": ["android.physical", "android.emulator"],
+      "allowedNaReason": "target_unavailable_by_project_policy",
+      "artifactRequired": true,
+      "artifactValidator": "validateDirectMediaBlobCustodyArtifact",
       "automationReady": true,
       "active": true,
       "declaredBuildException": false

@@ -147,6 +147,18 @@ abstract class MessageRepository {
   });
 }
 
+/// Post-transaction publication seam for strict incoming direct media.
+///
+/// The database transaction is owned by the media repository because it spans
+/// the parent, every attachment, and v111. This companion publishes only after
+/// that transaction commits, preserving the normal message stream contract.
+abstract interface class IncomingDirectMessagePublicationRepository {
+  Future<void> publishIncomingDirectMediaMessage({
+    required ConversationMessage message,
+    required List<MediaAttachment> attachments,
+  });
+}
+
 /// Optional, fail-closed authority for ordinary outgoing attempt and transport
 /// mutations. It intentionally lives beside (not on) [MessageRepository] so
 /// unrelated repository fakes do not acquire new abstract methods.

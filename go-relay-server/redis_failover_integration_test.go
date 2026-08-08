@@ -15,24 +15,26 @@ import (
 )
 
 type redisHelperRequest struct {
-	Op          string   `json:"op"`
-	RedisURL    string   `json:"redisUrl"`
-	RedisPrefix string   `json:"redisPrefix"`
-	Namespace   string   `json:"namespace,omitempty"`
-	Requester   string   `json:"requester,omitempty"`
-	PeerID      string   `json:"peerId,omitempty"`
-	From        string   `json:"from,omitempty"`
-	Record      string   `json:"record,omitempty"`
-	GroupID     string   `json:"groupId,omitempty"`
-	Cursor      string   `json:"cursor,omitempty"`
-	Token       string   `json:"token,omitempty"`
-	Platform    string   `json:"platform,omitempty"`
-	Limit       int      `json:"limit,omitempty"`
-	TTL         uint64   `json:"ttl,omitempty"`
-	Messages    []string `json:"messages,omitempty"`
-	EntryIDs    []string `json:"entryIds,omitempty"`
-	CustodyKind string   `json:"custodyKind,omitempty"`
-	Admission   bool     `json:"admission,omitempty"`
+	Op                         string   `json:"op"`
+	RedisURL                   string   `json:"redisUrl"`
+	RedisPrefix                string   `json:"redisPrefix"`
+	Namespace                  string   `json:"namespace,omitempty"`
+	Requester                  string   `json:"requester,omitempty"`
+	PeerID                     string   `json:"peerId,omitempty"`
+	From                       string   `json:"from,omitempty"`
+	Record                     string   `json:"record,omitempty"`
+	GroupID                    string   `json:"groupId,omitempty"`
+	Cursor                     string   `json:"cursor,omitempty"`
+	Token                      string   `json:"token,omitempty"`
+	Platform                   string   `json:"platform,omitempty"`
+	Limit                      int      `json:"limit,omitempty"`
+	TTL                        uint64   `json:"ttl,omitempty"`
+	Messages                   []string `json:"messages,omitempty"`
+	EntryIDs                   []string `json:"entryIds,omitempty"`
+	CustodyKind                string   `json:"custodyKind,omitempty"`
+	Admission                  bool     `json:"admission,omitempty"`
+	CustodyExpiresAtOrBeforeMs int64    `json:"custodyExpiresAtOrBeforeMs,omitempty"`
+	NowMs                      int64    `json:"nowMs,omitempty"`
 }
 
 type redisHelperResponse struct {
@@ -45,7 +47,10 @@ type redisHelperResponse struct {
 	StoreStatus string   `json:"storeStatus,omitempty"`
 	EntryIDs    []string `json:"entryIds,omitempty"`
 	Timestamps  []int64  `json:"timestamps,omitempty"`
+	ExpiresAtMs []int64  `json:"expiresAtMs,omitempty"`
 	Acked       int      `json:"acked,omitempty"`
+	Count       int      `json:"count,omitempty"`
+	Peers       int      `json:"peers,omitempty"`
 }
 
 func TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace(t *testing.T) {
@@ -145,6 +150,61 @@ func TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace(
 	}))
 	if len(final.Messages) != 0 || len(final.EntryIDs) != 0 || final.HasMore {
 		t.Fatalf("protected row survived exact ACK: %#v", final)
+	}
+
+	// Plan 347: a media-envelope ceiling is persisted in both physical rows,
+	// survives exact retry through another process, and is authoritative for
+	// legacy count/stats/read as well as protected count/stats/read.
+	const processNowMs int64 = 2_000_000_000_000
+	expiryBase := base
+	expiryBase.PeerID = "peer-media-expiry"
+	expiryBase.CustodyKind = ackCustodyDirectTextKind
+	expiryBase.Messages = []string{
+		ackCustodyTextEnvelope("process-media-expiry", "peer-sender", "cipher"),
+	}
+	expiryBase.NowMs = processNowMs
+	expiryBase.CustodyExpiresAtOrBeforeMs = processNowMs + time.Hour.Milliseconds()
+
+	expiryStored := runRedisHelper(t, withOp(expiryBase, "store_ack_custody", nil))
+	if expiryStored.StoreStatus != string(InboxStoreResultStored) ||
+		len(expiryStored.ExpiresAtMs) != 1 ||
+		expiryStored.ExpiresAtMs[0] != expiryBase.CustodyExpiresAtOrBeforeMs {
+		t.Fatalf("process media bounded store = %#v", expiryStored)
+	}
+	expiryRetry := expiryBase
+	expiryRetry.NowMs += time.Minute.Milliseconds()
+	expiryDuplicate := runRedisHelper(t, withOp(expiryRetry, "store_ack_custody", nil))
+	if expiryDuplicate.StoreStatus != string(InboxStoreResultDuplicate) ||
+		len(expiryDuplicate.EntryIDs) != 1 ||
+		expiryDuplicate.EntryIDs[0] != expiryStored.EntryIDs[0] ||
+		expiryDuplicate.ExpiresAtMs[0] != expiryBase.CustodyExpiresAtOrBeforeMs {
+		t.Fatalf("process media bounded duplicate = %#v", expiryDuplicate)
+	}
+
+	atExpiry := expiryBase
+	atExpiry.NowMs = expiryBase.CustodyExpiresAtOrBeforeMs
+	for _, operation := range []string{
+		"count_inbox",
+		"stats_inbox",
+		"count_ack_custody",
+		"stats_ack_custody",
+	} {
+		counted := runRedisHelper(t, withOp(atExpiry, operation, nil))
+		if counted.Count != 0 || counted.Peers != 0 {
+			t.Fatalf("%s retained media row at exact bound: %#v", operation, counted)
+		}
+	}
+	expiredShadow := runRedisHelper(t, withOp(atExpiry, "retrieve_inbox", func(r *redisHelperRequest) {
+		r.Limit = 50
+	}))
+	if len(expiredShadow.Messages) != 0 || expiredShadow.HasMore {
+		t.Fatalf("legacy shadow outlived media ceiling: %#v", expiredShadow)
+	}
+	expiredProtected := runRedisHelper(t, withOp(atExpiry, "retrieve_ack_custody", func(r *redisHelperRequest) {
+		r.Limit = 50
+	}))
+	if len(expiredProtected.Messages) != 0 || expiredProtected.HasMore {
+		t.Fatalf("protected row outlived media ceiling: %#v", expiredProtected)
 	}
 }
 
@@ -301,6 +361,11 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 		t.Fatalf("newControlPlaneStores() error: %v", err)
 	}
 	defer func() { _ = stores.Close() }()
+	helperNow := time.Now()
+	if req.NowMs > 0 {
+		helperNow = time.UnixMilli(req.NowMs)
+		stores.Inbox.SetAckCustodyNowForTest(func() time.Time { return helperNow })
+	}
 
 	var resp redisHelperResponse
 
@@ -333,9 +398,10 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 			t.Fatalf("store_ack_custody requires exactly one message")
 		}
 		result, stored, err := stores.Inbox.StoreAckCustody(req.PeerID, inboxMessage{
-			From:      req.From,
-			Message:   req.Messages[0],
-			Timestamp: time.Now().UnixMilli(),
+			From:        req.From,
+			Message:     req.Messages[0],
+			Timestamp:   helperNow.UnixMilli(),
+			ExpiresAtMs: req.CustodyExpiresAtOrBeforeMs,
 		}, req.CustodyKind)
 		if err != nil {
 			t.Fatalf("StoreAckCustody: %v", err)
@@ -343,6 +409,7 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 		resp.StoreStatus = string(result)
 		resp.EntryIDs = []string{stored.ID}
 		resp.Timestamps = []int64{stored.Timestamp}
+		resp.ExpiresAtMs = []int64{ackCustodyEntryExpiresAtMs(stored)}
 	case "retrieve_ack_custody":
 		messages, hasMore, err := stores.Inbox.RetrieveAckCustodyPending(req.PeerID, req.Limit)
 		if err != nil {
@@ -352,11 +419,21 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 		resp.Messages = make([]string, 0, len(messages))
 		resp.EntryIDs = make([]string, 0, len(messages))
 		resp.Timestamps = make([]int64, 0, len(messages))
+		resp.ExpiresAtMs = make([]int64, 0, len(messages))
 		for _, message := range messages {
 			resp.Messages = append(resp.Messages, message.Message)
 			resp.EntryIDs = append(resp.EntryIDs, message.ID)
 			resp.Timestamps = append(resp.Timestamps, message.Timestamp)
+			resp.ExpiresAtMs = append(resp.ExpiresAtMs, ackCustodyEntryExpiresAtMs(message))
 		}
+	case "count_inbox":
+		resp.Count = stores.Inbox.Count(req.PeerID)
+	case "stats_inbox":
+		resp.Peers, resp.Count = stores.Inbox.Stats()
+	case "count_ack_custody":
+		resp.Count = stores.Inbox.CountAckCustody(req.PeerID)
+	case "stats_ack_custody":
+		resp.Peers, resp.Count = stores.Inbox.AckCustodyStats()
 	case "ack_ack_custody":
 		acked, err := stores.Inbox.AckAckCustody(req.PeerID, req.EntryIDs)
 		if err != nil {

@@ -23,6 +23,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/debug/android_direct_media_blob_custody_e2e.dart';
 import 'package:flutter_app/features/contact_request/application/accept_and_reciprocate_use_case.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
@@ -1067,6 +1068,41 @@ void startIntroE2EPoller({
           await _writeIntroE2EResult(
             Map<String, dynamic>.from(
               wakeTokenE2EFailureReceipt(config: config, error: error),
+            ),
+          );
+        } finally {
+          await _deleteConfigIfPresent();
+        }
+        return;
+      }
+
+      // Plan 347 owns a four-phase two-peer production action. The sender's
+      // first phase deliberately never returns after strict blob persistence;
+      // the host must terminate that process and launch the resume phase.
+      if (config['transport_action'] ==
+          androidDirectMediaBlobCustodyE2EAction) {
+        try {
+          final result = await runAndroidDirectMediaBlobCustodyE2EAction(
+            config: config,
+            p2pService: p2pService,
+            bridge: bridge,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            audioRecorderService: audioRecorderService,
+            writeProgress: (progress) =>
+                _writeIntroE2EResult(Map<String, dynamic>.from(progress)),
+          );
+          await _writeIntroE2EResult(Map<String, dynamic>.from(result));
+        } catch (error) {
+          await _writeIntroE2EResult(
+            Map<String, dynamic>.from(
+              androidDirectMediaBlobCustodyE2EFailureReceipt(
+                config: config,
+                error: error,
+              ),
             ),
           );
         } finally {

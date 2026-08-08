@@ -14,6 +14,7 @@ class MigrationFileManifestValidator {
 
   Future<MigrationFileManifest> validateRows({
     Iterable<Map<String, Object?>> chatMediaRows = const [],
+    Iterable<Map<String, Object?>> directMediaBlobCustodyRows = const [],
     Iterable<Map<String, Object?>> postMediaRows = const [],
     Iterable<Map<String, Object?>> postMediaRecoveryRows = const [],
     Iterable<Map<String, Object?>> contactRows = const [],
@@ -22,6 +23,7 @@ class MigrationFileManifestValidator {
   }) {
     return _builder.build(
       chatMediaRows: chatMediaRows,
+      directMediaBlobCustodyRows: directMediaBlobCustodyRows,
       postMediaRows: postMediaRows,
       postMediaRecoveryRows: postMediaRecoveryRows,
       contactRows: contactRows,

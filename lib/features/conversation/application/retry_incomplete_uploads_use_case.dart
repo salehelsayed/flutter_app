@@ -1,7 +1,9 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -15,6 +17,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -41,6 +44,19 @@ bool isExactDirectMediaCustodyRetryProjection({
   required ConversationMessage message,
   required String expectedSenderPeerId,
   required List<MediaAttachment> attachments,
+  bool allowPublishedPending = false,
+}) => _isExactDirectMediaCustodyRetryProjection(
+  message: message,
+  expectedSenderPeerId: expectedSenderPeerId,
+  attachments: attachments,
+  allowPublishedPending: allowPublishedPending,
+);
+
+bool _isExactDirectMediaCustodyRetryProjection({
+  required ConversationMessage message,
+  required String expectedSenderPeerId,
+  required List<MediaAttachment> attachments,
+  required bool allowPublishedPending,
 }) {
   final intentId = message.directMediaCustodyIntentId;
   final attachmentIds = attachments.map((attachment) => attachment.id).toSet();
@@ -82,15 +98,43 @@ bool isExactDirectMediaCustodyRetryProjection({
 
   return attachments.every(
     (attachment) => attachment.downloadStatus == 'upload_pending'
-        ? _isExactPreparedDirectMediaRetryAttachment(
-            attachment,
-            messageId: message.id,
-          )
+        ? (_isExactPreparedDirectMediaRetryAttachment(
+                attachment,
+                messageId: message.id,
+              ) ||
+              (allowPublishedPending &&
+                  _isExactPublishedDirectMediaRetryAttachment(
+                    attachment,
+                    messageId: message.id,
+                  )))
         : _isExactCompletedDirectMediaRetryAttachment(
             attachment,
             messageId: message.id,
           ),
   );
+}
+
+bool _isExactPublishedDirectMediaRetryAttachment(
+  MediaAttachment attachment, {
+  required String messageId,
+}) {
+  final expectedPendingPath =
+      MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachment.id,
+        mime: attachment.mime,
+      );
+  return _hasExactDirectMediaRetryStableIdentity(
+        attachment,
+        messageId: messageId,
+      ) &&
+      attachment.localPath == expectedPendingPath &&
+      _directMediaRetrySha256.hasMatch(attachment.contentHash ?? '') &&
+      attachment.thumbnailHash == null &&
+      (attachment.encryptionKeyBase64?.trim().isNotEmpty ?? false) &&
+      (attachment.encryptionNonce?.trim().isNotEmpty ?? false) &&
+      attachment.encryptionScheme ==
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1;
 }
 
 /// Converts an uploaded blob into the exact completion candidate for a
@@ -272,6 +316,8 @@ Future<int> retryIncompleteUploads({
   bool requireOsConnectivity = false,
   MediaUploadConnectivityProbe connectivityProbe = probeMediaUploadConnectivity,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -476,12 +522,28 @@ Future<int> retryIncompleteUploads({
         owner: MediaOwnerLane.direct,
       );
       final directMediaIntent = msg.directMediaCustodyIntentId;
+      DirectMediaBlobCustodyRepository? directMediaBlobRepository;
+      var hasDirectMediaBlobGeneration = false;
+      if (kDirectMediaBlobCustodyClientEnabled &&
+          directMediaIntent != null &&
+          mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
+        final candidateRepository =
+            mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+        if (candidateRepository.supportsDirectMediaBlobCustody) {
+          directMediaBlobRepository = candidateRepository;
+          hasDirectMediaBlobGeneration =
+              (await candidateRepository.loadDirectMediaBlobCustodyForMessage(
+                messageId,
+              )).isNotEmpty;
+        }
+      }
       var retryPendingAttachments = pendingAttsForMessage;
       if (directMediaIntent != null) {
         if (!isExactDirectMediaCustodyRetryProjection(
           message: msg,
           expectedSenderPeerId: identity.peerId,
           attachments: allAttachments,
+          allowPublishedPending: hasDirectMediaBlobGeneration,
         )) {
           emitFlowEvent(
             layer: 'FL',
@@ -616,6 +678,39 @@ Future<int> retryIncompleteUploads({
       final carriedPrivateCompletions = <String, MediaAttachment>{};
       final carriedDirectMediaCustodyCompletions = <String, MediaAttachment>{};
       var directMediaPreparationRefused = false;
+
+      if (kDirectMediaBlobCustodyClientEnabled &&
+          directMediaIntent != null &&
+          directMediaBlobRepository != null &&
+          hasDirectMediaBlobGeneration) {
+        final coordinator =
+            directMediaBlobCustodyCoordinator ??
+            PreparedDirectMediaBlobCustodyCoordinator(
+              repository: directMediaBlobRepository,
+              artifactStore:
+                  directMediaBlobArtifactStore ??
+                  DirectMediaBlobArtifactStore(),
+            );
+        final strictResult = await coordinator.reopenAndUpload(
+          bridge: bridge,
+          identityPeerId: identity.peerId,
+          recipientPeerId: msg.contactPeerId,
+          expectedParent: msg,
+          expectedAttachments: allAttachments,
+        );
+        if (!strictResult.isComplete) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_STRICT_BLOB_RETAINED',
+            details: const <String, Object?>{},
+          );
+          continue;
+        }
+        for (final attachment in strictResult.attachments) {
+          carriedDirectMediaCustodyCompletions[attachment.id] = attachment;
+        }
+        retryPendingAttachments = const <MediaAttachment>[];
+      }
 
       for (final attachment in retryPendingAttachments) {
         var localPath = attachment.localPath;
@@ -1064,7 +1159,11 @@ Future<int> retryIncompleteUploads({
         );
 
         // Cleanup durable storage after successful send
-        if (mediaFileManager != null && !isOutgoingPrivateOneMoreLook) {
+        if (mediaFileManager != null &&
+            !isOutgoingPrivateOneMoreLook &&
+            !fullAttachmentList.any(
+              (attachment) => attachment.blobCustody != null,
+            )) {
           try {
             await mediaFileManager.deletePendingUploadDir(messageId);
           } catch (_) {}

@@ -3,7 +3,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -17,8 +19,10 @@ import 'package:flutter_app/features/conversation/application/retry_incomplete_u
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
     as p2p;
@@ -172,6 +176,62 @@ class _RecordingDirectUploadRetryProjection
       state: UploadRetryProjectionState.terminal,
     );
   }
+}
+
+class _AbsentDirectMediaBlobRepository extends FakeMediaAttachmentRepository
+    implements DirectMediaBlobCustodyRepository {
+  int blobLoads = 0;
+  int blobStages = 0;
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    blobStages++;
+    return const DirectMediaBlobGenerationStageResult.refused();
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => null;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async {
+    blobLoads++;
+    return const <DirectMediaBlobCustodyRow>[];
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async => false;
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
 }
 
 void main() {
@@ -2018,6 +2078,74 @@ void main() {
     );
 
     // G.8.3.1
+    test(
+      'TC-347-08c absent-v111 partial legacy attempt never promotes to strict',
+      () async {
+        const messageId = 'msg-347-absent-v111-partial';
+        const doneId = 'att-347-legacy-done';
+        const pendingId = 'att-347-legacy-pending';
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[doneId, pendingId],
+        );
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'peer-bob-001',
+          senderPeerId: 'my-peer-id',
+          text: '',
+          timestamp: '2026-08-08T12:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-08-08T12:00:00.000Z',
+          directMediaCustodyIntentId: intent,
+        );
+        final pending = _pendingAtt(
+          id: pendingId,
+          messageId: messageId,
+          localPath: MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: messageId,
+            attachmentId: pendingId,
+            mime: 'audio/mpeg',
+          ),
+        ).copyWith(ownerLane: MediaOwnerLane.direct);
+        final done = _doneAttachment(
+          doneId,
+          messageId,
+        ).copyWith(ownerLane: MediaOwnerLane.direct);
+        final absentBlobRepo = _AbsentDirectMediaBlobRepository()
+          ..seed(<MediaAttachment>[done, pending]);
+        messageRepo.seed(<ConversationMessage>[message]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+        fakeUploadFn.willReturn(
+          _doneAttachment(
+            pendingId,
+            messageId,
+          ).copyWith(durationMs: pending.durationMs),
+        );
+
+        await retryIncompleteUploads(
+          mediaAttachmentRepo: absentBlobRepo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+        );
+
+        expect(absentBlobRepo.blobLoads, 1);
+        expect(absentBlobRepo.blobStages, 0);
+        expect(fakeUploadFn.callCount, 1);
+        expect(fakeUploadFn.lastBlobId, pendingId);
+        expect(
+          bridge.commandLog.where((command) => command == 'media:upload'),
+          isEmpty,
+          reason: 'absent v111 must not enter the strict upload owner',
+        );
+      },
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
     test(
       'partial upload crash: re-uploads only pending, combines with done',
       () async {

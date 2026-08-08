@@ -580,6 +580,8 @@ class InMemoryMediaAttachmentRepository
     required OutgoingOrdinaryAttemptKind kind,
     required String recipientPeerId,
     required String wireEnvelope,
+    String? wireMediaBlobManifestHash,
+    int? wireMediaBlobExpiresAtMs,
   }) {
     final callback = onStageOutgoingDirectMediaInboxCustody;
     if (callback == null) {

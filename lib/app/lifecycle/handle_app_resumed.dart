@@ -80,6 +80,7 @@ Future<bool?> handleAppResumed({
   Future<int> Function()? retryPendingPostDeliveries,
   Future<int> Function()? retryIncompleteKeyExchangesFn,
   Future<int> Function()? recoverStuckSendingMessagesFn, // Part A
+  Future<int> Function()? drainDirectMediaBlobCustodyFn,
   Future<int> Function()? recoverStuckSendingGroupMessagesFn, // Section 1
   Future<int> Function()? retryIncompleteGroupUploadsFn, // Section 5
   Future<int> Function()? retryIncompleteGroupDownloadsFn, // Plan 269
@@ -122,6 +123,11 @@ Future<bool?> handleAppResumed({
   /// must run before the account-migration network gate so a denied network
   /// resume cannot strand already-local lifecycle work. Errors are isolated.
   Future<void> Function()? privateMediaLifecycleRecoveryFn,
+
+  /// Plan 347 local-only artifact/row cleanup. It runs before the account
+  /// migration network gate; the network-capable ACK/download drain uses
+  /// [drainDirectMediaBlobCustodyFn] later after bridge health.
+  Future<int> Function()? directMediaBlobLocalCleanupFn,
 
   /// FDC-04 (DESIGN-3/SRC-1): resolves the single active conversation peer so
   /// resume can eagerly warm ONLY it (PS-4 — never the roster). In production
@@ -201,6 +207,23 @@ Future<bool?> handleAppResumed({
         layer: 'FL',
         event: 'APP_LIFECYCLE_RESUME_PRIVATE_MEDIA_RECOVERY_FAILED',
         details: {'error': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  if (directMediaBlobLocalCleanupFn != null) {
+    try {
+      await directMediaBlobLocalCleanupFn();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_DIRECT_MEDIA_BLOB_LOCAL_CLEANUP_DONE',
+        details: {},
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_RESUME_DIRECT_MEDIA_BLOB_LOCAL_CLEANUP_FAILED',
+        details: {'errorType': error.runtimeType.toString()},
       );
     }
   }
@@ -835,6 +858,23 @@ Future<bool?> handleAppResumed({
         if (kDebugMode) {
           debugPrint('[RESUME] Step 8a: recoverStuckSendingMessages ERROR: $e');
         }
+      }
+    }
+
+    // TC-347-07c: recover immutable ciphertext/ACK authority before any
+    // mutable upload retry can inspect or alter attachment state.
+    if (drainDirectMediaBlobCustodyFn != null) {
+      try {
+        final count = await drainDirectMediaBlobCustodyFn();
+        if (kDebugMode) {
+          debugPrint('[RESUME] Step 8a.1: drainDirectMediaBlobCustody=$count');
+        }
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DRAIN_DIRECT_MEDIA_BLOB_CUSTODY_RESUME_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
       }
     }
 

@@ -452,8 +452,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 110);
-        expect(manifest.databaseVersion, 110);
+        expect(currentIdentityDatabaseVersion, 111);
+        expect(manifest.databaseVersion, 111);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -547,8 +547,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 110);
-        expect(await _userVersion(productionStaged), 110);
+        expect(await _userVersion(productionActive), 111);
+        expect(await _userVersion(productionStaged), 111);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -588,7 +588,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 110);
+        expect(manifest.databaseVersion, 111);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -673,8 +673,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 110);
-        expect(await _userVersion(productionStaged), 110);
+        expect(await _userVersion(productionActive), 111);
+        expect(await _userVersion(productionStaged), 111);
 
         const pendingMessageId = 'tc345-transfer-pending';
         const pendingAttachmentId = 'tc345-transfer-pending-media';
@@ -789,7 +789,7 @@ CREATE TABLE identity (
           orderBy: 'message_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 110);
+        expect(manifest.databaseVersion, 111);
 
         final result =
             await MigrationDatabaseActiveImporter(
@@ -880,6 +880,147 @@ CREATE TABLE identity (
         );
       },
     );
+
+    test(
+      'TC-347-07 production transfer preserves v111 rows and exact v108 binding',
+      () async {
+        final productionActive = await openDatabase(
+          p.join(tempDir.path, 'tc347-production-active.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        final productionStaged = await openDatabase(
+          p.join(tempDir.path, 'tc347-production-staged.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        addTearDown(() async {
+          if (productionActive.isOpen) await productionActive.close();
+          if (productionStaged.isOpen) await productionStaged.close();
+        });
+
+        expect(await _userVersion(productionActive), 111);
+        expect(await _userVersion(productionStaged), 111);
+
+        const incarnation = '34734734734734734734734734734734';
+        const manifestHash =
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+        const expiresAtMs = 2000000000000;
+        final boundV108 = <String, Object?>{
+          ..._custodyRow(
+            recipientPeerId: 'transfer-recipient',
+            messageId: 'message-347',
+            incarnationId: incarnation,
+            wireEnvelope: '{"type":"chat_message","id":"message-347"}',
+          ),
+          'media_blob_expires_at_ms': expiresAtMs,
+          'media_blob_manifest_hash': manifestHash,
+        };
+        await productionStaged.insert('direct_inbox_custody_outbox', boundV108);
+        await productionStaged.insert(
+          'direct_media_blob_custody',
+          _outgoingBlobCustodyRow(
+            attachmentId: 'outgoing-attachment-347',
+            messageId: 'message-347',
+            incarnationId: incarnation,
+            expiresAtMs: expiresAtMs,
+          ),
+        );
+        await productionStaged.insert(
+          'direct_media_blob_custody',
+          _incomingBlobCustodyRow(
+            attachmentId: 'incoming-attachment-347',
+            messageId: 'incoming-message-347',
+            expiresAtMs: expiresAtMs,
+          ),
+        );
+
+        final expectedV108 = await productionStaged.query(
+          'direct_inbox_custody_outbox',
+          orderBy: 'message_id',
+        );
+        final expectedV111 = await productionStaged.query(
+          'direct_media_blob_custody',
+          orderBy: 'attachment_id',
+        );
+        final manifest = await _manifestFor(productionStaged);
+        expect(manifest.databaseVersion, 111);
+        expect(
+          manifest.schemaInventory.tables['direct_media_blob_custody'],
+          isNotEmpty,
+        );
+        expect(
+          manifest.schemaInventory.hasColumn(
+            'direct_inbox_custody_outbox',
+            'media_blob_manifest_hash',
+          ),
+          isTrue,
+        );
+
+        final result =
+            await MigrationDatabaseActiveImporter(
+              activeDatabase: productionActive,
+            ).importVerifiedStagedDatabase(
+              MigrationDatabaseImportStagingResult(
+                database: productionStaged,
+                manifest: manifest,
+                stagedDatabasePath: p.join(
+                  tempDir.path,
+                  'tc347-production-staged.db',
+                ),
+              ),
+            );
+
+        expect(result.importedTables, contains('direct_media_blob_custody'));
+        expect(
+          await productionActive.query(
+            'direct_inbox_custody_outbox',
+            orderBy: 'message_id',
+          ),
+          expectedV108,
+        );
+        expect(
+          await productionActive.query(
+            'direct_media_blob_custody',
+            orderBy: 'attachment_id',
+          ),
+          expectedV111,
+        );
+
+        final targetBeforeRefusal = await _snapshotAllProductionRows(
+          productionActive,
+        );
+        await expectLater(
+          MigrationDatabaseActiveImporter(
+            activeDatabase: productionActive,
+          ).importVerifiedStagedDatabase(
+            MigrationDatabaseImportStagingResult(
+              database: productionStaged,
+              manifest: manifest.copyWith(databaseVersion: 110),
+              stagedDatabasePath: p.join(
+                tempDir.path,
+                'tc347-production-staged.db',
+              ),
+            ),
+          ),
+          throwsA(
+            isA<MigrationDatabaseActiveImportException>().having(
+              (error) => error.message,
+              'message',
+              contains('unsupportedDatabaseVersion'),
+            ),
+          ),
+        );
+        expect(
+          await _snapshotAllProductionRows(productionActive),
+          targetBeforeRefusal,
+        );
+      },
+    );
   });
 }
 
@@ -927,6 +1068,60 @@ Map<String, Object?> _reactionCustodyRow({
   'last_error_code': null,
   'created_at': createdAt,
   'updated_at': createdAt,
+};
+
+Map<String, Object?> _outgoingBlobCustodyRow({
+  required String attachmentId,
+  required String messageId,
+  required String incarnationId,
+  required int expiresAtMs,
+}) => <String, Object?>{
+  'attachment_id': attachmentId,
+  'message_id': messageId,
+  'direction': 'outgoing',
+  'state': 'outgoing_stored',
+  'inbox_custody_incarnation_id': incarnationId,
+  'recipient_peer_id': 'transfer-recipient',
+  'ciphertext_relative_path':
+      'direct_media_blob_custody_v1/${'a' * 64}/outgoing.blob',
+  'custody_kind': 'direct_media_blob_v1',
+  'custody_contract': 'ack_or_expiry_v1',
+  'content_hash': 'd' * 64,
+  'ciphertext_size': 347,
+  'transport_mime': 'application/octet-stream',
+  'expires_at_ms': expiresAtMs,
+  'custody_relay_peer_id': 'relay-transfer',
+  'retry_count': 0,
+  'last_attempt_at': null,
+  'next_attempt_at': null,
+  'created_at': '2026-08-08T10:00:00.000Z',
+  'updated_at': '2026-08-08T10:01:00.000Z',
+};
+
+Map<String, Object?> _incomingBlobCustodyRow({
+  required String attachmentId,
+  required String messageId,
+  required int expiresAtMs,
+}) => <String, Object?>{
+  'attachment_id': attachmentId,
+  'message_id': messageId,
+  'direction': 'incoming',
+  'state': 'incoming_ack_pending',
+  'inbox_custody_incarnation_id': null,
+  'recipient_peer_id': null,
+  'ciphertext_relative_path': null,
+  'custody_kind': 'direct_media_blob_v1',
+  'custody_contract': 'ack_or_expiry_v1',
+  'content_hash': 'e' * 64,
+  'ciphertext_size': 743,
+  'transport_mime': 'application/octet-stream',
+  'expires_at_ms': expiresAtMs,
+  'custody_relay_peer_id': 'relay-source',
+  'retry_count': 1,
+  'last_attempt_at': '2026-08-08T10:02:00.000Z',
+  'next_attempt_at': '2026-08-08T10:03:00.000Z',
+  'created_at': '2026-08-08T10:00:00.000Z',
+  'updated_at': '2026-08-08T10:02:00.000Z',
 };
 
 Map<String, Object?> _productionMessageRow({

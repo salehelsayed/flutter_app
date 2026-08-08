@@ -85,6 +85,7 @@ class P2PServiceImpl
         P2PService,
         DetailedInboxStore,
         AckOrExpiryInboxStore,
+        MediaExpiryBoundedInboxStore,
         ReadinessProofRecorder,
         P2PFullInboxDrain,
         DurableLanSender,
@@ -289,6 +290,7 @@ class P2PServiceImpl
               String? wakeToken,
               String? custodyContract,
               String? custodyKind,
+              int? custodyExpiresAtOrBeforeMs,
             }) => callP2PInboxStore(
               _bridge,
               toPeerId: toPeerId,
@@ -297,6 +299,7 @@ class P2PServiceImpl
               wakeToken: wakeToken,
               custodyContract: custodyContract,
               custodyKind: custodyKind,
+              custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
             ),
         retrieveInbox: ({int? timeoutMs}) =>
             callP2PInboxRetrieve(_bridge, timeoutMs: timeoutMs),
@@ -2732,6 +2735,19 @@ class P2PServiceImpl
     toPeerId,
     message,
     custodyKind: custodyKind,
+    timeoutMs: timeoutMs,
+  );
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) => _inboxCoordinator.storeInMediaExpiryBoundedInboxDetailed(
+    toPeerId,
+    message,
+    custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
     timeoutMs: timeoutMs,
   );
 

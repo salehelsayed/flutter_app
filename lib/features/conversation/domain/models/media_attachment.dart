@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 
 const kMediaAttachmentEncryptionSchemeBlobAesGcmV1 = 'blob_aes_256_gcm_v1';
@@ -76,6 +77,19 @@ class MediaAttachment {
   /// Versioned encryption scheme for encrypted media blobs.
   final String? encryptionScheme;
 
+  /// Recipient-verifiable strict relay custody commitment. This is a public
+  /// wire projection only; durable local proof and artifact state live in the
+  /// independent direct-media blob custody table.
+  final DirectMediaBlobCustodyCommitment? blobCustody;
+
+  /// LOCAL-ONLY exact digest of the strict commitment adopted for this row.
+  ///
+  /// The public commitment itself is never persisted in `media_attachments`.
+  /// This digest remains after v111 ACK/expiry retirement so replay and download
+  /// routing cannot silently reinterpret strict media as proof-less legacy.
+  /// Never serialized onto wire JSON.
+  final String? directMediaBlobCustodyFingerprint;
+
   /// LOCAL-ONLY (228): which message lane owns this attachment. Null means
   /// the row is legacy `'unresolved'` (or wire-parsed) and has no trusted
   /// owner. Never serialized onto wire JSON.
@@ -109,6 +123,8 @@ class MediaAttachment {
     this.encryptionKeyBase64,
     this.encryptionNonce,
     this.encryptionScheme,
+    this.blobCustody,
+    this.directMediaBlobCustodyFingerprint,
     this.ownerLane,
     this.isBookmarked = false,
     this.lastPlaybackPositionMs = 0,
@@ -175,6 +191,8 @@ class MediaAttachment {
       encryptionKeyBase64: map['encryption_key_base64'] as String?,
       encryptionNonce: map['encryption_nonce'] as String?,
       encryptionScheme: map['encryption_scheme'] as String?,
+      directMediaBlobCustodyFingerprint:
+          map['direct_media_blob_custody_fingerprint'] as String?,
       ownerLane: mediaOwnerLaneFromDbValue(map['owner_lane'] as String?),
       isBookmarked: ((map['is_bookmarked'] as num?)?.toInt() ?? 0) != 0,
       lastPlaybackPositionMs:
@@ -198,12 +216,16 @@ class MediaAttachment {
       'created_at': createdAt,
       'waveform': waveform != null ? jsonEncode(waveform) : null,
       if (uploadRetryCount != null) 'upload_retry_count': uploadRetryCount,
-      if (downloadRetryCount != null) 'download_retry_count': downloadRetryCount,
+      if (downloadRetryCount != null)
+        'download_retry_count': downloadRetryCount,
       'content_hash': contentHash,
       'thumbnail_hash': thumbnailHash,
       'encryption_key_base64': encryptionKeyBase64,
       'encryption_nonce': encryptionNonce,
       'encryption_scheme': encryptionScheme,
+      if (directMediaBlobCustodyFingerprint != null)
+        'direct_media_blob_custody_fingerprint':
+            directMediaBlobCustodyFingerprint,
       // LOCAL-ONLY columns (228) — DB map only, never wire JSON.
       'owner_lane': ownerLane?.dbValue ?? kMediaOwnerLaneUnresolved,
       'is_bookmarked': isBookmarked ? 1 : 0,
@@ -241,6 +263,9 @@ class MediaAttachment {
       encryptionKeyBase64: json['encryptionKeyBase64'] as String?,
       encryptionNonce: json['encryptionNonce'] as String?,
       encryptionScheme: json['encryptionScheme'] as String?,
+      blobCustody: json.containsKey('blobCustody')
+          ? DirectMediaBlobCustodyCommitment.fromJson(json['blobCustody'])
+          : null,
     );
   }
 
@@ -261,6 +286,7 @@ class MediaAttachment {
         'encryptionKeyBase64': encryptionKeyBase64,
       if (encryptionNonce != null) 'encryptionNonce': encryptionNonce,
       if (encryptionScheme != null) 'encryptionScheme': encryptionScheme,
+      if (blobCustody != null) 'blobCustody': blobCustody!.toJson(),
     };
   }
 
@@ -294,6 +320,10 @@ class MediaAttachment {
     bool clearEncryptionNonce = false,
     String? encryptionScheme,
     bool clearEncryptionScheme = false,
+    DirectMediaBlobCustodyCommitment? blobCustody,
+    bool clearBlobCustody = false,
+    String? directMediaBlobCustodyFingerprint,
+    bool clearDirectMediaBlobCustodyFingerprint = false,
     MediaOwnerLane? ownerLane,
     bool? isBookmarked,
     int? lastPlaybackPositionMs,
@@ -326,6 +356,11 @@ class MediaAttachment {
       encryptionScheme: clearEncryptionScheme
           ? null
           : (encryptionScheme ?? this.encryptionScheme),
+      blobCustody: clearBlobCustody ? null : (blobCustody ?? this.blobCustody),
+      directMediaBlobCustodyFingerprint: clearDirectMediaBlobCustodyFingerprint
+          ? null
+          : (directMediaBlobCustodyFingerprint ??
+                this.directMediaBlobCustodyFingerprint),
       ownerLane: ownerLane ?? this.ownerLane,
       isBookmarked: isBookmarked ?? this.isBookmarked,
       lastPlaybackPositionMs:

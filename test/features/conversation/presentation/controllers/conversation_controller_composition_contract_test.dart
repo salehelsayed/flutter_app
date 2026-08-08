@@ -49,7 +49,7 @@ const _controllerTestPaths = <String>[
 // non-DTR-15 parts of their pure-screen handoffs. The six sanctioned owner
 // expressions are canonicalized separately, so TC-294-09 is GREEN on HEAD and
 // remains GREEN when TC-294-01 transfers those expressions to controllers.
-const _expectedDirectApiFingerprint = 'cd54bae2';
+const _expectedDirectApiFingerprint = 'be8e4510';
 const _expectedGroupApiFingerprint = '2d8f881b';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection

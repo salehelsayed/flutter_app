@@ -369,7 +369,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.32.command.2",
+          "keyPath": "capabilities.34.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -397,7 +397,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.31.command.2",
+          "keyPath": "capabilities.33.command.2",
           "value": "integration_test/scripts/run_group_reaction_notification_sims.dart"
         }
       ]
@@ -412,7 +412,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.34.command.1",
+          "keyPath": "capabilities.36.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]
@@ -453,7 +453,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.31.artifactValidator",
+          "keyPath": "capabilities.33.artifactValidator",
           "value": "integration_test/scripts/validate_group_reaction_notification_artifacts.dart"
         }
       ]
@@ -1461,7 +1461,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.32.command.2",
+          "keyPath": "capabilities.34.command.2",
           "value": "integration_test/scripts/run_group_notification_projection_android.dart"
         }
       ]
@@ -1477,7 +1477,7 @@
         {
           "kind": "json-value",
           "source": "tool/sims/critical_features.json",
-          "keyPath": "capabilities.34.command.1",
+          "keyPath": "capabilities.36.command.1",
           "value": "integration_test/scripts/run_group_multi_party_sims.dart"
         }
       ]

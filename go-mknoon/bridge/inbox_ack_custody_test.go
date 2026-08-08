@@ -149,3 +149,70 @@ func TestDispatchInboxAckCustodyContract(t *testing.T) {
 		assertNotOk(t, conflict, "CUSTODY_IDENTITY_CONFLICT")
 	})
 }
+
+func TestInboxStoreMediaExpiryCeilingBridgeContract(t *testing.T) {
+	positive := int64(2_000_000_123_456)
+	zero := int64(0)
+	negative := int64(-1)
+
+	if err := validateInboxStoreMediaExpiryCeiling("", "", nil); err != nil {
+		t.Fatalf("omitted legacy ceiling: %v", err)
+	}
+	if err := validateInboxStoreMediaExpiryCeiling(
+		node.AckOrExpiryCustodyContract,
+		node.CustodyKindDirectReactionV109,
+		nil,
+	); err != nil {
+		t.Fatalf("omitted reaction ceiling: %v", err)
+	}
+	if err := validateInboxStoreMediaExpiryCeiling(
+		node.AckOrExpiryCustodyContract,
+		node.CustodyKindDirectTextV108,
+		&positive,
+	); err != nil {
+		t.Fatalf("exact media ceiling: %v", err)
+	}
+
+	for _, tc := range []struct {
+		name     string
+		contract string
+		kind     string
+		ceiling  *int64
+	}{
+		{
+			name:     "explicit zero",
+			contract: node.AckOrExpiryCustodyContract,
+			kind:     node.CustodyKindDirectTextV108,
+			ceiling:  &zero,
+		},
+		{
+			name:     "negative",
+			contract: node.AckOrExpiryCustodyContract,
+			kind:     node.CustodyKindDirectTextV108,
+			ceiling:  &negative,
+		},
+		{name: "legacy", ceiling: &positive},
+		{
+			name:     "reaction",
+			contract: node.AckOrExpiryCustodyContract,
+			kind:     node.CustodyKindDirectReactionV109,
+			ceiling:  &positive,
+		},
+		{
+			name:     "mutated contract",
+			contract: "ack_or_expiry_v2",
+			kind:     node.CustodyKindDirectTextV108,
+			ceiling:  &positive,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := validateInboxStoreMediaExpiryCeiling(
+				tc.contract,
+				tc.kind,
+				tc.ceiling,
+			); !errors.Is(err, errInvalidInboxAckCustodyContract) {
+				t.Fatalf("validation error = %v", err)
+			}
+		})
+	}
+}

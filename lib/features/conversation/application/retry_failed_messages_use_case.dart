@@ -3,9 +3,11 @@ import 'dart:io';
 
 import 'package:clock/clock.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
@@ -21,6 +23,7 @@ import 'package:flutter_app/features/conversation/application/delete_message_tom
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
@@ -192,6 +195,8 @@ Future<int> retryFailedMessages({
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
   MediaFileManager? mediaFileManager,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
   bool retryDirectInboxCustody = true,
 }) {
   return _retryFailedMessagesInternal(
@@ -203,6 +208,8 @@ Future<int> retryFailedMessages({
     mediaAttachmentRepo: mediaAttachmentRepo,
     uploadMediaFn: uploadMediaFn,
     mediaFileManager: mediaFileManager,
+    directMediaBlobArtifactStore: directMediaBlobArtifactStore,
+    directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
     uploadRetryProjectionRepo: null,
     manualRetry: false,
     retryDirectInboxCustody: retryDirectInboxCustody,
@@ -221,6 +228,8 @@ Future<int> retryFailedMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
   MediaFileManager? mediaFileManager,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
@@ -235,6 +244,8 @@ Future<int> retryFailedMessage({
     mediaAttachmentRepo: mediaAttachmentRepo,
     uploadMediaFn: uploadMediaFn,
     mediaFileManager: mediaFileManager,
+    directMediaBlobArtifactStore: directMediaBlobArtifactStore,
+    directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
     uploadRetryProjectionRepo:
         uploadRetryProjectionRepo ??
         (messageRepo is DirectUploadRetryProjectionRepository
@@ -269,6 +280,8 @@ Future<int> _retryFailedMessagesInternal({
   MediaAttachmentRepository? mediaAttachmentRepo,
   UploadMediaFn? uploadMediaFn,
   MediaFileManager? mediaFileManager,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
@@ -363,6 +376,8 @@ Future<int> _retryFailedMessagesInternal({
       mediaAttachmentRepo: mediaAttachmentRepo,
       uploadFn: effectiveUploadFn,
       mediaFileManager: mediaFileManager,
+      directMediaBlobArtifactStore: directMediaBlobArtifactStore,
+      directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
       uploadRetryProjectionRepo: uploadRetryProjectionRepo,
       uploadRetryRearmRepo: uploadRetryRearmRepo,
       tryClaimUploadLease: tryClaimUploadLease,
@@ -407,6 +422,8 @@ Future<bool> _retryFailedMessageCandidate({
   required dynamic identity,
   required UploadMediaFn uploadFn,
   MediaFileManager? mediaFileManager,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
   MediaAttachmentRepository? mediaAttachmentRepo,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
@@ -457,6 +474,11 @@ Future<bool> _retryFailedMessageCandidate({
           entry: owner,
           custodyRepository: custodyRepository,
           storeInAckCustodyInboxDetailed: storeExactCustody,
+          storeInMediaExpiryBoundedInboxDetailed:
+              p2pService is MediaExpiryBoundedInboxStore
+              ? (p2pService as MediaExpiryBoundedInboxStore)
+                    .storeInMediaExpiryBoundedInboxDetailed
+              : null,
         );
         emitFlowEvent(
           layer: 'FL',
@@ -494,18 +516,57 @@ Future<bool> _retryFailedMessageCandidate({
     // complete current projection before any retry path can rebuild blobs,
     // rotate keys, encrypt an event, or fall through to generic storage.
     final directMediaIntent = msg.directMediaCustodyIntentId;
+    _RetryAttachmentResolution? strictBlobResolution;
     if (directMediaIntent != null) {
       if (mediaAttachmentRepo == null) return false;
       try {
         final currentAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(msg.id, owner: MediaOwnerLane.direct);
+        DirectMediaBlobCustodyRepository? blobRepository;
+        var hasDirectMediaBlobGeneration = false;
+        if (kDirectMediaBlobCustodyClientEnabled &&
+            mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
+          final candidateRepository =
+              mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+          if (candidateRepository.supportsDirectMediaBlobCustody) {
+            blobRepository = candidateRepository;
+            hasDirectMediaBlobGeneration =
+                (await candidateRepository.loadDirectMediaBlobCustodyForMessage(
+                  msg.id,
+                )).isNotEmpty;
+          }
+        }
         if (!_isExactDirectMediaCustodyProjectionBeforeFailedRetry(
           message: msg,
           expectedSenderPeerId: identity.peerId,
           attachments: currentAttachments,
           manualRetry: manualRetry,
+          allowPublishedPending: hasDirectMediaBlobGeneration,
         )) {
           return false;
+        }
+        if (blobRepository != null && hasDirectMediaBlobGeneration) {
+          final coordinator =
+              directMediaBlobCustodyCoordinator ??
+              PreparedDirectMediaBlobCustodyCoordinator(
+                repository: blobRepository,
+                artifactStore:
+                    directMediaBlobArtifactStore ??
+                    DirectMediaBlobArtifactStore(),
+              );
+          final strictResult = await coordinator.reopenAndUpload(
+            bridge: bridge,
+            identityPeerId: identity.peerId,
+            recipientPeerId: msg.contactPeerId,
+            expectedParent: msg,
+            expectedAttachments: currentAttachments,
+          );
+          if (!strictResult.isComplete) return false;
+          strictBlobResolution = _RetryAttachmentResolution(
+            attachments: strictResult.attachments,
+            skipReason: _RetryFailedMessageSkipReason.none,
+            didUpload: true,
+          );
         }
       } catch (_) {
         return false;
@@ -525,21 +586,23 @@ Future<bool> _retryFailedMessageCandidate({
     // Resolve media authority before replaying a cached envelope. Automatic
     // retries are envelope-only for completed media; pending/terminal rows are
     // owned by the incomplete/manual lanes and must never be uploaded here.
-    final resolution = await _resolveAttachmentsForRetry(
-      message: msg,
-      messageRepo: messageRepo,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      bridge: bridge,
-      targetPeerId: msg.contactPeerId,
-      uploadFn: uploadFn,
-      mediaFileManager: mediaFileManager,
-      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
-      uploadRetryRearmRepo: uploadRetryRearmRepo,
-      tryClaimUploadLease: tryClaimUploadLease,
-      releaseUploadLease: releaseUploadLease,
-      manualRetry: manualRetry,
-      expectedSenderPeerId: identity.peerId,
-    );
+    final resolution =
+        strictBlobResolution ??
+        await _resolveAttachmentsForRetry(
+          message: msg,
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          bridge: bridge,
+          targetPeerId: msg.contactPeerId,
+          uploadFn: uploadFn,
+          mediaFileManager: mediaFileManager,
+          uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+          uploadRetryRearmRepo: uploadRetryRearmRepo,
+          tryClaimUploadLease: tryClaimUploadLease,
+          releaseUploadLease: releaseUploadLease,
+          manualRetry: manualRetry,
+          expectedSenderPeerId: identity.peerId,
+        );
     uploadLease = resolution.uploadLease;
     privateCustody = resolution.privateCustody;
     if (resolution.skipReason != _RetryFailedMessageSkipReason.none) {
@@ -1264,6 +1327,7 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
         expectedSenderPeerId: expectedSenderPeerId,
         attachments: persistedAttachments,
         manualRetry: manualRetry,
+        allowPublishedPending: false,
       )) {
     return const _RetryAttachmentResolution(
       attachments: null,
@@ -1551,11 +1615,13 @@ bool _isExactDirectMediaCustodyProjectionBeforeFailedRetry({
   required String expectedSenderPeerId,
   required List<MediaAttachment> attachments,
   required bool manualRetry,
+  required bool allowPublishedPending,
 }) {
   if (isExactDirectMediaCustodyRetryProjection(
     message: message,
     expectedSenderPeerId: expectedSenderPeerId,
     attachments: attachments,
+    allowPublishedPending: allowPublishedPending,
   )) {
     return true;
   }

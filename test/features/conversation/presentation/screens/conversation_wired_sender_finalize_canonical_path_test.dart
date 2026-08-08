@@ -1935,6 +1935,12 @@ void main() {
           );
           transferToken = null;
         }
+
+        // Retained failed-media rows keep their entry-animation card mounted.
+        // Dispose it explicitly, then flush its zero-delay start callback so
+        // this test leaves no pending widget-owned work for binding teardown.
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump(const Duration(milliseconds: 1));
       },
     );
   }

@@ -1,6 +1,10 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart'
+    show kDirectMediaBlobArtifactRootDirectory;
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_file_manifest.dart';
@@ -20,6 +24,7 @@ class MigrationFileManifestBuilder {
 
   Future<MigrationFileManifest> build({
     Iterable<Map<String, Object?>> chatMediaRows = const [],
+    Iterable<Map<String, Object?>> directMediaBlobCustodyRows = const [],
     Iterable<Map<String, Object?>> postMediaRows = const [],
     Iterable<Map<String, Object?>> postMediaRecoveryRows = const [],
     Iterable<Map<String, Object?>> contactRows = const [],
@@ -31,6 +36,23 @@ class MigrationFileManifestBuilder {
     final issues = <MigrationFileManifestIssue>[];
     final pathRepairs = <MigrationFilePathRepair>[];
     final includedPaths = <String>{};
+    final materializedIdentityRows = identityRows.toList(growable: false);
+    final identityScopes = materializedIdentityRows
+        .map((row) => _stringValue(row['peer_id']))
+        .whereType<String>()
+        .where((peerId) => peerId == peerId.trim())
+        .map((peerId) => sha256.convert(utf8.encode(peerId)).toString())
+        .toSet();
+
+    for (final row in directMediaBlobCustodyRows) {
+      await _addDirectMediaBlobCustody(
+        items: items,
+        issues: issues,
+        includedPaths: includedPaths,
+        allowedIdentityScopes: identityScopes,
+        row: row,
+      );
+    }
 
     for (final row in chatMediaRows) {
       await _addChatMedia(items, issues, pathRepairs, includedPaths, row);
@@ -53,7 +75,7 @@ class MigrationFileManifestBuilder {
         kind: MigrationFileManifestItemKind.contactAvatar,
       );
     }
-    for (final row in identityRows) {
+    for (final row in materializedIdentityRows) {
       final explicitAvatarPath = _stringValue(row['avatar_path']);
       final peerId = _stringValue(row['peer_id']) ?? 'identity';
       await _addPathBackedItem(
@@ -105,6 +127,161 @@ class MigrationFileManifestBuilder {
       issues: issues,
       pathRepairs: pathRepairs,
     );
+  }
+
+  Future<void> _addDirectMediaBlobCustody({
+    required List<MigrationFileManifestItem> items,
+    required List<MigrationFileManifestIssue> issues,
+    required Set<String> includedPaths,
+    required Set<String> allowedIdentityScopes,
+    required Map<String, Object?> row,
+  }) async {
+    final sourceId = _stringValue(row['attachment_id']) ?? 'unknown-custody';
+    final rawPath = _stringValue(row['ciphertext_relative_path']);
+    final DirectMediaBlobCustodyRow custody;
+    try {
+      custody = DirectMediaBlobCustodyRow.fromMap(row);
+    } on Object {
+      _addDirectMediaBlobCustodyIssue(
+        issues: issues,
+        code: isValidDirectMediaBlobCustodyRelativePath(rawPath)
+            ? MigrationFileManifestIssueCode.invalidCustodyArtifact
+            : MigrationFileManifestIssueCode.unsupportedAbsolutePath,
+        sourceId: sourceId,
+        relativePath: rawPath,
+        reason: 'invalid_v111_projection',
+      );
+      return;
+    }
+
+    // Incoming rows retain remote ACK authority in the database but do not
+    // own a ciphertext artifact. The dynamic database snapshot carries them.
+    if (custody.direction == DirectMediaBlobCustodyDirection.incoming) {
+      return;
+    }
+
+    final relativePath = custody.ciphertextRelativePath!;
+    final segments = p.posix.split(relativePath);
+    final isOwnedIdentityPath =
+        isValidDirectMediaBlobCustodyRelativePath(relativePath) &&
+        segments.length >= 3 &&
+        segments.first == kDirectMediaBlobArtifactRootDirectory &&
+        allowedIdentityScopes.contains(segments[1]) &&
+        relativePath.endsWith('.blob');
+    if (!isOwnedIdentityPath) {
+      _addDirectMediaBlobCustodyIssue(
+        issues: issues,
+        code: MigrationFileManifestIssueCode.unsupportedAbsolutePath,
+        sourceId: sourceId,
+        relativePath: relativePath,
+        reason: 'unsafe_or_cross_identity_custody_path',
+      );
+      return;
+    }
+    if (includedPaths.contains(relativePath)) {
+      _addDirectMediaBlobCustodyIssue(
+        issues: issues,
+        code: MigrationFileManifestIssueCode.invalidCustodyArtifact,
+        sourceId: sourceId,
+        relativePath: relativePath,
+        reason: 'duplicate_custody_path',
+      );
+      return;
+    }
+
+    final pathState = await _custodyArtifactPathState(relativePath);
+    if (pathState != _CustodyArtifactPathState.regularFile) {
+      _addDirectMediaBlobCustodyIssue(
+        issues: issues,
+        code: pathState == _CustodyArtifactPathState.missing
+            ? MigrationFileManifestIssueCode.missingRequiredFile
+            : MigrationFileManifestIssueCode.unsupportedAbsolutePath,
+        sourceId: sourceId,
+        relativePath: relativePath,
+        reason: pathState == _CustodyArtifactPathState.missing
+            ? 'custody_file_missing'
+            : 'custody_path_contains_non_directory_or_link',
+      );
+      return;
+    }
+
+    final file = File(_absoluteForRelativePath(relativePath));
+    final size = await file.length();
+    final digest = (await sha256.bind(file.openRead()).first).toString();
+    if (size != custody.ciphertextSize ||
+        digest != custody.contentHash ||
+        await file.length() != size) {
+      _addDirectMediaBlobCustodyIssue(
+        issues: issues,
+        code: MigrationFileManifestIssueCode.fileSizeMismatch,
+        sourceId: sourceId,
+        relativePath: relativePath,
+        reason: 'custody_file_does_not_match_v111',
+      );
+      return;
+    }
+
+    includedPaths.add(relativePath);
+    items.add(
+      MigrationFileManifestItem(
+        kind: MigrationFileManifestItemKind.directMediaBlobCustody,
+        criticality: MigrationFileCriticality.critical,
+        relativePath: relativePath,
+        sizeBytes: custody.ciphertextSize,
+        sha256: custody.contentHash,
+        sourceTable: 'direct_media_blob_custody',
+        sourceId: custody.attachmentId,
+      ),
+    );
+  }
+
+  void _addDirectMediaBlobCustodyIssue({
+    required List<MigrationFileManifestIssue> issues,
+    required MigrationFileManifestIssueCode code,
+    required String sourceId,
+    required String? relativePath,
+    required String reason,
+  }) {
+    issues.add(
+      MigrationFileManifestIssue(
+        code: code,
+        sourceTable: 'direct_media_blob_custody',
+        sourceId: sourceId,
+        relativePath: relativePath,
+        criticality: MigrationFileCriticality.critical,
+        diagnostics: <String, Object?>{'reason': reason},
+      ),
+    );
+  }
+
+  Future<_CustodyArtifactPathState> _custodyArtifactPathState(
+    String relativePath,
+  ) async {
+    final root = p.normalize(p.absolute(documentsRootPath));
+    final segments = p.posix.split(relativePath);
+    final absolutePath = p.normalize(p.joinAll(<String>[root, ...segments]));
+    if (!p.isWithin(root, absolutePath)) {
+      return _CustodyArtifactPathState.unsafe;
+    }
+
+    var current = root;
+    for (final segment in segments.take(segments.length - 1)) {
+      current = p.join(current, segment);
+      final type = await FileSystemEntity.type(current, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        return _CustodyArtifactPathState.missing;
+      }
+      if (type != FileSystemEntityType.directory) {
+        return _CustodyArtifactPathState.unsafe;
+      }
+    }
+    final type = await FileSystemEntity.type(absolutePath, followLinks: false);
+    if (type == FileSystemEntityType.notFound) {
+      return _CustodyArtifactPathState.missing;
+    }
+    return type == FileSystemEntityType.file
+        ? _CustodyArtifactPathState.regularFile
+        : _CustodyArtifactPathState.unsafe;
   }
 
   Future<void> _addChatMedia(
@@ -1015,6 +1192,8 @@ class MigrationFileManifestBuilder {
     return value == true || value == 1 || value == '1' || value == 'true';
   }
 }
+
+enum _CustodyArtifactPathState { regularFile, missing, unsafe }
 
 class _PathCandidate {
   final String relativePath;

@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 110);
+        expect(currentIdentityDatabaseVersion, 111);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -147,6 +147,53 @@ void main() {
             'updated_at',
             'wire_envelope',
           ],
+        );
+      },
+    );
+
+    test(
+      'TC-347-07 current inventory includes exact blob custody authority',
+      () async {
+        db = await openDatabase(
+          inMemoryDatabasePath,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+
+        final inventory = await MigrationDatabaseSchemaInventory.fromDatabase(
+          db!,
+        );
+
+        expect(currentIdentityDatabaseVersion, 111);
+        expect(inventory.tables['direct_media_blob_custody'], <String>[
+          'attachment_id',
+          'ciphertext_relative_path',
+          'ciphertext_size',
+          'content_hash',
+          'created_at',
+          'custody_contract',
+          'custody_kind',
+          'custody_relay_peer_id',
+          'direction',
+          'expires_at_ms',
+          'inbox_custody_incarnation_id',
+          'last_attempt_at',
+          'message_id',
+          'next_attempt_at',
+          'recipient_peer_id',
+          'retry_count',
+          'state',
+          'transport_mime',
+          'updated_at',
+        ]);
+        expect(
+          inventory.tables['direct_inbox_custody_outbox'],
+          containsAll(<String>[
+            'media_blob_expires_at_ms',
+            'media_blob_manifest_hash',
+          ]),
         );
       },
     );

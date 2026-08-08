@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -21,6 +22,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 // -- Fake Contact Repository --
 class FakeContactRepository implements ContactRepository {
@@ -3657,6 +3659,317 @@ void main() {
       },
     );
   });
+
+  test(
+    'TC-347-06a strict blob commitment publishes only after atomic stage and legacy remains compatible',
+    () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'tc347-handler-strict';
+      const expiresAtMs = 1_900_000_200_000;
+
+      Map<String, dynamic> strictMedia({
+        required String id,
+        required String hash,
+        required int ciphertextSize,
+      }) => <String, dynamic>{
+        'id': id,
+        'mime': 'image/jpeg',
+        'size': 13,
+        'mediaType': 'image',
+        'contentHash': hash,
+        'encryptionKeyBase64': 'key-$id',
+        'encryptionNonce': 'nonce-$id',
+        'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        'blobCustody': DirectMediaBlobCustodyCommitment(
+          contentHash: hash,
+          ciphertextSize: ciphertextSize,
+          expiresAtMs: expiresAtMs,
+        ).toJson(),
+      };
+
+      final strict = <Map<String, dynamic>>[
+        strictMedia(id: 'tc347-handler-a', hash: 'a' * 64, ciphertextSize: 29),
+        strictMedia(id: 'tc347-handler-b', hash: 'b' * 64, ciphertextSize: 31),
+      ];
+      final sideEffects = <String>[];
+      Future<void> assertCompleteAtomicStage(String effect) async {
+        expect(
+          await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[messageId],
+          ),
+          hasLength(1),
+          reason: '$effect cannot observe an attachment-only prefix',
+        );
+        expect(
+          await fixture.db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: const <Object?>[messageId],
+          ),
+          hasLength(2),
+        );
+        expect(
+          await fixture.db.query(
+            'direct_media_blob_custody',
+            where: 'message_id = ?',
+            whereArgs: const <Object?>[messageId],
+          ),
+          hasLength(2),
+        );
+        sideEffects.add(effect);
+      }
+
+      final (result, hydrated, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          buildValidChatJson(id: messageId, text: '', media: strict),
+        ),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+        transport: 'inbox',
+        stagedEntryId: 'tc347-handler-relay-entry',
+        stageNotificationDisplayCustody: (_) =>
+            assertCompleteAtomicStage('notification-stage'),
+        sendDeliveryReceipt: (_) => assertCompleteAtomicStage('receipt'),
+        promoteNotificationDisplayCustody: (_) =>
+            assertCompleteAtomicStage('notification-promote'),
+      );
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(hydrated!.media, hasLength(2));
+      expect(sideEffects, <String>[
+        'notification-stage',
+        'receipt',
+        'notification-promote',
+      ]);
+
+      sideEffects.clear();
+      final (duplicate, _, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          buildValidChatJson(id: messageId, text: '', media: strict),
+        ),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+        transport: 'inbox',
+        stagedEntryId: 'tc347-handler-relay-entry-replay',
+        stageNotificationDisplayCustody: (_) async =>
+            sideEffects.add('unexpected-stage'),
+        sendDeliveryReceipt: (_) => assertCompleteAtomicStage('receipt'),
+        promoteNotificationDisplayCustody: (_) =>
+            assertCompleteAtomicStage('notification-promote'),
+      );
+      expect(duplicate, HandleChatMessageResult.duplicate);
+      expect(sideEffects, <String>['receipt', 'notification-promote']);
+
+      var refusedSideEffects = 0;
+      final partial = <Map<String, dynamic>>[
+        strictMedia(
+          id: 'tc347-handler-partial-a',
+          hash: 'c' * 64,
+          ciphertextSize: 33,
+        ),
+        <String, dynamic>{
+          'id': 'tc347-handler-partial-b',
+          'mime': 'image/jpeg',
+          'size': 11,
+          'mediaType': 'image',
+        },
+      ];
+      final (refused, _, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          buildValidChatJson(
+            id: 'tc347-handler-partial',
+            text: '',
+            media: partial,
+          ),
+        ),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+        sendDeliveryReceipt: (_) async => refusedSideEffects++,
+        stageNotificationDisplayCustody: (_) async => refusedSideEffects++,
+        promoteNotificationDisplayCustody: (_) async => refusedSideEffects++,
+      );
+      expect(refused, HandleChatMessageResult.strictMediaCustodyRefused);
+      expect(refusedSideEffects, 0);
+      expect(
+        await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['tc347-handler-partial'],
+        ),
+        isEmpty,
+      );
+
+      final (legacy, legacyHydrated, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          buildValidChatJson(
+            id: 'tc347-handler-legacy',
+            text: 'legacy compatibility',
+            media: const <Map<String, dynamic>>[
+              <String, dynamic>{
+                'id': 'tc347-handler-legacy-blob',
+                'mime': 'image/jpeg',
+                'size': 9,
+                'mediaType': 'image',
+              },
+            ],
+          ),
+        ),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+      );
+      expect(legacy, HandleChatMessageResult.chatMessage);
+      expect(legacyHydrated!.media, hasLength(1));
+      expect(
+        await fixture.db.query(
+          'direct_media_blob_custody',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>['tc347-handler-legacy'],
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'TC-347-06i post-ACK exact replay rejects changed ciphertext size or expiry',
+    () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'tc347-post-ack-replay';
+      const attachmentId = 'tc347-post-ack-replay-blob';
+      const contentHash =
+          'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      const expiresAtMs = 1_900_000_300_000;
+      const ciphertextSize = 47;
+
+      Map<String, dynamic> media({
+        int size = ciphertextSize,
+        int expiry = expiresAtMs,
+      }) => <String, dynamic>{
+        'id': attachmentId,
+        'mime': 'image/jpeg',
+        'size': 17,
+        'mediaType': 'image',
+        'contentHash': contentHash,
+        'encryptionKeyBase64': 'tc347-post-ack-key',
+        'encryptionNonce': 'tc347-post-ack-nonce',
+        'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        'blobCustody': DirectMediaBlobCustodyCommitment(
+          contentHash: contentHash,
+          ciphertextSize: size,
+          expiresAtMs: expiry,
+        ).toJson(),
+      };
+
+      Future<HandleChatMessageResult> receive(
+        Map<String, dynamic> candidate, {
+        Future<void> Function(String messageId)? sendDeliveryReceipt,
+      }) async {
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildValidChatJson(
+              id: messageId,
+              text: '',
+              media: <Map<String, dynamic>>[candidate],
+            ),
+          ),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: fixture.repo,
+          transport: 'inbox',
+          stagedEntryId: 'tc347-post-ack-entry',
+          sendDeliveryReceipt: sendDeliveryReceipt,
+        );
+        return result;
+      }
+
+      expect(await receive(media()), HandleChatMessageResult.chatMessage);
+      final stored = (await fixture.repo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      )).single;
+      final expectedFingerprint = computeDirectMediaBlobCommitmentFingerprint(
+        attachmentId: attachmentId,
+        commitment: const DirectMediaBlobCustodyCommitment(
+          contentHash: contentHash,
+          ciphertextSize: ciphertextSize,
+          expiresAtMs: expiresAtMs,
+        ),
+      );
+      expect(stored.directMediaBlobCustodyFingerprint, expectedFingerprint);
+      expect(
+        stored.toJson(),
+        isNot(contains('directMediaBlobCustodyFingerprint')),
+        reason: 'local replay provenance must never leak onto public wire JSON',
+      );
+
+      final custodyRepository =
+          fixture.repo as DirectMediaBlobCustodyRepository;
+      final incomingRepository =
+          fixture.repo as IncomingDirectMediaBlobCustodyRepository;
+      final committed = await custodyRepository
+          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+      final parent = await fixture.messageRepo.getMessage(messageId);
+      expect(committed, isNotNull);
+      expect(parent, isNotNull);
+      expect(
+        await incomingRepository.commitIncomingDirectMediaBlobLocalPath(
+          expectedAttachment: stored,
+          expectedCustody: committed!,
+          localPath: 'media/${parent!.contactPeerId}/$attachmentId.jpg',
+          sourceRelayPeerId: 'relay-post-ack-exact',
+          updatedAt: '2026-08-08T12:30:01.000Z',
+        ),
+        isTrue,
+      );
+      final ackPending = await custodyRepository
+          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+      expect(ackPending, isNotNull);
+      expect(
+        await incomingRepository.deleteIncomingDirectMediaBlobAckIfExact(
+          ackPending!,
+        ),
+        isTrue,
+      );
+      expect(
+        await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
+          attachmentId,
+        ),
+        isNull,
+      );
+
+      var exactReceipts = 0;
+      expect(
+        await receive(
+          media(),
+          sendDeliveryReceipt: (_) async => exactReceipts++,
+        ),
+        HandleChatMessageResult.duplicate,
+      );
+      expect(exactReceipts, 1);
+
+      for (final crossed in <Map<String, dynamic>>[
+        media(size: ciphertextSize + 1),
+        media(expiry: expiresAtMs + 1),
+      ]) {
+        var refusedSideEffects = 0;
+        expect(
+          await receive(
+            crossed,
+            sendDeliveryReceipt: (_) async => refusedSideEffects++,
+          ),
+          HandleChatMessageResult.strictMediaCustodyRefused,
+        );
+        expect(refusedSideEffects, 0);
+      }
+    },
+  );
 
   // 147: the production inbox-drain predecrypt wiring must honor the listener's
   // blocked-sender policy — a blocked contact's ciphertext is rejected by the

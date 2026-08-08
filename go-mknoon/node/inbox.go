@@ -71,6 +71,9 @@ type inboxRequest struct {
 	// custody owners permitted to use it.
 	CustodyKind     string `json:"custodyKind,omitempty"`
 	CustodyContract string `json:"custodyContract,omitempty"`
+	// Plan 347: optional relay-authoritative ceiling for strict direct-media
+	// v108 envelope custody. Omission preserves the Plan 344 wire frame.
+	CustodyExpiresAtOrBeforeMs int64 `json:"custodyExpiresAtOrBeforeMs,omitempty"`
 }
 
 type inboxResponse struct {
@@ -379,6 +382,52 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeToken(
 	wakeToken string,
 	custodyKind string,
 ) (InboxStoreOutcome, error) {
+	return n.inboxStoreAckCustodyDetailedWithWakeToken(
+		toPeerID,
+		message,
+		timeoutMs,
+		wakeToken,
+		custodyKind,
+		0,
+	)
+}
+
+// InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling is the media-only
+// sibling of InboxStoreAckCustodyDetailedWithWakeToken. The positive ceiling
+// is sent on the existing protected action and the returned relay proof must
+// carry that exact persisted expiry.
+func (n *Node) InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+	toPeerID string,
+	message string,
+	timeoutMs int,
+	wakeToken string,
+	custodyKind string,
+	custodyExpiresAtOrBeforeMs int64,
+) (InboxStoreOutcome, error) {
+	if custodyKind != CustodyKindDirectTextV108 || custodyExpiresAtOrBeforeMs <= 0 {
+		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"}, fmt.Errorf(
+			"%w: media expiry ceiling requires direct_text_v108 and a positive ceiling",
+			ErrInboxCustodyIneligible,
+		)
+	}
+	return n.inboxStoreAckCustodyDetailedWithWakeToken(
+		toPeerID,
+		message,
+		timeoutMs,
+		wakeToken,
+		custodyKind,
+		custodyExpiresAtOrBeforeMs,
+	)
+}
+
+func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
+	toPeerID string,
+	message string,
+	timeoutMs int,
+	wakeToken string,
+	custodyKind string,
+	custodyExpiresAtOrBeforeMs int64,
+) (InboxStoreOutcome, error) {
 	if !isSupportedInboxCustodyKind(custodyKind) {
 		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"},
 			fmt.Errorf("%w: unsupported custody kind %q", ErrInboxCustodyIneligible, custodyKind)
@@ -401,13 +450,14 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeToken(
 	}
 
 	req := inboxRequest{
-		Action:          inboxStoreAckCustodyAction,
-		To:              toPeerID,
-		From:            n.peerId,
-		Message:         message,
-		WakeToken:       wakeToken,
-		CustodyKind:     custodyKind,
-		CustodyContract: AckOrExpiryCustodyContract,
+		Action:                     inboxStoreAckCustodyAction,
+		To:                         toPeerID,
+		From:                       n.peerId,
+		Message:                    message,
+		WakeToken:                  wakeToken,
+		CustodyKind:                custodyKind,
+		CustodyContract:            AckOrExpiryCustodyContract,
+		CustodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
 	}
 	start := time.Now()
 	var lastErr error
@@ -424,6 +474,15 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeToken(
 			}
 			peerResponded = true
 			outcome, parseErr := parseInboxAckCustodyStoreResponse(respBytes)
+			if parseErr == nil && custodyExpiresAtOrBeforeMs > 0 &&
+				outcome.ExpiresAtMs != custodyExpiresAtOrBeforeMs {
+				parseErr = fmt.Errorf(
+					"%w: media expiry proof=%d want=%d",
+					ErrInboxCustodyInvalidReceipt,
+					outcome.ExpiresAtMs,
+					custodyExpiresAtOrBeforeMs,
+				)
+			}
 			lastOutcome = outcome
 			if parseErr == nil {
 				n.emitEvent("inbox:store_timing", map[string]interface{}{

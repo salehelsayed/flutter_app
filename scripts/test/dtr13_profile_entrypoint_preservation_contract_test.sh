@@ -57,6 +57,17 @@ expected_profiles = [
         "declaredException": False,
     },
     {
+        "id": "android.e2e.direct_media_custody",
+        "platform": "android",
+        "artifactKind": "universal-debug-apk",
+        "buildRequired": True,
+        "compileDefines": {
+            "E2E_TEST_MODE": "true",
+            "MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED": "true",
+        },
+        "declaredException": False,
+    },
+    {
         "id": "android.e2e.group_media_269",
         "platform": "android",
         "artifactKind": "universal-debug-apk",
@@ -122,7 +133,7 @@ expected_profiles = [
     },
 ]
 assert actual_profiles == expected_profiles, (
-    "DTR-13 must preserve the exact ordered ten-row Sims build-profile table"
+    "DTR-13 must preserve the exact ordered eleven-row Sims build-profile table"
 )
 
 orchestrator = read("tool/sims/build_orchestrator.dart")
@@ -137,6 +148,7 @@ expected_entrypoint_method = """
 String _entrypointFor(BuildProfileSpec profile) => switch (profile.id) {
   'android.e2e.standard' => 'integration_test/sims_dispatcher.dart',
   'android.e2e.main' => 'lib/main.dart',
+  'android.e2e.direct_media_custody' => 'lib/main.dart',
   _androidGroupMedia269ProfileId => 'lib/main.dart',
   'ios.simulator.e2e' =>
     'integration_test/group_multi_party_device_real_harness.dart',
@@ -149,6 +161,7 @@ assert "".join(entrypoint_method.split()) == "".join(
 for fragment in (
     "'android.e2e.standard' => 'integration_test/sims_dispatcher.dart'",
     "'android.e2e.main' => 'lib/main.dart'",
+    "'android.e2e.direct_media_custody' => 'lib/main.dart'",
     "_androidGroupMedia269ProfileId => 'lib/main.dart'",
     "'ios.simulator.e2e' =>\n"
     "      'integration_test/group_multi_party_device_real_harness.dart'",

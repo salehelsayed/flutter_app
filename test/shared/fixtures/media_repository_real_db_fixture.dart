@@ -2,6 +2,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
@@ -122,6 +123,8 @@ class MediaRepositoryRealDbFixture {
             required kind,
             required recipientPeerId,
             required wireEnvelope,
+            wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs,
           }) => dbStageOutgoingDirectMediaInboxCustody(
             db,
             expectedRow: expectedRow,
@@ -130,7 +133,91 @@ class MediaRepositoryRealDbFixture {
             kind: kind,
             recipientPeerId: recipientPeerId,
             wireEnvelope: wireEnvelope,
+            wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
           ),
+      dbStageOutgoingDirectMediaBlobGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRows,
+            required preparedAttachmentRows,
+            required custodyRows,
+          }) => dbStageOutgoingDirectMediaBlobGeneration(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            preparedAttachmentRows: preparedAttachmentRows,
+            custodyRows: custodyRows,
+          ),
+      dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
+          dbLoadDirectMediaBlobCustodyForAttachment(
+            db,
+            attachmentId: attachmentId,
+          ),
+      dbLoadDirectMediaBlobCustodyForMessage: ({required messageId}) =>
+          dbLoadDirectMediaBlobCustodyForMessage(db, messageId: messageId),
+      dbLoadDirectMediaBlobCustodyByStates:
+          ({required states, int limit = 50}) =>
+              dbLoadDirectMediaBlobCustodyByStates(
+                db,
+                states: states,
+                limit: limit,
+              ),
+      dbTransitionDirectMediaBlobCustodyIfExact:
+          ({required expected, required next}) =>
+              dbTransitionDirectMediaBlobCustodyIfExact(
+                db,
+                expected: expected,
+                next: next,
+              ),
+      dbDeleteDirectMediaBlobCleanupPendingIfExact: ({required expected}) =>
+          dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: expected),
+      dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact:
+          ({required expectedRows, required reason, required nowMs}) =>
+              dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                db,
+                expectedRows: expectedRows,
+                reason: reason,
+                nowMs: nowMs,
+              ),
+      dbStageIncomingDirectMediaBlobCustody:
+          ({
+            required messageRow,
+            required attachmentRows,
+            required custodyRows,
+          }) => dbStageIncomingDirectMediaBlobCustody(
+            db,
+            messageRow: messageRow,
+            attachmentRows: attachmentRows,
+            custodyRows: custodyRows,
+          ),
+      dbCommitIncomingDirectMediaBlobLocalPath:
+          ({
+            required expectedAttachmentRow,
+            required expectedCustody,
+            required localPath,
+            required sourceRelayPeerId,
+            required updatedAt,
+          }) => dbCommitIncomingDirectMediaBlobLocalPath(
+            db,
+            expectedAttachmentRow: expectedAttachmentRow,
+            expectedCustody: expectedCustody,
+            localPath: localPath,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: updatedAt,
+          ),
+      dbDeleteIncomingDirectMediaBlobAckPendingIfExact: ({required expected}) =>
+          dbDeleteIncomingDirectMediaBlobAckPendingIfExact(
+            db,
+            expected: expected,
+          ),
+      dbDeleteIncomingDirectMediaBlobIfExpired:
+          ({required expected, required nowMs}) =>
+              dbDeleteIncomingDirectMediaBlobIfExpired(
+                db,
+                expected: expected,
+                nowMs: nowMs,
+              ),
       dbProjectOutgoingDirectMediaCustodyUploadFailure:
           ({
             required expectedParentRow,

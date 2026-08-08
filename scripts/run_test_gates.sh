@@ -232,6 +232,10 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/migrations/109_direct_reaction_inbox_custody_outbox_test.dart"
   # 345: manifest-bound preparation authority for fresh ordinary direct media.
   "test/core/database/migrations/110_direct_media_custody_intent_test.dart"
+  # 347: app-layer Android custody action proof lives outside the core auto-glob.
+  "test/debug/android_direct_media_blob_custody_e2e_test.dart"
+  "test/core/database/migrations/111_direct_media_blob_custody_test.dart"
+  "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart"
   "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"
   "test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart"
   "test/features/conversation/domain/repositories/reaction_repository_impl_test.dart"
@@ -1151,6 +1155,16 @@ run_ack_custody_go_gate() {
   echo "=== Direct Inbox ACK-Custody Go Gate ==="
 
   (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test . \
+      -list '^TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling$' | \
+      rg -x 'TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling')
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test . \
+      -run '^TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling$' \
+      -count=1 -v | \
+      rg '^--- PASS: TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling \(')
+
+  (cd go-relay-server && \
     GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \
       -list '^TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace$' | \
       rg -x 'TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace')
@@ -1170,10 +1184,14 @@ run_ack_custody_go_gate() {
       rg -x 'TestInboxAckCustodyReceiveFanoutContract')
   (cd go-mknoon && \
     GOTOOLCHAIN=go1.25.0 go test ./node \
-      -run '^TestInboxAckCustody(MixedRelayAndProof|ReceiveFanout)Contract$' \
+      -list '^TestInboxAckCustodyMediaExpiryCeiling$' | \
+      rg -x 'TestInboxAckCustodyMediaExpiryCeiling')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./node \
+      -run '^TestInboxAckCustody((MixedRelayAndProof|ReceiveFanout)Contract|MediaExpiryCeiling)$' \
       -count=1 -v | \
       rg '^--- PASS: TestInboxAckCustody' | \
-      awk 'END { exit NR == 2 ? 0 : 1 }')
+      awk 'END { exit NR == 3 ? 0 : 1 }')
 
   (cd go-mknoon && \
     GOTOOLCHAIN=go1.25.0 go test ./bridge \
@@ -1181,8 +1199,14 @@ run_ack_custody_go_gate() {
       rg -x 'TestDispatchInboxAckCustodyContract')
   (cd go-mknoon && \
     GOTOOLCHAIN=go1.25.0 go test ./bridge \
-      -run '^TestDispatchInboxAckCustodyContract$' -count=1 -v | \
-      rg '^--- PASS: TestDispatchInboxAckCustodyContract \(')
+      -list '^TestInboxStoreMediaExpiryCeilingBridgeContract$' | \
+      rg -x 'TestInboxStoreMediaExpiryCeilingBridgeContract')
+  (cd go-mknoon && \
+    GOTOOLCHAIN=go1.25.0 go test ./bridge \
+      -run '^(TestDispatchInboxAckCustodyContract|TestInboxStoreMediaExpiryCeilingBridgeContract)$' \
+      -count=1 -v | \
+      rg '^--- PASS: (TestDispatchInboxAckCustodyContract|TestInboxStoreMediaExpiryCeilingBridgeContract) \(' | \
+      awk 'END { exit NR == 2 ? 0 : 1 }')
 
   (cd go-mknoon && \
     GOTOOLCHAIN=go1.25.0 go test -tags integration ./integration \

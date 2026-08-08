@@ -1905,8 +1905,7 @@ void main() {
       );
     });
 
-    test('share to a non-LAN contact produces encrypted attachment via '
-        'uploadMedia', () async {
+    test('TC-347-08d external share remains legacy', () async {
       final p2pService = _DirectMediaCustodyFakeP2PService(
         initialState: const NodeState(
           isStarted: true,
@@ -1929,6 +1928,14 @@ void main() {
       expect(attachment['encryptionKeyBase64'], isNotNull);
       expect(attachment['encryptionNonce'], isNotNull);
       expect(attachment['encryptionScheme'], isNotNull);
+      expect(attachment, isNot(contains('blobCustody')));
+      final uploadRequest = outcome.bridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .singleWhere((request) => request['cmd'] == 'media:upload');
+      final uploadPayload = uploadRequest['payload'] as Map<String, dynamic>;
+      expect(uploadPayload, isNot(contains('custodyKind')));
+      expect(uploadPayload, isNot(contains('custodyContract')));
+      expect(uploadPayload, isNot(contains('contentHash')));
     });
   });
 

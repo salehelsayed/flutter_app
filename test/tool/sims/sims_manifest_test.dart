@@ -295,46 +295,40 @@ void main() {
     expect(capability.declaredBuildException, isFalse);
   });
 
-  test(
-    'critical manifest pins architecture boundary release capability',
-    () {
-      final capability = manifest.capabilityById('architecture.boundaries');
+  test('critical manifest pins architecture boundary release capability', () {
+    final capability = manifest.capabilityById('architecture.boundaries');
 
-      expect(capability, isNotNull);
-      expect(capability!.owner, 'flutter-app');
-      expect(
-        capability.proofBoundaryId,
-        'host.architecture-boundaries.enforced',
-      );
-      expect(capability.assertionIds, <String>[
-        'architecture_boundaries.current_exceptions_exact',
-      ]);
-      expect(capability.lane, 'host-dart');
-      expect(capability.modes, <SimsMode>{SimsMode.major});
-      expect(capability.families, <String>{'infra'});
-      expect(capability.required, isTrue);
-      expect(capability.command, <String>[
-        './scripts/run_test_gates.sh',
-        'architecture-boundaries',
-      ]);
-      expect(capability.buildProfileId, 'host.flutter_tester');
-      expect(capability.dependencies, isEmpty);
-      expect(capability.resources, hasLength(1));
-      expect(capability.resources.single.name, 'host.cpu');
-      expect(capability.resources.single.access, ResourceAccess.read);
-      expect(capability.targetCapabilities, <String>[
-        'host.flutter-tester',
-        'host.bash',
-        'host.git',
-      ]);
-      expect(capability.artifactRequired, isFalse);
-      expect(capability.artifactValidators, isEmpty);
-      expect(capability.allowedNaReason, isNull);
-      expect(capability.active, isTrue);
-      expect(capability.automationReady, isTrue);
-      expect(capability.declaredBuildException, isFalse);
-    },
-  );
+    expect(capability, isNotNull);
+    expect(capability!.owner, 'flutter-app');
+    expect(capability.proofBoundaryId, 'host.architecture-boundaries.enforced');
+    expect(capability.assertionIds, <String>[
+      'architecture_boundaries.current_exceptions_exact',
+    ]);
+    expect(capability.lane, 'host-dart');
+    expect(capability.modes, <SimsMode>{SimsMode.major});
+    expect(capability.families, <String>{'infra'});
+    expect(capability.required, isTrue);
+    expect(capability.command, <String>[
+      './scripts/run_test_gates.sh',
+      'architecture-boundaries',
+    ]);
+    expect(capability.buildProfileId, 'host.flutter_tester');
+    expect(capability.dependencies, isEmpty);
+    expect(capability.resources, hasLength(1));
+    expect(capability.resources.single.name, 'host.cpu');
+    expect(capability.resources.single.access, ResourceAccess.read);
+    expect(capability.targetCapabilities, <String>[
+      'host.flutter-tester',
+      'host.bash',
+      'host.git',
+    ]);
+    expect(capability.artifactRequired, isFalse);
+    expect(capability.artifactValidators, isEmpty);
+    expect(capability.allowedNaReason, isNull);
+    expect(capability.active, isTrue);
+    expect(capability.automationReady, isTrue);
+    expect(capability.declaredBuildException, isFalse);
+  });
 
   test(
     'analyzer capability runs strict analysis and production unused suppression ratchet',
@@ -441,6 +435,81 @@ void main() {
     final profile = manifest.buildProfileById('ios.device.production')!;
     expect(profile.compileDefines, <String, String>{'PRODUCTION_APNS': 'true'});
   });
+
+  test(
+    'TC-347-09 owns one selector-only Android build and local fixture row',
+    () {
+      final profile = manifest.buildProfileById(
+        'android.e2e.direct_media_custody',
+      )!;
+      expect(profile.platform, 'android');
+      expect(profile.artifactKind, 'universal-debug-apk');
+      expect(profile.buildRequired, isTrue);
+      expect(profile.compileDefines, <String, String>{
+        'E2E_TEST_MODE': 'true',
+        'MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED': 'true',
+      });
+
+      final build = manifest.capabilityById(
+        'build.android.e2e.direct_media_custody',
+      )!;
+      expect(build.command, <String>[
+        '@prepare-build',
+        'android.e2e.direct_media_custody',
+      ]);
+      expect(build.buildProfileId, profile.id);
+      expect(build.dependencies, isEmpty);
+      expect(
+        build.resources.any(
+          (resource) =>
+              resource.name == 'build:android.e2e.direct_media_custody' &&
+              resource.access == ResourceAccess.write,
+        ),
+        isTrue,
+      );
+
+      final scenario = manifest.capabilityById(
+        'android.direct_media_blob_custody',
+      )!;
+      expect(scenario.owner, 'conversation');
+      expect(scenario.required, isTrue);
+      expect(scenario.active, isTrue);
+      expect(scenario.automationReady, isTrue);
+      expect(scenario.modes, <SimsMode>{SimsMode.major, SimsMode.full});
+      expect(scenario.families, <String>{'1to1', 'media', 'transport'});
+      expect(scenario.buildProfileId, profile.id);
+      expect(scenario.dependencies, <String>[
+        'build.android.e2e.direct_media_custody',
+      ]);
+      expect(scenario.command, <String>[
+        'dart',
+        'run',
+        'integration_test/scripts/run_1to1_device_real.dart',
+        '--scenario',
+        'android.direct_media_blob_custody',
+      ]);
+      expect(scenario.targetCapabilities, <String>[
+        'android.physical',
+        'android.emulator',
+      ]);
+      expect(scenario.allowedNaReason, targetUnavailableNaReason);
+      expect(scenario.artifactValidators, <String>[
+        'validateDirectMediaBlobCustodyArtifact',
+      ]);
+      expect(
+        scenario.resources
+            .map((resource) => '${resource.access.name}:${resource.name}')
+            .toSet(),
+        containsAll(<String>{
+          'read:build:android.e2e.direct_media_custody',
+          'exclusive:device:android-physical',
+          'exclusive:device:android-emulator',
+          'exclusive:relay-mutation:local-direct-media-fixture',
+          'write:artifact:direct-media-custody',
+        }),
+      );
+    },
+  );
 
   test('TC-269 Android proof owns only its disposable build profile', () {
     final profile = manifest.buildProfileById('android.e2e.group_media_269')!;

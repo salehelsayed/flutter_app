@@ -23,6 +23,7 @@ import 'package:flutter_app/core/database/helpers/direct_notification_read_ackno
 import 'package:flutter_app/core/database/helpers/direct_notification_read_projection_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_reconciliation_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
@@ -127,6 +128,7 @@ import 'package:flutter_app/features/conversation/application/direct_notificatio
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_media_blob_custody_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/private_media_expiry_scheduler.dart';
 import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
@@ -151,6 +153,7 @@ import 'package:flutter_app/features/conversation/application/retry_direct_priva
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
+import 'package:flutter_app/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart';
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
@@ -240,6 +243,7 @@ import 'package:flutter_app/core/local_discovery/local_ws_server.dart';
 import 'package:flutter_app/core/local_discovery/local_media_server.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
@@ -1700,6 +1704,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required kind,
             required recipientPeerId,
             required wireEnvelope,
+            wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs,
           }) => dbStageOutgoingDirectMediaInboxCustody(
             db,
             expectedRow: expectedRow,
@@ -1708,7 +1714,91 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             kind: kind,
             recipientPeerId: recipientPeerId,
             wireEnvelope: wireEnvelope,
+            wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
           ),
+      dbStageOutgoingDirectMediaBlobGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRows,
+            required preparedAttachmentRows,
+            required custodyRows,
+          }) => dbStageOutgoingDirectMediaBlobGeneration(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            preparedAttachmentRows: preparedAttachmentRows,
+            custodyRows: custodyRows,
+          ),
+      dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
+          dbLoadDirectMediaBlobCustodyForAttachment(
+            db,
+            attachmentId: attachmentId,
+          ),
+      dbLoadDirectMediaBlobCustodyForMessage: ({required messageId}) =>
+          dbLoadDirectMediaBlobCustodyForMessage(db, messageId: messageId),
+      dbLoadDirectMediaBlobCustodyByStates:
+          ({required states, int limit = 50}) =>
+              dbLoadDirectMediaBlobCustodyByStates(
+                db,
+                states: states,
+                limit: limit,
+              ),
+      dbTransitionDirectMediaBlobCustodyIfExact:
+          ({required expected, required next}) =>
+              dbTransitionDirectMediaBlobCustodyIfExact(
+                db,
+                expected: expected,
+                next: next,
+              ),
+      dbDeleteDirectMediaBlobCleanupPendingIfExact: ({required expected}) =>
+          dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: expected),
+      dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact:
+          ({required expectedRows, required reason, required nowMs}) =>
+              dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                db,
+                expectedRows: expectedRows,
+                reason: reason,
+                nowMs: nowMs,
+              ),
+      dbStageIncomingDirectMediaBlobCustody:
+          ({
+            required messageRow,
+            required attachmentRows,
+            required custodyRows,
+          }) => dbStageIncomingDirectMediaBlobCustody(
+            db,
+            messageRow: messageRow,
+            attachmentRows: attachmentRows,
+            custodyRows: custodyRows,
+          ),
+      dbCommitIncomingDirectMediaBlobLocalPath:
+          ({
+            required expectedAttachmentRow,
+            required expectedCustody,
+            required localPath,
+            required sourceRelayPeerId,
+            required updatedAt,
+          }) => dbCommitIncomingDirectMediaBlobLocalPath(
+            db,
+            expectedAttachmentRow: expectedAttachmentRow,
+            expectedCustody: expectedCustody,
+            localPath: localPath,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: updatedAt,
+          ),
+      dbDeleteIncomingDirectMediaBlobAckPendingIfExact: ({required expected}) =>
+          dbDeleteIncomingDirectMediaBlobAckPendingIfExact(
+            db,
+            expected: expected,
+          ),
+      dbDeleteIncomingDirectMediaBlobIfExpired:
+          ({required expected, required nowMs}) =>
+              dbDeleteIncomingDirectMediaBlobIfExpired(
+                db,
+                expected: expected,
+                nowMs: nowMs,
+              ),
       dbProjectOutgoingDirectMediaCustodyUploadFailure:
           ({
             required expectedParentRow,
@@ -3786,6 +3876,68 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create and initialize the bridge (Go native)
     final Bridge bridge = GoBridgeClient();
+    final strictDirectMediaBlobDownloadAckOwner =
+        StrictDirectMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: mediaAttachmentRepository,
+          mediaFileManager: mediaFileManager,
+        );
+    final directMediaBlobCustodyDrain = DirectMediaBlobCustodyDrain(
+      repository: mediaAttachmentRepository,
+      incomingRepository: mediaAttachmentRepository,
+      artifactStore: DirectMediaBlobArtifactStore(
+        documentsDirectoryProvider: () async => appDocDir,
+      ),
+      identityPeerId: () async => (await repository.loadIdentity())?.peerId,
+      strictDownloadAckOwner: strictDirectMediaBlobDownloadAckOwner,
+      retryIncomingDownload: (row) async {
+        final parent = await messageRepository.getMessage(row.messageId);
+        if (parent == null || !parent.isIncoming) return false;
+        final attachments = await mediaAttachmentRepository
+            .getAttachmentsForMessage(
+              row.messageId,
+              owner: MediaOwnerLane.direct,
+            );
+        final candidates = attachments.where(
+          (attachment) => attachment.id == row.attachmentId,
+        );
+        if (candidates.length != 1) return false;
+        return await strictDirectMediaBlobDownloadAckOwner
+                .downloadAndAcknowledge(
+                  attachment: candidates.single,
+                  contactPeerId: parent.contactPeerId,
+                ) !=
+            null;
+      },
+    );
+    Future<int> cleanupDirectMediaBlobCustodyLocally() async {
+      final result = await directMediaBlobCustodyDrain.runLocalCleanupBounded();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_MEDIA_BLOB_CUSTODY_LOCAL_DRAIN_RESULT',
+        details: <String, Object?>{
+          'completed': result.completed,
+          'retained': result.retained,
+          'failed': result.failed,
+        },
+      );
+      return result.completed;
+    }
+
+    Future<int> drainDirectMediaBlobCustody() async {
+      final result = await directMediaBlobCustodyDrain.runNetworkBounded();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_MEDIA_BLOB_CUSTODY_NETWORK_DRAIN_RESULT',
+        details: <String, Object?>{
+          'completed': result.completed,
+          'retained': result.retained,
+          'failed': result.failed,
+        },
+      );
+      return result.completed;
+    }
+
     final diagnosingDeleteDissolvedGroupShellAction =
         DiagnosingDeleteDissolvedGroupShellAction(
           inner: (groupId) => deleteGroupAndMessages(
@@ -5860,6 +6012,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 custodyRepository: messageRepository,
                 storeInAckCustodyInboxDetailed:
                     p2pService.storeInAckCustodyInboxDetailed,
+                storeInMediaExpiryBoundedInboxDetailed:
+                    p2pService.storeInMediaExpiryBoundedInboxDetailed,
               );
             } catch (error) {
               emitFlowEvent(
@@ -6104,6 +6258,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         action: () =>
             recoverStuckSendingMessages(messageRepo: messageRepository),
       ),
+      drainDirectMediaBlobCustodyFn: () => runAccountRuntimeNetworkAction(
+        operation: 'pending_retrier_direct_media_blob_custody',
+        blockedValue: 0,
+        action: drainDirectMediaBlobCustody,
+      ),
       retryIncompleteUploadsFn: () => runAccountRuntimeNetworkAction(
         operation: 'pending_retrier_upload_retry',
         blockedValue: 0,
@@ -6224,6 +6383,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         () async {
           await ensurePrivateMediaColdRecovery();
         },
+      );
+      await liveServiceStartupSteps.runAsync(
+        'direct_media_blob_local_cleanup',
+        cleanupDirectMediaBlobCustodyLocally,
       );
       final groupContextBackfill = keychainMirrorBackfill;
       if (groupContextBackfill != null) {
@@ -6515,6 +6678,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         },
         privateMediaLifecycleRecovery:
             privateMediaLifecycleForegroundRuntime.recoverResumeAndArm,
+        directMediaBlobLocalCleanup: cleanupDirectMediaBlobCustodyLocally,
         stopPrivateMediaExpiryScheduler:
             privateMediaLifecycleForegroundRuntime.onBackgrounded,
         disposePrivateMediaExpiryScheduler:
@@ -6532,6 +6696,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
         drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies,
+        drainDirectMediaBlobCustody: drainDirectMediaBlobCustody,
         pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
         pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,
         pendingPostFollowOnRetrier: pendingPostFollowOnRetrier,

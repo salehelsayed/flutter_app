@@ -1387,11 +1387,12 @@ func trimmedString(raw interface{}) string {
 // --- Inbox store ---
 
 type inboxMessage struct {
-	ID        string                 `json:"id,omitempty"`
-	From      string                 `json:"from"`
-	Message   string                 `json:"message"`
-	Timestamp int64                  `json:"timestamp"`
-	Metadata  map[string]interface{} `json:"metadata,omitempty"`
+	ID          string                 `json:"id,omitempty"`
+	From        string                 `json:"from"`
+	Message     string                 `json:"message"`
+	Timestamp   int64                  `json:"timestamp"`
+	ExpiresAtMs int64                  `json:"expiresAtMs,omitempty"`
+	Metadata    map[string]interface{} `json:"metadata,omitempty"`
 	// FDC-09 §12: the opaque wake-token the sender presented (TRANSIENT — json:"-",
 	// never persisted or returned in a retrieve). Read once at store time for the
 	// access-token wake gate; the durable message shape is unchanged.
@@ -1410,6 +1411,9 @@ type InboxStore struct {
 	backend  InboxBackend
 	push     *PushService
 	capacity int
+	// now is injectable only for deterministic ACK-custody expiry tests. Every
+	// production constructor installs time.Now and nil falls back to time.Now.
+	now func() time.Time
 	// Plan 344: default-off admission applies only to new protected writes.
 	// Retrieve/ACK continue to drain a Redis lane while this kill switch is off.
 	ackCustodyAdmissionEnabled bool
@@ -1431,6 +1435,7 @@ func NewInboxStore(push *PushService) *InboxStore {
 		backend:                    newMemoryInboxBackend(),
 		push:                       push,
 		capacity:                   maxMessagesPerPeer,
+		now:                        time.Now,
 		ackCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
 		wakeTokens:                 newMemoryWakeTokenStore(),
 	}
@@ -1453,6 +1458,7 @@ func NewInboxStoreWithBackendAndCapacity(
 		backend:                    backend,
 		push:                       push,
 		capacity:                   capacity,
+		now:                        time.Now,
 		ackCustodyAdmissionEnabled: loadAckCustodyAdmissionEnabledFromEnv(),
 		wakeTokens:                 newMemoryWakeTokenStore(),
 	}
@@ -2262,6 +2268,10 @@ type inboxRequest struct {
 	// decoders ignore them under the existing lenient JSON contract.
 	CustodyKind     string `json:"custodyKind,omitempty"`
 	CustodyContract string `json:"custodyContract,omitempty"`
+	// Plan 347: present only on a strict direct-media v108 store. A pointer is
+	// required so an explicitly supplied zero is rejected instead of being
+	// confused with omission by Go's JSON zero value.
+	CustodyExpiresAtOrBeforeMs *int64 `json:"custodyExpiresAtOrBeforeMs,omitempty"`
 	// Group inbox fields.
 	GroupId                string   `json:"groupId,omitempty"`
 	RecipientPeerIds       []string `json:"recipientPeerIds,omitempty"`
@@ -2424,8 +2434,14 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		}
 
 	case ackCustodyStoreAction:
+		storeNow := inbox.ackCustodyNow()
 		if req.To == "" || req.Message == "" || req.CustodyKind == "" ||
-			req.CustodyContract != ackCustodyContract {
+			req.CustodyContract != ackCustodyContract ||
+			!validAckCustodyExpiryCeiling(
+				req.CustodyKind,
+				req.CustodyExpiresAtOrBeforeMs,
+				storeNow,
+			) {
 			recordAckCustodyStoreResult(ackCustodyStoreMetricIneligible)
 			resp = inboxResponse{
 				Status:    "ERROR",
@@ -2436,9 +2452,12 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 			entry := inboxMessage{
 				From:      remotePeer,
 				Message:   req.Message,
-				Timestamp: time.Now().UnixMilli(),
+				Timestamp: storeNow.UnixMilli(),
 				Metadata:  req.Metadata,
 				WakeToken: req.WakeToken,
+			}
+			if req.CustodyExpiresAtOrBeforeMs != nil {
+				entry.ExpiresAtMs = *req.CustodyExpiresAtOrBeforeMs
 			}
 			result, storedEntry, err := inbox.StoreAckCustody(req.To, entry, req.CustodyKind)
 			if err != nil {
@@ -2484,7 +2503,7 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 					Status:          "OK",
 					StoreStatus:     string(result),
 					CustodyContract: ackCustodyContract,
-					ExpiresAtMs:     storedEntry.Timestamp + maxMessageAge.Milliseconds(),
+					ExpiresAtMs:     ackCustodyEntryExpiresAtMs(storedEntry),
 					Occupancy:       inbox.CountAckCustody(req.To),
 					Capacity:        inbox.Capacity(),
 				}

@@ -313,10 +313,10 @@ func pruneExpiredInboxMessages(messages []inboxMessage) ([]inboxMessage, int) {
 	var result []inboxMessage
 	pruned := 0
 	for _, m := range messages {
-		if m.Timestamp > cutoff {
-			result = append(result, m)
-		} else {
+		if inboxMessageExpiredAtCutoff(m, cutoff) {
 			pruned++
+		} else {
+			result = append(result, m)
 		}
 	}
 	return result, pruned

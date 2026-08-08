@@ -1,8 +1,11 @@
 import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
     show isExactV2DirectChatInitialEnvelope;
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -13,6 +16,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -60,6 +64,8 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   EncryptedMediaArtifact? preparedArtifact,
   UploadMediaFn uploadMediaFn = uploadMedia,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
 }) async {
   final sendStopwatch = Stopwatch()..start();
   void emitVoiceTiming({
@@ -236,6 +242,11 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
             custodyRepository: directCustodyRepository,
             storeInAckCustodyInboxDetailed:
                 ackCustodyStore.storeInAckCustodyInboxDetailed,
+            storeInMediaExpiryBoundedInboxDetailed:
+                p2pService is MediaExpiryBoundedInboxStore
+                ? (p2pService as MediaExpiryBoundedInboxStore)
+                      .storeInMediaExpiryBoundedInboxDetailed
+                : null,
           );
           if (!attempt.completed) {
             emitVoiceTiming(outcome: 'custody_replay_retained');
@@ -312,6 +323,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   // transaction repeats the same identity check after envelope serialization.
   ConversationMessage? preparedVoiceParent;
   MediaAttachment? preparedVoiceAttachment;
+  bool preparedVoiceHasStrictGeneration = false;
   if (messageId != null) {
     try {
       final preparedParent = await messageRepo.getMessage(messageId);
@@ -336,6 +348,38 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
               attachmentId: attachmentId,
               mime: recording.mime,
             );
+        final strictRepository = kDirectMediaBlobCustodyClientEnabled
+            ? _directMediaBlobRepository(repository)
+            : null;
+        final strictRows = strictRepository == null
+            ? const <DirectMediaBlobCustodyRow>[]
+            : await strictRepository.loadDirectMediaBlobCustodyForMessage(
+                messageId,
+              );
+        final hasCompleteStrictGeneration =
+            projection.length == 1 &&
+            strictRows.length == 1 &&
+            strictRows.single.attachmentId == attachmentId &&
+            strictRows.single.messageId == messageId &&
+            strictRows.single.direction ==
+                DirectMediaBlobCustodyDirection.outgoing &&
+            const <DirectMediaBlobCustodyState>{
+              DirectMediaBlobCustodyState.outgoingPrepared,
+              DirectMediaBlobCustodyState.outgoingStored,
+            }.contains(strictRows.single.state) &&
+            strictRows.single.recipientPeerId == targetPeerId &&
+            projection.single.contentHash == strictRows.single.contentHash &&
+            projection.single.encryptionKeyBase64 != null &&
+            projection.single.encryptionNonce != null &&
+            projection.single.encryptionScheme ==
+                kMediaAttachmentEncryptionSchemeBlobAesGcmV1;
+        final hasFreshCryptoProjection =
+            projection.length == 1 &&
+            projection.single.contentHash == null &&
+            projection.single.thumbnailHash == null &&
+            projection.single.encryptionKeyBase64 == null &&
+            projection.single.encryptionNonce == null &&
+            projection.single.encryptionScheme == null;
         final exactPreparedIdentity =
             projection.length == 1 &&
             preparedParent != null &&
@@ -386,17 +430,14 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
             projection.single.durationMs == recording.durationMs &&
             projection.single.createdAt == preparedParent.createdAt &&
             _sameVoiceWaveform(projection.single.waveform, waveform) &&
-            projection.single.contentHash == null &&
-            projection.single.thumbnailHash == null &&
-            projection.single.encryptionKeyBase64 == null &&
-            projection.single.encryptionNonce == null &&
-            projection.single.encryptionScheme == null;
+            (hasFreshCryptoProjection || hasCompleteStrictGeneration);
         if (!exactPreparedIdentity) {
           emitVoiceTiming(outcome: 'prepared_identity_refused');
           return (SendVoiceMessageResult.sendFailed, null);
         }
         preparedVoiceParent = preparedParent;
         preparedVoiceAttachment = projection.single;
+        preparedVoiceHasStrictGeneration = hasCompleteStrictGeneration;
       }
     } catch (error) {
       emitFlowEvent(
@@ -413,6 +454,81 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
   final uploadStopwatch = Stopwatch()..start();
+  final strictRepository =
+      kDirectMediaBlobCustodyClientEnabled &&
+          preparedVoiceParent != null &&
+          preparedVoiceAttachment != null
+      ? _directMediaBlobRepository(mediaAttachmentRepo)
+      : null;
+  if (strictRepository != null) {
+    final coordinator =
+        directMediaBlobCustodyCoordinator ??
+        PreparedDirectMediaBlobCustodyCoordinator(
+          repository: strictRepository,
+          artifactStore:
+              directMediaBlobArtifactStore ?? DirectMediaBlobArtifactStore(),
+        );
+    final parent = preparedVoiceParent!;
+    final attachment = preparedVoiceAttachment!;
+    final strictResult = preparedVoiceHasStrictGeneration
+        ? await coordinator.reopenAndUpload(
+            bridge: bridge,
+            identityPeerId: senderPeerId,
+            recipientPeerId: targetPeerId,
+            expectedParent: parent,
+            expectedAttachments: <MediaAttachment>[attachment],
+            onGenerationReady: p2pService.isLocalPeer(targetPeerId)
+                ? (artifacts) => _sendStrictVoiceOverLan(
+                    p2pService: p2pService,
+                    senderPeerId: senderPeerId,
+                    targetPeerId: targetPeerId,
+                    durationMs: recording.durationMs,
+                    artifacts: artifacts,
+                  )
+                : null,
+          )
+        : await coordinator.prepareAndUploadFresh(
+            bridge: bridge,
+            identityPeerId: senderPeerId,
+            recipientPeerId: targetPeerId,
+            expectedParent: parent,
+            sources: <PreparedDirectMediaBlobSource>[
+              PreparedDirectMediaBlobSource(
+                attachment: attachment,
+                plaintextPath: recording.filePath,
+                preparedArtifact: preparedArtifact,
+              ),
+            ],
+            onGenerationReady: p2pService.isLocalPeer(targetPeerId)
+                ? (artifacts) => _sendStrictVoiceOverLan(
+                    p2pService: p2pService,
+                    senderPeerId: senderPeerId,
+                    targetPeerId: targetPeerId,
+                    durationMs: recording.durationMs,
+                    artifacts: artifacts,
+                  )
+                : null,
+          );
+    uploadStopwatch.stop();
+    if (strictResult.isComplete) {
+      return sendCompletedVoiceProjection(
+        attachments: strictResult.attachments,
+        uploadMs: uploadStopwatch.elapsedMilliseconds,
+        cleanupPreparedSource: false,
+      );
+    }
+    emitVoiceTiming(
+      outcome: strictResult.state == PreparedDirectMediaBlobUploadState.retained
+          ? 'strict_upload_queued'
+          : 'strict_generation_refused',
+    );
+    return (
+      strictResult.state == PreparedDirectMediaBlobUploadState.retained
+          ? SendVoiceMessageResult.uploadQueued
+          : SendVoiceMessageResult.sendFailed,
+      null,
+    );
+  }
   final uploadOutcome = await runUploadMedia(
     uploadMediaFn: uploadMediaFn,
     bridge: bridge,
@@ -720,6 +836,35 @@ bool _sameVoiceWaveform(List<double>? left, List<double>? right) {
     if (left[index] != right[index]) return false;
   }
   return true;
+}
+
+DirectMediaBlobCustodyRepository? _directMediaBlobRepository(Object? value) {
+  if (value is! DirectMediaBlobCustodyRepository ||
+      !value.supportsDirectMediaBlobCustody) {
+    return null;
+  }
+  return value;
+}
+
+Future<void> _sendStrictVoiceOverLan({
+  required P2PService p2pService,
+  required String senderPeerId,
+  required String targetPeerId,
+  required int durationMs,
+  required List<PreparedDirectMediaBlobArtifact> artifacts,
+}) async {
+  for (final artifact in artifacts) {
+    await p2pService.sendLocalMedia(
+      peerId: targetPeerId,
+      filePath: artifact.absoluteCiphertextPath,
+      mime: kOpaqueMediaTransportMime,
+      mediaId: artifact.attachment.id,
+      fromPeerId: senderPeerId,
+      durationMs: durationMs,
+      enc: true,
+      encScheme: artifact.attachment.encryptionScheme,
+    );
+  }
 }
 
 /// 117 Session 4: copies the recorder temp into the durable owned media dir

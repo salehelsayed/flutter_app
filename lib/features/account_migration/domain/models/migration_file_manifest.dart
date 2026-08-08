@@ -1,5 +1,6 @@
 enum MigrationFileManifestItemKind {
   chatMedia,
+  directMediaBlobCustody,
   postMedia,
   contactAvatar,
   identityAvatar,
@@ -13,6 +14,7 @@ enum MigrationFileCriticality { critical, nonCriticalCache }
 enum MigrationFileManifestIssueCode {
   missingRequiredFile,
   unsupportedAbsolutePath,
+  invalidCustodyArtifact,
   missingChatMediaMetadata,
   missingSecureStoreKey,
   missingPostMediaCrypto,

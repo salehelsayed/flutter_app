@@ -43,6 +43,23 @@ const _androidRecoveryCompletionSupport = <String, String>{
       '331 strict content-addressed Android recovery evidence criteria',
 };
 
+const _directMediaBlobCustodySupport = <String, String>{
+  'integration_test/scripts/run_direct_media_blob_custody_sims.dart':
+      '347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract',
+  'integration_test/scripts/android_direct_media_blob_custody_campaign.dart':
+      '347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract',
+  'integration_test/scripts/android_direct_media_blob_custody_device_action.dart':
+      '347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract',
+  'integration_test/support/android_direct_media_blob_custody_campaign_contract.dart':
+      '347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract',
+  'integration_test/support/android_direct_media_blob_custody_evidence.dart':
+      '347 manifest-owned disposable-relay adapter, concrete Android action campaign, or hash-only evidence contract',
+  'lib/debug/android_direct_media_blob_custody_e2e.dart':
+      '347 profile-gated direct-media custody endpoint and pure host protocol',
+  'lib/core/debug/android_direct_media_blob_custody_e2e_protocol.dart':
+      '347 profile-gated direct-media custody endpoint and pure host protocol',
+};
+
 void main() {
   late SimsManifest manifest;
   late List<_DiscoveryRecord> discovery;
@@ -536,6 +553,72 @@ void main() {
         isFalse,
         reason: 'the manifest cannot advertise an absent product proof seam',
       );
+
+      final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
+      expect(major.selectedIds, contains(capabilityId));
+      expect(major.rows.where((row) => row.id == capabilityId), hasLength(1));
+    },
+  );
+
+  test(
+    'TC-347-09 direct-media custody is one manifest-owned Android-pair proof',
+    () {
+      const capabilityId = 'android.direct_media_blob_custody';
+      const dispatcher = 'integration_test/scripts/run_1to1_device_real.dart';
+      final capability = manifest.capabilityById(capabilityId);
+
+      expect(capability, isNotNull);
+      expect(capability!.active, isTrue);
+      expect(capability.required, isTrue);
+      expect(capability.participatesIn(SimsMode.major), isTrue);
+      expect(capability.command, <String>[
+        'dart',
+        'run',
+        dispatcher,
+        '--scenario',
+        capabilityId,
+      ]);
+      expect(capability.buildProfileId, 'android.e2e.direct_media_custody');
+      expect(capability.dependencies, <String>[
+        'build.android.e2e.direct_media_custody',
+      ]);
+      expect(capability.artifactValidators, <String>[
+        'validateDirectMediaBlobCustodyArtifact',
+      ]);
+
+      for (final entry in _directMediaBlobCustodySupport.entries) {
+        expect(
+          discovery.where(
+            (record) =>
+                record.path == entry.key &&
+                record.category == 'support' &&
+                record.kind == 'support' &&
+                record.note == entry.value,
+          ),
+          hasLength(1),
+          reason: '${entry.key} must remain one support-only record',
+        );
+        expect(_executableDiscoveryRecords(discovery, entry.key), isEmpty);
+      }
+      expect(
+        discovery.where(
+          (record) =>
+              record.path == _manualProofRegistry &&
+              record.category == 'implemented' &&
+              record.kind == 'capability' &&
+              record.note.startsWith('id=$capabilityId '),
+        ),
+        hasLength(1),
+      );
+
+      final listed = Process.runSync('dart', const <String>[
+        dispatcher,
+        '--scenario',
+        capabilityId,
+        '--list-scenarios',
+      ]);
+      expect(listed.exitCode, 0, reason: '${listed.stderr}');
+      expect('${listed.stdout}'.trim(), capabilityId);
 
       final major = SimsPlanner(manifest).compile(mode: SimsMode.major);
       expect(major.selectedIds, contains(capabilityId));

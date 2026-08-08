@@ -24,6 +24,8 @@ type redisInboxBackend struct {
 	client     *redis.Client
 	prefix     string
 	maxPerPeer int
+	// Test-only clock. Nil is equivalent to time.Now.
+	now func() time.Time
 	// Test-only failpoints keep atomicity and ambiguous-commit behavior
 	// deterministic without changing the production Redis command path.
 	ackCustodyBeforeCommit func() error
@@ -69,7 +71,15 @@ func newRedisInboxBackend(client *redis.Client, prefix string, maxPerPeer int) *
 		client:     client,
 		prefix:     prefix,
 		maxPerPeer: maxPerPeer,
+		now:        time.Now,
 	}
+}
+
+func (b *redisInboxBackend) nowTime() time.Time {
+	if b != nil && b.now != nil {
+		return b.now()
+	}
+	return time.Now()
 }
 
 func newRedisGroupInboxBackend(
@@ -308,7 +318,7 @@ func (b *redisInboxBackend) Store(toPeerId string, entry inboxMessage) (InboxSto
 	}
 
 	key := b.key(toPeerId)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	dedupeKey := extractDirectInboxDedupeKey(entry.Message)
 	var result InboxStoreResult
 	pruned := 0
@@ -373,7 +383,7 @@ func (b *redisInboxBackend) Retrieve(peerId string, limit int) ([]inboxMessage, 
 	}
 
 	key := b.key(peerId)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 
 	var (
 		result  []inboxMessage
@@ -421,7 +431,7 @@ func (b *redisInboxBackend) RetrievePending(peerId string, limit int) ([]inboxMe
 	}
 
 	key := b.key(peerId)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 
 	var (
 		result  []inboxMessage
@@ -479,7 +489,7 @@ func (b *redisInboxBackend) Ack(peerId string, entryIDs []string) (int, error) {
 	}
 
 	key := b.key(peerId)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	removed := 0
 	pruned := 0
 
@@ -530,7 +540,7 @@ func (b *redisInboxBackend) Count(peerId string) int {
 		return 0
 	}
 
-	_, validMessages := filterInboxEntries(rawEntries, time.Now().Add(-maxMessageAge).UnixMilli())
+	_, validMessages := filterInboxEntries(rawEntries, b.nowTime().Add(-maxMessageAge).UnixMilli())
 	return len(validMessages)
 }
 
@@ -541,7 +551,7 @@ func (b *redisInboxBackend) Stats() (totalPeers int, totalMessages int) {
 		return 0, 0
 	}
 
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	for _, key := range keys {
 		rawEntries, err := b.client.LRange(context.Background(), key, 0, -1).Result()
 		if err == redis.Nil {
@@ -587,6 +597,11 @@ func inboxIdentityMatches(entry inboxMessage, from string, message string) bool 
 	return entry.From == from && entry.Message == message
 }
 
+func inboxCustodyIdentityMatches(entry inboxMessage, candidate inboxMessage) bool {
+	return inboxIdentityMatches(entry, candidate.From, candidate.Message) &&
+		entry.ExpiresAtMs == candidate.ExpiresAtMs
+}
+
 // StoreAckCustody atomically writes the protected authority and legacy shadow.
 // Duplicate and identity-conflict decisions precede the capacity check so an
 // exact retry remains accepting at cap and preserves the original expiry.
@@ -598,7 +613,7 @@ func (b *redisInboxBackend) StoreAckCustody(
 	entry = ensureInboxMessageID(entry)
 	protectedKey := b.ackCustodyKey(toPeerID)
 	legacyKey := b.key(toPeerID)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	capacity := b.maxPerPeer
 	if capacity <= 0 {
 		capacity = maxMessagesPerPeer
@@ -650,7 +665,7 @@ func (b *redisInboxBackend) StoreAckCustody(
 				if messageKey != dedupeKey {
 					continue
 				}
-				if !inboxIdentityMatches(protectedMessages[i], entry.From, entry.Message) {
+				if !inboxCustodyIdentityMatches(protectedMessages[i], entry) {
 					decisionErr = errAckCustodyIdentityConflict
 					break
 				}
@@ -667,7 +682,7 @@ func (b *redisInboxBackend) StoreAckCustody(
 					if extractDirectInboxDedupeKey(legacyMessages[i].Message) != dedupeKey {
 						continue
 					}
-					if !inboxIdentityMatches(legacyMessages[i], entry.From, entry.Message) {
+					if !inboxCustodyIdentityMatches(legacyMessages[i], entry) {
 						decisionErr = errAckCustodyIdentityConflict
 						break
 					}
@@ -675,7 +690,12 @@ func (b *redisInboxBackend) StoreAckCustody(
 					legacyMatch = &matched
 				}
 
-				if decisionErr == nil && len(protectedMessages) >= capacity {
+				if decisionErr == nil && legacyMatch != nil && entry.ExpiresAtMs > 0 {
+					// A ceiling-bearing retry may only converge against the protected
+					// authority that accepted that exact ceiling. A lone legacy shadow
+					// cannot be promoted into new media custody authority.
+					decisionErr = errAckCustodyIdentityConflict
+				} else if decisionErr == nil && len(protectedMessages) >= capacity {
 					result = InboxStoreResultRejectedFull
 				} else if decisionErr == nil && legacyMatch != nil {
 					// Promote the already-accepted legacy identity without extending
@@ -745,7 +765,13 @@ func (b *redisInboxBackend) StoreAckCustody(
 }
 
 func ackCustodyShadowSignature(message inboxMessage) string {
-	return message.ID + "\x00" + message.From + "\x00" + message.Message
+	return fmt.Sprintf(
+		"%s\x00%s\x00%s\x00%d",
+		message.ID,
+		message.From,
+		message.Message,
+		message.ExpiresAtMs,
+	)
 }
 
 func coalesceAndSortAckCustodyMessages(
@@ -789,7 +815,7 @@ func (b *redisInboxBackend) RetrieveAckCustodyPending(
 	}
 	protectedKey := b.ackCustodyKey(peerID)
 	legacyKey := b.key(peerID)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	var (
 		logical         []inboxMessage
 		protectedPruned int
@@ -876,7 +902,7 @@ func (b *redisInboxBackend) AckAckCustody(peerID string, entryIDs []string) (int
 	}
 	protectedKey := b.ackCustodyKey(peerID)
 	legacyKey := b.key(peerID)
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	var (
 		found           map[string]struct{}
 		protectedPruned int
@@ -954,7 +980,7 @@ func (b *redisInboxBackend) CountAckCustody(peerID string) int {
 	}
 	_, validMessages := filterInboxEntries(
 		rawEntries,
-		time.Now().Add(-maxMessageAge).UnixMilli(),
+		b.nowTime().Add(-maxMessageAge).UnixMilli(),
 	)
 	return len(validMessages)
 }
@@ -965,7 +991,7 @@ func (b *redisInboxBackend) AckCustodyStats() (totalPeers int, totalMessages int
 		log.Printf("[REDIS][ACK_CUSTODY] stats scan failed: %v", err)
 		return 0, 0
 	}
-	cutoff := time.Now().Add(-maxMessageAge).UnixMilli()
+	cutoff := b.nowTime().Add(-maxMessageAge).UnixMilli()
 	for _, key := range keys {
 		rawEntries, err := b.client.LRange(context.Background(), key, 0, -1).Result()
 		if err == redis.Nil {
@@ -995,7 +1021,7 @@ func filterInboxEntries(rawEntries []string, cutoff int64) ([]string, []inboxMes
 			log.Printf("[REDIS][INBOX] decode failed: %v", err)
 			continue
 		}
-		if message.Timestamp <= cutoff {
+		if inboxMessageExpiredAtCutoff(message, cutoff) {
 			continue
 		}
 		validRaw = append(validRaw, raw)
@@ -1019,7 +1045,7 @@ func normalizeInboxEntries(
 			log.Printf("[REDIS][INBOX] decode failed: %v", err)
 			continue
 		}
-		if message.Timestamp <= cutoff {
+		if inboxMessageExpiredAtCutoff(message, cutoff) {
 			pruned++
 			continue
 		}
@@ -1036,6 +1062,13 @@ func normalizeInboxEntries(
 	}
 
 	return validRaw, validMessages, pruned
+}
+
+func inboxMessageExpiredAtCutoff(message inboxMessage, cutoff int64) bool {
+	if message.ExpiresAtMs != 0 {
+		return message.ExpiresAtMs <= cutoff+maxMessageAge.Milliseconds()
+	}
+	return message.Timestamp <= cutoff
 }
 
 func (b *redisGroupInboxBackend) key(groupId string) string {

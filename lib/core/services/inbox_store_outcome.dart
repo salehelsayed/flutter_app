@@ -170,3 +170,23 @@ abstract class AckOrExpiryInboxStore {
     int? timeoutMs,
   });
 }
+
+typedef StoreInMediaExpiryBoundedInboxDetailedFn =
+    Future<InboxStoreOutcome> Function(
+      String toPeerId,
+      String message, {
+      required int custodyExpiresAtOrBeforeMs,
+      int? timeoutMs,
+    });
+
+/// Media-only sibling capability for a v108 envelope whose relay lifetime
+/// must not exceed the earliest strict blob proof. The common text/reaction
+/// [AckOrExpiryInboxStore] signature intentionally remains unchanged.
+abstract class MediaExpiryBoundedInboxStore {
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  });
+}

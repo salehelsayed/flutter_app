@@ -1147,6 +1147,26 @@ func dispatchInboxStoreAckCustodyContract(
 	return strict()
 }
 
+func validateInboxStoreMediaExpiryCeiling(
+	custodyContract string,
+	custodyKind string,
+	ceiling *int64,
+) error {
+	if ceiling == nil {
+		return nil
+	}
+	if *ceiling <= 0 || custodyContract != node.AckOrExpiryCustodyContract ||
+		custodyKind != node.CustodyKindDirectTextV108 {
+		return fmt.Errorf(
+			"%w: media expiry ceiling requires contract=%q kind=%q and a positive value",
+			errInvalidInboxAckCustodyContract,
+			node.AckOrExpiryCustodyContract,
+			node.CustodyKindDirectTextV108,
+		)
+	}
+	return nil
+}
+
 func validateInboxRetrieveAckCustodyContract(
 	requestedContract string,
 	result *node.InboxRetrievePendingResult,
@@ -1162,7 +1182,8 @@ func validateInboxRetrieveAckCustodyContract(
 
 // InboxStore stores a message in the offline inbox.
 // Input JSON: { "toPeerId": "...", "message": "...", optional
-// "custodyContract":"ack_or_expiry_v1", "custodyKind":"direct_text_v108" }
+// "custodyContract":"ack_or_expiry_v1", "custodyKind":"direct_text_v108",
+// optional "custodyExpiresAtOrBeforeMs":123 }
 // Returns JSON: { "ok": true }
 func InboxStore(paramsJSON string) (result string) {
 	defer func() {
@@ -1189,15 +1210,23 @@ func InboxStore(paramsJSON string) (result string) {
 		// pre-FDC-09 store frame byte-identical (NET-REL-07). The Dart source of
 		// this token (the recipient-issued token, distributed out of band) is
 		// wired separately; the bridge only threads it through.
-		WakeToken       string `json:"wakeToken"`
-		CustodyContract string `json:"custodyContract"`
-		CustodyKind     string `json:"custodyKind"`
+		WakeToken                  string `json:"wakeToken"`
+		CustodyContract            string `json:"custodyContract"`
+		CustodyKind                string `json:"custodyKind"`
+		CustodyExpiresAtOrBeforeMs *int64 `json:"custodyExpiresAtOrBeforeMs"`
 	}
 	if err := json.Unmarshal([]byte(paramsJSON), &params); err != nil {
 		return errJSON("INVALID_INPUT", fmt.Sprintf("invalid JSON: %v", err))
 	}
 	if params.ToPeerId == "" || params.Message == "" {
 		return errJSON("INVALID_INPUT", "missing toPeerId or message")
+	}
+	if err := validateInboxStoreMediaExpiryCeiling(
+		params.CustodyContract,
+		params.CustodyKind,
+		params.CustodyExpiresAtOrBeforeMs,
+	); err != nil {
+		return errJSON("INVALID_INPUT", err.Error())
 	}
 
 	outcome, err := dispatchInboxStoreAckCustodyContract(
@@ -1209,6 +1238,16 @@ func InboxStore(paramsJSON string) (result string) {
 			)
 		},
 		func() (node.InboxStoreOutcome, error) {
+			if params.CustodyExpiresAtOrBeforeMs != nil {
+				return n.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+					params.ToPeerId,
+					params.Message,
+					params.TimeoutMs,
+					params.WakeToken,
+					params.CustodyKind,
+					*params.CustodyExpiresAtOrBeforeMs,
+				)
+			}
 			return n.InboxStoreAckCustodyDetailedWithWakeToken(
 				params.ToPeerId,
 				params.Message,

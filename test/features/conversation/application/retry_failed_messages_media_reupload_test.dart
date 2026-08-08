@@ -1,7 +1,12 @@
 import 'dart:io';
+import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -12,7 +17,9 @@ import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -169,6 +176,97 @@ class _RecordingLegacyUploadFailureProjection
       state: UploadRetryProjectionState.retryPending,
     );
   }
+}
+
+class _ExistingDirectMediaBlobRetryRepository
+    extends FakeMediaAttachmentRepository
+    implements DirectMediaBlobCustodyRepository {
+  _ExistingDirectMediaBlobRetryRepository(this.row);
+
+  DirectMediaBlobCustodyRow row;
+  int stageCalls = 0;
+  int transitionCalls = 0;
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    stageCalls++;
+    final persisted = await getAttachmentsForMessage(
+      expectedParent.id,
+      owner: MediaOwnerLane.direct,
+    );
+    if (expectedParent.id != row.messageId ||
+        expectedParent.contactPeerId != row.recipientPeerId ||
+        expectedAttachments.length != 1 ||
+        preparedAttachments.length != 1 ||
+        custodyRows.length != 1 ||
+        persisted.length != 1 ||
+        expectedAttachments.single.id != row.attachmentId ||
+        preparedAttachments.single.id != row.attachmentId ||
+        persisted.single.id != row.attachmentId ||
+        preparedAttachments.single.contentHash != row.contentHash ||
+        persisted.single.contentHash != row.contentHash ||
+        !custodyRows.single.exactDatabaseProjectionMatches(row)) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.idempotent,
+      attachments: persisted,
+      custodyRows: <DirectMediaBlobCustodyRow>[row],
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => attachmentId == row.attachmentId ? row : null;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => messageId == row.messageId
+      ? <DirectMediaBlobCustodyRow>[row]
+      : const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => states.contains(row.state)
+      ? <DirectMediaBlobCustodyRow>[row]
+      : const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    transitionCalls++;
+    if (!row.exactDatabaseProjectionMatches(expected) ||
+        !expected.canTransitionTo(next)) {
+      return false;
+    }
+    row = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
 }
 
 IdentityModel _makeIdentity() {
@@ -646,6 +744,131 @@ void main() {
           attachmentBefore,
         );
       },
+    );
+
+    test(
+      'TC-347-03b strict failed retry reopens exact generation without legacy fallback',
+      () async {
+        const messageId = 'msg-347-strict-failed-retry';
+        const attachmentId = 'att-347-strict-failed-retry';
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final parent = _makeFailedMsg(
+          id: messageId,
+        ).copyWith(directMediaCustodyIntentId: intent);
+        final root = Directory.systemTemp.createTempSync(
+          'retry_failed_347_strict_',
+        );
+        addTearDown(() {
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        });
+        final ciphertextSource = File('${root.path}/accepted.enc')
+          ..writeAsBytesSync(const <int>[9, 2, 6, 5, 3, 5, 8, 9]);
+        final store = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => root,
+        );
+        final expectedCiphertextHash = sha256
+            .convert(ciphertextSource.readAsBytesSync())
+            .toString();
+        final durable = await store.persistCandidate(
+          identityPeerId: 'my-peer-id',
+          attachmentId: attachmentId,
+          encryptedSourcePath: ciphertextSource.path,
+          expectedContentHash: expectedCiphertextHash,
+        );
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          localPath: MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: 'image/jpeg',
+          ),
+          downloadStatus: 'upload_pending',
+          createdAt: parent.createdAt,
+          contentHash: durable.contentHash,
+          encryptionKeyBase64: 'original-durable-key',
+          encryptionNonce: 'original-durable-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        final row = DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: parent.contactPeerId,
+          ciphertextRelativePath: durable.relativePath,
+          contentHash: durable.contentHash,
+          ciphertextSize: durable.ciphertextSize,
+          expiresAtMs: null,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: '2026-08-08T12:00:00.000Z',
+          updatedAt: '2026-08-08T12:00:00.000Z',
+        );
+        final strictRepository = _ExistingDirectMediaBlobRetryRepository(row)
+          ..seed(<MediaAttachment>[attachment]);
+        final strictBridge = FakeBridge(
+          initialResponses: const <String, Map<String, dynamic>>{
+            'media:upload': <String, dynamic>{
+              'ok': false,
+              'errorCode': 'MEDIA_ERROR',
+              'errorMessage': 'connection reset after request body',
+            },
+          },
+        );
+        messageRepo.seed(<ConversationMessage>[parent]);
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: strictRepository,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: strictBridge,
+          uploadMediaFn: fakeUploadFn.call,
+          directMediaBlobArtifactStore: store,
+          retryDirectInboxCustody: false,
+        );
+
+        expect(count, 0);
+        expect(
+          strictRepository.stageCalls,
+          1,
+          reason: 'retry must revalidate, not mint, the existing generation',
+        );
+        expect(strictRepository.transitionCalls, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(strictBridge.commandLog, <String>['media:upload']);
+        final request =
+            jsonDecode(strictBridge.sentMessages.single)
+                as Map<String, dynamic>;
+        final payload = request['payload'] as Map<String, dynamic>;
+        expect(payload['id'], attachmentId);
+        expect(payload['to'], parent.contactPeerId);
+        expect(payload['mime'], 'application/octet-stream');
+        expect(payload['custodyKind'], 'direct_media_blob_v1');
+        expect(payload['custodyContract'], 'ack_or_expiry_v1');
+        expect(payload['contentHash'], durable.contentHash);
+        expect(
+          File(payload['filePath'] as String).readAsBytesSync(),
+          const <int>[9, 2, 6, 5, 3, 5, 8, 9],
+        );
+        expect(await File(durable.absolutePath).exists(), isTrue);
+        expect(
+          strictRepository.row.state,
+          DirectMediaBlobCustodyState.outgoingPrepared,
+        );
+      },
+      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     test(

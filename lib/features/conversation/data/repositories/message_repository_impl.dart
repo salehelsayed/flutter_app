@@ -32,6 +32,7 @@ class MessageRepositoryImpl
         OutgoingTransportMutationRepository,
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
+        IncomingDirectMessagePublicationRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
         ConversationReadEventSource {
@@ -439,6 +440,30 @@ class MessageRepositoryImpl
       );
       rethrow;
     }
+  }
+
+  @override
+  Future<void> publishIncomingDirectMediaMessage({
+    required ConversationMessage message,
+    required List<MediaAttachment> attachments,
+  }) async {
+    final row = await dbLoadMessage(message.id);
+    if (row == null) {
+      throw StateError('strict incoming media parent is not durable');
+    }
+    final committed = _rememberMessage(ConversationMessage.fromMap(row));
+    if (!committed.isIncoming ||
+        committed.contactPeerId != message.contactPeerId ||
+        committed.senderPeerId != message.senderPeerId ||
+        attachments.isEmpty ||
+        attachments.any(
+          (attachment) =>
+              attachment.messageId != committed.id ||
+              attachment.ownerLane != MediaOwnerLane.direct,
+        )) {
+      throw StateError('strict incoming media publication crossed authority');
+    }
+    _messageChangeController.add(committed.copyWith(media: attachments));
   }
 
   @override

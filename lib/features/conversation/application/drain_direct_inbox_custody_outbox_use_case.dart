@@ -31,6 +31,8 @@ final class DirectInboxCustodyDrainAttempt {
 Future<int> drainDirectInboxCustodyOutbox({
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
   required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
 }) async {
   final entries = await custodyRepository.loadDirectInboxCustody();
   var completed = 0;
@@ -39,6 +41,8 @@ Future<int> drainDirectInboxCustodyOutbox({
       entry: entry,
       custodyRepository: custodyRepository,
       storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          storeInMediaExpiryBoundedInboxDetailed,
     );
     if (result.completed) completed++;
   }
@@ -53,6 +57,8 @@ Future<int> drainDirectInboxCustodyOutbox({
 Future<DirectInboxCustodyDrainAttempt> drainDirectInboxCustodyOutboxForMessage({
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
   required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
   required String recipientPeerId,
   required String messageId,
 }) async {
@@ -73,6 +79,8 @@ Future<DirectInboxCustodyDrainAttempt> drainDirectInboxCustodyOutboxForMessage({
     entry: entry,
     custodyRepository: custodyRepository,
     storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+    storeInMediaExpiryBoundedInboxDetailed:
+        storeInMediaExpiryBoundedInboxDetailed,
   );
 }
 
@@ -82,14 +90,44 @@ Future<DirectInboxCustodyDrainAttempt> drainOwnedDirectInboxCustodyOutboxEntry({
   required DirectInboxCustodyOutboxEntry entry,
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
   required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
+  StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
 }) async {
   InboxStoreOutcome outcome;
   try {
-    outcome = await storeInAckCustodyInboxDetailed(
-      entry.recipientPeerId,
-      entry.wireEnvelope,
-      custodyKind: AckCustodyKind.directTextV108,
-    );
+    final blobExpiry = entry.mediaBlobExpiresAtMs;
+    final blobHash = entry.mediaBlobManifestHash;
+    final hasStrictBlobBinding = blobExpiry != null && blobHash != null;
+    final malformedBlobBinding = (blobExpiry == null) != (blobHash == null);
+    if (malformedBlobBinding ||
+        (hasStrictBlobBinding &&
+            (blobExpiry <= 0 ||
+                !RegExp(r'^[0-9a-f]{64}$').hasMatch(blobHash)))) {
+      return const DirectInboxCustodyDrainAttempt(
+        found: true,
+        completed: false,
+      );
+    }
+    if (hasStrictBlobBinding) {
+      final store = storeInMediaExpiryBoundedInboxDetailed;
+      if (store == null) {
+        return const DirectInboxCustodyDrainAttempt(
+          found: true,
+          completed: false,
+        );
+      }
+      outcome = await store(
+        entry.recipientPeerId,
+        entry.wireEnvelope,
+        custodyExpiresAtOrBeforeMs: blobExpiry,
+      );
+    } else {
+      outcome = await storeInAckCustodyInboxDetailed(
+        entry.recipientPeerId,
+        entry.wireEnvelope,
+        custodyKind: AckCustodyKind.directTextV108,
+      );
+    }
   } catch (error) {
     await _recordFailureBestEffort(
       custodyRepository: custodyRepository,
@@ -110,6 +148,18 @@ Future<DirectInboxCustodyDrainAttempt> drainOwnedDirectInboxCustodyOutboxEntry({
       errorCode: errorCode,
     );
     _emitAttempt(entry, attemptOutcome: errorCode);
+    return const DirectInboxCustodyDrainAttempt(found: true, completed: false);
+  }
+
+  if (entry.mediaBlobExpiresAtMs != null &&
+      (outcome.expiresAtMs == null ||
+          outcome.expiresAtMs! <= 0 ||
+          outcome.expiresAtMs! > entry.mediaBlobExpiresAtMs!)) {
+    await _recordFailureBestEffort(
+      custodyRepository: custodyRepository,
+      entry: entry,
+      errorCode: DirectInboxCustodyErrorCode.storeFailed,
+    );
     return const DirectInboxCustodyDrainAttempt(found: true, completed: false);
   }
 

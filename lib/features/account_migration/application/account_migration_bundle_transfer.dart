@@ -147,6 +147,7 @@ class AccountMigrationProductionBundleSource {
         details: {
           'sessionId': request.sessionId,
           'chatMediaCount': rows.chatMediaRows.length,
+          'directMediaBlobCustodyCount': rows.directMediaBlobCustodyRows.length,
           'postMediaCount': rows.postMediaRows.length,
           'postMediaRecoveryCount': rows.postMediaRecoveryRows.length,
           'contactCount': rows.contactRows.length,
@@ -509,6 +510,7 @@ class AccountMigrationProductionBundleSource {
       secureValueReader: primaryStore.read,
     ).build(
       chatMediaRows: rows.chatMediaRows,
+      directMediaBlobCustodyRows: rows.directMediaBlobCustodyRows,
       postMediaRows: rows.postMediaRows,
       postMediaRecoveryRows: rows.postMediaRecoveryRows,
       contactRows: rows.contactRows,
@@ -697,16 +699,7 @@ class AccountMigrationProductionBundleSource {
           'phase': phase,
           'issueIndex': i,
           'issueCount': issues.length,
-          'code': issue.code.name,
-          'sourceTable': issue.sourceTable,
-          'sourceId': issue.sourceId,
-          if (issue.relativePath != null) 'relativePath': issue.relativePath,
-          'blocking': issue.blocking,
-          if (issue.criticality != null) 'criticality': issue.criticality!.name,
-          if (issue.diagnostics.isNotEmpty)
-            'diagnostics': _compactFileManifestIssueDiagnostics(
-              issue.diagnostics,
-            ),
+          ..._fileManifestIssueTelemetryDetail(issue),
         },
       );
       if (issue.sourceTable == 'media_attachments' &&
@@ -847,21 +840,29 @@ List<Map<String, Object?>> _fileManifestIssueDetails(
 ) {
   return issues
       .take(_fileManifestIssueDetailLimit)
-      .map(
-        (issue) => <String, Object?>{
-          'code': issue.code.name,
-          'sourceTable': issue.sourceTable,
-          'sourceId': issue.sourceId,
-          if (issue.relativePath != null) 'relativePath': issue.relativePath,
-          'blocking': issue.blocking,
-          if (issue.criticality != null) 'criticality': issue.criticality!.name,
-          if (issue.diagnostics.isNotEmpty)
-            'diagnostics': _compactFileManifestIssueDiagnostics(
-              issue.diagnostics,
-            ),
-        },
-      )
+      .map(_fileManifestIssueTelemetryDetail)
       .toList(growable: false);
+}
+
+Map<String, Object?> _fileManifestIssueTelemetryDetail(
+  MigrationFileManifestIssue issue,
+) {
+  final detail = <String, Object?>{
+    'code': issue.code.name,
+    'sourceTable': issue.sourceTable,
+    'blocking': issue.blocking,
+    if (issue.criticality != null) 'criticality': issue.criticality!.name,
+  };
+  if (issue.sourceTable == 'direct_media_blob_custody') {
+    return detail;
+  }
+  return <String, Object?>{
+    ...detail,
+    'sourceId': issue.sourceId,
+    if (issue.relativePath != null) 'relativePath': issue.relativePath,
+    if (issue.diagnostics.isNotEmpty)
+      'diagnostics': _compactFileManifestIssueDiagnostics(issue.diagnostics),
+  };
 }
 
 Map<String, Object?> _compactFileManifestIssueDiagnostics(
@@ -965,6 +966,15 @@ Map<String, Object?> _fileEntryTelemetryDetail({
   int? bytesLength,
   bool? writeVerified,
 }) {
+  if (manifestItem?['kind'] ==
+      MigrationFileManifestItemKind.directMediaBlobCustody.name) {
+    return <String, Object?>{
+      'kind': manifestItem?['kind'],
+      'criticality': manifestItem?['criticality'],
+      'sourceTable': manifestItem?['sourceTable'],
+      'writeVerified': ?writeVerified,
+    };
+  }
   final sha256 = manifestItem?['sha256'] as String? ?? entry.sha256;
   final details = <String, Object?>{
     'relativePath': entry.relativePath,
@@ -1852,17 +1862,29 @@ class AccountMigrationProductionBundleReceiver
       writtenCount += 1;
       bytesWritten += entry.sizeBytes;
       if (writtenDetails.length < _fileManifestIssueDetailLimit) {
-        writtenDetails.add({
-          'relativePath': relativePath,
-          'kind': manifestItem?['kind'],
-          'criticality': manifestItem?['criticality'],
-          'sourceTable': manifestItem?['sourceTable'],
-          'sourceId': manifestItem?['sourceId'],
-          'manifestSizeBytes': manifestItem?['sizeBytes'],
-          'entryBytes': entry.sizeBytes,
-          'sha256Prefix': _sha256Prefix(entry.sha256),
-          'writeVerified': true,
-        });
+        final isCustodyArtifact =
+            manifestItem?['kind'] ==
+            MigrationFileManifestItemKind.directMediaBlobCustody.name;
+        writtenDetails.add(
+          isCustodyArtifact
+              ? <String, Object?>{
+                  'kind': manifestItem?['kind'],
+                  'criticality': manifestItem?['criticality'],
+                  'sourceTable': manifestItem?['sourceTable'],
+                  'writeVerified': true,
+                }
+              : <String, Object?>{
+                  'relativePath': relativePath,
+                  'kind': manifestItem?['kind'],
+                  'criticality': manifestItem?['criticality'],
+                  'sourceTable': manifestItem?['sourceTable'],
+                  'sourceId': manifestItem?['sourceId'],
+                  'manifestSizeBytes': manifestItem?['sizeBytes'],
+                  'entryBytes': entry.sizeBytes,
+                  'sha256Prefix': _sha256Prefix(entry.sha256),
+                  'writeVerified': true,
+                },
+        );
       }
     }
     emitFlowEvent(
@@ -2234,6 +2256,7 @@ class _VerifiedBundleImport {
 
 class _BundleRows {
   final List<Map<String, Object?>> chatMediaRows;
+  final List<Map<String, Object?>> directMediaBlobCustodyRows;
   final List<Map<String, Object?>> postMediaRows;
   final List<Map<String, Object?>> postMediaRecoveryRows;
   final List<Map<String, Object?>> contactRows;
@@ -2244,6 +2267,7 @@ class _BundleRows {
 
   const _BundleRows({
     required this.chatMediaRows,
+    required this.directMediaBlobCustodyRows,
     required this.postMediaRows,
     required this.postMediaRecoveryRows,
     required this.contactRows,
@@ -2257,6 +2281,10 @@ class _BundleRows {
 Future<_BundleRows> _loadBundleRows(Database db) async {
   return _BundleRows(
     chatMediaRows: await _queryChatMediaRows(db),
+    directMediaBlobCustodyRows: await _queryTableIfExists(
+      db,
+      'direct_media_blob_custody',
+    ),
     postMediaRows: await _queryTableIfExists(db, 'post_media_attachments'),
     postMediaRecoveryRows: await _queryTableIfExists(
       db,

@@ -131,7 +131,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(currentIdentityDatabaseVersion, 110);
+        expect(currentIdentityDatabaseVersion, 111);
         expect(await _userVersion(db), 102);
         final entry = productionUpgradeMigrations.singleWhere(
           (candidate) => candidate.version == 102,
@@ -222,6 +222,37 @@ void main() {
           ),
           throwsA(anything),
         );
+
+        // Deliberately advance this existing encrypted proof through the
+        // current production registry while retaining its historical v102
+        // boundary assertions above.
+        db = await sqlcipher.openDatabase(
+          upgradePath,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 111);
+        expect(
+          (await db.query(
+            'groups',
+            where: 'id = ?',
+            whereArgs: ['removed-shell'],
+          )).single['self_removed_at'],
+          '2026-07-20T13:00:00.000Z',
+        );
+        expect(
+          await db.rawQuery(
+            "SELECT name FROM sqlite_master WHERE type = 'table' "
+            "AND name = 'direct_media_blob_custody'",
+          ),
+          hasLength(1),
+        );
+        await db.close();
+        db = null;
 
         db = await sqlcipher.openDatabase(
           freshPath,

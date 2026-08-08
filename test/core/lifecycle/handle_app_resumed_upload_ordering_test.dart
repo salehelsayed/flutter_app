@@ -58,6 +58,51 @@ void main() {
 
   group('handleAppResumed -- retryIncompleteUploads ordering', () {
     test(
+      'TC-347-07c resume orders blob recovery before mutable upload retry',
+      () async {
+        final callOrder = <String>[];
+
+        await handleAppResumed(
+          bridge: fakeBridge,
+          p2pService: fakeP2PService,
+          directMediaBlobLocalCleanupFn: () async {
+            callOrder.add('directMediaBlobLocalCleanup');
+            return 1;
+          },
+          recoverStuckSendingMessagesFn: () async {
+            callOrder.add('recoverStuckSendingMessages');
+            return 0;
+          },
+          drainDirectMediaBlobCustodyFn: () async {
+            callOrder.add('drainDirectMediaBlobCustody');
+            return 2;
+          },
+          retryIncompleteUploadsFn: () async {
+            callOrder.add('retryIncompleteUploads');
+            return 0;
+          },
+          drainDirectInboxCustodyOutboxFn: () async {
+            callOrder.add('drainDirectInboxCustodyOutbox');
+            return 0;
+          },
+          retryFailedMessagesFn: () async {
+            callOrder.add('retryFailedMessages');
+            return 0;
+          },
+        );
+
+        expect(callOrder, <String>[
+          'directMediaBlobLocalCleanup',
+          'recoverStuckSendingMessages',
+          'drainDirectMediaBlobCustody',
+          'retryIncompleteUploads',
+          'drainDirectInboxCustodyOutbox',
+          'retryFailedMessages',
+        ]);
+      },
+    );
+
+    test(
       'TC-343-05 resume drains both direct custody families before failed and unacked rebuild',
       () async {
         for (final throwingFamily in const <String>['text', 'reaction']) {

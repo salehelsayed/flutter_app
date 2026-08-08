@@ -58,6 +58,7 @@ class PendingMessageRetrier {
   final Future<dynamic> Function()? drainGroupOfflineInboxFn;
   final Future<int> Function()? recoverStuckSendingMessagesFn; // Part A
   final Future<int> Function()? retryIncompleteUploadsFn; // Part G -- NEW
+  final Future<int> Function()? drainDirectMediaBlobCustodyFn;
   final Future<int> Function()? retryIncompleteUploadsNetworkRestoredFn;
   final Future<int> Function()? retryIncompleteUploadsPeriodicFn;
   final Future<int> Function()? recoverStuckSendingGroupMessagesFn;
@@ -130,6 +131,7 @@ class PendingMessageRetrier {
     this.drainGroupOfflineInboxFn,
     this.recoverStuckSendingMessagesFn, // Part A
     this.retryIncompleteUploadsFn, // Part G -- NEW
+    this.drainDirectMediaBlobCustodyFn,
     this.retryIncompleteUploadsNetworkRestoredFn,
     this.retryIncompleteUploadsPeriodicFn,
     this.recoverStuckSendingGroupMessagesFn,
@@ -250,6 +252,7 @@ class PendingMessageRetrier {
     if (_isNetworkRestoredFlushing) return;
     _isNetworkRestoredFlushing = true;
     try {
+      await _drainDirectMediaBlobCustody();
       // TC-343-05: the shared text+reaction exact-envelope custody composite is
       // the first retry family on the OS-restored light pass. Its internal
       // family boundaries and this callback boundary keep zero-age unacked and
@@ -387,6 +390,27 @@ class PendingMessageRetrier {
         layer: 'FL',
         event: 'PENDING_RETRIER_DIRECT_INBOX_CUSTODY_DRAIN_ERROR',
         details: {'errorType': e.runtimeType.toString()},
+      );
+    }
+  }
+
+  Future<void> _drainDirectMediaBlobCustody() async {
+    final drain = drainDirectMediaBlobCustodyFn;
+    if (drain == null) return;
+    try {
+      final count = await drain();
+      if (count > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'PENDING_RETRIER_DIRECT_MEDIA_BLOB_CUSTODY_DRAINED',
+          details: {'count': count},
+        );
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'PENDING_RETRIER_DIRECT_MEDIA_BLOB_CUSTODY_DRAIN_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
       );
     }
   }
@@ -761,6 +785,9 @@ class PendingMessageRetrier {
           );
         }
       }
+
+      // Immutable strict blob recovery precedes mutable attachment retry.
+      await _drainDirectMediaBlobCustody();
 
       // Step 7: Re-upload incomplete attachments (Part G)
       final retryIncompleteUploadsForPass = periodic

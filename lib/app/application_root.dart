@@ -374,6 +374,7 @@ class MyApp extends StatefulWidget {
   /// used at cold start and resume. Scheduler callbacks keep expiry strictly
   /// foreground-only without coupling it to network readiness.
   final Future<void> Function()? privateMediaLifecycleRecovery;
+  final Future<int> Function()? directMediaBlobLocalCleanup;
   final void Function()? stopPrivateMediaExpiryScheduler;
   final void Function()? disposePrivateMediaExpiryScheduler;
   final ChatMessageListener chatMessageListener;
@@ -389,6 +390,7 @@ class MyApp extends StatefulWidget {
   final IncomingMessageRouter messageRouter;
   final PendingMessageRetrier pendingMessageRetrier;
   final Future<int> Function()? drainDirectInboxCustodyOutbox;
+  final Future<int> Function()? drainDirectMediaBlobCustody;
   final PendingPostMediaUploadRetrier pendingPostMediaUploadRetrier;
   final PendingPostDeliveryRetrier pendingPostDeliveryRetrier;
   final PendingPostFollowOnRetrier pendingPostFollowOnRetrier;
@@ -497,6 +499,7 @@ class MyApp extends StatefulWidget {
     required this.groupMediaDeleteForMeCoordinator,
     required this.groupMediaDeletionCleanup,
     this.privateMediaLifecycleRecovery,
+    this.directMediaBlobLocalCleanup,
     this.stopPrivateMediaExpiryScheduler,
     this.disposePrivateMediaExpiryScheduler,
     required this.chatMessageListener,
@@ -512,6 +515,7 @@ class MyApp extends StatefulWidget {
     required this.messageRouter,
     required this.pendingMessageRetrier,
     this.drainDirectInboxCustodyOutbox,
+    this.drainDirectMediaBlobCustody,
     required this.pendingPostMediaUploadRetrier,
     required this.pendingPostDeliveryRetrier,
     required this.pendingPostFollowOnRetrier,
@@ -2269,6 +2273,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         privateMediaLifecycleRecoveryFn: privateMediaRecovery == null
             ? null
             : () => privateMediaRecovery!,
+        directMediaBlobLocalCleanupFn: widget.directMediaBlobLocalCleanup,
         retryPushRegistrationFn: widget.pushRegistrationCoordinator?.retryNow,
         skipDirectInboxDrain: droppedPushRecoveryOwnsInbox,
         skipGroupInboxDrain: droppedPushRecoveryOwnsInbox,
@@ -2303,6 +2308,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         retryPendingPostDeliveries: widget.pendingPostDeliveryRetrier.retryNow,
         recoverStuckSendingMessagesFn: () =>
             recoverStuckSendingMessages(messageRepo: widget.messageRepository),
+        drainDirectMediaBlobCustodyFn: widget.drainDirectMediaBlobCustody,
         recoverStuckSendingGroupMessagesFn: () =>
             recoverStuckSendingGroupMessages(
               groupMsgRepo: widget.groupMessageRepository,

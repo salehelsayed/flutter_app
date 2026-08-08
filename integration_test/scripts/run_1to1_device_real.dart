@@ -46,6 +46,7 @@
 //   android.keepalive_drop_skip_direct         Plan 258          automated Android pair
 //   android.wake_token_directionality          Plan 258          automated Android pair
 //   android.voice_message_e2e                   Plan 258          automated Android pair
+//   android.direct_media_blob_custody           Plan 347          automated Android pair
 //   vc02.dcutr_upgrade                          Future VC-02       inactive/BLOCKED
 //   vc02.dcutr_symmetric_cgnat_negative         Future VC-02       inactive/BLOCKED
 
@@ -61,8 +62,10 @@ import '../../tool/sims/artifact_evidence.dart';
 import '../../tool/sims/device_criteria.dart';
 import '../support/android_app_state_guard.dart';
 import '../support/android_critical_performance_evidence.dart';
+import '../support/android_direct_media_blob_custody_evidence.dart';
 import '../support/sims_runtime_protocol.dart';
 import '_android_app_package.dart';
+import 'android_direct_media_blob_custody_campaign.dart';
 import 'android_keepalive_drop_campaign.dart';
 import 'android_voice_message_device_campaign.dart';
 import 'android_wake_token_directionality_campaign.dart';
@@ -71,6 +74,8 @@ const _voiceRecorderScenarioId = simsAndroidVoiceRecorderScenarioId;
 const _criticalPerformanceScenarioId = simsAndroidCriticalPerformanceScenarioId;
 const _keepaliveDropScenarioId = 'android.keepalive_drop_skip_direct';
 const _voiceMessageScenarioId = simsAndroidVoiceMessageScenarioId;
+const _directMediaBlobCustodyScenarioId =
+    androidDirectMediaBlobCustodyScenarioId;
 const _wakeTokenDirectionalityScenarioId = 'android.wake_token_directionality';
 const _protectedThumbnailSecureWindowScenarioId =
     'protected-thumbnail-secure-window';
@@ -256,6 +261,15 @@ const List<_Scenario> _scenarios = <_Scenario>[
         'an Android emulator receives, downloads, and plays the exact bytes',
   ),
   _Scenario(
+    _directMediaBlobCustodyScenarioId,
+    'Plan 347',
+    'TC-347-09',
+    'automated-physical-android-plus-emulator',
+    'a physical Android sender restarts after strict blob custody; an Android '
+        'emulator reopens the exact bytes and source-pinned ACK retires the '
+        'disposable relay authority',
+  ),
+  _Scenario(
     _protectedThumbnailSecureWindowScenarioId,
     'Plan 301',
     'TC-14',
@@ -347,7 +361,12 @@ List<_Scenario> _scenariosToRun(String scenario) {
   return match;
 }
 
-Future<void> main(List<String> args) async {
+Future<void> main(List<String> args) => runOneToOneDeviceReal(args);
+
+Future<void> runOneToOneDeviceReal(
+  List<String> args, {
+  AndroidDirectMediaBlobCustodyDeviceDriver? directMediaBlobCustodyDeviceDriver,
+}) async {
   final scenario = _parseScenario(args);
   final listScenarios = _parseListScenarios(args);
   final cliDevices = _parseDevices(args);
@@ -365,6 +384,9 @@ Future<void> main(List<String> args) async {
       Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_MAIN']?.trim(),
     _voiceMessageScenarioId =>
       Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_MAIN']?.trim(),
+    _directMediaBlobCustodyScenarioId =>
+      Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_DIRECT_MEDIA_CUSTODY']
+          ?.trim(),
     _ => Platform.environment['SIMS_ARTIFACT_ANDROID_E2E_STANDARD']?.trim(),
   };
   final artifact = _parseArtifact(args) ?? environmentArtifact;
@@ -464,6 +486,30 @@ Future<void> main(List<String> args) async {
     final result = await runAndroidVoiceMessageDeviceCampaign(
       devices: pairDevices,
       artifactPath: artifact,
+    );
+    stdout.writeln('SIMS_RESULT_JSON=${jsonEncode(result.json)}');
+    exitCode = result.processExitCode;
+    return;
+  }
+
+  if (toRun.length == 1 &&
+      toRun.single.id == _directMediaBlobCustodyScenarioId) {
+    final pairDevices = cliDevices.isNotEmpty
+        ? cliDevices
+        : <String>[
+            if ((Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID'] ?? '')
+                .trim()
+                .isNotEmpty)
+              Platform.environment['SIMS_ANDROID_PHYSICAL_DEVICE_ID']!.trim(),
+            if ((Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID'] ?? '')
+                .trim()
+                .isNotEmpty)
+              Platform.environment['SIMS_ANDROID_EMULATOR_DEVICE_ID']!.trim(),
+          ];
+    final result = await runAndroidDirectMediaBlobCustodyCampaign(
+      devices: pairDevices,
+      artifactPath: artifact,
+      deviceDriver: directMediaBlobCustodyDeviceDriver,
     );
     stdout.writeln('SIMS_RESULT_JSON=${jsonEncode(result.json)}');
     exitCode = result.processExitCode;
@@ -692,8 +738,7 @@ Future<_RunnerResult> _executeProtectedThumbnailSecureWindowProof({
   }
 
   void onLine(String line) {
-    if (line.contains('P301_MARKER SECURE_HOLD_START') &&
-        !observedSecureHold) {
+    if (line.contains('P301_MARKER SECURE_HOLD_START') && !observedSecureHold) {
       observedSecureHold = true;
       pendingObservations.add(observeSecureHold());
       return;
@@ -755,12 +800,10 @@ Future<_RunnerResult> _executeProtectedThumbnailSecureWindowProof({
   }
 
   final failures = <String>[
-    if (inAppResult == null)
-      'the in-app P301_RESULT marker was never observed',
+    if (inAppResult == null) 'the in-app P301_RESULT marker was never observed',
     if (inAppResult?['tileVisibleBeforeOpen'] != true)
       '(a) the thumbnail tile was not visible before any Open interaction',
-    if (!observedSecureHold)
-      '(b) the secure hold window never opened',
+    if (!observedSecureHold) '(b) the secure hold window never opened',
     if (!secureDuringHold)
       '(b) dumpsys window showed no symbolic SECURE flag for $packageName '
           'while the thumbnail was visible',
@@ -769,8 +812,7 @@ Future<_RunnerResult> _executeProtectedThumbnailSecureWindowProof({
     if (screencapExitZero && screencapBlackFraction < 0.80)
       '(c) the captured app region was not black '
           '(black fraction $screencapBlackFraction) — the window leaked pixels',
-    if (!observedReleasedHold)
-      '(d) the released hold window never opened',
+    if (!observedReleasedHold) '(d) the released hold window never opened',
     if (secureAfterPop)
       '(d) SECURE was still present after popping the conversation route',
     ...observationErrors,
@@ -841,11 +883,13 @@ Future<bool> _windowHasSecureFlag(String device, String packageName) async {
 Future<({bool exitZero, double blackFraction})> _captureScreen(
   String device,
 ) async {
-  final result = await Process.run(
-    'adb',
-    <String>['-s', device, 'exec-out', 'screencap', '-p'],
-    stdoutEncoding: null,
-  );
+  final result = await Process.run('adb', <String>[
+    '-s',
+    device,
+    'exec-out',
+    'screencap',
+    '-p',
+  ], stdoutEncoding: null);
   if (result.exitCode != 0) {
     return (exitZero: false, blackFraction: -1.0);
   }

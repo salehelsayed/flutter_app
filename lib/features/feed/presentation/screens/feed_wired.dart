@@ -2403,6 +2403,11 @@ class _FeedWiredState extends State<FeedWired>
                 await drainDirectInboxCustodyOutboxForMessage(
                   custodyRepository: custodyRepository,
                   storeInAckCustodyInboxDetailed: storeExactCustody,
+                  storeInMediaExpiryBoundedInboxDetailed:
+                      widget.p2pService is MediaExpiryBoundedInboxStore
+                      ? (widget.p2pService as MediaExpiryBoundedInboxStore)
+                            .storeInMediaExpiryBoundedInboxDetailed
+                      : null,
                   recipientPeerId: contactPeerId,
                   messageId: reply.messageId,
                 );
