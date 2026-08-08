@@ -94,6 +94,7 @@ import 'package:flutter_app/core/database/migrations/106_group_notification_disp
 import 'package:flutter_app/core/database/migrations/107_direct_notification_durability.dart';
 import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
 import 'package:flutter_app/core/database/migrations/109_direct_reaction_inbox_custody_outbox.dart';
+import 'package:flutter_app/core/database/migrations/110_direct_media_custody_intent.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -323,6 +324,11 @@ void main() {
     // direct-parent shape. v98/v99 are group-only and do not gate this model.
     await productionUpgradeMigrations
         .singleWhere((entry) => entry.version == 100)
+        .run(db);
+    // Plan 345 advances the repository fixture to the v110 direct-message
+    // mapper shape. The intervening migrations do not add message columns.
+    await productionUpgradeMigrations
+        .singleWhere((entry) => entry.version == 110)
         .run(db);
   }
 
@@ -1469,7 +1475,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 109);
+        expect(currentIdentityDatabaseVersion, 110);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1489,7 +1495,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 109);
+        expect(currentIdentityDatabaseVersion, 110);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1504,9 +1510,9 @@ void main() {
       },
     );
     test(
-      'production registries preserve v100-v109 and end with reaction custody v109',
+      'production registries preserve v100-v110 and end with media custody intent v110',
       () {
-        expect(currentIdentityDatabaseVersion, 109);
+        expect(currentIdentityDatabaseVersion, 110);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1522,6 +1528,7 @@ void main() {
           final index107 = registry.indexWhere((entry) => entry.version == 107);
           final index108 = registry.indexWhere((entry) => entry.version == 108);
           final index109 = registry.indexWhere((entry) => entry.version == 109);
+          final index110 = registry.indexWhere((entry) => entry.version == 110);
           expect(registry.where((entry) => entry.version == 100), hasLength(1));
           expect(registry.where((entry) => entry.version == 101), hasLength(1));
           expect(registry.where((entry) => entry.version == 102), hasLength(1));
@@ -1532,6 +1539,7 @@ void main() {
           expect(registry.where((entry) => entry.version == 107), hasLength(1));
           expect(registry.where((entry) => entry.version == 108), hasLength(1));
           expect(registry.where((entry) => entry.version == 109), hasLength(1));
+          expect(registry.where((entry) => entry.version == 110), hasLength(1));
           expect(index99, greaterThanOrEqualTo(0));
           expect(index100, index99 + 1);
           expect(index101, index100 + 1);
@@ -1543,7 +1551,8 @@ void main() {
           expect(index107, index106 + 1);
           expect(index108, index107 + 1);
           expect(index109, index108 + 1);
-          expect(index109, registry.length - 1);
+          expect(index110, index109 + 1);
+          expect(index110, registry.length - 1);
           expect(registry[index100].name, '100_direct_private_media_lifecycle');
           expect(
             registry[index100].run,
@@ -1593,6 +1602,11 @@ void main() {
           expect(
             registry[index109].run,
             same(runDirectReactionInboxCustodyOutboxMigration),
+          );
+          expect(registry[index110].name, '110_direct_media_custody_intent');
+          expect(
+            registry[index110].run,
+            same(runDirectMediaCustodyIntentMigration),
           );
         }
       },
@@ -1991,7 +2005,7 @@ void main() {
     test('production create and v95 upgrade registries include media library '
         'state v96', () async {
       // TC-228-13: v96 appears exactly once in both registry branches.
-      expect(currentIdentityDatabaseVersion, 109);
+      expect(currentIdentityDatabaseVersion, 110);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,

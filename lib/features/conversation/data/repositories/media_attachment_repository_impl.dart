@@ -4,7 +4,11 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show mediaLocalPathIsTransient;
+    show
+        DirectMediaInboxCustodyDbStageResult,
+        GenericMediaAttachmentCustodySaveRefused,
+        mediaLocalPathIsTransient,
+        shouldPreserveImmutableDirectMediaCustodyAttachmentProjection;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
@@ -14,6 +18,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -24,6 +30,8 @@ import '../../domain/models/media_library.dart';
 import '../../domain/models/media_preview_descriptor.dart';
 import '../../domain/models/media_storage.dart';
 import '../../domain/models/outgoing_ordinary_mutation_result.dart';
+import '../../domain/models/outgoing_direct_media_custody_stage_result.dart';
+import '../../domain/models/direct_inbox_custody_outbox_entry.dart';
 import '../../domain/repositories/media_attachment_repository.dart';
 import '../../domain/repositories/message_repository.dart';
 
@@ -72,9 +80,13 @@ class MediaAttachmentRepositoryImpl
         MediaStorageInventoryRepository,
         GroupGuardedMediaAttachmentSave,
         OutgoingOrdinaryAttemptStagingRepository,
+        OutgoingDirectMediaInboxCustodyStagingRepository,
+        OutgoingDirectMediaCustodyFailureRepository,
         NewMessageMediaPersistenceRollback {
   final Future<void> Function(Map<String, Object?> row)
   dbSaveMediaAttachmentPreservingLocalState;
+  final Future<bool> Function(Map<String, Object?> row)?
+  dbCanApplyGenericMediaAttachmentSave;
   final Future<OutgoingOrdinaryMutationOutcome> Function({
     required Map<String, Object?>? expectedRow,
     required Map<String, Object?> stagedRow,
@@ -82,6 +94,22 @@ class MediaAttachmentRepositoryImpl
     required OutgoingOrdinaryAttemptKind kind,
   })?
   dbStageOutgoingOrdinaryAttemptWithMedia;
+  final Future<DirectMediaInboxCustodyDbStageResult> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required List<Map<String, Object?>> attachmentRows,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  })?
+  dbStageOutgoingDirectMediaInboxCustody;
+  final Future<UploadRetryProjectionResult> Function({
+    required Map<String, Object?> expectedParentRow,
+    required List<Map<String, Object?>> expectedAttachmentRows,
+    required String failedAttachmentId,
+    required UploadMediaDisposition disposition,
+  })?
+  dbProjectOutgoingDirectMediaCustodyUploadFailure;
   final Future<OutgoingOrdinaryMutationResult> Function({
     required String messageId,
     required OutgoingOrdinaryMutationOutcome outcome,
@@ -410,7 +438,10 @@ class MediaAttachmentRepositoryImpl
 
   MediaAttachmentRepositoryImpl({
     required this.dbSaveMediaAttachmentPreservingLocalState,
+    this.dbCanApplyGenericMediaAttachmentSave,
     this.dbStageOutgoingOrdinaryAttemptWithMedia,
+    this.dbStageOutgoingDirectMediaInboxCustody,
+    this.dbProjectOutgoingDirectMediaCustodyUploadFailure,
     this.publishOutgoingOrdinaryMutation,
     required this.dbLoadMediaForMessage,
     required this.dbLoadMediaById,
@@ -468,6 +499,16 @@ class MediaAttachmentRepositoryImpl
     this.refreshDirectPrivateMediaParent,
     MediaAttachmentLifecycleLock? lifecycleLock,
   }) : lifecycleLock = lifecycleLock ?? mediaAttachmentLifecycleLock;
+
+  @override
+  bool get supportsDirectMediaInboxCustody =>
+      dbStageOutgoingDirectMediaInboxCustody != null &&
+      dbCanApplyGenericMediaAttachmentSave != null &&
+      publishOutgoingOrdinaryMutation != null;
+
+  @override
+  bool get supportsDirectMediaCustodyFailureProjection =>
+      dbProjectOutgoingDirectMediaCustodyUploadFailure != null;
 
   late final OutgoingDirectPrivateMutationCoordinator
   _outgoingDirectPrivateMutationCoordinator =
@@ -711,6 +752,37 @@ class MediaAttachmentRepositoryImpl
         details: {'error': error.runtimeType.toString()},
       );
     }
+  }
+
+  MediaAttachment _pinImmutableDirectMediaProjection({
+    required MediaAttachment incoming,
+    required Map<String, Object?> existing,
+  }) {
+    final stored = MediaAttachment.fromMap(Map<String, dynamic>.from(existing));
+    return MediaAttachment(
+      id: stored.id,
+      messageId: stored.messageId,
+      mime: stored.mime,
+      size: stored.size,
+      mediaType: stored.mediaType,
+      width: stored.width,
+      height: stored.height,
+      durationMs: stored.durationMs,
+      localPath: incoming.localPath,
+      downloadStatus: incoming.downloadStatus,
+      createdAt: stored.createdAt,
+      waveform: stored.waveform,
+      uploadRetryCount: incoming.uploadRetryCount,
+      downloadRetryCount: incoming.downloadRetryCount,
+      contentHash: stored.contentHash,
+      thumbnailHash: stored.thumbnailHash,
+      encryptionKeyBase64: stored.encryptionKeyBase64,
+      encryptionNonce: stored.encryptionNonce,
+      encryptionScheme: stored.encryptionScheme,
+      ownerLane: MediaOwnerLane.direct,
+      isBookmarked: incoming.isBookmarked,
+      lastPlaybackPositionMs: incoming.lastPlaybackPositionMs,
+    );
   }
 
   Map<String, Object?> _toStorageReferenceRowWithoutKeyWrite(
@@ -1695,6 +1767,7 @@ class MediaAttachmentRepositoryImpl
     MediaAttachment attachment, {
     required MediaOwnerLane owner,
   }) => lifecycleLock.synchronized(attachment.id, () async {
+    var attachmentForPersistence = attachment;
     if (dbClassifyOutgoingDirectPrivateMediaCompletion != null &&
         owner == MediaOwnerLane.direct &&
         attachment.downloadStatus == 'done' &&
@@ -1740,6 +1813,34 @@ class MediaAttachmentRepositoryImpl
             '(${owner.dbValue}, ${attachment.messageId})',
           );
         }
+        if (shouldPreserveImmutableDirectMediaCustodyAttachmentProjection(
+          existing: existing,
+          candidate: attachment.toMap(),
+        )) {
+          attachmentForPersistence = _pinImmutableDirectMediaProjection(
+            incoming: attachment,
+            existing: existing,
+          );
+        }
+      }
+      final genericSaveGuard = dbCanApplyGenericMediaAttachmentSave;
+      if (genericSaveGuard != null &&
+          !await genericSaveGuard(
+            _toStorageReferenceRowWithoutKeyWrite(
+              attachmentForPersistence.copyWith(
+                ownerLane: MediaOwnerLane.direct,
+              ),
+            ),
+          )) {
+        // Active v108 custody and exact terminal/deletion authority own both
+        // present and user-removed attachment rows. This check must precede
+        // _toStorageRow so a delayed generic save cannot transiently recreate
+        // a row or overwrite the stable secure-store key. Settled rows instead
+        // keep their immutable descriptor/crypto projection pinned above while
+        // allowing local lifecycle repair.
+        return;
+      }
+      if (existing != null) {
         final result = await _applyOutgoingDirectPrivateNonCompletionWithinLock(
           attachment.copyWith(ownerLane: MediaOwnerLane.direct),
           missingParentIsOrdinary: true,
@@ -1801,7 +1902,7 @@ class MediaAttachmentRepositoryImpl
           'but the caller passed ${owner.dbValue}',
         );
       }
-      final stamped = attachment.copyWith(ownerLane: owner);
+      final stamped = attachmentForPersistence.copyWith(ownerLane: owner);
 
       // Immutable-identity validation BEFORE _toStorageRow or any
       // secure-store side effect (TC-228-04K): a rejected cross-owner or
@@ -1885,6 +1986,18 @@ class MediaAttachmentRepositoryImpl
             '$e; compensation: $compensationError',
           );
         }
+      }
+      if (e is GenericMediaAttachmentCustodySaveRefused) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'MEDIA_REPO_SAVE_CUSTODY_REFUSED',
+          details: {
+            'id': attachment.id.length > 8
+                ? attachment.id.substring(0, 8)
+                : attachment.id,
+          },
+        );
+        return;
       }
       emitFlowEvent(
         layer: 'FL',
@@ -1997,6 +2110,270 @@ class MediaAttachmentRepositoryImpl
       outcome: outcome,
       committedMedia: committedMedia,
     );
+  }
+
+  @override
+  Future<OutgoingDirectMediaCustodyStageResult>
+  stageOutgoingDirectMediaInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  }) async {
+    final stage = dbStageOutgoingDirectMediaInboxCustody;
+    if (!supportsDirectMediaInboxCustody ||
+        stage == null ||
+        attachments.isEmpty ||
+        staged.id.isEmpty ||
+        staged.contactPeerId != recipientPeerId ||
+        staged.wireEnvelope != wireEnvelope ||
+        attachments.any(
+          (attachment) =>
+              attachment.id.isEmpty ||
+              attachment.messageId != staged.id ||
+              attachment.encryptionKeyBase64 == null ||
+              attachment.encryptionKeyBase64!.isEmpty ||
+              isSecureStoreReference(attachment.encryptionKeyBase64) ||
+              (attachment.ownerLane != null &&
+                  attachment.ownerLane != MediaOwnerLane.direct),
+        ) ||
+        attachments.map((attachment) => attachment.id).toSet().length !=
+            attachments.length) {
+      return const OutgoingDirectMediaCustodyStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        message: null,
+        custody: null,
+      );
+    }
+
+    final stamped = attachments
+        .map(
+          (attachment) => attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        )
+        .toList(growable: false);
+    final dbResult = await lifecycleLock.synchronizedAll(() async {
+      final snapshots = <_MediaEncryptionKeyWriteSnapshot>[];
+      var restoreAttempted = false;
+      Future<void> restoreSnapshots() async {
+        if (restoreAttempted) return;
+        restoreAttempted = true;
+        Object? firstError;
+        for (final snapshot in snapshots.reversed) {
+          try {
+            await snapshot.restore();
+          } catch (error) {
+            firstError ??= error;
+          }
+        }
+        if (firstError != null) {
+          throw StateError(
+            'direct media custody secure-key compensation failed: '
+            '$firstError',
+          );
+        }
+      }
+
+      try {
+        for (final attachment in stamped) {
+          snapshots.add(await _captureEncryptionKeyWriteSnapshot(attachment));
+        }
+        final rows = <Map<String, Object?>>[];
+        for (final attachment in stamped) {
+          rows.add(await _toStorageRow(attachment));
+        }
+        final result = await stage(
+          expectedRow: expected?.toMap(),
+          stagedRow: staged.toMap(),
+          attachmentRows: rows,
+          kind: kind,
+          recipientPeerId: recipientPeerId,
+          wireEnvelope: wireEnvelope,
+        );
+        if (result.outcome == OutgoingOrdinaryMutationOutcome.idempotent) {
+          if (result.hasExactMutableProjection) {
+            // A competing finalizer may have written a different raw key
+            // under the same stable secure-store reference. Restore only
+            // values that this losing attempt overwrote; a genuinely missing
+            // key may still be repaired while the exact durable attachment
+            // projection proves which blob the reference belongs to.
+            for (final snapshot in snapshots.reversed) {
+              if (snapshot.overwroteDifferentExistingValue) {
+                await snapshot.restore();
+              }
+            }
+          } else {
+            // The immutable v108 row still authorizes replay after settlement
+            // or physical deletion, but a missing/mutated attachment
+            // projection cannot authorize installing this loser's raw key.
+            await restoreSnapshots();
+          }
+        }
+        final exactAuthority =
+            result.outcome.authorizesTransport &&
+            result.custodyRow != null &&
+            (result.hasExactMutableProjection
+                ? result.messageRow != null && result.attachmentRows.isNotEmpty
+                : result.outcome == OutgoingOrdinaryMutationOutcome.idempotent);
+        if (!exactAuthority) await restoreSnapshots();
+        return result;
+      } catch (_) {
+        await restoreSnapshots();
+        rethrow;
+      }
+    });
+
+    if (!dbResult.outcome.authorizesTransport ||
+        dbResult.custodyRow == null ||
+        (dbResult.hasExactMutableProjection &&
+            (dbResult.messageRow == null || dbResult.attachmentRows.isEmpty)) ||
+        (!dbResult.hasExactMutableProjection &&
+            dbResult.outcome != OutgoingOrdinaryMutationOutcome.idempotent)) {
+      return OutgoingDirectMediaCustodyStageResult(
+        outcome: dbResult.outcome,
+        message: null,
+        custody: null,
+      );
+    }
+
+    var committedMedia = const <MediaAttachment>[];
+    if (dbResult.hasExactMutableProjection) {
+      try {
+        committedMedia = await _attachmentsFromRows(dbResult.attachmentRows);
+      } catch (error) {
+        // Hydration is post-commit publication work. Preserve the exact DB
+        // projection (including stable secure-store references) if
+        // secure-store observation itself fails after custody committed.
+        committedMedia = dbResult.attachmentRows
+            .map(MediaAttachment.fromMap)
+            .toList(growable: false);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DIRECT_MEDIA_CUSTODY_HYDRATION_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+      }
+    }
+    final custody = DirectInboxCustodyOutboxEntry.fromMap(dbResult.custodyRow!);
+    ConversationMessage? committedMessage;
+    if (dbResult.hasExactMutableProjection) {
+      committedMessage = ConversationMessage.fromMap(
+        dbResult.messageRow!,
+      ).copyWith(media: committedMedia);
+    } else {
+      final currentRow = dbResult.messageRow;
+      if (currentRow != null &&
+          currentRow['id'] == staged.id &&
+          currentRow['contact_peer_id'] == recipientPeerId &&
+          currentRow['sender_peer_id'] == staged.senderPeerId) {
+        try {
+          committedMessage = ConversationMessage.fromMap(
+            currentRow,
+          ).copyWith(media: const <MediaAttachment>[]);
+        } catch (_) {
+          // Mutable projection hydration cannot revoke immutable custody.
+        }
+      }
+    }
+
+    // The transaction is already committed. Cache/stream publication is best
+    // effort and can neither compensate keys nor revoke exact custody.
+    if (dbResult.hasExactMutableProjection) {
+      try {
+        await publishOutgoingOrdinaryMutation!(
+          messageId: committedMessage!.id,
+          outcome: dbResult.outcome,
+          committedMedia: committedMedia,
+        );
+        for (final attachment in committedMedia) {
+          _emitAuthorizationChange(
+            owner: MediaOwnerLane.direct,
+            messageId: committedMessage.id,
+            attachmentId: attachment.id,
+            kind: MediaAttachmentAuthorizationMutation.saved,
+          );
+        }
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DIRECT_MEDIA_CUSTODY_PUBLICATION_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+      }
+    }
+    return OutgoingDirectMediaCustodyStageResult(
+      outcome: dbResult.outcome,
+      message: committedMessage,
+      custody: custody,
+    );
+  }
+
+  @override
+  Future<UploadRetryProjectionResult> projectDirectMediaCustodyUploadFailure({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required String failedAttachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    final project = dbProjectOutgoingDirectMediaCustodyUploadFailure;
+    final attachmentIds = expectedAttachments
+        .map((attachment) => attachment.id)
+        .toSet();
+    if (project == null ||
+        expectedParent.directMediaCustodyIntentId == null ||
+        expectedParent.id.isEmpty ||
+        expectedParent.contactPeerId.isEmpty ||
+        expectedAttachments.isEmpty ||
+        attachmentIds.length != expectedAttachments.length ||
+        !attachmentIds.contains(failedAttachmentId) ||
+        expectedAttachments.any(
+          (attachment) =>
+              attachment.messageId != expectedParent.id ||
+              attachment.ownerLane != MediaOwnerLane.direct,
+        )) {
+      return const UploadRetryProjectionResult.notApplied();
+    }
+
+    final expectedRows = expectedAttachments
+        .map(_toStorageExpectationRow)
+        .toList(growable: false);
+    final result = await lifecycleLock.synchronizedAll(
+      () => project(
+        expectedParentRow: expectedParent.toMap(),
+        expectedAttachmentRows: expectedRows,
+        failedAttachmentId: failedAttachmentId,
+        disposition: failure.disposition,
+      ),
+    );
+    if (!result.applied) return result;
+
+    _emitAuthorizationChange(
+      owner: MediaOwnerLane.direct,
+      messageId: expectedParent.id,
+      attachmentId: failedAttachmentId,
+      kind: MediaAttachmentAuthorizationMutation.downloadStatusChanged,
+    );
+    final publish = publishOutgoingOrdinaryMutation;
+    if (publish != null) {
+      try {
+        await publish(
+          messageId: expectedParent.id,
+          outcome: OutgoingOrdinaryMutationOutcome.applied,
+          committedMedia: await getAttachmentsForMessage(
+            expectedParent.id,
+            owner: MediaOwnerLane.direct,
+          ),
+        );
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'DIRECT_MEDIA_CUSTODY_FAILURE_PUBLICATION_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+      }
+    }
+    return result;
   }
 
   // Legacy saveAttachment callers have no parent-policy argument. Enter the
@@ -2800,6 +3177,17 @@ class MediaAttachmentRepositoryImpl
     final secureStoreKey = mediaAttachmentEncryptionKeyStoreName(attachment.id);
     await store.write(secureStoreKey, key);
     row['encryption_key_base64'] = secureStoreReferenceForKey(secureStoreKey);
+    return row;
+  }
+
+  Map<String, Object?> _toStorageExpectationRow(MediaAttachment attachment) {
+    final row = Map<String, Object?>.from(attachment.toMap());
+    final key = attachment.encryptionKeyBase64;
+    if (key != null && key.isNotEmpty && !isSecureStoreReference(key)) {
+      row['encryption_key_base64'] = secureStoreReferenceForKey(
+        mediaAttachmentEncryptionKeyStoreName(attachment.id),
+      );
+    }
     return row;
   }
 

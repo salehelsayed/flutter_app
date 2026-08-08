@@ -74,7 +74,7 @@ void main() {
     });
 
     test(
-      'TC-343-08a v109 inventory contains direct reaction custody',
+      'TC-343-08a current inventory contains direct reaction custody',
       () async {
         db = await openDatabase(
           inMemoryDatabasePath,
@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 109);
+        expect(currentIdentityDatabaseVersion, 110);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -117,6 +117,10 @@ void main() {
           isFalse,
         );
         expect(inventory.tableNames, contains('direct_inbox_custody_outbox'));
+        expect(
+          inventory.hasColumn('messages', 'direct_media_custody_intent_id'),
+          isTrue,
+        );
         expect(
           inventory.tables['direct_inbox_custody_outbox'],
           containsAll(<String>[

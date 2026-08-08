@@ -83,7 +83,7 @@ Future<Set<String>> _schemaObjectNames(
 )).map((row) => row['name'] as String).toSet();
 
 Future<void> _expectV107Artifacts(sqlcipher.Database db) async {
-  expect(await _userVersion(db), 109);
+  expect(await _userVersion(db), 110);
   expect(await _cipherVersion(db), isNotEmpty);
   expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
     'event_id',
@@ -369,7 +369,7 @@ void main() {
   testWidgets(
     'TC-331-22 real SQLCipher v106 to current preserves typed direct and group authority across refusal and reopen',
     (_) async {
-      expect(currentIdentityDatabaseVersion, 109);
+      expect(currentIdentityDatabaseVersion, 110);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_notification_durability_sqlcipher_',
@@ -408,7 +408,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v106-to-v109';
+        proofStage = 'upgrade-v106-to-current-v110';
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
@@ -557,7 +557,7 @@ void main() {
           }
         }(), throwsA(anything));
 
-        proofStage = 'v109-to-v106-downgrade-refusal';
+        proofStage = 'v110-to-v106-downgrade-refusal';
         await expectLater(
           sqlcipher.openDatabase(
             upgradePath,
@@ -569,7 +569,7 @@ void main() {
           throwsA(anything),
         );
 
-        proofStage = 'reopen-v109-after-refusals';
+        proofStage = 'reopen-current-v110-after-refusals';
         db = await sqlcipher.openDatabase(
           upgradePath,
           password: password,
@@ -593,7 +593,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'fresh-v109-database';
+        proofStage = 'fresh-current-v110-database';
         db = await sqlcipher.openDatabase(
           freshPath,
           password: password,

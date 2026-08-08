@@ -420,6 +420,83 @@ void main() {
   );
 
   test(
+    'media custody intent crossing refuses ordinary settlement byte-identically',
+    () async {
+      const intentId = '0123456789abcdef0123456789abcdef';
+      const ordinaryEnvelope = 'stale-ordinary-envelope';
+      final staleOrdinary = await insertMessage(
+        messageRow(
+          id: 'intent-crossed-ordinary',
+          wireEnvelope: ordinaryEnvelope,
+        ),
+      );
+      expect(staleOrdinary['direct_media_custody_intent_id'], isNull);
+      expect(
+        await db.update(
+          'messages',
+          const <String, Object?>{'direct_media_custody_intent_id': intentId},
+          where: 'id = ?',
+          whereArgs: const <Object?>['intent-crossed-ordinary'],
+        ),
+        1,
+      );
+      final ordinaryBefore = await loadMessage('intent-crossed-ordinary');
+
+      expect(
+        await dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: 'intent-crossed-ordinary',
+          expectedContactPeerId: staleOrdinary['contact_peer_id']! as String,
+          expectedEnvelope: staleOrdinary['wire_envelope']! as String,
+          status: 'sent',
+          transport: 'wifi',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.live,
+        ),
+        OutgoingOrdinaryMutationOutcome.refused,
+      );
+      expect(await loadMessage('intent-crossed-ordinary'), ordinaryBefore);
+
+      const tombstoneEnvelope = 'stale-tombstone-envelope';
+      final staleTombstone = await insertMessage(
+        messageRow(
+          id: 'intent-crossed-tombstone',
+          text: '',
+          deletedAt: '2026-08-05T12:20:00.000Z',
+          deletedByPeerId: 'self-peer',
+          wireEnvelope: tombstoneEnvelope,
+        ),
+      );
+      expect(staleTombstone['direct_media_custody_intent_id'], isNull);
+      expect(
+        await db.update(
+          'messages',
+          const <String, Object?>{'direct_media_custody_intent_id': intentId},
+          where: 'id = ?',
+          whereArgs: const <Object?>['intent-crossed-tombstone'],
+        ),
+        1,
+      );
+      final tombstoneBefore = await loadMessage('intent-crossed-tombstone');
+
+      expect(
+        await dbSettleOutgoingOrdinaryDeleteTombstone(
+          db,
+          messageId: 'intent-crossed-tombstone',
+          expectedContactPeerId: staleTombstone['contact_peer_id']! as String,
+          expectedEnvelope: staleTombstone['wire_envelope']! as String,
+          status: 'delivered',
+          transport: 'direct',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.live,
+        ),
+        OutgoingOrdinaryMutationOutcome.refused,
+      );
+      expect(await loadMessage('intent-crossed-tombstone'), tombstoneBefore);
+    },
+  );
+
+  test(
     'normal settlement binds identity policy and exact field shapes',
     () async {
       final ordinaryBefore = await insertMessage(

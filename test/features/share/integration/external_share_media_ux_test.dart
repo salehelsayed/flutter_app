@@ -10,11 +10,13 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -149,7 +151,7 @@ Future<void> _runExternalShareCardCase(
   addTearDown(() => tester.runAsync(repositoryFixture.dispose));
   final messageRepository = repositoryFixture.messageRepo;
   final mediaAttachmentRepository = repositoryFixture.repo;
-  final p2pService = FakeP2PService(
+  final p2pService = _AckOrExpiryFakeP2PService(
     initialState: const NodeState(
       peerId: ownPeerId,
       isStarted: true,
@@ -162,7 +164,6 @@ Future<void> _runExternalShareCardCase(
         ),
       ],
     ),
-    storeInInboxResult: true,
   );
   final bridge = PassthroughCryptoBridge();
   final chatMessageListener = ChatMessageListener(
@@ -274,6 +275,11 @@ Future<void> _runExternalShareCardCase(
         },
   );
 
+  ConversationMessage? firstPublished;
+  final firstOutgoingPublicationSubscription = messageRepository.messageChanges
+      .where((message) => message.id == messageId && !message.isIncoming)
+      .listen((message) => firstPublished ??= message);
+  addTearDown(firstOutgoingPublicationSubscription.cancel);
   final delivery = coordinator.deliver(
     shareIntent: ShareIntent(
       type: ShareIntentType.files,
@@ -285,9 +291,6 @@ Future<void> _runExternalShareCardCase(
   Object? deliveryError;
   StackTrace? deliveryStackTrace;
   var deliveryCompleted = false;
-  final firstOutgoingPublication = messageRepository.messageChanges.firstWhere(
-    (message) => message.id == messageId && !message.isIncoming,
-  );
   unawaited(
     delivery.then<void>(
       (result) {
@@ -301,13 +304,16 @@ Future<void> _runExternalShareCardCase(
       },
     ),
   );
-  for (var i = 0; i < 100 && !deliveryCompleted; i++) {
+  for (
+    var i = 0;
+    i < 100 && (!deliveryCompleted || firstPublished == null);
+    i++
+  ) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 5)),
     );
     await tester.pump();
   }
-  final firstPublished = await tester.runAsync(() => firstOutgoingPublication);
   for (var i = 0; i < 100; i++) {
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 5)),
@@ -322,9 +328,12 @@ Future<void> _runExternalShareCardCase(
   }
   expect(deliveryCompleted, isTrue);
   expect(deliveryResult?.sentCount, 1);
-  expect(firstPublished, isNotNull);
-  expect(firstPublished!.media, hasLength(1));
-  expect(firstPublished.media.single.id, attachmentId);
+  final published = firstPublished;
+  if (published == null) {
+    fail('outgoing publication was not observed within the polling bound');
+  }
+  expect(published.media, hasLength(1));
+  expect(published.media.single.id, attachmentId);
 
   final renderedCards = find.byType(MediaThumbnailImage);
   expect(
@@ -339,6 +348,28 @@ Future<void> _runExternalShareCardCase(
 
   await tester.pumpWidget(const SizedBox.shrink());
   await tester.pump();
+}
+
+class _AckOrExpiryFakeP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _AckOrExpiryFakeP2PService({required NodeState initialState})
+    : super(initialState: initialState, storeInInboxResult: true);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+    );
+  }
 }
 
 final List<int> _tinyPngBytes = base64Decode(

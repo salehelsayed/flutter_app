@@ -23,6 +23,7 @@ import 'package:flutter_app/features/conversation/application/direct_private_med
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
+import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -42,6 +43,7 @@ enum _RetryFailedMessageSkipReason {
   manualRearmNotEligible,
   uploadOwnershipUnavailable,
   uploadFailed,
+  mediaCustodyProjectionMismatch,
 }
 
 class _RetryAttachmentResolution {
@@ -425,62 +427,88 @@ Future<bool> _retryFailedMessageCandidate({
   MediaUploadLease? uploadLease;
   _DirectPrivateManualRetryCustody? privateCustody;
   try {
-    // 116 EF-3 settled-recheck: the loaded list may hold a stale snapshot of
-    // a row that settled between load and execution — re-fetch and use the
-    // FRESH row for all subsequent derivation.
-    final fresh = await messageRepo.getMessage(msg.id);
+    // A v108 immutable custody row is the sole retry authority for its initial
+    // direct event. Resolve it from the list-loaded identity before re-reading
+    // the weaker parent: settlement or physical deletion may win between list
+    // load and execution without revoking the retained outbox row. Either this
+    // caller attempts the exact bytes, or a bulk pass following the global
+    // drain recognizes the retained row and stops. Neither path may fall
+    // through to upload, cached-envelope, or re-encryption work.
+    final loadedMessageId = msg.id;
+    if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+      final custodyRepository =
+          messageRepo as OutgoingDirectTextInboxCustodyRepository;
+      final owner = await custodyRepository
+          .loadDirectInboxCustodyOwnerForMessageId(messageId: loadedMessageId);
+      if (owner != null) {
+        if (!retryDirectInboxCustody) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_SKIPPED_AFTER_DRAIN',
+            details: <String, Object?>{
+              'id': loadedMessageId.length > 8
+                  ? loadedMessageId.substring(0, 8)
+                  : loadedMessageId,
+            },
+          );
+          return false;
+        }
+        final custodyAttempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+          entry: owner,
+          custodyRepository: custodyRepository,
+          storeInAckCustodyInboxDetailed: storeExactCustody,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_OWNED',
+          details: <String, Object?>{
+            'id': loadedMessageId.length > 8
+                ? loadedMessageId.substring(0, 8)
+                : loadedMessageId,
+            'completed': custodyAttempt.completed,
+          },
+        );
+        return custodyAttempt.completed;
+      }
+    }
+
+    // 116 EF-3 settled-recheck: when no immutable custody exists, the loaded
+    // list may hold a stale snapshot of a row that settled between load and
+    // execution. Re-fetch and use the FRESH row for every weaker retry path.
+    final fresh = await messageRepo.getMessage(loadedMessageId);
     if (fresh == null || fresh.isIncoming || fresh.status != 'failed') {
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_FAILED_MESSAGE_SKIPPED_SETTLED',
-        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        details: {
+          'id': loadedMessageId.length > 8
+              ? loadedMessageId.substring(0, 8)
+              : loadedMessageId,
+        },
       );
       return false;
     }
     msg = fresh;
 
-    // A v108 immutable custody row is the sole retry authority for its initial
-    // direct-text event. Resolve that authority before inspecting message
-    // shape/status: either this caller attempts the exact bytes, or a bulk pass
-    // following the global drain recognizes the retained row and stops. Neither
-    // path may fall through to cached-envelope or re-encryption work.
-    if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
-      final custodyRepository =
-          messageRepo as OutgoingDirectTextInboxCustodyRepository;
-      if (!retryDirectInboxCustody) {
-        final pending = await custodyRepository
-            .loadDirectInboxCustodyForMessage(
-              recipientPeerId: msg.contactPeerId,
-              messageId: msg.id,
-            );
-        if (pending != null) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_SKIPPED_AFTER_DRAIN',
-            details: <String, Object?>{
-              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-            },
-          );
+    // A persisted fresh-media intent is exclusive provenance. Validate its
+    // complete current projection before any retry path can rebuild blobs,
+    // rotate keys, encrypt an event, or fall through to generic storage.
+    final directMediaIntent = msg.directMediaCustodyIntentId;
+    if (directMediaIntent != null) {
+      if (mediaAttachmentRepo == null) return false;
+      try {
+        final currentAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(msg.id, owner: MediaOwnerLane.direct);
+        if (!_isExactDirectMediaCustodyProjectionBeforeFailedRetry(
+          message: msg,
+          expectedSenderPeerId: identity.peerId,
+          attachments: currentAttachments,
+          manualRetry: manualRetry,
+        )) {
           return false;
         }
-      } else {
-        final custodyAttempt = await drainDirectInboxCustodyOutboxForMessage(
-          custodyRepository: custodyRepository,
-          storeInAckCustodyInboxDetailed: storeExactCustody,
-          recipientPeerId: msg.contactPeerId,
-          messageId: msg.id,
-        );
-        if (custodyAttempt.found) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_OWNED',
-            details: <String, Object?>{
-              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
-              'completed': custodyAttempt.completed,
-            },
-          );
-          return custodyAttempt.completed;
-        }
+      } catch (_) {
+        return false;
       }
     }
 
@@ -510,6 +538,7 @@ Future<bool> _retryFailedMessageCandidate({
       tryClaimUploadLease: tryClaimUploadLease,
       releaseUploadLease: releaseUploadLease,
       manualRetry: manualRetry,
+      expectedSenderPeerId: identity.peerId,
     );
     uploadLease = resolution.uploadLease;
     privateCustody = resolution.privateCustody;
@@ -546,6 +575,13 @@ Future<bool> _retryFailedMessageCandidate({
             layer: 'FL',
             event: 'RETRY_FAILED_MEDIA_MANUAL_RETRY_SKIPPED',
             details: {...details, 'reason': resolution.skipReason.name},
+          );
+          break;
+        case _RetryFailedMessageSkipReason.mediaCustodyProjectionMismatch:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_MEDIA_CUSTODY_PROJECTION_REFUSED',
+            details: details,
           );
           break;
         case _RetryFailedMessageSkipReason.none:
@@ -1204,6 +1240,7 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
   required String targetPeerId,
   required UploadMediaFn uploadFn,
   required bool manualRetry,
+  required String expectedSenderPeerId,
   MediaFileManager? mediaFileManager,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
@@ -1219,6 +1256,20 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
         owner: MediaOwnerLane.direct,
       ) ??
       const <MediaAttachment>[];
+
+  final tokenBearingPreparation = message.directMediaCustodyIntentId != null;
+  if (tokenBearingPreparation &&
+      !_isExactDirectMediaCustodyProjectionBeforeFailedRetry(
+        message: message,
+        expectedSenderPeerId: expectedSenderPeerId,
+        attachments: persistedAttachments,
+        manualRetry: manualRetry,
+      )) {
+    return const _RetryAttachmentResolution(
+      attachments: null,
+      skipReason: _RetryFailedMessageSkipReason.mediaCustodyProjectionMismatch,
+    );
+  }
 
   if (persistedAttachments.isEmpty) {
     return const _RetryAttachmentResolution(
@@ -1386,6 +1437,32 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       );
     }
 
+    ConversationMessage? mediaCustodyFailureParent;
+    List<MediaAttachment> mediaCustodyFailureAttachments = const [];
+    if (tokenBearingPreparation) {
+      final currentParent = await messageRepo.getMessage(messageId);
+      final currentProjection =
+          await mediaAttachmentRepo?.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          ) ??
+          const <MediaAttachment>[];
+      if (currentParent == null ||
+          !isExactDirectMediaCustodyRetryProjection(
+            message: currentParent,
+            expectedSenderPeerId: expectedSenderPeerId,
+            attachments: currentProjection,
+          )) {
+        return const _RetryAttachmentResolution(
+          attachments: null,
+          skipReason:
+              _RetryFailedMessageSkipReason.mediaCustodyProjectionMismatch,
+        );
+      }
+      mediaCustodyFailureParent = currentParent;
+      mediaCustodyFailureAttachments = currentProjection;
+    }
+
     if (isOutgoingPrivate) {
       privateCustody = await _claimDirectPrivateManualRetryCustody(
         messageId: messageId,
@@ -1411,12 +1488,16 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       targetPeerId: targetPeerId,
       uploadFn: uploadFn,
       messageId: messageId,
+      messageRepo: messageRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
       uploadRetryProjectionRepo: uploadRetryProjectionRepo,
       privateMutationRepository: isOutgoingPrivate
           ? privateMutationRepository
           : null,
+      carryToDirectMediaCustody: tokenBearingPreparation,
+      mediaCustodyFailureParent: mediaCustodyFailureParent,
+      mediaCustodyFailureAttachments: mediaCustodyFailureAttachments,
     );
     if (reuploadedAttachments == null) {
       leaseHandedOff = true;
@@ -1455,6 +1536,53 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       }
     }
   }
+}
+
+/// Exact token-bearing projection admitted before a failed manual retry CAS.
+///
+/// The shared validator deliberately accepts only prepared (`upload_pending`)
+/// and completed rows. A user-triggered retry may also start from the one
+/// terminal state that the atomic rearm capability owns: an exact prepared row
+/// at the bounded retry ceiling. Model only that CAS result here; the real
+/// parent and attachments are reloaded and checked by the strict validator
+/// after rearm, before any upload can begin.
+bool _isExactDirectMediaCustodyProjectionBeforeFailedRetry({
+  required ConversationMessage message,
+  required String expectedSenderPeerId,
+  required List<MediaAttachment> attachments,
+  required bool manualRetry,
+}) {
+  if (isExactDirectMediaCustodyRetryProjection(
+    message: message,
+    expectedSenderPeerId: expectedSenderPeerId,
+    attachments: attachments,
+  )) {
+    return true;
+  }
+  if (!manualRetry) return false;
+
+  var hasAtCeilingTerminal = false;
+  final modeledRearm = attachments
+      .map((attachment) {
+        final retryCount = attachment.uploadRetryCount ?? 0;
+        if (attachment.downloadStatus != 'upload_failed' ||
+            retryCount < kMaxUploadRetries) {
+          return attachment;
+        }
+        hasAtCeilingTerminal = true;
+        return attachment.copyWith(
+          downloadStatus: 'upload_pending',
+          uploadRetryCount: 0,
+        );
+      })
+      .toList(growable: false);
+
+  return hasAtCeilingTerminal &&
+      isExactDirectMediaCustodyRetryProjection(
+        message: message,
+        expectedSenderPeerId: expectedSenderPeerId,
+        attachments: modeledRearm,
+      );
 }
 
 Future<_DirectPrivateManualRetryCustody?>
@@ -1561,10 +1689,14 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
   required String targetPeerId,
   required UploadMediaFn uploadFn,
   required String messageId,
+  required MessageRepository messageRepo,
   required MediaAttachmentRepository? mediaAttachmentRepo,
   MediaFileManager? mediaFileManager,
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   OutgoingDirectPrivateMutationRepository? privateMutationRepository,
+  bool carryToDirectMediaCustody = false,
+  ConversationMessage? mediaCustodyFailureParent,
+  List<MediaAttachment> mediaCustodyFailureAttachments = const [],
 }) async {
   // Defensive ceiling: skip messages with too many attachments
   if (attachments.length > kReuploadMaxAttachmentsPerMessage) {
@@ -1602,21 +1734,91 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
         event: 'RETRY_REUPLOAD_FAILED',
         details: {'localPath': localPath},
       );
-      await uploadRetryProjectionRepo?.projectUploadFailure(
-        messageId: messageId,
-        attachmentId: attachment.id,
-        failure: uploadOutcome as UploadMediaFailed,
-      );
+      final failure = uploadOutcome as UploadMediaFailed;
+      if (carryToDirectMediaCustody) {
+        final failureRepository =
+            mediaAttachmentRepo is OutgoingDirectMediaCustodyFailureRepository
+            ? mediaAttachmentRepo as OutgoingDirectMediaCustodyFailureRepository
+            : null;
+        var projected = const UploadRetryProjectionResult.notApplied();
+        final expectedParent = mediaCustodyFailureParent;
+        if (failureRepository != null &&
+            failureRepository.supportsDirectMediaCustodyFailureProjection &&
+            expectedParent != null &&
+            mediaCustodyFailureAttachments.isNotEmpty) {
+          try {
+            final freshParent = await messageRepo.getMessage(messageId);
+            final freshAttachments = await mediaAttachmentRepo!
+                .getAttachmentsForMessage(
+                  messageId,
+                  owner: MediaOwnerLane.direct,
+                );
+            if (freshParent != null &&
+                _sameRetryFailureDatabaseMap(
+                  expectedParent.toMap(),
+                  freshParent.toMap(),
+                ) &&
+                _sameRetryFailureAttachmentProjection(
+                  mediaCustodyFailureAttachments,
+                  freshAttachments,
+                )) {
+              projected = await failureRepository
+                  .projectDirectMediaCustodyUploadFailure(
+                    expectedParent: freshParent,
+                    expectedAttachments: freshAttachments,
+                    failedAttachmentId: attachment.id,
+                    failure: failure,
+                  );
+            }
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_REUPLOAD_MEDIA_CUSTODY_FAILURE_ERROR',
+              details: {'errorType': error.runtimeType.toString()},
+            );
+          }
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: projected.applied
+              ? 'RETRY_REUPLOAD_MEDIA_CUSTODY_FAILURE_PROJECTED'
+              : 'RETRY_REUPLOAD_MEDIA_CUSTODY_FAILURE_REFUSED',
+          details: {'messageId': messageId},
+        );
+      } else {
+        await uploadRetryProjectionRepo?.projectUploadFailure(
+          messageId: messageId,
+          attachmentId: attachment.id,
+          failure: failure,
+        );
+      }
       return null;
     }
 
-    final completed = uploaded.copyWith(
-      id: attachment.id,
-      messageId: messageId,
-      downloadStatus: 'done',
-      uploadRetryCount: 0,
-      ownerLane: MediaOwnerLane.direct,
-    );
+    final completed = carryToDirectMediaCustody
+        ? completeDirectMediaCustodyRetryAttachment(
+            prepared: attachment,
+            uploaded: uploaded,
+          )
+        : uploaded.copyWith(
+            id: attachment.id,
+            messageId: messageId,
+            downloadStatus: 'done',
+            uploadRetryCount: 0,
+            ownerLane: MediaOwnerLane.direct,
+          );
+    if (completed == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_REUPLOAD_MEDIA_CUSTODY_COMPLETION_REFUSED',
+        details: {
+          'attachmentId': attachment.id.length > 8
+              ? attachment.id.substring(0, 8)
+              : attachment.id,
+        },
+      );
+      return null;
+    }
     if (privateMutationRepository != null) {
       final expectedPendingPath = attachment.localPath?.trim();
       if (expectedPendingPath == null || expectedPendingPath.isEmpty) {
@@ -1640,7 +1842,7 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
         );
         return null;
       }
-    } else {
+    } else if (!carryToDirectMediaCustody) {
       await mediaAttachmentRepo?.saveAttachment(
         completed,
         owner: MediaOwnerLane.direct,
@@ -1651,6 +1853,29 @@ Future<List<MediaAttachment>?> _reuploadAttachments({
 
   return result;
 }
+
+bool _sameRetryFailureAttachmentProjection(
+  List<MediaAttachment> expected,
+  List<MediaAttachment> current,
+) {
+  if (expected.length != current.length) return false;
+  final currentById = <String, MediaAttachment>{
+    for (final attachment in current) attachment.id: attachment,
+  };
+  return currentById.length == current.length &&
+      expected.every((attachment) {
+        final fresh = currentById[attachment.id];
+        return fresh != null &&
+            _sameRetryFailureDatabaseMap(attachment.toMap(), fresh.toMap());
+      });
+}
+
+bool _sameRetryFailureDatabaseMap(
+  Map<String, Object?> expected,
+  Map<String, Object?> current,
+) =>
+    expected.length == current.length &&
+    expected.entries.every((entry) => current[entry.key] == entry.value);
 
 bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
     !message.isIncoming &&

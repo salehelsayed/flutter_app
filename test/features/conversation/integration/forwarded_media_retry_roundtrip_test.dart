@@ -195,16 +195,40 @@ void main() {
       expect(firstReceived!.dedupKey, operationKey);
       expect(firstReceived.isForwarded, isTrue);
 
-      // Move the durably sent row back into the failed-retry state through the
-      // repository/DB helper, explicitly clear its envelope, then close and
-      // reopen again. retryFailedMessage must rebuild from the rehydrated
-      // message and media rows rather than replaying a cached wire payload.
+      // Plan 345 makes generic full-row persistence monotonic after an exact
+      // initial envelope has settled. This test deliberately needs a
+      // historical failed/no-envelope input, so seed that state through the
+      // raw fixture DB only after proving no v110 intent or v108 owner remains.
+      // retryFailedMessage must then rebuild from the rehydrated message and
+      // media rows rather than replaying a cached wire payload.
       final sentAfterUpload = (await senderStore.messageRepo.getMessage(
         messageId,
       ))!;
-      await senderStore.messageRepo.saveMessage(
-        sentAfterUpload.copyWith(status: 'failed', wireEnvelope: null),
+      expect(sentAfterUpload.status, 'inboxed');
+      expect(sentAfterUpload.transport, 'inbox');
+      expect(sentAfterUpload.directMediaCustodyIntentId, isNull);
+      final custodyOwners = await senderStore.db.query(
+        'direct_inbox_custody_outbox',
+        columns: const ['message_id'],
+        where: 'message_id = ?',
+        whereArgs: const [messageId],
       );
+      expect(custodyOwners, isEmpty);
+      final projected = await senderStore.db.update(
+        'messages',
+        const <String, Object?>{
+          'status': 'failed',
+          'wire_envelope': null,
+          'transport': null,
+          'relay_expires_at': null,
+          'custody_checked_at': null,
+        },
+        where:
+            'id = ? AND status = ? AND transport = ? '
+            'AND direct_media_custody_intent_id IS NULL',
+        whereArgs: const [messageId, 'inboxed', 'inbox'],
+      );
+      expect(projected, 1);
       senderStore = await senderStore.reopen();
       final failedAfterReopen = (await senderStore.messageRepo.getMessage(
         messageId,

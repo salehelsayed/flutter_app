@@ -1,6 +1,7 @@
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
@@ -98,6 +99,8 @@ class MediaRepositoryRealDbFixture {
                   row,
                   () => dbSaveMediaAttachmentPreservingLocalState(db, row),
                 ),
+      dbCanApplyGenericMediaAttachmentSave: (row) =>
+          dbCanApplyGenericMediaAttachmentSave(db, row),
       dbStageOutgoingOrdinaryAttemptWithMedia:
           ({
             required expectedRow,
@@ -110,6 +113,36 @@ class MediaRepositoryRealDbFixture {
             stagedRow: stagedRow,
             attachmentRows: attachmentRows,
             kind: kind,
+          ),
+      dbStageOutgoingDirectMediaInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required kind,
+            required recipientPeerId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbProjectOutgoingDirectMediaCustodyUploadFailure:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRows,
+            required failedAttachmentId,
+            required disposition,
+          }) => dbProjectOutgoingDirectMediaCustodyUploadFailure(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            failedAttachmentId: failedAttachmentId,
+            disposition: disposition,
           ),
       publishOutgoingOrdinaryMutation:
           ({required messageId, required outcome, required committedMedia}) =>
@@ -743,6 +776,71 @@ MessageRepositoryImpl _buildMessageRepository(
               stagedRow: stagedRow,
               kind: kind,
             ),
+    dbStageOutgoingDirectTextInboxCustody:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required kind,
+          required recipientPeerId,
+          required messageId,
+          required incarnationId,
+          required wireEnvelope,
+        }) => dbStageOutgoingDirectTextInboxCustody(
+          db,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          incarnationId: incarnationId,
+          wireEnvelope: wireEnvelope,
+        ),
+    dbLoadDirectInboxCustodyOutbox: ({limit = 50}) =>
+        dbLoadDirectInboxCustodyOutbox(db, limit: limit),
+    dbLoadDirectInboxCustodyOutboxForMessage:
+        ({required recipientPeerId, required messageId}) =>
+            dbLoadDirectInboxCustodyOutboxForMessage(
+              db,
+              recipientPeerId: recipientPeerId,
+              messageId: messageId,
+            ),
+    dbLoadDirectInboxCustodyOutboxOwnerForMessageId: ({required messageId}) =>
+        dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+          db,
+          messageId: messageId,
+        ),
+    dbRecordDirectInboxCustodyFailureIfExact:
+        ({
+          required recipientPeerId,
+          required messageId,
+          required expectedIncarnationId,
+          required expectedWireEnvelope,
+          required errorCode,
+          required attemptedAt,
+        }) => dbRecordDirectInboxCustodyFailureIfExact(
+          db,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          expectedIncarnationId: expectedIncarnationId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          errorCode: errorCode,
+          attemptedAt: attemptedAt,
+        ),
+    dbCompleteAcceptedDirectInboxCustodyIfExact:
+        ({
+          required recipientPeerId,
+          required messageId,
+          required expectedIncarnationId,
+          required expectedWireEnvelope,
+          required relayExpiresAt,
+        }) => dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          expectedIncarnationId: expectedIncarnationId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          relayExpiresAt: relayExpiresAt,
+        ),
     dbSettleOutgoingOrdinaryTransport:
         ({
           required messageId,

@@ -136,10 +136,10 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 109);
+      expect(currentIdentityDatabaseVersion, 110);
       expect(
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
-        109,
+        110,
       );
       expect(await db.query('group_reaction_replay_outbox'), hasLength(1));
 
@@ -296,7 +296,7 @@ void main() {
       );
       expect(
         (await fresh.rawQuery('PRAGMA user_version')).single.values.single,
-        109,
+        110,
       );
       await fresh.close();
     },

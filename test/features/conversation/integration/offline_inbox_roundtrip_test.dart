@@ -19,6 +19,7 @@ import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
 import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
@@ -658,7 +659,15 @@ void main() {
             messageRepo: receiptAlice.messageRepo,
             p2pService: receiptAlice.p2pService,
           );
-          expect(retried, 1);
+          expect(retried, 0);
+          expect(cappedNetwork.inboxCount(receiptBob.peerId), 0);
+
+          final completed = await drainDirectInboxCustodyOutbox(
+            custodyRepository: receiptAlice.messageRepo,
+            storeInAckCustodyInboxDetailed:
+                receiptAlice.p2pService.storeInAckCustodyInboxDetailed,
+          );
+          expect(completed, 1);
           expect(cappedNetwork.inboxCount(receiptBob.peerId), 1);
           expect(
             (await receiptAlice.messageRepo.getMessage(rejected.id))?.status,

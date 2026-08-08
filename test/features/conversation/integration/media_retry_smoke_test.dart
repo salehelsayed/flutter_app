@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/recover_stuck_sending_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -18,6 +19,8 @@ import '../../../core/services/fake_p2p_service.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 // Reuse the same fake pattern as C.1 tests
 class _FakeMediaAttachmentRepository
@@ -276,23 +279,22 @@ void main() {
     test(
       'successful outgoing media send clears stale upload_pending placeholders',
       () async {
-        final messageRepo = FakeMessageRepository();
-        final mediaAttachmentRepo = _FakeMediaAttachmentRepository()
-          ..seedAttachments(
+        final messageRepo = InMemoryMessageRepository();
+        final mediaAttachmentRepo = InMemoryMediaAttachmentRepository()
+          ..enableDirectMediaInboxCustodyForTest(messageRepo);
+        await mediaAttachmentRepo.saveAttachment(
+          const MediaAttachment(
+            id: 'placeholder-upload-pending',
             messageId: 'msg-smoke-stable-001',
-            attachments: [
-              MediaAttachment(
-                id: 'placeholder-upload-pending',
-                messageId: 'msg-smoke-stable-001',
-                mime: 'image/jpeg',
-                size: 0,
-                mediaType: 'image',
-                localPath: '/tmp/pending.jpg',
-                downloadStatus: 'upload_pending',
-                createdAt: _testTs,
-              ),
-            ],
-          );
+            mime: 'image/jpeg',
+            size: 0,
+            mediaType: 'image',
+            localPath: '/tmp/pending.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: _testTs,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
         final p2pService = FakeP2PService(
           initialState: const NodeState(
             isStarted: true,
@@ -340,9 +342,28 @@ void main() {
             ),
           ],
           mediaAttachmentRepo: mediaAttachmentRepo,
+          storeInAckCustodyInboxDetailed:
+              (peerId, envelope, {required custodyKind, timeoutMs}) async {
+                expect(custodyKind, AckCustodyKind.directTextV108);
+                final stored = await p2pService.storeInInbox(
+                  peerId,
+                  envelope,
+                  timeoutMs: timeoutMs,
+                );
+                return InboxStoreOutcome(
+                  status: stored
+                      ? InboxStoreStatus.stored
+                      : InboxStoreStatus.failed,
+                  storeStatus: stored ? 'stored' : null,
+                  custodyContract: stored
+                      ? ackOrExpiryInboxCustodyContract
+                      : null,
+                );
+              },
         );
 
         expect(result, SendChatMessageResult.success);
+        expect(messageRepo.directCustodyRows, isEmpty);
         final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
           'msg-smoke-stable-001',
           owner: MediaOwnerLane.direct,

@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
@@ -43,7 +45,8 @@ import '../../../contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../identity/domain/repositories/fake_identity_repository.dart';
 
 const _contactPeerId = 'contact-1';
-const _contentHash = 'canonical-ciphertext-hash';
+const _contentHash =
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
 const _encryptionKey = 'cHJpdmF0ZS1rZXk=';
 const _encryptionNonce = 'bm9uY2U=';
 
@@ -301,6 +304,8 @@ void main() {
         bool? deleteSourceWhenDoneValue;
         MediaFileManager? uploadMediaFileManager;
         PrivateMediaPolicy? sentPrivateMediaPolicy;
+        String? ordinaryCustodyEnvelope;
+        Object? injectedSendFailure;
         final messenger =
             TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
         messenger.setMockMessageHandler(
@@ -437,6 +442,7 @@ void main() {
                         const Duration(seconds: 10),
                       );
                     }
+                    ConversationMessage? committedOrdinaryParent;
                     if (testCase.expectsPrivateCustody) {
                       final envelopeRepository =
                           messageRepo
@@ -456,12 +462,68 @@ void main() {
                         );
                       }
                     } else {
-                      await messageRepo.updateWireEnvelope(
-                        messageId!,
-                        '{"fresh":true}',
-                      );
+                      final expected = await messageRepo.getMessage(messageId!);
+                      final envelope = jsonEncode(<String, Object?>{
+                        'type': 'chat_message',
+                        'version': '2',
+                        'id': messageId,
+                        'senderPeerId': senderPeerId,
+                        'encrypted': const <String, String>{
+                          'kem': 'fixture-kem',
+                          'ciphertext': 'fixture-ciphertext',
+                          'nonce': 'fixture-nonce',
+                        },
+                      });
+                      ordinaryCustodyEnvelope = envelope;
+                      final custodyRepository =
+                          mediaAttachmentRepo!
+                              as OutgoingDirectMediaInboxCustodyStagingRepository;
+                      try {
+                        final staged = await custodyRepository
+                            .stageOutgoingDirectMediaInboxCustody(
+                              expected: expected,
+                              staged: expected!.copyWith(
+                                wireEnvelope: envelope,
+                                directMediaCustodyIntentId: null,
+                                media: <MediaAttachment>[attachment],
+                              ),
+                              attachments: <MediaAttachment>[attachment],
+                              kind: OutgoingOrdinaryAttemptKind.existing,
+                              recipientPeerId: targetPeerId,
+                              wireEnvelope: envelope,
+                            );
+                        if (!staged.authorizesTransport ||
+                            staged.message == null) {
+                          throw StateError(
+                            'ordinary custody fixture refused: '
+                            'outcome=${staged.outcome.name}, '
+                            'supports=${custodyRepository.supportsDirectMediaInboxCustody}, '
+                            'parent=${expected.toMap()}, '
+                            'attachment=${attachment.toMap()}',
+                          );
+                        }
+                        if (staged.custody?.recipientPeerId != targetPeerId ||
+                            staged.custody?.wireEnvelope != envelope) {
+                          throw StateError(
+                            'ordinary custody fixture committed mismatched '
+                            'authority: ${staged.custody}',
+                          );
+                        }
+                        committedOrdinaryParent = staged.message;
+                      } catch (error) {
+                        injectedSendFailure = error;
+                        sendCompleted.complete();
+                        return (SendChatMessageResult.sendFailed, null);
+                      }
+                      if (committedOrdinaryParent == null) {
+                        throw StateError(
+                          'test ordinary media custody stage lost its parent',
+                        );
+                      }
                     }
-                    final durable = await messageRepo.getMessage(messageId);
+                    final durable =
+                        committedOrdinaryParent ??
+                        await messageRepo.getMessage(messageId);
                     final delivered = durable!.copyWith(
                       status: 'delivered',
                       media: mediaAttachments,
@@ -663,6 +725,7 @@ void main() {
           allowSendReturn.complete();
         }
         await _pumpUntil(tester, () => sendCompleted.isCompleted);
+        expect(injectedSendFailure, isNull, reason: '$injectedSendFailure');
         await _pumpUntil(
           tester,
           () =>
@@ -707,10 +770,9 @@ void main() {
         );
         expect(lifecycleLockReleasedBeforePlaintextCopy, isTrue);
         expect(registryOwnedDuringUpload, testCase.expectsPrivateCustody);
-        expect(
-          staleEnvelopeClearedBeforeUpload,
-          testCase.expectsPrivateCustody,
-        );
+        // Private staging clears the injected stale envelope; the ordinary
+        // v110 manifest token prevents that generic stale write entirely.
+        expect(staleEnvelopeClearedBeforeUpload, isTrue);
         expect(registryOwnedDuringSend, testCase.expectsPrivateCustody);
         if (testCase.expectsPrivateCustody) {
           expect(
@@ -736,7 +798,9 @@ void main() {
         if (testCase.requestCancellation) {
           expect(find.text('Upload cancelled.'), findsNothing);
         }
-        expect(deleteSourceWhenDoneValue, !testCase.expectsPrivateCustody);
+        // Both private transfer custody and ordinary v110 preparation retain
+        // the pending source until their exact final authority commits.
+        expect(deleteSourceWhenDoneValue, isFalse);
         expect(uploadMediaFileManager, same(manager));
         expect(File(pendingUploadPath!).existsSync(), isFalse);
         if (terminalized) {
@@ -755,12 +819,28 @@ void main() {
             kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
           );
         }
-        expect(
-          (await tester.runAsync(
-            () => fixture.messageRepo.getMessage(sentMessageId!),
-          ))?.wireEnvelope,
-          '{"fresh":true}',
+        final durableParent = await tester.runAsync(
+          () => fixture.messageRepo.getMessage(sentMessageId!),
         );
+        expect(
+          durableParent?.wireEnvelope,
+          testCase.expectsPrivateCustody
+              ? '{"fresh":true}'
+              : ordinaryCustodyEnvelope,
+        );
+        if (!testCase.expectsPrivateCustody) {
+          expect(durableParent?.directMediaCustodyIntentId, isNull);
+          final custodyRows = await tester.runAsync(
+            () => fixture.db.query(
+              'direct_inbox_custody_outbox',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[sentMessageId],
+            ),
+          );
+          expect(custodyRows, hasLength(1));
+          expect(custodyRows!.single['recipient_peer_id'], _contactPeerId);
+          expect(custodyRows.single['wire_envelope'], ordinaryCustodyEnvelope);
+        }
       },
     );
   }

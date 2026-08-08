@@ -13,6 +13,33 @@ void main() {
   );
 
   group('MessagePayload', () {
+    test('TC-345-01c wire payload cannot mint local media custody intent', () {
+      const injectedIntent = '0123456789abcdef0123456789abcdef';
+      final v1Envelope =
+          jsonDecode(testPayload.toJson()) as Map<String, dynamic>;
+      final v1Payload = v1Envelope['payload'] as Map<String, dynamic>;
+      v1Payload['directMediaCustodyIntentId'] = injectedIntent;
+      v1Payload['direct_media_custody_intent_id'] = injectedIntent;
+
+      final inner =
+          jsonDecode(testPayload.toInnerJson()) as Map<String, dynamic>
+            ..['directMediaCustodyIntentId'] = injectedIntent
+            ..['direct_media_custody_intent_id'] = injectedIntent;
+      final fromV1 = MessagePayload.fromJson(
+        jsonEncode(v1Envelope),
+      )!.toConversationMessage(contactPeerId: 'sender', isIncoming: true);
+      final fromV2 = MessagePayload.fromDecryptedJson(
+        jsonEncode(inner),
+      )!.toConversationMessage(contactPeerId: 'sender', isIncoming: true);
+
+      expect(fromV1.directMediaCustodyIntentId, isNull);
+      expect(fromV2.directMediaCustodyIntentId, isNull);
+      expect(testPayload.toJson(), isNot(contains('CustodyIntent')));
+      expect(testPayload.toJson(), isNot(contains('custody_intent')));
+      expect(testPayload.toInnerJson(), isNot(contains('CustodyIntent')));
+      expect(testPayload.toInnerJson(), isNot(contains('custody_intent')));
+    });
+
     test(
       'forward marker is legacy-safe inner-only and carries media plus dedup',
       () {

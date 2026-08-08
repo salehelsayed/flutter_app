@@ -15601,8 +15601,9 @@ void main() {
           stopFuture = stopRecording();
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
-        await pumpUntil(tester, () => uploadStarted.isCompleted, maxPumps: 240);
-        expect(uploadStarted.isCompleted, isTrue);
+        await tester.runAsync(() async {
+          await uploadStarted.future.timeout(const Duration(seconds: 10));
+        });
         await pumpFrames(tester, count: 5);
 
         expect(mediaFileManager.copyCalls, 1);

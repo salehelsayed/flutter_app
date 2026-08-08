@@ -10,6 +10,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -22,6 +23,8 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 
@@ -336,34 +339,43 @@ void main() {
     final media = (send.inner['media'] as List).cast<Map<String, dynamic>>();
     expect(media, hasLength(1));
     final inline = media.single[_thumbnailKey];
-    expect(inline, isA<String>(), reason: 'the inline thumbnail must ride the attachment JSON');
+    expect(
+      inline,
+      isA<String>(),
+      reason: 'the inline thumbnail must ride the attachment JSON',
+    );
     final rawBytes = base64Decode(inline as String);
     expect(rawBytes, isNotEmpty);
     expect(rawBytes.length, lessThanOrEqualTo(_thumbnailRawCap));
     final decoded = img.decodeJpg(rawBytes);
-    expect(decoded, isNotNull, reason: 'the inline payload must be a decodable JPEG');
+    expect(
+      decoded,
+      isNotNull,
+      reason: 'the inline payload must be a decodable JPEG',
+    );
     expect(
       decoded!.width <= 320 && decoded.height <= 320,
       isTrue,
-      reason: 'longest side must be bounded to 320px '
+      reason:
+          'longest side must be bounded to 320px '
           '(${decoded.width}x${decoded.height})',
     );
     // Exactly one embed in the whole serialized payload.
-    expect(
-      _thumbnailKey.allMatches(jsonEncode(send.inner)).length,
-      1,
-    );
+    expect(_thumbnailKey.allMatches(jsonEncode(send.inner)).length, 1);
   });
 
   test(
     'ordinary view-once disappearing video gif and oversized sends carry no inline thumbnail',
     () async {
-      // Ordinary photo (fresh send path, no custody needed).
+      // Ordinary photo (fresh send path with strict combined custody).
       {
         final bridge = encryptOkBridge();
+        final messages = InMemoryMessageRepository();
+        final attachments = InMemoryMediaAttachmentRepository()
+          ..enableDirectMediaInboxCustodyForTest(messages);
         final (result, _) = await sendChatMessage(
           p2pService: _ReuseP2PService(),
-          messageRepo: FakeMessageRepository(),
+          messageRepo: messages,
           targetPeerId: _targetPeerId,
           text: '',
           senderPeerId: 'my-peer',
@@ -377,13 +389,32 @@ void main() {
               localPath: writePhotoFixture('ordinary.jpg'),
             ),
           ],
-          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+          mediaAttachmentRepo: attachments,
+          storeInAckCustodyInboxDetailed:
+              (peerId, envelope, {required custodyKind, timeoutMs}) async {
+                expect(custodyKind, AckCustodyKind.directTextV108);
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  expiresAtMs: 1770000000000,
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                );
+              },
         );
         expect(result, SendChatMessageResult.success);
+        expect(
+          messages.directCustodyRows,
+          hasLength(1),
+          reason:
+              'the direct live ACK does not settle local ACK-or-expiry custody',
+        );
         final inner = capturedInnerJson(bridge);
         final media = (inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'ordinary');
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'ordinary',
+        );
       }
 
       // View-once photo (private custody path, still no thumbnail).
@@ -399,9 +430,13 @@ void main() {
           ),
         );
         expect(send.result, SendChatMessageResult.success);
-        final media = (send.inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'view-once');
+        final media = (send.inner['media'] as List)
+            .cast<Map<String, dynamic>>();
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'view-once',
+        );
       }
 
       // Disappearing photo (fresh private send, not one-more-look).
@@ -429,8 +464,11 @@ void main() {
         expect(result, SendChatMessageResult.success);
         final inner = capturedInnerJson(bridge);
         final media = (inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'disappearing');
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'disappearing',
+        );
       }
 
       // Protected VIDEO — representable, but never thumbnailed by this plan.
@@ -448,9 +486,13 @@ void main() {
           ),
         );
         expect(send.result, SendChatMessageResult.success);
-        final media = (send.inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'protected video');
+        final media = (send.inner['media'] as List)
+            .cast<Map<String, dynamic>>();
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'protected video',
+        );
       }
 
       // Protected GIF — the dual check (mime OR mediaType) must exclude it. A
@@ -470,9 +512,13 @@ void main() {
           ),
         );
         expect(send.result, SendChatMessageResult.success);
-        final media = (send.inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'protected gif');
+        final media = (send.inner['media'] as List)
+            .cast<Map<String, dynamic>>();
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'protected gif',
+        );
       }
 
       // Oversized: max-entropy source whose 320px/q60 thumbnail exceeds the
@@ -489,9 +535,13 @@ void main() {
           ),
         );
         expect(send.result, SendChatMessageResult.success);
-        final media = (send.inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'oversized');
+        final media = (send.inner['media'] as List)
+            .cast<Map<String, dynamic>>();
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'oversized',
+        );
       }
 
       // Generation failure (undecodable source): field absent AND the send
@@ -507,11 +557,18 @@ void main() {
             localPath: writeCorruptFixture('corrupt.jpg'),
           ),
         );
-        expect(send.result, SendChatMessageResult.success,
-            reason: 'generation failure must never fail the send');
-        final media = (send.inner['media'] as List).cast<Map<String, dynamic>>();
-        expect(media.single.containsKey(_thumbnailKey), isFalse,
-            reason: 'corrupt source');
+        expect(
+          send.result,
+          SendChatMessageResult.success,
+          reason: 'generation failure must never fail the send',
+        );
+        final media = (send.inner['media'] as List)
+            .cast<Map<String, dynamic>>();
+        expect(
+          media.single.containsKey(_thumbnailKey),
+          isFalse,
+          reason: 'corrupt source',
+        );
       }
     },
   );

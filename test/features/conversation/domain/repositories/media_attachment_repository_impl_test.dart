@@ -1,13 +1,17 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
@@ -753,6 +757,1601 @@ void main() {
         );
       },
     );
+
+    test(
+      'TC-345-02 manifest-bound ordinary media stages exact v108 custody atomically',
+      () async {
+        String envelope(String messageId, {String ciphertext = 'cipher'}) =>
+            jsonEncode(<String, Object?>{
+              'type': 'chat_message',
+              'version': '2',
+              'id': messageId,
+              'senderPeerId': 'peer-local',
+              'encrypted': <String, String>{
+                'kem': 'kem-$ciphertext',
+                'ciphertext': ciphertext,
+                'nonce': 'nonce-$ciphertext',
+              },
+            });
+
+        ConversationMessage preparedParent({
+          required String id,
+          required List<String> attachmentIds,
+        }) => ConversationMessage(
+          id: id,
+          contactPeerId: 'peer-media-recipient',
+          senderPeerId: 'peer-local',
+          text: 'caption',
+          timestamp: '2026-08-07T12:00:00.000Z',
+          status: 'sending',
+          isIncoming: false,
+          createdAt: '2026-08-07T12:00:00.000Z',
+          directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+            messageId: id,
+            attachmentIds: attachmentIds,
+          ),
+        );
+
+        MediaAttachment pending(String messageId, String attachmentId) =>
+            MediaAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mime: 'image/jpeg',
+              size: 321,
+              mediaType: 'image',
+              width: 640,
+              height: 480,
+              localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-08-07T12:00:00.000Z',
+              ownerLane: MediaOwnerLane.direct,
+            );
+
+        MediaAttachment completed(
+          String messageId,
+          String attachmentId, {
+          String? key,
+        }) => pending(messageId, attachmentId).copyWith(
+          downloadStatus: 'done',
+          localPath: 'media/direct/$attachmentId.jpg',
+          contentHash:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          encryptionKeyBase64: key ?? 'raw-key-$attachmentId',
+          encryptionNonce: 'blob-nonce-$attachmentId',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+        const freshId = 'tc345-fresh-media';
+        const freshAttachmentId = 'tc345-fresh-attachment';
+        final freshEnvelope = envelope(freshId, ciphertext: 'fresh-cipher');
+        final freshParent = ConversationMessage(
+          id: freshId,
+          contactPeerId: 'peer-media-recipient',
+          senderPeerId: 'peer-local',
+          text: 'fresh caption',
+          timestamp: '2026-08-07T11:59:00.000Z',
+          status: 'sending',
+          isIncoming: false,
+          createdAt: '2026-08-07T11:59:00.000Z',
+          wireEnvelope: freshEnvelope,
+          media: <MediaAttachment>[completed(freshId, freshAttachmentId)],
+        );
+        final fresh = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+          expected: null,
+          staged: freshParent,
+          attachments: freshParent.media,
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+          recipientPeerId: freshParent.contactPeerId,
+          wireEnvelope: freshEnvelope,
+        );
+        expect(fresh.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(fresh.message!.directMediaCustodyIntentId, isNull);
+        expect(fresh.message!.media, hasLength(1));
+        expect(fresh.custody!.wireEnvelope, freshEnvelope);
+        expect(
+          fresh.custody!.incarnationId,
+          matches(RegExp(r'^[0-9a-f]{32}$')),
+        );
+
+        const forgedId = 'tc345-forged-key-reference';
+        const forgedAttachmentId = 'tc345-forged-key-attachment';
+        final forgedEnvelope = envelope(forgedId, ciphertext: 'forged');
+        final forgedParent = freshParent.copyWith(
+          id: forgedId,
+          timestamp: '2026-08-07T11:59:30.000Z',
+          createdAt: '2026-08-07T11:59:30.000Z',
+          wireEnvelope: forgedEnvelope,
+          media: <MediaAttachment>[
+            completed(
+              forgedId,
+              forgedAttachmentId,
+              key: secureStoreReferenceForKey('attacker-selected'),
+            ),
+          ],
+        );
+        final forged = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+          expected: null,
+          staged: forgedParent,
+          attachments: forgedParent.media,
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+          recipientPeerId: forgedParent.contactPeerId,
+          wireEnvelope: forgedEnvelope,
+        );
+        expect(forged.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(await fixture.messageRepo.getMessage(forgedId), isNull);
+        expect(await rawRow(forgedAttachmentId), isNull);
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[forgedId],
+          ),
+          isEmpty,
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey('attacker-selected'),
+          isFalse,
+        );
+
+        const messageId = 'tc345-prepared-media';
+        const attachmentIds = <String>[
+          'tc345-attachment-b',
+          'tc345-attachment-a',
+        ];
+        final expected = preparedParent(
+          id: messageId,
+          attachmentIds: attachmentIds,
+        );
+        await fixture.messageRepo.saveMessage(expected);
+        for (final attachmentId in attachmentIds) {
+          await fixture.repo.saveAttachment(
+            pending(messageId, attachmentId),
+            owner: MediaOwnerLane.direct,
+          );
+        }
+        final wireEnvelope = envelope(messageId);
+        final staged = expected.copyWith(
+          wireEnvelope: wireEnvelope,
+          directMediaCustodyIntentId: null,
+          media: attachmentIds
+              .map((id) => completed(messageId, id))
+              .toList(growable: false),
+        );
+
+        final result = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+          expected: expected,
+          staged: staged,
+          attachments: staged.media,
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: 'peer-media-recipient',
+          wireEnvelope: wireEnvelope,
+        );
+
+        expect(result.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(result.authorizesTransport, isTrue);
+        expect(result.message!.wireEnvelope, wireEnvelope);
+        expect(result.message!.directMediaCustodyIntentId, isNull);
+        expect(
+          result.message!.media.map((attachment) => attachment.id).toSet(),
+          attachmentIds.toSet(),
+        );
+        expect(
+          result.custody!.incarnationId,
+          expected.directMediaCustodyIntentId,
+        );
+        expect(result.custody!.wireEnvelope, wireEnvelope);
+        final durableParent = (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+        expect(durableParent['direct_media_custody_intent_id'], isNull);
+        expect(durableParent['wire_envelope'], wireEnvelope);
+        expect(
+          (await fixture.db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          )).every((row) => row['download_status'] == 'done'),
+          isTrue,
+        );
+
+        // A differently encrypted finalizer must adopt the exact winner and
+        // restore any raw key it temporarily wrote under the stable reference.
+        final loserEnvelope = envelope(messageId, ciphertext: 'loser-cipher');
+        final adopted = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+          expected: expected,
+          staged: staged.copyWith(wireEnvelope: loserEnvelope),
+          attachments: staged.media
+              .map(
+                (attachment) => attachment.copyWith(
+                  encryptionKeyBase64: 'loser-${attachment.id}',
+                ),
+              )
+              .toList(growable: false),
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: 'peer-media-recipient',
+          wireEnvelope: loserEnvelope,
+        );
+        expect(adopted.outcome, OutgoingOrdinaryMutationOutcome.idempotent);
+        expect(adopted.custody!.wireEnvelope, wireEnvelope);
+        expect(adopted.message!.wireEnvelope, wireEnvelope);
+        for (final attachmentId in attachmentIds) {
+          expect(
+            await fixture.secureKeyStore.read(
+              mediaAttachmentEncryptionKeyStoreName(attachmentId),
+            ),
+            'raw-key-$attachmentId',
+          );
+        }
+
+        // The legacy media-only seam cannot consume or bypass a fresh intent.
+        const exclusiveId = 'tc345-exclusive-media';
+        const exclusiveAttachmentId = 'tc345-exclusive-attachment';
+        final exclusiveExpected = preparedParent(
+          id: exclusiveId,
+          attachmentIds: const <String>[exclusiveAttachmentId],
+        );
+        await fixture.messageRepo.saveMessage(exclusiveExpected);
+        await fixture.repo.saveAttachment(
+          pending(exclusiveId, exclusiveAttachmentId),
+          owner: MediaOwnerLane.direct,
+        );
+        final exclusiveEnvelope = envelope(exclusiveId);
+        final legacy = await fixture.repo.stageOutgoingOrdinaryAttemptWithMedia(
+          messageMutationRepository:
+              fixture.messageRepo as OutgoingTransportMutationRepository,
+          expected: exclusiveExpected,
+          staged: exclusiveExpected.copyWith(
+            wireEnvelope: exclusiveEnvelope,
+            directMediaCustodyIntentId: null,
+          ),
+          attachments: <MediaAttachment>[
+            completed(exclusiveId, exclusiveAttachmentId),
+          ],
+          kind: OutgoingOrdinaryAttemptKind.existing,
+        );
+        expect(legacy.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(
+          (await fixture.messageRepo.getMessage(
+            exclusiveId,
+          ))!.directMediaCustodyIntentId,
+          exclusiveExpected.directMediaCustodyIntentId,
+        );
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exclusiveId],
+          ),
+          isEmpty,
+        );
+
+        // Outbox insertion failure rolls back parent/media/token and restores
+        // the pre-commit secure-key snapshot.
+        const rollbackId = 'tc345-rollback-media';
+        const rollbackAttachmentId = 'tc345-rollback-attachment';
+        final rollbackExpected = preparedParent(
+          id: rollbackId,
+          attachmentIds: const <String>[rollbackAttachmentId],
+        );
+        await fixture.messageRepo.saveMessage(rollbackExpected);
+        await fixture.repo.saveAttachment(
+          pending(rollbackId, rollbackAttachmentId),
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.db.execute(
+          "CREATE TRIGGER tc345_reject_custody BEFORE INSERT ON "
+          "direct_inbox_custody_outbox WHEN NEW.message_id = '$rollbackId' "
+          "BEGIN SELECT RAISE(ABORT, 'tc345 failpoint'); END",
+        );
+        final rollbackEnvelope = envelope(rollbackId);
+        await expectLater(
+          fixture.repo.stageOutgoingDirectMediaInboxCustody(
+            expected: rollbackExpected,
+            staged: rollbackExpected.copyWith(
+              wireEnvelope: rollbackEnvelope,
+              directMediaCustodyIntentId: null,
+            ),
+            attachments: <MediaAttachment>[
+              completed(rollbackId, rollbackAttachmentId),
+            ],
+            kind: OutgoingOrdinaryAttemptKind.existing,
+            recipientPeerId: 'peer-media-recipient',
+            wireEnvelope: rollbackEnvelope,
+          ),
+          throwsA(isA<DatabaseException>()),
+        );
+        final rollbackParent = await fixture.messageRepo.getMessage(rollbackId);
+        expect(
+          rollbackParent!.directMediaCustodyIntentId,
+          rollbackExpected.directMediaCustodyIntentId,
+        );
+        expect(rollbackParent.wireEnvelope, isNull);
+        expect(
+          (await rawRow(rollbackAttachmentId))!['download_status'],
+          'upload_pending',
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(rollbackAttachmentId),
+          ),
+          isFalse,
+        );
+      },
+    );
+
+    test(
+      'TC-345-02b crossed saves preserve one owner through exact completion; TC-345-02c generic media staging cannot overwrite a consumed v108 winner; TC-345-02g completion-before-stale-save stays settled',
+      () async {
+        const messageId = 'tc345-crossed-finalizers';
+        const attachmentId = 'tc345-crossed-finalizers-attachment';
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final expected = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'peer-crossed-recipient',
+          senderPeerId: 'peer-local',
+          text: 'crossed caption',
+          timestamp: '2026-08-07T13:00:00.000Z',
+          status: 'sending',
+          isIncoming: false,
+          createdAt: '2026-08-07T13:00:00.000Z',
+          directMediaCustodyIntentId: intent,
+        );
+        final pending = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 451,
+          mediaType: 'image',
+          localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: expected.createdAt,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        MediaAttachment completed(String key) => pending.copyWith(
+          downloadStatus: 'done',
+          localPath: 'media/direct/$attachmentId.jpg',
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          encryptionKeyBase64: key,
+          encryptionNonce: 'crossed-blob-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        String envelope(String suffix) => jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'senderPeerId': 'peer-local',
+          'encrypted': <String, String>{
+            'kem': 'kem-$suffix',
+            'ciphertext': 'cipher-$suffix',
+            'nonce': 'nonce-$suffix',
+          },
+        });
+
+        await fixture.messageRepo.saveMessage(expected);
+        await fixture.repo.saveAttachment(
+          pending,
+          owner: MediaOwnerLane.direct,
+        );
+
+        // A stale generic null save cannot erase the insert-once intent.
+        await fixture.messageRepo.saveMessage(
+          expected.copyWith(directMediaCustodyIntentId: null),
+        );
+        expect(
+          (await fixture.messageRepo.getMessage(
+            messageId,
+          ))!.directMediaCustodyIntentId,
+          intent,
+        );
+
+        final winnerEnvelope = envelope('winner');
+        final winner = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+          expected: expected,
+          staged: expected.copyWith(
+            wireEnvelope: winnerEnvelope,
+            directMediaCustodyIntentId: null,
+          ),
+          attachments: <MediaAttachment>[completed('winner-key')],
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: expected.contactPeerId,
+          wireEnvelope: winnerEnvelope,
+        );
+        expect(winner.outcome, OutgoingOrdinaryMutationOutcome.applied);
+
+        final exactWinnerAttachment = Map<String, Object?>.from(
+          (await rawRow(attachmentId))!,
+        );
+        final secureWritesAfterWinner =
+            fixture.secureKeyStore.writtenKeys.length;
+        final stalePreUpload = pending.copyWith(
+          size: 999,
+          contentHash:
+              'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+          encryptionKeyBase64: 'stale-pre-upload-key',
+          encryptionNonce: 'stale-pre-upload-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        await fixture.repo.saveAttachment(
+          stalePreUpload,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          await rawRow(attachmentId),
+          exactWinnerAttachment,
+          reason: 'active v108 must reject a delayed generic pre-upload row',
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          secureWritesAfterWinner,
+          reason: 'custody refusal must happen before any secure-store write',
+        );
+        expect(
+          (await fixture.repo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          )).single.encryptionKeyBase64,
+          'winner-key',
+        );
+
+        // A stale token-bearing whole-row save can neither re-arm consumed
+        // intent nor erase/drift the exact winner-owned parent projection.
+        await fixture.messageRepo.saveMessage(
+          expected.copyWith(
+            contactPeerId: 'peer-crossed-drift',
+            senderPeerId: 'peer-crossed-wrong-sender',
+            isIncoming: true,
+            status: 'failed',
+            transport: 'direct',
+            relayExpiresAt: 999,
+            custodyCheckedAt: '2026-08-07T13:00:01.000Z',
+          ),
+        );
+        final parentAfterStaleSave = (await fixture.messageRepo.getMessage(
+          messageId,
+        ))!;
+        expect(parentAfterStaleSave.directMediaCustodyIntentId, isNull);
+        expect(parentAfterStaleSave.contactPeerId, expected.contactPeerId);
+        expect(parentAfterStaleSave.senderPeerId, expected.senderPeerId);
+        expect(parentAfterStaleSave.isIncoming, isFalse);
+        expect(parentAfterStaleSave.status, 'sending');
+        expect(parentAfterStaleSave.wireEnvelope, winnerEnvelope);
+        expect(parentAfterStaleSave.transport, isNull);
+        expect(parentAfterStaleSave.relayExpiresAt, isNull);
+        expect(parentAfterStaleSave.custodyCheckedAt, isNull);
+
+        final loserEnvelope = envelope('loser');
+        final loser = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+          expected: expected,
+          staged: expected.copyWith(
+            wireEnvelope: loserEnvelope,
+            directMediaCustodyIntentId: null,
+          ),
+          attachments: <MediaAttachment>[completed('loser-key')],
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: expected.contactPeerId,
+          wireEnvelope: loserEnvelope,
+        );
+        expect(loser.outcome, OutgoingOrdinaryMutationOutcome.idempotent);
+        expect(loser.custody!.incarnationId, intent);
+        expect(loser.custody!.wireEnvelope, winnerEnvelope);
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(1),
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'winner-key',
+        );
+
+        final parentBeforeGenericStage = await fixture.messageRepo.getMessage(
+          messageId,
+        );
+        final attachmentBeforeGenericStage = await rawRow(attachmentId);
+        final custodyBeforeGenericStage = (await fixture.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'recipient_peer_id = ? AND message_id = ?',
+          whereArgs: <Object?>[expected.contactPeerId, messageId],
+        )).single;
+        final genericLoser = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: parentBeforeGenericStage,
+              staged: parentBeforeGenericStage!.copyWith(
+                wireEnvelope: envelope('generic-loser'),
+              ),
+              attachments: <MediaAttachment>[completed('generic-loser-key')],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+
+        expect(genericLoser.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(
+          (await fixture.messageRepo.getMessage(messageId))!.toMap(),
+          parentBeforeGenericStage.toMap(),
+        );
+        expect(await rawRow(attachmentId), attachmentBeforeGenericStage);
+        expect(
+          (await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'recipient_peer_id = ? AND message_id = ?',
+            whereArgs: <Object?>[expected.contactPeerId, messageId],
+          )).single,
+          custodyBeforeGenericStage,
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'winner-key',
+        );
+
+        final completion = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          fixture.db,
+          recipientPeerId: expected.contactPeerId,
+          messageId: messageId,
+          expectedIncarnationId: intent,
+          expectedWireEnvelope: winnerEnvelope,
+          relayExpiresAt: 123456,
+        );
+        expect(completion, DirectInboxCustodyCompletionOutcome.messageAdvanced);
+        final completedParent = (await fixture.messageRepo.getMessage(
+          messageId,
+        ))!;
+        expect(completedParent.status, 'inboxed');
+        expect(completedParent.wireEnvelope, winnerEnvelope);
+        expect(completedParent.transport, 'inbox');
+        expect(completedParent.relayExpiresAt, 123456);
+        expect(completedParent.directMediaCustodyIntentId, isNull);
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+
+        final secureWritesBeforePostCompletionStale =
+            fixture.secureKeyStore.writtenKeys.length;
+        await fixture.repo.saveAttachment(
+          stalePreUpload.copyWith(
+            encryptionKeyBase64: 'stale-after-completion-key',
+            encryptionNonce: 'stale-after-completion-nonce',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          await rawRow(attachmentId),
+          exactWinnerAttachment,
+          reason:
+              'the exact complete encrypted winner must remain monotonic after v108 retirement',
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          secureWritesBeforePostCompletionStale,
+        );
+        expect(
+          (await fixture.repo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          )).single.encryptionKeyBase64,
+          'winner-key',
+        );
+
+        await fixture.messageRepo.saveMessage(
+          expected.copyWith(
+            status: 'failed',
+            wireEnvelope: envelope('stale-after-completion'),
+            transport: 'direct',
+            relayExpiresAt: null,
+            custodyCheckedAt: '2026-08-07T13:05:00.000Z',
+          ),
+        );
+        final completedAfterStaleSave = (await fixture.messageRepo.getMessage(
+          messageId,
+        ))!;
+        expect(completedAfterStaleSave.status, 'inboxed');
+        expect(completedAfterStaleSave.wireEnvelope, winnerEnvelope);
+        expect(completedAfterStaleSave.transport, 'inbox');
+        expect(completedAfterStaleSave.relayExpiresAt, 123456);
+        expect(completedAfterStaleSave.custodyCheckedAt, isNull);
+
+        final recoveryEnvelope = envelope('post-completion-recovery');
+        final recovery = await fixture.repo
+            .stageOutgoingOrdinaryAttemptWithMedia(
+              messageMutationRepository:
+                  fixture.messageRepo as OutgoingTransportMutationRepository,
+              expected: completedParent,
+              staged: completedParent.copyWith(
+                status: 'sending',
+                wireEnvelope: recoveryEnvelope,
+                transport: null,
+                relayExpiresAt: null,
+                custodyCheckedAt: null,
+              ),
+              attachments: <MediaAttachment>[completed('recovery-key')],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+            );
+        expect(recovery.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(
+          (await fixture.messageRepo.getMessage(messageId))!.wireEnvelope,
+          winnerEnvelope,
+          reason: 'recovery cannot emit a second initial envelope',
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'winner-key',
+        );
+
+        const legacySettledId = 'tc345-no-token-settled-control';
+        const legacySettledAttachmentId =
+            'tc345-no-token-settled-control-attachment';
+        final legacySettledEnvelope = jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': legacySettledId,
+          'senderPeerId': 'peer-local',
+          'encrypted': const <String, String>{
+            'kem': 'legacy-kem',
+            'ciphertext': 'legacy-ciphertext',
+            'nonce': 'legacy-nonce',
+          },
+        });
+        await fixture.messageRepo.saveMessage(
+          ConversationMessage(
+            id: legacySettledId,
+            contactPeerId: 'peer-legacy-recipient',
+            senderPeerId: 'peer-local',
+            text: 'legacy settled media',
+            timestamp: '2026-08-07T13:10:00.000Z',
+            status: 'inboxed',
+            isIncoming: false,
+            createdAt: '2026-08-07T13:10:00.000Z',
+            transport: 'inbox',
+            wireEnvelope: legacySettledEnvelope,
+          ),
+        );
+        final legacyIncomplete = MediaAttachment(
+          id: legacySettledAttachmentId,
+          messageId: legacySettledId,
+          mime: 'image/jpeg',
+          size: 101,
+          mediaType: 'image',
+          localPath:
+              'pending_uploads/$legacySettledId/$legacySettledAttachmentId.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-08-07T13:10:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        );
+        await fixture.repo.saveAttachment(
+          legacyIncomplete,
+          owner: MediaOwnerLane.direct,
+        );
+        await fixture.repo.saveAttachment(
+          legacyIncomplete.copyWith(
+            size: 202,
+            contentHash:
+                '1111111111111111111111111111111111111111111111111111111111111111',
+            encryptionKeyBase64: 'legacy-settled-key',
+            encryptionNonce: 'legacy-settled-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          (await rawRow(legacySettledAttachmentId))!['size'],
+          202,
+          reason:
+              'an indistinguishable no-token settled parent cannot freeze an incomplete attachment',
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(legacySettledAttachmentId),
+          ),
+          'legacy-settled-key',
+        );
+
+        final writesBeforeLegacyLifecycleRepair =
+            fixture.secureKeyStore.writtenKeys.length;
+        await fixture.repo.saveAttachment(
+          legacyIncomplete.copyWith(
+            size: 303,
+            clearLocalPath: true,
+            downloadStatus: 'failed',
+            uploadRetryCount: 4,
+            contentHash:
+                '2222222222222222222222222222222222222222222222222222222222222222',
+            encryptionKeyBase64: 'legacy-drift-key',
+            encryptionNonce: 'legacy-drift-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        final repairedLegacy = (await rawRow(legacySettledAttachmentId))!;
+        expect(repairedLegacy['size'], 202);
+        expect(repairedLegacy['local_path'], isNull);
+        expect(repairedLegacy['download_status'], 'failed');
+        expect(repairedLegacy['upload_retry_count'], 4);
+        expect(
+          repairedLegacy['content_hash'],
+          '1111111111111111111111111111111111111111111111111111111111111111',
+        );
+        expect(repairedLegacy['encryption_nonce'], 'legacy-settled-nonce');
+        expect(
+          repairedLegacy['encryption_scheme'],
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        expect(
+          repairedLegacy['encryption_key_base64'],
+          secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(legacySettledAttachmentId),
+          ),
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(legacySettledAttachmentId),
+          ),
+          'legacy-settled-key',
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesBeforeLegacyLifecycleRepair,
+          reason:
+              'legacy lifecycle repair must not write a stale replacement key',
+        );
+
+        const incomingId = 'tc345-incoming-lifecycle-control';
+        const incomingAttachmentId =
+            'tc345-incoming-lifecycle-control-attachment';
+        await fixture.seedDirectParent(incomingId);
+        final incomingComplete = MediaAttachment(
+          id: incomingAttachmentId,
+          messageId: incomingId,
+          mime: 'image/jpeg',
+          size: 404,
+          mediaType: 'image',
+          width: 640,
+          height: 480,
+          localPath: 'media/contact-1/$incomingAttachmentId.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-08-07T13:15:00.000Z',
+          contentHash:
+              '3333333333333333333333333333333333333333333333333333333333333333',
+          encryptionKeyBase64: 'incoming-winner-key',
+          encryptionNonce: 'incoming-winner-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        await fixture.repo.saveAttachment(
+          incomingComplete,
+          owner: MediaOwnerLane.direct,
+        );
+        final writesBeforeIncomingLifecycleRepair =
+            fixture.secureKeyStore.writtenKeys.length;
+        await fixture.repo.saveAttachment(
+          incomingComplete.copyWith(
+            size: 505,
+            clearLocalPath: true,
+            downloadStatus: 'failed',
+            downloadRetryCount: 2,
+            contentHash:
+                '4444444444444444444444444444444444444444444444444444444444444444',
+            encryptionKeyBase64: 'incoming-drift-key',
+            encryptionNonce: 'incoming-drift-nonce',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        final repairedIncoming = (await rawRow(incomingAttachmentId))!;
+        expect(repairedIncoming['size'], 404);
+        expect(repairedIncoming['local_path'], isNull);
+        expect(repairedIncoming['download_status'], 'failed');
+        expect(repairedIncoming['download_retry_count'], 2);
+        expect(
+          repairedIncoming['content_hash'],
+          '3333333333333333333333333333333333333333333333333333333333333333',
+        );
+        expect(repairedIncoming['encryption_nonce'], 'incoming-winner-nonce');
+        expect(
+          repairedIncoming['encryption_key_base64'],
+          secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(incomingAttachmentId),
+          ),
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(incomingAttachmentId),
+          ),
+          'incoming-winner-key',
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesBeforeIncomingLifecycleRepair,
+          reason:
+              'incoming lifecycle repair must not write a stale replacement key',
+        );
+      },
+    );
+
+    test(
+      'TC-345-02d immutable v108 winner survives settlement and physical deletion crossings; TC-345-02f physical deletion rejects generic resurrection through completion and recovery; TC-345-02h messageRemoved-before-stale-save retains deletion authority',
+      () async {
+        ConversationMessage preparedParent(String messageId) {
+          final attachmentId = '$messageId-attachment';
+          return ConversationMessage(
+            id: messageId,
+            contactPeerId: 'peer-late-winner',
+            senderPeerId: 'peer-local',
+            text: 'late winner caption',
+            timestamp: '2026-08-07T13:30:00.000Z',
+            status: 'sending',
+            isIncoming: false,
+            createdAt: '2026-08-07T13:30:00.000Z',
+            directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+              messageId: messageId,
+              attachmentIds: <String>[attachmentId],
+            ),
+          );
+        }
+
+        MediaAttachment pending(String messageId) {
+          final attachmentId = '$messageId-attachment';
+          return MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 509,
+            mediaType: 'image',
+            width: 320,
+            height: 240,
+            localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: '2026-08-07T13:30:00.000Z',
+            ownerLane: MediaOwnerLane.direct,
+          );
+        }
+
+        MediaAttachment completed(
+          String messageId,
+          String key,
+        ) => pending(messageId).copyWith(
+          downloadStatus: 'done',
+          localPath: 'media/direct/$messageId.jpg',
+          contentHash:
+              'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+          encryptionKeyBase64: key,
+          encryptionNonce: 'nonce-$messageId',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+
+        String envelope(String messageId, String suffix) =>
+            jsonEncode(<String, Object?>{
+              'type': 'chat_message',
+              'version': '2',
+              'id': messageId,
+              'senderPeerId': 'peer-local',
+              'encrypted': <String, String>{
+                'kem': 'kem-$suffix',
+                'ciphertext': 'cipher-$suffix',
+                'nonce': 'nonce-$suffix',
+              },
+            });
+
+        Future<String> commitWinner(String messageId) async {
+          final expected = preparedParent(messageId);
+          final pendingAttachment = pending(messageId);
+          await fixture.messageRepo.saveMessage(expected);
+          await fixture.repo.saveAttachment(
+            pendingAttachment,
+            owner: MediaOwnerLane.direct,
+          );
+          final winnerEnvelope = envelope(messageId, 'winner');
+          final winner = await fixture.repo
+              .stageOutgoingDirectMediaInboxCustody(
+                expected: expected,
+                staged: expected.copyWith(
+                  wireEnvelope: winnerEnvelope,
+                  directMediaCustodyIntentId: null,
+                ),
+                attachments: <MediaAttachment>[
+                  completed(messageId, 'winner-key-$messageId'),
+                ],
+                kind: OutgoingOrdinaryAttemptKind.existing,
+                recipientPeerId: expected.contactPeerId,
+                wireEnvelope: winnerEnvelope,
+              );
+          expect(winner.outcome, OutgoingOrdinaryMutationOutcome.applied);
+          return winnerEnvelope;
+        }
+
+        const settledId = 'tc345-winner-before-settlement';
+        final settledExpected = preparedParent(settledId);
+        final settledWinnerEnvelope = await commitWinner(settledId);
+        final settlement =
+            await (fixture.messageRepo as OutgoingTransportMutationRepository)
+                .settleOutgoingOrdinaryTransport(
+                  messageId: settledId,
+                  expectedContactPeerId: settledExpected.contactPeerId,
+                  expectedEnvelope: settledWinnerEnvelope,
+                  status: 'sent',
+                  transport: 'direct',
+                  relayExpiresAt: null,
+                  mode: OutgoingOrdinarySettlementMode.live,
+                );
+        expect(settlement.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        final settledCustodyBefore = (await fixture.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[settledId],
+        )).single;
+
+        final settledLoserEnvelope = envelope(settledId, 'settled-loser');
+        final settledLoser = await fixture.repo
+            .stageOutgoingDirectMediaInboxCustody(
+              expected: settledExpected,
+              staged: settledExpected.copyWith(
+                wireEnvelope: settledLoserEnvelope,
+                directMediaCustodyIntentId: null,
+              ),
+              attachments: <MediaAttachment>[
+                completed(settledId, 'settled-loser-key'),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+              recipientPeerId: settledExpected.contactPeerId,
+              wireEnvelope: settledLoserEnvelope,
+            );
+
+        expect(
+          settledLoser.outcome,
+          OutgoingOrdinaryMutationOutcome.idempotent,
+        );
+        expect(settledLoser.authorizesTransport, isTrue);
+        expect(settledLoser.custody!.wireEnvelope, settledWinnerEnvelope);
+        expect(settledLoser.message!.status, 'sent');
+        expect(settledLoser.message!.transport, 'direct');
+        expect(settledLoser.message!.media, isEmpty);
+        expect(
+          (await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[settledId],
+          )).single,
+          settledCustodyBefore,
+        );
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName('$settledId-attachment'),
+          ),
+          'winner-key-$settledId',
+        );
+
+        const deletedId = 'tc345-winner-before-deletion';
+        final deletedExpected = preparedParent(deletedId);
+        final deletedWinnerEnvelope = await commitWinner(deletedId);
+        final deletedCustodyBefore = (await fixture.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[deletedId],
+        )).single;
+        expect(
+          await fixture.repo.deleteAttachmentsForMessage(
+            deletedId,
+            owner: MediaOwnerLane.direct,
+          ),
+          1,
+        );
+        await fixture.secureKeyStore.delete(
+          mediaAttachmentEncryptionKeyStoreName('$deletedId-attachment'),
+        );
+        expect(await fixture.messageRepo.deleteMessage(deletedId), 1);
+
+        final deletedStaleAttachment = pending(deletedId).copyWith(
+          contentHash:
+              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          encryptionKeyBase64: 'deleted-stale-key',
+          encryptionNonce: 'deleted-stale-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final deletedKeyName = mediaAttachmentEncryptionKeyStoreName(
+          '$deletedId-attachment',
+        );
+        final writesBeforeDeletedStale =
+            fixture.secureKeyStore.writtenKeys.length;
+        await fixture.repo.saveAttachment(
+          deletedStaleAttachment,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(await rawRow('$deletedId-attachment'), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(deletedKeyName),
+          isFalse,
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesBeforeDeletedStale,
+          reason:
+              'active v108 must block row and key resurrection before any write',
+        );
+
+        final deletedLoserEnvelope = envelope(deletedId, 'deleted-loser');
+        final deletedLoser = await fixture.repo
+            .stageOutgoingDirectMediaInboxCustody(
+              expected: deletedExpected,
+              staged: deletedExpected.copyWith(
+                wireEnvelope: deletedLoserEnvelope,
+                directMediaCustodyIntentId: null,
+              ),
+              attachments: <MediaAttachment>[
+                completed(deletedId, 'deleted-loser-key'),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+              recipientPeerId: deletedExpected.contactPeerId,
+              wireEnvelope: deletedLoserEnvelope,
+            );
+
+        expect(
+          deletedLoser.outcome,
+          OutgoingOrdinaryMutationOutcome.idempotent,
+        );
+        expect(deletedLoser.authorizesTransport, isTrue);
+        expect(deletedLoser.custody!.wireEnvelope, deletedWinnerEnvelope);
+        expect(
+          deletedLoser.message,
+          isNull,
+          reason: 'immutable custody must not resurrect a deleted projection',
+        );
+        expect(await fixture.messageRepo.getMessage(deletedId), isNull);
+        expect(await rawRow('$deletedId-attachment'), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('$deletedId-attachment'),
+          ),
+          isFalse,
+        );
+        expect(
+          (await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[deletedId],
+          )).single,
+          deletedCustodyBefore,
+        );
+
+        await fixture.db.update(
+          'direct_inbox_custody_outbox',
+          {'incarnation_id': 'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'},
+          where: 'message_id = ?',
+          whereArgs: <Object?>[deletedId],
+        );
+        final mismatched = await fixture.repo
+            .stageOutgoingDirectMediaInboxCustody(
+              expected: deletedExpected,
+              staged: deletedExpected.copyWith(
+                wireEnvelope: deletedLoserEnvelope,
+                directMediaCustodyIntentId: null,
+              ),
+              attachments: <MediaAttachment>[
+                completed(deletedId, 'mismatched-loser-key'),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+              recipientPeerId: deletedExpected.contactPeerId,
+              wireEnvelope: deletedLoserEnvelope,
+            );
+        expect(mismatched.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(mismatched.authorizesTransport, isFalse);
+        expect(await fixture.messageRepo.getMessage(deletedId), isNull);
+        expect(await rawRow('$deletedId-attachment'), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('$deletedId-attachment'),
+          ),
+          isFalse,
+        );
+
+        await expectLater(
+          fixture.messageRepo.saveMessage(deletedExpected),
+          throwsA(isA<StateError>()),
+        );
+        expect(await fixture.messageRepo.getMessage(deletedId), isNull);
+        expect(await rawRow('$deletedId-attachment'), isNull);
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[deletedId],
+          ),
+          hasLength(1),
+        );
+
+        await fixture.db.update(
+          'direct_inbox_custody_outbox',
+          {'incarnation_id': deletedExpected.directMediaCustodyIntentId},
+          where: 'message_id = ?',
+          whereArgs: <Object?>[deletedId],
+        );
+        final deletedCompletion =
+            await dbCompleteAcceptedDirectInboxCustodyIfExact(
+              fixture.db,
+              recipientPeerId: deletedExpected.contactPeerId,
+              messageId: deletedId,
+              expectedIncarnationId:
+                  deletedExpected.directMediaCustodyIntentId!,
+              expectedWireEnvelope: deletedWinnerEnvelope,
+              relayExpiresAt: 222222,
+            );
+        expect(
+          deletedCompletion,
+          DirectInboxCustodyCompletionOutcome.messageRemoved,
+        );
+        final deletionTombstone = (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[deletedId],
+        )).single;
+        expect(
+          deletionTombstone,
+          allOf(
+            containsPair('contact_peer_id', deletedExpected.contactPeerId),
+            containsPair('sender_peer_id', deletedExpected.senderPeerId),
+            containsPair('text', ''),
+            containsPair('status', 'inboxed'),
+            containsPair('wire_envelope', null),
+            containsPair('transport', 'inbox'),
+            allOf(
+              containsPair('relay_expires_at', 222222),
+              containsPair('hidden_at', isNotNull),
+            ),
+          ),
+        );
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[deletedId],
+          ),
+          isEmpty,
+        );
+        final writesBeforeTombstoneStale =
+            fixture.secureKeyStore.writtenKeys.length;
+        await fixture.repo.saveAttachment(
+          deletedStaleAttachment.copyWith(
+            encryptionKeyBase64: 'tombstone-stale-key',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        expect(await rawRow('$deletedId-attachment'), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(deletedKeyName),
+          isFalse,
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesBeforeTombstoneStale,
+          reason:
+              'the exact completion tombstone must retain attachment deletion authority',
+        );
+        await fixture.messageRepo.saveMessage(
+          deletedExpected.copyWith(
+            status: 'failed',
+            wireEnvelope: deletedLoserEnvelope,
+            transport: 'direct',
+            custodyCheckedAt: '2026-08-07T13:40:00.000Z',
+          ),
+        );
+        expect(
+          (await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[deletedId],
+          )).single,
+          deletionTombstone,
+          reason:
+              'completion-before-stale-save must retain the hidden deletion authority',
+        );
+        expect(
+          (await fixture.messageRepo.getMessagesForContact(
+            deletedExpected.contactPeerId,
+          )).where((message) => message.id == deletedId),
+          isEmpty,
+        );
+
+        final postCompletionRecovery = await fixture.repo
+            .stageOutgoingDirectMediaInboxCustody(
+              expected: deletedExpected,
+              staged: deletedExpected.copyWith(
+                wireEnvelope: deletedLoserEnvelope,
+                directMediaCustodyIntentId: null,
+              ),
+              attachments: <MediaAttachment>[
+                completed(deletedId, 'post-completion-recovery-key'),
+              ],
+              kind: OutgoingOrdinaryAttemptKind.existing,
+              recipientPeerId: deletedExpected.contactPeerId,
+              wireEnvelope: deletedLoserEnvelope,
+            );
+        expect(
+          postCompletionRecovery.outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(
+          (await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[deletedId],
+          )).single,
+          deletionTombstone,
+        );
+        expect(await rawRow('$deletedId-attachment'), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('$deletedId-attachment'),
+          ),
+          isFalse,
+        );
+
+        const retainedDeletionId = 'tc345-retained-deletion-parent';
+        final retainedDeletionExpected = preparedParent(retainedDeletionId);
+        final retainedDeletionWinnerEnvelope = await commitWinner(
+          retainedDeletionId,
+        );
+        expect(
+          await fixture.repo.deleteAttachmentsForMessage(
+            retainedDeletionId,
+            owner: MediaOwnerLane.direct,
+          ),
+          1,
+        );
+        final retainedDeletionAttachmentId = '$retainedDeletionId-attachment';
+        final retainedDeletionKeyName = mediaAttachmentEncryptionKeyStoreName(
+          retainedDeletionAttachmentId,
+        );
+        await fixture.secureKeyStore.delete(retainedDeletionKeyName);
+        final deletionEnvelope = jsonEncode(<String, Object?>{
+          'type': 'message_deletion',
+          'version': '2',
+          'senderPeerId': retainedDeletionExpected.senderPeerId,
+          'encrypted': const <String, String>{
+            'kem': 'delete-kem',
+            'ciphertext': 'delete-ciphertext',
+            'nonce': 'delete-nonce',
+          },
+        });
+        const retainedDeletedAt = '2026-08-07T13:45:00.000Z';
+        final retainedParent = (await fixture.messageRepo.getMessage(
+          retainedDeletionId,
+        ))!;
+        await fixture.messageRepo.saveMessage(
+          retainedParent.copyWith(
+            text: '',
+            status: 'sending',
+            deletedAt: retainedDeletedAt,
+            deletedByPeerId: retainedDeletionExpected.senderPeerId,
+            wireEnvelope: deletionEnvelope,
+          ),
+        );
+        final retainedCompletion =
+            await dbCompleteAcceptedDirectInboxCustodyIfExact(
+              fixture.db,
+              recipientPeerId: retainedDeletionExpected.contactPeerId,
+              messageId: retainedDeletionId,
+              expectedIncarnationId:
+                  retainedDeletionExpected.directMediaCustodyIntentId!,
+              expectedWireEnvelope: retainedDeletionWinnerEnvelope,
+              relayExpiresAt: 333333,
+            );
+        expect(
+          retainedCompletion,
+          DirectInboxCustodyCompletionOutcome.messagePreserved,
+        );
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: const <Object?>[retainedDeletionId],
+          ),
+          isEmpty,
+        );
+        final retainedDeletionRow = (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[retainedDeletionId],
+        )).single;
+        expect(retainedDeletionRow['deleted_at'], retainedDeletedAt);
+        expect(
+          retainedDeletionRow['deleted_by_peer_id'],
+          retainedDeletionExpected.senderPeerId,
+        );
+        expect(retainedDeletionRow['wire_envelope'], deletionEnvelope);
+        final writesBeforeRetainedDeletionStale =
+            fixture.secureKeyStore.writtenKeys.length;
+        await fixture.repo.saveAttachment(
+          pending(retainedDeletionId).copyWith(
+            contentHash:
+                'abababababababababababababababababababababababababababababababab',
+            encryptionKeyBase64: 'retained-deletion-stale-key',
+            encryptionNonce: 'retained-deletion-stale-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        expect(await rawRow(retainedDeletionAttachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(retainedDeletionKeyName),
+          isFalse,
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesBeforeRetainedDeletionStale,
+          reason:
+              'an exact retained delete-for-everyone tombstone must prevent attachment/key resurrection',
+        );
+
+        const legacyId = 'tc345-no-token-hidden-control';
+        final legacyParent = preparedParent(legacyId).copyWith(
+          directMediaCustodyIntentId: null,
+          status: 'failed',
+          hiddenAt: '2026-08-07T13:50:00.000Z',
+        );
+        await fixture.messageRepo.saveMessage(legacyParent);
+        final legacyAttachment = pending(legacyId).copyWith(
+          encryptionKeyBase64: 'legacy-control-key',
+          encryptionNonce: 'legacy-control-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        await fixture.repo.saveAttachment(
+          legacyAttachment,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(await rawRow('$legacyId-attachment'), isNotNull);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName('$legacyId-attachment'),
+          ),
+          'legacy-control-key',
+          reason:
+              'a no-token legacy hidden parent must retain generic save behavior',
+        );
+      },
+    );
+
+    test(
+      'TC-345-02i final custody race compensates a replaced or newly written secure key',
+      () async {
+        await fixture.dispose();
+        String? custodyIncarnationOnNextPersist;
+        fixture = await MediaRepositoryRealDbFixture.create(
+          dbSaveMediaAttachmentAround: (row, persist) async {
+            final incarnation = custodyIncarnationOnNextPersist;
+            if (incarnation != null) {
+              custodyIncarnationOnNextPersist = null;
+              final messageId = row['message_id']! as String;
+              final envelope = jsonEncode(<String, Object?>{
+                'type': 'chat_message',
+                'version': '2',
+                'id': messageId,
+                'senderPeerId': 'peer-local',
+                'encrypted': const <String, String>{
+                  'kem': 'race-kem',
+                  'ciphertext': 'race-ciphertext',
+                  'nonce': 'race-nonce',
+                },
+              });
+              await fixture.db
+                  .insert('direct_inbox_custody_outbox', <String, Object?>{
+                    'recipient_peer_id': 'peer-race-recipient',
+                    'message_id': messageId,
+                    'incarnation_id': incarnation,
+                    'wire_envelope': envelope,
+                    'retry_count': 0,
+                    'last_attempt_at': null,
+                    'last_error_code': null,
+                    'created_at': '2026-08-07T13:55:00.000Z',
+                    'updated_at': '2026-08-07T13:55:00.000Z',
+                  });
+            }
+            await persist();
+          },
+        );
+
+        ConversationMessage parent(String id) => ConversationMessage(
+          id: id,
+          contactPeerId: 'peer-race-recipient',
+          senderPeerId: 'peer-local',
+          text: 'race caption',
+          timestamp: '2026-08-07T13:55:00.000Z',
+          status: 'sending',
+          isIncoming: false,
+          createdAt: '2026-08-07T13:55:00.000Z',
+        );
+
+        const existingMessageId = 'tc345-final-race-existing';
+        const existingAttachmentId = 'tc345-final-race-existing-attachment';
+        await fixture.messageRepo.saveMessage(parent(existingMessageId));
+        final existingAttachment = makeAttachment(
+          id: existingAttachmentId,
+          messageId: existingMessageId,
+          encryptionKeyBase64: 'race-original-key',
+          encryptionNonce: 'race-original-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        await fixture.repo.saveAttachment(
+          existingAttachment,
+          owner: MediaOwnerLane.direct,
+        );
+        final existingRow = Map<String, Object?>.from(
+          (await rawRow(existingAttachmentId))!,
+        );
+        final writesBeforeReplacement =
+            fixture.secureKeyStore.writtenKeys.length;
+        custodyIncarnationOnNextPersist = '11111111111111111111111111111111';
+
+        await fixture.repo.saveAttachment(
+          existingAttachment.copyWith(
+            size: 999,
+            encryptionKeyBase64: 'race-loser-key',
+            encryptionNonce: 'race-loser-nonce',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+
+        expect(await rawRow(existingAttachmentId), existingRow);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(existingAttachmentId),
+          ),
+          'race-original-key',
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys.length,
+          writesBeforeReplacement + 2,
+          reason: 'the loser write and compensating restore are both visible',
+        );
+
+        const missingMessageId = 'tc345-final-race-missing';
+        const missingAttachmentId = 'tc345-final-race-missing-attachment';
+        await fixture.messageRepo.saveMessage(parent(missingMessageId));
+        custodyIncarnationOnNextPersist = '22222222222222222222222222222222';
+        await fixture.repo.saveAttachment(
+          makeAttachment(
+            id: missingAttachmentId,
+            messageId: missingMessageId,
+            encryptionKeyBase64: 'race-new-loser-key',
+            encryptionNonce: 'race-new-loser-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        expect(await rawRow(missingAttachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(missingAttachmentId),
+          ),
+          isFalse,
+          reason: 'a final-race loser must delete its newly written key',
+        );
+      },
+    );
+
+    test('TC-345-09 media intent has one staging authority', () async {
+      expect(fixture.repo.supportsDirectMediaInboxCustody, isTrue);
+
+      const messageId = 'tc345-exclusive-authority';
+      const attachmentId = 'tc345-exclusive-authority-attachment';
+      final intent = computeDirectMediaCustodyIntentId(
+        messageId: messageId,
+        attachmentIds: const <String>[attachmentId],
+      );
+      final expected = ConversationMessage(
+        id: messageId,
+        contactPeerId: 'peer-exclusive-recipient',
+        senderPeerId: 'peer-local',
+        text: '',
+        timestamp: '2026-08-07T14:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-08-07T14:00:00.000Z',
+        directMediaCustodyIntentId: intent,
+      );
+      final completed = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'audio/mp4',
+        size: 712,
+        mediaType: 'audio',
+        durationMs: 900,
+        localPath: 'media/direct/$attachmentId.m4a',
+        downloadStatus: 'done',
+        createdAt: expected.createdAt,
+        contentHash:
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        encryptionKeyBase64: 'exclusive-raw-key',
+        encryptionNonce: 'exclusive-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      await fixture.messageRepo.saveMessage(expected);
+      await fixture.repo.saveAttachment(
+        completed.copyWith(
+          downloadStatus: 'upload_pending',
+          clearContentHash: true,
+          clearEncryptionKeyBase64: true,
+          clearEncryptionNonce: true,
+          clearEncryptionScheme: true,
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      final envelope = jsonEncode(<String, Object?>{
+        'type': 'chat_message',
+        'version': '2',
+        'id': messageId,
+        'senderPeerId': 'peer-local',
+        'encrypted': const <String, String>{
+          'kem': 'kem-exclusive',
+          'ciphertext': 'cipher-exclusive',
+          'nonce': 'nonce-exclusive',
+        },
+      });
+      final staged = expected.copyWith(
+        status: 'sending',
+        wireEnvelope: envelope,
+        directMediaCustodyIntentId: null,
+      );
+
+      final oldMedia = await fixture.repo.stageOutgoingOrdinaryAttemptWithMedia(
+        messageMutationRepository:
+            fixture.messageRepo as OutgoingTransportMutationRepository,
+        expected: expected,
+        staged: staged,
+        attachments: <MediaAttachment>[completed],
+        kind: OutgoingOrdinaryAttemptKind.existing,
+      );
+      expect(oldMedia.outcome, OutgoingOrdinaryMutationOutcome.refused);
+
+      final malformedEditEnvelope = jsonEncode(<String, Object?>{
+        ...jsonDecode(envelope) as Map<String, dynamic>,
+        'eventId': 'edit-event',
+      });
+      final malformed = await fixture.repo.stageOutgoingDirectMediaInboxCustody(
+        expected: expected,
+        staged: staged.copyWith(wireEnvelope: malformedEditEnvelope),
+        attachments: <MediaAttachment>[completed],
+        kind: OutgoingOrdinaryAttemptKind.existing,
+        recipientPeerId: expected.contactPeerId,
+        wireEnvelope: malformedEditEnvelope,
+      );
+      expect(malformed.outcome, OutgoingOrdinaryMutationOutcome.refused);
+      expect(
+        (await fixture.messageRepo.getMessage(
+          messageId,
+        ))!.directMediaCustodyIntentId,
+        intent,
+      );
+      expect(
+        (await rawRow(attachmentId))!['download_status'],
+        'upload_pending',
+      );
+      expect(
+        await fixture.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        isEmpty,
+      );
+    });
 
     test(
       'all public row writers queue behind exact lifecycle qualification',

@@ -313,6 +313,7 @@ void main() {
         'dbStageOutgoingDirectTextInboxCustody:',
         'dbLoadDirectInboxCustodyOutbox:',
         'dbLoadDirectInboxCustodyOutboxForMessage:',
+        'dbLoadDirectInboxCustodyOutboxOwnerForMessageId:',
         'dbRecordDirectInboxCustodyFailureIfExact:',
         'dbCompleteAcceptedDirectInboxCustodyIfExact:',
       ]) {
@@ -354,6 +355,59 @@ void main() {
           'drainDirectInboxCustodyOutboxFn: '
           'widget.drainDirectInboxCustodyOutbox',
         ),
+      );
+    },
+  );
+
+  test(
+    'TC-345-03c production bootstrap wires combined media custody and shared v108 drain',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+
+      expect(
+        'dbStageOutgoingDirectMediaInboxCustody:'.allMatches(production),
+        hasLength(1),
+        reason: 'production must wire one combined media custody delegate',
+      );
+      expect(
+        RegExp(
+          r'\)\s*=>\s*dbStageOutgoingDirectMediaInboxCustody\s*\(',
+        ).allMatches(production),
+        hasLength(1),
+        reason: 'the delegate must call the real atomic DB authority',
+      );
+      expect(
+        'dbProjectOutgoingDirectMediaCustodyUploadFailure:'.allMatches(
+          production,
+        ),
+        hasLength(1),
+        reason:
+            'token-bearing upload failures need the exact transactional '
+            'projection in production',
+      );
+      expect(
+        RegExp(
+          r'\)\s*=>\s*dbProjectOutgoingDirectMediaCustodyUploadFailure\s*\(',
+        ).allMatches(production),
+        hasLength(1),
+        reason: 'the failure delegate must call the real DB authority',
+      );
+      expect(
+        'Future<int> drainDirectInboxCustodyFamilies()'.allMatches(production),
+        hasLength(1),
+        reason: 'media reuses the existing v108 lifecycle drain',
+      );
+      expect(
+        RegExp(r'\bdrainDirectInboxCustodyOutbox\s*\(').allMatches(production),
+        hasLength(1),
+        reason: 'media must not introduce a sibling v108 worker',
+      );
+      expect(
+        RegExp(
+          r'\bdbCompleteAcceptedDirectInboxCustodyIfExact\s*\(',
+        ).allMatches(production),
+        hasLength(1),
+        reason: 'text and media share the exact v108 completion authority',
       );
     },
   );
@@ -481,7 +535,7 @@ void main() {
             expect(arguments, contains('messageId'));
             expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
           case _SendChatMessageCallerKind.excludedVoice:
-            expect(arguments['mediaAttachments'], '[uploaded]');
+            expect(arguments['mediaAttachments'], 'attachments');
             expect(arguments, contains('messageId'));
             expect(
               arguments['preassignedMessageIdIsFresh'],

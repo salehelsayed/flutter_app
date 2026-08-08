@@ -2,9 +2,13 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
+import 'package:flutter_app/core/database/migrations/110_direct_media_custody_intent.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -16,6 +20,10 @@ const _attemptedAt = '2026-08-06T10:01:00.000Z';
 const _recipientPeerId = 'peer-recipient';
 const _messageId = 'tc342-message';
 const _incarnationId = '1234567890abcdef1234567890abcdef';
+const _mediaMessageId = 'tc345-media-message';
+const _mediaAttachmentId = 'tc345-media-attachment';
+const _rollbackMessageId = 'tc345-rollback-message';
+const _rollbackAttachmentId = 'tc345-rollback-attachment';
 const _wireEnvelope =
     '{"type":"chat_message","version":"2","id":"tc342-message",'
     '"senderPeerId":"self-peer",'
@@ -72,6 +80,105 @@ Map<String, Object?> _v107TerminalRow() => const <String, Object?>{
   'updated_at': _at,
 };
 
+Map<String, Object?> _v109ReactionCustodyRow() => const <String, Object?>{
+  'recipient_peer_id': 'peer-v109-reaction',
+  'event_id': 'event-v109-reaction',
+  'wire_envelope': '{"type":"reaction","version":"1"}',
+  'retry_count': 0,
+  'last_attempt_at': null,
+  'last_error_code': null,
+  'created_at': _at,
+  'updated_at': _at,
+};
+
+String _mediaWireEnvelope(String messageId) =>
+    '{"type":"chat_message","version":"2","id":"$messageId",'
+    '"senderPeerId":"self-peer",'
+    '"encrypted":{"kem":"test-kem","ciphertext":"test-ciphertext",'
+    '"nonce":"test-nonce"}}';
+
+Map<String, Object?> _preparedMediaMessageRow({
+  required String messageId,
+  required String attachmentId,
+}) => Map<String, Object?>.from(_stagedMessage())
+  ..['id'] = messageId
+  ..['text'] = 'opaque media payload owner'
+  ..['wire_envelope'] = null
+  ..['dedup_key'] = messageId
+  ..['direct_media_custody_intent_id'] = computeDirectMediaCustodyIntentId(
+    messageId: messageId,
+    attachmentIds: <String>[attachmentId],
+  );
+
+Map<String, Object?> _pendingMediaAttachmentRow({
+  required String messageId,
+  required String attachmentId,
+}) => <String, Object?>{
+  'id': attachmentId,
+  'message_id': messageId,
+  'mime': 'audio/ogg',
+  'size': 345,
+  'media_type': 'audio',
+  'width': null,
+  'height': null,
+  'duration_ms': 1200,
+  'local_path': 'pending_uploads/$messageId/$attachmentId.ogg',
+  'download_status': 'upload_pending',
+  'created_at': _at,
+  'waveform': null,
+  'upload_retry_count': 0,
+  'download_retry_count': 0,
+  'content_hash': null,
+  'thumbnail_hash': null,
+  'encryption_key_base64': null,
+  'encryption_nonce': null,
+  'encryption_scheme': null,
+  'owner_lane': 'direct',
+  'is_bookmarked': 0,
+  'last_playback_position_ms': 0,
+};
+
+Map<String, Object?> _completedMediaAttachmentRow(
+  Map<String, Object?> pending,
+) => Map<String, Object?>.from(pending)
+  ..['download_status'] = 'done'
+  ..['local_path'] = 'media/${pending['message_id']}/${pending['id']}.ogg'
+  ..['content_hash'] =
+      'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+  ..['encryption_key_base64'] = secureStoreReferenceForKey(
+    mediaAttachmentEncryptionKeyStoreName(pending['id']! as String),
+  )
+  ..['encryption_nonce'] = 'tc345-media-nonce'
+  ..['encryption_scheme'] = 'blob_aes_256_gcm_v1';
+
+Map<String, Object?> _stagedMediaMessageRow(
+  Map<String, Object?> prepared,
+  String wireEnvelope,
+) => Map<String, Object?>.from(prepared)
+  ..['status'] = 'sending'
+  ..['wire_envelope'] = wireEnvelope
+  ..['direct_media_custody_intent_id'] = null;
+
+Future<Map<String, Object?>> _tc345AuthoritySnapshot(
+  sqlcipher.Database db,
+) async => <String, Object?>{
+  'user_version': await _userVersion(db),
+  'messages': await db.query('messages', orderBy: 'id'),
+  'media': await db.query('media_attachments', orderBy: 'id'),
+  'direct_custody': await db.query(
+    'direct_inbox_custody_outbox',
+    orderBy: 'recipient_peer_id, message_id',
+  ),
+  'reaction_custody': await db.query(
+    'direct_reaction_inbox_custody_outbox',
+    orderBy: 'recipient_peer_id, event_id',
+  ),
+  'reaction_terminal': await db.query(
+    'direct_notification_reaction_terminal_events',
+    orderBy: 'peer_id, message_id, actor_peer_id, reaction_id',
+  ),
+};
+
 Future<Map<String, List<Map<String, Object?>>>> _authoritySnapshot(
   sqlcipher.Database db,
 ) async => <String, List<Map<String, Object?>>>{
@@ -95,7 +202,7 @@ void main() {
         isTrue,
         reason: 'TC-342-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 109);
+      expect(currentIdentityDatabaseVersion, 110);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_inbox_custody_sqlcipher_',
@@ -131,7 +238,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v107-to-v109';
+        proofStage = 'upgrade-v107-to-current-v110';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -141,7 +248,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 109);
+        expect(await _userVersion(db), 110);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
         expect(
@@ -345,7 +452,7 @@ END
           throwsA(anything),
         );
 
-        proofStage = 'reopen-v109-unchanged-after-refusal';
+        proofStage = 'reopen-current-v110-unchanged-after-refusal';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -355,10 +462,297 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 109);
+        expect(await _userVersion(db), 110);
         expect(await _authoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-342-11 failed at $proofStage: $error\n$stackTrace');
+      } finally {
+        if (db != null && db.isOpen) await db.close();
+        if (await temp.exists()) await temp.delete(recursive: true);
+      }
+    },
+  );
+
+  testWidgets(
+    'TC-345-11 Android SQLCipher v109-to-v110 media custody and downgrade floor survive reopen',
+    (_) async {
+      expect(
+        Platform.isAndroid,
+        isTrue,
+        reason: 'TC-345-11 is an Android SQLCipher plugin boundary proof',
+      );
+      expect(currentIdentityDatabaseVersion, 110);
+
+      final temp = await Directory.systemTemp.createTemp(
+        'direct_media_custody_sqlcipher_',
+      );
+      final path = '${temp.path}/identity.db';
+      const password = 'tc345-sqlcipher-password';
+      sqlcipher.Database? db;
+      var proofStage = 'create-v109';
+
+      try {
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: 109,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 109);
+        expect(await _cipherVersion(db), isNotEmpty);
+        expect(
+          (await db.rawQuery('PRAGMA table_info(messages)')).where(
+            (column) => column['name'] == 'direct_media_custody_intent_id',
+          ),
+          isEmpty,
+        );
+
+        proofStage = 'seed-v108-text-and-v109-reaction-authority';
+        expect(
+          await dbStageOutgoingDirectTextInboxCustody(
+            db,
+            expectedRow: null,
+            stagedRow: _stagedMessage(),
+            kind: OutgoingOrdinaryAttemptKind.fresh,
+            recipientPeerId: _recipientPeerId,
+            messageId: _messageId,
+            incarnationId: _incarnationId,
+            wireEnvelope: _wireEnvelope,
+          ),
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        await db.insert(
+          'direct_notification_reaction_terminal_events',
+          _v107TerminalRow(),
+        );
+        await db.insert(
+          'direct_reaction_inbox_custody_outbox',
+          _v109ReactionCustodyRow(),
+        );
+        await db.close();
+        db = null;
+
+        proofStage = 'upgrade-v109-to-v110';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 110);
+        expect(await _cipherVersion(db), isNotEmpty);
+        expect(
+          (await db.query(
+            'messages',
+            columns: const <String>['direct_media_custody_intent_id'],
+            where: 'id = ?',
+            whereArgs: const <Object?>[_messageId],
+          )).single['direct_media_custody_intent_id'],
+          isNull,
+          reason: 'v109 rows must not be backfilled with invented freshness',
+        );
+        expect(await db.query('direct_inbox_custody_outbox'), hasLength(1));
+        expect(
+          await db.query('direct_reaction_inbox_custody_outbox'),
+          <Map<String, Object?>>[_v109ReactionCustodyRow()],
+        );
+
+        proofStage = 'idempotent-v110-migration';
+        await runDirectMediaCustodyIntentMigration(db);
+        await runDirectMediaCustodyIntentMigration(db);
+        final intentColumns = (await db.rawQuery('PRAGMA table_info(messages)'))
+            .where(
+              (column) => column['name'] == 'direct_media_custody_intent_id',
+            );
+        expect(intentColumns, hasLength(1));
+
+        proofStage = 'persist-prepared-media-intent';
+        await db.insert(
+          'messages',
+          _preparedMediaMessageRow(
+            messageId: _mediaMessageId,
+            attachmentId: _mediaAttachmentId,
+          ),
+        );
+        await db.insert(
+          'media_attachments',
+          _pendingMediaAttachmentRow(
+            messageId: _mediaMessageId,
+            attachmentId: _mediaAttachmentId,
+          ),
+        );
+        final pendingIntent = computeDirectMediaCustodyIntentId(
+          messageId: _mediaMessageId,
+          attachmentIds: const <String>[_mediaAttachmentId],
+        );
+        await db.close();
+        db = null;
+
+        proofStage = 'wrong-key-refusal';
+        sqlcipher.Database? wrong;
+        await expectLater(() async {
+          wrong = await sqlcipher.openDatabase(
+            path,
+            password: 'wrong-tc345-password',
+            singleInstance: false,
+          );
+          await wrong!.rawQuery('SELECT COUNT(*) FROM messages');
+        }(), throwsA(anything));
+        if (wrong != null && wrong!.isOpen) await wrong!.close();
+
+        proofStage = 'prepared-intent-reopen';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        var prepared = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[_mediaMessageId],
+        )).single;
+        var pendingAttachment = (await db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: const <Object?>[_mediaAttachmentId],
+        )).single;
+        expect(prepared['direct_media_custody_intent_id'], pendingIntent);
+        expect(pendingAttachment['download_status'], 'upload_pending');
+
+        proofStage = 'atomic-media-custody-stage';
+        final mediaEnvelope = _mediaWireEnvelope(_mediaMessageId);
+        final mediaStage = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: prepared,
+          stagedRow: _stagedMediaMessageRow(prepared, mediaEnvelope),
+          attachmentRows: <Map<String, Object?>>[
+            _completedMediaAttachmentRow(pendingAttachment),
+          ],
+          kind: OutgoingOrdinaryAttemptKind.existing,
+          recipientPeerId: _recipientPeerId,
+          wireEnvelope: mediaEnvelope,
+        );
+        expect(mediaStage.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(
+          mediaStage.messageRow?['direct_media_custody_intent_id'],
+          isNull,
+        );
+        expect(mediaStage.messageRow?['wire_envelope'], mediaEnvelope);
+        expect(mediaStage.attachmentRows.single['download_status'], 'done');
+        expect(mediaStage.custodyRow?['incarnation_id'], pendingIntent);
+        expect(mediaStage.custodyRow?['wire_envelope'], mediaEnvelope);
+
+        final committedSnapshot = await _tc345AuthoritySnapshot(db);
+        await db.close();
+        db = null;
+
+        proofStage = 'atomic-media-custody-reopen';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _tc345AuthoritySnapshot(db), committedSnapshot);
+
+        proofStage = 'prepare-rollback-fixture';
+        await db.insert(
+          'messages',
+          _preparedMediaMessageRow(
+            messageId: _rollbackMessageId,
+            attachmentId: _rollbackAttachmentId,
+          ),
+        );
+        await db.insert(
+          'media_attachments',
+          _pendingMediaAttachmentRow(
+            messageId: _rollbackMessageId,
+            attachmentId: _rollbackAttachmentId,
+          ),
+        );
+        prepared = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[_rollbackMessageId],
+        )).single;
+        pendingAttachment = (await db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: const <Object?>[_rollbackAttachmentId],
+        )).single;
+        final beforeRollback = await _tc345AuthoritySnapshot(db);
+        await db.execute('''
+CREATE TRIGGER tc345_abort_media_custody_insert
+BEFORE INSERT ON direct_inbox_custody_outbox
+WHEN NEW.message_id = '$_rollbackMessageId'
+BEGIN
+  SELECT RAISE(ABORT, 'simulated media custody commit failure');
+END
+''');
+
+        proofStage = 'combined-stage-rollback';
+        final rollbackEnvelope = _mediaWireEnvelope(_rollbackMessageId);
+        await expectLater(
+          dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: prepared,
+            stagedRow: _stagedMediaMessageRow(prepared, rollbackEnvelope),
+            attachmentRows: <Map<String, Object?>>[
+              _completedMediaAttachmentRow(pendingAttachment),
+            ],
+            kind: OutgoingOrdinaryAttemptKind.existing,
+            recipientPeerId: _recipientPeerId,
+            wireEnvelope: rollbackEnvelope,
+          ),
+          throwsA(anything),
+        );
+        await db.execute('DROP TRIGGER tc345_abort_media_custody_insert');
+        expect(await _tc345AuthoritySnapshot(db), beforeRollback);
+
+        proofStage = 'v110-to-v109-downgrade-refusal';
+        final beforeDowngradeRefusal = await _tc345AuthoritySnapshot(db);
+        await db.close();
+        db = null;
+        await expectLater(
+          sqlcipher.openDatabase(
+            path,
+            password: password,
+            version: 109,
+            singleInstance: false,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+            onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+          ),
+          throwsA(anything),
+        );
+
+        proofStage = 'reopen-v110-unchanged-after-downgrade-refusal';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 110);
+        expect(await _tc345AuthoritySnapshot(db), beforeDowngradeRefusal);
+      } catch (error, stackTrace) {
+        fail('TC-345-11 failed at $proofStage: $error\n$stackTrace');
       } finally {
         if (db != null && db.isOpen) await db.close();
         if (await temp.exists()) await temp.delete(recursive: true);

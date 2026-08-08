@@ -1,6 +1,8 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
 import '../../../core/services/fake_p2p_service.dart';
@@ -43,6 +45,28 @@ ConversationMessage _makeSentDeletedMessage({
     deletedByPeerId: 'my-peer-id',
     wireEnvelope: wireEnvelope,
   );
+}
+
+class _TokenAfterUnackedListMessageRepository extends FakeMessageRepository {
+  _TokenAfterUnackedListMessageRepository(this.intentId);
+
+  final String intentId;
+  bool crossedAfterListLoad = false;
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    final loaded = await super.getUnackedOutgoingMessages(olderThan: olderThan);
+    if (!crossedAfterListLoad && loaded.isNotEmpty) {
+      crossedAfterListLoad = true;
+      final current = await getMessage(loaded.single.id);
+      await saveMessage(
+        current!.copyWith(directMediaCustodyIntentId: intentId),
+      );
+    }
+    return loaded;
+  }
 }
 
 void main() {
@@ -276,7 +300,12 @@ void main() {
           (await messageRepo.getMessage(crossedWinner.id))!.toMap(),
           crossedWinner.toMap(),
         );
-        expect(messageRepo.ordinaryMutationCallCount, 3);
+        expect(
+          messageRepo.ordinaryMutationCallCount,
+          2,
+          reason:
+              'the crossed winner is rejected by the fresh exact pre-egress recheck before quarantine',
+        );
         expect(messageRepo.saveMessageCallCount, 0);
         expect(p2pService.storeInInboxCallCount, 0);
         expect(p2pService.sendMessageCallCount, 0);
@@ -550,6 +579,166 @@ void main() {
     // 'delivered' may never be minted from a bare storeInInbox==true and
     // NEVER from a blind transport=='inbox' flip with no re-store at all —
     // those were the second and third places false-delivered was born.
+    test(
+      'TC-345-08 globally v108-owned media bypasses generic unacked store after recipient drift without starving legacy rows',
+      () async {
+        final ownedMedia =
+            _makeSentMessage(
+              id: 'msg-v108-media-owned',
+              contactPeerId: 'peer-media-drifted',
+              wireEnvelope:
+                  '{"type":"chat_message","version":"2","encrypted":{"ciphertext":"media"}}',
+            ).copyWith(
+              media: const <MediaAttachment>[
+                MediaAttachment(
+                  id: 'att-v108-media-owned',
+                  messageId: 'msg-v108-media-owned',
+                  mime: 'image/jpeg',
+                  size: 7,
+                  mediaType: 'image',
+                  downloadStatus: 'done',
+                  createdAt: '2026-08-07T12:00:00.000Z',
+                ),
+              ],
+            );
+        final legacySibling = _makeSentMessage(
+          id: 'msg-legacy-sibling',
+          contactPeerId: 'peer-legacy',
+          wireEnvelope:
+              '{"type":"chat_message","version":"2","encrypted":{"ciphertext":"legacy"}}',
+        );
+        messageRepo.seed(<ConversationMessage>[ownedMedia, legacySibling]);
+        messageRepo.unackedOutgoingOverride = <ConversationMessage>[
+          ownedMedia,
+          legacySibling,
+        ];
+        messageRepo.seedDirectInboxCustody(
+          DirectInboxCustodyOutboxEntry(
+            recipientPeerId: 'peer-media-owner',
+            messageId: ownedMedia.id,
+            incarnationId: '0123456789abcdef0123456789abcdef',
+            wireEnvelope: ownedMedia.wireEnvelope!,
+            retryCount: 0,
+            lastAttemptAt: null,
+            lastErrorCode: null,
+            createdAt: '2026-08-07T12:00:00.000Z',
+            updatedAt: '2026-08-07T12:00:00.000Z',
+          ),
+        );
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+          olderThan: Duration.zero,
+        );
+
+        expect(count, 1);
+        expect(p2pService.storeInInboxCallCount, 1);
+        expect(p2pService.lastStoreInInboxPeerId, legacySibling.contactPeerId);
+        expect(
+          (await messageRepo.getMessage(ownedMedia.id))!.toMap(),
+          ownedMedia.toMap(),
+          reason: 'the shared v108 drain remains the only settlement owner',
+        );
+        expect(
+          (await messageRepo.getMessage(legacySibling.id))?.status,
+          'inboxed',
+        );
+        expect(messageRepo.directCustodyRows, hasLength(1));
+        expect(
+          messageRepo.directCustodyRows.values.single,
+          isA<DirectInboxCustodyOutboxEntry>()
+              .having((entry) => entry.messageId, 'messageId', ownedMedia.id)
+              .having(
+                (entry) => entry.recipientPeerId,
+                'stored recipient owner',
+                'peer-media-owner',
+              ),
+        );
+      },
+    );
+
+    test(
+      'TC-345-08b token-bearing unacked preparation has zero generic egress or settlement',
+      () async {
+        const messageId = 'msg-v110-unacked-preparation';
+        const intent = '0123456789abcdef0123456789abcdef';
+        final prepared = _makeSentMessage(
+          id: messageId,
+          contactPeerId: 'peer-token-preparation',
+          wireEnvelope:
+              '{"type":"chat_message","version":"2","encrypted":{"ciphertext":"stale"}}',
+        ).copyWith(directMediaCustodyIntentId: intent);
+        messageRepo.seed(<ConversationMessage>[prepared]);
+        messageRepo.unackedOutgoingOverride = <ConversationMessage>[prepared];
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+          olderThan: Duration.zero,
+        );
+
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(messageRepo.ordinaryMutationCallCount, 0);
+        expect(messageRepo.saveMessageCallCount, 0);
+        expect(
+          (await messageRepo.getMessage(messageId))!.toMap(),
+          prepared.toMap(),
+        );
+      },
+    );
+
+    test(
+      'TC-345-08c token preparation winning after unacked list load has zero egress',
+      () async {
+        const messageId = 'msg-v110-unacked-crossing';
+        const intent = 'fedcba9876543210fedcba9876543210';
+        final crossingRepo = _TokenAfterUnackedListMessageRepository(intent);
+        final listed = _makeSentMessage(
+          id: messageId,
+          contactPeerId: 'peer-token-crossing',
+          wireEnvelope:
+              '{"type":"chat_message","version":"2","encrypted":{"ciphertext":"listed"}}',
+        );
+        crossingRepo.seed(<ConversationMessage>[listed]);
+        crossingRepo.unackedOutgoingOverride = <ConversationMessage>[listed];
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: crossingRepo,
+          p2pService: p2pService,
+          olderThan: Duration.zero,
+        );
+
+        expect(crossingRepo.crossedAfterListLoad, isTrue);
+        expect(count, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(crossingRepo.ordinaryMutationCallCount, 0);
+        expect(
+          (await crossingRepo.getMessage(
+            messageId,
+          ))?.directMediaCustodyIntentId,
+          intent,
+        );
+      },
+    );
+
     group('115 P3 — retry-unacked truthfulness', () {
       test(
         "'sent' row with transport=='inbox' is re-stored to the relay, not blind-flipped to 'delivered'",

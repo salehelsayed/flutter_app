@@ -115,7 +115,7 @@ void main() {
   test(
     'v100 remains the sole successor to v99 and later versions follow it',
     () {
-      expect(currentIdentityDatabaseVersion, 109);
+      expect(currentIdentityDatabaseVersion, 110);
       for (final registry in [
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -130,7 +130,8 @@ void main() {
         expect(registry.where((entry) => entry.version == 107), hasLength(1));
         expect(registry.where((entry) => entry.version == 108), hasLength(1));
         expect(registry.where((entry) => entry.version == 109), hasLength(1));
-        expect(registry.where((entry) => entry.version > 109), isEmpty);
+        expect(registry.where((entry) => entry.version == 110), hasLength(1));
+        expect(registry.where((entry) => entry.version > 110), isEmpty);
         final index99 = registry.indexWhere((entry) => entry.version == 99);
         final index100 = registry.indexWhere((entry) => entry.version == 100);
         final index101 = registry.indexWhere((entry) => entry.version == 101);
@@ -148,12 +149,14 @@ void main() {
         final index107 = registry.indexWhere((entry) => entry.version == 107);
         final index108 = registry.indexWhere((entry) => entry.version == 108);
         final index109 = registry.indexWhere((entry) => entry.version == 109);
+        final index110 = registry.indexWhere((entry) => entry.version == 110);
         expect(index105, index104 + 1);
         expect(index106, index105 + 1);
         expect(index107, index106 + 1);
         expect(index108, index107 + 1);
         expect(index109, index108 + 1);
-        expect(index109, registry.length - 1);
+        expect(index110, index109 + 1);
+        expect(index110, registry.length - 1);
         expect(registry[index100].name, '100_direct_private_media_lifecycle');
         expect(
           registry[index100].run,
@@ -181,6 +184,7 @@ void main() {
           registry[index109].name,
           '109_direct_reaction_inbox_custody_outbox',
         );
+        expect(registry[index110].name, '110_direct_media_custody_intent');
       }
     },
   );

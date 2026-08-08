@@ -38,6 +38,7 @@ void main() {
       size: size,
       mediaType: 'audio',
       durationMs: durationMs,
+      localPath: '/tmp/$id.m4a',
       downloadStatus: 'done',
       createdAt: DateTime.now().toUtc().toIso8601String(),
       contentHash:
@@ -65,6 +66,7 @@ void main() {
       network: network,
       mediaAttachmentRepo: bobMediaRepo,
     );
+    aliceMediaRepo.enableDirectMediaInboxCustodyForTest(alice.messageRepo);
 
     alice.addContact(bob);
     bob.addContact(alice);

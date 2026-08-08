@@ -4,6 +4,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 
 import '../models/media_attachment.dart';
 import '../models/conversation_message.dart';
@@ -11,6 +13,7 @@ import '../models/media_library.dart';
 import '../models/media_preview_descriptor.dart';
 import '../models/media_storage.dart';
 import '../models/outgoing_ordinary_mutation_result.dart';
+import '../models/outgoing_direct_media_custody_stage_result.dart';
 import 'message_repository.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 
@@ -102,6 +105,44 @@ abstract interface class OutgoingOrdinaryAttemptStagingRepository {
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
     required OutgoingOrdinaryAttemptKind kind,
+  });
+}
+
+/// Optional fail-closed authority for newly authored ordinary direct media.
+///
+/// Parent, exact attachment projection, manifest-intent consumption and the
+/// immutable v108 outbox row commit in one SQLCipher transaction. The
+/// prepared intent (when present) is the incarnation; a marker-free fresh
+/// stage mints its incarnation inside that transaction.
+abstract interface class OutgoingDirectMediaInboxCustodyStagingRepository {
+  bool get supportsDirectMediaInboxCustody;
+
+  Future<OutgoingDirectMediaCustodyStageResult>
+  stageOutgoingDirectMediaInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  });
+}
+
+/// Exact failure projection for a manifest-bound direct-media preparation.
+///
+/// Implementations revalidate the original parent, the complete authored
+/// attachment projection, the manifest token, and global v108 absence in the
+/// same transaction that changes retry state. Token-bearing callers must not
+/// fall back to [MediaAttachmentRepository.saveAttachment] when this authority
+/// is unavailable or refuses the crossed snapshot.
+abstract interface class OutgoingDirectMediaCustodyFailureRepository {
+  bool get supportsDirectMediaCustodyFailureProjection;
+
+  Future<UploadRetryProjectionResult> projectDirectMediaCustodyUploadFailure({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required String failedAttachmentId,
+    required UploadMediaFailed failure,
   });
 }
 

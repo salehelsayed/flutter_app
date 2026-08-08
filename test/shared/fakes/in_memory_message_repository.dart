@@ -666,6 +666,19 @@ class InMemoryMessageRepository
   }) async => directCustodyRows[_directCustodyKey(recipientPeerId, messageId)];
 
   @override
+  Future<DirectInboxCustodyOutboxEntry?>
+  loadDirectInboxCustodyOwnerForMessageId({required String messageId}) async {
+    final matches = directCustodyRows.values
+        .where((entry) => entry.messageId == messageId)
+        .take(2)
+        .toList(growable: false);
+    if (matches.length > 1) {
+      throw StateError('Ambiguous direct inbox custody owner for message');
+    }
+    return matches.firstOrNull;
+  }
+
+  @override
   Future<bool> recordDirectInboxCustodyFailureIfExact({
     required DirectInboxCustodyOutboxEntry expected,
     required String errorCode,

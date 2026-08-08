@@ -39,7 +39,7 @@ void main() {
         isTrue,
         reason: 'TC-343-10 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 109);
+      expect(currentIdentityDatabaseVersion, 110);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_reaction_custody_sqlcipher_',
@@ -74,7 +74,7 @@ void main() {
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v108-to-v109';
+        proofStage = 'upgrade-v108-through-v109-to-current-v110';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -84,7 +84,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 109);
+        expect(await _userVersion(db), 110);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(
           await db.query('direct_inbox_custody_outbox'),
@@ -313,12 +313,12 @@ END
         proofStage = 'second-production-migration-pass-is-stable';
         await runProductionOnUpgrade(db, 108, 109);
         await runDirectReactionInboxCustodyOutboxMigration(db);
-        expect(await _userVersion(db), 109);
+        expect(await _userVersion(db), 110);
         expect(await _authoritySnapshot(db), convergedSnapshot);
         await db.close();
         db = null;
 
-        proofStage = 'v109-to-v108-downgrade-refusal';
+        proofStage = 'v110-to-v108-downgrade-refusal';
         await expectLater(
           sqlcipher.openDatabase(
             path,
@@ -332,7 +332,7 @@ END
           throwsA(anything),
         );
 
-        proofStage = 'correct-v109-reopen-unchanged-after-refusal';
+        proofStage = 'correct-current-v110-reopen-unchanged-after-refusal';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -342,7 +342,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 109);
+        expect(await _userVersion(db), 110);
         expect(await _authoritySnapshot(db), convergedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-343-10 failed at $proofStage: $error\n$stackTrace');

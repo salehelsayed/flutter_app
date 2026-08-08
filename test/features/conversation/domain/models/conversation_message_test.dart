@@ -15,6 +15,38 @@ void main() {
   );
 
   group('ConversationMessage', () {
+    test(
+      'TC-345-01b media custody intent is local serialized state outside message identity',
+      () {
+        const intent = '0123456789abcdef0123456789abcdef';
+        final withIntent = testMessage.copyWith(
+          directMediaCustodyIntentId: intent,
+        );
+
+        final map = withIntent.toMap();
+        expect(map['direct_media_custody_intent_id'], intent);
+        expect(
+          ConversationMessage.fromMap(map).directMediaCustodyIntentId,
+          intent,
+        );
+        expect(
+          ConversationMessage.fromMap(
+            Map<String, Object?>.from(map)
+              ..remove('direct_media_custody_intent_id'),
+          ).directMediaCustodyIntentId,
+          isNull,
+        );
+
+        final preserved = withIntent.copyWith(text: 'updated locally');
+        final cleared = withIntent.copyWith(directMediaCustodyIntentId: null);
+        expect(preserved.directMediaCustodyIntentId, intent);
+        expect(cleared.directMediaCustodyIntentId, isNull);
+        expect(withIntent, testMessage);
+        expect(withIntent.hashCode, testMessage.hashCode);
+        expect(withIntent.toString(), isNot(contains(intent)));
+      },
+    );
+
     group('fromMap / toMap round-trip', () {
       test('round-trips correctly', () {
         final map = testMessage.toMap();
@@ -53,7 +85,10 @@ void main() {
         expect(restored.dedupKey, 'src-key-1');
 
         // Default (no key) round-trips as null.
-        expect(ConversationMessage.fromMap(testMessage.toMap()).dedupKey, isNull);
+        expect(
+          ConversationMessage.fromMap(testMessage.toMap()).dedupKey,
+          isNull,
+        );
       });
 
       test('copyWith preserves vs clears dedupKey (sentinel)', () {

@@ -17,6 +17,7 @@ import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/private_media_protection_coordinator.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -1831,6 +1832,397 @@ void main() {
   });
 
   group('ConversationWired optimistic send', () {
+    testWidgets(
+      'TC-345-05 ordinary media and voice persist manifest-bound custody intent before upload',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_345_producer_intent_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final first = File('${tempDir.path}/first.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final second = File('${tempDir.path}/second.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+
+        final completeMessages = FakeMessageRepository();
+        final completeMedia = FakeMediaAttachmentRepository();
+        final completeListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: completeMessages,
+          contactRepo: FakeContactRepository(),
+        );
+        ConversationMessage? parentObservedBeforeUpload;
+        List<MediaAttachment>? rowsObservedBeforeUpload;
+        Future<UploadMediaOutcome> stopAtCompleteUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          final parents = completeMessages.store.values
+              .where((message) => !message.isIncoming)
+              .toList(growable: false);
+          parentObservedBeforeUpload = parents.single;
+          rowsObservedBeforeUpload = await completeMedia
+              .getAttachmentsForMessage(
+                parents.single.id,
+                owner: MediaOwnerLane.direct,
+              );
+          return const UploadMediaFailed(
+            stage: UploadMediaStage.transport,
+            disposition: UploadMediaDisposition.connectivityRetryable,
+            errorCode: 'TEST_UPLOAD_BARRIER',
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: completeMessages,
+          chatListener: completeListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: completeMedia,
+          typedUploadMediaFn: stopAtCompleteUpload,
+          initialAttachments: <File>[first, second],
+        );
+        await tester.enterText(find.byType(TextField), 'Two attachments');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(tester, () => parentObservedBeforeUpload != null);
+
+        final completeParent = parentObservedBeforeUpload!;
+        final completeRows = rowsObservedBeforeUpload!;
+        expect(completeRows, hasLength(2));
+        expect(
+          completeRows.every(
+            (attachment) => attachment.downloadStatus == 'upload_pending',
+          ),
+          isTrue,
+        );
+        expect(
+          completeParent.directMediaCustodyIntentId,
+          computeDirectMediaCustodyIntentId(
+            messageId: completeParent.id,
+            attachmentIds: completeRows.map((attachment) => attachment.id),
+          ),
+          reason: 'the full authored manifest is durable before upload begins',
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        final partialMessages = FakeMessageRepository();
+        final partialMedia = FakeMediaAttachmentRepository();
+        final partialListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: partialMessages,
+          contactRepo: FakeContactRepository(),
+        );
+        final attemptedAttachmentIds = <String>[];
+        partialMedia.onSaveAttachment = (attachment) {
+          attemptedAttachmentIds.add(attachment.id);
+          if (attemptedAttachmentIds.length == 2) {
+            throw StateError('interrupt sequential attachment persistence');
+          }
+        };
+        var partialUploadCalls = 0;
+        Future<UploadMediaOutcome> stopPartialUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          partialUploadCalls++;
+          return const UploadMediaFailed(
+            stage: UploadMediaStage.transport,
+            disposition: UploadMediaDisposition.connectivityRetryable,
+            errorCode: 'TEST_PARTIAL_UPLOAD_BARRIER',
+          );
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: partialMessages,
+          chatListener: partialListener,
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: partialMedia,
+          typedUploadMediaFn: stopPartialUpload,
+          initialAttachments: <File>[first, second],
+        );
+        await tester.enterText(find.byType(TextField), 'Interrupted pair');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntil(
+          tester,
+          () => attemptedAttachmentIds.length == 2 && partialUploadCalls > 0,
+        );
+
+        final partialParent = partialMessages.store.values.single;
+        final survivingRows = await partialMedia.getAttachmentsForMessage(
+          partialParent.id,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(survivingRows, hasLength(1));
+        expect(
+          partialParent.directMediaCustodyIntentId,
+          computeDirectMediaCustodyIntentId(
+            messageId: partialParent.id,
+            attachmentIds: attemptedAttachmentIds,
+          ),
+        );
+        expect(
+          partialParent.directMediaCustodyIntentId,
+          isNot(
+            computeDirectMediaCustodyIntentId(
+              messageId: partialParent.id,
+              attachmentIds: survivingRows.map((attachment) => attachment.id),
+            ),
+          ),
+          reason:
+              'a restart cannot mistake the surviving subset for the authored set',
+        );
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+
+        final voiceMessages = FakeMessageRepository();
+        final voiceMedia = FakeMediaAttachmentRepository();
+        final voiceListener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: voiceMessages,
+          contactRepo: FakeContactRepository(),
+        );
+        final voiceFile = File('${tempDir.path}/voice.m4a')
+          ..writeAsBytesSync(List<int>.filled(64, 1));
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 1200
+          ..fakeOutputPath = voiceFile.path;
+        ConversationMessage? voiceParentObserved;
+        MediaAttachment? voiceAttachmentObserved;
+        Future<(SendVoiceMessageResult, ConversationMessage?)> captureVoice({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String senderPeerId,
+          required String senderUsername,
+          required AudioRecording recording,
+          required Bridge bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+          String? text,
+          String? quotedMessageId,
+          List<double>? waveform,
+          String? messageId,
+          String? timestamp,
+          String? blobId,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          voiceParentObserved = await messageRepo.getMessage(messageId!);
+          final rows = await mediaAttachmentRepo!.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          );
+          voiceAttachmentObserved = rows.single;
+          return (SendVoiceMessageResult.sendFailed, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: voiceMessages,
+          chatListener: voiceListener,
+          sendFn: _instantSuccessSendFn,
+          p2pService: FakeP2PService(),
+          bridge: FakeBridge(),
+          audioRecorderService: recorder,
+          mediaAttachmentRepo: voiceMedia,
+          sendVoiceMessageFn: captureVoice,
+        );
+        final screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 100));
+        final recordingScreen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (recordingScreen.onRecordStop! as Future<void> Function())();
+        await pumpUntil(tester, () => voiceParentObserved != null);
+
+        expect(voiceAttachmentObserved?.downloadStatus, 'upload_pending');
+        expect(
+          voiceParentObserved?.directMediaCustodyIntentId,
+          computeDirectMediaCustodyIntentId(
+            messageId: voiceParentObserved!.id,
+            attachmentIds: <String>[voiceAttachmentObserved!.id],
+          ),
+          reason: 'voice preparation is durable before its upload delegate',
+        );
+        await tester.pump(const Duration(milliseconds: 500));
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    testWidgets(
+      'TC-345-05b ordinary upload cannot launder authored identity or delete pending custody',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_345_upload_identity_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final source = File('${tempDir.path}/source.jpg')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final messages = FakeMessageRepository();
+        final media = FakeMediaAttachmentRepository();
+        final manager = TrackingDurableConversationMediaFileManager(tempDir);
+        final listener = ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        );
+        var uploadCalls = 0;
+        var sendCalls = 0;
+        bool? deleteSourceWhenDoneObserved;
+
+        Future<UploadMediaOutcome> crossedUpload({
+          required Bridge bridge,
+          required String localFilePath,
+          required String mime,
+          required String recipientPeerId,
+          MediaFileManager? mediaFileManager,
+          int? width,
+          int? height,
+          int? durationMs,
+          List<double>? waveform,
+          List<String>? allowedPeers,
+          String? blobId,
+          bool deleteSourceWhenDone = false,
+          EncryptedMediaArtifact? preparedArtifact,
+        }) async {
+          uploadCalls++;
+          deleteSourceWhenDoneObserved = deleteSourceWhenDone;
+          return UploadMediaSucceeded(
+            MediaAttachment(
+              id: '${blobId!}-crossed',
+              messageId: '',
+              mime: mime,
+              size: File(localFilePath).lengthSync() + 1,
+              mediaType: MediaAttachment.mediaTypeFromMime(mime),
+              width: width,
+              height: height,
+              durationMs: durationMs,
+              localPath: 'media/crossed.jpg',
+              downloadStatus: 'done',
+              createdAt: '2099-01-01T00:00:00.000Z',
+              waveform: waveform,
+              contentHash:
+                  'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+              encryptionKeyBase64: 'crossed-key',
+              encryptionNonce: 'crossed-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+          );
+        }
+
+        Future<(SendChatMessageResult, ConversationMessage?)> shouldNotSend({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          required bool preassignedMessageIdIsFresh,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+        }) async {
+          sendCalls++;
+          return (SendChatMessageResult.sendFailed, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: listener,
+          sendFn: shouldNotSend,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: media,
+          mediaFileManager: manager,
+          typedUploadMediaFn: crossedUpload,
+          initialAttachments: <File>[source],
+        );
+        await tester.enterText(find.byType(TextField), 'Authored identity');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await pumpUntilAsyncIo(tester, () => uploadCalls == 1);
+        await pumpUntil(
+          tester,
+          () =>
+              messages.store.isNotEmpty &&
+              messages.store.values.single.status == 'failed',
+        );
+
+        final parent = messages.store.values.single;
+        final durableRows = await media.getAttachmentsForMessage(
+          parent.id,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(sendCalls, 0);
+        expect(deleteSourceWhenDoneObserved, isFalse);
+        expect(
+          media.allSavedAttachments,
+          hasLength(2),
+          reason:
+              'only the optimistic and durable-pending preparation saves run',
+        );
+        expect(durableRows, hasLength(1));
+        expect(durableRows.single.downloadStatus, 'upload_pending');
+        expect(parent.directMediaCustodyIntentId, isNotNull);
+        expect(manager.deletedPendingUploadDirs, isEmpty);
+        final pendingPath = await manager.resolveStoredPath(
+          durableRows.single.localPath!,
+        );
+        expect(File(pendingPath).existsSync(), isTrue);
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
     testWidgets(_gifReplacementPolicyTestName, (tester) async {
       installPrivateMediaProtectionEventChannelStub(tester);
       final tempDir = Directory.systemTemp.createTempSync(
@@ -3119,7 +3511,7 @@ void main() {
     });
 
     testWidgets(
-      'retryable composer upload failure projects once and keeps the optimistic queued lane',
+      'TC-345-05c retryable manifest-bound composer failure uses exact authority and keeps queued lane',
       (tester) async {
         final identityRepo = FakeIdentityRepository(makeIdentity());
         final messageRepo = FakeMessageRepository();
@@ -3129,7 +3521,30 @@ void main() {
           contactRepo: FakeContactRepository(),
         );
         final mediaAttachmentRepo = FakeMediaAttachmentRepository();
-        final projection = _RecordingComposerUploadProjection();
+        final legacyProjection = _RecordingComposerUploadProjection();
+        var exactProjectionCalls = 0;
+        ConversationMessage? exactParent;
+        List<MediaAttachment>? exactAttachments;
+        String? exactFailedAttachmentId;
+        UploadMediaFailed? exactFailure;
+        mediaAttachmentRepo.onProjectDirectMediaCustodyUploadFailure =
+            ({
+              required expectedParent,
+              required expectedAttachments,
+              required failedAttachmentId,
+              required failure,
+            }) async {
+              exactProjectionCalls++;
+              exactParent = expectedParent;
+              exactAttachments = List<MediaAttachment>.from(
+                expectedAttachments,
+              );
+              exactFailedAttachmentId = failedAttachmentId;
+              exactFailure = failure;
+              return const UploadRetryProjectionResult(
+                state: UploadRetryProjectionState.retryPending,
+              );
+            };
         final tempDir = Directory.systemTemp.createTempSync(
           'conv_retryable_projection_',
         );
@@ -3170,20 +3585,22 @@ void main() {
           bridge: FakeBridge(),
           mediaAttachmentRepo: mediaAttachmentRepo,
           typedUploadMediaFn: connectivityFailure,
-          uploadRetryProjectionRepo: projection,
+          uploadRetryProjectionRepo: legacyProjection,
           initialAttachments: [attachment],
         );
 
         await tester.enterText(find.byType(TextField), 'Queued photo');
         await tester.pump(const Duration(milliseconds: 300));
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-        await pumpUntil(tester, () => projection.callCount == 1);
+        await pumpUntil(tester, () => exactProjectionCalls == 1);
 
-        expect(projection.callCount, 1);
-        expect(projection.messageId, isNotEmpty);
-        expect(projection.attachmentId, isNotEmpty);
+        expect(exactProjectionCalls, 1);
+        expect(legacyProjection.callCount, 0);
+        expect(exactParent?.directMediaCustodyIntentId, isNotNull);
+        expect(exactAttachments, hasLength(1));
+        expect(exactFailedAttachmentId, exactAttachments!.single.id);
         expect(
-          projection.failure?.disposition,
+          exactFailure?.disposition,
           UploadMediaDisposition.connectivityRetryable,
         );
         expect(
@@ -3192,12 +3609,197 @@ void main() {
           ),
           isEmpty,
         );
-        expect(messageRepo.store[projection.messageId!]?.status, 'sending');
+        expect(messageRepo.store[exactParent!.id]?.status, 'sending');
         expect(
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
           isEmpty,
         );
         expect(find.byType(SnackBar), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'TC-345-05d manifest-bound composer failure refuses crossed unsupported and global-v108 state without legacy fallback',
+      (tester) async {
+        for (final scenario in <String>[
+          'metadata',
+          'partial',
+          'token',
+          'unsupported',
+          'global-v108',
+        ]) {
+          final identityRepo = FakeIdentityRepository(makeIdentity());
+          final messageRepo = FakeMessageRepository();
+          final mediaAttachmentRepo = FakeMediaAttachmentRepository();
+          final legacyProjection = _RecordingComposerUploadProjection();
+          final listener = ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          );
+          final tempDir = Directory.systemTemp.createTempSync(
+            'conv_345_failure_refusal_$scenario',
+          );
+          final first = File('${tempDir.path}/first.jpg')
+            ..writeAsBytesSync(_tinyPngBytes);
+          final second = File('${tempDir.path}/second.jpg')
+            ..writeAsBytesSync(_tinyPngBytes);
+          addTearDown(() {
+            if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+          });
+          var uploadCalls = 0;
+          var sendCalls = 0;
+          var exactProjectionCalls = 0;
+          List<MediaAttachment>? exactAttachments;
+          if (scenario != 'unsupported') {
+            mediaAttachmentRepo.onProjectDirectMediaCustodyUploadFailure =
+                ({
+                  required expectedParent,
+                  required expectedAttachments,
+                  required failedAttachmentId,
+                  required failure,
+                }) async {
+                  exactProjectionCalls++;
+                  exactAttachments = List<MediaAttachment>.from(
+                    expectedAttachments,
+                  );
+                  if (scenario == 'global-v108') {
+                    return const UploadRetryProjectionResult.notApplied();
+                  }
+                  return const UploadRetryProjectionResult(
+                    state: UploadRetryProjectionState.retryPending,
+                  );
+                };
+          }
+
+          Future<UploadMediaOutcome> crossedFailure({
+            required Bridge bridge,
+            required String localFilePath,
+            required String mime,
+            required String recipientPeerId,
+            MediaFileManager? mediaFileManager,
+            int? width,
+            int? height,
+            int? durationMs,
+            List<double>? waveform,
+            List<String>? allowedPeers,
+            String? blobId,
+            bool deleteSourceWhenDone = false,
+            EncryptedMediaArtifact? preparedArtifact,
+          }) async {
+            uploadCalls++;
+            final parent = messageRepo.store.values.single;
+            final rows = await mediaAttachmentRepo.getAttachmentsForMessage(
+              parent.id,
+              owner: MediaOwnerLane.direct,
+            );
+            switch (scenario) {
+              case 'metadata':
+                await mediaAttachmentRepo.saveAttachment(
+                  rows.first.copyWith(width: (rows.first.width ?? 0) + 1),
+                  owner: MediaOwnerLane.direct,
+                );
+                break;
+              case 'partial':
+                await mediaAttachmentRepo.deleteAttachmentsForMessage(
+                  parent.id,
+                  owner: MediaOwnerLane.direct,
+                );
+                await mediaAttachmentRepo.saveAttachment(
+                  rows.first,
+                  owner: MediaOwnerLane.direct,
+                );
+                break;
+              case 'token':
+                messageRepo.store[parent.id] = parent.copyWith(
+                  directMediaCustodyIntentId:
+                      'ffffffffffffffffffffffffffffffff',
+                );
+                break;
+              case 'unsupported':
+              case 'global-v108':
+                break;
+            }
+            return const UploadMediaFailed(
+              stage: UploadMediaStage.transport,
+              disposition: UploadMediaDisposition.connectivityRetryable,
+              errorCode: 'TEST_MANIFEST_FAILURE',
+            );
+          }
+
+          Future<(SendChatMessageResult, ConversationMessage?)> shouldNotSend({
+            required P2PService p2pService,
+            required MessageRepository messageRepo,
+            required String targetPeerId,
+            required String text,
+            required String senderPeerId,
+            required String senderUsername,
+            String? messageId,
+            required bool preassignedMessageIdIsFresh,
+            String? timestamp,
+            Bridge? bridge,
+            String? recipientMlKemPublicKey,
+            String? quotedMessageId,
+            List<MediaAttachment>? mediaAttachments,
+            PrivateMediaPolicy? privateMediaPolicy,
+            MediaAttachmentRepository? mediaAttachmentRepo,
+            TransportMetrics? transportMetrics,
+          }) async {
+            sendCalls++;
+            return (SendChatMessageResult.sendFailed, null);
+          }
+
+          await pumpScreen(
+            tester,
+            identityRepo: identityRepo,
+            messageRepo: messageRepo,
+            chatListener: listener,
+            sendFn: shouldNotSend,
+            bridge: FakeBridge(),
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            typedUploadMediaFn: crossedFailure,
+            uploadRetryProjectionRepo: legacyProjection,
+            initialAttachments: <File>[first, second],
+          );
+          final draft = 'Refuse $scenario';
+          await tester.enterText(find.byType(TextField), draft);
+          await tester.pump(const Duration(milliseconds: 300));
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          await pumpUntil(
+            tester,
+            () => find
+                .text('Failed to upload media. Try again.')
+                .evaluate()
+                .isNotEmpty,
+          );
+
+          expect(uploadCalls, 1, reason: scenario);
+          expect(sendCalls, 0, reason: scenario);
+          expect(legacyProjection.callCount, 0, reason: scenario);
+          expect(
+            exactProjectionCalls,
+            scenario == 'global-v108' ? 1 : 0,
+            reason: scenario,
+          );
+          if (scenario == 'global-v108') {
+            expect(exactAttachments, hasLength(2));
+          }
+          final parent = messageRepo.store.values.single;
+          expect(parent.status, 'sending', reason: scenario);
+          expect(
+            parent.directMediaCustodyIntentId,
+            isNotNull,
+            reason: scenario,
+          );
+          expect(
+            tester.widget<TextField>(find.byType(TextField)).controller?.text,
+            draft,
+            reason: scenario,
+          );
+
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump();
+        }
       },
     );
 

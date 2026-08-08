@@ -35,7 +35,8 @@ import '../application/send_chat_message_use_case_test.dart'
         DurableLanFakeP2PService,
         FakeMessageRepository,
         sendChatMessage;
-import '../domain/repositories/fake_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 void main() {
   const circuitMultiaddr =
@@ -234,6 +235,7 @@ void main() {
         mime: 'image/jpeg',
         size: 1024,
         mediaType: 'image',
+        localPath: '/tmp/att-fdc02-e2e-media.jpg',
         downloadStatus: 'done',
         createdAt: '2026-06-26T11:00:00.000Z',
         contentHash:
@@ -255,17 +257,20 @@ void main() {
         ),
       );
       const fixedId = 'msg-fdc02-e2e-media-001';
+      final mediaMessages = InMemoryMessageRepository();
+      final mediaAttachments = InMemoryMediaAttachmentRepository()
+        ..enableDirectMediaInboxCustodyForTest(mediaMessages);
 
       final (result, message) = await sendChatMessage(
         p2pService: sender,
-        messageRepo: senderRepo,
+        messageRepo: mediaMessages,
         targetPeerId: receiverPeerId,
         text: 'photo over a live circuit, e2e?',
         senderPeerId: 'my-peer',
         senderUsername: 'Me',
         messageId: fixedId,
         mediaAttachments: const [encryptedAttachment],
-        mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+        mediaAttachmentRepo: mediaAttachments,
       );
 
       // Sender side: the LAN write is not authenticated proof, so the
@@ -277,6 +282,13 @@ void main() {
       expect(sender.localSendCallCount, 1);
       expect(sender.relayLiveSendCount, 1);
       expect(sender.sendCallCount, 1);
+      expect(
+        mediaMessages.directCustodyRows,
+        hasLength(1),
+        reason:
+            'an authenticated live ACK does not cancel the scheduled strict '
+            'ACK-or-expiry custody handoff',
+      );
 
       // Receiver side: replay both actual live transmissions with the fixed
       // message ID; dedup must preserve exactly one media row.

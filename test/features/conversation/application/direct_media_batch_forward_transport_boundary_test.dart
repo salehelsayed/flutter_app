@@ -1,15 +1,21 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/build_direct_media_library_batch_forward.dart';
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
@@ -79,16 +85,158 @@ ImageProcessor _imageProcessor() => ImageProcessor(
       const VideoProcessResult(path: '/tmp/video.mp4'),
 );
 
+class _AckCustodyP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _AckCustodyP2PService()
+    : super(
+        initialState: const NodeState(isStarted: true, peerId: 'sender-peer'),
+      );
+
+  final List<_AckCustodyStoreEvidence> custodyStores = [];
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    custodyStores.add(
+      _AckCustodyStoreEvidence(
+        recipientPeerId: toPeerId,
+        wireEnvelope: message,
+        kind: custodyKind,
+      ),
+    );
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      expiresAtMs: 4102444800000,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
+
+class _AckCustodyStoreEvidence {
+  const _AckCustodyStoreEvidence({
+    required this.recipientPeerId,
+    required this.wireEnvelope,
+    required this.kind,
+  });
+
+  final String recipientPeerId;
+  final String wireEnvelope;
+  final AckCustodyKind kind;
+}
+
 class _Harness {
   _Harness({InMemoryContactRepository? contacts})
     : contacts = contacts ?? InMemoryContactRepository(),
       messages = InMemoryMessageRepository(),
-      attachments = InMemoryMediaAttachmentRepository();
+      attachments = InMemoryMediaAttachmentRepository() {
+    attachments.onStageOutgoingDirectMediaInboxCustody =
+        ({
+          required expected,
+          required staged,
+          required attachments,
+          required kind,
+          required recipientPeerId,
+          required wireEnvelope,
+        }) async {
+          directMediaCustodyStageCallCount++;
+          final attachmentIds = attachments
+              .map((attachment) => attachment.id)
+              .toSet();
+          final exactFreshAuthority =
+              expected == null &&
+              kind == OutgoingOrdinaryAttemptKind.fresh &&
+              staged.id.isNotEmpty &&
+              staged.contactPeerId == recipientPeerId &&
+              staged.wireEnvelope == wireEnvelope &&
+              wireEnvelope.isNotEmpty &&
+              staged.directMediaCustodyIntentId == null &&
+              attachments.isNotEmpty &&
+              attachmentIds.length == attachments.length &&
+              !attachmentIds.contains('') &&
+              attachments.every(
+                (attachment) =>
+                    attachment.messageId == staged.id &&
+                    attachment.ownerLane == MediaOwnerLane.direct &&
+                    attachment.downloadStatus == 'done' &&
+                    attachment.contentHash?.isNotEmpty == true &&
+                    attachment.encryptionKeyBase64?.isNotEmpty == true &&
+                    attachment.encryptionNonce?.isNotEmpty == true &&
+                    attachment.encryptionScheme ==
+                        kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ) &&
+              !messages.directCustodyRows.values.any(
+                (entry) => entry.messageId == staged.id,
+              );
+          if (!exactFreshAuthority) {
+            return const OutgoingDirectMediaCustodyStageResult(
+              outcome: OutgoingOrdinaryMutationOutcome.refused,
+              message: null,
+              custody: null,
+            );
+          }
+
+          final parentAndMedia = await this.attachments
+              .stageOutgoingOrdinaryAttemptWithMedia(
+                messageMutationRepository: messages,
+                expected: expected,
+                staged: staged,
+                attachments: attachments,
+                kind: kind,
+              );
+          final committed = parentAndMedia.message;
+          if (!parentAndMedia.authorizesTransport || committed == null) {
+            return OutgoingDirectMediaCustodyStageResult(
+              outcome: parentAndMedia.outcome,
+              message: committed,
+              custody: null,
+            );
+          }
+
+          final custody = DirectInboxCustodyOutboxEntry(
+            recipientPeerId: recipientPeerId,
+            messageId: committed.id,
+            incarnationId: computeDirectMediaCustodyIntentId(
+              messageId: committed.id,
+              attachmentIds: attachmentIds,
+            ),
+            wireEnvelope: wireEnvelope,
+            retryCount: 0,
+            lastAttemptAt: null,
+            lastErrorCode: null,
+            createdAt: committed.createdAt,
+            updatedAt: committed.createdAt,
+          );
+          messages.directCustodyRows['$recipientPeerId\u0000${committed.id}'] =
+              custody;
+          directMediaCustodyStages.add(
+            _FreshDirectMediaCustodyEvidence(
+              expected: expected,
+              kind: kind,
+              parent: committed,
+              attachments: List<MediaAttachment>.unmodifiable(attachments),
+              custody: custody,
+            ),
+          );
+          return OutgoingDirectMediaCustodyStageResult(
+            outcome: parentAndMedia.outcome,
+            message: committed,
+            custody: custody,
+          );
+        };
+  }
 
   final InMemoryContactRepository contacts;
   final InMemoryMessageRepository messages;
   final InMemoryMediaAttachmentRepository attachments;
   final PassthroughCryptoBridge bridge = PassthroughCryptoBridge();
+  final _AckCustodyP2PService p2pService = _AckCustodyP2PService();
+  int directMediaCustodyStageCallCount = 0;
+  final List<_FreshDirectMediaCustodyEvidence> directMediaCustodyStages = [];
 
   late final DefaultShareBatchDeliveryCoordinator ordinary =
       DefaultShareBatchDeliveryCoordinator(
@@ -99,9 +247,7 @@ class _Harness {
         groupRepository: InMemoryGroupRepository(),
         groupMessageRepository: InMemoryGroupMessageRepository(),
         bridge: bridge,
-        p2pService: FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'sender-peer'),
-        ),
+        p2pService: p2pService,
         mediaFileManager: FakeMediaFileManager(),
         imageProcessor: _imageProcessor(),
         processSharedMediaFn: (intent) async {
@@ -137,6 +283,22 @@ class _Harness {
           onProgress: onProgress,
         ),
   );
+}
+
+class _FreshDirectMediaCustodyEvidence {
+  const _FreshDirectMediaCustodyEvidence({
+    required this.expected,
+    required this.kind,
+    required this.parent,
+    required this.attachments,
+    required this.custody,
+  });
+
+  final ConversationMessage? expected;
+  final OutgoingOrdinaryAttemptKind kind;
+  final ConversationMessage parent;
+  final List<MediaAttachment> attachments;
+  final DirectInboxCustodyOutboxEntry custody;
 }
 
 class _InvalidateOnSecondReadContacts extends InMemoryContactRepository {
@@ -198,6 +360,9 @@ void main() {
       expect(result.isDenied, isFalse);
       expect(result.matrix!.cells, hasLength(4));
       expect(result.matrix!.sentCount, 4);
+      expect(harness.directMediaCustodyStageCallCount, 4);
+      expect(harness.directMediaCustodyStages, hasLength(4));
+      expect(harness.p2pService.custodyStores, hasLength(4));
       final firstRows = await harness.messages.getMessagesForContact(
         firstContact.peerId,
       );
@@ -223,6 +388,30 @@ void main() {
         expect(media, hasLength(1));
         expect(media.single.messageId, row.id);
         attachmentByMessageId[row.id] = media.single;
+        final custodyStage = harness.directMediaCustodyStages.singleWhere(
+          (stage) => stage.parent.id == row.id,
+        );
+        expect(custodyStage.expected, isNull);
+        expect(custodyStage.kind, OutgoingOrdinaryAttemptKind.fresh);
+        expect(custodyStage.parent.directMediaCustodyIntentId, isNull);
+        expect(custodyStage.attachments, hasLength(1));
+        expect(custodyStage.attachments.single.toMap(), media.single.toMap());
+        expect(custodyStage.custody.messageId, row.id);
+        expect(custodyStage.custody.recipientPeerId, row.contactPeerId);
+        expect(custodyStage.custody.wireEnvelope, row.wireEnvelope);
+        final custodyStore = harness.p2pService.custodyStores.singleWhere(
+          (store) =>
+              store.recipientPeerId == row.contactPeerId &&
+              store.wireEnvelope == row.wireEnvelope,
+        );
+        expect(custodyStore.kind, AckCustodyKind.directTextV108);
+        expect(
+          custodyStage.custody.incarnationId,
+          computeDirectMediaCustodyIntentId(
+            messageId: row.id,
+            attachmentIds: <String>[media.single.id],
+          ),
+        );
       }
       final allMedia = attachmentByMessageId.values.toList(growable: false);
       expect(allMedia, hasLength(4));
@@ -375,6 +564,9 @@ void main() {
           await harness.messages.getMessagesForContact(contact.peerId),
           isEmpty,
         );
+        expect(harness.directMediaCustodyStageCallCount, 0);
+        expect(harness.directMediaCustodyStages, isEmpty);
+        expect(harness.p2pService.custodyStores, isEmpty);
       }
     },
   );
@@ -418,6 +610,28 @@ void main() {
       expect(
         await harness.messages.getMessagesForContact(valid.peerId),
         hasLength(1),
+      );
+      expect(harness.directMediaCustodyStageCallCount, 1);
+      expect(harness.directMediaCustodyStages, hasLength(1));
+      expect(harness.p2pService.custodyStores, hasLength(1));
+      final validCustody = harness.directMediaCustodyStages.single;
+      expect(validCustody.expected, isNull);
+      expect(validCustody.kind, OutgoingOrdinaryAttemptKind.fresh);
+      expect(validCustody.parent.contactPeerId, valid.peerId);
+      expect(validCustody.custody.recipientPeerId, valid.peerId);
+      expect(validCustody.custody.messageId, validCustody.parent.id);
+      final validCustodyStore = harness.p2pService.custodyStores.single;
+      expect(validCustodyStore.recipientPeerId, valid.peerId);
+      expect(validCustodyStore.wireEnvelope, validCustody.custody.wireEnvelope);
+      expect(validCustodyStore.kind, AckCustodyKind.directTextV108);
+      expect(
+        validCustody.custody.incarnationId,
+        computeDirectMediaCustodyIntentId(
+          messageId: validCustody.parent.id,
+          attachmentIds: validCustody.attachments.map(
+            (attachment) => attachment.id,
+          ),
+        ),
       );
       expect(contacts.reads[invalid.peerId], greaterThanOrEqualTo(2));
     },

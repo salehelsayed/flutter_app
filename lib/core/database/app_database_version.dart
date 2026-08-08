@@ -32,4 +32,7 @@
 // 343: DB v109 adds event-scoped exact-envelope custody for newly authored
 // direct reaction ADD/REMOVE transitions. Historical reactions are not
 // backfilled and v109 remains a one-way schema floor.
-const int currentIdentityDatabaseVersion = 109;
+// 345: DB v110 adds a nullable, manifest-bound local custody intent for newly
+// prepared ordinary direct media. Historical messages are not backfilled,
+// and v110 remains a one-way schema floor.
+const int currentIdentityDatabaseVersion = 110;

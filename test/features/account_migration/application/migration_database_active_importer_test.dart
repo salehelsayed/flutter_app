@@ -1,6 +1,8 @@
 import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/104_group_exit_diagnostics.dart';
 import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -450,8 +452,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 109);
-        expect(manifest.databaseVersion, 109);
+        expect(currentIdentityDatabaseVersion, 110);
+        expect(manifest.databaseVersion, 110);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -524,7 +526,7 @@ CREATE TABLE identity (
     );
 
     test(
-      'TC-343-08b production-v109 transfer preserves two pending reaction transitions and v108 rejection leaves target unchanged',
+      'TC-343-08b production-current transfer preserves two pending reaction transitions and v108 rejection leaves target unchanged',
       () async {
         final productionActive = await openDatabase(
           p.join(tempDir.path, 'tc343-production-active.db'),
@@ -545,8 +547,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 109);
-        expect(await _userVersion(productionStaged), 109);
+        expect(await _userVersion(productionActive), 110);
+        expect(await _userVersion(productionStaged), 110);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -586,7 +588,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 109);
+        expect(manifest.databaseVersion, 110);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -648,6 +650,236 @@ CREATE TABLE identity (
         );
       },
     );
+
+    test(
+      'TC-345-10 production-v110 transfer preserves pending and outbox-only media custody',
+      () async {
+        final productionActive = await openDatabase(
+          p.join(tempDir.path, 'tc345-production-active.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        final productionStaged = await openDatabase(
+          p.join(tempDir.path, 'tc345-production-staged.db'),
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        );
+        addTearDown(() async {
+          if (productionActive.isOpen) await productionActive.close();
+          if (productionStaged.isOpen) await productionStaged.close();
+        });
+
+        expect(await _userVersion(productionActive), 110);
+        expect(await _userVersion(productionStaged), 110);
+
+        const pendingMessageId = 'tc345-transfer-pending';
+        const pendingAttachmentId = 'tc345-transfer-pending-media';
+        const pendingIntent = '11111111111111111111111111111111';
+        await productionStaged.insert(
+          'messages',
+          _productionMessageRow(
+            messageId: pendingMessageId,
+            status: 'sending',
+            directMediaCustodyIntentId: pendingIntent,
+          ),
+        );
+        await productionStaged.insert(
+          'media_attachments',
+          _productionMediaRow(
+            attachmentId: pendingAttachmentId,
+            messageId: pendingMessageId,
+            downloadStatus: 'upload_pending',
+          ),
+        );
+
+        const completedMessageId = 'tc345-transfer-completed';
+        const completedAttachmentId = 'tc345-transfer-completed-media';
+        const completedEnvelope =
+            '{"type":"chat_message","version":"2",'
+            '"id":"tc345-transfer-completed","senderPeerId":"transfer-self",'
+            '"encrypted":{"kem":"kem-completed",'
+            '"ciphertext":"exact-completed","nonce":"nonce-completed"}}';
+        const completedIncarnation = '22222222222222222222222222222222';
+        await productionStaged.insert(
+          'messages',
+          _productionMessageRow(
+            messageId: completedMessageId,
+            status: 'sending',
+            wireEnvelope: completedEnvelope,
+          ),
+        );
+        await productionStaged.insert(
+          'media_attachments',
+          _productionMediaRow(
+            attachmentId: completedAttachmentId,
+            messageId: completedMessageId,
+            downloadStatus: 'done',
+            completed: true,
+          ),
+        );
+        await productionStaged.insert(
+          'direct_inbox_custody_outbox',
+          _custodyRow(
+            recipientPeerId: 'transfer-recipient',
+            messageId: completedMessageId,
+            incarnationId: completedIncarnation,
+            wireEnvelope: completedEnvelope,
+          ),
+        );
+
+        const removedMessageId = 'tc345-transfer-removed';
+        const removedAttachmentId = 'tc345-transfer-removed-media';
+        const removedEnvelope =
+            '{"type":"chat_message","version":"2",'
+            '"id":"tc345-transfer-removed","senderPeerId":"transfer-self",'
+            '"encrypted":{"kem":"kem-removed",'
+            '"ciphertext":"exact-removed","nonce":"nonce-removed"}}';
+        const removedIncarnation = '33333333333333333333333333333333';
+        await productionStaged.insert(
+          'messages',
+          _productionMessageRow(
+            messageId: removedMessageId,
+            status: 'sending',
+            wireEnvelope: removedEnvelope,
+          ),
+        );
+        await productionStaged.insert(
+          'media_attachments',
+          _productionMediaRow(
+            attachmentId: removedAttachmentId,
+            messageId: removedMessageId,
+            downloadStatus: 'done',
+            completed: true,
+          ),
+        );
+        await productionStaged.insert(
+          'direct_inbox_custody_outbox',
+          _custodyRow(
+            recipientPeerId: 'transfer-recipient',
+            messageId: removedMessageId,
+            incarnationId: removedIncarnation,
+            wireEnvelope: removedEnvelope,
+          ),
+        );
+        await productionStaged.delete(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[removedMessageId],
+        );
+        await productionStaged.delete(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[removedMessageId],
+        );
+
+        final expectedMessages = await productionStaged.query(
+          'messages',
+          orderBy: 'id',
+        );
+        final expectedMedia = await productionStaged.query(
+          'media_attachments',
+          orderBy: 'id',
+        );
+        final expectedCustody = await productionStaged.query(
+          'direct_inbox_custody_outbox',
+          orderBy: 'message_id',
+        );
+        final manifest = await _manifestFor(productionStaged);
+        expect(manifest.databaseVersion, 110);
+
+        final result =
+            await MigrationDatabaseActiveImporter(
+              activeDatabase: productionActive,
+            ).importVerifiedStagedDatabase(
+              MigrationDatabaseImportStagingResult(
+                database: productionStaged,
+                manifest: manifest,
+                stagedDatabasePath: p.join(
+                  tempDir.path,
+                  'tc345-production-staged.db',
+                ),
+              ),
+            );
+        expect(result.importedTables, contains('media_attachments'));
+        expect(result.importedTables, contains('direct_inbox_custody_outbox'));
+        expect(
+          await productionActive.query('messages', orderBy: 'id'),
+          expectedMessages,
+        );
+        expect(
+          await productionActive.query('media_attachments', orderBy: 'id'),
+          expectedMedia,
+        );
+        expect(
+          await productionActive.query(
+            'direct_inbox_custody_outbox',
+            orderBy: 'message_id',
+          ),
+          expectedCustody,
+        );
+        expect(
+          (await productionActive.query(
+            'messages',
+            columns: const <String>['direct_media_custody_intent_id'],
+            where: 'id = ?',
+            whereArgs: const <Object?>[pendingMessageId],
+          )).single['direct_media_custody_intent_id'],
+          pendingIntent,
+        );
+        expect(
+          await productionActive.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[removedMessageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          await dbCompleteAcceptedDirectInboxCustodyIfExact(
+            productionActive,
+            recipientPeerId: 'transfer-recipient',
+            messageId: removedMessageId,
+            expectedIncarnationId: removedIncarnation,
+            expectedWireEnvelope: removedEnvelope,
+            relayExpiresAt: 1999999999000,
+          ),
+          DirectInboxCustodyCompletionOutcome.messageRemoved,
+        );
+
+        final targetBeforeV109Refusal = await _snapshotAllProductionRows(
+          productionActive,
+        );
+        await expectLater(
+          MigrationDatabaseActiveImporter(
+            activeDatabase: productionActive,
+          ).importVerifiedStagedDatabase(
+            MigrationDatabaseImportStagingResult(
+              database: productionStaged,
+              manifest: manifest.copyWith(databaseVersion: 109),
+              stagedDatabasePath: p.join(
+                tempDir.path,
+                'tc345-production-staged.db',
+              ),
+            ),
+          ),
+          throwsA(
+            isA<MigrationDatabaseActiveImportException>().having(
+              (error) => error.message,
+              'message',
+              contains('unsupportedDatabaseVersion'),
+            ),
+          ),
+        );
+        expect(
+          await _snapshotAllProductionRows(productionActive),
+          targetBeforeV109Refusal,
+        );
+      },
+    );
   });
 }
 
@@ -695,6 +927,49 @@ Map<String, Object?> _reactionCustodyRow({
   'last_error_code': null,
   'created_at': createdAt,
   'updated_at': createdAt,
+};
+
+Map<String, Object?> _productionMessageRow({
+  required String messageId,
+  required String status,
+  String? wireEnvelope,
+  String? directMediaCustodyIntentId,
+}) => <String, Object?>{
+  'id': messageId,
+  'contact_peer_id': 'transfer-recipient',
+  'sender_peer_id': 'transfer-self',
+  'text': 'opaque media message',
+  'timestamp': '2026-08-07T12:00:00.000Z',
+  'status': status,
+  'is_incoming': 0,
+  'created_at': '2026-08-07T12:00:00.000Z',
+  'wire_envelope': wireEnvelope,
+  'direct_media_custody_intent_id': directMediaCustodyIntentId,
+};
+
+Map<String, Object?> _productionMediaRow({
+  required String attachmentId,
+  required String messageId,
+  required String downloadStatus,
+  bool completed = false,
+}) => <String, Object?>{
+  'id': attachmentId,
+  'message_id': messageId,
+  'mime': 'image/jpeg',
+  'size': 345,
+  'media_type': 'image',
+  'local_path': 'media/$messageId/$attachmentId.jpg',
+  'download_status': downloadStatus,
+  'created_at': '2026-08-07T12:00:00.000Z',
+  'content_hash': completed
+      ? 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+      : null,
+  'encryption_key_base64': completed
+      ? 'secure:media_attachment_encryption_key:$attachmentId'
+      : null,
+  'encryption_nonce': completed ? 'nonce-$attachmentId' : null,
+  'encryption_scheme': completed ? 'blob_aes_256_gcm_v1' : null,
+  'owner_lane': 'direct',
 };
 
 Future<void> _createSchema(Database db) async {

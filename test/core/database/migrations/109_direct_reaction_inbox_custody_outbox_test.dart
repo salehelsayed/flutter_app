@@ -79,8 +79,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 109);
-      expect(await _userVersion(upgraded), 109);
+      expect(currentIdentityDatabaseVersion, 110);
+      expect(await _userVersion(upgraded), 110);
       expect(await upgraded.query('message_reactions'), hasLength(1));
       expect(
         await upgraded.query('direct_reaction_inbox_custody_outbox'),
@@ -100,7 +100,8 @@ void main() {
           entries.single.run,
           same(runDirectReactionInboxCustodyOutboxMigration),
         );
-        expect(registry.last, same(entries.single));
+        expect(registry[registry.indexOf(entries.single) + 1].version, 110);
+        expect(registry.last.version, 110);
         final v108 = registry.indexWhere((entry) => entry.version == 108);
         expect(registry.indexOf(entries.single), v108 + 1);
       }
@@ -125,7 +126,7 @@ void main() {
         ),
       );
       await _expectExactSchema(fresh);
-      expect(await _userVersion(fresh), 109);
+      expect(await _userVersion(fresh), 110);
       expect(
         await fresh.query('direct_reaction_inbox_custody_outbox'),
         isEmpty,
@@ -165,7 +166,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 109);
+      expect(await _userVersion(upgraded), 110);
       expect(
         await upgraded.query('direct_reaction_inbox_custody_outbox'),
         snapshotBeforeDowngrade,

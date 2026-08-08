@@ -1,12 +1,22 @@
+import 'dart:convert';
+
+import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
+    show isExactV2DirectChatInitialEnvelope;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+
+import 'in_memory_message_repository.dart';
 
 /// In-memory [MediaAttachmentRepository] for integration tests.
 ///
@@ -22,9 +32,177 @@ class InMemoryMediaAttachmentRepository
         OrdinaryGroupAutomaticMediaDownloadStateRepository,
         OrdinaryGroupMediaDownloadFailureRepository,
         OutgoingOrdinaryAttemptStagingRepository,
+        OutgoingDirectMediaInboxCustodyStagingRepository,
         NewMessageMediaPersistenceRollback {
   final Map<String, MediaAttachment> _attachments = {};
   void Function(MediaAttachment attachment)? onSaveAttachment;
+  Future<OutgoingDirectMediaCustodyStageResult> Function({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  })?
+  onStageOutgoingDirectMediaInboxCustody;
+
+  @override
+  bool get supportsDirectMediaInboxCustody =>
+      onStageOutgoingDirectMediaInboxCustody != null;
+
+  /// Installs the strict combined parent/media/v108 authority used by
+  /// production-shaped direct-media tests.
+  ///
+  /// This remains opt-in so tests that intentionally prove missing-capability
+  /// behavior continue to fail closed. The callback accepts only a fresh
+  /// marker-free attempt or an exact manifest-bound prepared predecessor,
+  /// delegates parent/media CAS to the existing in-memory staging seams, and
+  /// publishes one immutable v108 custody row.
+  void enableDirectMediaInboxCustodyForTest(
+    InMemoryMessageRepository messages,
+  ) {
+    onStageOutgoingDirectMediaInboxCustody =
+        ({
+          required expected,
+          required staged,
+          required attachments,
+          required kind,
+          required recipientPeerId,
+          required wireEnvelope,
+        }) async {
+          final attachmentIds = attachments
+              .map((attachment) => attachment.id)
+              .toList(growable: false);
+          final exactManifest = computeDirectMediaCustodyIntentId(
+            messageId: staged.id,
+            attachmentIds: attachmentIds,
+          );
+          final fresh =
+              kind == OutgoingOrdinaryAttemptKind.fresh &&
+              expected == null &&
+              staged.directMediaCustodyIntentId == null;
+          final prepared =
+              kind == OutgoingOrdinaryAttemptKind.existing &&
+              expected != null &&
+              expected.id == staged.id &&
+              expected.contactPeerId == recipientPeerId &&
+              !expected.isIncoming &&
+              expected.directMediaCustodyIntentId == exactManifest &&
+              staged.directMediaCustodyIntentId == null;
+          final valid =
+              recipientPeerId.trim().isNotEmpty &&
+              staged.id.trim().isNotEmpty &&
+              staged.contactPeerId == recipientPeerId &&
+              !staged.isIncoming &&
+              staged.senderPeerId.trim().isNotEmpty &&
+              staged.wireEnvelope == wireEnvelope &&
+              wireEnvelope.trim().isNotEmpty &&
+              isExactV2DirectChatInitialEnvelope(
+                wireEnvelope,
+                messageId: staged.id,
+                senderPeerId: staged.senderPeerId,
+              ) &&
+              attachments.isNotEmpty &&
+              attachmentIds.toSet().length == attachmentIds.length &&
+              attachments.every(
+                (attachment) => _isStrictDirectMediaCustodyCandidate(
+                  attachment,
+                  messageId: staged.id,
+                ),
+              ) &&
+              (fresh || prepared);
+          if (!valid) {
+            return OutgoingDirectMediaCustodyStageResult(
+              outcome: OutgoingOrdinaryMutationOutcome.refused,
+              message: expected,
+              custody: null,
+            );
+          }
+
+          final incarnationId = prepared
+              ? expected.directMediaCustodyIntentId!
+              : sha256
+                    .convert(
+                      utf8.encode(
+                        jsonEncode(<String>[
+                          'in_memory_direct_media_custody_v1',
+                          recipientPeerId,
+                          staged.id,
+                          wireEnvelope,
+                        ]),
+                      ),
+                    )
+                    .toString()
+                    .substring(0, 32);
+          final custodyKey = '$recipientPeerId\u0000${staged.id}';
+          final existingCustody = messages.directCustodyRows[custodyKey];
+          final globalMessageOwners = messages.directCustodyRows.values
+              .where((entry) => entry.messageId == staged.id)
+              .take(2)
+              .toList(growable: false);
+          final crossedOrAmbiguousGlobalOwner =
+              globalMessageOwners.length > 1 ||
+              (globalMessageOwners.isNotEmpty &&
+                  globalMessageOwners.single.recipientPeerId !=
+                      recipientPeerId);
+          final incarnationCollision = messages.directCustodyRows.values.any(
+            (entry) =>
+                entry.incarnationId == incarnationId &&
+                (entry.recipientPeerId != recipientPeerId ||
+                    entry.messageId != staged.id),
+          );
+          if (crossedOrAmbiguousGlobalOwner ||
+              incarnationCollision ||
+              (existingCustody != null &&
+                  (existingCustody.incarnationId != incarnationId ||
+                      existingCustody.wireEnvelope != wireEnvelope))) {
+            return OutgoingDirectMediaCustodyStageResult(
+              outcome: OutgoingOrdinaryMutationOutcome.refused,
+              message: await messages.getMessage(staged.id),
+              custody: null,
+            );
+          }
+
+          final stagedResult = await stageOutgoingOrdinaryAttemptWithMedia(
+            messageMutationRepository: messages,
+            expected: expected,
+            staged: staged,
+            attachments: attachments,
+            kind: kind,
+          );
+          if (!stagedResult.authorizesTransport ||
+              stagedResult.message == null) {
+            return OutgoingDirectMediaCustodyStageResult(
+              outcome: stagedResult.outcome,
+              message: stagedResult.message,
+              custody: null,
+            );
+          }
+
+          final committed = stagedResult.message!;
+          await messages.saveMessage(committed);
+          final now = committed.createdAt;
+          final custody =
+              existingCustody ??
+              DirectInboxCustodyOutboxEntry(
+                recipientPeerId: recipientPeerId,
+                messageId: committed.id,
+                incarnationId: incarnationId,
+                wireEnvelope: wireEnvelope,
+                retryCount: 0,
+                lastAttemptAt: null,
+                lastErrorCode: null,
+                createdAt: now,
+                updatedAt: now,
+              );
+          messages.directCustodyRows[custodyKey] = custody;
+          return OutgoingDirectMediaCustodyStageResult(
+            outcome: stagedResult.outcome,
+            message: committed,
+            custody: custody,
+          );
+        };
+  }
 
   /// Owner-migration boundary fixture: installs a legacy/unresolved row
   /// without weakening normal owner-enforcing writes. Production callers can
@@ -393,6 +571,36 @@ class InMemoryMediaAttachmentRepository
     );
   }
 
+  @override
+  Future<OutgoingDirectMediaCustodyStageResult>
+  stageOutgoingDirectMediaInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  }) {
+    final callback = onStageOutgoingDirectMediaInboxCustody;
+    if (callback == null) {
+      return Future<OutgoingDirectMediaCustodyStageResult>.value(
+        const OutgoingDirectMediaCustodyStageResult(
+          outcome: OutgoingOrdinaryMutationOutcome.refused,
+          message: null,
+          custody: null,
+        ),
+      );
+    }
+    return callback(
+      expected: expected,
+      staged: staged,
+      attachments: attachments,
+      kind: kind,
+      recipientPeerId: recipientPeerId,
+      wireEnvelope: wireEnvelope,
+    );
+  }
+
   int get count => _attachments.length;
 }
 
@@ -414,4 +622,41 @@ bool _sameOrdinaryOutgoingAttachmentAttempt(
       currentMap.entries.every(
         (entry) => candidateMap[entry.key] == entry.value,
       );
+}
+
+final RegExp _strictDirectMediaSha256 = RegExp(r'^[0-9a-f]{64}$');
+
+bool _isStrictDirectMediaCustodyCandidate(
+  MediaAttachment attachment, {
+  required String messageId,
+}) {
+  final localPath = attachment.localPath?.trim();
+  final normalizedPath = localPath?.replaceAll('\\', '/');
+  return attachment.id.trim().isNotEmpty &&
+      attachment.messageId == messageId &&
+      attachment.ownerLane == MediaOwnerLane.direct &&
+      attachment.mime.trim().isNotEmpty &&
+      attachment.mediaType ==
+          MediaAttachment.mediaTypeFromMime(attachment.mime) &&
+      attachment.size > 0 &&
+      attachment.downloadStatus == 'done' &&
+      attachment.createdAt.trim().isNotEmpty &&
+      localPath != null &&
+      localPath.isNotEmpty &&
+      !normalizedPath!.startsWith('pending_uploads/') &&
+      !normalizedPath.contains('/pending_uploads/') &&
+      _strictDirectMediaSha256.hasMatch(attachment.contentHash ?? '') &&
+      (attachment.thumbnailHash == null ||
+          _strictDirectMediaSha256.hasMatch(attachment.thumbnailHash!)) &&
+      (attachment.encryptionKeyBase64?.trim().isNotEmpty ?? false) &&
+      (attachment.encryptionNonce?.trim().isNotEmpty ?? false) &&
+      attachment.encryptionScheme ==
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1 &&
+      (attachment.width == null || attachment.width! >= 0) &&
+      (attachment.height == null || attachment.height! >= 0) &&
+      (attachment.durationMs == null || attachment.durationMs! >= 0) &&
+      (attachment.waveform == null ||
+          attachment.waveform!.every(
+            (sample) => sample.isFinite && sample >= 0 && sample <= 1,
+          ));
 }

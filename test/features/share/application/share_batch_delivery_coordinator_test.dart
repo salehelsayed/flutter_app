@@ -8,6 +8,7 @@ import 'package:path/path.dart' as path;
 
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -15,10 +16,13 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -1405,11 +1409,13 @@ void main() {
         ..writeAsBytesSync(List<int>.filled(512, 0x7a));
 
       final bridge = PassthroughCryptoBridge();
+      final messages = InMemoryMessageRepository();
+      final media = _withDirectMediaCustodyAuthority(messages);
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: identityRepository,
         contactRepository: contactRepository,
-        messageRepository: InMemoryMessageRepository(),
-        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        messageRepository: messages,
+        mediaAttachmentRepository: media,
         groupRepository: InMemoryGroupRepository(),
         groupMessageRepository: InMemoryGroupMessageRepository(),
         bridge: bridge,
@@ -1432,6 +1438,139 @@ void main() {
       );
       return (result: result, bridge: bridge, p2pService: p2pService);
     }
+
+    test(
+      'TC-345-05b fresh direct media share enters insert-fresh custody without preparation token',
+      () async {
+        final identityRepository = FakeIdentityRepository()
+          ..seed(_makeIdentity());
+        final contact = ContactModel(
+          peerId: 'peer-share-fresh-custody',
+          publicKey: 'pk-peer-share-fresh-custody',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Fresh custody',
+          signature: 'sig-peer-share-fresh-custody',
+          scannedAt: '2026-08-07T12:00:00.000Z',
+          mlKemPublicKey: 'mlkem-peer-share-fresh-custody',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(contact);
+        final messages = InMemoryMessageRepository();
+        final media = InMemoryMediaAttachmentRepository();
+        final p2pService = _DirectMediaCustodyFakeP2PService();
+        final sharedDir = Directory.systemTemp.createTempSync(
+          'share_fresh_custody_',
+        );
+        addTearDown(() {
+          if (sharedDir.existsSync()) sharedDir.deleteSync(recursive: true);
+        });
+        final sharedFile = File('${sharedDir.path}/fresh.jpg')
+          ..writeAsBytesSync(List<int>.filled(64, 0x45));
+        var combinedStageCalls = 0;
+        media.onStageOutgoingDirectMediaInboxCustody =
+            ({
+              required expected,
+              required staged,
+              required attachments,
+              required kind,
+              required recipientPeerId,
+              required wireEnvelope,
+            }) async {
+              combinedStageCalls++;
+              expect(expected, isNull);
+              expect(kind, OutgoingOrdinaryAttemptKind.fresh);
+              expect(staged.directMediaCustodyIntentId, isNull);
+              expect(
+                await messages.getMessage(staged.id),
+                isNull,
+                reason:
+                    'external share has no prepared parent before final stage',
+              );
+              final parent = await messages.stageOutgoingOrdinaryAttempt(
+                expected: null,
+                staged: staged,
+                kind: kind,
+              );
+              if (!parent.authorizesTransport) {
+                return OutgoingDirectMediaCustodyStageResult(
+                  outcome: parent.outcome,
+                  message: parent.message,
+                  custody: null,
+                );
+              }
+              for (final attachment in attachments) {
+                await media.saveAttachment(
+                  attachment,
+                  owner: MediaOwnerLane.direct,
+                );
+              }
+              final committed = parent.message!.copyWith(media: attachments);
+              await messages.saveMessage(committed);
+              final custody = DirectInboxCustodyOutboxEntry(
+                recipientPeerId: recipientPeerId,
+                messageId: staged.id,
+                incarnationId: 'cccccccccccccccccccccccccccccccc',
+                wireEnvelope: wireEnvelope,
+                retryCount: 0,
+                lastAttemptAt: null,
+                lastErrorCode: null,
+                createdAt: committed.createdAt,
+                updatedAt: committed.createdAt,
+              );
+              messages.directCustodyRows['$recipientPeerId\u0000${staged.id}'] =
+                  custody;
+              return OutgoingDirectMediaCustodyStageResult(
+                outcome: parent.outcome,
+                message: committed,
+                custody: custody,
+              );
+            };
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: identityRepository,
+          contactRepository: contacts,
+          messageRepository: messages,
+          mediaAttachmentRepository: media,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: PassthroughCryptoBridge(),
+          p2pService: p2pService,
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(file: sharedFile, budgetBytes: 64),
+            ],
+          ),
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[sharedFile.path],
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(contact),
+          ],
+        );
+
+        expect(combinedStageCalls, 1);
+        expect(result.results.single.status, ShareBatchTargetStatus.queued);
+        expect(messages.directCustodyRows, hasLength(1));
+        final committed = (await messages.getMessagesForContact(
+          contact.peerId,
+        )).single;
+        expect(committed.directMediaCustodyIntentId, isNull);
+        expect(
+          await media.getAttachmentsForMessage(
+            committed.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
 
     test(
       'production contact leg remints identity and persists forward provenance per target',
@@ -1464,7 +1603,7 @@ void main() {
         final file = File('${dir.path}/source.jpg')
           ..writeAsBytesSync([1, 2, 3]);
         final messages = InMemoryMessageRepository();
-        final media = InMemoryMediaAttachmentRepository();
+        final media = _withDirectMediaCustodyAuthority(messages);
         const baseProvenance = ForwardProvenance(
           operationDedupKey: 'forward-operation-one',
         );
@@ -1476,7 +1615,7 @@ void main() {
           groupRepository: InMemoryGroupRepository(),
           groupMessageRepository: InMemoryGroupMessageRepository(),
           bridge: PassthroughCryptoBridge(),
-          p2pService: FakeP2PService(
+          p2pService: _DirectMediaCustodyFakeP2PService(
             initialState: const NodeState(
               isStarted: true,
               peerId: 'my-peer-id-12345',
@@ -1586,7 +1725,7 @@ void main() {
           ..writeAsBytesSync([9, 8, 7]);
         final sourceBytes = file.readAsBytesSync();
         final messages = InMemoryMessageRepository();
-        final media = InMemoryMediaAttachmentRepository();
+        final media = _withDirectMediaCustodyAuthority(messages);
         const sourceAttachment = MediaAttachment(
           id: 'source-stored-blob',
           messageId: 'source-message',
@@ -1620,7 +1759,7 @@ void main() {
           groupRepository: InMemoryGroupRepository(),
           groupMessageRepository: InMemoryGroupMessageRepository(),
           bridge: PassthroughCryptoBridge(),
-          p2pService: FakeP2PService(
+          p2pService: _DirectMediaCustodyFakeP2PService(
             initialState: const NodeState(
               isStarted: true,
               peerId: 'my-peer-id-12345',
@@ -1768,7 +1907,7 @@ void main() {
 
     test('share to a non-LAN contact produces encrypted attachment via '
         'uploadMedia', () async {
-      final p2pService = FakeP2PService(
+      final p2pService = _DirectMediaCustodyFakeP2PService(
         initialState: const NodeState(
           isStarted: true,
           peerId: 'my-peer-id-12345',
@@ -2247,7 +2386,7 @@ void main() {
       final groups = InMemoryGroupRepository();
       final groupMessages = InMemoryGroupMessageRepository();
       final directMessages = InMemoryMessageRepository();
-      final media = InMemoryMediaAttachmentRepository();
+      final media = _withDirectMediaCustodyAuthority(directMessages);
       final fileManager = FakeMediaFileManager();
 
       // Verified group SOURCE: incoming discussion media at its canonical
@@ -2337,7 +2476,7 @@ void main() {
       // Keep the durable retry payload alive on the saved row (a fully
       // successful send clears it): live publish succeeds, custody fails.
       bridge.responses['group:inboxStore'] = {'ok': false};
-      final p2pService = FakeP2PService(
+      final p2pService = _DirectMediaCustodyFakeP2PService(
         initialState: const NodeState(
           isStarted: true,
           peerId: 'my-peer-id-12345',
@@ -2562,7 +2701,7 @@ void main() {
         final groups = InMemoryGroupRepository();
         final groupMessages = InMemoryGroupMessageRepository();
         final directMessages = InMemoryMessageRepository();
-        final media = InMemoryMediaAttachmentRepository();
+        final media = _withDirectMediaCustodyAuthority(directMessages);
         final fileManager = FakeMediaFileManager();
         final cleanupPaths = <String>{};
         addTearDown(() {
@@ -2648,7 +2787,7 @@ void main() {
         await contacts.addContact(second);
 
         final bridge = PassthroughCryptoBridge();
-        final p2pService = FakeP2PService(
+        final p2pService = _DirectMediaCustodyFakeP2PService(
           initialState: const NodeState(
             isStarted: true,
             peerId: 'my-peer-id-12345',
@@ -3391,6 +3530,68 @@ class _StrictContactRepository extends InMemoryContactRepository {
   }
 }
 
+/// Upgrades legacy production-path share fixtures with the combined authority
+/// now required for a fresh ordinary direct-media send.
+InMemoryMediaAttachmentRepository _withDirectMediaCustodyAuthority(
+  InMemoryMessageRepository messages,
+) {
+  final media = InMemoryMediaAttachmentRepository();
+  media.onStageOutgoingDirectMediaInboxCustody =
+      ({
+        required expected,
+        required staged,
+        required attachments,
+        required kind,
+        required recipientPeerId,
+        required wireEnvelope,
+      }) async {
+        final parent = await messages.stageOutgoingOrdinaryAttempt(
+          expected: expected,
+          staged: staged,
+          kind: kind,
+        );
+        if (!parent.authorizesTransport) {
+          return OutgoingDirectMediaCustodyStageResult(
+            outcome: parent.outcome,
+            message: parent.message,
+            custody: null,
+          );
+        }
+        for (final attachment in attachments) {
+          await media.saveAttachment(attachment, owner: MediaOwnerLane.direct);
+        }
+        final committed = parent.message!.copyWith(media: attachments);
+        await messages.saveMessage(committed);
+        final incarnationId = sha256
+            .convert(
+              utf8.encode(
+                '$recipientPeerId\u0000${staged.id}\u0000$wireEnvelope',
+              ),
+            )
+            .toString()
+            .substring(0, 32);
+        final custody = DirectInboxCustodyOutboxEntry(
+          recipientPeerId: recipientPeerId,
+          messageId: staged.id,
+          incarnationId: incarnationId,
+          wireEnvelope: wireEnvelope,
+          retryCount: 0,
+          lastAttemptAt: null,
+          lastErrorCode: null,
+          createdAt: committed.createdAt,
+          updatedAt: committed.createdAt,
+        );
+        messages.directCustodyRows['$recipientPeerId\u0000${staged.id}'] =
+            custody;
+        return OutgoingDirectMediaCustodyStageResult(
+          outcome: parent.outcome,
+          message: committed,
+          custody: custody,
+        );
+      };
+  return media;
+}
+
 class _ExactRowAwaitMutationRepository
     extends InMemoryMediaAttachmentRepository {
   Future<void> Function(int callCount)? onExactRowAwait;
@@ -3405,7 +3606,28 @@ class _ExactRowAwaitMutationRepository
   }
 }
 
-class _LanFakeP2PService extends FakeP2PService {
+class _DirectMediaCustodyFakeP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _DirectMediaCustodyFakeP2PService({super.initialState});
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+    );
+  }
+}
+
+class _LanFakeP2PService extends _DirectMediaCustodyFakeP2PService {
   _LanFakeP2PService({super.initialState});
 
   @override

@@ -26,6 +26,7 @@ void main() {
   late TestUser bob;
   late InMemoryMediaAttachmentRepository aliceMediaRepo;
   late InMemoryMediaAttachmentRepository bobMediaRepo;
+  late InMemoryMessageRepository aliceMessageRepo;
 
   MediaAttachment makeAttachment({
     required String id,
@@ -41,7 +42,8 @@ void main() {
       mime: mime,
       size: size,
       mediaType: mediaType,
-      downloadStatus: 'pending',
+      localPath: '/tmp/$id',
+      downloadStatus: 'done',
       createdAt: DateTime.now().toUtc().toIso8601String(),
       contentHash:
           'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -53,7 +55,9 @@ void main() {
 
   setUp(() {
     network = FakeP2PNetwork();
+    aliceMessageRepo = InMemoryMessageRepository();
     aliceMediaRepo = InMemoryMediaAttachmentRepository();
+    aliceMediaRepo.enableDirectMediaInboxCustodyForTest(aliceMessageRepo);
     bobMediaRepo = InMemoryMediaAttachmentRepository();
 
     alice = TestUser.create(
@@ -61,6 +65,7 @@ void main() {
       username: 'Alice',
       network: network,
       mediaAttachmentRepo: aliceMediaRepo,
+      messageRepo: aliceMessageRepo,
     );
     bob = TestUser.create(
       peerId: '12D3KooWBobPeerIdxxx00000000002',
@@ -97,6 +102,11 @@ void main() {
           [attachment],
         );
         expect(result, SendChatMessageResult.success);
+        expect(
+          aliceMessageRepo.directCustodyRows,
+          isEmpty,
+          reason: 'strict ACK-or-expiry acceptance settles media custody',
+        );
 
         // Verify attachment saved in Alice's repo
         // The attachment is persisted with the message ID assigned by sendChatMessage
@@ -492,7 +502,7 @@ void main() {
           mediaType: 'video',
           durationMs: durationMs,
           localPath: '/tmp/large-video.mp4',
-          downloadStatus: 'pending',
+          downloadStatus: 'done',
           createdAt: DateTime.now().toUtc().toIso8601String(),
           contentHash:
               'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',

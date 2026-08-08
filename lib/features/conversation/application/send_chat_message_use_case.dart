@@ -6,10 +6,13 @@ import 'package:clock/clock.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
+    show isExactV2DirectChatInitialEnvelope;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -24,6 +27,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -286,6 +290,155 @@ String? _sanitizeDirectMediaAttachments(List<MediaAttachment>? attachments) {
   return null;
 }
 
+final RegExp _directMediaCustodySha256 = RegExp(r'^[0-9a-f]{64}$');
+const Set<String> _directMediaCustodyTypes = <String>{
+  'image',
+  'video',
+  'audio',
+  'file',
+};
+
+bool _isCompleteDirectMediaCustodyCandidate(
+  MediaAttachment attachment, {
+  required String messageId,
+}) {
+  final localPath = attachment.localPath?.trim();
+  final normalizedPath = localPath?.replaceAll('\\', '/');
+  return attachment.id.isNotEmpty &&
+      attachment.messageId == messageId &&
+      attachment.ownerLane == MediaOwnerLane.direct &&
+      attachment.mime.trim().isNotEmpty &&
+      attachment.size > 0 &&
+      _directMediaCustodyTypes.contains(attachment.mediaType) &&
+      attachment.mediaType ==
+          MediaAttachment.mediaTypeFromMime(attachment.mime) &&
+      attachment.downloadStatus == 'done' &&
+      attachment.createdAt.trim().isNotEmpty &&
+      localPath != null &&
+      localPath.isNotEmpty &&
+      !normalizedPath!.startsWith('pending_uploads/') &&
+      !normalizedPath.contains('/pending_uploads/') &&
+      _directMediaCustodySha256.hasMatch(attachment.contentHash ?? '') &&
+      (attachment.thumbnailHash == null ||
+          _directMediaCustodySha256.hasMatch(attachment.thumbnailHash!)) &&
+      (attachment.encryptionKeyBase64?.trim().isNotEmpty ?? false) &&
+      (attachment.encryptionNonce?.trim().isNotEmpty ?? false) &&
+      attachment.encryptionScheme ==
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1 &&
+      (attachment.width == null || attachment.width! >= 0) &&
+      (attachment.height == null || attachment.height! >= 0) &&
+      (attachment.durationMs == null || attachment.durationMs! >= 0) &&
+      (attachment.waveform == null ||
+          attachment.waveform!.every(
+            (sample) => sample.isFinite && sample >= 0 && sample <= 1,
+          ));
+}
+
+bool _sameDirectMediaCustodyWaveform(List<double>? left, List<double>? right) {
+  if (identical(left, right)) return true;
+  if (left == null || right == null || left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+bool _samePreparedDirectMediaStableIdentity(
+  MediaAttachment durable,
+  MediaAttachment candidate,
+) =>
+    durable.id == candidate.id &&
+    durable.messageId == candidate.messageId &&
+    durable.ownerLane == candidate.ownerLane &&
+    durable.mime == candidate.mime &&
+    durable.size == candidate.size &&
+    durable.mediaType == candidate.mediaType &&
+    durable.width == candidate.width &&
+    durable.height == candidate.height &&
+    durable.durationMs == candidate.durationMs &&
+    durable.createdAt == candidate.createdAt &&
+    _sameDirectMediaCustodyWaveform(durable.waveform, candidate.waveform);
+
+bool _sameCompletedDirectMediaAttempt(
+  MediaAttachment durable,
+  MediaAttachment candidate,
+) =>
+    _samePreparedDirectMediaStableIdentity(durable, candidate) &&
+    durable.localPath == candidate.localPath &&
+    durable.downloadStatus == candidate.downloadStatus &&
+    (durable.uploadRetryCount ?? 0) == (candidate.uploadRetryCount ?? 0) &&
+    (durable.downloadRetryCount ?? 0) == (candidate.downloadRetryCount ?? 0) &&
+    durable.contentHash == candidate.contentHash &&
+    durable.thumbnailHash == candidate.thumbnailHash &&
+    durable.encryptionKeyBase64 == candidate.encryptionKeyBase64 &&
+    durable.encryptionNonce == candidate.encryptionNonce &&
+    durable.encryptionScheme == candidate.encryptionScheme;
+
+bool _isExactPreparedDirectMediaPreflightProjection({
+  required String messageId,
+  required List<MediaAttachment> durable,
+  required List<MediaAttachment> candidates,
+}) {
+  if (durable.length != candidates.length) return false;
+  final candidatesById = <String, MediaAttachment>{
+    for (final candidate in candidates) candidate.id: candidate,
+  };
+  if (candidatesById.length != candidates.length) return false;
+
+  for (final persisted in durable) {
+    final candidate = candidatesById[persisted.id];
+    if (candidate == null ||
+        !_isCompleteDirectMediaCustodyCandidate(
+          candidate,
+          messageId: messageId,
+        )) {
+      return false;
+    }
+    if (persisted.downloadStatus == 'done') {
+      if (!_sameCompletedDirectMediaAttempt(persisted, candidate)) return false;
+      continue;
+    }
+    final expectedPendingPath =
+        MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: messageId,
+          attachmentId: persisted.id,
+          mime: persisted.mime,
+        );
+    if (persisted.downloadStatus != 'upload_pending' ||
+        persisted.localPath != expectedPendingPath ||
+        persisted.contentHash != null ||
+        persisted.thumbnailHash != null ||
+        persisted.encryptionKeyBase64 != null ||
+        persisted.encryptionNonce != null ||
+        persisted.encryptionScheme != null ||
+        !_samePreparedDirectMediaStableIdentity(persisted, candidate)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _isExactDirectInboxCustodyReplay({
+  required DirectInboxCustodyOutboxEntry custody,
+  required String messageId,
+  required String senderPeerId,
+}) {
+  final exactIncarnation = RegExp(
+    r'^[0-9a-f]{32}$',
+  ).hasMatch(custody.incarnationId);
+  final exactEnvelope = isExactV2DirectChatInitialEnvelope(
+    custody.wireEnvelope,
+    messageId: messageId,
+    senderPeerId: senderPeerId,
+  );
+  return exactIncarnation &&
+      exactEnvelope &&
+      custody.recipientPeerId.trim().isNotEmpty &&
+      custody.messageId == messageId;
+}
+
 /// 301: best-effort inline thumbnail for a protected PHOTO. Photo means the
 /// dual check excludes gif (mirror of the eligibility kind fork below — a bare
 /// image-mime predicate would wrongly embed thumbs for protected GIFs, which
@@ -447,15 +600,85 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     details: {'targetPeerId': targetPrefix},
   );
 
-  // 1. Validate
-  if (sanitizedText.trim().isEmpty && !hasAttachments) {
+  final directTextCustodyCapability =
+      messageRepo is OutgoingDirectTextInboxCustodyRepository
+      ? messageRepo as OutgoingDirectTextInboxCustodyRepository
+      : null;
+  final directTextCustodyRepo =
+      directTextCustodyCapability?.supportsDirectTextInboxCustody == true
+      ? directTextCustodyCapability
+      : null;
+
+  Future<(SendChatMessageResult, ConversationMessage?)> drainExistingCustody(
+    DirectInboxCustodyOutboxEntry custody, {
+    required String reason,
+  }) async {
+    final strictStore = effectiveStoreInAckCustodyInboxDetailed;
+    if (strictStore == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_CUSTODY_OWNER_RETAINED',
+        details: {'id': shortenMessageId(custody.messageId), 'reason': reason},
+      );
+      emitSendTiming(outcome: 'custody_owner_retained');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+      entry: custody,
+      custodyRepository: directTextCustodyRepo!,
+      storeInAckCustodyInboxDetailed: strictStore,
+    );
+    if (!attempt.completed) {
+      emitSendTiming(outcome: 'custody_owner_retained');
+      return (SendChatMessageResult.sendFailed, null);
+    }
     emitFlowEvent(
       layer: 'FL',
-      event: 'CHAT_MSG_SEND_INVALID',
-      details: {'reason': 'empty_text'},
+      event: 'CHAT_MSG_SEND_CUSTODY_OWNER_COMPLETED',
+      details: {'id': shortenMessageId(custody.messageId), 'reason': reason},
     );
-    emitSendTiming(outcome: 'invalid_message');
-    return (SendChatMessageResult.invalidMessage, null);
+    recordMetrics(transport: 'inbox', rung: 'inbox');
+    emitSendTiming(outcome: 'success');
+    return (SendChatMessageResult.success, null);
+  }
+
+  DirectInboxCustodyOutboxEntry? preexistingDirectMediaCustody;
+  if (action == MessagePayload.actionSend &&
+      messageId != null &&
+      directTextCustodyRepo != null) {
+    try {
+      final custody = await directTextCustodyRepo
+          .loadDirectInboxCustodyOwnerForMessageId(messageId: messageId);
+      if (custody != null &&
+          !_isExactDirectInboxCustodyReplay(
+            custody: custody,
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+          )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_MEDIA_CUSTODY_REPLAY_REFUSED',
+          details: {'id': shortenMessageId(messageId)},
+        );
+        emitSendTiming(outcome: 'media_custody_replay_refused');
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      if (custody != null && custody.recipientPeerId != targetPeerId) {
+        return drainExistingCustody(custody, reason: 'caller_recipient_drift');
+      }
+      preexistingDirectMediaCustody = custody;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_MEDIA_CUSTODY_REPLAY_ERROR',
+        details: {
+          'id': shortenMessageId(messageId),
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+      emitSendTiming(outcome: 'media_custody_replay_error');
+      return (SendChatMessageResult.sendFailed, null);
+    }
   }
 
   ConversationMessage? existingOutgoing;
@@ -464,9 +687,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         ? null
         : await messageRepo.getMessage(messageId);
   } catch (error) {
-    // This read happens before any envelope build or atomic attempt/custody
-    // stage. Convert the escaping repository exception into a definitive
-    // non-staged result so callers may safely retry with a fresh authority.
+    final custody = preexistingDirectMediaCustody;
+    if (custody != null) {
+      return drainExistingCustody(custody, reason: 'parent_read_error');
+    }
+    // No immutable owner can absorb the failure. Convert the escaping
+    // repository exception into a definitive non-staged result.
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_PRE_STAGE_READ_ERROR',
@@ -475,11 +701,52 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     emitSendTiming(outcome: 'pre_stage_read_error');
     return (SendChatMessageResult.sendFailed, null);
   }
-  final effectivePrivateMediaPolicy =
-      privateMediaPolicy ??
-      (existingOutgoing != null && !existingOutgoing.isIncoming
-          ? existingOutgoing.privateMediaPolicy
-          : const PrivateMediaPolicy.ordinary());
+  final custody = preexistingDirectMediaCustody;
+  if (custody != null &&
+      existingOutgoing != null &&
+      existingOutgoing.contactPeerId != custody.recipientPeerId) {
+    return drainExistingCustody(custody, reason: 'parent_recipient_drift');
+  }
+
+  // A globally-owned v108 row is type-opaque immutable authority. Caller
+  // shape (including omitted media or empty text) cannot strand or reinterpret
+  // those bytes. Without an owner, preserve the ordinary input validation.
+  if (preexistingDirectMediaCustody == null &&
+      sanitizedText.trim().isEmpty &&
+      !hasAttachments) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INVALID',
+      details: {'reason': 'empty_text'},
+    );
+    emitSendTiming(outcome: 'invalid_message');
+    return (SendChatMessageResult.invalidMessage, null);
+  }
+  final effectivePrivateMediaPolicy = preexistingDirectMediaCustody != null
+      ? const PrivateMediaPolicy.ordinary()
+      : privateMediaPolicy ??
+            (existingOutgoing != null && !existingOutgoing.isIncoming
+                ? existingOutgoing.privateMediaPolicy
+                : const PrivateMediaPolicy.ordinary());
+
+  // A v110 intent is exclusive preparation authority. It may only enter the
+  // exact ordinary initial-media acquisition path; an empty-media call, edit,
+  // delete, or private-policy reinterpretation must not fall through to a
+  // weaker generic/private staging seam after doing envelope work.
+  if (preexistingDirectMediaCustody == null &&
+      existingOutgoing?.directMediaCustodyIntentId != null &&
+      (action != MessagePayload.actionSend ||
+          !hasAttachments ||
+          effectivePrivateMediaPolicy.version != 0 ||
+          effectivePrivateMediaPolicy.mode != PrivateMediaMode.ordinary)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_MEDIA_CUSTODY_EXCLUSIVE_PATH_REFUSED',
+      details: {'id': shortenMessageId(messageId!)},
+    );
+    emitSendTiming(outcome: 'media_custody_exclusive_path_refused');
+    return (SendChatMessageResult.sendFailed, null);
+  }
   if (effectivePrivateMediaPolicy.mode != PrivateMediaMode.ordinary) {
     final eligibility = _privateMediaEligibilityForSend(
       text: sanitizedText,
@@ -518,7 +785,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // staging below. Fail closed BEFORE encryption and before any
   // persist. All UI retry paths route through retryFailedMessage, so this
   // gate has zero legitimate trips — any field occurrence is a bug detector.
-  if (action == MessagePayload.actionSend && messageId != null) {
+  if (preexistingDirectMediaCustody == null &&
+      action == MessagePayload.actionSend &&
+      messageId != null) {
     final existing = existingOutgoing;
     if (existing != null &&
         !existing.isIncoming &&
@@ -544,6 +813,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           effectivePrivateMediaPolicy.mode == PrivateMediaMode.viewOnce);
   final attemptKind = action == MessagePayload.actionEdit
       ? OutgoingOrdinaryAttemptKind.edit
+      : existingOutgoing?.directMediaCustodyIntentId != null
+      ? OutgoingOrdinaryAttemptKind.existing
       : messageId == null || preassignedMessageIdIsFresh
       ? OutgoingOrdinaryAttemptKind.fresh
       : OutgoingOrdinaryAttemptKind.existing;
@@ -553,27 +824,87 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       action == MessagePayload.actionSend &&
       !hasAttachments &&
       effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary;
+  var ownsDirectMediaInboxCustody =
+      !isOutgoingPrivateOneMoreLook &&
+      action == MessagePayload.actionSend &&
+      hasAttachments &&
+      effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary &&
+      ((attemptKind == OutgoingOrdinaryAttemptKind.fresh &&
+              existingOutgoing == null) ||
+          (attemptKind == OutgoingOrdinaryAttemptKind.existing &&
+              existingOutgoing?.directMediaCustodyIntentId != null));
+  var ownsDirectInboxCustody =
+      ownsDirectTextInboxCustody || ownsDirectMediaInboxCustody;
   final ordinaryMutationRepo =
       messageRepo is OutgoingTransportMutationRepository
       ? messageRepo as OutgoingTransportMutationRepository
       : null;
-  final directTextCustodyCapability =
-      messageRepo is OutgoingDirectTextInboxCustodyRepository
-      ? messageRepo as OutgoingDirectTextInboxCustodyRepository
+  final directMediaCustodyCapability =
+      mediaAttachmentRepo is OutgoingDirectMediaInboxCustodyStagingRepository
+      ? mediaAttachmentRepo as OutgoingDirectMediaInboxCustodyStagingRepository
       : null;
-  final directTextCustodyRepo =
-      directTextCustodyCapability?.supportsDirectTextInboxCustody == true
-      ? directTextCustodyCapability
+  final directMediaCustodyRepo =
+      directMediaCustodyCapability?.supportsDirectMediaInboxCustody == true
+      ? directMediaCustodyCapability
       : null;
-  if (ownsDirectTextInboxCustody &&
-      (ordinaryMutationRepo == null || directTextCustodyRepo == null)) {
+
+  // 112 G5: reject malformed or non-direct media before consulting optional
+  // custody capabilities. This remains the earliest media-specific boundary,
+  // so invalid blob metadata cannot be masked as a repository-composition
+  // failure and no envelope/encryption work can begin.
+  final mediaGateReason = preexistingDirectMediaCustody == null
+      ? _sanitizeDirectMediaAttachments(mediaAttachments)
+      : null;
+  if (mediaGateReason != null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'DIRECT_MEDIA_ENCRYPTION_REQUIRED',
+      details: {'reason': mediaGateReason},
+    );
+    emitSendTiming(
+      outcome: 'media_encryption_required',
+      details: {'reason': mediaGateReason},
+    );
+    return (SendChatMessageResult.mediaEncryptionRequired, null);
+  }
+
+  final replayedDirectMediaCustody = preexistingDirectMediaCustody;
+  final replayedDirectMediaMessage =
+      replayedDirectMediaCustody != null &&
+          existingOutgoing != null &&
+          !existingOutgoing.isIncoming &&
+          existingOutgoing.id == messageId &&
+          existingOutgoing.contactPeerId == targetPeerId &&
+          existingOutgoing.senderPeerId == senderPeerId
+      ? existingOutgoing
+      : null;
+  if (replayedDirectMediaCustody != null) {
+    ownsDirectMediaInboxCustody = true;
+    ownsDirectInboxCustody = true;
+  }
+
+  final missingStrictMediaCustodyStore =
+      ownsDirectMediaInboxCustody &&
+      effectiveStoreInAckCustodyInboxDetailed == null;
+
+  if (ownsDirectInboxCustody &&
+      (ordinaryMutationRepo == null ||
+          directTextCustodyRepo == null ||
+          (ownsDirectMediaInboxCustody &&
+              replayedDirectMediaCustody == null &&
+              directMediaCustodyRepo == null) ||
+          missingStrictMediaCustodyStore)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
       details: {
         'reason': ordinaryMutationRepo == null
             ? 'missing_message_capability'
-            : 'missing_direct_text_custody_capability',
+            : directTextCustodyRepo == null
+            ? 'missing_direct_inbox_custody_capability'
+            : missingStrictMediaCustodyStore
+            ? 'missing_ack_or_expiry_store_capability'
+            : 'missing_direct_media_custody_capability',
       },
     );
     emitSendTiming(outcome: 'attempt_stage_refused');
@@ -583,12 +914,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final nodeWasNotRunningAtEntry = !p2pService.currentState.isStarted;
   final canStageCustodyBeforeNodeNotRunning =
       nodeWasNotRunningAtEntry &&
-      ownsDirectTextInboxCustody &&
+      ownsDirectInboxCustody &&
       ordinaryMutationRepo != null &&
       directTextCustodyRepo != null &&
-      bridge != null &&
-      recipientKey != null &&
-      recipientKey.isNotEmpty;
+      (!ownsDirectMediaInboxCustody ||
+          replayedDirectMediaCustody != null ||
+          directMediaCustodyRepo != null) &&
+      (replayedDirectMediaCustody != null ||
+          (bridge != null && recipientKey != null && recipientKey.isNotEmpty));
 
   // Preserve the historical pre-encryption return for paths that do not own
   // newly-authored direct-text custody, or cannot atomically acquire it. A
@@ -604,7 +937,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.nodeNotRunning, null);
   }
 
-  if (bridge == null || recipientKey == null || recipientKey.isEmpty) {
+  if (replayedDirectMediaCustody == null &&
+      (bridge == null || recipientKey == null || recipientKey.isEmpty)) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_ENCRYPTION_REQUIRED',
@@ -621,29 +955,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.encryptionRequired, null);
   }
 
-  // 112 G5: outbound 1:1 media must carry complete blob-encryption
-  // metadata — the media mirror of the encryptionRequired gate above
-  // (mirror of the group path's _sanitizeGroupMediaAttachments). Fails
-  // closed BEFORE any envelope is built or persisted so a plaintext blob
-  // reference can never ride a v2 envelope.
-  final mediaGateReason = _sanitizeDirectMediaAttachments(mediaAttachments);
-  if (mediaGateReason != null) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'DIRECT_MEDIA_ENCRYPTION_REQUIRED',
-      details: {'reason': mediaGateReason},
-    );
-    emitSendTiming(
-      outcome: 'media_encryption_required',
-      details: {'reason': mediaGateReason},
-    );
-    return (SendChatMessageResult.mediaEncryptionRequired, null);
-  }
-
   // 3. Build payload
   final resolvedMessageId = messageId ?? _uuid.v4();
   final resolvedTimestamp =
-      timestamp ?? DateTime.now().toUtc().toIso8601String();
+      timestamp ??
+      replayedDirectMediaMessage?.timestamp ??
+      existingOutgoing?.timestamp ??
+      DateTime.now().toUtc().toIso8601String();
   // F8 tier-2: default a fresh normal send's dedupKey to its own id; one
   // Forward action keeps its operation token when a destination id/timestamp
   // is re-minted or retried. An existing legacy row may deliberately have a
@@ -679,6 +997,108 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         ),
       )
       .toList();
+
+  // A prepared media send is authorized by durable provenance, never by the
+  // caller's flag or its in-memory attachment list. Reload the parent and the
+  // complete direct-owned projection before encryption; the combined SQL
+  // transaction repeats these checks after serialization to close the race.
+  if (ownsDirectMediaInboxCustody && replayedDirectMediaCustody == null) {
+    final candidates = normalizedAttachments ?? const <MediaAttachment>[];
+    final candidateIds = candidates.map((attachment) => attachment.id).toSet();
+    var preflightValid =
+        candidates.isNotEmpty &&
+        candidateIds.length == candidates.length &&
+        !candidateIds.contains('') &&
+        candidates.every(
+          (attachment) => _isCompleteDirectMediaCustodyCandidate(
+            attachment,
+            messageId: resolvedMessageId,
+          ),
+        );
+
+    if (attemptKind == OutgoingOrdinaryAttemptKind.fresh) {
+      preflightValid = preflightValid && existingOutgoing == null;
+    } else {
+      try {
+        final durableParent = await messageRepo.getMessage(resolvedMessageId);
+        final durableAttachments = await mediaAttachmentRepo!
+            .getAttachmentsForMessage(
+              resolvedMessageId,
+              owner: MediaOwnerLane.direct,
+            );
+        final durableIds = durableAttachments
+            .map((attachment) => attachment.id)
+            .toSet();
+        final durableIntent = durableParent?.directMediaCustodyIntentId;
+        final exactManifest =
+            durableIds.length == durableAttachments.length &&
+            durableIds.length == candidateIds.length &&
+            durableIds.containsAll(candidateIds);
+        final expectedIntent = durableIntent == null
+            ? null
+            : computeDirectMediaCustodyIntentId(
+                messageId: resolvedMessageId,
+                attachmentIds: durableIds,
+              );
+        final effectiveCreatedAt = createdAt ?? durableParent?.createdAt;
+        preflightValid =
+            preflightValid &&
+            durableParent != null &&
+            !durableParent.isIncoming &&
+            durableParent.contactPeerId == targetPeerId &&
+            durableParent.senderPeerId == senderPeerId &&
+            durableParent.text == sanitizedText &&
+            durableParent.timestamp == resolvedTimestamp &&
+            durableParent.createdAt == effectiveCreatedAt &&
+            durableParent.quotedMessageId == quotedMessageId &&
+            durableParent.dedupKey == resolvedDedupKey &&
+            durableParent.isForwarded == isForwarded &&
+            const <String>{
+              'sending',
+              'failed',
+            }.contains(durableParent.status) &&
+            durableParent.editedAt == null &&
+            durableParent.deletedAt == null &&
+            durableParent.deletedByPeerId == null &&
+            durableParent.hiddenAt == null &&
+            durableParent.transport == null &&
+            durableParent.wireEnvelope == null &&
+            durableParent.relayExpiresAt == null &&
+            durableParent.custodyCheckedAt == null &&
+            durableParent.privateMediaPolicy.version == 0 &&
+            durableParent.privateMediaMode == PrivateMediaMode.ordinary &&
+            durableParent.privateMediaDurationSeconds == null &&
+            durableParent.privateMediaState ==
+                PrivateMediaLifecycleState.none &&
+            durableParent.privateMediaReceivedAtMs == null &&
+            durableParent.privateMediaExpiresAtMs == null &&
+            durableParent.privateMediaRevealedAtMs == null &&
+            durableParent.privateMediaTerminalAtMs == null &&
+            durableParent.privateMediaClockHighWaterMs == null &&
+            durableIntent != null &&
+            durableIntent == expectedIntent &&
+            exactManifest &&
+            _isExactPreparedDirectMediaPreflightProjection(
+              messageId: resolvedMessageId,
+              durable: durableAttachments,
+              candidates: candidates,
+            );
+        if (preflightValid) existingOutgoing = durableParent;
+      } catch (_) {
+        preflightValid = false;
+      }
+    }
+
+    if (!preflightValid) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_MEDIA_CUSTODY_PREFLIGHT_REFUSED',
+        details: {'id': shortenMessageId(resolvedMessageId)},
+      );
+      emitSendTiming(outcome: 'media_custody_preflight_refused');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+  }
 
   // 301: a protected PHOTO send embeds one bounded inline thumbnail into the
   // serialized attachment map (the encrypted inner JSON), so the receiver can
@@ -726,48 +1146,56 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   // 4. Serialize as v2 encrypted envelope.
   String jsonString;
-  try {
-    final innerJson = payload.toInnerJson();
-    final encryptStopwatch = Stopwatch()..start();
-    final encryptResult = await callEncryptMessage(
-      bridge: bridge,
-      recipientMlKemPublicKey: recipientKey,
-      plaintext: innerJson,
-    );
-    encryptStopwatch.stop();
-    stepTimings['encryptMs'] = encryptStopwatch.elapsedMilliseconds;
-    if (encryptResult['ok'] != true) {
+  final exactReplay = replayedDirectMediaCustody;
+  if (exactReplay != null) {
+    // A committed v108 owner is already the immutable serialization
+    // authority. A late media finalizer adopts those bytes before touching the
+    // crypto bridge and must never route through a generic staging writer.
+    jsonString = exactReplay.wireEnvelope;
+  } else {
+    try {
+      final innerJson = payload.toInnerJson();
+      final encryptStopwatch = Stopwatch()..start();
+      final encryptResult = await callEncryptMessage(
+        bridge: bridge!,
+        recipientMlKemPublicKey: recipientKey!,
+        plaintext: innerJson,
+      );
+      encryptStopwatch.stop();
+      stepTimings['encryptMs'] = encryptStopwatch.elapsedMilliseconds;
+      if (encryptResult['ok'] != true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
+          details: {
+            'errorCode': encryptResult['errorCode'],
+            'errorMessage': encryptResult['errorMessage'],
+          },
+        );
+        emitSendTiming(
+          outcome: 'encrypt_failed',
+          details: {'errorCode': encryptResult['errorCode']},
+        );
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      jsonString = MessagePayload.buildEncryptedEnvelope(
+        id: resolvedMessageId,
+        senderPeerId: senderPeerId,
+        senderUsername: senderUsername,
+        kem: encryptResult['kem'] as String,
+        ciphertext: encryptResult['ciphertext'] as String,
+        nonce: encryptResult['nonce'] as String,
+        eventId: resolvedEventId,
+      );
+    } catch (e) {
       emitFlowEvent(
         layer: 'FL',
-        event: 'CHAT_MSG_SEND_ENCRYPT_FAILED',
-        details: {
-          'errorCode': encryptResult['errorCode'],
-          'errorMessage': encryptResult['errorMessage'],
-        },
+        event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
+        details: {'error': e.toString()},
       );
-      emitSendTiming(
-        outcome: 'encrypt_failed',
-        details: {'errorCode': encryptResult['errorCode']},
-      );
+      emitSendTiming(outcome: 'encrypt_error');
       return (SendChatMessageResult.sendFailed, null);
     }
-    jsonString = MessagePayload.buildEncryptedEnvelope(
-      id: resolvedMessageId,
-      senderPeerId: senderPeerId,
-      senderUsername: senderUsername,
-      kem: encryptResult['kem'] as String,
-      ciphertext: encryptResult['ciphertext'] as String,
-      nonce: encryptResult['nonce'] as String,
-      eventId: resolvedEventId,
-    );
-  } catch (e) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_SEND_ENCRYPT_ERROR',
-      details: {'error': e.toString()},
-    );
-    emitSendTiming(outcome: 'encrypt_error');
-    return (SendChatMessageResult.sendFailed, null);
   }
 
   logChatWireEnvelope(
@@ -780,8 +1208,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // BEFORE the transport race. If the app crashes after this point, Section
   // 1's PendingMessageRetrier can replay the attempt without re-serializing or
   // re-encrypting.
-  DirectInboxCustodyOutboxEntry? stagedDirectTextCustody;
-  ConversationMessage? stagedDirectTextMessage;
+  DirectInboxCustodyOutboxEntry? stagedDirectInboxCustody = exactReplay;
+  ConversationMessage? stagedCustodyMessage = replayedDirectMediaMessage;
   if (isOutgoingPrivateOneMoreLook) {
     final handedOff =
         messageId != null &&
@@ -805,11 +1233,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       emitSendTiming(outcome: 'private_envelope_handoff_refused');
       return (SendChatMessageResult.sendFailed, null);
     }
-  } else {
+  } else if (exactReplay == null) {
     final hasOrdinaryMedia = normalizedAttachments?.isNotEmpty ?? false;
     if (ordinaryMutationRepo == null ||
-        (ownsDirectTextInboxCustody && directTextCustodyRepo == null) ||
+        (ownsDirectInboxCustody && directTextCustodyRepo == null) ||
         (hasOrdinaryMedia &&
+            !ownsDirectMediaInboxCustody &&
             mediaAttachmentRepo is! OutgoingOrdinaryAttemptStagingRepository)) {
       emitFlowEvent(
         layer: 'FL',
@@ -820,8 +1249,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               : resolvedMessageId,
           'reason': ordinaryMutationRepo == null
               ? 'missing_message_capability'
-              : ownsDirectTextInboxCustody && directTextCustodyRepo == null
-              ? 'missing_direct_text_custody_capability'
+              : ownsDirectInboxCustody && directTextCustodyRepo == null
+              ? 'missing_direct_inbox_custody_capability'
               : 'missing_media_capability',
         },
       );
@@ -862,17 +1291,40 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       final custodyIncarnationId = ownsDirectTextInboxCustody
           ? _uuid.v4().replaceAll('-', '')
           : null;
-      final staged = ownsDirectTextInboxCustody
-          ? await directTextCustodyRepo!.stageOutgoingDirectTextInboxCustody(
+      late final OutgoingOrdinaryMutationOutcome stagedOutcome;
+      late final ConversationMessage? stagedMessage;
+      var stagedAuthorizesTransport = false;
+      DirectInboxCustodyOutboxEntry? committedMediaCustody;
+      if (ownsDirectTextInboxCustody) {
+        final staged = await directTextCustodyRepo!
+            .stageOutgoingDirectTextInboxCustody(
               expected: expectedAttempt,
               staged: stagedAttempt,
               kind: attemptKind,
               recipientPeerId: targetPeerId,
               incarnationId: custodyIncarnationId!,
               wireEnvelope: jsonString,
-            )
-          : hasOrdinaryMedia
-          ? await (mediaAttachmentRepo
+            );
+        stagedOutcome = staged.outcome;
+        stagedMessage = staged.message;
+        stagedAuthorizesTransport = staged.authorizesTransport;
+      } else if (ownsDirectMediaInboxCustody) {
+        final staged = await directMediaCustodyRepo!
+            .stageOutgoingDirectMediaInboxCustody(
+              expected: expectedAttempt,
+              staged: stagedAttempt,
+              attachments: normalizedAttachments!,
+              kind: attemptKind,
+              recipientPeerId: targetPeerId,
+              wireEnvelope: jsonString,
+            );
+        stagedOutcome = staged.outcome;
+        stagedMessage = staged.message;
+        stagedAuthorizesTransport = staged.authorizesTransport;
+        committedMediaCustody = staged.custody;
+      } else if (hasOrdinaryMedia) {
+        final staged =
+            await (mediaAttachmentRepo
                     as OutgoingOrdinaryAttemptStagingRepository)
                 .stageOutgoingOrdinaryAttemptWithMedia(
                   messageMutationRepository: ordinaryMutationRepo,
@@ -880,13 +1332,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
                   staged: stagedAttempt,
                   attachments: normalizedAttachments!,
                   kind: attemptKind,
-                )
-          : await ordinaryMutationRepo.stageOutgoingOrdinaryAttempt(
-              expected: expectedAttempt,
-              staged: stagedAttempt,
-              kind: attemptKind,
-            );
-      if (!staged.authorizesTransport) {
+                );
+        stagedOutcome = staged.outcome;
+        stagedMessage = staged.message;
+        stagedAuthorizesTransport = staged.authorizesTransport;
+      } else {
+        final staged = await ordinaryMutationRepo.stageOutgoingOrdinaryAttempt(
+          expected: expectedAttempt,
+          staged: stagedAttempt,
+          kind: attemptKind,
+        );
+        stagedOutcome = staged.outcome;
+        stagedMessage = staged.message;
+        stagedAuthorizesTransport = staged.authorizesTransport;
+      }
+      if (!stagedAuthorizesTransport) {
         emitFlowEvent(
           layer: 'FL',
           event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
@@ -894,32 +1354,42 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             'id': resolvedMessageId.length > 8
                 ? resolvedMessageId.substring(0, 8)
                 : resolvedMessageId,
-            'reason': staged.outcome.name,
+            'reason': stagedOutcome.name,
           },
         );
         emitSendTiming(
           outcome: 'attempt_stage_refused',
-          details: {'reason': staged.outcome.name},
+          details: {'reason': stagedOutcome.name},
         );
         return (SendChatMessageResult.sendFailed, null);
       }
-      if (ownsDirectTextInboxCustody) {
-        stagedDirectTextMessage = staged.message;
+      if (ownsDirectInboxCustody) {
+        stagedCustodyMessage = stagedMessage;
         // The authorized atomic mutation is the authority boundary. Build the
         // immutable handle from those exact inputs instead of re-reading after
         // commit: a concurrent lifecycle drain may already have completed and
         // deleted the row, which must not turn a committed send into failure.
-        stagedDirectTextCustody = DirectInboxCustodyOutboxEntry(
-          recipientPeerId: targetPeerId,
-          messageId: resolvedMessageId,
-          incarnationId: custodyIncarnationId!,
-          wireEnvelope: jsonString,
-          retryCount: 0,
-          lastAttemptAt: null,
-          lastErrorCode: null,
-          createdAt: stagedAttempt.createdAt,
-          updatedAt: stagedAttempt.createdAt,
-        );
+        stagedDirectInboxCustody = ownsDirectMediaInboxCustody
+            ? committedMediaCustody
+            : DirectInboxCustodyOutboxEntry(
+                recipientPeerId: targetPeerId,
+                messageId: resolvedMessageId,
+                incarnationId: custodyIncarnationId!,
+                wireEnvelope: jsonString,
+                retryCount: 0,
+                lastAttemptAt: null,
+                lastErrorCode: null,
+                createdAt: stagedAttempt.createdAt,
+                updatedAt: stagedAttempt.createdAt,
+              );
+        final exactCustody = stagedDirectInboxCustody;
+        if (exactCustody == null) {
+          throw StateError('authorized custody stage returned no exact owner');
+        }
+        // A competing prepared-media finalizer may have committed different
+        // ciphertext first. From this point onward replay only the winner's
+        // immutable bytes returned by the transaction.
+        jsonString = exactCustody.wireEnvelope;
         try {
           onDirectTextCustodyStaged?.call(resolvedMessageId);
         } catch (error) {
@@ -955,7 +1425,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   if (canStageCustodyBeforeNodeNotRunning) {
-    ConversationMessage? authoritativeMessage = stagedDirectTextMessage;
+    ConversationMessage? authoritativeMessage = stagedCustodyMessage;
     try {
       final settled = await ordinaryMutationRepo
           .settleOutgoingOrdinaryTransport(
@@ -1039,8 +1509,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           transport: 'inbox',
           relayExpiresAt: outcome.expiresAtMs,
         );
-      } else if (ownsDirectTextInboxCustody) {
-        final custody = stagedDirectTextCustody;
+      } else if (ownsDirectInboxCustody) {
+        final custody = stagedDirectInboxCustody;
         if (custody == null) {
           throw StateError('accepted custody has no staged local authority');
         }
@@ -1064,10 +1534,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         observedMessage = settled.message;
       }
     } catch (error) {
-      if (ownsDirectTextInboxCustody && stagedDirectTextCustody != null) {
+      if (ownsDirectInboxCustody && stagedDirectInboxCustody != null) {
         try {
           await directTextCustodyRepo!.recordDirectInboxCustodyFailureIfExact(
-            expected: stagedDirectTextCustody,
+            expected: stagedDirectInboxCustody,
             errorCode: DirectInboxCustodyErrorCode.localCompletionFailed,
           );
         } catch (_) {
@@ -1117,14 +1587,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     try {
       final ackCustodyStore = effectiveStoreInAckCustodyInboxDetailed;
       final detailedStore = effectiveStoreInInboxDetailed;
-      if (ownsDirectTextInboxCustody && ackCustodyStore != null) {
+      if (ownsDirectInboxCustody && ackCustodyStore != null) {
         outcome = await ackCustodyStore(
           targetPeerId,
           jsonString,
           custodyKind: AckCustodyKind.directTextV108,
           timeoutMs: interactiveInboxBudget.inMilliseconds,
         );
-      } else if (ownsDirectTextInboxCustody) {
+      } else if (ownsDirectInboxCustody) {
         outcome = const InboxStoreOutcome(
           status: InboxStoreStatus.failed,
           errorCode: 'ACK_OR_EXPIRY_STORE_UNAVAILABLE',
@@ -1163,13 +1633,13 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       stepTimings['inboxMs'] = inboxStopwatch.elapsedMilliseconds;
     }
 
-    final custodyAccepted = ownsDirectTextInboxCustody
+    final custodyAccepted = ownsDirectInboxCustody
         ? outcome.ackOrExpiryAccepted
         : outcome.accepted;
     transportMetrics?.recordAttempt(leg: 'inbox', succeeded: custodyAccepted);
     if (custodyAccepted) {
       await settleAcceptedInboxCustody(outcome);
-    } else if (ownsDirectTextInboxCustody && stagedDirectTextCustody != null) {
+    } else if (ownsDirectInboxCustody && stagedDirectInboxCustody != null) {
       final errorCode = storeThrew
           ? DirectInboxCustodyErrorCode.storeThrew
           : outcome.status == InboxStoreStatus.rejectedFull
@@ -1177,7 +1647,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           : DirectInboxCustodyErrorCode.storeFailed;
       try {
         await directTextCustodyRepo!.recordDirectInboxCustodyFailureIfExact(
-          expected: stagedDirectTextCustody,
+          expected: stagedDirectInboxCustody,
           errorCode: errorCode,
         );
       } catch (_) {
@@ -1240,7 +1710,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             stepTimings: stepTimings,
           );
           if (reuseEvidence.provesDeviceDeliveryForCurrentProtocol) {
-            if (!ownsDirectTextInboxCustody) {
+            if (!ownsDirectInboxCustody) {
               inboxHedge.cancelIfNotStarted();
             }
             transportMetrics?.recordAttempt(leg: 'reuse', succeeded: true);
@@ -1263,7 +1733,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               sendStopwatch: sendStopwatch,
               emitTimingEvent: emitTimingEvent,
               inboxHedge: inboxHedge,
-              requiresAckOrExpiryCustody: ownsDirectTextInboxCustody,
+              requiresAckOrExpiryCustody: ownsDirectInboxCustody,
               extraTimingDetails: {
                 'connectionReused': true,
                 'sendPath': 'reuse',
@@ -1330,7 +1800,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     );
     if (shortCircuit != null &&
         shortCircuit.provesDeviceDeliveryForCurrentProtocol) {
-      if (!ownsDirectTextInboxCustody) {
+      if (!ownsDirectInboxCustody) {
         inboxHedge.cancelIfNotStarted();
       }
       sendPath = 'sticky';
@@ -1358,7 +1828,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         sendStopwatch: sendStopwatch,
         emitTimingEvent: emitTimingEvent,
         inboxHedge: inboxHedge,
-        requiresAckOrExpiryCustody: ownsDirectTextInboxCustody,
+        requiresAckOrExpiryCustody: ownsDirectInboxCustody,
         extraTimingDetails: {
           'connectionReused': false,
           'sendPath': 'sticky',
@@ -1524,7 +1994,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       pendingCount--;
       if (result.provesDeviceDeliveryForCurrentProtocol) {
         if (!completer.isCompleted) {
-          if (!ownsDirectTextInboxCustody) {
+          if (!ownsDirectInboxCustody) {
             inboxHedge.cancelIfNotStarted();
           }
           completer.complete(result);
@@ -1610,7 +2080,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       sendStopwatch: sendStopwatch,
       emitTimingEvent: emitTimingEvent,
       inboxHedge: inboxHedge,
-      requiresAckOrExpiryCustody: ownsDirectTextInboxCustody,
+      requiresAckOrExpiryCustody: ownsDirectInboxCustody,
       extraTimingDetails: {
         'connectionReused': false,
         'sendPath': sendPath,
@@ -1746,7 +2216,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (inboxOutcome.status == InboxStoreStatus.failed) {
     inboxOutcome = await inboxHedge.retryAfterFailure();
   }
-  if (ownsDirectTextInboxCustody
+  if (ownsDirectInboxCustody
       ? inboxOutcome.ackOrExpiryAccepted
       : inboxOutcome.accepted) {
     emitFlowEvent(

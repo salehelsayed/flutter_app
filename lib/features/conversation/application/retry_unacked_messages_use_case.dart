@@ -76,6 +76,51 @@ Future<int> retryUnackedMessages({
 
   var count = 0;
   for (final msg in unacked) {
+    // A persisted fresh-media preparation token is exclusive authority. An
+    // unacked snapshot carrying it must never reach the legacy bool inbox
+    // store or any ordinary/private settlement writer, even if its v108 row
+    // is temporarily absent or the repository lacks the custody capability.
+    if (msg.directMediaCustodyIntentId != null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_DIRECT_MEDIA_CUSTODY_PREPARATION_OWNED',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      continue;
+    }
+
+    // A v108 row is the sole owner of its immutable initial chat envelope
+    // (text or ordinary media). Generic bool storage cannot prove the
+    // ACK-or-expiry contract and must not settle it. Skip only this row so
+    // unrelated legacy messages in the same batch continue to converge.
+    if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+      try {
+        final owned =
+            await (messageRepo as OutgoingDirectTextInboxCustodyRepository)
+                .loadDirectInboxCustodyOwnerForMessageId(messageId: msg.id);
+        if (owned != null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_UNACKED_DIRECT_INBOX_CUSTODY_OWNED',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            },
+          );
+          continue;
+        }
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_UNACKED_DIRECT_INBOX_CUSTODY_LOOKUP_FAILED',
+          details: {
+            'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+        continue;
+      }
+    }
+
     // Defensive: skip messages with null or empty wireEnvelope.
     // The SQL query should exclude these, but a corrupt row or future
     // query change could let one through.
@@ -224,6 +269,48 @@ Future<int> retryUnackedMessages({
       return result.outcome.authorizesTransport;
     }
 
+    // The batch row is only a snapshot. Re-read exact transport identity
+    // immediately before either quarantine/settlement or relay egress so a
+    // direct-media preparation that won after list load cannot be replayed by
+    // this legacy lane. Re-check global v108 ownership after the parent read
+    // as well, covering the token -> combined-custody transition.
+    try {
+      final fresh = await messageRepo.getMessage(msg.id);
+      if (!_isExactUnackedTransportCandidate(loaded: msg, fresh: fresh)) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_UNACKED_MESSAGE_SKIP_STALE_SNAPSHOT',
+          details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+        );
+        continue;
+      }
+      if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+        final owner =
+            await (messageRepo as OutgoingDirectTextInboxCustodyRepository)
+                .loadDirectInboxCustodyOwnerForMessageId(messageId: msg.id);
+        if (owner != null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_UNACKED_DIRECT_INBOX_CUSTODY_OWNED_AT_EGRESS',
+            details: {
+              'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+            },
+          );
+          continue;
+        }
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_EGRESS_AUTHORITY_RECHECK_FAILED',
+        details: {
+          'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id,
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+      continue;
+    }
+
     if (isUnsafeLegacyOutboundEnvelope(msg.wireEnvelope!)) {
       if (isOutgoingPrivate) {
         await persistTransport(status: 'failed', transport: null);
@@ -292,3 +379,23 @@ bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
     message.privateMediaPolicy.version == 1 &&
     (message.privateMediaMode == PrivateMediaMode.protected ||
         message.privateMediaMode == PrivateMediaMode.viewOnce);
+
+bool _isExactUnackedTransportCandidate({
+  required ConversationMessage loaded,
+  required ConversationMessage? fresh,
+}) =>
+    fresh != null &&
+    !fresh.isIncoming &&
+    fresh.status == 'sent' &&
+    fresh.directMediaCustodyIntentId == null &&
+    fresh.id == loaded.id &&
+    fresh.contactPeerId == loaded.contactPeerId &&
+    fresh.senderPeerId == loaded.senderPeerId &&
+    fresh.wireEnvelope == loaded.wireEnvelope &&
+    fresh.isDeleted == loaded.isDeleted &&
+    fresh.deletedAt == loaded.deletedAt &&
+    fresh.deletedByPeerId == loaded.deletedByPeerId &&
+    fresh.hiddenAt == loaded.hiddenAt &&
+    fresh.privateMediaPolicy.version == loaded.privateMediaPolicy.version &&
+    fresh.privateMediaMode == loaded.privateMediaMode &&
+    fresh.privateMediaDurationSeconds == loaded.privateMediaDurationSeconds;

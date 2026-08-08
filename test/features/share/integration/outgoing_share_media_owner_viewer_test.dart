@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_thumbnail_cache.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
@@ -95,7 +96,11 @@ void main() {
         final contacts = InMemoryContactRepository();
         await contacts.addContact(contact);
         final messages = InMemoryMessageRepository();
-        final media = InMemoryMediaAttachmentRepository();
+        final media = InMemoryMediaAttachmentRepository()
+          ..enableDirectMediaInboxCustodyForTest(messages);
+        final p2pService = _AckOrExpiryFakeP2PService(
+          initialState: const NodeState(peerId: ownPeerId, isStarted: true),
+        );
         final coordinator = DefaultShareBatchDeliveryCoordinator(
           identityRepository: identities,
           contactRepository: contacts,
@@ -104,10 +109,7 @@ void main() {
           groupRepository: null,
           groupMessageRepository: null,
           bridge: PassthroughCryptoBridge(),
-          p2pService: FakeP2PService(
-            initialState: const NodeState(peerId: ownPeerId, isStarted: true),
-            storeInInboxResult: true,
-          ),
+          p2pService: p2pService,
           mediaFileManager: FakeMediaFileManager(),
           imageProcessor: ImageProcessor(
             compressFile:
@@ -169,6 +171,11 @@ void main() {
           message.media.map((attachment) => attachment.messageId),
           everyElement(message.id),
         );
+        expect(p2pService.custodyStores, hasLength(1));
+        final custodyStore = p2pService.custodyStores.single;
+        expect(custodyStore.recipientPeerId, contactPeerId);
+        expect(custodyStore.custodyKind, AckCustodyKind.directTextV108);
+        expect(custodyStore.wireEnvelope, message.wireEnvelope);
         final paths = message.media
             .map(
               (attachment) =>
@@ -238,6 +245,43 @@ void main() {
         await tester.pumpWidget(const SizedBox.shrink());
         await tester.pump();
       },
+    );
+  }
+}
+
+class _AckOrExpiryFakeP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _AckOrExpiryFakeP2PService({required NodeState initialState})
+    : super(initialState: initialState, storeInInboxResult: true);
+
+  final List<
+    ({String recipientPeerId, String wireEnvelope, AckCustodyKind custodyKind})
+  >
+  custodyStores = [];
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    custodyStores.add((
+      recipientPeerId: toPeerId,
+      wireEnvelope: message,
+      custodyKind: custodyKind,
+    ));
+    if (custodyKind != AckCustodyKind.directTextV108) {
+      return const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'WRONG_CUSTODY_KIND',
+      );
+    }
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      expiresAtMs: 4102444800000,
+      custodyContract: ackOrExpiryInboxCustodyContract,
     );
   }
 }

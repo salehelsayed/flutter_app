@@ -254,7 +254,7 @@ class TestUser {
       recipientMlKemPublicKey: await _mlKemKeyFor(targetPeerId),
       mediaAttachments: attachments,
       mediaAttachmentRepo: mediaAttachmentRepo,
-      storeInInboxDetailed: p2pService.storeInInboxDetailed,
+      storeInAckCustodyInboxDetailed: p2pService.storeInAckCustodyInboxDetailed,
     );
   }
 

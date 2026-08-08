@@ -7,6 +7,7 @@ import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -30,6 +31,7 @@ import 'package:just_audio_platform_interface/just_audio_platform_interface.dart
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
+import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_mic_permission_gateway.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/fake_p2p_network.dart';
@@ -124,7 +126,27 @@ class BobTestHarness {
   }
 }
 
-class _WifiFirstVoiceP2PService implements P2PService {
+class _CopyingFakeMediaFileManager extends FakeMediaFileManager {
+  @override
+  Future<String> copyToDurableStorage({
+    required String sourceFilePath,
+    required String messageId,
+    required String attachmentId,
+    required String mime,
+  }) async {
+    final storedPath = await super.copyToDurableStorage(
+      sourceFilePath: sourceFilePath,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+    final destinationPath = await resolveStoredPath(storedPath);
+    await File(sourceFilePath).copy(destinationPath);
+    return storedPath;
+  }
+}
+
+class _WifiFirstVoiceP2PService implements P2PService, AckOrExpiryInboxStore {
   final P2PService _inner;
   final Set<String> _localPeerIds;
   final bool _sendLocalMediaResult;
@@ -193,6 +215,38 @@ class _WifiFirstVoiceP2PService implements P2PService {
     String message, {
     int? timeoutMs,
   }) => _inner.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) {
+    if (custodyKind != AckCustodyKind.directTextV108) {
+      return Future<InboxStoreOutcome>.value(
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.failed,
+          errorCode: 'WRONG_ACK_CUSTODY_KIND',
+        ),
+      );
+    }
+    final inner = _inner;
+    if (inner is! AckOrExpiryInboxStore) {
+      return Future<InboxStoreOutcome>.value(
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.failed,
+          errorCode: 'ACK_OR_EXPIRY_CUSTODY_UNAVAILABLE',
+        ),
+      );
+    }
+    return (inner as AckOrExpiryInboxStore).storeInAckCustodyInboxDetailed(
+      toPeerId,
+      message,
+      custodyKind: custodyKind,
+      timeoutMs: timeoutMs,
+    );
+  }
 
   @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
@@ -582,7 +636,10 @@ void main() {
       );
     }
 
-    Future<int> retryAliceIncompleteUploads({P2PService? p2pService}) {
+    Future<int> retryAliceIncompleteUploads({
+      P2PService? p2pService,
+      FakeMediaFileManager? mediaFileManager,
+    }) {
       return retryIncompleteUploads(
         mediaAttachmentRepo: aliceMediaAttachmentRepo,
         messageRepo: alice.messageRepo,
@@ -590,6 +647,7 @@ void main() {
         p2pService: p2pService ?? alice.p2pService,
         identityRepo: aliceIdentityRepo,
         contactRepo: alice.contactRepo,
+        mediaFileManager: mediaFileManager,
       );
     }
 
@@ -605,6 +663,7 @@ void main() {
       SendChatMessageFn sendChatMessageFn = sendChatMessage,
       SendVoiceMessageFn sendVoiceMessageFn = sendVoiceMessage,
       FakeAudioRecorderService? audioRecorderService,
+      FakeMediaFileManager? mediaFileManager,
     }) async {
       await tester.pumpWidget(
         MaterialApp(
@@ -620,6 +679,7 @@ void main() {
             bridge: alice.bridge,
             contactRepo: alice.contactRepo,
             mediaAttachmentRepo: aliceMediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
             sendChatMessageFn: sendChatMessageFn,
             sendVoiceMessageFn: sendVoiceMessageFn,
             audioRecorderService: audioRecorderService,
@@ -707,6 +767,9 @@ void main() {
         withMessageDeletion: true,
         withDeliveryReceipts: true,
         autoStartListener: false,
+      );
+      aliceMediaAttachmentRepo.enableDirectMediaInboxCustodyForTest(
+        alice.messageRepo,
       );
 
       bobHarness = BobTestHarness(bob: bob);
@@ -995,7 +1058,8 @@ void main() {
       '3b. WIFI-INTERRUPTED-VOICE: local-peer voice transport is attempted before relay recovery on resume',
       (tester) async {
         final durablePath = await tester.runAsync(
-          () => writeTempMediaFile('wifi-voice.m4a', List<int>.filled(40, 9)),
+          () =>
+              writeTempMediaFile('wifi-voice.m4a', List<int>.filled(64000, 9)),
         );
         final recorder = FakeAudioRecorderService()
           ..fakeOutputPath = durablePath
@@ -1006,6 +1070,7 @@ void main() {
           inner: alice.p2pService,
           localPeerIds: {bob.peerId},
         );
+        final mediaFileManager = _CopyingFakeMediaFileManager();
         final contact = await alice.contactRepo.getContact(bob.peerId);
         expect(contact, isNotNull);
         final chatListener = ChatMessageListener(
@@ -1022,6 +1087,7 @@ void main() {
           chatListener: chatListener,
           p2pService: widgetP2p,
           audioRecorderService: recorder,
+          mediaFileManager: mediaFileManager,
           sendVoiceMessageFn:
               ({
                 required p2pService,
@@ -1090,7 +1156,10 @@ void main() {
           await alice.simulateResume(
             retryIncompleteUploadsFn: () async {
               callOrder.add('retryIncompleteUploads');
-              return retryAliceIncompleteUploads(p2pService: wifiFirstP2p);
+              return retryAliceIncompleteUploads(
+                p2pService: wifiFirstP2p,
+                mediaFileManager: mediaFileManager,
+              );
             },
             retryFailedMessagesFn: () async {
               callOrder.add('retryFailedMessages');

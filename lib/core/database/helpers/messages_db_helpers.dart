@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
@@ -10,6 +12,22 @@ import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 
 const _visibleMessageFilter = 'hidden_at IS NULL';
+const _directMediaCustodyIntentColumn = 'direct_media_custody_intent_id';
+const _directInboxCustodyOutboxTable = 'direct_inbox_custody_outbox';
+
+const _custodyOwnedParentIdentityColumns = <String>[
+  'contact_peer_id',
+  'sender_peer_id',
+  'is_incoming',
+];
+
+const _custodyOwnedParentTransportColumns = <String>[
+  'status',
+  'wire_envelope',
+  'transport',
+  'relay_expires_at',
+  'custody_checked_at',
+];
 
 /// Inserts a message into the database.
 Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
@@ -23,6 +41,22 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
 
   try {
     await dbWriteTransaction(db, (txn) async {
+      final hasDirectInboxCustodyTable = (await txn.rawQuery(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+        "AND name = '$_directInboxCustodyOutboxTable' LIMIT 1",
+      )).isNotEmpty;
+      final custodyRows = hasDirectInboxCustodyTable
+          ? await txn.query(
+              _directInboxCustodyOutboxTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[id],
+              limit: 2,
+            )
+          : const <Map<String, Object?>>[];
+      if (custodyRows.length > 1) {
+        throw StateError('Ambiguous direct inbox custody owner for message');
+      }
+      final custody = custodyRows.isEmpty ? null : custodyRows.single;
       final existingRows = await txn.query(
         'messages',
         where: 'id = ?',
@@ -30,8 +64,120 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
         limit: 1,
       );
       final merged = Map<String, Object?>.from(row);
+      if (existingRows.isEmpty && custody != null) {
+        // The v108 row intentionally survives physical parent deletion. A
+        // generic full-row save has no predecessor CAS and therefore cannot
+        // distinguish a delayed pre-delete writer from a legitimate new
+        // projection. Keep physical absence (including user-terminal absence)
+        // authoritative until exact custody completion retires the owner.
+        throw StateError(
+          'generic message save cannot resurrect a custody-owned message',
+        );
+      }
       if (existingRows.isNotEmpty) {
         final existing = existingRows.single;
+        final existingIsOutgoing =
+            ((existing['is_incoming'] as num?)?.toInt() ?? 0) == 0;
+        final existingUserTerminal =
+            existing['deleted_at'] != null || existing['hidden_at'] != null;
+        if (existingIsOutgoing && existingUserTerminal) {
+          // Retained outgoing deletion state is durable authority. An active
+          // v108 owner and the scrubbed completion tombstone admit no generic
+          // full-row successor at all. Other established outgoing terminal
+          // rows keep their deletion columns while preserving the pre-existing
+          // behavior that compatible non-terminal fields can still converge
+          // through this generic persistence seam (notably private-media
+          // failure projection). Incoming hidden-edit and deleted placeholders
+          // remain fully writable for their exact materialization/merge paths.
+          if (custody != null ||
+              _isScrubbedCustodyCompletionTombstone(existing)) {
+            return;
+          }
+          for (final column in const <String>[
+            'deleted_at',
+            'deleted_by_peer_id',
+            'hidden_at',
+          ]) {
+            merged[column] = existing[column];
+          }
+        }
+        // The v110 media-custody intent is insert-once and may be consumed
+        // only by the combined media + v108 transaction. Generic full-row
+        // saves must neither erase a pending intent nor re-arm a consumed one.
+        if (existing.containsKey(_directMediaCustodyIntentColumn)) {
+          merged[_directMediaCustodyIntentColumn] =
+              existing[_directMediaCustodyIntentColumn];
+        }
+
+        final candidateMatchesCurrentIdentity =
+            merged['contact_peer_id'] == existing['contact_peer_id'] &&
+            merged['sender_peer_id'] == existing['sender_peer_id'] &&
+            ((merged['is_incoming'] as num?)?.toInt() ?? 0) ==
+                ((existing['is_incoming'] as num?)?.toInt() ?? 0);
+        final userTerminal =
+            merged['deleted_at'] != null || merged['hidden_at'] != null;
+        final provesLaterEdit =
+            !userTerminal &&
+            candidateMatchesCurrentIdentity &&
+            _isDemonstrablyLaterEdit(
+              merged['edited_at'],
+              existing['edited_at'],
+            ) &&
+            _isExactV2DirectChatEditEnvelope(
+              merged['wire_envelope'],
+              messageId: id,
+              senderPeerId: existing['sender_peer_id'],
+            );
+        final existingStatus = existing['status'];
+        final existingTransport = existing['transport'];
+        final hasExactInitialEnvelope = _isExactV2DirectChatInitialEnvelope(
+          existing['wire_envelope'],
+          messageId: id,
+          senderPeerId: existing['sender_peer_id'],
+        );
+        final settledOutgoingInitial =
+            existingIsOutgoing &&
+            hasExactInitialEnvelope &&
+            ((existingStatus == 'inboxed' && existingTransport == 'inbox') ||
+                (existingStatus == 'delivered' &&
+                    _isNonBlankDatabaseString(existingTransport)));
+        final settledOutgoingEdit =
+            existingIsOutgoing &&
+            _isNonBlankDatabaseString(existing['edited_at']) &&
+            _isExactV2DirectChatEditEnvelope(
+              existing['wire_envelope'],
+              messageId: id,
+              senderPeerId: existing['sender_peer_id'],
+            );
+
+        if (custody != null || settledOutgoingInitial || settledOutgoingEdit) {
+          // A combined direct-media commit consumes the v110 intent and
+          // leaves its exact initial envelope owned by the independent v108
+          // row. A delayed pre-commit whole-row save commonly carries a null
+          // envelope; letting that stale projection overwrite the winner
+          // would make exact completion retire the only immutable authority
+          // while leaving a sending row that generic recovery could rebuild.
+          //
+          // Resolve ownership globally by message ID inside this transaction.
+          // Identity stays pinned for the lifetime of the one global owner.
+          // Transport fields freeze unless the caller proves a later edit with
+          // exact current identity, an edit marker, and a strict v2 edit outer
+          // envelope. The same monotonic rule survives exact v108 retirement
+          // for an already-settled outgoing initial projection. Arbitrary
+          // non-null bytes are not mutation authority.
+          for (final column in _custodyOwnedParentIdentityColumns) {
+            merged[column] = existing[column];
+          }
+          if (!userTerminal && !provesLaterEdit) {
+            for (final column in _custodyOwnedParentTransportColumns) {
+              merged[column] = existing[column];
+            }
+            if (settledOutgoingEdit) {
+              merged['text'] = existing['text'];
+              merged['edited_at'] = existing['edited_at'];
+            }
+          }
+        }
         final version = (existing['private_media_policy_version'] as num?)
             ?.toInt();
         final mode = existing['private_media_mode'] as String?;
@@ -101,6 +247,77 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
     );
     rethrow;
   }
+}
+
+bool _isExactV2DirectChatEditEnvelope(
+  Object? rawEnvelope, {
+  required String messageId,
+  required Object? senderPeerId,
+}) {
+  if (rawEnvelope is! String) return false;
+  try {
+    final decoded = jsonDecode(rawEnvelope);
+    if (decoded is! Map<String, dynamic>) return false;
+    final eventId = decoded['eventId'];
+    final encrypted = decoded['encrypted'];
+    return decoded['type'] == 'chat_message' &&
+        decoded['version'] == '2' &&
+        decoded['id'] == messageId &&
+        decoded['senderPeerId'] == senderPeerId &&
+        _isNonBlankDatabaseString(eventId) &&
+        eventId != messageId &&
+        encrypted is Map<String, dynamic> &&
+        _isNonBlankDatabaseString(encrypted['kem']) &&
+        _isNonBlankDatabaseString(encrypted['ciphertext']) &&
+        _isNonBlankDatabaseString(encrypted['nonce']);
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _isExactV2DirectChatInitialEnvelope(
+  Object? rawEnvelope, {
+  required String messageId,
+  required Object? senderPeerId,
+}) {
+  if (rawEnvelope is! String) return false;
+  try {
+    final decoded = jsonDecode(rawEnvelope);
+    if (decoded is! Map<String, dynamic>) return false;
+    final encrypted = decoded['encrypted'];
+    return decoded['type'] == 'chat_message' &&
+        decoded['version'] == '2' &&
+        decoded['id'] == messageId &&
+        decoded['senderPeerId'] == senderPeerId &&
+        !decoded.containsKey('eventId') &&
+        encrypted is Map<String, dynamic> &&
+        _isNonBlankDatabaseString(encrypted['kem']) &&
+        _isNonBlankDatabaseString(encrypted['ciphertext']) &&
+        _isNonBlankDatabaseString(encrypted['nonce']);
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _isScrubbedCustodyCompletionTombstone(Map<String, Object?> row) =>
+    ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+    row['deleted_at'] == null &&
+    row['hidden_at'] != null &&
+    row['text'] == '' &&
+    row['status'] == 'inboxed' &&
+    row['wire_envelope'] == null &&
+    row['transport'] == 'inbox';
+
+bool _isNonBlankDatabaseString(Object? value) =>
+    value is String && value.trim().isNotEmpty;
+
+bool _isDemonstrablyLaterEdit(Object? candidate, Object? existing) {
+  if (!_isNonBlankDatabaseString(candidate)) return false;
+  final candidateTime = DateTime.tryParse(candidate as String);
+  if (candidateTime == null) return false;
+  if (!_isNonBlankDatabaseString(existing)) return true;
+  final existingTime = DateTime.tryParse(existing as String);
+  return existingTime != null && candidateTime.isAfter(existingTime);
 }
 
 /// Returns true if an incoming 1:1 message with the same logical content
@@ -1055,19 +1272,16 @@ Future<void> dbUpdateWireEnvelope(
     await dbWriteTransaction(db, (txn) async {
       final rows = await txn.query(
         'messages',
-        columns: const <String>[
-          'is_incoming',
-          'hidden_at',
-          'deleted_at',
-          'private_media_policy_version',
-          'private_media_mode',
-        ],
         where: 'id = ?',
         whereArgs: <Object?>[id],
         limit: 1,
       );
       if (rows.isEmpty) return;
       final row = rows.single;
+      if (row[_directMediaCustodyIntentColumn] != null) return;
+      final intentPredicate = row.containsKey(_directMediaCustodyIntentColumn)
+          ? 'AND $_directMediaCustodyIntentColumn IS NULL '
+          : '';
       final version = (row['private_media_policy_version'] as num?)?.toInt();
       final mode = row['private_media_mode'] as String?;
       final genericOutgoing =
@@ -1081,6 +1295,7 @@ Future<void> dbUpdateWireEnvelope(
       await txn.rawUpdate(
         'UPDATE messages SET wire_envelope = ? WHERE id = ? '
         'AND is_incoming = 0 AND hidden_at IS NULL AND deleted_at IS NULL '
+        '$intentPredicate'
         'AND ((private_media_policy_version IS NULL '
         'AND private_media_mode IS NULL) '
         'OR (private_media_policy_version = 0 '
@@ -1125,6 +1340,7 @@ const _ordinaryAttemptSnapshotColumns = <String>[
   'wire_envelope',
   'relay_expires_at',
   'custody_checked_at',
+  'direct_media_custody_intent_id',
   'dedup_key',
   'is_forwarded',
   'private_media_policy_version',
@@ -1203,6 +1419,11 @@ Object? _ordinaryComparableColumnValue(
   final predicates = <String>[];
   final arguments = <Object?>[];
   for (final column in columns) {
+    // Historical-schema unit fixtures may exercise the generic stage before
+    // v110 exists. Current rows include the custody column, so it participates
+    // in the exact CAS there without making older schemas reference a missing
+    // SQL column.
+    if (!row.containsKey(column)) continue;
     final value = row[column];
     if (value == null) {
       predicates.add('$column IS NULL');
@@ -1270,12 +1491,15 @@ dbStageOutgoingOrdinaryAttemptWithinTransaction(
   required Map<String, Object?> stagedRow,
   required OutgoingOrdinaryAttemptKind kind,
   bool allowDirectAttachments = false,
+  bool allowDirectMediaCustodyIntent = false,
 }) async {
   final messageId = stagedRow['id'] as String? ?? '';
   final validStagedBase =
       _hasBaseOutgoingOrdinaryAttemptShape(stagedRow) &&
       stagedRow['status'] == 'sending' &&
       stagedRow['hidden_at'] == null &&
+      (allowDirectMediaCustodyIntent ||
+          stagedRow[_directMediaCustodyIntentColumn] == null) &&
       _isNonEmptyEnvelope(stagedRow['wire_envelope']);
   if (!validStagedBase) {
     return OutgoingOrdinaryMutationOutcome.refused;
@@ -1287,6 +1511,14 @@ dbStageOutgoingOrdinaryAttemptWithinTransaction(
     whereArgs: <Object?>[messageId],
     limit: 1,
   );
+
+  if (!allowDirectMediaCustodyIntent &&
+      (expectedRow?[_directMediaCustodyIntentColumn] != null ||
+          currentRows.any(
+            (row) => row[_directMediaCustodyIntentColumn] != null,
+          ))) {
+    return OutgoingOrdinaryMutationOutcome.refused;
+  }
 
   if (!allowDirectAttachments &&
       (kind == OutgoingOrdinaryAttemptKind.fresh ||
@@ -1597,7 +1829,8 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
     );
     if (rows.isEmpty) return OutgoingOrdinaryMutationOutcome.removed;
     final current = rows.single;
-    if (((current['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
+    if (current[_directMediaCustodyIntentColumn] != null ||
+        ((current['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
         current['contact_peer_id'] != expectedContactPeerId ||
         !_isSupportedOutgoingOrdinaryPolicy(current)) {
       return OutgoingOrdinaryMutationOutcome.refused;
@@ -1747,6 +1980,22 @@ Future<OutgoingOrdinaryMutationOutcome> dbInvalidateOutgoingOrdinaryEnvelope(
     }
     if (current['wire_envelope'] != expectedEnvelope) {
       return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+    final hasDirectInboxCustodyOutbox = (await txn.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'direct_inbox_custody_outbox' LIMIT 1",
+    )).isNotEmpty;
+    if (hasDirectInboxCustodyOutbox) {
+      final custodyRows = await txn.query(
+        'direct_inbox_custody_outbox',
+        columns: const <String>['message_id'],
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      if (custodyRows.isNotEmpty) {
+        return OutgoingOrdinaryMutationOutcome.preserved;
+      }
     }
     final changed = await txn.update(
       'messages',

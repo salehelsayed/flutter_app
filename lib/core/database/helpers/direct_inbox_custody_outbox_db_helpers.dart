@@ -43,7 +43,7 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
       stagedRow['wire_envelope'] == wireEnvelope &&
       createdAt.trim().isNotEmpty &&
       _isEligibleFreshOrdinaryDirectText(stagedRow) &&
-      _isExactV2DirectTextEnvelope(
+      isExactV2DirectChatInitialEnvelope(
         wireEnvelope,
         messageId: messageId,
         senderPeerId: stagedRow['sender_peer_id'],
@@ -61,11 +61,11 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
       whereArgs: <Object?>[messageId],
       limit: 1,
     );
-    final currentScope = await txn.query(
+    final currentMessageAuthority = await txn.query(
       _table,
-      where: 'recipient_peer_id = ? AND message_id = ?',
-      whereArgs: <Object?>[recipientPeerId, messageId],
-      limit: 1,
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 2,
     );
     final currentIncarnation = await txn.query(
       _table,
@@ -75,15 +75,15 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingDirectTextInboxCustody(
     );
 
     if (currentMessages.isNotEmpty ||
-        currentScope.isNotEmpty ||
+        currentMessageAuthority.isNotEmpty ||
         currentIncarnation.isNotEmpty) {
       final isExactReplay =
           currentMessages.length == 1 &&
-          currentScope.length == 1 &&
+          currentMessageAuthority.length == 1 &&
           currentIncarnation.length == 1 &&
           _messageAttemptMatches(currentMessages.single, stagedRow) &&
           _immutableCustodyMatches(
-            currentScope.single,
+            currentMessageAuthority.single,
             recipientPeerId: recipientPeerId,
             messageId: messageId,
             incarnationId: incarnationId,
@@ -163,6 +163,28 @@ Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxForMessage(
   return rows.isEmpty ? null : rows.single;
 }
 
+/// Loads the immutable v108 owner for [messageId] without trusting the
+/// mutable parent message's current recipient projection.
+///
+/// More than one stored owner is corrupt/ambiguous authority. Throwing keeps
+/// retry callers fail-closed instead of allowing a generic transport path to
+/// interpret the ambiguity as an absent custody row.
+Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+  DatabaseExecutor db, {
+  required String messageId,
+}) async {
+  final rows = await db.query(
+    _table,
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 2,
+  );
+  if (rows.length > 1) {
+    throw StateError('Ambiguous direct inbox custody owner for message');
+  }
+  return rows.isEmpty ? null : rows.single;
+}
+
 /// Retains the row and records one bounded failure classification only while
 /// the caller's exact immutable incarnation still owns the scope.
 Future<bool> dbRecordDirectInboxCustodyFailureIfExact(
@@ -234,6 +256,7 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
         )) {
       return DirectInboxCustodyCompletionOutcome.stale;
     }
+    final custody = custodyRows.single;
 
     final messageRows = await txn.query(
       'messages',
@@ -242,7 +265,24 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
       limit: 1,
     );
     var outcome = DirectInboxCustodyCompletionOutcome.messageRemoved;
-    if (messageRows.isNotEmpty) {
+    if (messageRows.isEmpty) {
+      // Physical deletion is stronger than accepted relay custody, but the
+      // outbox row was the only durable fact preventing a delayed generic
+      // whole-row save from recreating the message after completion. Replace
+      // that authority inside this same transaction with a scrubbed local
+      // tombstone before retiring the exact v108 incarnation.
+      await txn.insert(
+        'messages',
+        _removedMessageTombstoneFromCustody(
+          custody,
+          messageId: messageId,
+          recipientPeerId: recipientPeerId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          relayExpiresAt: relayExpiresAt,
+        ),
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+    } else {
       final message = messageRows.single;
       final status = message['status'] as String?;
       final ownsMessage =
@@ -332,6 +372,66 @@ bool _immutableCustodyMatches(
     row['incarnation_id'] == incarnationId &&
     row['wire_envelope'] == wireEnvelope;
 
+Map<String, Object?> _removedMessageTombstoneFromCustody(
+  Map<String, Object?> custody, {
+  required String messageId,
+  required String recipientPeerId,
+  required String expectedWireEnvelope,
+  required int? relayExpiresAt,
+}) {
+  final senderPeerId = _exactInitialEnvelopeSenderPeerId(
+    expectedWireEnvelope,
+    messageId: messageId,
+  );
+  final createdAt = custody['created_at'];
+  final completedAt = custody['updated_at'];
+  if (senderPeerId == null ||
+      !_isNonBlankString(createdAt) ||
+      !_isNonBlankString(completedAt)) {
+    throw StateError(
+      'direct inbox custody cannot retain exact removed-message authority',
+    );
+  }
+  return <String, Object?>{
+    'id': messageId,
+    'contact_peer_id': recipientPeerId,
+    'sender_peer_id': senderPeerId,
+    'text': '',
+    'timestamp': createdAt,
+    'status': 'inboxed',
+    'is_incoming': 0,
+    'created_at': createdAt,
+    'wire_envelope': null,
+    'transport': 'inbox',
+    'relay_expires_at': relayExpiresAt,
+    'custody_checked_at': null,
+    'hidden_at': completedAt,
+    'direct_media_custody_intent_id': null,
+  };
+}
+
+String? _exactInitialEnvelopeSenderPeerId(
+  String wireEnvelope, {
+  required String messageId,
+}) {
+  try {
+    final decoded = jsonDecode(wireEnvelope);
+    if (decoded is! Map<String, dynamic>) return null;
+    final senderPeerId = decoded['senderPeerId'];
+    if (!_isNonBlankString(senderPeerId) ||
+        !isExactV2DirectChatInitialEnvelope(
+          wireEnvelope,
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+        )) {
+      return null;
+    }
+    return senderPeerId as String;
+  } on FormatException {
+    return null;
+  }
+}
+
 bool _messageAttemptMatches(
   Map<String, Object?> current,
   Map<String, Object?> staged,
@@ -357,6 +457,7 @@ bool _isEligibleFreshOrdinaryDirectText(Map<String, Object?> row) =>
     row['transport'] == null &&
     row['relay_expires_at'] == null &&
     row['custody_checked_at'] == null &&
+    row['direct_media_custody_intent_id'] == null &&
     _asInt(row['private_media_policy_version']) == 0 &&
     row['private_media_mode'] == 'ordinary' &&
     row['private_media_duration_seconds'] == null &&
@@ -367,7 +468,13 @@ bool _isEligibleFreshOrdinaryDirectText(Map<String, Object?> row) =>
     row['private_media_terminal_at_ms'] == null &&
     row['private_media_clock_high_water_ms'] == null;
 
-bool _isExactV2DirectTextEnvelope(
+/// Validates the cleartext discriminator and encrypted body of one initial
+/// direct `chat_message` envelope.
+///
+/// The frozen v108 custody wire label says "text" for compatibility, but the
+/// outer envelope is shared by initial text and ordinary-media messages. Edit
+/// events carry a distinct `eventId` and are deliberately excluded.
+bool isExactV2DirectChatInitialEnvelope(
   String wireEnvelope, {
   required String messageId,
   required Object? senderPeerId,
@@ -380,6 +487,7 @@ bool _isExactV2DirectTextEnvelope(
         decoded['version'] == '2' &&
         decoded['id'] == messageId &&
         decoded['senderPeerId'] == senderPeerId &&
+        !decoded.containsKey('eventId') &&
         encrypted is Map<String, dynamic> &&
         _isNonBlankString(encrypted['kem']) &&
         _isNonBlankString(encrypted['ciphertext']) &&

@@ -762,9 +762,15 @@ void main() {
 
       expect(retried, 1);
       expect(rawPendingDirDeletes, 1);
+      _expectCompletedFingerprint(
+        (await fixture.rawAttachmentRow(attachmentId))!,
+        completed,
+      );
       expect(
-        (await fixture.rawAttachmentRow(attachmentId))?['download_status'],
-        'done',
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        _newKey,
       );
     },
   );

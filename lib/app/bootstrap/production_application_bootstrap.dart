@@ -1179,6 +1179,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 recipientPeerId: recipientPeerId,
                 messageId: messageId,
               ),
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId: ({required messageId}) =>
+          dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+            db,
+            messageId: messageId,
+          ),
       dbRecordDirectInboxCustodyFailureIfExact:
           ({
             required recipientPeerId,
@@ -1672,6 +1677,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     mediaAttachmentRepository = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState: (row) =>
           dbSaveMediaAttachmentPreservingLocalState(db, row),
+      dbCanApplyGenericMediaAttachmentSave: (row) =>
+          dbCanApplyGenericMediaAttachmentSave(db, row),
       dbStageOutgoingOrdinaryAttemptWithMedia:
           ({
             required expectedRow,
@@ -1684,6 +1691,36 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             stagedRow: stagedRow,
             attachmentRows: attachmentRows,
             kind: kind,
+          ),
+      dbStageOutgoingDirectMediaInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required kind,
+            required recipientPeerId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbProjectOutgoingDirectMediaCustodyUploadFailure:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRows,
+            required failedAttachmentId,
+            required disposition,
+          }) => dbProjectOutgoingDirectMediaCustodyUploadFailure(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            failedAttachmentId: failedAttachmentId,
+            disposition: disposition,
           ),
       publishOutgoingOrdinaryMutation:
           ({required messageId, required outcome, required committedMedia}) =>

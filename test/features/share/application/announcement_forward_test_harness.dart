@@ -7,6 +7,7 @@ import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -128,6 +129,30 @@ class RecordingCryptoBridge extends PassthroughCryptoBridge {
       .toList(growable: false);
 }
 
+class _AnnouncementForwardP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _AnnouncementForwardP2PService({required NodeState initialState})
+    : super(initialState: initialState);
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    // Delegate through the bool fake so existing hooks, call counts, and
+    // serialized-envelope logs retain their exact historical semantics.
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+    );
+  }
+}
+
 class AnnouncementForwardHarness {
   final identities = FakeIdentityRepository();
   final contacts = InMemoryContactRepository();
@@ -137,7 +162,7 @@ class AnnouncementForwardHarness {
   final media = RecordingOwnerMediaRepository();
   final fileManager = FakeMediaFileManager();
   final bridge = RecordingCryptoBridge();
-  final p2p = FakeP2PService(
+  final p2p = _AnnouncementForwardP2PService(
     initialState: const NodeState(
       isStarted: true,
       peerId: announcementOwnPeerId,
@@ -172,6 +197,7 @@ class AnnouncementForwardHarness {
   );
 
   Future<void> setUp() async {
+    media.enableDirectMediaInboxCustodyForTest(directMessages);
     identities.seed(
       IdentityModel(
         peerId: announcementOwnPeerId,

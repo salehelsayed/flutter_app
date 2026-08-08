@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -39,7 +40,7 @@ void main() {
     db = await databaseFactoryFfi.openDatabase(
       '${tempDirectory.path}/identity.db',
       options: OpenDatabaseOptions(
-        version: 108,
+        version: currentIdentityDatabaseVersion,
         singleInstance: false,
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
@@ -55,33 +56,147 @@ void main() {
     }
   });
 
+  test('runtime custody capability requires the complete six-callback set', () {
+    expect(repository.supportsDirectTextInboxCustody, isTrue);
+    for (final omitted in <String>{
+      'stage',
+      'loadBatch',
+      'loadMessage',
+      'loadOwner',
+      'recordFailure',
+      'complete',
+    }) {
+      final partial = _buildRepository(
+        db,
+        capacity: 2,
+        omitCustodyDelegate: omitted,
+      );
+      expect(
+        partial.supportsDirectTextInboxCustody,
+        isFalse,
+        reason: 'must fail closed when $omitted is absent',
+      );
+    }
+  });
+
   test(
-    'runtime custody capability requires the complete five-callback set',
-    () {
-      expect(repository.supportsDirectTextInboxCustody, isTrue);
-      for (final omitted in <String>{
-        'stage',
-        'loadBatch',
-        'loadMessage',
-        'recordFailure',
-        'complete',
-      }) {
-        final partial = _buildRepository(
-          db,
-          capacity: 2,
-          omitCustodyDelegate: omitted,
-        );
-        expect(
-          partial.supportsDirectTextInboxCustody,
-          isFalse,
-          reason: 'must fail closed when $omitted is absent',
-        );
-      }
+    'message-id owner lookup returns stored recipient after parent drift and rejects ambiguity',
+    () async {
+      final message = _message(
+        'global-owner-lookup',
+        envelope: _envelope('global-owner-lookup', 'cipher-owner'),
+      );
+      final staged = await repository.stageOutgoingDirectTextInboxCustody(
+        expected: null,
+        staged: message,
+        kind: OutgoingOrdinaryAttemptKind.fresh,
+        recipientPeerId: _peer,
+        incarnationId: _incarnationA,
+        wireEnvelope: message.wireEnvelope!,
+      );
+      expect(staged.authorizesTransport, isTrue);
+      await db.update(
+        'messages',
+        const <String, Object?>{'contact_peer_id': 'peer-drifted'},
+        where: 'id = ?',
+        whereArgs: <Object?>[message.id],
+      );
+
+      final owner = await repository.loadDirectInboxCustodyOwnerForMessageId(
+        messageId: message.id,
+      );
+      expect(owner?.recipientPeerId, _peer);
+      expect(owner?.messageId, message.id);
+      expect(
+        await repository.loadDirectInboxCustodyForMessage(
+          recipientPeerId: 'peer-drifted',
+          messageId: message.id,
+        ),
+        isNull,
+      );
+
+      await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+        'recipient_peer_id': 'peer-other-owner',
+        'message_id': message.id,
+        'incarnation_id': _incarnationB,
+        'wire_envelope': _envelope(message.id, 'cipher-other-owner'),
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': _t1,
+        'updated_at': _t1,
+      });
+      await expectLater(
+        repository.loadDirectInboxCustodyOwnerForMessageId(
+          messageId: message.id,
+        ),
+        throwsA(isA<StateError>()),
+      );
     },
   );
 
   test(
-    'TC-342-02 atomic immutable direct-text custody mutations fail closed',
+    'TC-345-09b fresh text stage cannot create a sibling global message-id owner',
+    () async {
+      const messageId = 'global-message-id-stage-exclusion';
+      const secondPeer = 'peer-second-recipient';
+      final first = _message(
+        messageId,
+        envelope: _envelope(messageId, 'cipher-first-owner'),
+      );
+      final firstStage = await repository.stageOutgoingDirectTextInboxCustody(
+        expected: null,
+        staged: first,
+        kind: OutgoingOrdinaryAttemptKind.fresh,
+        recipientPeerId: _peer,
+        incarnationId: _incarnationA,
+        wireEnvelope: first.wireEnvelope!,
+      );
+      expect(firstStage.authorizesTransport, isTrue);
+      await db.delete(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+
+      final second = _message(
+        messageId,
+        envelope: _envelope(messageId, 'cipher-second-owner'),
+        createdAt: _t1,
+      ).copyWith(contactPeerId: secondPeer);
+      final secondStage = await repository.stageOutgoingDirectTextInboxCustody(
+        expected: null,
+        staged: second,
+        kind: OutgoingOrdinaryAttemptKind.fresh,
+        recipientPeerId: secondPeer,
+        incarnationId: _incarnationB,
+        wireEnvelope: second.wireEnvelope!,
+      );
+
+      expect(secondStage.outcome, OutgoingOrdinaryMutationOutcome.refused);
+      expect(secondStage.authorizesTransport, isFalse);
+      expect(
+        await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        isEmpty,
+      );
+      final owners = await db.query(
+        'direct_inbox_custody_outbox',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      expect(owners, hasLength(1));
+      expect(owners.single['recipient_peer_id'], _peer);
+      expect(owners.single['incarnation_id'], _incarnationA);
+      expect(owners.single['wire_envelope'], first.wireEnvelope);
+    },
+  );
+
+  test(
+    'TC-342-02 atomic immutable direct-text custody mutations fail closed; TC-345-02g completion-before-stale-save stays terminal',
     () async {
       final first = _message(
         'generated-message',
@@ -271,6 +386,26 @@ void main() {
       expect(inboxedCompletion.message?.status, 'inboxed');
       expect(inboxedCompletion.message?.transport, 'inbox');
       expect(inboxedCompletion.message?.relayExpiresAt, 9100);
+      await repository.saveMessage(
+        preassigned.copyWith(
+          status: 'failed',
+          wireEnvelope: _envelope(preassigned.id, 'stale-after-completion'),
+        ),
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[preassigned.id],
+        )).single,
+        allOf(
+          containsPair('status', 'inboxed'),
+          containsPair('transport', 'inbox'),
+          containsPair('wire_envelope', preassigned.wireEnvelope),
+          containsPair('relay_expires_at', 9100),
+        ),
+        reason: 'completion must stay monotonic after the v108 row is retired',
+      );
 
       final crossedEdit = _message(
         'crossed-edit-completion',
@@ -289,7 +424,12 @@ void main() {
             recipientPeerId: _peer,
             messageId: crossedEdit.id,
           ))!;
-      final laterEditEnvelope = _envelope(crossedEdit.id, 'cipher-later-edit');
+      final laterEditEnvelope =
+          '{"type":"chat_message","version":"2",'
+          '"id":"${crossedEdit.id}","eventId":"crossed-edit-event",'
+          '"senderPeerId":"peer-self",'
+          '"encrypted":{"kem":"kem","ciphertext":"cipher-later-edit",'
+          '"nonce":"nonce"}}';
       await db.update(
         'messages',
         <String, Object?>{
@@ -332,6 +472,52 @@ void main() {
         reason:
             'accepted initial custody retires without projecting a later edit',
       );
+      final crossedEditBeforeStaleSave = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[crossedEdit.id],
+      )).single;
+      await repository.saveMessage(crossedEdit);
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[crossedEdit.id],
+        )).single,
+        crossedEditBeforeStaleSave,
+        reason:
+            'a delayed initial save cannot overwrite the strict edit after v108 retirement',
+      );
+
+      const newestEditAt = '2026-08-06T10:00:02.000Z';
+      final newestEditEnvelope =
+          '{"type":"chat_message","version":"2",'
+          '"id":"${crossedEdit.id}","eventId":"crossed-edit-event-2",'
+          '"senderPeerId":"peer-self",'
+          '"encrypted":{"kem":"kem","ciphertext":"cipher-newest-edit",'
+          '"nonce":"nonce"}}';
+      await repository.saveMessage(
+        crossedEdit.copyWith(
+          text: 'newest edit',
+          status: 'sending',
+          wireEnvelope: newestEditEnvelope,
+          editedAt: newestEditAt,
+        ),
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[crossedEdit.id],
+        )).single,
+        allOf(
+          containsPair('text', 'newest edit'),
+          containsPair('edited_at', newestEditAt),
+          containsPair('status', 'sending'),
+          containsPair('wire_envelope', newestEditEnvelope),
+        ),
+        reason: 'a demonstrably newer strict Plan342 edit remains writable',
+      );
 
       final removed = _message(
         'removed-before-completion',
@@ -364,6 +550,23 @@ void main() {
         DirectInboxCustodyCompletionOutcome.messageRemoved,
       );
       expect(removedCompletion.message, isNull);
+      final removedTombstone = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[removed.id],
+      )).single;
+      expect(
+        removedTombstone,
+        allOf(
+          containsPair('contact_peer_id', _peer),
+          containsPair('sender_peer_id', 'peer-self'),
+          containsPair('text', ''),
+          containsPair('wire_envelope', null),
+          containsPair('status', 'inboxed'),
+          containsPair('transport', 'inbox'),
+          containsPair('hidden_at', _t0),
+        ),
+      );
       expect(
         await db.query(
           'direct_inbox_custody_outbox',
@@ -371,6 +574,22 @@ void main() {
           whereArgs: <Object?>[removed.id],
         ),
         isEmpty,
+      );
+      await repository.saveMessage(
+        removed.copyWith(
+          status: 'failed',
+          wireEnvelope: _envelope(removed.id, 'stale-after-removal'),
+        ),
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[removed.id],
+        )).single,
+        removedTombstone,
+        reason:
+            'messageRemoved completion must retain deletion authority after v108 retirement',
       );
 
       await db.execute('''
@@ -453,6 +672,65 @@ void main() {
           whereArgs: <Object?>[rollback.id],
         ),
         hasLength(1),
+      );
+
+      final removedRollback = _message(
+        'removed-rollback-completion',
+        envelope: _envelope(
+          'removed-rollback-completion',
+          'cipher-removed-rollback',
+        ),
+      );
+      await repository.stageOutgoingDirectTextInboxCustody(
+        expected: null,
+        staged: removedRollback,
+        kind: OutgoingOrdinaryAttemptKind.fresh,
+        recipientPeerId: _peer,
+        incarnationId: _incarnationE,
+        wireEnvelope: removedRollback.wireEnvelope!,
+      );
+      final removedRollbackEntry = (await repository
+          .loadDirectInboxCustodyForMessage(
+            recipientPeerId: _peer,
+            messageId: removedRollback.id,
+          ))!;
+      await db.delete(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[removedRollback.id],
+      );
+      await db.execute('''
+        CREATE TRIGGER inject_removed_custody_completion_failure
+        BEFORE DELETE ON direct_inbox_custody_outbox
+        WHEN OLD.message_id = 'removed-rollback-completion'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected removed custody completion failure');
+        END
+      ''');
+      await expectLater(
+        repository.completeAcceptedDirectInboxCustodyIfExact(
+          expected: removedRollbackEntry,
+          relayExpiresAt: 9250,
+        ),
+        throwsA(isA<DatabaseException>()),
+      );
+      expect(
+        await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[removedRollback.id],
+        ),
+        isEmpty,
+        reason: 'the hidden tombstone insert must roll back with retirement',
+      );
+      expect(
+        await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[removedRollback.id],
+        ),
+        hasLength(1),
+        reason: 'the exact v108 authority must remain retryable after rollback',
       );
     },
   );
@@ -880,6 +1158,14 @@ MessageRepositoryImpl _buildRepository(
               dbLoadDirectInboxCustodyOutboxForMessage(
                 db,
                 recipientPeerId: recipientPeerId,
+                messageId: messageId,
+              ),
+    dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+        omitCustodyDelegate == 'loadOwner'
+        ? null
+        : ({required messageId}) =>
+              dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+                db,
                 messageId: messageId,
               ),
     dbRecordDirectInboxCustodyFailureIfExact:

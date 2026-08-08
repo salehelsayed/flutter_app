@@ -2,11 +2,16 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -82,6 +87,87 @@ class _FakeDirectManualUploadRetryRearmRepository
       );
     }
     return true;
+  }
+}
+
+enum _FailedRetryParentCrossing { deleted, settled }
+
+class _CrossingFailedMessageRepository extends FakeMessageRepository {
+  _CrossingFailedMessageRepository(this.crossing);
+
+  final _FailedRetryParentCrossing crossing;
+  bool crossedAfterListLoad = false;
+
+  @override
+  Future<List<ConversationMessage>> getFailedOutgoingMessages() async {
+    final loaded = await super.getFailedOutgoingMessages();
+    if (!crossedAfterListLoad && loaded.isNotEmpty) {
+      crossedAfterListLoad = true;
+      switch (crossing) {
+        case _FailedRetryParentCrossing.deleted:
+          await deleteMessage(loaded.single.id);
+          break;
+        case _FailedRetryParentCrossing.settled:
+          await updateMessageStatus(loaded.single.id, 'delivered');
+          break;
+      }
+    }
+    return loaded;
+  }
+}
+
+class _AckCustodyRetryP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _AckCustodyRetryP2PService()
+    : super(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
+
+  int ackCustodyCallCount = 0;
+  String? lastAckCustodyPeerId;
+  String? lastAckCustodyEnvelope;
+  AckCustodyKind? lastAckCustodyKind;
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    ackCustodyCallCount++;
+    lastAckCustodyPeerId = toPeerId;
+    lastAckCustodyEnvelope = message;
+    lastAckCustodyKind = custodyKind;
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      expiresAtMs: 4102444800000,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
+
+class _RecordingLegacyUploadFailureProjection
+    implements DirectUploadRetryProjectionRepository {
+  int callCount = 0;
+  String? lastMessageId;
+  String? lastAttachmentId;
+  UploadMediaFailed? lastFailure;
+
+  @override
+  Future<UploadRetryProjectionResult> projectUploadFailure({
+    required String messageId,
+    required String attachmentId,
+    required UploadMediaFailed failure,
+  }) async {
+    callCount++;
+    lastMessageId = messageId;
+    lastAttachmentId = attachmentId;
+    lastFailure = failure;
+    return const UploadRetryProjectionResult(
+      state: UploadRetryProjectionState.retryPending,
+    );
   }
 }
 
@@ -219,6 +305,7 @@ void main() {
     String messageId, {
     FakeMediaFileManager? manager,
     void Function(Iterable<String> attachmentIds)? onClaim,
+    DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   }) {
     return retryFailedMessage(
       messageId: messageId,
@@ -230,6 +317,7 @@ void main() {
       bridge: bridge,
       uploadMediaFn: fakeUploadFn.call,
       mediaFileManager: manager,
+      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
       uploadRetryRearmRepo: manualRearmRepo,
       tryClaimUploadLease: (attachmentIds) {
         onClaim?.call(attachmentIds);
@@ -243,6 +331,631 @@ void main() {
   }
 
   group('retryFailedMessages -- re-upload incomplete media', () {
+    test(
+      'TC-345-07b failed retry respects media intent and existing v108 authority before rebuild',
+      () async {
+        final owned = _makeFailedMsg(id: 'msg-v108-media-retry');
+        final ownedAttachment = _makeAttachment(
+          id: 'att-v108-media-retry',
+          messageId: owned.id,
+          downloadStatus: 'done',
+        );
+        messageRepo.seed(<ConversationMessage>[owned]);
+        mediaAttachmentRepo.seed(<MediaAttachment>[ownedAttachment]);
+        messageRepo.seedDirectInboxCustody(
+          DirectInboxCustodyOutboxEntry(
+            recipientPeerId: owned.contactPeerId,
+            messageId: owned.id,
+            incarnationId: 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+            wireEnvelope:
+                '{"type":"chat_message","version":"2","encrypted":{"ciphertext":"owned"}}',
+            retryCount: 0,
+            lastAttemptAt: null,
+            lastErrorCode: null,
+            createdAt: '2026-08-07T12:00:00.000Z',
+            updatedAt: '2026-08-07T12:00:00.000Z',
+          ),
+        );
+
+        final ownedCount = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          uploadMediaFn: fakeUploadFn.call,
+          retryDirectInboxCustody: false,
+        );
+
+        expect(ownedCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.directCustodyRows, hasLength(1));
+        expect(
+          (await messageRepo.getMessage(owned.id))!.toMap(),
+          owned.toMap(),
+        );
+
+        // The failed list is a snapshot. A lifecycle mutation may settle or
+        // physically remove its parent after that list read but before this
+        // candidate executes. The independent v108 row must still be resolved
+        // from the loaded scope and must remain the only retry authority.
+        for (final crossing in _FailedRetryParentCrossing.values) {
+          final crossingMessageRepo = _CrossingFailedMessageRepository(
+            crossing,
+          );
+          final crossingMediaRepo = FakeMediaAttachmentRepository();
+          final crossingBridge = FakeBridge();
+          final crossingUpload = FakeUploadMediaFn();
+          final crossingP2p = _AckCustodyRetryP2PService();
+          final crossingMessage = _makeFailedMsg(
+            id: 'msg-v108-${crossing.name}-after-list-load',
+          );
+          final crossingAttachment = _makeAttachment(
+            id: 'att-v108-${crossing.name}-after-list-load',
+            messageId: crossingMessage.id,
+            downloadStatus: 'upload_pending',
+          );
+          final exactEnvelope =
+              '{"type":"chat_message","version":"2",'
+              '"id":"${crossingMessage.id}","senderPeerId":"my-peer-id",'
+              '"encrypted":{"kem":"kem-${crossing.name}",'
+              '"ciphertext":"cipher-${crossing.name}",'
+              '"nonce":"nonce-${crossing.name}"}}';
+          crossingMessageRepo.seed(<ConversationMessage>[crossingMessage]);
+          crossingMediaRepo.seed(<MediaAttachment>[crossingAttachment]);
+          crossingMessageRepo.seedDirectInboxCustody(
+            DirectInboxCustodyOutboxEntry(
+              recipientPeerId: crossingMessage.contactPeerId,
+              messageId: crossingMessage.id,
+              incarnationId: crossing == _FailedRetryParentCrossing.deleted
+                  ? 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+                  : 'cccccccccccccccccccccccccccccccc',
+              wireEnvelope: exactEnvelope,
+              retryCount: 0,
+              lastAttemptAt: null,
+              lastErrorCode: null,
+              createdAt: '2026-08-07T12:01:00.000Z',
+              updatedAt: '2026-08-07T12:01:00.000Z',
+            ),
+          );
+
+          final crossingCount = await retryFailedMessages(
+            messageRepo: crossingMessageRepo,
+            mediaAttachmentRepo: crossingMediaRepo,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: crossingP2p,
+            bridge: crossingBridge,
+            uploadMediaFn: crossingUpload.call,
+          );
+
+          expect(crossingMessageRepo.crossedAfterListLoad, isTrue);
+          expect(crossingCount, 1, reason: crossing.name);
+          expect(crossingMessageRepo.directCustodyRows, isEmpty);
+          expect(crossingP2p.ackCustodyCallCount, 1);
+          expect(
+            crossingP2p.lastAckCustodyPeerId,
+            crossingMessage.contactPeerId,
+          );
+          expect(crossingP2p.lastAckCustodyEnvelope, exactEnvelope);
+          expect(crossingP2p.lastAckCustodyKind, AckCustodyKind.directTextV108);
+          expect(crossingUpload.callCount, 0);
+          expect(crossingBridge.sendCallCount, 0);
+          expect(crossingMediaRepo.getAttachmentsForMessageCallCount, 0);
+          expect(crossingMediaRepo.allSavedAttachments, isEmpty);
+          expect(crossingMessageRepo.ordinaryMutationCallCount, 0);
+          expect(crossingP2p.storeInInboxCallCount, 0);
+          expect(crossingP2p.sendMessageCallCount, 0);
+          expect(crossingP2p.sendMessageWithReplyCallCount, 0);
+          final parentAfter = await crossingMessageRepo.getMessage(
+            crossingMessage.id,
+          );
+          if (crossing == _FailedRetryParentCrossing.deleted) {
+            expect(parentAfter, isNull);
+          } else {
+            expect(parentAfter!.status, 'delivered');
+          }
+        }
+
+        // The parent contact is mutable and can already have drifted before
+        // the failed-list snapshot is read. Ownership and replay destination
+        // still come from the immutable v108 row, never the parent recipient.
+        final driftedMessageRepo = FakeMessageRepository();
+        final driftedMediaRepo = FakeMediaAttachmentRepository();
+        final driftedBridge = FakeBridge();
+        final driftedUpload = FakeUploadMediaFn();
+        final driftedP2p = _AckCustodyRetryP2PService();
+        final driftedParent = _makeFailedMsg(
+          id: 'msg-v108-owner-recipient-drift',
+          contactPeerId: 'peer-parent-drifted',
+          wireEnvelope:
+              '{"type":"chat_message","version":"2","encrypted":{"ciphertext":"stale-parent"}}',
+        );
+        const storedOwner = 'peer-stored-owner';
+        const exactOwnedEnvelope =
+            '{"type":"chat_message","version":"2",'
+            '"id":"msg-v108-owner-recipient-drift",'
+            '"senderPeerId":"my-peer-id",'
+            '"encrypted":{"kem":"owner-kem",'
+            '"ciphertext":"owner-cipher","nonce":"owner-nonce"}}';
+        driftedMessageRepo.seed(<ConversationMessage>[driftedParent]);
+        driftedMediaRepo.seed(<MediaAttachment>[
+          _makeAttachment(
+            id: 'att-v108-owner-recipient-drift',
+            messageId: driftedParent.id,
+            downloadStatus: 'done',
+          ),
+        ]);
+        driftedMessageRepo.seedDirectInboxCustody(
+          DirectInboxCustodyOutboxEntry(
+            recipientPeerId: storedOwner,
+            messageId: driftedParent.id,
+            incarnationId: 'dddddddddddddddddddddddddddddddd',
+            wireEnvelope: exactOwnedEnvelope,
+            retryCount: 0,
+            lastAttemptAt: null,
+            lastErrorCode: null,
+            createdAt: '2026-08-07T12:02:00.000Z',
+            updatedAt: '2026-08-07T12:02:00.000Z',
+          ),
+        );
+
+        final driftedCount = await retryFailedMessages(
+          messageRepo: driftedMessageRepo,
+          mediaAttachmentRepo: driftedMediaRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: driftedP2p,
+          bridge: driftedBridge,
+          uploadMediaFn: driftedUpload.call,
+        );
+
+        expect(driftedCount, 1);
+        expect(driftedP2p.ackCustodyCallCount, 1);
+        expect(driftedP2p.lastAckCustodyPeerId, storedOwner);
+        expect(driftedP2p.lastAckCustodyEnvelope, exactOwnedEnvelope);
+        expect(driftedP2p.lastAckCustodyKind, AckCustodyKind.directTextV108);
+        expect(driftedMessageRepo.directCustodyRows, isEmpty);
+        expect(driftedUpload.callCount, 0);
+        expect(driftedMediaRepo.getAttachmentsForMessageCallCount, 0);
+        expect(driftedMediaRepo.allSavedAttachments, isEmpty);
+        expect(driftedBridge.commandLog, isNot(contains('message.encrypt')));
+        expect(driftedBridge.sendCallCount, 0);
+        expect(driftedP2p.storeInInboxCallCount, 0);
+        expect(driftedP2p.sendMessageCallCount, 0);
+        expect(driftedP2p.sendMessageWithReplyCallCount, 0);
+        expect(driftedMessageRepo.ordinaryMutationCallCount, 0);
+
+        const partialMessageId = 'msg-partial-media-retry';
+        const persistedId = 'att-partial-present';
+        const missingId = 'att-partial-missing';
+        final partial = _makeFailedMsg(id: partialMessageId).copyWith(
+          directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+            messageId: partialMessageId,
+            attachmentIds: const <String>[persistedId, missingId],
+          ),
+        );
+        messageRepo.seed(<ConversationMessage>[partial]);
+        mediaAttachmentRepo.seed(<MediaAttachment>[
+          _makeAttachment(
+            id: persistedId,
+            messageId: partialMessageId,
+            downloadStatus: 'done',
+          ),
+        ]);
+
+        final partialCount = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          uploadMediaFn: fakeUploadFn.call,
+          retryDirectInboxCustody: false,
+        );
+
+        expect(partialCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(
+          (await messageRepo.getMessage(
+            partialMessageId,
+          ))?.directMediaCustodyIntentId,
+          partial.directMediaCustodyIntentId,
+        );
+      },
+    );
+
+    test(
+      'TC-345-07d failed retry cannot normalize malformed token preparation through generic save',
+      () async {
+        const messageId = 'msg-345-07d-malformed-preparation';
+        const attachmentId = 'att-345-07d-malformed-preparation';
+        final tempDir = Directory.systemTemp.createTempSync(
+          'direct_media_custody_retry_malformed_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final source = File('${tempDir.path}/voice.m4a');
+        await source.writeAsBytes(<int>[0x01, 0x02, 0x03]);
+        final malformedPending = _makeAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          localPath: source.path,
+          downloadStatus: 'upload_pending',
+          mime: 'audio/mp4',
+          mediaType: 'audio',
+          durationMs: 3000,
+        );
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final prepared = _makeFailedMsg(
+          id: messageId,
+          text: '',
+        ).copyWith(directMediaCustodyIntentId: intent);
+        messageRepo.seed(<ConversationMessage>[prepared]);
+        mediaAttachmentRepo.seed(<MediaAttachment>[malformedPending]);
+        fakeUploadFn.willReturn(
+          malformedPending.copyWith(
+            localPath: 'media/peer-target/$attachmentId.m4a',
+            downloadStatus: 'done',
+          ),
+        );
+        var combinedStageCalls = 0;
+        mediaAttachmentRepo.onStageOutgoingDirectMediaInboxCustody =
+            ({
+              required expected,
+              required staged,
+              required attachments,
+              required kind,
+              required recipientPeerId,
+              required wireEnvelope,
+            }) async {
+              combinedStageCalls++;
+              throw StateError('malformed preparation reached custody');
+            };
+        final parentBefore = (await messageRepo.getMessage(messageId))!.toMap();
+        final attachmentBefore = (await mediaAttachmentRepo.getAttachmentById(
+          attachmentId,
+        ))!.toMap();
+
+        final count = await retryManual(messageId);
+
+        expect(count, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(mediaAttachmentRepo.allSavedAttachments, isEmpty);
+        expect(combinedStageCalls, 0);
+        expect(bridge.commandLog, isNot(contains('message.encrypt')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(
+          (await messageRepo.getMessage(messageId))?.toMap(),
+          parentBefore,
+        );
+        expect(
+          (await mediaAttachmentRepo.getAttachmentById(attachmentId))?.toMap(),
+          attachmentBefore,
+        );
+      },
+    );
+
+    test(
+      'TC-345-07g token-bearing failed reupload failure uses only exact manifest authority',
+      () async {
+        const scenarios = <String>[
+          'unsupported',
+          'refused',
+          'applied',
+          'metadata',
+          'partial',
+          'token',
+          'global-v108',
+        ];
+
+        for (final scenario in scenarios) {
+          messageRepo = FakeMessageRepository();
+          mediaAttachmentRepo = FakeMediaAttachmentRepository();
+          fakeUploadFn = FakeUploadMediaFn();
+          uploadTracker = MediaUploadInFlightTracker();
+          manualRearmRepo = _FakeDirectManualUploadRetryRearmRepository(
+            messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+          );
+
+          final tempDir = Directory.systemTemp.createTempSync(
+            'retry_failed_345_07g_${scenario.replaceAll('-', '_')}_',
+          );
+          addTearDown(() {
+            if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+          });
+          final source = File('${tempDir.path}/source.jpg')
+            ..writeAsBytesSync(const <int>[0x01, 0x02, 0x03, 0x04]);
+          final manager = FakeMediaFileManager()..resolveResult = source.path;
+          final messageId = 'msg-345-07g-$scenario';
+          final attachmentIds = <String>[
+            'att-345-07g-$scenario-a',
+            'att-345-07g-$scenario-b',
+          ];
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: attachmentIds,
+          );
+          final preparedParent = _makeFailedMsg(
+            id: messageId,
+          ).copyWith(directMediaCustodyIntentId: intent);
+          final pendingAttachments = attachmentIds
+              .map(
+                (attachmentId) => MediaAttachment(
+                  id: attachmentId,
+                  messageId: messageId,
+                  mime: 'image/jpeg',
+                  size: source.lengthSync(),
+                  mediaType: 'image',
+                  localPath:
+                      MediaFilePathConvention.relativePathForPendingUpload(
+                        messageId: messageId,
+                        attachmentId: attachmentId,
+                        mime: 'image/jpeg',
+                      ),
+                  downloadStatus: 'upload_pending',
+                  createdAt: preparedParent.createdAt,
+                  ownerLane: MediaOwnerLane.direct,
+                ),
+              )
+              .toList(growable: false);
+          messageRepo.seed(<ConversationMessage>[preparedParent]);
+          mediaAttachmentRepo.seed(pendingAttachments);
+
+          var exactProjectionCalls = 0;
+          if (scenario != 'unsupported') {
+            mediaAttachmentRepo.onProjectDirectMediaCustodyUploadFailure =
+                ({
+                  required expectedParent,
+                  required expectedAttachments,
+                  required failedAttachmentId,
+                  required failure,
+                }) async {
+                  exactProjectionCalls++;
+                  expect(expectedParent.status, 'sending', reason: scenario);
+                  expect(
+                    expectedParent.directMediaCustodyIntentId,
+                    intent,
+                    reason: scenario,
+                  );
+                  expect(
+                    expectedAttachments
+                        .map((attachment) => attachment.id)
+                        .toSet(),
+                    attachmentIds.toSet(),
+                    reason: scenario,
+                  );
+                  expect(
+                    expectedAttachments.every(
+                      (attachment) =>
+                          attachment.ownerLane == MediaOwnerLane.direct &&
+                          attachment.downloadStatus == 'upload_pending',
+                    ),
+                    isTrue,
+                    reason: scenario,
+                  );
+                  expect(failedAttachmentId, attachmentIds.first);
+                  expect(
+                    failure.disposition,
+                    UploadMediaDisposition.terminal,
+                    reason: scenario,
+                  );
+                  if (scenario == 'applied') {
+                    messageRepo.seed(<ConversationMessage>[
+                      expectedParent.copyWith(status: 'failed'),
+                    ]);
+                    mediaAttachmentRepo.seed(
+                      expectedAttachments
+                          .map(
+                            (attachment) => attachment.id == failedAttachmentId
+                                ? attachment.copyWith(
+                                    downloadStatus: 'upload_failed',
+                                  )
+                                : attachment,
+                          )
+                          .toList(growable: false),
+                    );
+                    return const UploadRetryProjectionResult(
+                      state: UploadRetryProjectionState.terminal,
+                      uploadRetryCount: 0,
+                    );
+                  }
+                  return const UploadRetryProjectionResult.notApplied();
+                };
+          }
+
+          fakeUploadFn.beforeReturn = switch (scenario) {
+            'metadata' => () => messageRepo.seed(<ConversationMessage>[
+              preparedParent.copyWith(
+                status: 'sending',
+                text: 'crossed after upload started',
+              ),
+            ]),
+            'partial' => () => mediaAttachmentRepo.seed(<MediaAttachment>[
+              pendingAttachments.first,
+            ]),
+            'token' => () => messageRepo.seed(<ConversationMessage>[
+              preparedParent.copyWith(
+                status: 'sending',
+                directMediaCustodyIntentId: 'ffffffffffffffffffffffffffffffff',
+              ),
+            ]),
+            _ => null,
+          };
+          fakeUploadFn.willReturn(null);
+          final legacyProjection = _RecordingLegacyUploadFailureProjection();
+
+          final count = await retryManual(
+            messageId,
+            manager: manager,
+            uploadRetryProjectionRepo: legacyProjection,
+          );
+
+          final mutationCrossed = const <String>{
+            'metadata',
+            'partial',
+            'token',
+          }.contains(scenario);
+          expect(count, 0, reason: scenario);
+          expect(fakeUploadFn.callCount, 1, reason: scenario);
+          expect(manualRearmRepo.callCount, 1, reason: scenario);
+          expect(uploadTracker.inFlightCount, 0, reason: scenario);
+          expect(
+            exactProjectionCalls,
+            scenario == 'unsupported' || mutationCrossed ? 0 : 1,
+            reason: scenario,
+          );
+          expect(legacyProjection.callCount, 0, reason: scenario);
+          expect(mediaAttachmentRepo.allSavedAttachments, isEmpty);
+
+          final parentAfter = await messageRepo.getMessage(messageId);
+          final attachmentsAfter = await mediaAttachmentRepo
+              .getAttachmentsForMessage(
+                messageId,
+                owner: MediaOwnerLane.direct,
+              );
+          expect(
+            parentAfter?.status,
+            scenario == 'applied' ? 'failed' : 'sending',
+            reason: scenario,
+          );
+          expect(
+            parentAfter?.directMediaCustodyIntentId,
+            scenario == 'token' ? 'ffffffffffffffffffffffffffffffff' : intent,
+            reason: scenario,
+          );
+          expect(
+            attachmentsAfter,
+            hasLength(scenario == 'partial' ? 1 : 2),
+            reason: scenario,
+          );
+          expect(
+            attachmentsAfter
+                .where(
+                  (attachment) => attachment.downloadStatus == 'upload_failed',
+                )
+                .length,
+            scenario == 'applied' ? 1 : 0,
+            reason: scenario,
+          );
+          if (scenario == 'metadata') {
+            expect(parentAfter?.text, 'crossed after upload started');
+          }
+        }
+      },
+    );
+
+    test(
+      'TC-345-07h token-bearing at-ceiling manual retry rearms before strict validation',
+      () async {
+        const messageId = 'msg-345-07h-terminal-rearm';
+        const attachmentId = 'att-345-07h-terminal-rearm';
+        final tempDir = Directory.systemTemp.createTempSync(
+          'retry_failed_345_07h_terminal_rearm_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final source = File('${tempDir.path}/source.jpg')
+          ..writeAsBytesSync(const <int>[0x01, 0x02, 0x03, 0x04]);
+        final manager = FakeMediaFileManager()..resolveResult = source.path;
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final preparedParent = _makeFailedMsg(
+          id: messageId,
+        ).copyWith(directMediaCustodyIntentId: intent);
+        final terminalPreparedAttachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: source.lengthSync(),
+          mediaType: 'image',
+          localPath: MediaFilePathConvention.relativePathForPendingUpload(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: 'image/jpeg',
+          ),
+          downloadStatus: 'upload_failed',
+          createdAt: preparedParent.createdAt,
+          uploadRetryCount: kMaxUploadRetries,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        messageRepo.seed(<ConversationMessage>[preparedParent]);
+        mediaAttachmentRepo.seed(<MediaAttachment>[terminalPreparedAttachment]);
+        fakeUploadFn.willReturn(null);
+
+        var exactFailureProjectionCalls = 0;
+        mediaAttachmentRepo.onProjectDirectMediaCustodyUploadFailure =
+            ({
+              required expectedParent,
+              required expectedAttachments,
+              required failedAttachmentId,
+              required failure,
+            }) async {
+              exactFailureProjectionCalls++;
+              expect(expectedParent.status, 'sending');
+              expect(expectedParent.directMediaCustodyIntentId, intent);
+              expect(expectedAttachments, hasLength(1));
+              expect(
+                expectedAttachments.single.downloadStatus,
+                'upload_pending',
+              );
+              expect(expectedAttachments.single.uploadRetryCount, 0);
+              expect(failedAttachmentId, attachmentId);
+              expect(failure.disposition, UploadMediaDisposition.terminal);
+              return const UploadRetryProjectionResult.notApplied();
+            };
+
+        final automaticCount = await retryFailedMessages(
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          uploadMediaFn: fakeUploadFn.call,
+          mediaFileManager: manager,
+        );
+
+        expect(automaticCount, 0);
+        expect(manualRearmRepo.callCount, 0);
+        expect(fakeUploadFn.callCount, 0);
+        expect(exactFailureProjectionCalls, 0);
+
+        final count = await retryManual(messageId, manager: manager);
+
+        expect(count, 0);
+        expect(manualRearmRepo.callCount, 1);
+        expect(
+          manualRearmRepo.lastExpectations!.single.downloadStatus,
+          'upload_failed',
+        );
+        expect(
+          manualRearmRepo.lastExpectations!.single.uploadRetryCount,
+          kMaxUploadRetries,
+        );
+        expect(fakeUploadFn.callCount, 1);
+        expect(fakeUploadFn.lastBlobId, attachmentId);
+        expect(exactFailureProjectionCalls, 1);
+        expect(uploadTracker.inFlightCount, 0);
+      },
+    );
+
     test(
       'manual Retry rearms an at-ceiling upload and sends on success',
       () async {
@@ -323,12 +1036,23 @@ void main() {
       if (!tmpFile.existsSync()) tmpFile.writeAsBytesSync([0xFF]);
 
       fakeUploadFn.willReturn(null);
+      final legacyProjection = _RecordingLegacyUploadFailureProjection();
 
-      final count = await retryManual(msg.id);
+      final count = await retryManual(
+        msg.id,
+        uploadRetryProjectionRepo: legacyProjection,
+      );
 
       expect(fakeUploadFn.callCount, 1);
       expect(manualRearmRepo.callCount, 1);
       expect(uploadTracker.inFlightCount, 0);
+      expect(legacyProjection.callCount, 1);
+      expect(legacyProjection.lastMessageId, msg.id);
+      expect(legacyProjection.lastAttachmentId, 'att-001');
+      expect(
+        legacyProjection.lastFailure?.disposition,
+        UploadMediaDisposition.terminal,
+      );
       expect(count, 0);
     });
 

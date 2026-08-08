@@ -1,7 +1,9 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_connectivity_probe.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
@@ -21,6 +23,214 @@ import 'package:flutter_app/features/conversation/domain/repositories/direct_pri
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+
+final RegExp _directMediaRetrySha256 = RegExp(r'^[0-9a-f]{64}$');
+const Set<String> _directMediaRetryTypes = <String>{
+  'image',
+  'video',
+  'audio',
+  'file',
+};
+
+/// Application preflight for a token-bearing crash-resumed media projection.
+///
+/// The database combined stage remains final authority. This earlier check is
+/// intentionally strict so retry never uploads a malformed preparation and
+/// never launders it through a generic attachment save before that authority.
+bool isExactDirectMediaCustodyRetryProjection({
+  required ConversationMessage message,
+  required String expectedSenderPeerId,
+  required List<MediaAttachment> attachments,
+}) {
+  final intentId = message.directMediaCustodyIntentId;
+  final attachmentIds = attachments.map((attachment) => attachment.id).toSet();
+  if (intentId == null ||
+      message.id.trim().isEmpty ||
+      message.contactPeerId.trim().isEmpty ||
+      message.senderPeerId != expectedSenderPeerId ||
+      message.timestamp.trim().isEmpty ||
+      message.createdAt.trim().isEmpty ||
+      !const <String>{'sending', 'failed'}.contains(message.status) ||
+      message.isIncoming ||
+      message.editedAt != null ||
+      message.deletedAt != null ||
+      message.deletedByPeerId != null ||
+      message.hiddenAt != null ||
+      message.wireEnvelope != null ||
+      message.transport != null ||
+      message.relayExpiresAt != null ||
+      message.custodyCheckedAt != null ||
+      message.privateMediaPolicy.version != 0 ||
+      message.privateMediaMode != PrivateMediaMode.ordinary ||
+      message.privateMediaDurationSeconds != null ||
+      message.privateMediaState != PrivateMediaLifecycleState.none ||
+      message.privateMediaReceivedAtMs != null ||
+      message.privateMediaExpiresAtMs != null ||
+      message.privateMediaRevealedAtMs != null ||
+      message.privateMediaTerminalAtMs != null ||
+      message.privateMediaClockHighWaterMs != null ||
+      attachments.isEmpty ||
+      attachmentIds.length != attachments.length ||
+      attachmentIds.contains('') ||
+      computeDirectMediaCustodyIntentId(
+            messageId: message.id,
+            attachmentIds: attachmentIds,
+          ) !=
+          intentId) {
+    return false;
+  }
+
+  return attachments.every(
+    (attachment) => attachment.downloadStatus == 'upload_pending'
+        ? _isExactPreparedDirectMediaRetryAttachment(
+            attachment,
+            messageId: message.id,
+          )
+        : _isExactCompletedDirectMediaRetryAttachment(
+            attachment,
+            messageId: message.id,
+          ),
+  );
+}
+
+/// Converts an uploaded blob into the exact completion candidate for a
+/// prepared row without changing its authored metadata identity.
+///
+/// The candidate is carried directly to the combined custody transaction; it
+/// must not be written through generic attachment persistence first.
+MediaAttachment? completeDirectMediaCustodyRetryAttachment({
+  required MediaAttachment prepared,
+  required MediaAttachment uploaded,
+}) {
+  if (!_isExactPreparedDirectMediaRetryAttachment(
+        prepared,
+        messageId: prepared.messageId,
+      ) ||
+      uploaded.id != prepared.id ||
+      (uploaded.messageId.isNotEmpty &&
+          uploaded.messageId != prepared.messageId) ||
+      uploaded.mime != prepared.mime ||
+      uploaded.size != prepared.size ||
+      uploaded.mediaType != prepared.mediaType ||
+      uploaded.width != prepared.width ||
+      uploaded.height != prepared.height ||
+      uploaded.durationMs != prepared.durationMs ||
+      !_sameDirectMediaRetryWaveform(uploaded.waveform, prepared.waveform) ||
+      uploaded.downloadStatus != 'done') {
+    return null;
+  }
+
+  final completed = MediaAttachment(
+    id: prepared.id,
+    messageId: prepared.messageId,
+    mime: prepared.mime,
+    size: prepared.size,
+    mediaType: prepared.mediaType,
+    width: prepared.width,
+    height: prepared.height,
+    durationMs: prepared.durationMs,
+    localPath: uploaded.localPath,
+    downloadStatus: 'done',
+    createdAt: prepared.createdAt,
+    waveform: prepared.waveform,
+    uploadRetryCount: 0,
+    downloadRetryCount: prepared.downloadRetryCount,
+    contentHash: uploaded.contentHash,
+    thumbnailHash: uploaded.thumbnailHash,
+    encryptionKeyBase64: uploaded.encryptionKeyBase64,
+    encryptionNonce: uploaded.encryptionNonce,
+    encryptionScheme: uploaded.encryptionScheme,
+    ownerLane: MediaOwnerLane.direct,
+    isBookmarked: prepared.isBookmarked,
+    lastPlaybackPositionMs: prepared.lastPlaybackPositionMs,
+  );
+  return _isExactCompletedDirectMediaRetryAttachment(
+        completed,
+        messageId: prepared.messageId,
+      )
+      ? completed
+      : null;
+}
+
+bool _isExactPreparedDirectMediaRetryAttachment(
+  MediaAttachment attachment, {
+  required String messageId,
+}) {
+  final expectedPendingPath =
+      MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachment.id,
+        mime: attachment.mime,
+      );
+  return _hasExactDirectMediaRetryStableIdentity(
+        attachment,
+        messageId: messageId,
+      ) &&
+      attachment.localPath == expectedPendingPath &&
+      attachment.contentHash == null &&
+      attachment.thumbnailHash == null &&
+      attachment.encryptionKeyBase64 == null &&
+      attachment.encryptionNonce == null &&
+      attachment.encryptionScheme == null;
+}
+
+bool _isExactCompletedDirectMediaRetryAttachment(
+  MediaAttachment attachment, {
+  required String messageId,
+}) {
+  final localPath = attachment.localPath?.trim();
+  final normalizedPath = localPath?.replaceAll('\\', '/');
+  return _hasExactDirectMediaRetryStableIdentity(
+        attachment,
+        messageId: messageId,
+      ) &&
+      localPath != null &&
+      localPath.isNotEmpty &&
+      attachment.downloadStatus == 'done' &&
+      !normalizedPath!.startsWith('pending_uploads/') &&
+      !normalizedPath.contains('/pending_uploads/') &&
+      _directMediaRetrySha256.hasMatch(attachment.contentHash ?? '') &&
+      (attachment.thumbnailHash == null ||
+          _directMediaRetrySha256.hasMatch(attachment.thumbnailHash!)) &&
+      (attachment.encryptionKeyBase64?.trim().isNotEmpty ?? false) &&
+      (attachment.encryptionNonce?.trim().isNotEmpty ?? false) &&
+      attachment.encryptionScheme ==
+          kMediaAttachmentEncryptionSchemeBlobAesGcmV1;
+}
+
+bool _hasExactDirectMediaRetryStableIdentity(
+  MediaAttachment attachment, {
+  required String messageId,
+}) =>
+    attachment.id.isNotEmpty &&
+    attachment.messageId == messageId &&
+    attachment.ownerLane == MediaOwnerLane.direct &&
+    attachment.mime.trim().isNotEmpty &&
+    attachment.size > 0 &&
+    _directMediaRetryTypes.contains(attachment.mediaType) &&
+    attachment.mediaType ==
+        MediaAttachment.mediaTypeFromMime(attachment.mime) &&
+    attachment.createdAt.trim().isNotEmpty &&
+    (attachment.width == null || attachment.width! >= 0) &&
+    (attachment.height == null || attachment.height! >= 0) &&
+    (attachment.durationMs == null || attachment.durationMs! >= 0) &&
+    (attachment.uploadRetryCount == null ||
+        attachment.uploadRetryCount! >= 0) &&
+    (attachment.waveform == null ||
+        attachment.waveform!.every(
+          (sample) => sample.isFinite && sample >= 0 && sample <= 1,
+        ));
+
+bool _sameDirectMediaRetryWaveform(List<double>? left, List<double>? right) {
+  if (identical(left, right)) return true;
+  if (left == null || right == null || left.length != right.length) {
+    return false;
+  }
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
 
 /// Re-uploads any attachment rows with downloadStatus='upload_pending',
 /// grouped by messageId, then calls [sendChatMessage] ONCE per message
@@ -233,12 +443,59 @@ Future<int> retryIncompleteUploads({
         continue;
       }
 
+      if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+        try {
+          final owned =
+              await (messageRepo as OutgoingDirectTextInboxCustodyRepository)
+                  .loadDirectInboxCustodyOwnerForMessageId(messageId: msg.id);
+          if (owned != null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_UPLOAD_DIRECT_INBOX_CUSTODY_OWNED',
+              details: {'messageId': messageId},
+            );
+            continue;
+          }
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_UPLOAD_CUSTODY_LOOKUP_FAILED',
+            details: {
+              'messageId': messageId,
+              'errorType': error.runtimeType.toString(),
+            },
+          );
+          continue;
+        }
+      }
+
       // Load ALL attachments for this message (including already-done ones)
       // so we can combine them with newly-uploaded ones for the send call.
       final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
         messageId,
         owner: MediaOwnerLane.direct,
       );
+      final directMediaIntent = msg.directMediaCustodyIntentId;
+      var retryPendingAttachments = pendingAttsForMessage;
+      if (directMediaIntent != null) {
+        if (!isExactDirectMediaCustodyRetryProjection(
+          message: msg,
+          expectedSenderPeerId: identity.peerId,
+          attachments: allAttachments,
+        )) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_UPLOAD_MEDIA_CUSTODY_MANIFEST_REFUSED',
+            details: {'messageId': messageId},
+          );
+          continue;
+        }
+        retryPendingAttachments = allAttachments
+            .where(
+              (attachment) => attachment.downloadStatus == 'upload_pending',
+            )
+            .toList(growable: false);
+      }
       final isOutgoingPrivateOneMoreLook =
           !msg.isIncoming &&
           msg.privateMediaPolicy.version == 1 &&
@@ -357,8 +614,10 @@ Future<int> retryIncompleteUploads({
       UploadMediaFailed? uploadFailure;
       MediaAttachment? failedAttachment;
       final carriedPrivateCompletions = <String, MediaAttachment>{};
+      final carriedDirectMediaCustodyCompletions = <String, MediaAttachment>{};
+      var directMediaPreparationRefused = false;
 
-      for (final attachment in pendingAttsForMessage) {
+      for (final attachment in retryPendingAttachments) {
         var localPath = attachment.localPath;
         if (localPath == null || localPath.isEmpty) {
           emitFlowEvent(
@@ -423,11 +682,36 @@ Future<int> retryIncompleteUploads({
           break;
         }
 
-        final latestBeforeSave = await _latestAttachmentForMessage(
+        var latestBeforeSave = await _latestAttachmentForMessage(
           mediaAttachmentRepo: mediaAttachmentRepo,
           messageId: messageId,
           attachmentId: attachment.id,
         );
+        if (directMediaIntent != null) {
+          final currentMessage = await messageRepo.getMessage(messageId);
+          final currentProjection = await mediaAttachmentRepo
+              .getAttachmentsForMessage(
+                messageId,
+                owner: MediaOwnerLane.direct,
+              );
+          if (currentMessage == null ||
+              !isExactDirectMediaCustodyRetryProjection(
+                message: currentMessage,
+                expectedSenderPeerId: identity.peerId,
+                attachments: currentProjection,
+              )) {
+            directMediaPreparationRefused = true;
+            allUploadsSucceeded = false;
+            break;
+          }
+          latestBeforeSave = null;
+          for (final current in currentProjection) {
+            if (current.id == attachment.id) {
+              latestBeforeSave = current;
+              break;
+            }
+          }
+        }
         if (latestBeforeSave != null &&
             latestBeforeSave.downloadStatus != 'upload_pending') {
           if (latestBeforeSave.downloadStatus == 'done') {
@@ -463,11 +747,23 @@ Future<int> retryIncompleteUploads({
           break;
         }
 
-        final completedAttachment = uploaded.copyWith(
-          id: attachment.id,
-          messageId: msg.id,
-          downloadStatus: 'done',
-        );
+        final completedAttachment = directMediaIntent == null
+            ? uploaded.copyWith(
+                id: attachment.id,
+                messageId: msg.id,
+                downloadStatus: 'done',
+              )
+            : latestBeforeSave == null
+            ? null
+            : completeDirectMediaCustodyRetryAttachment(
+                prepared: latestBeforeSave,
+                uploaded: uploaded,
+              );
+        if (completedAttachment == null) {
+          directMediaPreparationRefused = true;
+          allUploadsSucceeded = false;
+          break;
+        }
 
         // KC-2 (112 Phase 3): the re-upload minted a fresh key/nonce, so a
         // persisted wire envelope (the Section-4 crash-replay contract,
@@ -559,6 +855,12 @@ Future<int> retryIncompleteUploads({
           // settlement before this transfer's finally path runs.
           authorizedPrivatePendingSources[attachment.id] = expectedPendingPath;
           carriedPrivateCompletions[attachment.id] = completedAttachment;
+        } else if (directMediaIntent != null) {
+          // The combined custody transaction owns the pending->done write.
+          // Carry the exact candidate in memory so a generic save cannot turn
+          // a malformed/crossed preparation into transport authority.
+          carriedDirectMediaCustodyCompletions[attachment.id] =
+              completedAttachment;
         } else {
           await mediaAttachmentRepo.saveAttachment(
             completedAttachment,
@@ -572,10 +874,46 @@ Future<int> retryIncompleteUploads({
       if (ordinaryEnvelopeInvalidationRefused) {
         continue;
       }
+      if (directMediaPreparationRefused) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_UPLOAD_MEDIA_CUSTODY_IDENTITY_REFUSED',
+          details: {'messageId': messageId},
+        );
+        continue;
+      }
 
       // Canonical failure handling (G.8.2): transient vs non-retryable
       if (!allUploadsSucceeded) {
-        if (projection != null &&
+        if (directMediaIntent != null) {
+          final custodyFailureAuthority =
+              mediaAttachmentRepo is OutgoingDirectMediaCustodyFailureRepository
+              ? mediaAttachmentRepo
+                    as OutgoingDirectMediaCustodyFailureRepository
+              : null;
+          UploadRetryProjectionResult projected =
+              const UploadRetryProjectionResult.notApplied();
+          if (custodyFailureAuthority != null &&
+              custodyFailureAuthority
+                  .supportsDirectMediaCustodyFailureProjection &&
+              failedAttachment != null &&
+              uploadFailure != null) {
+            projected = await custodyFailureAuthority
+                .projectDirectMediaCustodyUploadFailure(
+                  expectedParent: msg,
+                  expectedAttachments: allAttachments,
+                  failedAttachmentId: failedAttachment.id,
+                  failure: uploadFailure,
+                );
+          }
+          emitFlowEvent(
+            layer: 'FL',
+            event: projected.applied
+                ? 'RETRY_INCOMPLETE_UPLOAD_MEDIA_CUSTODY_FAILURE_PROJECTED'
+                : 'RETRY_INCOMPLETE_UPLOAD_MEDIA_CUSTODY_FAILURE_REFUSED',
+            details: {'messageId': messageId},
+          );
+        } else if (projection != null &&
             failedAttachment != null &&
             uploadFailure != null) {
           await projection.projectUploadFailure(
@@ -585,8 +923,9 @@ Future<int> retryIncompleteUploads({
           );
         } else {
           // Compatibility for lightweight repository doubles that predate the
-          // atomic capability. Production always takes the branch above.
-          for (final att in pendingAttsForMessage) {
+          // atomic capability. Token-bearing attempts never enter this legacy
+          // save path: only an exact full-manifest authority may mutate them.
+          for (final att in retryPendingAttachments) {
             final latest = await _latestAttachmentForMessage(
               mediaAttachmentRepo: mediaAttachmentRepo,
               messageId: messageId,
@@ -632,7 +971,7 @@ Future<int> retryIncompleteUploads({
             'reason': isNonRetryable
                 ? 'non_retryable_failure'
                 : 'transient_failure',
-            'totalAttachments': pendingAttsForMessage.length,
+            'totalAttachments': retryPendingAttachments.length,
           },
         );
         continue;
@@ -641,10 +980,26 @@ Future<int> retryIncompleteUploads({
       final refreshedMsg = await messageRepo.getMessage(messageId);
       final refreshedAttachments = await mediaAttachmentRepo
           .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct);
+      if (directMediaIntent != null &&
+          (refreshedMsg == null ||
+              !isExactDirectMediaCustodyRetryProjection(
+                message: refreshedMsg,
+                expectedSenderPeerId: identity.peerId,
+                attachments: refreshedAttachments,
+              ))) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_UPLOAD_MEDIA_CUSTODY_FINAL_REFUSED',
+          details: {'messageId': messageId},
+        );
+        continue;
+      }
       final transportAttachments = refreshedAttachments
           .map(
             (attachment) =>
-                carriedPrivateCompletions[attachment.id] ?? attachment,
+                carriedDirectMediaCustodyCompletions[attachment.id] ??
+                carriedPrivateCompletions[attachment.id] ??
+                attachment,
           )
           .toList(growable: false);
       final abortReason = _lateSendAbortReason(

@@ -35,6 +35,7 @@ void main() {
         ],
       );
       expect(firstPass.sentCount, 1);
+      expect(firstPass.queuedCount, 0);
       expect(firstPass.failureCount, 1);
       expect(firstPass.failedTargetKeys, {
         'contact:${failedThenRetried.peerId}',
@@ -46,6 +47,7 @@ void main() {
         targets: [ShareTargetSelection.contact(failedThenRetried)],
       );
       expect(retry.sentCount, 1);
+      expect(retry.queuedCount, 0);
       expect(retry.failureCount, 0);
 
       final firstMessage = (await harness.directMessages.getMessagesForContact(
@@ -102,10 +104,9 @@ void main() {
         isNot(retriedAttachment.encryptionKeyBase64),
       );
 
-      final contactWires = <String>[
-        ...harness.p2p.sentMessageLog.map((entry) => entry.content),
-        ...harness.p2p.storeInInboxLog.map((entry) => entry.message),
-      ];
+      final contactWires = harness.p2p.storeInInboxLog
+          .map((entry) => entry.message)
+          .toList(growable: false);
       final innerPayloads = contactWires
           .map((wire) {
             final envelope = jsonDecode(wire) as Map<String, dynamic>;

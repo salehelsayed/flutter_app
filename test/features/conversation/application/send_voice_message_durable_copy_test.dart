@@ -5,17 +5,17 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 
-import 'send_chat_message_use_case_test.dart'
-    show FakeP2PService, FakeMessageRepository;
-import '../domain/repositories/fake_media_attachment_repository.dart';
+import 'send_chat_message_use_case_test.dart' show FakeP2PService;
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart';
 
 void main() {
   late FakeP2PService p2pService;
-  late FakeMessageRepository messageRepo;
+  late InMemoryMessageRepository messageRepo;
   late FakeBridge bridge;
-  late FakeMediaAttachmentRepository mediaAttachmentRepo;
+  late InMemoryMediaAttachmentRepository mediaAttachmentRepo;
   late FakeMediaFileManager mediaFileManager;
   const mlKemKey = 'test-recipient-mlkem-pub-key';
 
@@ -23,8 +23,9 @@ void main() {
 
   setUp(() {
     p2pService = FakeP2PService();
-    messageRepo = FakeMessageRepository();
-    mediaAttachmentRepo = FakeMediaAttachmentRepository();
+    messageRepo = InMemoryMessageRepository();
+    mediaAttachmentRepo = InMemoryMediaAttachmentRepository()
+      ..enableDirectMediaInboxCustodyForTest(messageRepo);
     mediaFileManager = FakeMediaFileManager();
     bridge = FakeBridge(
       initialResponses: {
@@ -85,28 +86,30 @@ void main() {
 
         expect(result, SendVoiceMessageResult.uploadFailed);
 
-        expect(mediaAttachmentRepo.allSavedAttachments, isNotEmpty);
-        final saved = mediaAttachmentRepo.allSavedAttachments.firstWhere(
-          (a) => a.id == blobId,
-        );
+        final saved = await mediaAttachmentRepo.getAttachmentById(blobId);
+        expect(saved, isNotNull);
+        final persisted = saved!;
         // MUST be 'upload_pending', NOT 'done': 'done' is the relay-blob-exists
         // signal that retryIncompleteUploads reuses (skipping re-upload). Since
         // the upload just failed, marking 'done' would make a retry reference a
         // never-uploaded blob → permanent "Media unavailable" on the recipient.
-        expect(saved.downloadStatus, 'upload_pending');
-        expect(saved.mediaType, 'audio');
-        expect(saved.messageId, 'msg-durable-1');
-        expect(saved.localPath, isNotNull);
+        expect(persisted.downloadStatus, 'upload_pending');
+        expect(persisted.mediaType, 'audio');
+        expect(persisted.messageId, 'msg-durable-1');
+        expect(persisted.localPath, isNotNull);
         // Container-safe retry staging — NOT the recorder temp and not a
         // forged successful `media/` copy.
-        expect(saved.localPath, isNot(recording.filePath));
-        expect(saved.localPath, 'pending_uploads/msg-durable-1/$blobId.m4a');
-        expect(saved.localPath, endsWith('.m4a'));
+        expect(persisted.localPath, isNot(recording.filePath));
+        expect(
+          persisted.localPath,
+          'pending_uploads/msg-durable-1/$blobId.m4a',
+        );
+        expect(persisted.localPath, endsWith('.m4a'));
 
         // Stored paths are resolved through MediaFileManager so the row stays
         // valid when the application container moves.
         final resolvedPath = await mediaFileManager.resolveStoredPath(
-          saved.localPath!,
+          persisted.localPath!,
         );
         expect(File(resolvedPath).existsSync(), isTrue);
       },
@@ -136,11 +139,11 @@ void main() {
         blobId: blobId,
       );
 
-      final saved = mediaAttachmentRepo.allSavedAttachments.firstWhere(
-        (a) => a.id == blobId,
-      );
+      final saved = await mediaAttachmentRepo.getAttachmentById(blobId);
+      expect(saved, isNotNull);
+      final persisted = saved!;
       final durablePath = await mediaFileManager.resolveStoredPath(
-        saved.localPath!,
+        persisted.localPath!,
       );
 
       // Simulate OS temp eviction.
@@ -150,7 +153,7 @@ void main() {
       // The durable copy is an independent owned file — untouched.
       expect(File(durablePath).existsSync(), isTrue);
       expect(durablePath, isNot(recording.filePath));
-      expect(saved.localPath, 'pending_uploads/msg-survives-1/$blobId.m4a');
+      expect(persisted.localPath, 'pending_uploads/msg-survives-1/$blobId.m4a');
     });
 
     test(

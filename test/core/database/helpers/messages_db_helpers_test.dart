@@ -17,8 +17,11 @@ import 'package:flutter_app/core/database/migrations/077_message_relay_custody.d
 import 'package:flutter_app/core/database/migrations/079_message_dedup_key.dart';
 import 'package:flutter_app/core/database/migrations/097_direct_message_forwarded.dart';
 import 'package:flutter_app/core/database/migrations/100_direct_private_media_lifecycle.dart';
+import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_outbox.dart';
+import 'package:flutter_app/core/database/migrations/110_direct_media_custody_intent.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
@@ -49,6 +52,8 @@ void main() {
     await runMessageDedupKeyMigration(db);
     await runDirectMessageForwardedMigration(db);
     await runDirectPrivateMediaLifecycleMigration(db);
+    await runDirectInboxCustodyOutboxMigration(db);
+    await runDirectMediaCustodyIntentMigration(db);
   });
 
   tearDown(() async {
@@ -73,6 +78,7 @@ void main() {
     String? transport,
     String? wireEnvelope,
     String? dedupKey,
+    String? directMediaCustodyIntentId,
   }) {
     return {
       'id': id,
@@ -92,6 +98,7 @@ void main() {
       'transport': transport,
       'wire_envelope': wireEnvelope,
       'dedup_key': dedupKey,
+      'direct_media_custody_intent_id': directMediaCustodyIntentId,
     };
   }
 
@@ -122,32 +129,35 @@ void main() {
   }
 
   group('dbExistsMessageByDedupKey (F8 tier-2)', () {
-    test('matches an incoming row by dedup_key; misses wrong/empty key', () async {
-      await dbInsertMessage(
-        db,
-        makeMessageRow(
-          id: 'in-1',
-          contactPeerId: 'peer-a',
-          senderPeerId: 'peer-a',
-          isIncoming: 1,
-          dedupKey: 'k1',
-        ),
-      );
+    test(
+      'matches an incoming row by dedup_key; misses wrong/empty key',
+      () async {
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'in-1',
+            contactPeerId: 'peer-a',
+            senderPeerId: 'peer-a',
+            isIncoming: 1,
+            dedupKey: 'k1',
+          ),
+        );
 
-      expect(
-        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', 'k1'),
-        isTrue,
-      );
-      expect(
-        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', 'k2'),
-        isFalse,
-      );
-      // Empty key never dedups (absent-key guard).
-      expect(
-        await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', ''),
-        isFalse,
-      );
-    });
+        expect(
+          await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', 'k1'),
+          isTrue,
+        );
+        expect(
+          await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', 'k2'),
+          isFalse,
+        );
+        // Empty key never dedups (absent-key guard).
+        expect(
+          await dbExistsMessageByDedupKey(db, 'peer-a', 'peer-a', ''),
+          isFalse,
+        );
+      },
+    );
 
     test('does NOT match an OUTGOING row (is_incoming = 0)', () async {
       await dbInsertMessage(
@@ -187,6 +197,390 @@ void main() {
   });
 
   group('dbInsertMessage', () {
+    test(
+      'generic updates preserve pending and consumed media custody intent',
+      () async {
+        const intent = '0123456789abcdef0123456789abcdef';
+        await dbInsertMessage(
+          db,
+          makeMessageRow(text: 'prepared', directMediaCustodyIntentId: intent),
+        );
+
+        final staleNull = makeMessageRow(text: 'stale null writer')
+          ..remove('direct_media_custody_intent_id');
+        await dbInsertMessage(db, staleNull);
+        var durable = (await db.query('messages')).single;
+        expect(durable['text'], 'stale null writer');
+        expect(durable['direct_media_custody_intent_id'], intent);
+
+        await db.update(
+          'messages',
+          const <String, Object?>{'direct_media_custody_intent_id': null},
+          where: 'id = ?',
+          whereArgs: const <Object?>['msg-001'],
+        );
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            text: 'stale token writer',
+            directMediaCustodyIntentId: intent,
+          ),
+        );
+        durable = (await db.query('messages')).single;
+        expect(durable['text'], 'stale token writer');
+        expect(durable['direct_media_custody_intent_id'], isNull);
+      },
+    );
+
+    test(
+      'TC-345-02e generic stale null save preserves global custody owner while later edits and user terminal projections remain writable',
+      () async {
+        const ownerEnvelope =
+            '{"type":"chat_message","version":"2","id":"custody-placeholder","senderPeerId":"peer-self","encrypted":{"kem":"owner-kem","ciphertext":"owner-ciphertext","nonce":"owner-nonce"}}';
+
+        Future<void> insertOwnedParent(String id) async {
+          await dbInsertMessage(
+            db,
+            makeMessageRow(
+              id: id,
+              contactPeerId: 'peer-owner',
+              senderPeerId: 'peer-self',
+              status: 'sending',
+              wireEnvelope: ownerEnvelope.replaceFirst(
+                'custody-placeholder',
+                id,
+              ),
+            ),
+          );
+          await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+            'recipient_peer_id': 'peer-owner',
+            'message_id': id,
+            'incarnation_id': id == 'custody-edit-control'
+                ? '11111111111111111111111111111111'
+                : '22222222222222222222222222222222',
+            'wire_envelope': ownerEnvelope.replaceFirst(
+              'custody-placeholder',
+              id,
+            ),
+            'retry_count': 0,
+            'last_attempt_at': null,
+            'last_error_code': null,
+            'created_at': '2026-01-01T00:00:00.000Z',
+            'updated_at': '2026-01-01T00:00:00.000Z',
+          });
+        }
+
+        await insertOwnedParent('custody-edit-control');
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'custody-edit-control',
+            contactPeerId: 'peer-drift',
+            senderPeerId: 'peer-wrong-sender',
+            status: 'failed',
+            isIncoming: 1,
+            wireEnvelope: '',
+          ),
+        );
+        var durable = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['custody-edit-control'],
+        )).single;
+        expect(durable['contact_peer_id'], 'peer-owner');
+        expect(durable['sender_peer_id'], 'peer-self');
+        expect(durable['is_incoming'], 0);
+        expect(durable['status'], 'sending');
+        final exactOwnerEnvelope = ownerEnvelope.replaceFirst(
+          'custody-placeholder',
+          'custody-edit-control',
+        );
+        expect(durable['wire_envelope'], exactOwnerEnvelope);
+
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'custody-edit-control',
+            contactPeerId: 'peer-owner',
+            senderPeerId: 'peer-self',
+            text: 'arbitrary non-edit overwrite',
+            status: 'failed',
+            editedAt: '2026-01-01T12:00:00.000Z',
+            transport: 'direct',
+            wireEnvelope: '{"arbitrary":"non-null"}',
+          ),
+        );
+        durable = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['custody-edit-control'],
+        )).single;
+        expect(durable['status'], 'sending');
+        expect(durable['wire_envelope'], exactOwnerEnvelope);
+        expect(durable['transport'], isNull);
+
+        const editEnvelope =
+            '{"type":"chat_message","version":"2","id":"custody-edit-control","eventId":"edit-event-001","senderPeerId":"peer-self","encrypted":{"kem":"edit-kem","ciphertext":"edit-ciphertext","nonce":"edit-nonce"}}';
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'custody-edit-control',
+            contactPeerId: 'peer-owner',
+            senderPeerId: 'peer-self',
+            text: 'later edit',
+            status: 'sending',
+            isIncoming: 0,
+            editedAt: '2026-01-02T00:00:00.000Z',
+            wireEnvelope: editEnvelope,
+          ),
+        );
+        durable = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['custody-edit-control'],
+        )).single;
+        expect(durable['text'], 'later edit');
+        expect(durable['edited_at'], '2026-01-02T00:00:00.000Z');
+        expect(durable['wire_envelope'], editEnvelope);
+        expect(durable['contact_peer_id'], 'peer-owner');
+        expect(durable['sender_peer_id'], 'peer-self');
+        expect(durable['is_incoming'], 0);
+
+        await insertOwnedParent('custody-terminal-control');
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'custody-terminal-control',
+            contactPeerId: 'peer-terminal-drift',
+            senderPeerId: 'peer-terminal-wrong-sender',
+            text: '',
+            status: 'delivered',
+            isIncoming: 1,
+            deletedAt: '2026-01-03T00:00:00.000Z',
+            deletedByPeerId: 'peer-self',
+          ),
+        );
+        final terminal = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['custody-terminal-control'],
+        )).single;
+        expect(terminal['deleted_at'], '2026-01-03T00:00:00.000Z');
+        expect(terminal['deleted_by_peer_id'], 'peer-self');
+        expect(terminal['wire_envelope'], isNull);
+        expect(terminal['contact_peer_id'], 'peer-owner');
+        expect(terminal['sender_peer_id'], 'peer-self');
+        expect(terminal['is_incoming'], 0);
+      },
+    );
+
+    test(
+      'TC-345-02e terminal guard preserves incoming placeholder materialization and ignores malformed settled lookalikes',
+      () async {
+        const hiddenEditAt = '2026-01-02T00:00:00.000Z';
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'incoming-hidden-edit',
+            contactPeerId: 'peer-incoming',
+            senderPeerId: 'peer-incoming',
+            text: 'newer edited text',
+            timestamp: hiddenEditAt,
+            status: 'delivered',
+            isIncoming: 1,
+            createdAt: hiddenEditAt,
+            editedAt: hiddenEditAt,
+            hiddenAt: hiddenEditAt,
+            transport: 'direct',
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'incoming-hidden-edit',
+            contactPeerId: 'peer-incoming',
+            senderPeerId: 'peer-incoming',
+            text: 'newer edited text',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            status: 'delivered',
+            isIncoming: 1,
+            createdAt: hiddenEditAt,
+            editedAt: hiddenEditAt,
+            hiddenAt: null,
+            transport: 'inbox',
+          ),
+        );
+        var row = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['incoming-hidden-edit'],
+        )).single;
+        expect(row['hidden_at'], isNull);
+        expect(row['text'], 'newer edited text');
+        expect(row['timestamp'], '2026-01-01T00:00:00.000Z');
+        expect(row['edited_at'], hiddenEditAt);
+        expect(row['transport'], 'inbox');
+
+        const deletedAt = '2026-01-03T00:00:00.000Z';
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'incoming-deleted-placeholder',
+            contactPeerId: 'peer-incoming',
+            senderPeerId: 'peer-incoming',
+            text: '',
+            timestamp: deletedAt,
+            status: 'delivered',
+            isIncoming: 1,
+            createdAt: deletedAt,
+            deletedAt: deletedAt,
+            deletedByPeerId: 'peer-incoming',
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'incoming-deleted-placeholder',
+            contactPeerId: 'peer-incoming',
+            senderPeerId: 'peer-incoming',
+            text: '',
+            timestamp: '2026-01-01T12:00:00.000Z',
+            status: 'delivered',
+            isIncoming: 1,
+            createdAt: deletedAt,
+            deletedAt: deletedAt,
+            deletedByPeerId: 'peer-incoming',
+            quotedMessageId: 'quoted-original',
+            transport: 'inbox',
+          ),
+        );
+        row = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['incoming-deleted-placeholder'],
+        )).single;
+        expect(row['deleted_at'], deletedAt);
+        expect(row['quoted_message_id'], 'quoted-original');
+        expect(row['transport'], 'inbox');
+
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'malformed-delivered-lookalike',
+            contactPeerId: 'peer-outgoing',
+            senderPeerId: 'peer-self',
+            status: 'delivered',
+            transport: 'direct',
+            wireEnvelope: '{"arbitrary":"not-an-initial-envelope"}',
+          ),
+        );
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'malformed-delivered-lookalike',
+            contactPeerId: 'peer-outgoing',
+            senderPeerId: 'peer-self',
+            text: 'ordinary generic update',
+            status: 'failed',
+            wireEnvelope: null,
+          ),
+        );
+        row = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['malformed-delivered-lookalike'],
+        )).single;
+        expect(row['text'], 'ordinary generic update');
+        expect(row['status'], 'failed');
+        expect(row['wire_envelope'], isNull);
+        expect(row['transport'], isNull);
+      },
+    );
+
+    test(
+      'generic ordinary envelope stages reject media custody intent',
+      () async {
+        const intent = 'fedcba9876543210fedcba9876543210';
+        final fresh = makeMessageRow(
+          id: 'fresh-token',
+          senderPeerId: 'peer-self',
+          status: 'sending',
+          wireEnvelope: '{"fresh":true}',
+          directMediaCustodyIntentId: intent,
+        );
+        expect(
+          await dbStageOutgoingOrdinaryAttempt(
+            db,
+            expectedRow: null,
+            stagedRow: fresh,
+            kind: OutgoingOrdinaryAttemptKind.fresh,
+          ),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+        expect(
+          await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>['fresh-token'],
+          ),
+          isEmpty,
+        );
+
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'prepared-token',
+            senderPeerId: 'peer-self',
+            status: 'failed',
+            directMediaCustodyIntentId: intent,
+          ),
+        );
+        final expected = Map<String, Object?>.from(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>['prepared-token'],
+          )).single,
+        );
+        final stagedExisting = Map<String, Object?>.from(expected)
+          ..['status'] = 'sending'
+          ..['wire_envelope'] = '{"existing":true}'
+          ..['direct_media_custody_intent_id'] = null;
+        expect(
+          await dbStageOutgoingOrdinaryAttempt(
+            db,
+            expectedRow: Map<String, Object?>.from(expected)
+              ..['direct_media_custody_intent_id'] = null,
+            stagedRow: stagedExisting,
+            kind: OutgoingOrdinaryAttemptKind.existing,
+          ),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+
+        final stagedEdit = Map<String, Object?>.from(stagedExisting)
+          ..['text'] = 'edited'
+          ..['edited_at'] = '2026-01-02T00:00:00.000Z';
+        expect(
+          await dbStageOutgoingOrdinaryAttempt(
+            db,
+            expectedRow: expected,
+            stagedRow: stagedEdit,
+            kind: OutgoingOrdinaryAttemptKind.edit,
+          ),
+          OutgoingOrdinaryMutationOutcome.refused,
+        );
+
+        await dbUpdateWireEnvelope(db, 'prepared-token', '{"generic":true}');
+        final durable = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['prepared-token'],
+        )).single;
+        expect(durable['wire_envelope'], isNull);
+        expect(durable['direct_media_custody_intent_id'], intent);
+      },
+    );
+
     test('inserts a new message', () async {
       await dbInsertMessage(db, makeMessageRow());
 
@@ -230,6 +624,151 @@ void main() {
       expect(rows.single['deleted_by_peer_id'], 'peer-a');
       expect(rows.single['hidden_at'], '2026-01-03T00:00:00.000Z');
     });
+  });
+
+  group('dbInvalidateOutgoingOrdinaryEnvelope', () {
+    test('v108 custody prevents media-key envelope invalidation', () async {
+      const envelope = '{"type":"chat_message","version":"2"}';
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'custody-owned',
+          contactPeerId: 'peer-a',
+          senderPeerId: 'peer-self',
+          status: 'failed',
+          wireEnvelope: envelope,
+        ),
+      );
+      await db.insert('direct_inbox_custody_outbox', const <String, Object?>{
+        'recipient_peer_id': 'peer-a',
+        'message_id': 'custody-owned',
+        'incarnation_id': '1234567890abcdef1234567890abcdef',
+        'wire_envelope': envelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': '2026-01-01T00:00:00.000Z',
+        'updated_at': '2026-01-01T00:00:00.000Z',
+      });
+
+      expect(
+        await dbInvalidateOutgoingOrdinaryEnvelope(
+          db,
+          messageId: 'custody-owned',
+          expectedContactPeerId: 'peer-a',
+          expectedEnvelope: envelope,
+        ),
+        OutgoingOrdinaryMutationOutcome.preserved,
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['custody-owned'],
+        )).single['wire_envelope'],
+        envelope,
+      );
+
+      await db.delete(
+        'direct_inbox_custody_outbox',
+        where: 'recipient_peer_id = ? AND message_id = ?',
+        whereArgs: const <Object?>['peer-a', 'custody-owned'],
+      );
+      expect(
+        await dbInvalidateOutgoingOrdinaryEnvelope(
+          db,
+          messageId: 'custody-owned',
+          expectedContactPeerId: 'peer-a',
+          expectedEnvelope: envelope,
+        ),
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['custody-owned'],
+        )).single['wire_envelope'],
+        isNull,
+      );
+    });
+
+    test(
+      'v108 custody remains authoritative after parent contact drift',
+      () async {
+        const envelope = '{"type":"chat_message","version":"2"}';
+        await dbInsertMessage(
+          db,
+          makeMessageRow(
+            id: 'custody-contact-drift',
+            contactPeerId: 'peer-a',
+            senderPeerId: 'peer-self',
+            status: 'failed',
+            wireEnvelope: envelope,
+          ),
+        );
+        await db.insert('direct_inbox_custody_outbox', const <String, Object?>{
+          'recipient_peer_id': 'peer-a',
+          'message_id': 'custody-contact-drift',
+          'incarnation_id': 'abcdef1234567890abcdef1234567890',
+          'wire_envelope': envelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': '2026-01-01T00:00:00.000Z',
+          'updated_at': '2026-01-01T00:00:00.000Z',
+        });
+        expect(
+          await db.update(
+            'messages',
+            const <String, Object?>{'contact_peer_id': 'peer-b'},
+            where: 'id = ?',
+            whereArgs: const <Object?>['custody-contact-drift'],
+          ),
+          1,
+        );
+        final messageBefore = Map<String, Object?>.from(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>['custody-contact-drift'],
+          )).single,
+        );
+        final custodyBefore = Map<String, Object?>.from(
+          (await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: const <Object?>['custody-contact-drift'],
+          )).single,
+        );
+
+        expect(
+          await dbInvalidateOutgoingOrdinaryEnvelope(
+            db,
+            messageId: 'custody-contact-drift',
+            expectedContactPeerId: 'peer-b',
+            expectedEnvelope: envelope,
+          ),
+          OutgoingOrdinaryMutationOutcome.preserved,
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>['custody-contact-drift'],
+          )).single,
+          messageBefore,
+        );
+        expect(
+          (await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: const <Object?>['custody-contact-drift'],
+          )).single,
+          custodyBefore,
+        );
+      },
+    );
   });
 
   group('dbLoadMessagesPage', () {
@@ -890,33 +1429,41 @@ void main() {
     // a non-deleted, non-hidden OUTGOING row — even when it is far older than
     // the newest incoming (so the feed can derive hasReply/state from the
     // summary instead of a windowed message scan).
-    test('exposes last_outgoing_at as the newest non-deleted outgoing', () async {
-      await dbInsertMessage(
-        db,
-        makeMessageRow(
-          id: 'out-old',
-          contactPeerId: 'peer-a',
-          text: 'my old reply',
-          timestamp: '2026-01-01T00:00:00.000Z',
-          isIncoming: 0,
-        ),
-      );
-      for (var i = 0; i < 9; i++) {
+    test(
+      'exposes last_outgoing_at as the newest non-deleted outgoing',
+      () async {
         await dbInsertMessage(
           db,
           makeMessageRow(
-            id: 'in-$i',
+            id: 'out-old',
             contactPeerId: 'peer-a',
-            text: 'incoming $i',
-            timestamp: '2026-01-02T00:0$i:00.000Z',
-            isIncoming: 1,
+            text: 'my old reply',
+            timestamp: '2026-01-01T00:00:00.000Z',
+            isIncoming: 0,
           ),
         );
-      }
+        for (var i = 0; i < 9; i++) {
+          await dbInsertMessage(
+            db,
+            makeMessageRow(
+              id: 'in-$i',
+              contactPeerId: 'peer-a',
+              text: 'incoming $i',
+              timestamp: '2026-01-02T00:0$i:00.000Z',
+              isIncoming: 1,
+            ),
+          );
+        }
 
-      final summaries = await dbLoadConversationThreadSummaries(db, ['peer-a']);
-      expect(summaries.single['last_outgoing_at'], '2026-01-01T00:00:00.000Z');
-    });
+        final summaries = await dbLoadConversationThreadSummaries(db, [
+          'peer-a',
+        ]);
+        expect(
+          summaries.single['last_outgoing_at'],
+          '2026-01-01T00:00:00.000Z',
+        );
+      },
+    );
 
     test('last_outgoing_at is null when there is no outgoing row', () async {
       await dbInsertMessage(
@@ -1382,48 +1929,44 @@ void main() {
     // 186 (FU-185-A): the age gate the reconnect pass drops to converge a
     // freshly-queued offline message immediately instead of after the 5-min
     // periodic.
-    test(
-      'TC-186-04 a fresh (<60s) sent+envelope row is excluded at olderThan:60s '
-      'but included at olderThan:0',
-      () async {
-        final now = DateTime.now().toUtc();
-        final freshTs = now
-            .subtract(const Duration(seconds: 30))
-            .toIso8601String();
-        await dbInsertMessage(
-          db,
-          makeMessageRow(
-            id: 'msg-186-fresh',
-            status: 'sent',
-            isIncoming: 0,
-            timestamp: freshTs,
-            wireEnvelope:
-                '{"type":"chat_message","version":"2","encrypted":{}}',
-          ),
-        );
+    test('TC-186-04 a fresh (<60s) sent+envelope row is excluded at olderThan:60s '
+        'but included at olderThan:0', () async {
+      final now = DateTime.now().toUtc();
+      final freshTs = now
+          .subtract(const Duration(seconds: 30))
+          .toIso8601String();
+      await dbInsertMessage(
+        db,
+        makeMessageRow(
+          id: 'msg-186-fresh',
+          status: 'sent',
+          isIncoming: 0,
+          timestamp: freshTs,
+          wireEnvelope: '{"type":"chat_message","version":"2","encrypted":{}}',
+        ),
+      );
 
-        // NB: dbLoadUnackedOutgoingMessages takes a DateTime CUTOFF (rows with
-        // timestamp < cutoff). The repository converts Duration->cutoff; here we
-        // pass the cutoffs directly. 60s gate => cutoff now-60s; reconnect (0) =>
-        // cutoff now.
-        final gated = await dbLoadUnackedOutgoingMessages(
-          db,
-          olderThan: now.subtract(const Duration(seconds: 60)),
-        );
-        expect(
-          gated.map((r) => r['id']),
-          isNot(contains('msg-186-fresh')),
-          reason: 'the 60s anti-race gate excludes a just-sent row',
-        );
+      // NB: dbLoadUnackedOutgoingMessages takes a DateTime CUTOFF (rows with
+      // timestamp < cutoff). The repository converts Duration->cutoff; here we
+      // pass the cutoffs directly. 60s gate => cutoff now-60s; reconnect (0) =>
+      // cutoff now.
+      final gated = await dbLoadUnackedOutgoingMessages(
+        db,
+        olderThan: now.subtract(const Duration(seconds: 60)),
+      );
+      expect(
+        gated.map((r) => r['id']),
+        isNot(contains('msg-186-fresh')),
+        reason: 'the 60s anti-race gate excludes a just-sent row',
+      );
 
-        final reconnect = await dbLoadUnackedOutgoingMessages(db, olderThan: now);
-        expect(
-          reconnect.map((r) => r['id']),
-          contains('msg-186-fresh'),
-          reason: 'dropping the gate (the reconnect pass) picks up the fresh row',
-        );
-      },
-    );
+      final reconnect = await dbLoadUnackedOutgoingMessages(db, olderThan: now);
+      expect(
+        reconnect.map((r) => r['id']),
+        contains('msg-186-fresh'),
+        reason: 'dropping the gate (the reconnect pass) picks up the fresh row',
+      );
+    });
   });
   group('private media v100 helper round-trip', () {
     test(

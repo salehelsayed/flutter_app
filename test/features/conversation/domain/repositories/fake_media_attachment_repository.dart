@@ -1,8 +1,11 @@
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
@@ -20,7 +23,9 @@ class FakeMediaAttachmentRepository
     implements
         MediaAttachmentRepository,
         MediaAttachmentByIdLookup,
-        OutgoingOrdinaryAttemptStagingRepository {
+        OutgoingOrdinaryAttemptStagingRepository,
+        OutgoingDirectMediaInboxCustodyStagingRepository,
+        OutgoingDirectMediaCustodyFailureRepository {
   FakeMediaAttachmentRepository({this.seedOwnerLane = MediaOwnerLane.direct});
 
   final List<MediaAttachment> _attachments = [];
@@ -30,6 +35,32 @@ class FakeMediaAttachmentRepository
 
   // Pre-upload ordering hook
   void Function(MediaAttachment att)? onSaveAttachment;
+
+  Future<OutgoingDirectMediaCustodyStageResult> Function({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  })?
+  onStageOutgoingDirectMediaInboxCustody;
+
+  Future<UploadRetryProjectionResult> Function({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required String failedAttachmentId,
+    required UploadMediaFailed failure,
+  })?
+  onProjectDirectMediaCustodyUploadFailure;
+
+  @override
+  bool get supportsDirectMediaInboxCustody =>
+      onStageOutgoingDirectMediaInboxCustody != null;
+
+  @override
+  bool get supportsDirectMediaCustodyFailureProjection =>
+      onProjectDirectMediaCustodyUploadFailure != null;
 
   // Track all saves for assertion in multi-attachment tests
   final _savedAttachments = <MediaAttachment>[];
@@ -322,6 +353,57 @@ class FakeMediaAttachmentRepository
     return OutgoingOrdinaryMutationResult(
       outcome: result.outcome,
       message: result.message?.copyWith(media: committed),
+    );
+  }
+
+  @override
+  Future<OutgoingDirectMediaCustodyStageResult>
+  stageOutgoingDirectMediaInboxCustody({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String wireEnvelope,
+  }) {
+    final callback = onStageOutgoingDirectMediaInboxCustody;
+    if (callback == null) {
+      return Future<OutgoingDirectMediaCustodyStageResult>.value(
+        const OutgoingDirectMediaCustodyStageResult(
+          outcome: OutgoingOrdinaryMutationOutcome.refused,
+          message: null,
+          custody: null,
+        ),
+      );
+    }
+    return callback(
+      expected: expected,
+      staged: staged,
+      attachments: attachments,
+      kind: kind,
+      recipientPeerId: recipientPeerId,
+      wireEnvelope: wireEnvelope,
+    );
+  }
+
+  @override
+  Future<UploadRetryProjectionResult> projectDirectMediaCustodyUploadFailure({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required String failedAttachmentId,
+    required UploadMediaFailed failure,
+  }) {
+    final callback = onProjectDirectMediaCustodyUploadFailure;
+    if (callback == null) {
+      return Future<UploadRetryProjectionResult>.value(
+        const UploadRetryProjectionResult.notApplied(),
+      );
+    }
+    return callback(
+      expectedParent: expectedParent,
+      expectedAttachments: expectedAttachments,
+      failedAttachmentId: failedAttachmentId,
+      failure: failure,
     );
   }
 }

@@ -235,6 +235,12 @@ abstract interface class OutgoingDirectTextInboxCustodyRepository {
     required String messageId,
   });
 
+  /// Resolves ownership by immutable message identity alone. The returned
+  /// row supplies the authoritative stored recipient for replay; callers must
+  /// not scope this lookup with the mutable parent message's contact field.
+  Future<DirectInboxCustodyOutboxEntry?>
+  loadDirectInboxCustodyOwnerForMessageId({required String messageId});
+
   /// Records one retained failure only if [expected]'s immutable incarnation
   /// still owns its recipient/message scope.
   Future<bool> recordDirectInboxCustodyFailureIfExact({

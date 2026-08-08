@@ -68,6 +68,13 @@ class ConversationMessage {
   /// ISO-8601 timestamp of the last custody-sweep check on an 'inboxed' row.
   final String? custodyCheckedAt;
 
+  /// Device-local manifest authority for newly prepared ordinary direct media.
+  ///
+  /// This value is never received from or serialized into a wire payload. A
+  /// null value means that this row does not own unconsumed media-custody
+  /// preparation authority.
+  final String? directMediaCustodyIntentId;
+
   /// F8 tier-2: wire-stamped logical-delivery identifier (a normal send stamps
   /// its own id; one explicit Forward action stamps a random operation token).
   /// Survives that action's id+timestamp re-mint; the receiver dedups on
@@ -113,6 +120,7 @@ class ConversationMessage {
     this.wireEnvelope,
     this.relayExpiresAt,
     this.custodyCheckedAt,
+    this.directMediaCustodyIntentId,
     this.dedupKey,
     this.isForwarded = false,
     this.privateMediaPolicy = const PrivateMediaPolicy.ordinary(),
@@ -155,6 +163,8 @@ class ConversationMessage {
       wireEnvelope: map['wire_envelope'] as String?,
       relayExpiresAt: map['relay_expires_at'] as int?,
       custodyCheckedAt: map['custody_checked_at'] as String?,
+      directMediaCustodyIntentId:
+          map['direct_media_custody_intent_id'] as String?,
       dedupKey: map['dedup_key'] as String?,
       isForwarded: ((map['is_forwarded'] as num?)?.toInt() ?? 0) == 1,
       privateMediaPolicy: privateMediaPolicy,
@@ -195,6 +205,7 @@ class ConversationMessage {
       'wire_envelope': wireEnvelope,
       'relay_expires_at': relayExpiresAt,
       'custody_checked_at': custodyCheckedAt,
+      'direct_media_custody_intent_id': directMediaCustodyIntentId,
       'dedup_key': dedupKey,
       'is_forwarded': isForwarded ? 1 : 0,
       'private_media_policy_version': privateMediaPolicy.version,
@@ -232,6 +243,7 @@ class ConversationMessage {
     Object? wireEnvelope = _sentinel,
     Object? relayExpiresAt = _sentinel,
     Object? custodyCheckedAt = _sentinel,
+    Object? directMediaCustodyIntentId = _sentinel,
     Object? dedupKey = _sentinel,
     bool? isForwarded,
     PrivateMediaPolicy? privateMediaPolicy,
@@ -272,6 +284,9 @@ class ConversationMessage {
       custodyCheckedAt: custodyCheckedAt == _sentinel
           ? this.custodyCheckedAt
           : custodyCheckedAt as String?,
+      directMediaCustodyIntentId: directMediaCustodyIntentId == _sentinel
+          ? this.directMediaCustodyIntentId
+          : directMediaCustodyIntentId as String?,
       dedupKey: dedupKey == _sentinel ? this.dedupKey : dedupKey as String?,
       isForwarded: isForwarded ?? this.isForwarded,
       privateMediaPolicy: privateMediaPolicy ?? this.privateMediaPolicy,

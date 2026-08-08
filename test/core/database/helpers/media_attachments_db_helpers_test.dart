@@ -1,11 +1,20 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
+import 'package:flutter_app/core/media/upload_retry_projection.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 void main() {
   late Database db;
@@ -743,6 +752,451 @@ void main() {
         'upload_pending',
       );
     });
+  });
+
+  group('direct media custody final authority gate', () {
+    String envelope(String messageId, {String senderPeerId = 'peer-local'}) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'senderPeerId': senderPeerId,
+          'encrypted': const <String, String>{
+            'kem': 'kem-final-authority',
+            'ciphertext': 'cipher-final-authority',
+            'nonce': 'nonce-final-authority',
+          },
+        });
+
+    Map<String, Object?> freshParent({
+      required String messageId,
+      required String recipientPeerId,
+    }) {
+      final wireEnvelope = envelope(messageId);
+      return ConversationMessage(
+        id: messageId,
+        contactPeerId: recipientPeerId,
+        senderPeerId: 'peer-local',
+        text: 'fresh media',
+        timestamp: '2026-08-07T14:30:00.000Z',
+        status: 'sending',
+        isIncoming: false,
+        createdAt: '2026-08-07T14:30:00.000Z',
+        wireEnvelope: wireEnvelope,
+      ).toMap();
+    }
+
+    Map<String, Object?> completedAttachment({
+      required String messageId,
+      required String attachmentId,
+      String mime = 'audio/mp4',
+      String mediaType = 'audio',
+      Object? width,
+      Object? height,
+      Object? durationMs = 800,
+      Object? waveform = '[0.0,0.5,1.0]',
+    }) => <String, Object?>{
+      ...makeAttachmentRow(
+        id: attachmentId,
+        messageId: messageId,
+        mime: mime,
+        size: 800,
+        mediaType: mediaType,
+        width: null,
+        height: null,
+        durationMs: null,
+        localPath: 'media/direct/$attachmentId.m4a',
+        downloadStatus: 'done',
+        contentHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        encryptionKeyBase64: secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        encryptionNonce: 'nonce-$attachmentId',
+        encryptionScheme: 'blob_aes_256_gcm_v1',
+      ),
+      'width': width,
+      'height': height,
+      'duration_ms': durationMs,
+      'waveform': waveform,
+    };
+
+    test(
+      'TC-345 final DB authority rejects MIME/type, negative dimensions, and malformed waveform metadata',
+      () async {
+        const messageId = 'tc345-final-metadata-gate';
+        const attachmentId = 'tc345-final-metadata-attachment';
+        final parent = freshParent(
+          messageId: messageId,
+          recipientPeerId: 'peer-metadata',
+        );
+        final valid = completedAttachment(
+          messageId: messageId,
+          attachmentId: attachmentId,
+        );
+        final malformed = <Map<String, Object?>>[
+          <String, Object?>{...valid, 'media_type': 'video'},
+          <String, Object?>{...valid, 'size': 1.5},
+          <String, Object?>{...valid, 'width': -1},
+          <String, Object?>{...valid, 'height': -1},
+          <String, Object?>{...valid, 'duration_ms': -1},
+          <String, Object?>{...valid, 'waveform': '{"sample":0.5}'},
+          <String, Object?>{...valid, 'waveform': '[0.0,1.01]'},
+          <String, Object?>{...valid, 'waveform': '[0.0,"bad"]'},
+          <String, Object?>{
+            ...valid,
+            'encryption_key_base64': secureStoreReferenceForKey(
+              mediaAttachmentEncryptionKeyStoreName('attacker-selected'),
+            ),
+          },
+        ];
+
+        for (final candidate in malformed) {
+          final result = await dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: null,
+            stagedRow: parent,
+            attachmentRows: <Map<String, Object?>>[candidate],
+            kind: OutgoingOrdinaryAttemptKind.fresh,
+            recipientPeerId: 'peer-metadata',
+            wireEnvelope: parent['wire_envelope']! as String,
+          );
+          expect(result.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        }
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+
+        final accepted = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: null,
+          stagedRow: parent,
+          attachmentRows: <Map<String, Object?>>[valid],
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+          recipientPeerId: 'peer-metadata',
+          wireEnvelope: parent['wire_envelope']! as String,
+        );
+        expect(accepted.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(accepted.hasExactMutableProjection, isTrue);
+      },
+    );
+
+    test(
+      'TC-345 marker-free fresh cannot reuse an outbox-only message ID under another recipient',
+      () async {
+        const messageId = 'tc345-fresh-cross-recipient';
+        const firstAttachmentId = 'tc345-fresh-peer-a-attachment';
+        final peerAParent = freshParent(
+          messageId: messageId,
+          recipientPeerId: 'peer-a',
+        );
+        final peerA = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: null,
+          stagedRow: peerAParent,
+          attachmentRows: <Map<String, Object?>>[
+            completedAttachment(
+              messageId: messageId,
+              attachmentId: firstAttachmentId,
+            ),
+          ],
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+          recipientPeerId: 'peer-a',
+          wireEnvelope: peerAParent['wire_envelope']! as String,
+        );
+        expect(peerA.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        final authorityBefore = (await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+
+        await db.delete(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        await db.delete(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+
+        const secondAttachmentId = 'tc345-fresh-peer-b-attachment';
+        final peerBParent = freshParent(
+          messageId: messageId,
+          recipientPeerId: 'peer-b',
+        );
+        final peerB = await dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: null,
+          stagedRow: peerBParent,
+          attachmentRows: <Map<String, Object?>>[
+            completedAttachment(
+              messageId: messageId,
+              attachmentId: secondAttachmentId,
+            ),
+          ],
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+          recipientPeerId: 'peer-b',
+          wireEnvelope: peerBParent['wire_envelope']! as String,
+        );
+
+        expect(peerB.outcome, OutgoingOrdinaryMutationOutcome.refused);
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          <Map<String, Object?>>[authorityBefore],
+        );
+        expect(await db.query('messages'), isEmpty);
+        expect(await db.query('media_attachments'), isEmpty);
+      },
+    );
+
+    test(
+      'TC-345-07f manifest-bound failure projection is atomic and refuses crossed authority',
+      () async {
+        Future<
+          ({
+            Map<String, Object?> parent,
+            List<Map<String, Object?>> attachments,
+            String failedAttachmentId,
+            String intent,
+          })
+        >
+        seedPrepared(String suffix) async {
+          final messageId = 'tc345-failure-$suffix';
+          final failedAttachmentId = 'tc345-failure-$suffix-a';
+          final siblingAttachmentId = 'tc345-failure-$suffix-b';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[failedAttachmentId, siblingAttachmentId],
+          );
+          final parent = ConversationMessage(
+            id: messageId,
+            contactPeerId: 'peer-failure-$suffix',
+            senderPeerId: 'peer-local',
+            text: 'prepared media',
+            timestamp: '2026-08-07T15:00:00.000Z',
+            status: 'sending',
+            isIncoming: false,
+            createdAt: '2026-08-07T15:00:00.000Z',
+            directMediaCustodyIntentId: intent,
+          ).toMap();
+          await db.insert('messages', parent);
+          for (final attachmentId in <String>[
+            failedAttachmentId,
+            siblingAttachmentId,
+          ]) {
+            await dbInsertMediaAttachment(
+              db,
+              makeAttachmentRow(
+                id: attachmentId,
+                messageId: messageId,
+                mime: 'audio/mp4',
+                mediaType: 'audio',
+                durationMs: 800,
+                localPath: MediaFilePathConvention.relativePathForPendingUpload(
+                  messageId: messageId,
+                  attachmentId: attachmentId,
+                  mime: 'audio/mp4',
+                ),
+                downloadStatus: 'upload_pending',
+              ),
+            );
+          }
+          return (
+            parent: Map<String, Object?>.from(
+              (await db.query(
+                'messages',
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+              )).single,
+            ),
+            attachments: (await db.rawQuery(
+              'SELECT * FROM media_attachments WHERE message_id = ? '
+              'AND owner_lane = ? ORDER BY id',
+              <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+            )).map(Map<String, Object?>.from).toList(growable: false),
+            failedAttachmentId: failedAttachmentId,
+            intent: intent,
+          );
+        }
+
+        Future<Map<String, Object?>> snapshot(String messageId) async =>
+            <String, Object?>{
+              'parent': await db.query(
+                'messages',
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+              ),
+              'attachments': await db.rawQuery(
+                'SELECT * FROM media_attachments WHERE message_id = ? '
+                'ORDER BY id',
+                <Object?>[messageId],
+              ),
+              'custody': await db.rawQuery(
+                'SELECT * FROM direct_inbox_custody_outbox '
+                'WHERE message_id = ? ORDER BY recipient_peer_id',
+                <Object?>[messageId],
+              ),
+            };
+
+        for (final variant in <String>[
+          'parent-deleted',
+          'attachment-deleted',
+          'metadata-crossed',
+          'contact-crossed',
+          'token-crossed',
+          'v108-owned',
+        ]) {
+          final seeded = await seedPrepared(variant);
+          final messageId = seeded.parent['id']! as String;
+          switch (variant) {
+            case 'parent-deleted':
+              await db.delete(
+                'messages',
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+              );
+              break;
+            case 'attachment-deleted':
+              await db.delete(
+                'media_attachments',
+                where: 'id = ?',
+                whereArgs: <Object?>[seeded.failedAttachmentId],
+              );
+              break;
+            case 'metadata-crossed':
+              await db.update(
+                'media_attachments',
+                <String, Object?>{'duration_ms': 801},
+                where: 'id = ?',
+                whereArgs: <Object?>[seeded.failedAttachmentId],
+              );
+              break;
+            case 'contact-crossed':
+              await db.update(
+                'messages',
+                <String, Object?>{'contact_peer_id': 'peer-crossed'},
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+              );
+              break;
+            case 'token-crossed':
+              await db.update(
+                'messages',
+                <String, Object?>{
+                  'direct_media_custody_intent_id':
+                      'ffffffffffffffffffffffffffffffff',
+                },
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+              );
+              break;
+            case 'v108-owned':
+              await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+                'recipient_peer_id': 'peer-crossed-owner',
+                'message_id': messageId,
+                'incarnation_id': seeded.intent,
+                'wire_envelope': '{"owned":true}',
+                'retry_count': 0,
+                'last_attempt_at': null,
+                'last_error_code': null,
+                'created_at': '2026-08-07T15:01:00.000Z',
+                'updated_at': '2026-08-07T15:01:00.000Z',
+              });
+              break;
+          }
+
+          final crossed = await snapshot(messageId);
+          final result = await dbProjectOutgoingDirectMediaCustodyUploadFailure(
+            db,
+            expectedParentRow: seeded.parent,
+            expectedAttachmentRows: seeded.attachments,
+            failedAttachmentId: seeded.failedAttachmentId,
+            disposition: UploadMediaDisposition.terminal,
+          );
+          expect(result.applied, isFalse, reason: variant);
+          expect(await snapshot(messageId), crossed, reason: variant);
+        }
+
+        final valid = await seedPrepared('valid');
+        final validMessageId = valid.parent['id']! as String;
+        await db.update(
+          'media_attachments',
+          <String, Object?>{'upload_retry_count': kMaxUploadRetries - 1},
+          where: 'id = ?',
+          whereArgs: <Object?>[valid.failedAttachmentId],
+        );
+        final exactParent = Map<String, Object?>.from(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[validMessageId],
+          )).single,
+        );
+        final exactAttachments = (await db.rawQuery(
+          'SELECT * FROM media_attachments WHERE message_id = ? '
+          'AND owner_lane = ? ORDER BY id',
+          <Object?>[validMessageId, MediaOwnerLane.direct.dbValue],
+        )).map(Map<String, Object?>.from).toList(growable: false);
+
+        final applied = await dbProjectOutgoingDirectMediaCustodyUploadFailure(
+          db,
+          expectedParentRow: exactParent,
+          expectedAttachmentRows: exactAttachments,
+          failedAttachmentId: valid.failedAttachmentId,
+          disposition: UploadMediaDisposition.boundedRetryable,
+        );
+        expect(applied.state, UploadRetryProjectionState.terminal);
+        expect(applied.uploadRetryCount, kMaxUploadRetries);
+        final committedParent = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[validMessageId],
+        )).single;
+        expect(committedParent['status'], 'failed');
+        expect(committedParent['direct_media_custody_intent_id'], valid.intent);
+        final committedAttachments = await db.rawQuery(
+          'SELECT * FROM media_attachments WHERE message_id = ? ORDER BY id',
+          <Object?>[validMessageId],
+        );
+        final committedFailed = committedAttachments.singleWhere(
+          (row) => row['id'] == valid.failedAttachmentId,
+        );
+        final committedSibling = committedAttachments.singleWhere(
+          (row) => row['id'] != valid.failedAttachmentId,
+        );
+        expect(committedFailed['download_status'], 'upload_failed');
+        expect(committedFailed['upload_retry_count'], kMaxUploadRetries);
+        expect(committedSibling, exactAttachments.last);
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[validMessageId],
+          ),
+          isEmpty,
+        );
+      },
+    );
   });
 
   group('removed membership retry completion CAS', () {

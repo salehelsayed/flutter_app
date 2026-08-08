@@ -40,6 +40,8 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
+import '../../../shared/fakes/in_memory_message_repository.dart'
+    as shared_fakes;
 
 // ─── Fake P2P Network ───────────────────────────────────────────────
 // Routes messages between two FakeP2PService instances.
@@ -101,6 +103,10 @@ class FakeP2PService implements P2PService, AckOrExpiryInboxStore {
   final String peerId;
   final FakeP2PNetwork network;
   final _messageController = StreamController<ChatMessage>.broadcast();
+  final List<
+    ({String recipientPeerId, String wireEnvelope, AckCustodyKind custodyKind})
+  >
+  custodyStores = [];
 
   FakeP2PService({required this.peerId, required this.network}) {
     network.register(this);
@@ -217,10 +223,22 @@ class FakeP2PService implements P2PService, AckOrExpiryInboxStore {
     required AckCustodyKind custodyKind,
     int? timeoutMs,
   }) async {
+    custodyStores.add((
+      recipientPeerId: toPeerId,
+      wireEnvelope: message,
+      custodyKind: custodyKind,
+    ));
+    if (custodyKind != AckCustodyKind.directTextV108) {
+      return const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'WRONG_CUSTODY_KIND',
+      );
+    }
     final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
     return InboxStoreOutcome(
       status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
       storeStatus: stored ? 'stored' : null,
+      expiresAtMs: stored ? 4102444800000 : null,
       custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
     );
   }
@@ -300,13 +318,8 @@ class FakeP2PService implements P2PService, AckOrExpiryInboxStore {
 }
 
 // ─── In-memory Message Repository ───────────────────────────────────
-class InMemoryMessageRepository
-    implements
-        MessageRepository,
-        OutgoingTransportMutationRepository,
-        OutgoingDirectTextInboxCustodyRepository {
+class InMemoryMessageRepository extends shared_fakes.InMemoryMessageRepository {
   final Map<String, ConversationMessage> _messages = {};
-  final Map<String, DirectInboxCustodyOutboxEntry> _directCustodyRows = {};
 
   @override
   bool get supportsDirectTextInboxCustody => true;
@@ -701,7 +714,7 @@ class InMemoryMessageRepository
   }) async {
     final key = _directCustodyKey(recipientPeerId, staged.id);
     final current = _messages[staged.id];
-    final custody = _directCustodyRows[key];
+    final custody = directCustodyRows[key];
     final validFreshAuthority =
         kind == OutgoingOrdinaryAttemptKind.fresh &&
         expected == null &&
@@ -730,7 +743,7 @@ class InMemoryMessageRepository
 
     final now = DateTime.now().toUtc().toIso8601String();
     _messages[staged.id] = staged;
-    _directCustodyRows[key] = DirectInboxCustodyOutboxEntry(
+    directCustodyRows[key] = DirectInboxCustodyOutboxEntry(
       recipientPeerId: recipientPeerId,
       messageId: staged.id,
       incarnationId: incarnationId,
@@ -748,7 +761,7 @@ class InMemoryMessageRepository
   Future<List<DirectInboxCustodyOutboxEntry>> loadDirectInboxCustody({
     int limit = 50,
   }) async {
-    final rows = _directCustodyRows.values.toList()
+    final rows = directCustodyRows.values.toList()
       ..sort((left, right) {
         if (left.lastAttemptAt == null && right.lastAttemptAt != null) {
           return -1;
@@ -773,7 +786,20 @@ class InMemoryMessageRepository
   Future<DirectInboxCustodyOutboxEntry?> loadDirectInboxCustodyForMessage({
     required String recipientPeerId,
     required String messageId,
-  }) async => _directCustodyRows[_directCustodyKey(recipientPeerId, messageId)];
+  }) async => directCustodyRows[_directCustodyKey(recipientPeerId, messageId)];
+
+  @override
+  Future<DirectInboxCustodyOutboxEntry?>
+  loadDirectInboxCustodyOwnerForMessageId({required String messageId}) async {
+    final matches = directCustodyRows.values
+        .where((entry) => entry.messageId == messageId)
+        .take(2)
+        .toList(growable: false);
+    if (matches.length > 1) {
+      throw StateError('Ambiguous direct inbox custody owner for message');
+    }
+    return matches.firstOrNull;
+  }
 
   @override
   Future<bool> recordDirectInboxCustodyFailureIfExact({
@@ -782,14 +808,14 @@ class InMemoryMessageRepository
   }) async {
     if (!DirectInboxCustodyErrorCode.values.contains(errorCode)) return false;
     final key = _directCustodyKey(expected.recipientPeerId, expected.messageId);
-    final current = _directCustodyRows[key];
+    final current = directCustodyRows[key];
     if (current == null ||
         current.incarnationId != expected.incarnationId ||
         current.wireEnvelope != expected.wireEnvelope) {
       return false;
     }
     final now = DateTime.now().toUtc().toIso8601String();
-    _directCustodyRows[key] = current.copyWith(
+    directCustodyRows[key] = current.copyWith(
       retryCount: current.retryCount + 1,
       lastAttemptAt: now,
       lastErrorCode: errorCode,
@@ -805,7 +831,7 @@ class InMemoryMessageRepository
     required int? relayExpiresAt,
   }) async {
     final key = _directCustodyKey(expected.recipientPeerId, expected.messageId);
-    final custody = _directCustodyRows[key];
+    final custody = directCustodyRows[key];
     if (custody == null ||
         custody.incarnationId != expected.incarnationId ||
         custody.wireEnvelope != expected.wireEnvelope) {
@@ -816,7 +842,7 @@ class InMemoryMessageRepository
     }
 
     final current = _messages[expected.messageId];
-    _directCustodyRows.remove(key);
+    directCustodyRows.remove(key);
     if (current == null) {
       return const DirectInboxCustodyCompletionResult(
         outcome: DirectInboxCustodyCompletionOutcome.messageRemoved,
@@ -863,6 +889,7 @@ class InMemoryMessageRepository
     ConversationMessage? message,
   ) => OutgoingOrdinaryMutationResult(outcome: outcome, message: message);
 
+  @override
   int get count => _messages.length;
 }
 
@@ -964,7 +991,8 @@ class TestUser {
   }) {
     final p2p = FakeP2PService(peerId: peerId, network: network);
     final msgRepo = messageRepo ?? InMemoryMessageRepository();
-    final mediaRepo = InMemoryMediaAttachmentRepository();
+    final mediaRepo = InMemoryMediaAttachmentRepository()
+      ..enableDirectMediaInboxCustodyForTest(msgRepo);
     final contactsRepo = contactRepo ?? InMemoryContactRepository();
     final bridge = PassthroughCryptoBridge();
     final listener = ChatMessageListener(
@@ -1759,7 +1787,8 @@ void main() {
       required List<MediaAttachment> attachments,
     }) async {
       final contact = await alice.contactRepo.getContact(bob.peerId);
-      await sendChatMessage(
+      final custodyStoreCount = alice.p2pService.custodyStores.length;
+      final (result, message) = await sendChatMessage(
         p2pService: alice.p2pService,
         messageRepo: alice.messageRepo,
         targetPeerId: bob.peerId,
@@ -1776,6 +1805,13 @@ void main() {
         mediaAttachments: attachments,
         mediaAttachmentRepo: alice.mediaAttachmentRepo,
       );
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(alice.p2pService.custodyStores, hasLength(custodyStoreCount + 1));
+      final custodyStore = alice.p2pService.custodyStores.last;
+      expect(custodyStore.recipientPeerId, bob.peerId);
+      expect(custodyStore.custodyKind, AckCustodyKind.directTextV108);
+      expect(custodyStore.wireEnvelope, isNotEmpty);
     }
 
     List<MediaAttachment> forwardedVisuals(
@@ -1788,6 +1824,7 @@ void main() {
         mime: 'image/jpeg',
         size: 11,
         mediaType: 'image',
+        localPath: 'media/$destinationPrefix-image.jpg',
         downloadStatus: 'done',
         createdAt: '2099-01-01T00:00:00.000Z',
         contentHash:
@@ -1802,6 +1839,7 @@ void main() {
         mime: 'video/mp4',
         size: 22,
         mediaType: 'video',
+        localPath: 'media/$destinationPrefix-video.mp4',
         durationMs: 1000,
         downloadStatus: 'done',
         createdAt: '2099-01-01T00:00:00.000Z',

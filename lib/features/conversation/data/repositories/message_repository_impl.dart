@@ -107,6 +107,8 @@ class MessageRepositoryImpl
     required String messageId,
   })?
   dbLoadDirectInboxCustodyOutboxForMessage;
+  final Future<Map<String, Object?>?> Function({required String messageId})?
+  dbLoadDirectInboxCustodyOutboxOwnerForMessageId;
   final Future<bool> Function({
     required String recipientPeerId,
     required String messageId,
@@ -335,6 +337,7 @@ class MessageRepositoryImpl
     this.dbStageOutgoingDirectTextInboxCustody,
     this.dbLoadDirectInboxCustodyOutbox,
     this.dbLoadDirectInboxCustodyOutboxForMessage,
+    this.dbLoadDirectInboxCustodyOutboxOwnerForMessageId,
     this.dbRecordDirectInboxCustodyFailureIfExact,
     this.dbCompleteAcceptedDirectInboxCustodyIfExact,
     this.dbSettleOutgoingOrdinaryTransport,
@@ -382,6 +385,7 @@ class MessageRepositoryImpl
       dbStageOutgoingDirectTextInboxCustody != null &&
       dbLoadDirectInboxCustodyOutbox != null &&
       dbLoadDirectInboxCustodyOutboxForMessage != null &&
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId != null &&
       dbRecordDirectInboxCustodyFailureIfExact != null &&
       dbCompleteAcceptedDirectInboxCustodyIfExact != null;
 
@@ -589,6 +593,15 @@ class MessageRepositoryImpl
   }
 
   @override
+  Future<DirectInboxCustodyOutboxEntry?>
+  loadDirectInboxCustodyOwnerForMessageId({required String messageId}) async {
+    final load = dbLoadDirectInboxCustodyOutboxOwnerForMessageId;
+    if (load == null) return null;
+    final row = await load(messageId: messageId);
+    return row == null ? null : DirectInboxCustodyOutboxEntry.fromMap(row);
+  }
+
+  @override
   Future<bool> recordDirectInboxCustodyFailureIfExact({
     required DirectInboxCustodyOutboxEntry expected,
     required String errorCode,
@@ -626,6 +639,16 @@ class MessageRepositoryImpl
       relayExpiresAt: relayExpiresAt,
     );
     if (!outcome.completed) {
+      return DirectInboxCustodyCompletionResult(
+        outcome: outcome,
+        message: null,
+      );
+    }
+    if (outcome == DirectInboxCustodyCompletionOutcome.messageRemoved) {
+      // The DB helper retains a hidden, scrubbed local tombstone so a delayed
+      // generic save cannot recreate the physically removed parent. Keep that
+      // internal authority out of the repository's visible completion result.
+      _messageSnapshots.remove(expected.messageId);
       return DirectInboxCustodyCompletionResult(
         outcome: outcome,
         message: null,

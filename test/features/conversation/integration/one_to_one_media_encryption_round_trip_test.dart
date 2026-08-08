@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
@@ -175,6 +176,7 @@ void main() {
   late _RelayBridge bobBridge;
   late InMemoryMediaAttachmentRepository aliceMediaRepo;
   late InMemoryMediaAttachmentRepository bobMediaRepo;
+  late InMemoryMessageRepository aliceMessageRepo;
   late InMemoryMessageRepository bobMessageRepo;
   late InMemoryContactRepository bobContacts;
   late _TempMediaFileManager bobFileManager;
@@ -188,6 +190,8 @@ void main() {
     bobBridge = _RelayBridge(relayStore);
     aliceMediaRepo = InMemoryMediaAttachmentRepository();
     bobMediaRepo = InMemoryMediaAttachmentRepository();
+    aliceMessageRepo = InMemoryMessageRepository();
+    aliceMediaRepo.enableDirectMediaInboxCustodyForTest(aliceMessageRepo);
     bobMessageRepo = InMemoryMessageRepository();
     bobContacts = InMemoryContactRepository();
     bobContacts.addTestContact(
@@ -247,9 +251,10 @@ void main() {
     final aliceP2P = FakeP2PService(
       initialState: const NodeState(isStarted: true, peerId: _alicePeerId),
     );
+    String? acceptedInboxEnvelope;
     final (sendResult, _) = await sendChatMessage(
       p2pService: aliceP2P,
-      messageRepo: InMemoryMessageRepository(),
+      messageRepo: aliceMessageRepo,
       targetPeerId: _bobPeerId,
       text: 'photo for you',
       senderPeerId: _alicePeerId,
@@ -258,10 +263,29 @@ void main() {
       recipientMlKemPublicKey: 'mlkem-bob',
       mediaAttachments: [uploaded],
       mediaAttachmentRepo: aliceMediaRepo,
+      storeInAckCustodyInboxDetailed:
+          (peerId, envelope, {required custodyKind, timeoutMs}) async {
+            expect(peerId, _bobPeerId);
+            expect(custodyKind, AckCustodyKind.directTextV108);
+            acceptedInboxEnvelope = envelope;
+            return const InboxStoreOutcome(
+              status: InboxStoreStatus.stored,
+              storeStatus: 'stored',
+              expiresAtMs: 1770000000000,
+              custodyContract: ackOrExpiryInboxCustodyContract,
+            );
+          },
     );
     expect(sendResult, SendChatMessageResult.success);
+    expect(
+      aliceMessageRepo.directCustodyRows,
+      isEmpty,
+      reason: 'strict ACK-or-expiry acceptance settles exact local custody',
+    );
     final wire =
-        aliceP2P.lastSendMessageContent ?? aliceP2P.lastStoreInInboxMessage;
+        aliceP2P.lastSendMessageContent ??
+        acceptedInboxEnvelope ??
+        aliceP2P.lastStoreInInboxMessage;
     expect(wire, isNotNull);
     final outerEnvelope = jsonDecode(wire!) as Map<String, dynamic>;
     expect(outerEnvelope['version'], '2');

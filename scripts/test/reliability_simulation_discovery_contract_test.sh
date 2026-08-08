@@ -360,21 +360,22 @@ if grep -Fq '==>' "$missing_invite_devices_run"; then
   fail 'invite_send_latency without device env reached Dart/device execution'
 fi
 
-# Plan 342 has exactly one device-proof discovery row; it is not a host test.
+# Plans 342/345 share exactly one device-proof discovery row; it is not a host
+# test and covers both direct-text and direct-media custody SQLCipher proofs.
 custody_path=integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart
 assert_record_once 1to1 test "$custody_path"
-grep -Fq $'1to1\ttest\t'$custody_path$'\t342 TC-342-11 Android v107-to-v108 direct-text custody SQLCipher durability device proof' \
-  "$records" || fail 'TC-342-11 discovery record lost its exact Android proof label'
+grep -Fq $'1to1\ttest\t'$custody_path$'\t342/345 TC-342-11 direct-text and TC-345-11 direct-media custody Android SQLCipher durability device proofs' \
+  "$records" || fail 'TC-342/345 discovery record lost its exact Android proof label'
 
 unset RELIABILITY_SINGLE_DEVICE_ID FLUTTER_DEVICE_ID
 missing_custody_device_list="$tmp_dir/tc342-missing-device.list"
 ./scripts/run_test_gates.sh reliability-sim 1to1 --list \
   --only "$custody_path" \
   >"$missing_custody_device_list" ||
-  fail 'TC-342-11 list must remain available without a device env'
+  fail 'TC-342/345 list must remain available without a device env'
 grep -Fq -- "-d '<required:RELIABILITY_SINGLE_DEVICE_ID>'" \
   "$missing_custody_device_list" ||
-  fail 'TC-342-11 list did not expose its required explicit Android target'
+  fail 'TC-342/345 list did not expose its required explicit Android target'
 
 missing_custody_device_run="$tmp_dir/tc342-missing-device.run"
 set +e
@@ -384,14 +385,14 @@ set +e
 missing_custody_device_status=$?
 set -e
 [ "$missing_custody_device_status" -eq 64 ] ||
-  fail "TC-342-11 without device env exited $missing_custody_device_status instead of 64"
+  fail "TC-342/345 without device env exited $missing_custody_device_status instead of 64"
 grep -Fq 'Missing explicit single-device ID' "$missing_custody_device_run" ||
-  fail 'TC-342-11 without device env did not fail with the explicit-ID diagnostic'
+  fail 'TC-342/345 without device env did not fail with the explicit-ID diagnostic'
 if grep -Fq '==>' "$missing_custody_device_run"; then
-  fail 'TC-342-11 without device env reached Flutter/device execution'
+  fail 'TC-342/345 without device env reached Flutter/device execution'
 fi
 grep -Fq 'Platform.isAndroid' "$custody_path" ||
-  fail 'TC-342-11 does not reject a non-Android explicit target'
+  fail 'TC-342/345 does not reject a non-Android explicit target'
 
 # Plan 343 adds one independent Android SQLCipher proof and keeps it off host.
 reaction_custody_path=integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart

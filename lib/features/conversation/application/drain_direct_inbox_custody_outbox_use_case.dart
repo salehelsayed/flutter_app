@@ -35,7 +35,7 @@ Future<int> drainDirectInboxCustodyOutbox({
   final entries = await custodyRepository.loadDirectInboxCustody();
   var completed = 0;
   for (final entry in entries) {
-    final result = await _attemptDirectInboxCustodyEntry(
+    final result = await drainOwnedDirectInboxCustodyOutboxEntry(
       entry: entry,
       custodyRepository: custodyRepository,
       storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
@@ -56,19 +56,29 @@ Future<DirectInboxCustodyDrainAttempt> drainDirectInboxCustodyOutboxForMessage({
   required String recipientPeerId,
   required String messageId,
 }) async {
-  final entry = await custodyRepository.loadDirectInboxCustodyForMessage(
-    recipientPeerId: recipientPeerId,
+  final entry = await custodyRepository.loadDirectInboxCustodyOwnerForMessageId(
     messageId: messageId,
   );
+  if (entry != null && entry.recipientPeerId != recipientPeerId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'DIRECT_INBOX_CUSTODY_PARENT_RECIPIENT_DRIFT',
+      details: <String, Object?>{
+        'id': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
+      },
+    );
+  }
   if (entry == null) return DirectInboxCustodyDrainAttempt.notFound;
-  return _attemptDirectInboxCustodyEntry(
+  return drainOwnedDirectInboxCustodyOutboxEntry(
     entry: entry,
     custodyRepository: custodyRepository,
     storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
   );
 }
 
-Future<DirectInboxCustodyDrainAttempt> _attemptDirectInboxCustodyEntry({
+/// Replays one already-resolved immutable owner row. The stored entry supplies
+/// both the exact bytes and recipient; no mutable parent projection is used.
+Future<DirectInboxCustodyDrainAttempt> drainOwnedDirectInboxCustodyOutboxEntry({
   required DirectInboxCustodyOutboxEntry entry,
   required OutgoingDirectTextInboxCustodyRepository custodyRepository,
   required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
@@ -116,8 +126,7 @@ Future<DirectInboxCustodyDrainAttempt> _attemptDirectInboxCustodyEntry({
       // retry that may later re-mint the logical message. A surviving same-key
       // row (including a replacement incarnation) remains authoritative.
       completed =
-          await custodyRepository.loadDirectInboxCustodyForMessage(
-            recipientPeerId: entry.recipientPeerId,
+          await custodyRepository.loadDirectInboxCustodyOwnerForMessageId(
             messageId: entry.messageId,
           ) ==
           null;

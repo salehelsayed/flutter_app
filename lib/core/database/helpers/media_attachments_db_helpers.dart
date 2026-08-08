@@ -1,7 +1,10 @@
+import 'dart:convert';
+
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../constants/retry_constants.dart';
 import '../../media/group_media_integrity_policy.dart';
+import '../../media/direct_media_custody_intent.dart';
 import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
@@ -14,6 +17,7 @@ import '../db_write_transaction.dart';
 import '../outgoing_transport_mutation.dart';
 import 'group_messages_db_helpers.dart';
 import 'group_parent_write_guard.dart';
+import 'direct_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
 
 enum _OutgoingPrivateParentMutationAuthority {
@@ -735,6 +739,13 @@ const Set<String> _nonTerminalMediaStatuses = {
   kMediaDownloadStatusUploadPending,
 };
 
+/// Internal-authority refusal surfaced by the final transactional generic-save
+/// guard so repository callers can compensate a secure-key write and then
+/// treat the stale custody loser as a successful no-op.
+final class GenericMediaAttachmentCustodySaveRefused implements Exception {
+  const GenericMediaAttachmentCustodySaveRefused();
+}
+
 /// Completed-local-path preservation policy (raw column values): an existing
 /// completed download must survive an ordinary metadata replay that would
 /// otherwise regress it to a non-terminal status or a transient path.
@@ -810,6 +821,24 @@ Future<void> dbSaveMediaAttachmentPreservingLocalState(
   }
 }
 
+/// Returns whether an unqualified whole-row attachment save may proceed.
+///
+/// A committed direct-media initial envelope owns its attachment projection
+/// for as long as v108 custody exists. Once v108 retires, the exact complete
+/// encrypted attachment itself remains monotonic; exact outgoing deletion
+/// authority also prevents a user-removed row from being recreated. Callers
+/// must run this check before preparing a secure-store key write; the
+/// preserving SQL merge repeats the predicate in its transaction as the final
+/// race guard.
+Future<bool> dbCanApplyGenericMediaAttachmentSave(
+  Database db,
+  Map<String, Object?> row,
+) => dbWriteTransaction(
+  db,
+  (txn) =>
+      _canApplyGenericMediaAttachmentSave(txn, row, requireCustodySchema: true),
+);
+
 const _ordinaryOutgoingAttachmentAttemptColumns = <String>[
   'id',
   'message_id',
@@ -826,6 +855,26 @@ const _ordinaryOutgoingAttachmentAttemptColumns = <String>[
   'waveform',
   'upload_retry_count',
   'download_retry_count',
+  'content_hash',
+  'thumbnail_hash',
+  'encryption_key_base64',
+  'encryption_nonce',
+  'encryption_scheme',
+];
+
+/// Descriptor and ciphertext identity that becomes monotonic once a direct
+/// attachment has a complete encrypted projection. Local lifecycle columns
+/// (path, status, retry counters, bookmark, and playback) intentionally stay
+/// outside this set so download repair and eviction can continue to converge.
+const _immutableDirectMediaProjectionColumns = <String>[
+  'mime',
+  'size',
+  'media_type',
+  'width',
+  'height',
+  'duration_ms',
+  'created_at',
+  'waveform',
   'content_hash',
   'thumbnail_hash',
   'encryption_key_base64',
@@ -886,6 +935,8 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingOrdinaryAttemptWithMedia(
   final uniqueAttachmentIds = attachmentIds.toSet();
   final validShape =
       messageId.isNotEmpty &&
+      expectedRow?['direct_media_custody_intent_id'] == null &&
+      stagedRow['direct_media_custody_intent_id'] == null &&
       attachmentRows.isNotEmpty &&
       uniqueAttachmentIds.length == attachmentRows.length &&
       !uniqueAttachmentIds.contains('') &&
@@ -913,6 +964,949 @@ Future<OutgoingOrdinaryMutationOutcome> dbStageOutgoingOrdinaryAttemptWithMedia(
   );
 }
 
+/// Storage result of the combined ordinary-media/v108 transaction.
+///
+/// Every authorizing result returns the exact immutable custody row selected
+/// inside the transaction. The parent/media rows are the same transactional
+/// snapshot, but may be absent or lifecycle-mutated when an idempotent loser
+/// enters after settlement or physical deletion.
+class DirectMediaInboxCustodyDbStageResult {
+  const DirectMediaInboxCustodyDbStageResult({
+    required this.outcome,
+    required this.messageRow,
+    required this.attachmentRows,
+    required this.custodyRow,
+    required this.hasExactMutableProjection,
+  });
+
+  const DirectMediaInboxCustodyDbStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      messageRow = null,
+      attachmentRows = const <Map<String, Object?>>[],
+      custodyRow = null,
+      hasExactMutableProjection = false;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final Map<String, Object?>? messageRow;
+  final List<Map<String, Object?>> attachmentRows;
+  final Map<String, Object?>? custodyRow;
+
+  /// Whether the returned parent and attachment rows still exactly describe
+  /// the committed initial attempt.
+  ///
+  /// An idempotent result may legitimately be `false`: v108 is deliberately
+  /// independent of the mutable message/media projection so settlement or
+  /// physical deletion cannot revoke an already-committed envelope.
+  final bool hasExactMutableProjection;
+}
+
+final class _DirectMediaInboxCustodyRollback implements Exception {
+  const _DirectMediaInboxCustodyRollback();
+}
+
+final class _DirectMediaCustodyFailureRollback implements Exception {
+  const _DirectMediaCustodyFailureRollback();
+}
+
+const String _directInboxCustodyOutboxTable = 'direct_inbox_custody_outbox';
+const String _directMediaCustodyIntentColumn = 'direct_media_custody_intent_id';
+const String _blobAesGcmV1 = 'blob_aes_256_gcm_v1';
+
+/// Atomically records one upload failure only while the caller still owns the
+/// exact manifest-bound preparation and no immutable v108 authority exists.
+///
+/// This is deliberately separate from [dbProjectDirectUploadFailure]. A
+/// token-bearing preparation must requalify its complete parent/attachment
+/// snapshot; a single-row legacy projection could otherwise mutate a crossed
+/// or already-custodied attempt.
+Future<UploadRetryProjectionResult>
+dbProjectOutgoingDirectMediaCustodyUploadFailure(
+  Database db, {
+  required Map<String, Object?> expectedParentRow,
+  required List<Map<String, Object?>> expectedAttachmentRows,
+  required String failedAttachmentId,
+  required UploadMediaDisposition disposition,
+}) async {
+  final messageId = expectedParentRow['id'] as String? ?? '';
+  final recipientPeerId = expectedParentRow['contact_peer_id'] as String? ?? '';
+  final intentId =
+      expectedParentRow[_directMediaCustodyIntentColumn] as String?;
+  final attachmentIds = expectedAttachmentRows
+      .map((row) => row['id'] as String? ?? '')
+      .toList(growable: false);
+  final uniqueAttachmentIds = attachmentIds.toSet();
+  final expectedFailedRows = expectedAttachmentRows
+      .where((row) => row['id'] == failedAttachmentId)
+      .toList(growable: false);
+  final validExpectedShape =
+      messageId.trim().isNotEmpty &&
+      recipientPeerId.trim().isNotEmpty &&
+      expectedAttachmentRows.isNotEmpty &&
+      uniqueAttachmentIds.length == expectedAttachmentRows.length &&
+      !uniqueAttachmentIds.contains('') &&
+      _isExactLowercaseHex(intentId, 32) &&
+      intentId ==
+          computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: attachmentIds,
+          ) &&
+      _isEligiblePreparedDirectMediaCustodyParent(
+        expectedParentRow,
+        recipientPeerId: recipientPeerId,
+        intentId: intentId!,
+      ) &&
+      expectedAttachmentRows.every(
+        (row) => _isValidDirectMediaCustodyPreparationAttachment(
+          row,
+          messageId: messageId,
+        ),
+      ) &&
+      expectedFailedRows.length == 1 &&
+      expectedFailedRows.single['download_status'] ==
+          kMediaDownloadStatusUploadPending;
+  if (!validExpectedShape) {
+    return const UploadRetryProjectionResult.notApplied();
+  }
+
+  try {
+    return await dbWriteTransaction(db, (txn) async {
+      final currentParents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      final currentAttachments = await txn.query(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      // Message identity is the global v108 exclusion key. Also reject an
+      // impossible crossed incarnation elsewhere rather than letting failure
+      // state make that collision look like an unowned preparation.
+      final currentCustody = await txn.rawQuery(
+        'SELECT 1 FROM $_directInboxCustodyOutboxTable '
+        'WHERE message_id = ? OR incarnation_id = ? LIMIT 1',
+        <Object?>[messageId, intentId],
+      );
+      if (currentCustody.isNotEmpty ||
+          currentParents.length != 1 ||
+          !_messageDatabaseProjectionMatches(
+            currentParents.single,
+            expectedParentRow,
+          ) ||
+          !_isEligiblePreparedDirectMediaCustodyParent(
+            currentParents.single,
+            recipientPeerId: recipientPeerId,
+            intentId: intentId,
+          ) ||
+          !_exactDirectMediaCustodyFailureProjection(
+            currentAttachments,
+            expectedAttachmentRows,
+          )) {
+        return const UploadRetryProjectionResult.notApplied();
+      }
+
+      final failedRow = currentAttachments.singleWhere(
+        (row) => row['id'] == failedAttachmentId,
+      );
+      final currentCount =
+          (failedRow['upload_retry_count'] as num?)?.toInt() ?? 0;
+      late final String projectedAttachmentStatus;
+      late final int projectedRetryCount;
+      switch (disposition) {
+        case UploadMediaDisposition.connectivityRetryable:
+          projectedAttachmentStatus = kMediaDownloadStatusUploadPending;
+          projectedRetryCount = currentCount;
+          break;
+        case UploadMediaDisposition.boundedRetryable:
+          final incremented = currentCount + 1;
+          projectedRetryCount = incremented > kMaxUploadRetries
+              ? kMaxUploadRetries
+              : incremented;
+          projectedAttachmentStatus = projectedRetryCount >= kMaxUploadRetries
+              ? 'upload_failed'
+              : kMediaDownloadStatusUploadPending;
+          break;
+        case UploadMediaDisposition.terminal:
+          projectedAttachmentStatus = 'upload_failed';
+          projectedRetryCount = currentCount;
+          break;
+      }
+
+      final attachmentCount = await txn.rawUpdate(
+        'UPDATE media_attachments SET download_status = ?, '
+        'upload_retry_count = ? WHERE id = ? AND message_id = ? '
+        'AND owner_lane = ? AND download_status = ? '
+        'AND upload_retry_count = ?',
+        <Object?>[
+          projectedAttachmentStatus,
+          projectedRetryCount,
+          failedAttachmentId,
+          messageId,
+          MediaOwnerLane.direct.dbValue,
+          kMediaDownloadStatusUploadPending,
+          currentCount,
+        ],
+      );
+      if (attachmentCount != 1) {
+        throw const _DirectMediaCustodyFailureRollback();
+      }
+
+      final projectedParentStatus = projectedAttachmentStatus == 'upload_failed'
+          ? 'failed'
+          : 'sending';
+      final parentCount = await txn.rawUpdate(
+        'UPDATE messages SET status = ? WHERE id = ? '
+        'AND contact_peer_id = ? AND status = ? '
+        'AND direct_media_custody_intent_id = ? '
+        'AND wire_envelope IS NULL AND transport IS NULL '
+        'AND relay_expires_at IS NULL AND custody_checked_at IS NULL',
+        <Object?>[
+          projectedParentStatus,
+          messageId,
+          recipientPeerId,
+          expectedParentRow['status'],
+          intentId,
+        ],
+      );
+      if (parentCount != 1) {
+        throw const _DirectMediaCustodyFailureRollback();
+      }
+
+      final committedParents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      final committedAttachments = await txn.query(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      final committedCustody = await txn.rawQuery(
+        'SELECT 1 FROM $_directInboxCustodyOutboxTable '
+        'WHERE message_id = ? OR incarnation_id = ? LIMIT 1',
+        <Object?>[messageId, intentId],
+      );
+      final projectedParent = Map<String, Object?>.from(expectedParentRow)
+        ..['status'] = projectedParentStatus;
+      final projectedAttachments = expectedAttachmentRows
+          .map(Map<String, Object?>.from)
+          .toList(growable: false);
+      final projectedFailed = projectedAttachments.singleWhere(
+        (row) => row['id'] == failedAttachmentId,
+      );
+      projectedFailed['download_status'] = projectedAttachmentStatus;
+      projectedFailed['upload_retry_count'] = projectedRetryCount;
+      if (committedCustody.isNotEmpty ||
+          committedParents.length != 1 ||
+          !_messageDatabaseProjectionMatches(
+            committedParents.single,
+            projectedParent,
+          ) ||
+          !_exactDirectMediaCustodyFailureProjection(
+            committedAttachments,
+            projectedAttachments,
+          )) {
+        throw const _DirectMediaCustodyFailureRollback();
+      }
+
+      return UploadRetryProjectionResult(
+        state: projectedAttachmentStatus == 'upload_failed'
+            ? UploadRetryProjectionState.terminal
+            : UploadRetryProjectionState.retryPending,
+        uploadRetryCount: projectedRetryCount,
+      );
+    });
+  } on _DirectMediaCustodyFailureRollback {
+    return const UploadRetryProjectionResult.notApplied();
+  }
+}
+
+/// Atomically acquires v108 initial-envelope custody for one newly authored
+/// ordinary direct-media message.
+///
+/// A prepared predecessor proves freshness with its manifest-bound v110 token,
+/// which also becomes the immutable outbox incarnation. A marker-free fresh
+/// insert mints its random 32-hex incarnation from SQLite inside this same
+/// transaction. Every successful result contains the exact immutable custody
+/// row selected after commit, including an already-committed competing winner.
+Future<DirectMediaInboxCustodyDbStageResult>
+dbStageOutgoingDirectMediaInboxCustody(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required List<Map<String, Object?>> attachmentRows,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String recipientPeerId,
+  required String wireEnvelope,
+  int capacity = kDirectInboxCustodyOutboxCapacity,
+}) async {
+  final messageId = stagedRow['id'] as String? ?? '';
+  final attachmentIds = attachmentRows
+      .map((row) => row['id'] as String? ?? '')
+      .toList(growable: false);
+  final uniqueAttachmentIds = attachmentIds.toSet();
+  final prepared = expectedRow != null;
+  final intentId = expectedRow?[_directMediaCustodyIntentColumn] as String?;
+  final validMode = prepared
+      ? kind == OutgoingOrdinaryAttemptKind.existing
+      : kind == OutgoingOrdinaryAttemptKind.fresh;
+  final validPreparedIntent =
+      !prepared ||
+      (_isExactLowercaseHex(intentId, 32) &&
+          intentId ==
+              computeDirectMediaCustodyIntentId(
+                messageId: messageId,
+                attachmentIds: attachmentIds,
+              ));
+  final validShape =
+      capacity >= 0 &&
+      validMode &&
+      validPreparedIntent &&
+      messageId.trim().isNotEmpty &&
+      recipientPeerId.trim().isNotEmpty &&
+      stagedRow['contact_peer_id'] == recipientPeerId &&
+      stagedRow['wire_envelope'] == wireEnvelope &&
+      stagedRow[_directMediaCustodyIntentColumn] == null &&
+      attachmentRows.isNotEmpty &&
+      uniqueAttachmentIds.length == attachmentRows.length &&
+      !uniqueAttachmentIds.contains('') &&
+      _isEligibleDirectMediaCustodyParent(stagedRow) &&
+      attachmentRows.every(
+        (row) =>
+            _isCompleteDirectMediaCustodyAttachment(row, messageId: messageId),
+      ) &&
+      isExactV2DirectChatInitialEnvelope(
+        wireEnvelope,
+        messageId: messageId,
+        senderPeerId: stagedRow['sender_peer_id'],
+      );
+  if (!validShape) {
+    return const DirectMediaInboxCustodyDbStageResult.refused();
+  }
+
+  try {
+    return await dbWriteTransaction(db, (txn) async {
+      final currentMessages = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      final currentProjection = await txn.query(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      final currentMessageCustody = await txn.query(
+        _directInboxCustodyOutboxTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      final currentPreparedIncarnation = prepared
+          ? await txn.query(
+              _directInboxCustodyOutboxTable,
+              where: 'incarnation_id = ?',
+              whereArgs: <Object?>[intentId],
+            )
+          : const <Map<String, Object?>>[];
+
+      // A differently encrypted competing finalizer adopts the exact durable
+      // winner. Mutable parent/media rows may already have settled or been
+      // physically deleted; neither can revoke the independent v108 row.
+      // Querying the whole message scope also prevents a marker-free fresh
+      // caller from creating a second authority under another recipient.
+      if (currentMessageCustody.isNotEmpty ||
+          currentPreparedIncarnation.isNotEmpty) {
+        final oneMessageAuthority = currentMessageCustody.length == 1;
+        final onePreparedAuthority =
+            !prepared || currentPreparedIncarnation.length == 1;
+        if (!oneMessageAuthority || !onePreparedAuthority) {
+          return const DirectMediaInboxCustodyDbStageResult.refused();
+        }
+        final custody = currentMessageCustody.single;
+        final winnerEnvelopeValue = custody['wire_envelope'];
+        final winnerEnvelope = winnerEnvelopeValue is String
+            ? winnerEnvelopeValue
+            : null;
+        final expectedPreparedIncarnation = prepared ? intentId : null;
+        final exactPreparedIncarnation =
+            expectedPreparedIncarnation == null ||
+            custody['incarnation_id'] == expectedPreparedIncarnation;
+        final samePreparedAuthority =
+            !prepared ||
+            _sameDirectMediaCustodyAuthority(
+              custody,
+              currentPreparedIncarnation.single,
+            );
+        final exactWinner =
+            exactPreparedIncarnation &&
+            samePreparedAuthority &&
+            _immutableDirectMediaCustodyMatches(
+              custody,
+              recipientPeerId: recipientPeerId,
+              messageId: messageId,
+            ) &&
+            winnerEnvelope != null &&
+            isExactV2DirectChatInitialEnvelope(
+              winnerEnvelope,
+              messageId: messageId,
+              senderPeerId: stagedRow['sender_peer_id'],
+            );
+        if (!exactWinner) {
+          return const DirectMediaInboxCustodyDbStageResult.refused();
+        }
+        final hasExactMutableProjection =
+            currentMessages.length == 1 &&
+            _adoptableDirectMediaCustodyParent(
+              currentMessages.single,
+              stagedRow,
+              winnerEnvelope: winnerEnvelope,
+            ) &&
+            _exactDirectMediaCustodyProjection(
+              currentProjection,
+              attachmentRows,
+            );
+        return DirectMediaInboxCustodyDbStageResult(
+          outcome: OutgoingOrdinaryMutationOutcome.idempotent,
+          messageRow: currentMessages.length == 1
+              ? Map<String, Object?>.from(currentMessages.single)
+              : null,
+          attachmentRows: currentProjection
+              .map(Map<String, Object?>.from)
+              .toList(growable: false),
+          custodyRow: Map<String, Object?>.from(custody),
+          hasExactMutableProjection: hasExactMutableProjection,
+        );
+      }
+
+      if (prepared) {
+        if (currentMessages.length != 1 ||
+            !_messageDatabaseProjectionMatches(
+              currentMessages.single,
+              expectedRow,
+            ) ||
+            !_isEligiblePreparedDirectMediaCustodyParent(
+              currentMessages.single,
+              recipientPeerId: recipientPeerId,
+              intentId: intentId!,
+            ) ||
+            !_preparedDirectMediaProjectionCanFinalize(
+              currentProjection,
+              attachmentRows,
+            )) {
+          return const DirectMediaInboxCustodyDbStageResult.refused();
+        }
+      } else if (currentMessages.isNotEmpty || currentProjection.isNotEmpty) {
+        // Marker-free fresh authority is insert-only. In particular it never
+        // blesses an orphaned or partially prepared attachment projection.
+        return const DirectMediaInboxCustodyDbStageResult.refused();
+      }
+
+      final incarnationId = prepared
+          ? intentId!
+          : await _mintUnusedDirectMediaCustodyIncarnation(txn);
+      if (incarnationId.isEmpty) {
+        return const DirectMediaInboxCustodyDbStageResult.refused();
+      }
+      final incarnationCollision = await txn.query(
+        _directInboxCustodyOutboxTable,
+        columns: const <String>['incarnation_id'],
+        where: 'incarnation_id = ?',
+        whereArgs: <Object?>[incarnationId],
+        limit: 1,
+      );
+      if (incarnationCollision.isNotEmpty) {
+        return const DirectMediaInboxCustodyDbStageResult.refused();
+      }
+      final countRows = await txn.rawQuery(
+        'SELECT COUNT(*) AS count FROM $_directInboxCustodyOutboxTable',
+      );
+      final count = (countRows.single['count'] as num?)?.toInt() ?? 0;
+      if (count >= capacity) {
+        return const DirectMediaInboxCustodyDbStageResult.refused();
+      }
+
+      final parentOutcome =
+          await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+            txn,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            allowDirectAttachments: true,
+            allowDirectMediaCustodyIntent: true,
+          );
+      if (parentOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+        return const DirectMediaInboxCustodyDbStageResult.refused();
+      }
+
+      if (prepared) {
+        final currentById = <String, Map<String, Object?>>{
+          for (final row in currentProjection) row['id']! as String: row,
+        };
+        for (final candidate in attachmentRows) {
+          final current = currentById[candidate['id']]!;
+          if (current['download_status'] == kMediaDownloadStatusUploadPending) {
+            await _applyMediaAttachmentPreservingSave(
+              txn,
+              candidate,
+              candidate['id'] as String,
+            );
+          }
+        }
+        final consumed = await txn.rawUpdate(
+          'UPDATE messages SET $_directMediaCustodyIntentColumn = NULL '
+          'WHERE id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+          'AND status = ? AND wire_envelope = ? '
+          'AND $_directMediaCustodyIntentColumn = ?',
+          <Object?>[
+            messageId,
+            recipientPeerId,
+            'sending',
+            wireEnvelope,
+            intentId,
+          ],
+        );
+        if (consumed != 1) throw const _DirectMediaInboxCustodyRollback();
+      } else {
+        for (final candidate in attachmentRows) {
+          await _applyMediaAttachmentPreservingSave(
+            txn,
+            candidate,
+            candidate['id'] as String,
+          );
+        }
+      }
+
+      final createdAt = stagedRow['created_at'] as String? ?? '';
+      await txn.insert(_directInboxCustodyOutboxTable, <String, Object?>{
+        'recipient_peer_id': recipientPeerId,
+        'message_id': messageId,
+        'incarnation_id': incarnationId,
+        'wire_envelope': wireEnvelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': createdAt,
+        'updated_at': createdAt,
+      }, conflictAlgorithm: ConflictAlgorithm.abort);
+
+      final committedMessages = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      final committedProjection = await txn.query(
+        'media_attachments',
+        where: 'message_id = ? AND owner_lane = ?',
+        whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      final committedCustody = await txn.query(
+        _directInboxCustodyOutboxTable,
+        where: 'recipient_peer_id = ? AND message_id = ?',
+        whereArgs: <Object?>[recipientPeerId, messageId],
+        limit: 1,
+      );
+      final exactCommit =
+          committedMessages.length == 1 &&
+          committedMessages.single[_directMediaCustodyIntentColumn] == null &&
+          committedMessages.single['wire_envelope'] == wireEnvelope &&
+          _exactDirectMediaCustodyProjection(
+            committedProjection,
+            attachmentRows,
+          ) &&
+          committedCustody.length == 1 &&
+          committedCustody.single['incarnation_id'] == incarnationId &&
+          committedCustody.single['wire_envelope'] == wireEnvelope;
+      if (!exactCommit) throw const _DirectMediaInboxCustodyRollback();
+
+      return DirectMediaInboxCustodyDbStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.applied,
+        messageRow: Map<String, Object?>.from(committedMessages.single),
+        attachmentRows: committedProjection
+            .map(Map<String, Object?>.from)
+            .toList(growable: false),
+        custodyRow: Map<String, Object?>.from(committedCustody.single),
+        hasExactMutableProjection: true,
+      );
+    });
+  } on _DirectMediaInboxCustodyRollback {
+    return const DirectMediaInboxCustodyDbStageResult.refused();
+  }
+}
+
+Future<String> _mintUnusedDirectMediaCustodyIncarnation(
+  DatabaseExecutor txn,
+) async {
+  // A bounded retry makes the UNIQUE collision path explicit while keeping
+  // every random draw inside the staging transaction.
+  for (var attempt = 0; attempt < 4; attempt++) {
+    final rows = await txn.rawQuery(
+      'SELECT lower(hex(randomblob(16))) AS incarnation_id',
+    );
+    final candidate = rows.single['incarnation_id'] as String? ?? '';
+    if (!_isExactLowercaseHex(candidate, 32)) continue;
+    final collision = await txn.query(
+      _directInboxCustodyOutboxTable,
+      columns: const <String>['incarnation_id'],
+      where: 'incarnation_id = ?',
+      whereArgs: <Object?>[candidate],
+      limit: 1,
+    );
+    if (collision.isEmpty) return candidate;
+  }
+  return '';
+}
+
+bool _isEligibleDirectMediaCustodyParent(Map<String, Object?> row) =>
+    _isNonBlankDatabaseString(row['id']) &&
+    _isNonBlankDatabaseString(row['contact_peer_id']) &&
+    _isNonBlankDatabaseString(row['sender_peer_id']) &&
+    _isNonBlankDatabaseString(row['timestamp']) &&
+    _isNonBlankDatabaseString(row['created_at']) &&
+    row['status'] == 'sending' &&
+    ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+    row['edited_at'] == null &&
+    row['deleted_at'] == null &&
+    row['deleted_by_peer_id'] == null &&
+    row['hidden_at'] == null &&
+    row['transport'] == null &&
+    row['relay_expires_at'] == null &&
+    row['custody_checked_at'] == null &&
+    ((row['private_media_policy_version'] as num?)?.toInt() ?? -1) == 0 &&
+    row['private_media_mode'] == 'ordinary' &&
+    row['private_media_duration_seconds'] == null &&
+    row['private_media_state'] == 'none' &&
+    row['private_media_received_at_ms'] == null &&
+    row['private_media_expires_at_ms'] == null &&
+    row['private_media_revealed_at_ms'] == null &&
+    row['private_media_terminal_at_ms'] == null &&
+    row['private_media_clock_high_water_ms'] == null;
+
+bool _isEligiblePreparedDirectMediaCustodyParent(
+  Map<String, Object?> row, {
+  required String recipientPeerId,
+  required String intentId,
+}) =>
+    row['contact_peer_id'] == recipientPeerId &&
+    row[_directMediaCustodyIntentColumn] == intentId &&
+    row['wire_envelope'] == null &&
+    row['transport'] == null &&
+    row['relay_expires_at'] == null &&
+    row['custody_checked_at'] == null &&
+    const <String>{'sending', 'failed'}.contains(row['status']) &&
+    _isEligibleDirectMediaCustodyParent(
+      Map<String, Object?>.from(row)..['status'] = 'sending',
+    );
+
+bool hasImmutableDirectMediaCustodyAttachmentProjection(
+  Map<String, Object?> row,
+) {
+  final attachmentId = row['id'];
+  final mime = row['mime'];
+  final mediaType = row['media_type'];
+  final size = row['size'];
+  final thumbnailHash = row['thumbnail_hash'];
+  final encryptionKey = row['encryption_key_base64'];
+  final expectedKeyReference = attachmentId is String
+      ? secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        )
+      : null;
+  return _isNonBlankDatabaseString(attachmentId) &&
+      _isNonBlankDatabaseString(row['message_id']) &&
+      row['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+      _isNonBlankDatabaseString(mime) &&
+      size is int &&
+      size > 0 &&
+      mediaType == _directMediaTypeForMime(mime! as String) &&
+      _isNullOrNonNegativeDatabaseInteger(row['width']) &&
+      _isNullOrNonNegativeDatabaseInteger(row['height']) &&
+      _isNullOrNonNegativeDatabaseInteger(row['duration_ms']) &&
+      _isValidDirectMediaCustodyWaveform(row['waveform']) &&
+      _isNonBlankDatabaseString(row['created_at']) &&
+      _isExactLowercaseHex(row['content_hash'], 64) &&
+      (thumbnailHash == null || _isExactLowercaseHex(thumbnailHash, 64)) &&
+      encryptionKey == expectedKeyReference &&
+      _isNonBlankDatabaseString(row['encryption_nonce']) &&
+      row['encryption_scheme'] == _blobAesGcmV1;
+}
+
+/// Whether a generic save must retain an already-complete encrypted identity.
+///
+/// A legacy ordinary retry is the one qualified exception: its persisted
+/// upload row can already carry crypto from the failed attempt, while a later
+/// successful upload necessarily supplies a new ciphertext identity. The
+/// upload-completion transition must therefore commit that new identity. Once
+/// the row has left an upload state, later lifecycle repairs remain pinned.
+bool shouldPreserveImmutableDirectMediaCustodyAttachmentProjection({
+  required Map<String, Object?> existing,
+  required Map<String, Object?> candidate,
+}) {
+  if (!hasImmutableDirectMediaCustodyAttachmentProjection(existing)) {
+    return false;
+  }
+  final completesPendingUpload =
+      const <String>{
+        kMediaDownloadStatusUploadPending,
+        kMediaDownloadStatusUploadFailed,
+      }.contains(existing['download_status']) &&
+      candidate['download_status'] == kMediaDownloadStatusDone;
+  return !completesPendingUpload;
+}
+
+bool _isCompleteDirectMediaCustodyAttachment(
+  Map<String, Object?> row, {
+  required String messageId,
+}) {
+  final localPathValue = row['local_path'];
+  final localPath = localPathValue is String ? localPathValue : null;
+  return row['message_id'] == messageId &&
+      hasImmutableDirectMediaCustodyAttachmentProjection(row) &&
+      row['download_status'] == kMediaDownloadStatusDone &&
+      mediaLocalPathHasValue(localPath) &&
+      !mediaLocalPathIsTransient(localPath);
+}
+
+bool _isValidDirectMediaCustodyPreparationAttachment(
+  Map<String, Object?> row, {
+  required String messageId,
+}) {
+  if (row['download_status'] == kMediaDownloadStatusDone) {
+    return _isCompleteDirectMediaCustodyAttachment(row, messageId: messageId);
+  }
+  final attachmentId = row['id'];
+  final mime = row['mime'];
+  final size = row['size'];
+  final uploadRetryCount = row['upload_retry_count'];
+  final downloadRetryCount = row['download_retry_count'];
+  final expectedPendingPath = attachmentId is String && mime is String
+      ? _expectedPendingPathForMutation(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: mime,
+        )
+      : null;
+  return _isNonBlankDatabaseString(attachmentId) &&
+      row['message_id'] == messageId &&
+      row['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+      _isNonBlankDatabaseString(mime) &&
+      size is int &&
+      size > 0 &&
+      row['media_type'] == _directMediaTypeForMime(mime! as String) &&
+      _isNullOrNonNegativeDatabaseInteger(row['width']) &&
+      _isNullOrNonNegativeDatabaseInteger(row['height']) &&
+      _isNullOrNonNegativeDatabaseInteger(row['duration_ms']) &&
+      _isValidDirectMediaCustodyWaveform(row['waveform']) &&
+      row['download_status'] == kMediaDownloadStatusUploadPending &&
+      expectedPendingPath != null &&
+      row['local_path'] == expectedPendingPath &&
+      _isNonBlankDatabaseString(row['created_at']) &&
+      (uploadRetryCount == null ||
+          (uploadRetryCount is int && uploadRetryCount >= 0)) &&
+      (downloadRetryCount == null ||
+          (downloadRetryCount is int && downloadRetryCount >= 0)) &&
+      row['content_hash'] == null &&
+      row['thumbnail_hash'] == null &&
+      row['encryption_key_base64'] == null &&
+      row['encryption_nonce'] == null &&
+      row['encryption_scheme'] == null;
+}
+
+String _directMediaTypeForMime(String mime) {
+  if (mime.startsWith('image/')) return 'image';
+  if (mime.startsWith('video/')) return 'video';
+  if (mime.startsWith('audio/')) return 'audio';
+  return 'file';
+}
+
+bool _isNullOrNonNegativeDatabaseInteger(Object? value) =>
+    value == null || (value is int && value >= 0);
+
+bool _isValidDirectMediaCustodyWaveform(Object? value) {
+  if (value == null) return true;
+  if (value is! String) return false;
+  try {
+    final decoded = jsonDecode(value);
+    return decoded is List<dynamic> &&
+        decoded.every(
+          (sample) =>
+              sample is num &&
+              sample.toDouble().isFinite &&
+              sample >= 0 &&
+              sample <= 1,
+        );
+  } catch (_) {
+    return false;
+  }
+}
+
+bool _preparedDirectMediaProjectionCanFinalize(
+  List<Map<String, Object?>> current,
+  List<Map<String, Object?>> candidates,
+) {
+  if (current.length != candidates.length) return false;
+  final candidatesById = <String, Map<String, Object?>>{
+    for (final row in candidates) row['id']! as String: row,
+  };
+  if (candidatesById.length != candidates.length) return false;
+  for (final persisted in current) {
+    final candidate = candidatesById[persisted['id']];
+    if (candidate == null ||
+        persisted['owner_lane'] != MediaOwnerLane.direct.dbValue ||
+        persisted['message_id'] != candidate['message_id']) {
+      return false;
+    }
+    if (persisted['download_status'] == kMediaDownloadStatusDone) {
+      if (!_sameOrdinaryOutgoingAttachmentAttempt(persisted, candidate)) {
+        return false;
+      }
+      continue;
+    }
+    if (persisted['download_status'] != kMediaDownloadStatusUploadPending ||
+        !_samePreparedDirectMediaIdentity(persisted, candidate)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+const _preparedDirectMediaStableColumns = <String>[
+  'id',
+  'message_id',
+  'owner_lane',
+  'mime',
+  'size',
+  'media_type',
+  'width',
+  'height',
+  'duration_ms',
+  'created_at',
+  'waveform',
+];
+
+bool _samePreparedDirectMediaIdentity(
+  Map<String, Object?> current,
+  Map<String, Object?> candidate,
+) {
+  final messageId = current['message_id'] as String? ?? '';
+  final attachmentId = current['id'] as String? ?? '';
+  final mime = current['mime'] as String? ?? '';
+  if (messageId.isEmpty || attachmentId.isEmpty || mime.isEmpty) return false;
+  final expectedPendingPath =
+      MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mime: mime,
+      );
+  return _preparedDirectMediaStableColumns.every(
+        (column) => _sameDatabaseScalar(current[column], candidate[column]),
+      ) &&
+      current['local_path'] == expectedPendingPath &&
+      current['content_hash'] == null &&
+      current['thumbnail_hash'] == null &&
+      current['encryption_key_base64'] == null &&
+      current['encryption_nonce'] == null &&
+      current['encryption_scheme'] == null;
+}
+
+bool _exactDirectMediaCustodyProjection(
+  List<Map<String, Object?>> current,
+  List<Map<String, Object?>> candidates,
+) {
+  if (current.length != candidates.length) return false;
+  final candidatesById = <String, Map<String, Object?>>{
+    for (final row in candidates) row['id']! as String: row,
+  };
+  return candidatesById.length == candidates.length &&
+      current.every((row) {
+        final candidate = candidatesById[row['id']];
+        return candidate != null &&
+            _sameOrdinaryOutgoingAttachmentAttempt(row, candidate);
+      });
+}
+
+bool _exactDirectMediaCustodyFailureProjection(
+  List<Map<String, Object?>> current,
+  List<Map<String, Object?>> expected,
+) {
+  if (current.length != expected.length) return false;
+  final expectedById = <String, Map<String, Object?>>{
+    for (final row in expected) row['id']! as String: row,
+  };
+  return expectedById.length == expected.length &&
+      current.every((row) {
+        final expectedRow = expectedById[row['id']];
+        return expectedRow != null &&
+            expectedRow.entries.every(
+              (entry) => _sameDatabaseScalar(row[entry.key], entry.value),
+            );
+      });
+}
+
+bool _adoptableDirectMediaCustodyParent(
+  Map<String, Object?> current,
+  Map<String, Object?> attempted, {
+  required String winnerEnvelope,
+}) {
+  if (current[_directMediaCustodyIntentColumn] != null ||
+      (current['wire_envelope'] != winnerEnvelope &&
+          current['wire_envelope'] != null) ||
+      !_isEligibleDirectMediaCustodyParent(current)) {
+    return false;
+  }
+  return attempted.entries
+      .where(
+        (entry) =>
+            entry.key != 'wire_envelope' &&
+            entry.key != _directMediaCustodyIntentColumn,
+      )
+      .every((entry) => _sameDatabaseScalar(current[entry.key], entry.value));
+}
+
+bool _immutableDirectMediaCustodyMatches(
+  Map<String, Object?> row, {
+  required String recipientPeerId,
+  required String messageId,
+}) =>
+    row['recipient_peer_id'] == recipientPeerId &&
+    row['message_id'] == messageId &&
+    _isExactLowercaseHex(row['incarnation_id'], 32) &&
+    _isNonBlankDatabaseString(row['wire_envelope']);
+
+bool _sameDirectMediaCustodyAuthority(
+  Map<String, Object?> left,
+  Map<String, Object?> right,
+) =>
+    left['recipient_peer_id'] == right['recipient_peer_id'] &&
+    left['message_id'] == right['message_id'] &&
+    left['incarnation_id'] == right['incarnation_id'] &&
+    left['wire_envelope'] == right['wire_envelope'];
+
+bool _messageDatabaseProjectionMatches(
+  Map<String, Object?> current,
+  Map<String, Object?> attempted,
+) => attempted.entries.every(
+  (entry) => _sameDatabaseScalar(current[entry.key], entry.value),
+);
+
+bool _sameDatabaseScalar(Object? left, Object? right) {
+  if (left is num && right is num) return left == right;
+  return left == right;
+}
+
+bool _isNonBlankDatabaseString(Object? value) =>
+    value is String && value.trim().isNotEmpty;
+
+bool _isExactLowercaseHex(Object? value, int length) =>
+    value is String &&
+    value.length == length &&
+    RegExp('^[0-9a-f]{$length}\$').hasMatch(value);
+
 Future<OutgoingOrdinaryMutationOutcome>
 _stageOutgoingOrdinaryAttemptWithMediaTransaction(
   Database db, {
@@ -925,6 +1919,32 @@ _stageOutgoingOrdinaryAttemptWithMediaTransaction(
 }) async {
   try {
     return await dbWriteTransaction(db, (txn) async {
+      final existingCustody = await txn.query(
+        _directInboxCustodyOutboxTable,
+        columns: const <String>['incarnation_id'],
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      if (existingCustody.isNotEmpty) {
+        // v108 custody is the immutable transport authority. Generic media
+        // staging may never replace its parent envelope after the v110
+        // preparation token has already been consumed. Message IDs are the
+        // parent PK, so matching only that immutable identity also closes a
+        // stale caller attempting to rewrite the recipient projection.
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+      final currentParents = await txn.query(
+        'messages',
+        columns: const <String>['direct_media_custody_intent_id'],
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      if (currentParents.isNotEmpty &&
+          currentParents.single['direct_media_custody_intent_id'] != null) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
       final currentProjection = await txn.query(
         'media_attachments',
         where: 'message_id = ? AND owner_lane = ?',
@@ -2350,6 +3370,12 @@ Future<void> _applyMediaAttachmentPreservingSave(
   String id, {
   bool preserveDurableMimeIdentity = false,
 }) async {
+  if (!await _canApplyGenericMediaAttachmentSave(txn, row)) {
+    // The caller has no predecessor CAS for an immutable custody winner. This
+    // also blocks INSERT after user deletion while v108 (or its post-retirement
+    // terminal parent tombstone) remains the durable authority.
+    throw const GenericMediaAttachmentCustodySaveRefused();
+  }
   final existingRows = await txn.query(
     'media_attachments',
     where: 'id = ?',
@@ -2390,6 +3416,14 @@ Future<void> _applyMediaAttachmentPreservingSave(
   }
 
   final merged = Map<String, Object?>.from(row);
+  if (shouldPreserveImmutableDirectMediaCustodyAttachmentProjection(
+    existing: existing,
+    candidate: row,
+  )) {
+    for (final column in _immutableDirectMediaProjectionColumns) {
+      merged[column] = existing[column];
+    }
+  }
   // MIME/media type become path identity only after a durable copy exists, or
   // when a DB-qualified private parent invokes the guarded save. Ordinary
   // pending/failed direct replays must still be able to correct descriptors.
@@ -2449,6 +3483,114 @@ Future<void> _applyMediaAttachmentPreservingSave(
     where: 'id = ?',
     whereArgs: [id],
   );
+}
+
+Future<bool> _canApplyGenericMediaAttachmentSave(
+  DatabaseExecutor db,
+  Map<String, Object?> row, {
+  bool requireCustodySchema = false,
+}) async {
+  if (row['owner_lane'] != MediaOwnerLane.direct.dbValue) return true;
+  final messageId = row['message_id'];
+  if (!_isNonBlankDatabaseString(messageId)) return true;
+
+  final schemaRows = await db.rawQuery(
+    "SELECT name FROM sqlite_master WHERE type = 'table' "
+    "AND name IN ('messages', '$_directInboxCustodyOutboxTable')",
+  );
+  final tables = schemaRows
+      .map((row) => row['name'])
+      .whereType<String>()
+      .toSet();
+  final hasCustodyTable = tables.contains(_directInboxCustodyOutboxTable);
+  final hasMessagesTable = tables.contains('messages');
+  if (requireCustodySchema && (!hasCustodyTable || !hasMessagesTable)) {
+    throw StateError(
+      'generic direct attachment custody guard requires current schema',
+    );
+  }
+  if (hasCustodyTable) {
+    final custody = await db.query(
+      _directInboxCustodyOutboxTable,
+      columns: const <String>['message_id'],
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (custody.isNotEmpty) return false;
+  }
+
+  if (!hasMessagesTable) return true;
+
+  final parents = await db.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  if (parents.isEmpty) return true;
+
+  final parent = parents.single;
+  final outgoing = ((parent['is_incoming'] as num?)?.toInt() ?? 0) == 0;
+  if (!outgoing) return true;
+  final canonicalOrdinary =
+      ((parent['private_media_policy_version'] as num?)?.toInt() ?? -1) == 0 &&
+      parent['private_media_mode'] == 'ordinary' &&
+      parent['private_media_duration_seconds'] == null &&
+      parent['private_media_state'] == 'none' &&
+      parent['private_media_received_at_ms'] == null &&
+      parent['private_media_expires_at_ms'] == null &&
+      parent['private_media_revealed_at_ms'] == null &&
+      parent['private_media_terminal_at_ms'] == null &&
+      parent['private_media_clock_high_water_ms'] == null;
+  if (!canonicalOrdinary) return true;
+  final exactRemovedCompletionTombstone =
+      parent['text'] == '' &&
+      parent['status'] == 'inboxed' &&
+      parent['edited_at'] == null &&
+      parent['deleted_at'] == null &&
+      parent['hidden_at'] != null &&
+      parent['wire_envelope'] == null &&
+      parent['transport'] == 'inbox';
+  if (exactRemovedCompletionTombstone) {
+    return false;
+  }
+  final deletedAt = parent['deleted_at'];
+  final deletedByPeerId = parent['deleted_by_peer_id'];
+  final exactOutgoingDeletion =
+      _isNonBlankDatabaseString(deletedAt) &&
+      _isNonBlankDatabaseString(deletedByPeerId) &&
+      deletedByPeerId == parent['sender_peer_id'] &&
+      parent['text'] == '' &&
+      (_isExactV2DirectMessageDeletionEnvelope(
+            parent['wire_envelope'],
+            senderPeerId: parent['sender_peer_id'],
+          ) ||
+          (parent['status'] == 'delivered' &&
+              parent['wire_envelope'] == null &&
+              parent['hidden_at'] == deletedAt));
+  return !exactOutgoingDeletion;
+}
+
+bool _isExactV2DirectMessageDeletionEnvelope(
+  Object? rawEnvelope, {
+  required Object? senderPeerId,
+}) {
+  if (rawEnvelope is! String) return false;
+  try {
+    final decoded = jsonDecode(rawEnvelope);
+    if (decoded is! Map<String, dynamic>) return false;
+    final encrypted = decoded['encrypted'];
+    return decoded['type'] == 'message_deletion' &&
+        decoded['version'] == '2' &&
+        decoded['senderPeerId'] == senderPeerId &&
+        encrypted is Map<String, dynamic> &&
+        _isNonBlankDatabaseString(encrypted['kem']) &&
+        _isNonBlankDatabaseString(encrypted['ciphertext']) &&
+        _isNonBlankDatabaseString(encrypted['nonce']);
+  } catch (_) {
+    return false;
+  }
 }
 
 /// 235: guarded final write for INCOMING group media.
