@@ -2,8 +2,11 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -1926,5 +1929,140 @@ void main() {
         );
       },
     );
+
+    test('TC-352-03 post-drain strict-media delete retains v109 while node '
+        'stopped', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      final original = await seedStrictMediaParent(fixture, 'tc352-post-drain');
+      final attachmentId = '${original.id}-a';
+      final v108 = (await fixture.db.query(
+        'direct_inbox_custody_outbox',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[original.id],
+      )).single;
+      final stored = DirectMediaBlobCustodyRow.fromMap(
+        (await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[original.id],
+        )).single,
+      );
+      final expectedFingerprint = computeDirectMediaBlobCommitmentFingerprint(
+        attachmentId: stored.attachmentId,
+        commitment: DirectMediaBlobCustodyCommitment(
+          kind: stored.custodyKind,
+          contract: stored.custodyContract,
+          contentHash: stored.contentHash,
+          ciphertextSize: stored.ciphertextSize,
+          transportMime: stored.transportMime,
+          expiresAtMs: stored.expiresAtMs!,
+        ),
+      );
+
+      // Protected inbox custody accepts the initial: the delivered parent
+      // is preserved and its lineage becomes durable.
+      expect(
+        await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          fixture.db,
+          recipientPeerId: recipient,
+          messageId: original.id,
+          expectedIncarnationId: v108['incarnation_id']! as String,
+          expectedWireEnvelope: v108['wire_envelope']! as String,
+          relayExpiresAt:
+              (v108['media_blob_expires_at_ms']! as num).toInt() - 1,
+        ),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+      final completedParent = (await fixture.messageRepo.getMessage(
+        original.id,
+      ))!;
+      expect(completedParent.status, 'delivered');
+      expect(completedParent.wireEnvelope, original.wireEnvelope);
+      expect(
+        (await fixture.db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[attachmentId],
+        )).single['direct_media_blob_custody_fingerprint'],
+        expectedFingerprint,
+      );
+
+      // Cleanup physically drains every remaining v111 row: the lineage
+      // fingerprint is now the only surviving strict proof.
+      for (final row in (await fixture.db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[original.id],
+      )).map(DirectMediaBlobCustodyRow.fromMap)) {
+        expect(
+          await dbDeleteDirectMediaBlobCleanupPendingIfExact(
+            fixture.db,
+            expected: row,
+          ),
+          isTrue,
+        );
+      }
+      expect(
+        await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[original.id],
+        ),
+        isEmpty,
+      );
+      expect(
+        (await fixture.db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[attachmentId],
+        )).single['direct_media_blob_custody_fingerprint'],
+        expectedFingerprint,
+      );
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          fixture.db,
+          messageId: original.id,
+        ),
+        OutgoingDirectDeletionLane.strictMedia,
+      );
+
+      final network = FakeP2PNetwork();
+      final p2pService = _StoppedDeleteP2PService(
+        peerId: sender,
+        network: network,
+      );
+      addTearDown(p2pService.dispose);
+
+      final (result, tombstone) = await deleteMessageForEveryone(
+        p2pService: p2pService,
+        messageRepo: fixture.messageRepo,
+        originalMessage: completedParent,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(result, SendChatMessageResult.nodeNotRunning);
+      expect(tombstone, isNotNull);
+      expect(tombstone!.isDeleted, isTrue);
+      expect(network.storeInInboxCallCount, 0);
+
+      final custody = await fixture.db.query(
+        'direct_reaction_inbox_custody_outbox',
+      );
+      expect(
+        custody,
+        hasLength(1),
+        reason: 'a fully drained strict parent still owns protected custody',
+      );
+      expect(custody.single['recipient_peer_id'], recipient);
+      final envelope =
+          jsonDecode(custody.single['wire_envelope']! as String)
+              as Map<String, dynamic>;
+      expect(envelope['type'], 'message_deletion');
+      expect(envelope['eventId'], custody.single['event_id']);
+    });
   });
 }

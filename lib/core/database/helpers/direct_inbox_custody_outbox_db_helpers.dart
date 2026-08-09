@@ -8,7 +8,9 @@ import '../direct_inbox_custody_outbox_contract.dart';
 import '../direct_media_blob_custody.dart';
 import '../outgoing_transport_mutation.dart';
 import '../../media/direct_media_blob_custody.dart';
+import '../../media/media_owner_lane.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
+import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
 
 const String _table = 'direct_inbox_custody_outbox';
@@ -354,6 +356,34 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
           message['deleted_at'] != null || message['hidden_at'] != null;
       final stillProjectsOwnedAttempt =
           message['wire_envelope'] == expectedWireEnvelope;
+
+      // This transaction is the last point at which the complete bound
+      // generation is still provable: it retires the exact v108 owner below,
+      // and cleanup later drains every v111 row physically. Persist each
+      // already-proven per-attachment commitment digest first so a delete
+      // for everyone can still select the protected owner afterwards.
+      //
+      // Authorship is deliberately independent of [shouldAdvance]: a
+      // delivered parent is preserved rather than advanced, yet it is the
+      // common accepted case and owns exactly the same lineage. A terminal,
+      // superseded or no-longer-owned parent keeps its current completion
+      // outcome instead, so a Plan 351 deletion-first tombstone never turns
+      // attachments into a completion prerequisite.
+      final ownsExactLineage =
+          strictBlobRows.isNotEmpty &&
+          ownsMessage &&
+          !userTerminal &&
+          stillProjectsOwnedAttempt &&
+          isStrictOrdinaryOutgoingDirectPolicy(message);
+      if (ownsExactLineage &&
+          !await _stampExactStrictOutgoingLineage(
+            txn,
+            messageId: messageId,
+            strictBlobRows: strictBlobRows,
+          )) {
+        return DirectInboxCustodyCompletionOutcome.stale;
+      }
+
       final shouldAdvance =
           ownsMessage &&
           !userTerminal &&
@@ -440,6 +470,112 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
     }
     return outcome;
   });
+}
+
+/// Persists the exact per-attachment commitment digest of one already-proven
+/// strict outgoing generation, inside the caller's completion transaction.
+///
+/// Returns false for a missing, extra, crossed or ambiguous physical
+/// projection. That answer is only valid before the first write, so every
+/// contradiction is prevalidated and the caller leaves all rows untouched.
+/// Once a digest has been written, a lost CAS or drifted re-read throws so the
+/// shared transaction rolls back the lineage together with the message
+/// projection, the exact v108 deletion and every v111 transition.
+///
+/// Each digest commits to that row's own full public commitment. The v108
+/// manifest hash, the generation's earliest expiry and the accepted relay
+/// expiry are all generation-level values and can never stand in for it.
+Future<bool> _stampExactStrictOutgoingLineage(
+  DatabaseExecutor txn, {
+  required String messageId,
+  required List<DirectMediaBlobCustodyRow> strictBlobRows,
+}) async {
+  const columns = <String>[
+    'id',
+    'content_hash',
+    'direct_media_blob_custody_fingerprint',
+  ];
+  const where = 'message_id = ? AND owner_lane = ?';
+  final whereArgs = <Object?>[messageId, MediaOwnerLane.direct.dbValue];
+
+  final attachments = await txn.query(
+    'media_attachments',
+    columns: columns,
+    where: where,
+    whereArgs: whereArgs,
+    orderBy: 'id ASC',
+  );
+  // One physical attachment per strict row and no extras.
+  if (attachments.length != strictBlobRows.length) return false;
+  final attachmentsById = <String, Map<String, Object?>>{};
+  for (final attachment in attachments) {
+    final id = attachment['id'];
+    if (id is! String || attachmentsById.containsKey(id)) return false;
+    attachmentsById[id] = attachment;
+  }
+
+  final exactLineage = <String, String>{};
+  final unstamped = <String, String>{};
+  for (final row in strictBlobRows) {
+    final attachment = attachmentsById[row.attachmentId];
+    if (attachment == null || attachment['content_hash'] != row.contentHash) {
+      return false;
+    }
+    final commitment = DirectMediaBlobCustodyCommitment(
+      kind: row.custodyKind,
+      contract: row.custodyContract,
+      contentHash: row.contentHash,
+      ciphertextSize: row.ciphertextSize,
+      transportMime: row.transportMime,
+      expiresAtMs: row.expiresAtMs!,
+    );
+    if (!commitment.isValid) return false;
+    final exact = computeDirectMediaBlobCommitmentFingerprint(
+      attachmentId: row.attachmentId,
+      commitment: commitment,
+    );
+    // A well-formed digest that is not this row's own is crossed proof, never
+    // lineage to overwrite or adopt.
+    final current = attachment['direct_media_blob_custody_fingerprint'];
+    if (current != null && current != exact) return false;
+    exactLineage[row.attachmentId] = exact;
+    if (current == null) unstamped[row.attachmentId] = exact;
+  }
+
+  for (final entry in unstamped.entries) {
+    final changed = await txn.update(
+      'media_attachments',
+      <String, Object?>{'direct_media_blob_custody_fingerprint': entry.value},
+      where:
+          '$where AND id = ? '
+          'AND direct_media_blob_custody_fingerprint IS NULL',
+      whereArgs: <Object?>[...whereArgs, entry.key],
+    );
+    if (changed != 1) {
+      throw StateError(
+        'direct inbox custody completion lost its exact attachment lineage',
+      );
+    }
+  }
+
+  final committed = await txn.query(
+    'media_attachments',
+    columns: columns,
+    where: where,
+    whereArgs: whereArgs,
+    orderBy: 'id ASC',
+  );
+  if (committed.length != exactLineage.length ||
+      committed.any(
+        (attachment) =>
+            attachment['direct_media_blob_custody_fingerprint'] !=
+            exactLineage[attachment['id']],
+      )) {
+    throw StateError(
+      'direct inbox custody completion lost its exact attachment lineage',
+    );
+  }
+  return true;
 }
 
 bool _immutableCustodyMatches(

@@ -1,6 +1,7 @@
 # 352 - GAP-N01 Preserve Direct-Media Post-Drain Delete Custody
 
-Status: **EXECUTION_READY / REVIEWED / NOT IMPLEMENTED** (2026-08-09)
+Status: **IMPLEMENTED / DEFAULT-OFF CODE-CLOSED / PLAN-GREEN / HOST GATES GREEN / NOT STANDALONE RELEASE-ELIGIBLE** (2026-08-09)
+Execution HEAD: 22a577b3d (docs: add reviewed Plan 352 post-drain media delete custody plan)
 Type: Bug
 Baseline observed while planning: b4e7d490ae0a51e8b9eecd79d0d014e9a04ca016 (docs: carry the notification coverage assessment through Plan 351)
 Spec: UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md requirements 1, 3, and 6 plus A-01/A-02/A-03/A-24/A-26; gap inventory UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md GAP-N01 / WP-01 / section 9.2
@@ -190,13 +191,36 @@ Explicit exclusions from the acceptance command block: completeness-check, featu
 - Environment blocker: none. Existing host SQLite fixtures prove the changed boundary; device availability is irrelevant because no platform boundary changes.
 - Scope drift: any schema/public API/feature/native change, completion backfill/scanner, stage/classifier edit, new test path, device requirement, or second production file stops execution for re-review.
 
-- [ ] Exact accepted v108 completion conditionally persists each exact attachment lineage before v108/v111 proof retirement. -> TC-352-01.
-- [ ] Crossed/partial/faulted completion is all-or-zero, including a failure after fingerprints and message projection, and exact pre-stamped input is idempotent. -> TC-352-02.
-- [ ] A fully drained strict media parent still stages one protected delete event while offline. -> TC-352-03.
-- [ ] Deletion-first terminal completion and adjacent historical/text/incoming paths remain unchanged. -> TC-352-04 and named preservation tests.
-- [ ] The existing repository winner remains byte-stable except for the one exact lineage fingerprint, which stale saves cannot erase. -> PRES-352-A.
-- [ ] Focused GREEN, host 1to1, core-host-all dart-only, analyzer, format, diff, and one Graphify refresh are recorded.
-- [ ] No activation, GAP-N01 closure, device/iOS, full host-all, or release claim is made.
+- [x] Exact accepted v108 completion conditionally persists each exact attachment lineage before v108/v111 proof retirement. -> TC-352-01.
+- [x] Crossed/partial/faulted completion is all-or-zero, including a failure after fingerprints and message projection, and exact pre-stamped input is idempotent. -> TC-352-02.
+- [x] A fully drained strict media parent still stages one protected delete event while offline. -> TC-352-03.
+- [x] Deletion-first terminal completion and adjacent historical/text/incoming paths remain unchanged. -> TC-352-04 and named preservation tests.
+- [x] The existing repository winner remains byte-stable except for the one exact lineage fingerprint, which stale saves cannot erase. -> PRES-352-A, satisfied with the assertion UNCHANGED; see Execution Corrections.
+- [x] Focused GREEN, host 1to1, core-host-all dart-only, analyzer, format, diff, and one Graphify refresh are recorded.
+- [x] No activation, GAP-N01 closure, device/iOS, full host-all, or release claim is made.
+
+## Execution Corrections
+
+Three plan-versus-source divergences were found during execution. None changed the core bet or the scope contract.
+
+1. **PRES-352-A needed no narrowing; the assertion is unchanged.** Reviewer finding 3 predicted that the compound TC-345-02b/02c/02g raw-row equality would reject the new fingerprint delta. It does not. That scenario stages an UNBOUND v108: its attachments carry no `blobCustody`, so `_canonicalDirectMediaBlobWireBinding` returns `(null, null)`, the v108 row stores no manifest hash, and no v111 row exists. Completion therefore leaves `strictBlobRows` empty and the lineage predicate never runs. The existing whole-row equality now proves the stronger property that unbound v108 completion authors nothing at all. The sentinel passed byte-for-byte unmodified, and the whole file passed 66/66.
+2. **The planned TC-352-02 matrix could not prove prevalidation.** Every contradiction the plan enumerated lands on the FIRST attachment, so an implementation that interleaved each write with its own validation would have passed the entire matrix. One scenario was added (`late-crossed`: the trailing attachment's content hash drifts) so a valid leading row is proven never to be written first. It is the row that caught mutation B below.
+3. **`seedBoundStrictParent` could not seed a multi-generation matrix.** It hard-coded `'c' * 32` as the incarnation while v108 holds `UNIQUE(incarnation_id)` and v111 additionally requires lowercase 32-hex, so the second seeded generation aborted. The fixture now derives a distinct lowercase-32-hex identity per call; every existing caller already read the returned value, so no TC-351 assertion changed.
+
+## Execution Evidence
+
+- Causal REDs recorded at HEAD before any production edit: TC-352-01 (both fingerprints null, drained parent classified `legacyMedia`), TC-352-02 (crossed-valid-digest refusal fails before authorship exists), TC-352-03 (stopped-node delete returns through the legacy lane with no retained v109).
+- Mutation re-reds after GREEN: gating authorship on `shouldAdvance`'s status set reds TC-352-01 AND TC-352-03, confirming reviewer finding 2 about the delivered fast path; interleaving the writes with validation reds TC-352-02 at the new trailing-contradiction row.
+- Focused GREEN over the two core helper files plus the delete use-case file: 74/74, re-confirmed after formatting.
+- Exact accepted-difference repository sentinel: green with no edit; full `media_attachment_repository_impl_test.dart` 66/66.
+- Graph `affected` dependents run ahead of the curated lanes (migration importer, send-chat, send-voice): 216/216 with 2 pre-existing declared skips.
+- Host `1to1`: 120 paths / 2,286 Flutter tests / 2 declared skips, exit 0.
+- `core-host-all --batch-flutter --concurrency 2 --dart-only`: 404 planned paths / 3,217 tests, 0 failures, exit 0.
+- `flutter analyze` no issues found; exact changed-Dart `dart format` clean after one formatting pass; `git diff --check` clean.
+- One Graphify incremental refresh: 3 changed code files, 70,506 nodes / 103,674 edges.
+- Production surface is exactly one file, `lib/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart`. DB stays v111. No schema, public API, feature production, relay/native, backfill, scanner, or new owner.
+- Gate-cadence note: one attempt to run `core-host-all` at `--concurrency 4` failed on `test/core/media/android_picture_in_picture_native_contract_test.dart` with `TimeoutException after 0:00:30`. That path-discovery census test takes ~27s in isolation against a 30s timeout, so it cannot absorb the extra load. It is subject-unrelated to this plan and green alone. The plan's literal `--concurrency 2` is the correct setting for this family and is what the recorded receipt used.
+- Verified during execution, no change required: `dbSaveMediaAttachmentPreservingLocalState` already carries a non-null fingerprint through a generic replay, so a stale save structurally cannot erase the new lineage; and the only other reader of the column, `_deleteIncomingDirectMediaBlobIfExact`, is unreachable for outgoing rows because both callers require `state == incomingAckPending` or `direction == incoming`.
 
 ## Handoff
 
@@ -230,3 +254,4 @@ READY / EXECUTION_READY. The core bet is confirmed: exact accepted v108 completi
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-09 | planning/review | planning artifacts only | tdd-plan plus fresh tdd-review and targeted re-review: READY | Source-grounded five-row contract, three causal REDs, early/late rollback mutations, delivered fast-path proof, exact repository sentinel, and proportional run/not-run gates | no plan-content blocker; implementation intentionally not started | execute in a separate session, then append EXECUTION_COMPLETED only after every required receipt passes |
+| 2026-08-09 | execution | `direct_inbox_custody_outbox_db_helpers.dart`; `media_attachments_db_helpers_test.dart`; `delete_message_use_case_test.dart` | Three causal REDs, then focused GREEN 74/74, repository sentinel green unmodified, host `1to1` 120 paths / 2,286 tests, `core-host-all` 404 paths / 3,217 tests, analyzer clean, format/diff clean, Graphify refreshed | Completion-time conditional stamping implemented in one production helper inside the existing transaction; two mutation re-reds confirm the delivered fast path and prevalidation-before-first-write | Three execution corrections recorded above: PRES-352-A needed no narrowing, the matrix needed a trailing-contradiction row, and the shared seed fixture needed unique v108 incarnations | EXECUTION_COMPLETED appended; GAP-N01 closure, activation, device/iOS and release remain out of scope |

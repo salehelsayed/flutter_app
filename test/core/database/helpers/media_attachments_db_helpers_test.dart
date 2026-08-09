@@ -2713,6 +2713,8 @@ void main() {
       'direct_media_blob_custody_fingerprint': fingerprint,
     };
 
+    var boundIncarnationSeq = 0;
+
     /// Seeds one delivered strict ordinary direct-media parent whose complete
     /// v111 generation is still bound to its live v108 incarnation.
     Future<
@@ -2726,7 +2728,12 @@ void main() {
     seedBoundStrictParent(String suffix) async {
       final messageId = 'tc351-$suffix';
       final attachmentIds = <String>['$messageId-a', '$messageId-b'];
-      final incarnationId = 'c' * 32;
+      // v108 holds one UNIQUE lowercase 32-hex incarnation per row, so a
+      // matrix that seeds several generations into one database needs a
+      // distinct identity per call.
+      final incarnationId =
+          'c0c0c0c0c0c0c0c0c0c0c0c0'
+          '${(++boundIncarnationSeq).toRadixString(16).padLeft(8, '0')}';
       await db.insert(
         'messages',
         ConversationMessage(
@@ -3639,5 +3646,592 @@ void main() {
         isNull,
       );
     });
+
+    /// The exact per-row lineage digest the completion transaction owes each
+    /// physical attachment of a proven strict generation.
+    Future<Map<String, String>> expectedLineageOf(String messageId) async {
+      final rows = (await db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        orderBy: 'attachment_id ASC',
+      )).map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
+      return <String, String>{
+        for (final row in rows)
+          row.attachmentId: computeDirectMediaBlobCommitmentFingerprint(
+            attachmentId: row.attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              kind: row.custodyKind,
+              contract: row.custodyContract,
+              contentHash: row.contentHash,
+              ciphertextSize: row.ciphertextSize,
+              transportMime: row.transportMime,
+              expiresAtMs: row.expiresAtMs!,
+            ),
+          ),
+      };
+    }
+
+    Future<Map<String, Object?>> lineageOf(String messageId) async => {
+      for (final row in await db.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        orderBy: 'id ASC',
+      ))
+        row['id']! as String: row['direct_media_blob_custody_fingerprint'],
+    };
+
+    Future<DirectInboxCustodyCompletionOutcome> completeBound(
+      ({
+        Map<String, Object?> current,
+        String messageId,
+        List<String> attachmentIds,
+        String incarnationId,
+      })
+      bound,
+    ) async {
+      final v108 = (await db.query(
+        'direct_inbox_custody_outbox',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[bound.messageId],
+      )).single;
+      return dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: recipient,
+        messageId: bound.messageId,
+        expectedIncarnationId: bound.incarnationId,
+        expectedWireEnvelope: v108['wire_envelope']! as String,
+        relayExpiresAt: (v108['media_blob_expires_at_ms']! as num).toInt() - 1,
+      );
+    }
+
+    test('TC-352-01 exact accepted v108 completion pins per-attachment lineage '
+        'through full v111 drain', () async {
+      final bound = await seedBoundStrictParent('post-drain');
+      final expectedLineage = await expectedLineageOf(bound.messageId);
+
+      // Two independent commitments: no generation-level manifest hash, one
+      // shared earliest expiry, and no relay expiry can satisfy both rows.
+      expect(expectedLineage, hasLength(2));
+      expect(expectedLineage.values.toSet(), hasLength(2));
+      expect(await lineageOf(bound.messageId), <String, Object?>{
+        for (final id in bound.attachmentIds) id: null,
+      });
+
+      expect(
+        await completeBound(bound),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+
+      // The already-stronger delivered projection is preserved byte for
+      // byte; only the attachments gained their exact lineage.
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[bound.messageId],
+        )).single,
+        bound.current,
+      );
+      expect(await lineageOf(bound.messageId), expectedLineage);
+
+      // The v108 owner is retired and its generation moves to cleanup.
+      expect(
+        await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[bound.messageId],
+        ),
+        isEmpty,
+      );
+      final cleanup = (await db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[bound.messageId],
+        orderBy: 'attachment_id ASC',
+      )).map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
+      expect(
+        cleanup.map((row) => row.state).toSet(),
+        <DirectMediaBlobCustodyState>{
+          DirectMediaBlobCustodyState.outgoingCleanupPending,
+        },
+      );
+
+      // Physical cleanup now drains the last reconstructable v111 proof.
+      for (final row in cleanup) {
+        expect(
+          await dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: row),
+          isTrue,
+        );
+      }
+      expect(
+        await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[bound.messageId],
+        ),
+        isEmpty,
+      );
+      expect(await lineageOf(bound.messageId), expectedLineage);
+
+      // The persisted lineage is the only surviving authority and still
+      // selects Plan 351's durable v109 owner.
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: bound.messageId,
+        ),
+        OutgoingDirectDeletionLane.strictMedia,
+      );
+
+      const eventId = '35200000-0000-4000-8000-000000000001';
+      final envelope = deletionEnvelope(eventId);
+      final drainedParent = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[bound.messageId],
+      )).single;
+      final staged = await dbStageOutgoingDirectMediaDeletionInboxCustody(
+        db,
+        expectedRow: drainedParent,
+        stagedRow: tombstoneOf(drainedParent, wireEnvelope: envelope),
+        kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        recipientPeerId: recipient,
+        eventId: eventId,
+        wireEnvelope: envelope,
+        updatedAt: t1,
+      );
+      expect(staged.outcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(staged.ownsMutationEvent, isTrue);
+      expect(staged.messageRow!['deleted_at'], t1);
+      final v109 = await db.query('direct_reaction_inbox_custody_outbox');
+      expect(v109, hasLength(1));
+      expect(v109.single['event_id'], eventId);
+      expect(v109.single['wire_envelope'], envelope);
+    });
+
+    test('TC-352-02 outgoing lineage fingerprint CAS and v108 completion are '
+        'all-or-zero', () async {
+      Future<
+        ({
+          Map<String, Object?> messages,
+          List<Map<String, Object?>> attachments,
+          List<Map<String, Object?>> v108,
+          List<Map<String, Object?>> v111,
+        })
+      >
+      snapshot(String messageId) async => (
+        messages: (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single,
+        attachments: await db.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+          orderBy: 'id ASC',
+        ),
+        v108: await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        v111: await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+          orderBy: 'attachment_id ASC',
+        ),
+      );
+
+      Future<void> expectUnchanged(
+        String messageId,
+        ({
+          Map<String, Object?> messages,
+          List<Map<String, Object?>> attachments,
+          List<Map<String, Object?>> v108,
+          List<Map<String, Object?>> v111,
+        })
+        before, {
+        required String reason,
+      }) async {
+        final after = await snapshot(messageId);
+        expect(after.messages, before.messages, reason: reason);
+        expect(after.attachments, before.attachments, reason: reason);
+        expect(after.v108, before.v108, reason: reason);
+        expect(after.v111, before.v111, reason: reason);
+      }
+
+      Future<void> stamp(String attachmentId, String? fingerprint) async {
+        expect(
+          await db.update(
+            'media_attachments',
+            <String, Object?>{
+              'direct_media_blob_custody_fingerprint': fingerprint,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[attachmentId],
+          ),
+          1,
+        );
+      }
+
+      // A crossed but well-formed digest is refused BEFORE any authorship:
+      // a sibling attachment's real fingerprint is not this row's lineage.
+      final crossed = await seedBoundStrictParent('crossed-valid-digest');
+      final crossedExpected = await expectedLineageOf(crossed.messageId);
+      await stamp(
+        crossed.attachmentIds.first,
+        crossedExpected[crossed.attachmentIds.last],
+      );
+      final crossedBefore = await snapshot(crossed.messageId);
+      expect(
+        await completeBound(crossed),
+        DirectInboxCustodyCompletionOutcome.stale,
+      );
+      await expectUnchanged(
+        crossed.messageId,
+        crossedBefore,
+        reason: 'a sibling digest is crossed proof, not lineage',
+      );
+
+      // A well-formed value that is nobody's commitment digest is refused.
+      final foreign = await seedBoundStrictParent('foreign-digest');
+      await stamp(foreign.attachmentIds.first, '7' * 64);
+      final foreignBefore = await snapshot(foreign.messageId);
+      expect(
+        await completeBound(foreign),
+        DirectInboxCustodyCompletionOutcome.stale,
+      );
+      await expectUnchanged(
+        foreign.messageId,
+        foreignBefore,
+        reason: 'a foreign 64-hex value can never be adopted as lineage',
+      );
+
+      // One strict v111 row without its physical attachment is ambiguous.
+      final missing = await seedBoundStrictParent('missing-attachment');
+      await db.delete(
+        'media_attachments',
+        where: 'id = ?',
+        whereArgs: <Object?>[missing.attachmentIds.last],
+      );
+      final missingBefore = await snapshot(missing.messageId);
+      expect(
+        await completeBound(missing),
+        DirectInboxCustodyCompletionOutcome.stale,
+      );
+      await expectUnchanged(
+        missing.messageId,
+        missingBefore,
+        reason: 'an unmatched v111 row cannot author partial lineage',
+      );
+
+      // An extra direct attachment with no v111 row is equally ambiguous.
+      final extra = await seedBoundStrictParent('extra-attachment');
+      await dbInsertMediaAttachment(
+        db,
+        strictAttachmentRow(
+          messageId: extra.messageId,
+          attachmentId: '${extra.messageId}-c',
+          contentHash: '3' * 64,
+        ),
+      );
+      final extraBefore = await snapshot(extra.messageId);
+      expect(
+        await completeBound(extra),
+        DirectInboxCustodyCompletionOutcome.stale,
+      );
+      await expectUnchanged(
+        extra.messageId,
+        extraBefore,
+        reason: 'an extra physical attachment is not part of the generation',
+      );
+
+      // A physical row whose content hash no longer matches its own v111
+      // commitment is crossed identity, not a stampable projection.
+      final crossedHash = await seedBoundStrictParent('crossed-hash');
+      expect(
+        await db.update(
+          'media_attachments',
+          <String, Object?>{'content_hash': '9' * 64},
+          where: 'id = ?',
+          whereArgs: <Object?>[crossedHash.attachmentIds.first],
+        ),
+        1,
+      );
+      final crossedHashBefore = await snapshot(crossedHash.messageId);
+      expect(
+        await completeBound(crossedHash),
+        DirectInboxCustodyCompletionOutcome.stale,
+      );
+      await expectUnchanged(
+        crossedHash.messageId,
+        crossedHashBefore,
+        reason: 'a drifted physical content hash is crossed identity',
+      );
+
+      // The same crossed identity on the SECOND row: the complete set is
+      // prevalidated, so a valid leading row is never written first.
+      final lateCrossedHash = await seedBoundStrictParent('late-crossed');
+      expect(
+        await db.update(
+          'media_attachments',
+          <String, Object?>{'content_hash': '9' * 64},
+          where: 'id = ?',
+          whereArgs: <Object?>[lateCrossedHash.attachmentIds.last],
+        ),
+        1,
+      );
+      final lateCrossedHashBefore = await snapshot(lateCrossedHash.messageId);
+      expect(
+        await completeBound(lateCrossedHash),
+        DirectInboxCustodyCompletionOutcome.stale,
+      );
+      await expectUnchanged(
+        lateCrossedHash.messageId,
+        lateCrossedHashBefore,
+        reason: 'a trailing contradiction must precede the first write',
+      );
+
+      // Null input is authored exactly once.
+      final fresh = await seedBoundStrictParent('null-input');
+      final freshExpected = await expectedLineageOf(fresh.messageId);
+      expect(
+        await completeBound(fresh),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+      expect(await lineageOf(fresh.messageId), freshExpected);
+
+      // Exact pre-stamped input completes and is left byte-identical.
+      final prestamped = await seedBoundStrictParent('pre-stamped-exact');
+      final prestampedExpected = await expectedLineageOf(prestamped.messageId);
+      for (final entry in prestampedExpected.entries) {
+        await stamp(entry.key, entry.value);
+      }
+      final prestampedAttachments = await db.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[prestamped.messageId],
+        orderBy: 'id ASC',
+      );
+      expect(
+        await completeBound(prestamped),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+      expect(
+        await db.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[prestamped.messageId],
+          orderBy: 'id ASC',
+        ),
+        prestampedAttachments,
+      );
+
+      // A mixed null/exact generation is completed to full lineage.
+      final partial = await seedBoundStrictParent('pre-stamped-partial');
+      final partialExpected = await expectedLineageOf(partial.messageId);
+      await stamp(
+        partial.attachmentIds.first,
+        partialExpected[partial.attachmentIds.first],
+      );
+      expect(
+        await completeBound(partial),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+      expect(await lineageOf(partial.messageId), partialExpected);
+
+      // Fault 1: the SECOND fingerprint update aborts. Nothing partial may
+      // survive — not the first digest, not the v108/v111 retirement.
+      final earlyFault = await seedBoundStrictParent('fault-fingerprint');
+      expect(
+        await db.update(
+          'messages',
+          <String, Object?>{'status': 'sending'},
+          where: 'id = ?',
+          whereArgs: <Object?>[earlyFault.messageId],
+        ),
+        1,
+      );
+      final earlyFaultBefore = await snapshot(earlyFault.messageId);
+      await db.execute('''
+          CREATE TRIGGER abort_second_lineage_stamp
+          BEFORE UPDATE OF direct_media_blob_custody_fingerprint
+          ON media_attachments
+          WHEN NEW.id = '${earlyFault.attachmentIds.last}'
+          BEGIN
+            SELECT RAISE(ABORT, 'injected second fingerprint failure');
+          END
+        ''');
+      await expectLater(
+        completeBound(earlyFault),
+        throwsA(isA<DatabaseException>()),
+      );
+      await db.execute('DROP TRIGGER abort_second_lineage_stamp');
+      await expectUnchanged(
+        earlyFault.messageId,
+        earlyFaultBefore,
+        reason: 'partial lineage authorship must roll back completely',
+      );
+
+      // Fault 2: the SECOND v111 cleanup transition aborts AFTER both
+      // fingerprints, the message projection and the v108 delete have run.
+      // One transaction is the only thing that can undo all of them.
+      final lateFault = await seedBoundStrictParent('fault-late-v111');
+      expect(
+        await db.update(
+          'messages',
+          <String, Object?>{'status': 'sending'},
+          where: 'id = ?',
+          whereArgs: <Object?>[lateFault.messageId],
+        ),
+        1,
+      );
+      final lateFaultBefore = await snapshot(lateFault.messageId);
+      await db.execute('''
+          CREATE TRIGGER abort_second_v111_cleanup
+          BEFORE UPDATE OF state ON $kDirectMediaBlobCustodyTable
+          WHEN OLD.attachment_id = '${lateFault.attachmentIds.last}'
+            AND NEW.state = 'outgoing_cleanup_pending'
+          BEGIN
+            SELECT RAISE(ABORT, 'injected late v111 transition failure');
+          END
+        ''');
+      await expectLater(
+        completeBound(lateFault),
+        throwsA(isA<DatabaseException>()),
+      );
+      await db.execute('DROP TRIGGER abort_second_v111_cleanup');
+      await expectUnchanged(
+        lateFault.messageId,
+        lateFaultBefore,
+        reason:
+            'lineage, message projection, v108 and v111 share one transaction',
+      );
+    });
+
+    test(
+      'TC-352-04 deletion-first completion retires v108 without requiring or '
+      'recreating attachment lineage',
+      () async {
+        // Plan 351 tombstones the parent and cleanup removes its attachments
+        // before the retained v108 incarnation ever completes.
+        final removed = await seedBoundStrictParent('deletion-first-removed');
+        const removedEventId = '35200000-0000-4000-8000-000000000004';
+        final removedEnvelope = deletionEnvelope(removedEventId);
+        expect(
+          (await dbStageOutgoingDirectMediaDeletionInboxCustody(
+            db,
+            expectedRow: removed.current,
+            stagedRow: tombstoneOf(
+              removed.current,
+              wireEnvelope: removedEnvelope,
+            ),
+            kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+            recipientPeerId: recipient,
+            eventId: removedEventId,
+            wireEnvelope: removedEnvelope,
+            updatedAt: t1,
+          )).outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        await db.delete(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[removed.messageId],
+        );
+
+        expect(
+          await completeBound(removed),
+          DirectInboxCustodyCompletionOutcome.messagePreserved,
+        );
+        final removedTombstone = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[removed.messageId],
+        )).single;
+        expect(removedTombstone['deleted_at'], t1);
+        expect(removedTombstone['status'], 'sending');
+        expect(
+          await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[removed.messageId],
+          ),
+          isEmpty,
+          reason: 'completion may never recreate a cleaned-up attachment',
+        );
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[removed.messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[removed.messageId],
+          )).map((row) => row['state']).toSet(),
+          <String>{'outgoing_cleanup_pending'},
+        );
+
+        // The same holds when cleanup has only partially drained: a terminal
+        // parent never makes lineage a completion prerequisite.
+        final partial = await seedBoundStrictParent('deletion-first-partial');
+        const partialEventId = '35200000-0000-4000-8000-000000000005';
+        final partialEnvelope = deletionEnvelope(partialEventId);
+        expect(
+          (await dbStageOutgoingDirectMediaDeletionInboxCustody(
+            db,
+            expectedRow: partial.current,
+            stagedRow: tombstoneOf(
+              partial.current,
+              wireEnvelope: partialEnvelope,
+            ),
+            kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+            recipientPeerId: recipient,
+            eventId: partialEventId,
+            wireEnvelope: partialEnvelope,
+            updatedAt: t1,
+          )).outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        await db.delete(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[partial.attachmentIds.last],
+        );
+
+        expect(
+          await completeBound(partial),
+          DirectInboxCustodyCompletionOutcome.messagePreserved,
+        );
+        expect(await lineageOf(partial.messageId), <String, Object?>{
+          partial.attachmentIds.first: null,
+        });
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[partial.messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[partial.messageId],
+          )).map((row) => row['state']).toSet(),
+          <String>{'outgoing_cleanup_pending'},
+        );
+      },
+    );
   });
 }
