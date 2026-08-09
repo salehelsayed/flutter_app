@@ -466,12 +466,17 @@ if is_image_update_request "$@"; then
   exit 0
 fi
 
-# Normal launches retain Docker's cached layers.  Only the explicit update
-# command rebuilds the npm-install layer.
-docker build \
-  -t "${IMAGE_NAME}" \
-  -f "${REPO_ROOT}/docker/claude-code/Dockerfile" \
-  "${REPO_ROOT}/docker/claude-code"
+# Normal launches should not rebuild an existing image. A rebuild without
+# --pull/--no-cache can reuse an older BuildKit cache for the npm install
+# @latest layer and retag the image back to an older Claude Code version right
+# after `claude-docker update`.
+if [ "${CLAUDE_DOCKER_REBUILD:-0}" = "1" ] || ! docker image inspect "${IMAGE_NAME}" >/dev/null 2>&1; then
+  docker build \
+    --pull \
+    -t "${IMAGE_NAME}" \
+    -f "${REPO_ROOT}/docker/claude-code/Dockerfile" \
+    "${REPO_ROOT}/docker/claude-code"
+fi
 
 start_host_bridge
 
