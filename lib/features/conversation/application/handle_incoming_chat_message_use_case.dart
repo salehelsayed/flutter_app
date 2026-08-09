@@ -24,6 +24,7 @@ import 'package:flutter_app/features/conversation/application/send_delivery_rece
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -712,6 +713,21 @@ handleIncomingChatMessage({
       attachments: strictAttachments,
       custodyRows: custodyRows,
     );
+    if (staged.outcome ==
+        IncomingDirectMediaBlobCustodyStageOutcome.supersededByDeletion) {
+      // The author's deletion is durable precedence, not a refusal. Publish no
+      // media, marker, or notification — but still settle the event with the
+      // one initial receipt the sender is waiting for.
+      await maybeSendDeliveryReceipt(payload.id);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_STRICT_MEDIA_SUPERSEDED_BY_DELETION',
+        details: {
+          'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
+        },
+      );
+      return (HandleChatMessageResult.duplicate, null, null);
+    }
     if (!staged.outcome.isDurable) {
       return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
     }
@@ -719,10 +735,23 @@ handleIncomingChatMessage({
     // The complete parent/attachment/v111 transaction is already durable.
     // Every observable side effect starts only after that boundary.
     await stageNotificationDisplayCustody?.call(conversationMessage);
-    await incomingMessageRepo.publishIncomingDirectMediaMessage(
-      message: conversationMessage,
-      attachments: strictAttachments,
-    );
+    final published = await incomingMessageRepo
+        .publishIncomingDirectMediaMessage(
+          message: conversationMessage,
+          attachments: strictAttachments,
+        );
+    if (published ==
+        StrictIncomingMediaPublicationDisposition.durablySuperseded) {
+      await maybeSendDeliveryReceipt(payload.id);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_STRICT_MEDIA_SUPERSEDED_BY_DELETION',
+        details: {
+          'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
+        },
+      );
+      return (HandleChatMessageResult.duplicate, null, null);
+    }
     await maybeSendDeliveryReceipt(payload.id);
   } else {
     if (isOrdinaryDirectText) {

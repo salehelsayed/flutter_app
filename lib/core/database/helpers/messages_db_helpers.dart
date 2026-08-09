@@ -11,6 +11,7 @@ import '../../media/media_owner_lane.dart';
 import '../../media/outgoing_direct_private_mutation_coordinator.dart';
 import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
+import 'direct_notification_display_outbox_db_helpers.dart';
 
 const _visibleMessageFilter = 'hidden_at IS NULL';
 const _directMediaCustodyIntentColumn = 'direct_media_custody_intent_id';
@@ -239,6 +240,153 @@ dbApplyIncomingOrdinaryTextMutation(
           ),
         );
     }
+  });
+}
+
+/// Applies one authenticated current incoming deletion event to whatever the
+/// target is at commit time — absent, ordinary text, or strict ordinary media.
+///
+/// This is deliberately one transaction with no schema of its own. It re-reads
+/// the target inside SQLite so an independently dispatched initial/media stream
+/// cannot be routed from a stale pre-read classification, and it retires any
+/// pre-existing direct display marker for the target in the same commit so the
+/// tombstone can never be raced by a queued presentation. It never touches the
+/// independent v111 blob obligations: a deletion receipt is not a blob ACK.
+Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
+  Database db, {
+  required String messageId,
+  required String senderPeerId,
+  required String deletedAt,
+  required String? transport,
+  required String createdAt,
+}) {
+  final deletedOrder = DateTime.tryParse(deletedAt);
+  if (!_nonBlankDatabaseString(messageId) ||
+      !_nonBlankDatabaseString(senderPeerId) ||
+      !_nonBlankDatabaseString(createdAt) ||
+      deletedOrder == null) {
+    return Future<DbIncomingDirectDeletionResult>.value(
+      const DbIncomingDirectDeletionResult(
+        outcome: IncomingDirectDeletionOutcome.refused,
+        row: null,
+      ),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    Future<DbIncomingDirectDeletionResult> retireMarkerAndReturn(
+      IncomingDirectDeletionOutcome outcome,
+      Map<String, Object?>? row,
+    ) async {
+      // Message display custody is identifier-only and peer-scoped, so the
+      // existing message-scoped retirement body is the exact owner here.
+      await dbDeleteDirectNotificationDisplayOutboxForMessage(
+        txn,
+        peerId: senderPeerId,
+        messageId: messageId,
+      );
+      return DbIncomingDirectDeletionResult(outcome: outcome, row: row);
+    }
+
+    final currentRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (currentRows.isEmpty) {
+      final tombstone = <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': senderPeerId,
+        'sender_peer_id': senderPeerId,
+        'text': '',
+        'timestamp': deletedAt,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': createdAt,
+        'deleted_at': deletedAt,
+        'deleted_by_peer_id': senderPeerId,
+        'transport': transport,
+      };
+      await txn.insert(
+        'messages',
+        tombstone,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      return retireMarkerAndReturn(
+        IncomingDirectDeletionOutcome.tombstoned,
+        Map<String, Object?>.from(
+          (await txn.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+            limit: 1,
+          )).single,
+        ),
+      );
+    }
+
+    final current = currentRows.single;
+    final snapshot = Map<String, Object?>.from(current);
+    if (((current['is_incoming'] as num?)?.toInt() ?? 0) != 1 ||
+        current['contact_peer_id'] != senderPeerId ||
+        current['sender_peer_id'] != senderPeerId) {
+      return DbIncomingDirectDeletionResult(
+        outcome: IncomingDirectDeletionOutcome.unauthorized,
+        row: snapshot,
+      );
+    }
+    if (((current['private_media_policy_version'] as num?)?.toInt() ?? 0) !=
+            0 ||
+        (current['private_media_mode'] as String? ?? 'ordinary') !=
+            'ordinary' ||
+        current['direct_media_custody_intent_id'] != null) {
+      return DbIncomingDirectDeletionResult(
+        outcome: IncomingDirectDeletionOutcome.refused,
+        row: snapshot,
+      );
+    }
+
+    if (_nonBlankDatabaseString(current['deleted_at']) &&
+        _nonBlankDatabaseString(current['deleted_by_peer_id'])) {
+      // Durable precedence: exact replay re-mints its receipt and an older or
+      // repeated event never rewrites the winner.
+      return retireMarkerAndReturn(
+        current['deleted_at'] == deletedAt &&
+                current['deleted_by_peer_id'] == senderPeerId
+            ? IncomingDirectDeletionOutcome.exactReplay
+            : IncomingDirectDeletionOutcome.superseded,
+        snapshot,
+      );
+    }
+
+    final changed = await txn.update(
+      'messages',
+      <String, Object?>{
+        'text': '',
+        'deleted_at': deletedAt,
+        'deleted_by_peer_id': senderPeerId,
+        'hidden_at': null,
+        'transport': transport ?? current['transport'],
+        'wire_envelope': null,
+      },
+      where: 'id = ? AND deleted_at IS NULL',
+      whereArgs: <Object?>[messageId],
+    );
+    if (changed != 1) {
+      throw StateError('incoming direct deletion lost its exact parent');
+    }
+    return retireMarkerAndReturn(
+      IncomingDirectDeletionOutcome.tombstoned,
+      Map<String, Object?>.from(
+        (await txn.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+          limit: 1,
+        )).single,
+      ),
+    );
   });
 }
 

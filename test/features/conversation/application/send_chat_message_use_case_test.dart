@@ -921,6 +921,9 @@ class FakeMessageRepository
   @override
   bool get supportsDirectTextMutationInboxCustody =>
       directTextMutationInboxCustodySupported;
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle =>
+      directTextMutationInboxCustodySupported;
   final List<({DirectInboxCustodyOutboxEntry expected, int? relayExpiresAt})>
   directCustodyCompletionCalls = [];
   OutgoingOrdinaryMutationOutcome? forcedStageOutcome;

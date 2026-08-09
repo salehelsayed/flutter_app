@@ -15,9 +15,11 @@ import '../../media/upload_retry_projection.dart';
 import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import '../direct_inbox_event_envelope.dart';
 import '../direct_media_blob_custody.dart';
 import '../outgoing_transport_mutation.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
+import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'group_messages_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 import 'direct_inbox_custody_outbox_db_helpers.dart';
@@ -4439,7 +4441,14 @@ Future<bool> _canApplyGenericMediaAttachmentSave(
 
   final parent = parents.single;
   final outgoing = ((parent['is_incoming'] as num?)?.toInt() ?? 0) == 0;
-  if (!outgoing) return true;
+  if (!outgoing) {
+    // An author's incoming tombstone is durable deletion authority. A delayed
+    // generic whole-row save must never recreate an attachment behind it.
+    return !_isExactIncomingAuthorTombstone(
+      parent,
+      senderPeerId: parent['sender_peer_id'],
+    );
+  }
   final canonicalOrdinary =
       ((parent['private_media_policy_version'] as num?)?.toInt() ?? -1) == 0 &&
       parent['private_media_mode'] == 'ordinary' &&
@@ -6052,7 +6061,16 @@ LIMIT ?
   }
 }
 
-enum IncomingDirectMediaBlobDbStageOutcome { applied, idempotent, refused }
+enum IncomingDirectMediaBlobDbStageOutcome {
+  applied,
+  idempotent,
+
+  /// An exact ordinary incoming author tombstone already won for this target.
+  /// Nothing was staged and nothing may be published, but the event is durably
+  /// settled: the caller still owes its initial message receipt.
+  supersededByDeletion,
+  refused,
+}
 
 final class IncomingDirectMediaBlobDbStageResult {
   const IncomingDirectMediaBlobDbStageResult({
@@ -6165,6 +6183,19 @@ dbStageIncomingDirectMediaBlobCustody(
       'WHERE attachment_id IN ($attachmentPlaceholders) OR message_id = ?',
       <Object?>[...attachmentIds, messageId],
     );
+
+    if (existingParents.length == 1 &&
+        _isExactIncomingAuthorTombstone(
+          existingParents.single,
+          senderPeerId: messageRow['sender_peer_id'],
+        )) {
+      // Durable precedence, not a refusal: the deletion already won this
+      // target, so no attachment row, v111 obligation, stream event, or
+      // notification may be created behind it.
+      return const IncomingDirectMediaBlobDbStageResult(
+        outcome: IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion,
+      );
+    }
 
     if (existingParents.isNotEmpty ||
         existingAttachments.isNotEmpty ||
@@ -6324,6 +6355,8 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
         'is_incoming',
         'private_media_policy_version',
         'private_media_mode',
+        'deleted_at',
+        'hidden_at',
       ],
       where: 'id = ?',
       whereArgs: <Object?>[messageId],
@@ -6334,7 +6367,12 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
         ((parentRows.single['private_media_policy_version'] as num?)?.toInt() ??
                 0) !=
             0 ||
-        parentRows.single['private_media_mode'] != 'ordinary') {
+        parentRows.single['private_media_mode'] != 'ordinary' ||
+        // A durable deletion or local hide already won this parent. Committing
+        // plaintext behind it would resurrect the media the user removed; the
+        // independent v111 obligation still converges by ACK or expiry.
+        parentRows.single['deleted_at'] != null ||
+        parentRows.single['hidden_at'] != null) {
       return false;
     }
     final expectedPath = MediaFilePathConvention.relativePathForAttachment(
@@ -6404,4 +6442,449 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
     }
     return true;
   });
+}
+
+/// True for a durable ordinary incoming tombstone authored by [senderPeerId].
+///
+/// This is the receiver-side precedence marker: an author's deletion, not a
+/// local hide and not a crossed-sender row.
+bool _isExactIncomingAuthorTombstone(
+  Map<String, Object?> row, {
+  required Object? senderPeerId,
+}) =>
+    ((row['is_incoming'] as num?)?.toInt() ?? 0) == 1 &&
+    _isNonBlankDatabaseString(row['deleted_at']) &&
+    row['deleted_by_peer_id'] == senderPeerId &&
+    row['sender_peer_id'] == senderPeerId &&
+    row['contact_peer_id'] == senderPeerId;
+
+/// DB-authoritative deletion lane for one outgoing ordinary direct parent.
+///
+/// The parent's in-memory media list is a UI snapshot and is never authority
+/// here. Only the persisted direct attachment projection, the independent v111
+/// generation, and the immutable v108 row decide which owner may delete.
+enum OutgoingDirectDeletionLane {
+  /// No direct attachment rows: the Plan 349 text mutation owner applies.
+  text,
+
+  /// A provable strict Plan 347 lineage: the Plan 351 media owner applies.
+  strictMedia,
+
+  /// Historical fingerprint-less media without v111 authority. The legacy
+  /// ordinary transport owner keeps it and never promotes it.
+  legacyMedia,
+
+  /// Crossed, partial, or ambiguous authority. Every owner fails closed.
+  contradiction,
+}
+
+/// Storage result of the atomic ordinary direct-media deletion transaction.
+final class DirectMediaDeletionCustodyDbStageResult {
+  const DirectMediaDeletionCustodyDbStageResult({
+    required this.outcome,
+    this.messageRow,
+    this.custodyRow,
+  });
+
+  const DirectMediaDeletionCustodyDbStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      messageRow = null,
+      custodyRow = null;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final Map<String, Object?>? messageRow;
+  final Map<String, Object?>? custodyRow;
+
+  bool get authorizesTransport => outcome.authorizesTransport;
+
+  /// True only while this deletion owns an exact retained v109 event.
+  bool get ownsMutationEvent => custodyRow != null;
+}
+
+/// Classifies which deletion owner may act on [messageId] right now.
+///
+/// This is advisory only: it selects an owner and mints identity, but the
+/// staging transaction repeats every predicate before it mutates anything.
+Future<OutgoingDirectDeletionLane> dbClassifyOutgoingDirectDeletionLane(
+  DatabaseExecutor db, {
+  required String messageId,
+}) async {
+  final authority = await _loadDirectDeletionLaneAuthority(
+    db,
+    messageId: messageId,
+  );
+  return authority.lane;
+}
+
+/// Atomically commits the exact v111 state transition, the visible tombstone,
+/// and the raw-event v109 obligation for one strict ordinary direct-media
+/// delete-for-everyone.
+///
+/// Either all three land or none does. The helper never terminalizes, deletes,
+/// or falsely acknowledges an independent v111 obligation, never retires a live
+/// v108 incarnation, and never performs artifact cleanup: cleanup is a caller
+/// operation that may only start after this transaction has authorized it.
+///
+/// [capacity] and [beforeCustodyInsertForTest] are test seams. Production uses
+/// the shared 512-row default and supplies no barrier.
+Future<DirectMediaDeletionCustodyDbStageResult>
+dbStageOutgoingDirectMediaDeletionInboxCustody(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String recipientPeerId,
+  required String eventId,
+  required String wireEnvelope,
+  required String updatedAt,
+  int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeCustodyInsertForTest,
+}) {
+  final classified = classifyDirectInboxEventEnvelope(wireEnvelope);
+  final messageId = stagedRow['id'];
+  final senderPeerId = stagedRow['sender_peer_id'];
+  final createdAt = stagedRow['created_at'];
+  final isDeletion =
+      kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+      kind == OutgoingOrdinaryAttemptKind.tombstoneRetry;
+  final valid =
+      capacity >= 0 &&
+      isDeletion &&
+      expectedRow != null &&
+      _isNonBlankDatabaseString(recipientPeerId) &&
+      _isNonBlankDatabaseString(eventId) &&
+      _isNonBlankDatabaseString(updatedAt) &&
+      _isNonBlankDatabaseString(messageId) &&
+      _isNonBlankDatabaseString(senderPeerId) &&
+      _isNonBlankDatabaseString(createdAt) &&
+      DateTime.tryParse(createdAt! as String) != null &&
+      classified != null &&
+      classified.kind == DirectInboxEventEnvelopeKind.deletion &&
+      classified.eventId == eventId &&
+      classified.senderPeerId == senderPeerId &&
+      expectedRow['id'] == messageId &&
+      stagedRow['contact_peer_id'] == recipientPeerId &&
+      stagedRow['wire_envelope'] == wireEnvelope &&
+      isStrictOrdinaryOutgoingDirectPolicy(expectedRow) &&
+      isStrictOrdinaryOutgoingDirectPolicy(stagedRow) &&
+      isExactOutgoingDirectDeletionProjection(stagedRow);
+  if (!valid) {
+    return Future<DirectMediaDeletionCustodyDbStageResult>.value(
+      const DirectMediaDeletionCustodyDbStageResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    // Exact replay is checked before shared capacity so an already-owned event
+    // stays idempotent without replaying an older parent projection.
+    final existingCustody = await txn.query(
+      kDirectReactionInboxCustodyOutboxTable,
+      where: 'recipient_peer_id = ? AND event_id = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId],
+      limit: 1,
+    );
+    if (existingCustody.isNotEmpty) {
+      final row = existingCustody.single;
+      if (row['wire_envelope'] != wireEnvelope) {
+        return const DirectMediaDeletionCustodyDbStageResult.refused();
+      }
+      final currentParents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      return DirectMediaDeletionCustodyDbStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.idempotent,
+        messageRow: currentParents.isEmpty
+            ? null
+            : Map<String, Object?>.from(currentParents.single),
+        custodyRow: Map<String, Object?>.from(row),
+      );
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $kDirectReactionInboxCustodyOutboxTable',
+    );
+    if (((countRows.single['count'] as num?)?.toInt() ?? 0) >= capacity) {
+      return const DirectMediaDeletionCustodyDbStageResult.refused();
+    }
+
+    // The lane is re-derived here, so a drift between advisory selection and
+    // this commit fails closed instead of downgrading to another owner.
+    final authority = await _loadDirectDeletionLaneAuthority(
+      txn,
+      messageId: messageId! as String,
+    );
+    if (authority.lane != OutgoingDirectDeletionLane.strictMedia) {
+      return const DirectMediaDeletionCustodyDbStageResult.refused();
+    }
+
+    final messageOutcome =
+        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+        );
+    if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+      return DirectMediaDeletionCustodyDbStageResult(
+        outcome: messageOutcome == OutgoingOrdinaryMutationOutcome.idempotent
+            ? OutgoingOrdinaryMutationOutcome.refused
+            : messageOutcome,
+      );
+    }
+
+    for (final row in authority.cleanupTransitions) {
+      final moved =
+          await dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
+            txn,
+            expected: row,
+            next: row.copyWith(
+              state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+              updatedAt: updatedAt,
+            ),
+          );
+      if (!moved) {
+        throw StateError(
+          'direct media deletion lost its exact v111 generation',
+        );
+      }
+    }
+
+    final custodyRow = <String, Object?>{
+      'recipient_peer_id': recipientPeerId,
+      'event_id': eventId,
+      'wire_envelope': wireEnvelope,
+      'retry_count': 0,
+      'last_attempt_at': null,
+      'last_error_code': null,
+      'created_at': createdAt,
+      'updated_at': createdAt,
+    };
+    // Test-only barrier between the parent/v111 writes and the v109 insert.
+    await beforeCustodyInsertForTest?.call();
+    await txn.insert(
+      kDirectReactionInboxCustodyOutboxTable,
+      custodyRow,
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    final committed = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (committed.length != 1) {
+      throw StateError('direct media deletion lost its exact tombstone');
+    }
+    return DirectMediaDeletionCustodyDbStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      messageRow: Map<String, Object?>.from(committed.single),
+      custodyRow: custodyRow,
+    );
+  });
+}
+
+/// The lane plus the exact v111 rows that must move to cleanup with the
+/// tombstone. An empty transition list never means "nothing to preserve".
+final class _DirectDeletionLaneAuthority {
+  const _DirectDeletionLaneAuthority(
+    this.lane, {
+    this.cleanupTransitions = const <DirectMediaBlobCustodyRow>[],
+  });
+
+  const _DirectDeletionLaneAuthority.contradiction()
+    : lane = OutgoingDirectDeletionLane.contradiction,
+      cleanupTransitions = const <DirectMediaBlobCustodyRow>[];
+
+  final OutgoingDirectDeletionLane lane;
+  final List<DirectMediaBlobCustodyRow> cleanupTransitions;
+}
+
+Future<_DirectDeletionLaneAuthority> _loadDirectDeletionLaneAuthority(
+  DatabaseExecutor db, {
+  required String messageId,
+}) async {
+  final attachments = await db.query(
+    'media_attachments',
+    columns: const <String>['id', 'direct_media_blob_custody_fingerprint'],
+    where: 'message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    orderBy: 'id ASC',
+  );
+  final rawBlobRows = await db.query(
+    kDirectMediaBlobCustodyTable,
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    orderBy: 'attachment_id ASC',
+  );
+  List<DirectMediaBlobCustodyRow> blobRows;
+  try {
+    blobRows = rawBlobRows
+        .map(DirectMediaBlobCustodyRow.fromMap)
+        .toList(growable: false);
+  } on FormatException {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+
+  if (attachments.isEmpty) {
+    return blobRows.isEmpty
+        ? const _DirectDeletionLaneAuthority(OutgoingDirectDeletionLane.text)
+        : const _DirectDeletionLaneAuthority.contradiction();
+  }
+  if (blobRows.any(
+    (row) => row.direction != DirectMediaBlobCustodyDirection.outgoing,
+  )) {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+
+  final fingerprintById = <String, String?>{
+    for (final attachment in attachments)
+      attachment['id']! as String:
+          attachment['direct_media_blob_custody_fingerprint'] as String?,
+  };
+  final fingerprints = fingerprintById.values.toList(growable: false);
+  final allNullFingerprints = fingerprints.every((value) => value == null);
+  final allStrictFingerprints = fingerprints.every(
+    (value) => _isExactLowercaseHex(value, 64),
+  );
+  if (!allNullFingerprints && !allStrictFingerprints) {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+
+  final v108Rows = await db.query(
+    _directInboxCustodyOutboxTable,
+    columns: const <String>[
+      'incarnation_id',
+      'media_blob_manifest_hash',
+      'media_blob_expires_at_ms',
+    ],
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 2,
+  );
+  if (v108Rows.length > 1) {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+  final v108 = v108Rows.isEmpty ? null : v108Rows.single;
+  final v108ManifestHash = v108?['media_blob_manifest_hash'] as String?;
+  final v108ExpiresAtMs = (v108?['media_blob_expires_at_ms'] as num?)?.toInt();
+
+  if (blobRows.isEmpty) {
+    if (allStrictFingerprints) {
+      // Every remaining row still retains a valid strict commitment digest, so
+      // the strict owner keeps custody even after v111 has fully converged.
+      return const _DirectDeletionLaneAuthority(
+        OutgoingDirectDeletionLane.strictMedia,
+      );
+    }
+    if (v108 == null) {
+      return const _DirectDeletionLaneAuthority(
+        OutgoingDirectDeletionLane.legacyMedia,
+      );
+    }
+    // A historical unbound v108 continues its original lifecycle on legacy
+    // transport. A manifest-bearing v108 with no v111 is a contradiction.
+    return v108ManifestHash == null && v108ExpiresAtMs == null
+        ? const _DirectDeletionLaneAuthority(
+            OutgoingDirectDeletionLane.legacyMedia,
+          )
+        : const _DirectDeletionLaneAuthority.contradiction();
+  }
+
+  // Fingerprint parity: a persisted digest must be recomputable from the exact
+  // extant commitment. A different but well-formed value is a crossed proof.
+  for (final row in blobRows) {
+    if (!fingerprintById.containsKey(row.attachmentId)) {
+      return const _DirectDeletionLaneAuthority.contradiction();
+    }
+    final fingerprint = fingerprintById[row.attachmentId];
+    if (row.expiresAtMs == null) {
+      if (fingerprint != null) {
+        return const _DirectDeletionLaneAuthority.contradiction();
+      }
+      continue;
+    }
+    if (fingerprint != null &&
+        fingerprint !=
+            computeDirectMediaBlobCommitmentFingerprint(
+              attachmentId: row.attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                kind: row.custodyKind,
+                contract: row.custodyContract,
+                contentHash: row.contentHash,
+                ciphertextSize: row.ciphertextSize,
+                transportMime: row.transportMime,
+                expiresAtMs: row.expiresAtMs!,
+              ),
+            )) {
+      return const _DirectDeletionLaneAuthority.contradiction();
+    }
+  }
+
+  final active = blobRows.every(
+    (row) =>
+        row.state == DirectMediaBlobCustodyState.outgoingPrepared ||
+        row.state == DirectMediaBlobCustodyState.outgoingStored,
+  );
+  final terminal = blobRows.every(
+    (row) => row.state == DirectMediaBlobCustodyState.outgoingCleanupPending,
+  );
+  if (!active && !terminal) {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+
+  if (v108 == null) {
+    if (terminal) {
+      // A subset left after physical cleanup is expected; those rows keep
+      // their own obligations and must survive the tombstone unchanged.
+      return const _DirectDeletionLaneAuthority(
+        OutgoingDirectDeletionLane.strictMedia,
+      );
+    }
+    if (blobRows.length != attachments.length ||
+        blobRows.any((row) => row.inboxCustodyIncarnationId != null)) {
+      return const _DirectDeletionLaneAuthority.contradiction();
+    }
+    return _DirectDeletionLaneAuthority(
+      OutgoingDirectDeletionLane.strictMedia,
+      cleanupTransitions: blobRows,
+    );
+  }
+
+  final incarnationId = v108['incarnation_id'];
+  if (v108ManifestHash == null ||
+      v108ExpiresAtMs == null ||
+      !active ||
+      blobRows.length != attachments.length ||
+      blobRows.any(
+        (row) =>
+            row.state != DirectMediaBlobCustodyState.outgoingStored ||
+            row.inboxCustodyIncarnationId != incarnationId ||
+            row.expiresAtMs == null,
+      )) {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+  final manifest = blobRows
+      .map(
+        (row) => DirectMediaBlobManifestProjection(
+          attachmentId: row.attachmentId,
+          commitment: DirectMediaBlobCustodyCommitment(
+            contentHash: row.contentHash,
+            ciphertextSize: row.ciphertextSize,
+            expiresAtMs: row.expiresAtMs!,
+          ),
+        ),
+      )
+      .toList(growable: false);
+  if (computeDirectMediaBlobManifestHash(manifest) != v108ManifestHash ||
+      earliestDirectMediaBlobExpiryMs(manifest) != v108ExpiresAtMs) {
+    return const _DirectDeletionLaneAuthority.contradiction();
+  }
+  // The live incarnation keeps its bound generation: exact v108 completion
+  // still owns the transition to cleanup after this tombstone.
+  return const _DirectDeletionLaneAuthority(
+    OutgoingDirectDeletionLane.strictMedia,
+  );
 }

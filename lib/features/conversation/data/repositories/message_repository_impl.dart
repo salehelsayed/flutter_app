@@ -36,6 +36,7 @@ class MessageRepositoryImpl
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectTextMutationInboxCustodyRepository,
         IncomingOrdinaryTextApplyRepository,
+        IncomingDirectDeletionApplyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
         IncomingDirectMessagePublicationRepository,
         MessageRepositoryChangeSource,
@@ -166,6 +167,14 @@ class MessageRepositoryImpl
     required IncomingOrdinaryTextMutationKind kind,
   })?
   dbApplyIncomingOrdinaryTextMutation;
+  final Future<DbIncomingDirectDeletionResult> Function({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+    required String createdAt,
+  })?
+  dbApplyIncomingDirectMessageDeletion;
   final Future<OutgoingOrdinaryMutationOutcome> Function({
     required String messageId,
     required String expectedContactPeerId,
@@ -385,6 +394,7 @@ class MessageRepositoryImpl
     this.dbRecordDirectTextMutationInboxCustodyFailureIfExact,
     this.dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact,
     this.dbApplyIncomingOrdinaryTextMutation,
+    this.dbApplyIncomingDirectMessageDeletion,
     this.dbSettleOutgoingOrdinaryTransport,
     this.dbSettleOutgoingOrdinaryDeleteTombstone,
     this.dbInvalidateOutgoingOrdinaryEnvelope,
@@ -437,6 +447,10 @@ class MessageRepositoryImpl
   @override
   bool get supportsDirectTextMutationInboxCustody =>
       dbStageOutgoingDirectTextMutationInboxCustody != null &&
+      supportsDirectMutationInboxCustodyLifecycle;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle =>
       dbLoadDirectTextMutationInboxCustodyForEvent != null &&
       dbRecordDirectTextMutationInboxCustodyFailureIfExact != null &&
       dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact != null;
@@ -494,7 +508,8 @@ class MessageRepositoryImpl
   }
 
   @override
-  Future<void> publishIncomingDirectMediaMessage({
+  Future<StrictIncomingMediaPublicationDisposition>
+  publishIncomingDirectMediaMessage({
     required ConversationMessage message,
     required List<MediaAttachment> attachments,
   }) async {
@@ -503,6 +518,12 @@ class MessageRepositoryImpl
       throw StateError('strict incoming media parent is not durable');
     }
     final committed = _rememberMessage(ConversationMessage.fromMap(row));
+    if (committed.isDeleted || committed.hiddenAt != null) {
+      // The author's deletion won after the strict transaction committed.
+      // Throwing here would suppress the initial receipt the sender is still
+      // waiting for, so report durable supersession and publish nothing stale.
+      return StrictIncomingMediaPublicationDisposition.durablySuperseded;
+    }
     if (!committed.isIncoming ||
         committed.contactPeerId != message.contactPeerId ||
         committed.senderPeerId != message.senderPeerId ||
@@ -515,6 +536,7 @@ class MessageRepositoryImpl
       throw StateError('strict incoming media publication crossed authority');
     }
     _messageChangeController.add(committed.copyWith(media: attachments));
+    return StrictIncomingMediaPublicationDisposition.published;
   }
 
   @override
@@ -866,6 +888,48 @@ class MessageRepositoryImpl
       }
     }
     return IncomingOrdinaryTextApplyResult(
+      outcome: result.outcome,
+      message: message,
+    );
+  }
+
+  @override
+  bool get supportsIncomingDirectDeletionApply =>
+      dbApplyIncomingDirectMessageDeletion != null;
+
+  @override
+  Future<IncomingDirectDeletionApplyResult> applyIncomingDirectMessageDeletion({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+  }) async {
+    final apply = dbApplyIncomingDirectMessageDeletion;
+    if (apply == null) {
+      return const IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.refused,
+        message: null,
+      );
+    }
+    final result = await apply(
+      messageId: messageId,
+      senderPeerId: senderPeerId,
+      deletedAt: deletedAt,
+      transport: transport,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    final message = result.row == null
+        ? null
+        : _rememberMessage(ConversationMessage.fromMap(result.row!));
+    if (result.outcome.changed && message != null) {
+      try {
+        _messageChangeController.add(message);
+      } catch (_) {
+        // The committed tombstone remains authoritative after a failed
+        // publication; deletion durability never depends on the stream.
+      }
+    }
+    return IncomingDirectDeletionApplyResult(
       outcome: result.outcome,
       message: message,
     );

@@ -59,6 +59,17 @@ Future<void> dbStageDirectNotificationDisplayOutboxEntry(
     final eventId = row['event_id'] as String? ?? '';
     final eventKind = row['event_kind'] as String? ?? '';
     final peerId = row['peer_id'] as String? ?? '';
+    // A durable author tombstone is terminal for this target's message
+    // presentation. Refusing custody here (rather than after promotion) is
+    // what makes deletion-before-display and display-before-deletion converge
+    // on the same durable outcome from either commit order.
+    if (eventKind == 'message' &&
+        await _messageParentIsTombstoned(
+          txn,
+          messageId: row['message_id'] as String? ?? '',
+        )) {
+      return;
+    }
     final existing = await txn.query(
       _table,
       where: 'peer_id = ? AND event_kind = ? AND event_id = ?',
@@ -460,6 +471,26 @@ Future<int> dbDeleteDirectNotificationDisplayOutboxForReactionActor(
         'AND actor_peer_id = ?',
     whereArgs: <Object?>[peerId, messageId, 'reaction', actorPeerId],
   );
+}
+
+Future<bool> _messageParentIsTombstoned(
+  DatabaseExecutor db, {
+  required String messageId,
+}) async {
+  if (messageId.isEmpty) return false;
+  final rows = await db.rawQuery(
+    "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+    "AND name = 'messages' LIMIT 1",
+  );
+  if (rows.isEmpty) return false;
+  final parents = await db.query(
+    'messages',
+    columns: const <String>['deleted_at'],
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  return parents.isNotEmpty && parents.single['deleted_at'] != null;
 }
 
 Future<bool> _tableExists(DatabaseExecutor db) async {

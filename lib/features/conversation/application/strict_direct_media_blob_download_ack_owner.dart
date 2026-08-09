@@ -266,7 +266,14 @@ final class StrictDirectMediaBlobDownloadAckOwner {
                   sourceRelayPeerId: sourceRelayPeerId,
                   updatedAt: now().toUtc().toIso8601String(),
                 );
-            if (!didCommit) return false;
+            if (!didCommit) {
+              // The DB refused this promotion — a deletion, hide, or crossed
+              // projection won. Remove only the canonical plaintext this
+              // attempt just wrote; a pre-existing durable copy would have
+              // been adopted long before reaching here.
+              await _deleteRegularFile(canonical);
+              return false;
+            }
             if (ownsCiphertextCandidate ||
                 identical(ciphertext, lanCandidate)) {
               await _deleteRegularFile(ciphertext);

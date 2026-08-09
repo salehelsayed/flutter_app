@@ -1279,6 +1279,21 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 incomingRow: incomingRow,
                 kind: kind,
               ),
+      dbApplyIncomingDirectMessageDeletion:
+          ({
+            required messageId,
+            required senderPeerId,
+            required deletedAt,
+            required transport,
+            required createdAt,
+          }) => dbApplyIncomingDirectMessageDeletion(
+            db,
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            deletedAt: deletedAt,
+            transport: transport,
+            createdAt: createdAt,
+          ),
       dbSettleOutgoingOrdinaryTransport:
           ({
             required messageId,
@@ -1775,6 +1790,27 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             wireEnvelope: wireEnvelope,
             wireMediaBlobManifestHash: wireMediaBlobManifestHash,
             wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+          ),
+      dbClassifyOutgoingDirectDeletionLane: ({required messageId}) =>
+          dbClassifyOutgoingDirectDeletionLane(db, messageId: messageId),
+      dbStageOutgoingDirectMediaDeletionInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+            required updatedAt,
+          }) => dbStageOutgoingDirectMediaDeletionInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+            updatedAt: updatedAt,
           ),
       dbStageOutgoingDirectMediaBlobGeneration:
           ({
@@ -3966,7 +4002,15 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       strictDownloadAckOwner: strictDirectMediaBlobDownloadAckOwner,
       retryIncomingDownload: (row) async {
         final parent = await messageRepository.getMessage(row.messageId);
-        if (parent == null || !parent.isIncoming) return false;
+        // A tombstoned or hidden parent keeps its independent v111 obligation
+        // (ACK or expiry still converge), but its plaintext must never be
+        // re-downloaded after the user's deletion won.
+        if (parent == null ||
+            !parent.isIncoming ||
+            parent.isDeleted ||
+            parent.hiddenAt != null) {
+          return false;
+        }
         final attachments = await mediaAttachmentRepository
             .getAttachmentsForMessage(
               row.messageId,

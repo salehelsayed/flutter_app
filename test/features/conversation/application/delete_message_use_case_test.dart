@@ -2,6 +2,9 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/p2p_service.dart'
@@ -16,6 +19,7 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p_state;
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -29,6 +33,15 @@ import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
 import '../../contacts/domain/repositories/fake_contact_repository.dart'
     as contact_fakes;
+
+/// A node that is not running: the delete lane must still retain its exact
+/// v109 event and perform zero network work.
+class _StoppedDeleteP2PService extends FakeP2PService {
+  _StoppedDeleteP2PService({required super.peerId, required super.network});
+
+  @override
+  NodeState get currentState => NodeState(isStarted: false, peerId: peerId);
+}
 
 class _UnackedDeleteP2PService extends FakeP2PService {
   _UnackedDeleteP2PService({
@@ -1631,6 +1644,286 @@ void main() {
           sender.dispose();
           recipient.dispose();
         });
+      },
+    );
+  });
+
+  group('Plan 351 ordinary direct-media delete-for-everyone custody', () {
+    const sender = 'peer-alice';
+    const recipient = 'contact-1';
+    const t0 = '2026-08-09T09:00:00.000Z';
+    const nowMs = 1900000000000;
+
+    /// Seeds one delivered strict ordinary direct-media parent whose complete
+    /// v111 generation is still bound to its live v108 incarnation.
+    Future<ConversationMessage> seedStrictMediaParent(
+      MediaRepositoryRealDbFixture fixture,
+      String messageId,
+    ) async {
+      const incarnationId = 'c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0c0';
+      final attachmentId = '$messageId-a';
+      const contentHash =
+          '1111111111111111111111111111111111111111111111111111111111111111';
+      const ciphertextSize = 41;
+      const expiresAtMs = nowMs + 60000;
+      final initialEnvelope = jsonEncode(<String, Object?>{
+        'type': 'chat_message',
+        'version': '2',
+        'id': messageId,
+        'senderPeerId': sender,
+        'encrypted': const <String, Object?>{
+          'kem': 'kem-initial',
+          'ciphertext': 'cipher-initial',
+          'nonce': 'nonce-initial',
+        },
+      });
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': recipient,
+        'sender_peer_id': sender,
+        'text': 'strict media',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 0,
+        'created_at': t0,
+        'wire_envelope': initialEnvelope,
+      });
+      await fixture.db.insert('media_attachments', <String, Object?>{
+        'id': attachmentId,
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 800,
+        'media_type': 'image',
+        'local_path': 'media/direct/$attachmentId.jpg',
+        'download_status': 'done',
+        'created_at': t0,
+        'content_hash': contentHash,
+      });
+      final commitment = DirectMediaBlobCustodyCommitment(
+        contentHash: contentHash,
+        ciphertextSize: ciphertextSize,
+        expiresAtMs: expiresAtMs,
+      );
+      await fixture.db.insert(
+        kDirectMediaBlobCustodyTable,
+        DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          inboxCustodyIncarnationId: incarnationId,
+          recipientPeerId: recipient,
+          ciphertextRelativePath:
+              'direct_media_blob_custody_v1/${'a' * 64}/$attachmentId.blob',
+          contentHash: contentHash,
+          ciphertextSize: ciphertextSize,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: 'relay-1',
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      await fixture.db.insert('direct_inbox_custody_outbox', <String, Object?>{
+        'recipient_peer_id': recipient,
+        'message_id': messageId,
+        'incarnation_id': incarnationId,
+        'wire_envelope': initialEnvelope,
+        'retry_count': 0,
+        'created_at': t0,
+        'updated_at': t0,
+        'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
+          <DirectMediaBlobManifestProjection>[
+            DirectMediaBlobManifestProjection(
+              attachmentId: attachmentId,
+              commitment: commitment,
+            ),
+          ],
+        ),
+        'media_blob_expires_at_ms': expiresAtMs,
+      });
+      return (await fixture.messageRepo.getMessage(messageId))!;
+    }
+
+    test(
+      'TC-351-03 node-off media deletion retains one exact v109 event, cleans '
+      'up only after stage, and performs zero network',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final original = await seedStrictMediaParent(fixture, 'tc351-node-off');
+
+        final network = FakeP2PNetwork();
+        final p2pService = _StoppedDeleteP2PService(
+          peerId: sender,
+          network: network,
+        );
+        addTearDown(p2pService.dispose);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.nodeNotRunning);
+        expect(tombstone, isNotNull);
+        expect(tombstone!.isDeleted, isTrue);
+        expect(network.storeInInboxCallCount, 0);
+
+        final custody = await fixture.db.query(
+          'direct_reaction_inbox_custody_outbox',
+        );
+        expect(custody, hasLength(1), reason: 'the exact event is retained');
+        expect(custody.single['recipient_peer_id'], recipient);
+        final envelope =
+            jsonDecode(custody.single['wire_envelope']! as String)
+                as Map<String, dynamic>;
+        expect(envelope['type'], 'message_deletion');
+        expect(envelope['eventId'], custody.single['event_id']);
+
+        // Post-authority cleanup ran even though the node was stopped.
+        expect(
+          await fixture.repo.getAttachmentsForMessage(
+            original.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
+        // The live v108 and its bound v111 generation are preserved.
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[original.id],
+          ),
+          hasLength(1),
+        );
+        expect(
+          (await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[original.id],
+          )).single['state'],
+          'outgoing_stored',
+        );
+      },
+    );
+
+    test(
+      'TC-351-03 protected acceptance settles the exact media tombstone after '
+      'cleanup has already removed its attachments',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final original = await seedStrictMediaParent(fixture, 'tc351-accepted');
+
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(peerId: sender, network: network);
+        addTearDown(p2pService.dispose);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone?.isDeleted, isTrue);
+        expect(
+          await fixture.db.query('direct_reaction_inbox_custody_outbox'),
+          isEmpty,
+          reason: 'accepted protected custody retires the exact event',
+        );
+        final settled = (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[original.id],
+        )).single;
+        expect(settled['status'], 'inboxed');
+        expect(settled['transport'], 'inbox');
+        expect(settled['deleted_at'], isNotNull);
+        expect(
+          await fixture.repo.getAttachmentsForMessage(
+            original.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+          reason: 'attachment absence cannot invalidate terminal settlement',
+        );
+      },
+    );
+
+    test(
+      'TC-351-03 a contradictory blob generation refuses without mutating the '
+      'parent, v111 or v109',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final original = await seedStrictMediaParent(fixture, 'tc351-crossed');
+        // Retire the exact v108 while its generation stays bound: a bound
+        // generation without its incarnation is a contradiction.
+        await fixture.db.delete(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[original.id],
+        );
+
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(peerId: sender, network: network);
+        addTearDown(p2pService.dispose);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.invalidMessage);
+        expect(tombstone, isNull);
+        expect(network.storeInInboxCallCount, 0);
+        expect(
+          await fixture.db.query('direct_reaction_inbox_custody_outbox'),
+          isEmpty,
+        );
+        expect(
+          (await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[original.id],
+          )).single['deleted_at'],
+          isNull,
+        );
+        expect(
+          (await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[original.id],
+          )).single['state'],
+          'outgoing_stored',
+        );
+        expect(
+          await fixture.repo.getAttachmentsForMessage(
+            original.id,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+          reason: 'no cleanup may precede stage authorization',
+        );
       },
     );
   });

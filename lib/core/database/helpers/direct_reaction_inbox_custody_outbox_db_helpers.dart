@@ -8,7 +8,11 @@ import '../direct_reaction_inbox_custody_outbox_contract.dart';
 import '../outgoing_transport_mutation.dart';
 import 'messages_db_helpers.dart';
 
-const String _table = 'direct_reaction_inbox_custody_outbox';
+/// The one physical v109 outbox shared by direct reaction and mutation events.
+const String kDirectReactionInboxCustodyOutboxTable =
+    'direct_reaction_inbox_custody_outbox';
+
+const String _table = kDirectReactionInboxCustodyOutboxTable;
 
 const int kDirectReactionInboxCustodyOutboxCapacity = 512;
 const int kDirectReactionInboxCustodyOutboxMaxLoadBatch = 50;
@@ -527,13 +531,20 @@ dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
       if (!validParent) {
         return DirectMutationInboxCustodyCompletionOutcome.stale;
       }
-      final directMedia = await txn.rawQuery(
-        'SELECT 1 FROM media_attachments '
-        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
-        <Object?>[parent['id'], 'direct'],
-      );
-      if (directMedia.isNotEmpty) {
-        return DirectMutationInboxCustodyCompletionOutcome.stale;
+      if (!isDeletion) {
+        // Media EDIT stays excluded: its persisted commitment lifetime is a
+        // different decision. Terminal deletion settlement, by contrast, can
+        // never be invalidated by attachment presence or absence — exact v109
+        // staging already owned the event, and best-effort artifact cleanup
+        // may legitimately have removed those rows before this acceptance.
+        final directMedia = await txn.rawQuery(
+          'SELECT 1 FROM media_attachments '
+          'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+          <Object?>[parent['id'], 'direct'],
+        );
+        if (directMedia.isNotEmpty) {
+          return DirectMutationInboxCustodyCompletionOutcome.stale;
+        }
       }
       final alreadyProjected =
           status == 'inboxed' &&
@@ -609,6 +620,17 @@ bool _isExactV2DirectReactionEnvelope(
       classified?.targetMessageId == targetMessageId &&
       classified?.senderPeerId == senderPeerId;
 }
+
+/// The ordinary outgoing direct policy shared by the text and media v109
+/// deletion owners. Media parents satisfy it once v108 staging has consumed
+/// their v110 intent; only policy/lifecycle columns are inspected here.
+bool isStrictOrdinaryOutgoingDirectPolicy(Map<String, Object?> row) =>
+    _isStrictOrdinaryTextPolicy(row);
+
+/// The exact visible projection every outgoing delete-for-everyone tombstone
+/// must carry before it can own a v109 event.
+bool isExactOutgoingDirectDeletionProjection(Map<String, Object?> row) =>
+    _isExactOutgoingDeletionProjection(row);
 
 bool _isStrictOrdinaryTextPolicy(Map<String, Object?> row) =>
     ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&

@@ -57,7 +57,7 @@ Future<int> drainDirectReactionInboxCustodyOutbox({
 /// entering the legacy inbox store.
 Future<bool> drainOwnedDirectMutationInboxCustodyOutboxEntry({
   required DirectReactionInboxCustodyOutboxEntry entry,
-  required OutgoingDirectTextMutationInboxCustodyRepository custodyRepository,
+  required DirectMutationInboxCustodyLifecycleRepository custodyRepository,
   required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
 }) async {
   final classified = classifyDirectInboxEventEnvelope(entry.wireEnvelope);
@@ -234,7 +234,7 @@ Future<void> _recordFailureBestEffort({
 }
 
 Future<void> _recordMutationFailureBestEffort({
-  required OutgoingDirectTextMutationInboxCustodyRepository custodyRepository,
+  required DirectMutationInboxCustodyLifecycleRepository custodyRepository,
   required DirectReactionInboxCustodyOutboxEntry entry,
   required String errorCode,
 }) async {

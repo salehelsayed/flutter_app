@@ -3,6 +3,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
@@ -140,6 +141,27 @@ class MediaRepositoryRealDbFixture {
             wireEnvelope: wireEnvelope,
             wireMediaBlobManifestHash: wireMediaBlobManifestHash,
             wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+          ),
+      dbClassifyOutgoingDirectDeletionLane: ({required messageId}) =>
+          dbClassifyOutgoingDirectDeletionLane(db, messageId: messageId),
+      dbStageOutgoingDirectMediaDeletionInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+            required updatedAt,
+          }) => dbStageOutgoingDirectMediaDeletionInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+            updatedAt: updatedAt,
           ),
       dbStageOutgoingDirectMediaBlobGeneration:
           ({
@@ -916,6 +938,56 @@ MessageRepositoryImpl _buildMessageRepository(
           messageId: messageId,
           incarnationId: incarnationId,
           wireEnvelope: wireEnvelope,
+        ),
+    dbLoadDirectTextMutationInboxCustodyForEvent:
+        ({required recipientPeerId, required eventId}) =>
+            dbLoadDirectReactionInboxCustodyOutboxForEvent(
+              db,
+              recipientPeerId: recipientPeerId,
+              eventId: eventId,
+            ),
+    dbRecordDirectTextMutationInboxCustodyFailureIfExact:
+        ({
+          required recipientPeerId,
+          required eventId,
+          required expectedWireEnvelope,
+          required errorCode,
+          required attemptedAt,
+        }) => dbRecordDirectReactionInboxCustodyFailureIfExact(
+          db,
+          recipientPeerId: recipientPeerId,
+          eventId: eventId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          errorCode: errorCode,
+          attemptedAt: attemptedAt,
+        ),
+    dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact:
+        ({
+          required recipientPeerId,
+          required eventId,
+          required expectedWireEnvelope,
+          required relayExpiresAt,
+        }) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+          db,
+          recipientPeerId: recipientPeerId,
+          eventId: eventId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          relayExpiresAt: relayExpiresAt,
+        ),
+    dbApplyIncomingDirectMessageDeletion:
+        ({
+          required messageId,
+          required senderPeerId,
+          required deletedAt,
+          required transport,
+          required createdAt,
+        }) => dbApplyIncomingDirectMessageDeletion(
+          db,
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+          deletedAt: deletedAt,
+          transport: transport,
+          createdAt: createdAt,
         ),
     dbLoadDirectInboxCustodyOutbox: ({limit = 50}) =>
         dbLoadDirectInboxCustodyOutbox(db, limit: limit),

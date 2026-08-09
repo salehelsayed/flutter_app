@@ -66,6 +66,9 @@ final class _InMemoryReactionCustodyRepository
   bool get supportsDirectTextMutationInboxCustody => true;
 
   @override
+  bool get supportsDirectMutationInboxCustodyLifecycle => true;
+
+  @override
   Future<List<DirectReactionInboxCustodyOutboxEntry>>
   loadDirectReactionInboxCustody({int limit = 50}) async {
     final ordered = rows.values.toList()

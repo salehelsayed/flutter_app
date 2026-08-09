@@ -1,6 +1,8 @@
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
@@ -15,7 +17,8 @@ class FakeMessageRepository
         OutgoingTransportMutationRepository,
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectTextMutationInboxCustodyRepository,
-        IncomingOrdinaryTextApplyRepository {
+        IncomingOrdinaryTextApplyRepository,
+        IncomingDirectDeletionApplyRepository {
   final List<ConversationMessage> _messages = [];
   final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
   final Map<String, DirectReactionInboxCustodyOutboxEntry>
@@ -42,6 +45,9 @@ class FakeMessageRepository
 
   @override
   bool get supportsDirectTextMutationInboxCustody => true;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle => true;
 
   /// Seed messages for testing.
   void seed(List<ConversationMessage> messages) {
@@ -863,6 +869,81 @@ class FakeMessageRepository
     }
     directMutationCustodyRows.remove(key);
     return DirectMutationInboxCustodyCompletionOutcome.completed;
+  }
+
+  /// Mirrors the production transactional owner: the target is re-read here,
+  /// the tombstone is durable precedence, and no lane is chosen from a caller
+  /// snapshot.
+  bool supportsIncomingDirectDeletionApplyOverride = true;
+
+  @override
+  bool get supportsIncomingDirectDeletionApply =>
+      supportsIncomingDirectDeletionApplyOverride;
+
+  @override
+  Future<IncomingDirectDeletionApplyResult> applyIncomingDirectMessageDeletion({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+  }) async {
+    final index = _messages.indexWhere((message) => message.id == messageId);
+    if (index < 0) {
+      final tombstone = ConversationMessage(
+        id: messageId,
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: '',
+        timestamp: deletedAt,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        deletedAt: deletedAt,
+        deletedByPeerId: senderPeerId,
+        transport: transport,
+      );
+      _messages.add(tombstone);
+      return IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.tombstoned,
+        message: tombstone,
+      );
+    }
+    final current = _messages[index];
+    if (!current.isIncoming ||
+        current.contactPeerId != senderPeerId ||
+        current.senderPeerId != senderPeerId) {
+      return IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.unauthorized,
+        message: current,
+      );
+    }
+    if (current.privateMediaPolicy.version != 0 ||
+        current.privateMediaMode != PrivateMediaMode.ordinary) {
+      return IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.refused,
+        message: current,
+      );
+    }
+    if (current.isDeleted) {
+      return IncomingDirectDeletionApplyResult(
+        outcome: current.deletedAt == deletedAt
+            ? IncomingDirectDeletionOutcome.exactReplay
+            : IncomingDirectDeletionOutcome.superseded,
+        message: current,
+      );
+    }
+    final tombstone = current.copyWith(
+      text: '',
+      deletedAt: deletedAt,
+      deletedByPeerId: senderPeerId,
+      transport: transport ?? current.transport,
+      media: const <MediaAttachment>[],
+    );
+    _messages[index] = tombstone;
+    return IncomingDirectDeletionApplyResult(
+      outcome: IncomingDirectDeletionOutcome.tombstoned,
+      message: tombstone,
+    );
   }
 
   @override

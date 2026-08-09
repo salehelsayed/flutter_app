@@ -870,4 +870,166 @@ void main() {
       },
     );
   });
+
+  group('Plan 351 current media deletion convergence', () {
+    test(
+      'TC-351-05 duplicate current deletion re-drives cleanup and re-mints its '
+      'receipt without a second tombstone write',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        const messageId = 'tc351-duplicate-media';
+        const eventId = '35100000-0000-4000-8000-000000000099';
+        messageRepo.seed([
+          makeMessage(
+            id: messageId,
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+        mediaAttachmentRepo.seed([
+          makeAttachment(
+            id: '$messageId-a',
+            messageId: messageId,
+            localPath: 'media/peer-alice/$messageId-a.jpg',
+          ),
+        ]);
+        final inner = MessageDeletionPayload(
+          messageId: messageId,
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-08-09T00:00:00.000Z',
+          eventId: eventId,
+        );
+        final message = ChatMessage(
+          from: 'peer-alice',
+          to: 'peer-bob',
+          content: MessageDeletionPayload.buildEncryptedEnvelope(
+            senderPeerId: 'peer-alice',
+            eventId: eventId,
+            kem: 'kem',
+            ciphertext: inner.toInnerJson(),
+            nonce: 'nonce',
+          ),
+          timestamp: '2026-08-09T00:00:00.000Z',
+          isIncoming: true,
+          transport: 'inbox',
+        );
+        final receiptEvents = <String>[];
+
+        Future<HandleMessageDeletionResult> apply() async {
+          final (result, _) = await handleIncomingMessageDeletion(
+            message: message,
+            messageRepo: messageRepo,
+            contactRepo: contactRepo,
+            reactionRepo: reactionRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            bridge: PassthroughCryptoBridge(),
+            ownMlKemSecretKey: 'secret',
+            stagedEntryId: 'relay-uuid-tc351',
+            sendMutationDeliveryReceipt:
+                (id, {required mutationEventId}) async =>
+                    receiptEvents.add(mutationEventId),
+          );
+          return result;
+        }
+
+        expect(await apply(), HandleMessageDeletionResult.success);
+        final stored = await messageRepo.getMessage(messageId);
+        expect(stored!.isDeleted, isTrue);
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+        );
+        expect(mediaFileManager.deletedFilePaths, isNotEmpty);
+
+        // A duplicate of the exact same event re-drives the idempotent cleanup
+        // and re-mints its receipt without rewriting the durable tombstone.
+        mediaFileManager.deletedFilePaths.clear();
+        expect(await apply(), HandleMessageDeletionResult.success);
+        expect(receiptEvents, <String>[eventId, eventId]);
+        expect(
+          (await messageRepo.getMessage(messageId))!.deletedAt,
+          stored.deletedAt,
+        );
+      },
+    );
+
+    test(
+      'TC-351-05 an ownerless current deletion capability fails closed with no '
+      'cleanup or receipt',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        const messageId = 'tc351-no-authority';
+        const eventId = '35100000-0000-4000-8000-000000000098';
+        messageRepo.seed([
+          makeMessage(
+            id: messageId,
+            contactPeerId: 'peer-alice',
+            senderPeerId: 'peer-alice',
+          ),
+        ]);
+        messageRepo.supportsIncomingDirectDeletionApplyOverride = false;
+        addTearDown(
+          () => messageRepo.supportsIncomingDirectDeletionApplyOverride = true,
+        );
+        mediaAttachmentRepo.seed([
+          makeAttachment(
+            id: '$messageId-a',
+            messageId: messageId,
+            localPath: 'media/peer-alice/$messageId-a.jpg',
+          ),
+        ]);
+        final inner = MessageDeletionPayload(
+          messageId: messageId,
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-08-09T00:00:00.000Z',
+          eventId: eventId,
+        );
+        var receipts = 0;
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: MessageDeletionPayload.buildEncryptedEnvelope(
+              senderPeerId: 'peer-alice',
+              eventId: eventId,
+              kem: 'kem',
+              ciphertext: inner.toInnerJson(),
+              nonce: 'nonce',
+            ),
+            timestamp: '2026-08-09T00:00:00.000Z',
+            isIncoming: true,
+            transport: 'inbox',
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'secret',
+          stagedEntryId: 'relay-uuid-tc351b',
+          sendMutationDeliveryReceipt: (_, {required mutationEventId}) async =>
+              receipts++,
+        );
+
+        expect(result, HandleMessageDeletionResult.unauthorized);
+        expect(tombstone, isNull);
+        expect(receipts, 0);
+        expect((await messageRepo.getMessage(messageId))!.isDeleted, isFalse);
+        expect(
+          await mediaAttachmentRepo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+        );
+        expect(mediaFileManager.deletedFilePaths, isEmpty);
+      },
+    );
+  });
 }

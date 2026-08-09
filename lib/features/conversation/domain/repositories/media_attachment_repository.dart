@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show OutgoingDirectDeletionLane;
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -11,6 +13,7 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 
 import '../models/media_attachment.dart';
 import '../models/conversation_message.dart';
+import '../models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../models/direct_media_blob_generation_result.dart';
 import '../models/incoming_direct_media_blob_custody_result.dart';
 import '../models/media_library.dart';
@@ -165,6 +168,59 @@ abstract interface class FreshOutgoingDirectMediaBlobGenerationRepository {
     required List<MediaAttachment> preparedAttachments,
     required List<DirectMediaBlobCustodyRow> custodyRows,
     String? authorizedForwardDedupKey,
+  });
+}
+
+class OutgoingDirectMediaDeletionCustodyStageResult {
+  const OutgoingDirectMediaDeletionCustodyStageResult({
+    required this.outcome,
+    required this.message,
+    required this.custody,
+  });
+
+  const OutgoingDirectMediaDeletionCustodyStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      message = null,
+      custody = null;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final ConversationMessage? message;
+  final DirectReactionInboxCustodyOutboxEntry? custody;
+
+  bool get authorizesTransport => outcome.authorizesTransport;
+}
+
+/// Advisory DB-authoritative selection of the owner that may delete one
+/// outgoing ordinary direct parent for everyone.
+///
+/// The parent's in-memory media list is a UI snapshot. Only the persisted
+/// attachment projection and the independent v111/v108 authority decide.
+abstract interface class OutgoingDirectDeletionLaneRepository {
+  bool get supportsOutgoingDirectDeletionLaneSelection;
+
+  Future<OutgoingDirectDeletionLane> selectOutgoingDirectDeletionLane(
+    String messageId,
+  );
+}
+
+/// Fail-closed authority for one newly authored strict ordinary direct-media
+/// delete-for-everyone.
+///
+/// The exact v111 state transition, the visible tombstone, and the raw-event
+/// v109 obligation commit together under the message-wide media lifecycle
+/// lock, or nothing changes. Nothing here cancels a live v108, falsely
+/// acknowledges a v111 obligation, or performs artifact cleanup.
+abstract interface class OutgoingDirectMediaDeletionInboxCustodyRepository {
+  bool get supportsDirectMediaDeletionInboxCustody;
+
+  Future<OutgoingDirectMediaDeletionCustodyStageResult>
+  stageOutgoingDirectMediaDeletionInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
   });
 }
 

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
@@ -18,6 +20,7 @@ class InMemoryMessageRepository
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectTextMutationInboxCustodyRepository,
         IncomingOrdinaryTextApplyRepository,
+        IncomingDirectDeletionApplyRepository,
         ConversationThreadSummaryRepository,
         MessageRepositoryChangeSource,
         ConversationReadEventSource {
@@ -74,6 +77,76 @@ class InMemoryMessageRepository
   Future<void> saveMessage(ConversationMessage message) async {
     _messages[message.id] = message;
     _messageChangeController.add(message);
+  }
+
+  @override
+  bool get supportsIncomingDirectDeletionApply => true;
+
+  /// Mirrors the production transactional owner: the exact target is re-read
+  /// here and an already-durable tombstone is precedence, never a refusal.
+  @override
+  Future<IncomingDirectDeletionApplyResult> applyIncomingDirectMessageDeletion({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+  }) async {
+    final current = _messages[messageId];
+    if (current == null) {
+      final tombstone = ConversationMessage(
+        id: messageId,
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: '',
+        timestamp: deletedAt,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: DateTime.now().toUtc().toIso8601String(),
+        deletedAt: deletedAt,
+        deletedByPeerId: senderPeerId,
+        transport: transport,
+      );
+      await saveMessage(tombstone);
+      return IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.tombstoned,
+        message: tombstone,
+      );
+    }
+    if (!current.isIncoming ||
+        current.contactPeerId != senderPeerId ||
+        current.senderPeerId != senderPeerId) {
+      return IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.unauthorized,
+        message: current,
+      );
+    }
+    if (current.privateMediaPolicy.version != 0 ||
+        current.privateMediaMode != PrivateMediaMode.ordinary) {
+      return IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.refused,
+        message: current,
+      );
+    }
+    if (current.isDeleted) {
+      return IncomingDirectDeletionApplyResult(
+        outcome: current.deletedAt == deletedAt
+            ? IncomingDirectDeletionOutcome.exactReplay
+            : IncomingDirectDeletionOutcome.superseded,
+        message: current,
+      );
+    }
+    final tombstone = current.copyWith(
+      text: '',
+      deletedAt: deletedAt,
+      deletedByPeerId: senderPeerId,
+      transport: transport ?? current.transport,
+      media: const <MediaAttachment>[],
+    );
+    await saveMessage(tombstone);
+    return IncomingDirectDeletionApplyResult(
+      outcome: IncomingDirectDeletionOutcome.tombstoned,
+      message: tombstone,
+    );
   }
 
   @override
@@ -502,6 +575,9 @@ class InMemoryMessageRepository
 
   @override
   bool get supportsDirectTextMutationInboxCustody => true;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle => true;
 
   @override
   Future<OutgoingDirectTextMutationCustodyStageResult>

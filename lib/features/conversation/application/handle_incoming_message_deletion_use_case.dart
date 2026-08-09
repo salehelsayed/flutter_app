@@ -214,6 +214,80 @@ handleIncomingMessageDeletion({
     return (HandleMessageDeletionResult.unauthorized, null);
   }
 
+  if (hasEnvelopeEventId) {
+    // A current event-bearing deletion never routes from this pre-read: the
+    // target may be absent, ordinary text, or strict media, and an
+    // independently dispatched initial/media stream can change that between
+    // the read above and the commit below. One transaction re-reads the exact
+    // target, applies durable precedence, and retires any queued display
+    // marker for it.
+    final directDeletionCapability =
+        messageRepo is IncomingDirectDeletionApplyRepository
+        ? messageRepo as IncomingDirectDeletionApplyRepository
+        : null;
+    final directDeletionRepository =
+        directDeletionCapability?.supportsIncomingDirectDeletionApply == true
+        ? directDeletionCapability
+        : null;
+    if (directDeletionRepository == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_RECEIVE_CURRENT_AUTHORITY_UNAVAILABLE',
+        details: {
+          'messageId': payload.messageId.length > 8
+              ? payload.messageId.substring(0, 8)
+              : payload.messageId,
+        },
+      );
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+    IncomingDirectDeletionApplyResult applied;
+    try {
+      applied = await directDeletionRepository
+          .applyIncomingDirectMessageDeletion(
+            messageId: payload.messageId,
+            senderPeerId: payload.senderPeerId,
+            deletedAt: payload.timestamp,
+            transport: message.transport,
+          );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_RECEIVE_CURRENT_APPLY_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+    final stored = applied.message;
+    if (!applied.isDurable || stored == null) {
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+    // The tombstone alone is deletion authority. Duplicate re-application
+    // re-drives the same idempotent best-effort cleanup, and a cleanup failure
+    // never revokes durable deletion or withholds its receipt.
+    await _bestEffortIncomingCleanup(
+      message: stored,
+      reactionRepo: reactionRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_SUCCESS',
+      details: {
+        'messageId': payload.messageId.length > 8
+            ? payload.messageId.substring(0, 8)
+            : payload.messageId,
+        'outcome': applied.outcome.name,
+      },
+    );
+    await maybeSendDeliveryReceipt(
+      payload.messageId,
+      mutationEventId: payload.eventId,
+    );
+    return (HandleMessageDeletionResult.success, stored);
+  }
+
   var isOrdinaryDirectText =
       targetMessage == null ||
       (targetMessage.privateMediaPolicy.version == 0 &&

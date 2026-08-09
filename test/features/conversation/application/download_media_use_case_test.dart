@@ -4888,6 +4888,98 @@ void main() {
         }
       },
     );
+
+    test(
+      'TC-351-05 delete during strict download cannot resurrect canonical media',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const expiresAtMs = 1_900_002_400_000;
+        final (attachment, custody, manager) = await stageIncoming(
+          fixture: fixture,
+          suffix: 'delete-race',
+          plaintext: _jpegBytes,
+          expiresAtMs: expiresAtMs,
+        );
+        final encrypted = _encryptedBytes(_jpegBytes);
+        bridge.downloadedBytes = encrypted;
+        bridge.downloadResponse = <String, dynamic>{
+          'ok': true,
+          'id': attachment.id,
+          'custodyKind': kDirectMediaBlobCustodyKind,
+          'custodyContract': kDirectMediaBlobCustodyContract,
+          'contentHash': custody.contentHash,
+          'size': encrypted.length,
+          'mime': kDirectMediaBlobTransportMime,
+          'expiresAtMs': expiresAtMs,
+          'custodyRelayPeerId': 'relay-source-tc351',
+        };
+
+        // The author's deletion wins in flight — after this owner passed every
+        // pre-transfer check and before its own local-path commit. The startup
+        // `incoming_committed` retry lane enters here with no eligibility
+        // precheck of its own, so the DB commit is the only guard left.
+        bridge.beforeDownloadResponse = (_) async {
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'text': '',
+              'deleted_at': '2026-08-09T09:00:00.000Z',
+              'deleted_by_peer_id': 'tc347-download-sender',
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[attachment.messageId],
+          );
+        };
+
+        final downloaded =
+            await StrictDirectMediaBlobDownloadAckOwner(
+              bridge: bridge,
+              mediaAttachmentRepository: fixture.repo,
+              mediaFileManager: manager,
+              now: () => DateTime.fromMillisecondsSinceEpoch(
+                1_800_000_000_000,
+                isUtc: true,
+              ),
+            ).downloadAndAcknowledge(
+              attachment: attachment,
+              contactPeerId: 'tc347-download-sender',
+            );
+        expect(downloaded, isNull);
+
+        final absolutePath = await manager.localPathForAttachment(
+          contactPeerId: 'tc347-download-sender',
+          blobId: attachment.id,
+          mime: attachment.mime,
+        );
+        expect(
+          File(absolutePath).existsSync(),
+          isFalse,
+          reason: 'a losing promotion must remove its own canonical plaintext',
+        );
+        final row = await fixture.rawAttachmentRow(attachment.id);
+        expect(row!['local_path'], isNull);
+        expect(row['download_status'], kMediaDownloadStatusPending);
+        expect(bridge.deleteRequests, isEmpty);
+
+        // v111 remains the independent obligation: the deletion is not a blob
+        // ACK and must not retire or rewrite the incoming custody row.
+        final retained =
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+        expect(retained, isNotNull);
+        expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
+        expect(
+          await (fixture.repo as IncomingDirectMediaBlobCustodyRepository)
+              .deleteIncomingDirectMediaBlobIfExpired(
+                expected: retained,
+                nowMs: expiresAtMs,
+              ),
+          isTrue,
+          reason: 'expiry must still converge from v111 alone after deletion',
+        );
+      },
+    );
   });
 
   group('229 download/eviction CAS', () {

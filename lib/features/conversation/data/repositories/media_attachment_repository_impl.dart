@@ -7,11 +7,13 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
     show
         DirectMediaBlobGenerationDbStageOutcome,
         DirectMediaBlobGenerationDbStageResult,
+        DirectMediaDeletionCustodyDbStageResult,
         DirectMediaInboxCustodyDbStageResult,
         GenericMediaAttachmentCustodySaveRefused,
         IncomingDirectMediaBlobDbStageOutcome,
         IncomingDirectMediaBlobDbStageResult,
         mediaLocalPathIsTransient,
+        OutgoingDirectDeletionLane,
         shouldPreserveImmutableDirectMediaCustodyAttachmentProjection;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -35,6 +37,7 @@ import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import '../../domain/models/media_attachment.dart';
 import '../../domain/models/conversation_message.dart';
 import '../../domain/models/direct_media_blob_generation_result.dart';
+import '../../domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../../domain/models/incoming_direct_media_blob_custody_result.dart';
 import '../../domain/models/media_library.dart';
 import '../../domain/models/media_preview_descriptor.dart';
@@ -126,6 +129,8 @@ class MediaAttachmentRepositoryImpl
         GroupGuardedMediaAttachmentSave,
         OutgoingOrdinaryAttemptStagingRepository,
         OutgoingDirectMediaInboxCustodyStagingRepository,
+        OutgoingDirectDeletionLaneRepository,
+        OutgoingDirectMediaDeletionInboxCustodyRepository,
         DirectMediaBlobCustodyRepository,
         FreshOutgoingDirectMediaBlobGenerationRepository,
         OutgoingDirectMediaBlobTerminalizationRepository,
@@ -154,6 +159,20 @@ class MediaAttachmentRepositoryImpl
     int? wireMediaBlobExpiresAtMs,
   })?
   dbStageOutgoingDirectMediaInboxCustody;
+  final Future<OutgoingDirectDeletionLane> Function({
+    required String messageId,
+  })?
+  dbClassifyOutgoingDirectDeletionLane;
+  final Future<DirectMediaDeletionCustodyDbStageResult> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+    required String updatedAt,
+  })?
+  dbStageOutgoingDirectMediaDeletionInboxCustody;
   final Future<DirectMediaBlobGenerationDbStageResult> Function({
     required Map<String, Object?> expectedParentRow,
     required List<Map<String, Object?>> expectedAttachmentRows,
@@ -554,6 +573,8 @@ class MediaAttachmentRepositoryImpl
     this.dbCanApplyGenericMediaAttachmentSave,
     this.dbStageOutgoingOrdinaryAttemptWithMedia,
     this.dbStageOutgoingDirectMediaInboxCustody,
+    this.dbClassifyOutgoingDirectDeletionLane,
+    this.dbStageOutgoingDirectMediaDeletionInboxCustody,
     this.dbStageOutgoingDirectMediaBlobGeneration,
     this.dbStageFreshOutgoingDirectMediaBlobGeneration,
     this.dbLoadDirectMediaBlobCustodyForAttachment,
@@ -634,6 +655,77 @@ class MediaAttachmentRepositoryImpl
   @override
   bool get supportsDirectMediaCustodyFailureProjection =>
       dbProjectOutgoingDirectMediaCustodyUploadFailure != null;
+
+  @override
+  bool get supportsOutgoingDirectDeletionLaneSelection =>
+      dbClassifyOutgoingDirectDeletionLane != null;
+
+  @override
+  Future<OutgoingDirectDeletionLane> selectOutgoingDirectDeletionLane(
+    String messageId,
+  ) {
+    final classify = dbClassifyOutgoingDirectDeletionLane;
+    if (classify == null || messageId.isEmpty) {
+      return Future.value(OutgoingDirectDeletionLane.contradiction);
+    }
+    // Selection is advisory: the staging transaction repeats every predicate,
+    // so a lane that drifts before the commit fails closed there.
+    return lifecycleLock.synchronizedAll(() => classify(messageId: messageId));
+  }
+
+  @override
+  bool get supportsDirectMediaDeletionInboxCustody =>
+      dbStageOutgoingDirectMediaDeletionInboxCustody != null &&
+      dbClassifyOutgoingDirectDeletionLane != null;
+
+  @override
+  Future<OutgoingDirectMediaDeletionCustodyStageResult>
+  stageOutgoingDirectMediaDeletionInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    final stage = dbStageOutgoingDirectMediaDeletionInboxCustody;
+    if (!supportsDirectMediaDeletionInboxCustody ||
+        stage == null ||
+        expected.id.isEmpty ||
+        staged.id != expected.id ||
+        staged.contactPeerId != recipientPeerId ||
+        staged.wireEnvelope != wireEnvelope ||
+        eventId.trim().isEmpty) {
+      return const OutgoingDirectMediaDeletionCustodyStageResult.refused();
+    }
+    final result = await lifecycleLock.synchronizedAll(
+      () => stage(
+        expectedRow: expected.toMap(),
+        stagedRow: staged.toMap(),
+        kind: kind,
+        recipientPeerId: recipientPeerId,
+        eventId: eventId,
+        wireEnvelope: wireEnvelope,
+        updatedAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+    );
+    if (!result.authorizesTransport || result.custodyRow == null) {
+      return OutgoingDirectMediaDeletionCustodyStageResult(
+        outcome: result.outcome,
+        message: null,
+        custody: null,
+      );
+    }
+    return OutgoingDirectMediaDeletionCustodyStageResult(
+      outcome: result.outcome,
+      message: result.messageRow == null
+          ? null
+          : ConversationMessage.fromMap(result.messageRow!),
+      custody: DirectReactionInboxCustodyOutboxEntry.fromMap(
+        result.custodyRow!,
+      ),
+    );
+  }
 
   @override
   bool get supportsDirectMediaBlobCustody =>
@@ -1227,6 +1319,13 @@ class MediaAttachmentRepositoryImpl
         rethrow;
       }
     });
+    if (dbResult.outcome ==
+        IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion) {
+      return const IncomingDirectMediaBlobCustodyStageResult(
+        outcome:
+            IncomingDirectMediaBlobCustodyStageOutcome.supersededByDeletion,
+      );
+    }
     if (dbResult.messageRow == null ||
         dbResult.attachmentRows.length != attachments.length) {
       return const IncomingDirectMediaBlobCustodyStageResult.refused();
@@ -1236,6 +1335,7 @@ class MediaAttachmentRepositoryImpl
         IncomingDirectMediaBlobCustodyStageOutcome.applied,
       IncomingDirectMediaBlobDbStageOutcome.idempotent =>
         IncomingDirectMediaBlobCustodyStageOutcome.idempotent,
+      IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion ||
       IncomingDirectMediaBlobDbStageOutcome.refused =>
         IncomingDirectMediaBlobCustodyStageOutcome.refused,
     };

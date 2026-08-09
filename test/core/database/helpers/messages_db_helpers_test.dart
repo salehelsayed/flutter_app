@@ -1,5 +1,16 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
@@ -2099,4 +2110,267 @@ void main() {
       },
     );
   });
+
+  group('Plan 351 incoming current-deletion convergence', () {
+    const sender = 'tc351-author';
+    const t0 = '2026-08-09T09:00:00.000Z';
+    const t1 = '2026-08-09T09:00:01.000Z';
+    const t2 = '2026-08-09T09:00:02.000Z';
+    const expiresAtMs = 1900003000000;
+
+    late Directory tempDir;
+    late String path;
+    late Database current;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('tc351_incoming_');
+      path = '${tempDir.path}/identity.db';
+      current = await _openCurrentSchema(path);
+    });
+
+    tearDown(() async {
+      if (current.isOpen) await current.close();
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+
+    ({
+      Map<String, Object?> message,
+      List<Map<String, Object?>> attachments,
+      List<DirectMediaBlobCustodyRow> custody,
+    })
+    strictProjection(String messageId) {
+      const attachmentId = 'tc351-blob';
+      const contentHash =
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const commitment = DirectMediaBlobCustodyCommitment(
+        contentHash: contentHash,
+        ciphertextSize: 64,
+        expiresAtMs: expiresAtMs,
+      );
+      return (
+        message: ConversationMessage(
+          id: messageId,
+          contactPeerId: sender,
+          senderPeerId: sender,
+          text: '',
+          timestamp: t0,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: t0,
+        ).toMap(),
+        attachments: <Map<String, Object?>>[
+          <String, Object?>{
+            'id': '$messageId-$attachmentId',
+            'message_id': messageId,
+            'owner_lane': MediaOwnerLane.direct.dbValue,
+            'mime': 'image/jpeg',
+            'size': 42,
+            'media_type': 'image',
+            'local_path': null,
+            'download_status': 'pending',
+            'created_at': t0,
+            'content_hash': contentHash,
+            'encryption_key_base64': 'key-$messageId',
+            'encryption_nonce': 'nonce-$messageId',
+            'encryption_scheme': 'blob_aes_256_gcm_v1',
+            'direct_media_blob_custody_fingerprint':
+                computeDirectMediaBlobCommitmentFingerprint(
+                  attachmentId: '$messageId-$attachmentId',
+                  commitment: commitment,
+                ),
+          },
+        ],
+        custody: <DirectMediaBlobCustodyRow>[
+          DirectMediaBlobCustodyRow(
+            attachmentId: '$messageId-$attachmentId',
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.incoming,
+            state: DirectMediaBlobCustodyState.incomingCommitted,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: null,
+            ciphertextRelativePath: null,
+            contentHash: contentHash,
+            ciphertextSize: 64,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: t0,
+            updatedAt: t0,
+          ),
+        ],
+      );
+    }
+
+    test('TC-351-04 strict media initial and current deletion converge without '
+        'resurrection', () async {
+      // Order A: the deletion commits first against an absent target.
+      const deletedFirst = 'tc351-deleted-first';
+      final deletionFirst = await dbApplyIncomingDirectMessageDeletion(
+        current,
+        messageId: deletedFirst,
+        senderPeerId: sender,
+        deletedAt: t1,
+        transport: 'relay',
+        createdAt: t1,
+      );
+      expect(deletionFirst.outcome, IncomingDirectDeletionOutcome.tombstoned);
+      expect(deletionFirst.row!['deleted_by_peer_id'], sender);
+
+      final crossedInitial = strictProjection(deletedFirst);
+      final superseded = await dbStageIncomingDirectMediaBlobCustody(
+        current,
+        messageRow: crossedInitial.message,
+        attachmentRows: crossedInitial.attachments,
+        custodyRows: crossedInitial.custody,
+      );
+      expect(
+        superseded.outcome,
+        IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion,
+        reason: 'a durable author tombstone is precedence, not a refusal',
+      );
+      expect(
+        await current.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[deletedFirst],
+        ),
+        isEmpty,
+      );
+      expect(
+        await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[deletedFirst],
+        ),
+        isEmpty,
+      );
+
+      // Order B: the strict initial commits first, then the deletion wins.
+      const initialFirst = 'tc351-initial-first';
+      final staged = strictProjection(initialFirst);
+      expect(
+        (await dbStageIncomingDirectMediaBlobCustody(
+          current,
+          messageRow: staged.message,
+          attachmentRows: staged.attachments,
+          custodyRows: staged.custody,
+        )).outcome,
+        IncomingDirectMediaBlobDbStageOutcome.applied,
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        current,
+        const DirectNotificationDisplayOutboxEntry.message(
+          eventId: initialFirst,
+          peerId: sender,
+          messageId: initialFirst,
+          actorPeerId: sender,
+          eventTimestamp: t0,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+
+      final applied = await dbApplyIncomingDirectMessageDeletion(
+        current,
+        messageId: initialFirst,
+        senderPeerId: sender,
+        deletedAt: t1,
+        transport: 'relay',
+        createdAt: t1,
+      );
+      expect(applied.outcome, IncomingDirectDeletionOutcome.tombstoned);
+      expect(applied.row!['text'], '');
+      expect(applied.row!['deleted_at'], t1);
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          current,
+          peerId: sender,
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: initialFirst,
+        ),
+        isNull,
+        reason: 'the deletion transaction retires its display marker',
+      );
+      expect(
+        (await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[initialFirst],
+        )),
+        hasLength(1),
+        reason: 'a deletion receipt is not a blob ACK and never deletes v111',
+      );
+
+      // Exact replay and an older crossing event are durable supersession.
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: initialFirst,
+          senderPeerId: sender,
+          deletedAt: t1,
+          transport: 'relay',
+          createdAt: t2,
+        )).outcome,
+        IncomingDirectDeletionOutcome.exactReplay,
+      );
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: initialFirst,
+          senderPeerId: sender,
+          deletedAt: t0,
+          transport: 'relay',
+          createdAt: t2,
+        )).outcome,
+        IncomingDirectDeletionOutcome.superseded,
+      );
+      expect(
+        (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[initialFirst],
+        )).single['deleted_at'],
+        t1,
+        reason: 'an older event never replaces a newer tombstone',
+      );
+
+      // A crossed sender can never author this deletion.
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: initialFirst,
+          senderPeerId: 'tc351-impostor',
+          deletedAt: t2,
+          transport: 'relay',
+          createdAt: t2,
+        )).outcome,
+        IncomingDirectDeletionOutcome.unauthorized,
+      );
+
+      await current.close();
+      current = await _openCurrentSchema(path);
+      for (final messageId in <String>[deletedFirst, initialFirst]) {
+        final reopened = (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+        expect(reopened['deleted_at'], t1);
+        expect(reopened['deleted_by_peer_id'], sender);
+        expect(reopened['text'], '');
+      }
+    });
+  });
 }
+
+Future<Database> _openCurrentSchema(String path) =>
+    databaseFactoryFfi.openDatabase(
+      path,
+      options: OpenDatabaseOptions(
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      ),
+    );

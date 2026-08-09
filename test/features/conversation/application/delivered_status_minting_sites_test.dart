@@ -63,7 +63,11 @@ void main() {
       // migrations) MUST update this map and pass review against G4.
       const expected = <String, int>{
         // Atomic ordinary-text receiver projection writes incoming rows only.
-        'lib/core/database/helpers/messages_db_helpers.dart': 1,
+        // Plan 351 adds the second write: the transactional incoming-deletion
+        // owner materializes an absent target as an INCOMING author tombstone
+        // (`is_incoming: 1`). It moved here verbatim from the deletion handler
+        // and is receiver-side, so G4's outgoing-truthfulness bar is untouched.
+        'lib/core/database/helpers/messages_db_helpers.dart': 2,
         // (a) the delivery-receipt apply — receiver-confirmed by definition
         // (the receipt is emitted after the receiver's durable persist).
         // One typed ordinary settlement handles inboxed/sent/failed without a

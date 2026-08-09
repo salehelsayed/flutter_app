@@ -155,10 +155,22 @@ abstract class MessageRepository {
 /// the parent, every attachment, and v111. This companion publishes only after
 /// that transaction commits, preserving the normal message stream contract.
 abstract interface class IncomingDirectMessagePublicationRepository {
-  Future<void> publishIncomingDirectMediaMessage({
+  Future<StrictIncomingMediaPublicationDisposition>
+  publishIncomingDirectMediaMessage({
     required ConversationMessage message,
     required List<MediaAttachment> attachments,
   });
+}
+
+/// Durable disposition of one strict incoming media publication attempt.
+enum StrictIncomingMediaPublicationDisposition {
+  /// The exact committed parent and its attachments reached the stream.
+  published,
+
+  /// A durable author tombstone won between the strict DB commit and this
+  /// callback. Nothing stale is published, and this is not an error: the
+  /// caller still owes exactly one initial message receipt.
+  durablySuperseded,
 }
 
 /// Optional, fail-closed authority for ordinary outgoing attempt and transport
@@ -289,20 +301,15 @@ class OutgoingDirectTextMutationCustodyStageResult {
   bool get authorizesTransport => outcome.authorizesTransport;
 }
 
-/// Optional fail-closed authority for newly authored ordinary direct-text
-/// edit/delete events stored in the shared physical v109 outbox.
-abstract interface class OutgoingDirectTextMutationInboxCustodyRepository {
-  bool get supportsDirectTextMutationInboxCustody;
-
-  Future<OutgoingDirectTextMutationCustodyStageResult>
-  stageOutgoingDirectTextMutationInboxCustody({
-    required ConversationMessage expected,
-    required ConversationMessage staged,
-    required OutgoingOrdinaryAttemptKind kind,
-    required String recipientPeerId,
-    required String eventId,
-    required String wireEnvelope,
-  });
+/// The shared load/failure/completion lifecycle for one exact direct mutation
+/// event in the physical v109 outbox.
+///
+/// Deliberately independent of which owner staged the event: a text parent and
+/// a strict-media parent retain byte-identical obligations and must converge
+/// through the same drain. Method names keep their original `Text` spelling so
+/// the frozen v109 file/table/migration identity stays untouched.
+abstract interface class DirectMutationInboxCustodyLifecycleRepository {
+  bool get supportsDirectMutationInboxCustodyLifecycle;
 
   Future<DirectReactionInboxCustodyOutboxEntry?>
   loadDirectTextMutationInboxCustodyForEvent({
@@ -319,6 +326,23 @@ abstract interface class OutgoingDirectTextMutationInboxCustodyRepository {
   completeAcceptedDirectTextMutationInboxCustodyIfExact({
     required DirectReactionInboxCustodyOutboxEntry expected,
     required int? relayExpiresAt,
+  });
+}
+
+/// Optional fail-closed authority for newly authored ordinary direct-text
+/// edit/delete events stored in the shared physical v109 outbox.
+abstract interface class OutgoingDirectTextMutationInboxCustodyRepository
+    implements DirectMutationInboxCustodyLifecycleRepository {
+  bool get supportsDirectTextMutationInboxCustody;
+
+  Future<OutgoingDirectTextMutationCustodyStageResult>
+  stageOutgoingDirectTextMutationInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
   });
 }
 
@@ -341,6 +365,37 @@ abstract interface class IncomingOrdinaryTextApplyRepository {
   Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
     required ConversationMessage incoming,
     required IncomingOrdinaryTextMutationKind kind,
+  });
+}
+
+class IncomingDirectDeletionApplyResult {
+  const IncomingDirectDeletionApplyResult({
+    required this.outcome,
+    required this.message,
+  });
+
+  final IncomingDirectDeletionOutcome outcome;
+  final ConversationMessage? message;
+
+  bool get isDurable => outcome.isDurable;
+  bool get changed => outcome.changed;
+}
+
+/// Optional transactional owner for one authenticated current incoming
+/// deletion event, whatever its target turns out to be at commit time.
+///
+/// The target is re-read inside the transaction, so an independently
+/// dispatched initial/media stream cannot route this event from a stale
+/// pre-read classification. Legacy event-less deletion payloads keep their
+/// existing owners.
+abstract interface class IncomingDirectDeletionApplyRepository {
+  bool get supportsIncomingDirectDeletionApply;
+
+  Future<IncomingDirectDeletionApplyResult> applyIncomingDirectMessageDeletion({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
   });
 }
 

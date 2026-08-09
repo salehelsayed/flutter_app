@@ -1,8 +1,9 @@
 # 351 - GAP-N01 Ordinary Direct-Media Delete-for-Everyone Custody
 
-Status: **EXECUTION_READY / REVIEWED / NOT IMPLEMENTED** (2026-08-09)
+Status: **IMPLEMENTED / DEFAULT-OFF CODE-CLOSED / PLAN-GREEN / HOST GATES GREEN / NOT STANDALONE RELEASE-ELIGIBLE** (2026-08-09)
 Type: Modification
 Baseline observed while planning: `e0a559aef53243f0126958be9800b2c092403a84` (`docs: carry the notification coverage assessment through Plan 350`)
+Execution baseline (clean handoff actually used): `c90e14737` on top of the checkpoint session's `f1165a010` (`test: harden the six concurrency-sensitive host-all tests`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` requirements 1, 3, and 6 plus A-01/A-02/A-03/A-24/A-26; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / §9.2
 Classification: execution-ready after the documented clean checkpoint handoff; bounded adoption of the existing v109 mutation and v111 blob owners; core bet confirmed by `$tdd-review`
 Closure tier: host real-SQLite/filesystem concurrency and restart proof, affected curated/family gates; no relay/native/schema/mobile/iOS claim
@@ -235,14 +236,23 @@ git diff --check
 - Environment blocker: none. Host real SQLite/filesystem barriers prove every changed boundary; unavailable mobile/iOS hardware is N/A by project policy.
 - Scope drift: any schema/protocol/native/platform change, cleanup journal/scanner, caption edit/private/group adoption, new retry/drain/flag, device requirement or per-plan full `host-all` stops execution for re-review.
 
-- [ ] Strict media deletion commits the exact v111 state transition, tombstone and v109 event atomically before network; every refusal changes none. -> TC-351-01/02.
-- [ ] An exact live v108 and bound v111 survive deletion and later complete independently without resurrecting the parent. -> TC-351-02.
-- [ ] Node-off/live/restart/protected acceptance/failed/unacked paths retain and retire only the exact media deletion event with no legacy fallback. -> TC-351-03.
-- [ ] Strict initial and current deletion converge to one tombstone in both SQLite commit orders and after reopen; a post-stage deletion suppresses stale publication without throwing and still produces exactly one initial receipt. -> TC-351-04.
-- [ ] Local-path commit, generic save, startup retry and publication cannot recreate media after delete; incoming v111 still ACKs or expires. -> TC-351-05.
-- [ ] Adjacent lanes, schema v111, physical v109, default-off controls and gate ownership remain unchanged. -> TC-351-06.
-- [ ] Causal REDs, focused GREEN, at least one representative stage-order mutation re-red, completeness, host `1to1`, core/feature families, analyzer, format, diff and one Graphify refresh are recorded.
-- [ ] No activation, GAP-N01 closure, crash-complete erasure, device/iOS, per-plan full `host-all` or release claim is made.
+- [x] Strict media deletion commits the exact v111 state transition, tombstone and v109 event atomically before network; every refusal changes none. -> TC-351-01/02.
+- [x] An exact live v108 and bound v111 survive deletion and later complete independently without resurrecting the parent. -> TC-351-02.
+- [x] Node-off/live/restart/protected acceptance/failed/unacked paths retain and retire only the exact media deletion event with no legacy fallback. -> TC-351-03.
+- [x] Strict initial and current deletion converge to one tombstone in both SQLite commit orders and after reopen; a post-stage deletion suppresses stale publication without throwing and still produces exactly one initial receipt. -> TC-351-04.
+- [x] Local-path commit, generic save, startup retry and publication cannot recreate media after delete; incoming v111 still ACKs or expires. -> TC-351-05.
+- [x] Adjacent lanes, schema v111, physical v109, default-off controls and gate ownership remain unchanged. -> TC-351-06.
+- [x] Causal REDs, focused GREEN, at least one representative stage-order mutation re-red, completeness, host `1to1`, core/feature families, analyzer, format, diff and one Graphify refresh are recorded.
+- [x] No activation, GAP-N01 closure, crash-complete erasure, device/iOS, per-plan full `host-all` or release claim is made.
+
+## Execution Receipts
+
+- Causal REDs (all non-zero before production edits): `media_attachments_db_helpers_test.dart` TC-351-01 and `messages_db_helpers_test.dart` TC-351-04 failed as missing capability; `107_direct_notification_durability_test.dart` TC-351-04 failed behaviorally (a message marker entered the display outbox under a durable author tombstone); `download_media_use_case_test.dart` TC-351-05 failed behaviorally (a strict download committed and retained canonical plaintext under a parent deleted mid-flight).
+- Mutation re-red: removing the in-transaction lane re-derivation from `dbStageOutgoingDirectMediaDeletionInboxCustody` turns TC-351-02's contradiction rows from `refused` to `applied`. Restored and re-proved green.
+- Gates: completeness 1,437/1,437; `run_host_test_gates.sh 1to1` 120 paths / 95 Flutter tests; `core-host-all --batch-flutter --concurrency 2` 404 paths / 3,214 tests plus both Android manifest contract scripts; `feature-host-all --batch-flutter --concurrency 1` 841 paths / 9,006 tests / 7 declared skips; `flutter analyze` clean; exact `dart format` on the changed set; `git diff --check` clean; one `refresh_arch_graph.sh --incremental` (32 changed code files).
+- Gate-owned updates, not weakenings: `delivered_status_minting_sites_test.dart` now allows 2 sites in `messages_db_helpers.dart` because the absent-target tombstone insert moved verbatim from the deletion handler into the transactional owner and remains `is_incoming: 1`; three DTR-18 frozen content digests were re-pinned over `production_application_bootstrap.dart`, `media_attachment_repository_impl.dart` and `message_repository_impl.dart`.
+- Corrected plan premise: `direct_media_blob_custody_fingerprint` is written only by the incoming stage (`media_attachment_repository_impl.dart` strict receive), never on the outgoing side. Strict-media selection therefore rests on v111/v108 authority for matrix rows 1-3, uses the persisted fingerprint only as the row-4/row-5 tiebreak when v111 is fully absent, and still enforces recomputed fingerprint parity as the crossed-proof guard. A strict parent whose v111 generation has fully drained after v108 completion consequently takes the unchanged legacy row-5 lane; that is the plan's documented compatibility outcome, not a widened claim.
+- Deferred exactly as planned: caption EDIT, media replacement, private/disappearing, groups/announcements, historical promotion, linked-device fanout, production activation, crash-complete artifact erasure, device/iOS evidence, per-plan full `host-all`, and GAP-N01 closure.
 
 ## Handoff
 
@@ -269,3 +279,5 @@ Targeted re-review found one final receipt-order counterexample: throwing from s
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-09 | execution not started | planning artifacts only | `$tdd-plan` + fresh `$tdd-review`: READY | Source-grounded six-row causal contract, four causal REDs, proportional gates, independent review and final arbitration complete; no implementation or tests run | implementation must wait for the separate checkpoint session's clean handoff | execute the reviewed plan in a different session, then append `EXECUTION_COMPLETED` only after its required evidence passes |
+| 2026-08-09 | causal RED | media/messages/107-display/download tests | four exact `--plain-name` commands, all non-zero | outgoing + receiver-order REDs are missing-capability; display-order RED inserted a marker under a durable tombstone; filesystem RED committed canonical plaintext under a deleted parent | proceed from the clean `c90e14737` handoff | implement the selector, the atomic stage, the incoming transaction and the resurrection guards |
+| 2026-08-09 | implementation | 16 production + 11 test/fixture files | focused batches, mutation re-red, completeness, `1to1`, `core-host-all`, `feature-host-all` all green | 1437/1437 completeness; `1to1` 120 paths / 95 tests; `core-host-all` 404 paths / 3,214 tests + 2 manifest contracts; `feature-host-all` 841 paths / 9,006 tests / 7 skips; analyzer, exact format, `git diff --check`, Graphify incremental all clean | plan premise corrected: the strict fingerprint is written on the INCOMING path only, so rows 1-3 are selected by v111/v108 authority and the fingerprint is the row-4/5 tiebreak plus the crossed-proof guard, exactly as the plan's own "when v111 is fully absent" sentence allows | `EXECUTION_COMPLETED`; GAP-N01 closure, activation, device/iOS and release evidence remain deferred |

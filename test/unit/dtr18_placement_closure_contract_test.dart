@@ -31,15 +31,19 @@ const _relocations = <String, List<String>>{
     // Plans 347/348 add exact v111 generation, terminalization, incoming
     // custody ownership, and the reviewed fresh absent-parent stage to the
     // already-relocated Conversation adapter. Plan 350 generalizes that stage
-    // to exactly two canonical parent shapes without relocating anything.
-    '8a0426702352a17209a05890c06db5535009df091a47e70b030dc3ee2d5b573c',
+    // to exactly two canonical parent shapes and Plan 351 adds the deletion
+    // lane selector plus the atomic strict-media deletion stage — all without
+    // relocating anything.
+    'bf13e4932c7c94c5f5517cfe7cb5f8e8e40619b6bb719d3dff2e225dbfaae803',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/message_repository_impl.dart',
     // Plans 347 and 349 publish the strict incoming parent/attachment and
-    // ordinary-text mutation projections; the adapter remains in data.
-    '564ad9413b7ce07420ccb4f4e32cc68839560ab78da9e08b88b1bf4eff285fca',
+    // ordinary-text mutation projections; Plan 351 adds the transactional
+    // incoming-deletion owner and the typed strict publication disposition.
+    // The adapter remains in data.
+    '90ef92275e231ff4c35254e8ae24ab0da25f871f3513cbab50acc5e44a7b4232',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

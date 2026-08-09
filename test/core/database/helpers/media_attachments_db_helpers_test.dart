@@ -2666,4 +2666,978 @@ void main() {
       },
     );
   });
+
+  group('Plan 351 ordinary direct-media deletion custody', () {
+    const sender = 'peer-local';
+    const recipient = 'tc351-recipient';
+    const t0 = '2026-08-09T09:00:00.000Z';
+    const t1 = '2026-08-09T09:00:01.000Z';
+    const nowMs = 1900000000000;
+
+    String deletionEnvelope(String eventId) => jsonEncode(<String, Object?>{
+      'type': 'message_deletion',
+      'version': '2',
+      'eventId': eventId,
+      'senderPeerId': sender,
+      'encrypted': const <String, Object?>{
+        'kem': 'kem-351',
+        'ciphertext': 'cipher-351',
+        'nonce': 'nonce-351',
+      },
+    });
+
+    Map<String, Object?> strictAttachmentRow({
+      required String messageId,
+      required String attachmentId,
+      required String contentHash,
+      String? fingerprint,
+    }) => <String, Object?>{
+      ...makeAttachmentRow(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 800,
+        mediaType: 'image',
+        width: null,
+        height: null,
+        localPath: 'media/direct/$attachmentId.jpg',
+        downloadStatus: 'done',
+        createdAt: t0,
+        contentHash: contentHash,
+        encryptionKeyBase64: secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        encryptionNonce: 'nonce-$attachmentId',
+        encryptionScheme: 'blob_aes_256_gcm_v1',
+      ),
+      'direct_media_blob_custody_fingerprint': fingerprint,
+    };
+
+    /// Seeds one delivered strict ordinary direct-media parent whose complete
+    /// v111 generation is still bound to its live v108 incarnation.
+    Future<
+      ({
+        Map<String, Object?> current,
+        String messageId,
+        List<String> attachmentIds,
+        String incarnationId,
+      })
+    >
+    seedBoundStrictParent(String suffix) async {
+      final messageId = 'tc351-$suffix';
+      final attachmentIds = <String>['$messageId-a', '$messageId-b'];
+      final incarnationId = 'c' * 32;
+      await db.insert(
+        'messages',
+        ConversationMessage(
+          id: messageId,
+          contactPeerId: recipient,
+          senderPeerId: sender,
+          text: 'strict media',
+          timestamp: t0,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: t0,
+          wireEnvelope: jsonEncode(<String, Object?>{
+            'type': 'chat_message',
+            'version': '2',
+            'id': messageId,
+            'senderPeerId': sender,
+            'encrypted': const <String, Object?>{
+              'kem': 'kem-initial',
+              'ciphertext': 'cipher-initial',
+              'nonce': 'nonce-initial',
+            },
+          }),
+        ).toMap(),
+      );
+      final manifest = <DirectMediaBlobManifestProjection>[];
+      for (var index = 0; index < attachmentIds.length; index++) {
+        final attachmentId = attachmentIds[index];
+        final contentHash = index == 0 ? '1' * 64 : '2' * 64;
+        final ciphertextSize = 41 + index;
+        final expiresAtMs = nowMs + 60000 + (index * 1000);
+        await dbInsertMediaAttachment(
+          db,
+          strictAttachmentRow(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            contentHash: contentHash,
+          ),
+        );
+        await db.insert(
+          kDirectMediaBlobCustodyTable,
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            inboxCustodyIncarnationId: incarnationId,
+            recipientPeerId: recipient,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'a' * 64}/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: 'relay-$index',
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: t0,
+            updatedAt: t0,
+          ).toMap(),
+        );
+        manifest.add(
+          DirectMediaBlobManifestProjection(
+            attachmentId: attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              expiresAtMs: expiresAtMs,
+            ),
+          ),
+        );
+      }
+      await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+        'recipient_peer_id': recipient,
+        'message_id': messageId,
+        'incarnation_id': incarnationId,
+        'wire_envelope': jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'senderPeerId': sender,
+          'encrypted': const <String, Object?>{
+            'kem': 'kem-initial',
+            'ciphertext': 'cipher-initial',
+            'nonce': 'nonce-initial',
+          },
+        }),
+        'retry_count': 0,
+        'created_at': t0,
+        'updated_at': t0,
+        'media_blob_expires_at_ms': earliestDirectMediaBlobExpiryMs(manifest),
+        'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
+          manifest,
+        ),
+      });
+      final current = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
+      return (
+        current: current,
+        messageId: messageId,
+        attachmentIds: attachmentIds,
+        incarnationId: incarnationId,
+      );
+    }
+
+    Map<String, Object?> tombstoneOf(
+      Map<String, Object?> current, {
+      required String wireEnvelope,
+    }) => <String, Object?>{
+      ...current,
+      'text': '',
+      'status': 'sending',
+      'deleted_at': t1,
+      'deleted_by_peer_id': sender,
+      'hidden_at': null,
+      'transport': null,
+      'relay_expires_at': null,
+      'custody_checked_at': null,
+      'wire_envelope': wireEnvelope,
+    };
+
+    test('TC-351-01 direct-media deletion stages blob transition tombstone and '
+        'v109 atomically', () async {
+      const eventId = '35100000-0000-4000-8000-000000000001';
+      final seeded = await seedBoundStrictParent('atomic');
+      final envelope = deletionEnvelope(eventId);
+
+      // Selection is DB-authoritative: physical attachments plus the exact
+      // v111/v108 generation decide the lane, never the parent's media list.
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: seeded.messageId,
+        ),
+        OutgoingDirectDeletionLane.strictMedia,
+      );
+
+      // A failure injected immediately before the v109 insert must leave the
+      // parent, v111 and v108 exactly as they were.
+      await expectLater(
+        dbStageOutgoingDirectMediaDeletionInboxCustody(
+          db,
+          expectedRow: seeded.current,
+          stagedRow: tombstoneOf(seeded.current, wireEnvelope: envelope),
+          kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+          recipientPeerId: recipient,
+          eventId: eventId,
+          wireEnvelope: envelope,
+          updatedAt: t1,
+          beforeCustodyInsertForTest: () async =>
+              throw StateError('injected v109 insert fault'),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[seeded.messageId],
+        )).single['deleted_at'],
+        isNull,
+        reason: 'no tombstone may survive a lost v109 insert',
+      );
+      expect(await db.query('direct_reaction_inbox_custody_outbox'), isEmpty);
+      expect(
+        (await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[seeded.messageId],
+        )).map((row) => row['state']).toSet(),
+        <String>{'outgoing_stored'},
+      );
+
+      final applied = await dbStageOutgoingDirectMediaDeletionInboxCustody(
+        db,
+        expectedRow: seeded.current,
+        stagedRow: tombstoneOf(seeded.current, wireEnvelope: envelope),
+        kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        recipientPeerId: recipient,
+        eventId: eventId,
+        wireEnvelope: envelope,
+        updatedAt: t1,
+      );
+      expect(applied.outcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(applied.ownsMutationEvent, isTrue);
+      expect(applied.custodyRow!['wire_envelope'], envelope);
+      expect(applied.messageRow!['deleted_at'], t1);
+      expect(applied.messageRow!['text'], '');
+
+      final custody = await db.query('direct_reaction_inbox_custody_outbox');
+      expect(custody, hasLength(1));
+      expect(custody.single['recipient_peer_id'], recipient);
+      expect(custody.single['event_id'], eventId);
+      expect(custody.single['wire_envelope'], envelope);
+
+      // An exact live v108 and its bound generation survive the deletion.
+      expect(
+        await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[seeded.messageId],
+        ),
+        hasLength(1),
+      );
+      expect(
+        (await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[seeded.messageId],
+        )).map((row) => row['state']).toSet(),
+        <String>{'outgoing_stored'},
+      );
+
+      // Exact replay is idempotent and never replays the parent projection.
+      final replay = await dbStageOutgoingDirectMediaDeletionInboxCustody(
+        db,
+        expectedRow: seeded.current,
+        stagedRow: tombstoneOf(seeded.current, wireEnvelope: envelope),
+        kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        recipientPeerId: recipient,
+        eventId: eventId,
+        wireEnvelope: envelope,
+        updatedAt: t1,
+      );
+      expect(replay.outcome, OutgoingOrdinaryMutationOutcome.idempotent);
+      expect(replay.custodyRow!['event_id'], eventId);
+      expect(
+        await db.query('direct_reaction_inbox_custody_outbox'),
+        hasLength(1),
+      );
+
+      // A changed envelope under the same key is a collision, not a winner.
+      final collision = await dbStageOutgoingDirectMediaDeletionInboxCustody(
+        db,
+        expectedRow: seeded.current,
+        stagedRow: tombstoneOf(
+          seeded.current,
+          wireEnvelope: deletionEnvelope(
+            eventId,
+          ).replaceAll('cipher-351', 'cipher-other'),
+        ),
+        kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        recipientPeerId: recipient,
+        eventId: eventId,
+        wireEnvelope: deletionEnvelope(
+          eventId,
+        ).replaceAll('cipher-351', 'cipher-other'),
+        updatedAt: t1,
+      );
+      expect(collision.outcome, OutgoingOrdinaryMutationOutcome.refused);
+      expect(
+        await db.query('direct_reaction_inbox_custody_outbox'),
+        hasLength(1),
+      );
+    });
+
+    test(
+      'TC-351-05 an incoming author tombstone refuses generic attachment save',
+      () async {
+        const messageId = 'tc351-incoming-deleted';
+        await db.insert('messages', <String, Object?>{
+          'id': messageId,
+          'contact_peer_id': 'tc351-author',
+          'sender_peer_id': 'tc351-author',
+          'text': '',
+          'timestamp': t0,
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': t0,
+          'deleted_at': t1,
+          'deleted_by_peer_id': 'tc351-author',
+        });
+        expect(
+          await dbCanApplyGenericMediaAttachmentSave(
+            db,
+            makeAttachmentRow(
+              id: '$messageId-a',
+              messageId: messageId,
+              createdAt: t0,
+            ),
+          ),
+          isFalse,
+          reason: 'a delayed whole-row save cannot recreate deleted media',
+        );
+
+        // A live incoming parent is untouched by the new guard.
+        const liveId = 'tc351-incoming-live';
+        await db.insert('messages', <String, Object?>{
+          'id': liveId,
+          'contact_peer_id': 'tc351-author',
+          'sender_peer_id': 'tc351-author',
+          'text': 'live',
+          'timestamp': t0,
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': t0,
+        });
+        expect(
+          await dbCanApplyGenericMediaAttachmentSave(
+            db,
+            makeAttachmentRow(
+              id: '$liveId-a',
+              messageId: liveId,
+              createdAt: t0,
+            ),
+          ),
+          isTrue,
+        );
+      },
+    );
+
+    test('TC-351-02 v108 and v111 state matrix preserves the independent initial '
+        'and blob owners', () async {
+      var eventSeq = 0;
+      String nextEventId() =>
+          '35100000-0000-4000-8000-00000000${(++eventSeq + 10).toString().padLeft(4, '0')}';
+
+      Future<DirectMediaDeletionCustodyDbStageResult> stageDeletion(
+        Map<String, Object?> current, {
+        required String eventId,
+      }) {
+        final envelope = deletionEnvelope(eventId);
+        return dbStageOutgoingDirectMediaDeletionInboxCustody(
+          db,
+          expectedRow: current,
+          stagedRow: tombstoneOf(current, wireEnvelope: envelope),
+          kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+          recipientPeerId: recipient,
+          eventId: eventId,
+          wireEnvelope: envelope,
+          updatedAt: t1,
+        );
+      }
+
+      Future<Map<String, Object?>> seedMediaParent(
+        String suffix, {
+        required List<
+          ({
+            String attachmentId,
+            String contentHash,
+            String? fingerprint,
+            DirectMediaBlobCustodyState? state,
+            int? expiresAtMs,
+            String? incarnationId,
+            DirectMediaBlobCustodyDirection direction,
+          })
+        >
+        attachments,
+        ({String incarnationId, String? manifestHash, int? expiresAtMs})? v108,
+      }) async {
+        final messageId = 'tc351-$suffix';
+        await db.insert(
+          'messages',
+          ConversationMessage(
+            id: messageId,
+            contactPeerId: recipient,
+            senderPeerId: sender,
+            text: 'media',
+            timestamp: t0,
+            status: 'delivered',
+            isIncoming: false,
+            createdAt: t0,
+          ).toMap(),
+        );
+        for (final spec in attachments) {
+          await dbInsertMediaAttachment(
+            db,
+            strictAttachmentRow(
+              messageId: messageId,
+              attachmentId: '$messageId-${spec.attachmentId}',
+              contentHash: spec.contentHash,
+              fingerprint: spec.fingerprint,
+            ),
+          );
+          if (spec.state == null) continue;
+          final outgoing =
+              spec.direction == DirectMediaBlobCustodyDirection.outgoing;
+          await db.insert(
+            kDirectMediaBlobCustodyTable,
+            DirectMediaBlobCustodyRow(
+              attachmentId: '$messageId-${spec.attachmentId}',
+              messageId: messageId,
+              direction: spec.direction,
+              state: spec.state!,
+              inboxCustodyIncarnationId: spec.incarnationId,
+              recipientPeerId: outgoing ? recipient : null,
+              ciphertextRelativePath: outgoing
+                  ? 'direct_media_blob_custody_v1/${'a' * 64}/'
+                        '$messageId-${spec.attachmentId}.blob'
+                  : null,
+              contentHash: spec.contentHash,
+              ciphertextSize: 41,
+              expiresAtMs: spec.expiresAtMs,
+              custodyRelayPeerId: !outgoing || spec.expiresAtMs == null
+                  ? null
+                  : 'relay-x',
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: t0,
+              updatedAt: t0,
+            ).toMap(),
+          );
+        }
+        if (v108 != null) {
+          await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+            'recipient_peer_id': recipient,
+            'message_id': messageId,
+            'incarnation_id': v108.incarnationId,
+            'wire_envelope': jsonEncode(<String, Object?>{
+              'type': 'chat_message',
+              'version': '2',
+              'id': messageId,
+              'senderPeerId': sender,
+              'encrypted': const <String, Object?>{
+                'kem': 'kem-initial',
+                'ciphertext': 'cipher-initial',
+                'nonce': 'nonce-initial',
+              },
+            }),
+            'retry_count': 0,
+            'created_at': t0,
+            'updated_at': t0,
+            'media_blob_manifest_hash': v108.manifestHash,
+            'media_blob_expires_at_ms': v108.expiresAtMs,
+          });
+        }
+        return (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+      }
+
+      // Row 2: no v108 plus one complete unbound active generation moves to
+      // cleanup atomically with the tombstone and the v109 event.
+      final activeParent = await seedMediaParent(
+        'active',
+        attachments:
+            <
+              ({
+                String attachmentId,
+                String contentHash,
+                String? fingerprint,
+                DirectMediaBlobCustodyState? state,
+                int? expiresAtMs,
+                String? incarnationId,
+                DirectMediaBlobCustodyDirection direction,
+              })
+            >[
+              (
+                attachmentId: 'a',
+                contentHash: '1' * 64,
+                fingerprint: null,
+                state: DirectMediaBlobCustodyState.outgoingStored,
+                expiresAtMs: nowMs + 60000,
+                incarnationId: null,
+                direction: DirectMediaBlobCustodyDirection.outgoing,
+              ),
+            ],
+        v108: null,
+      );
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: activeParent['id']! as String,
+        ),
+        OutgoingDirectDeletionLane.strictMedia,
+      );
+      expect(
+        (await stageDeletion(activeParent, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      expect(
+        (await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[activeParent['id']],
+        )).single['state'],
+        'outgoing_cleanup_pending',
+      );
+
+      // Row 3: a cleanup subset left after physical cleanup still stages and
+      // its remaining obligations survive untouched.
+      final cleanupParent = await seedMediaParent(
+        'cleanup-subset',
+        attachments:
+            <
+              ({
+                String attachmentId,
+                String contentHash,
+                String? fingerprint,
+                DirectMediaBlobCustodyState? state,
+                int? expiresAtMs,
+                String? incarnationId,
+                DirectMediaBlobCustodyDirection direction,
+              })
+            >[
+              (
+                attachmentId: 'a',
+                contentHash: '1' * 64,
+                fingerprint: null,
+                state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+                expiresAtMs: nowMs + 60000,
+                incarnationId: 'd' * 32,
+                direction: DirectMediaBlobCustodyDirection.outgoing,
+              ),
+              (
+                attachmentId: 'b',
+                contentHash: '2' * 64,
+                fingerprint: null,
+                state: null,
+                expiresAtMs: null,
+                incarnationId: null,
+                direction: DirectMediaBlobCustodyDirection.outgoing,
+              ),
+            ],
+        v108: null,
+      );
+      expect(
+        (await stageDeletion(cleanupParent, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      expect(
+        (await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[cleanupParent['id']],
+        )).single['state'],
+        'outgoing_cleanup_pending',
+      );
+
+      // Row 4: v111 fully absent while every attachment retains a valid
+      // strict commitment fingerprint.
+      final fingerprintCommitment = DirectMediaBlobCustodyCommitment(
+        contentHash: '3' * 64,
+        ciphertextSize: 41,
+        expiresAtMs: nowMs + 60000,
+      );
+      final fingerprinted = await seedMediaParent(
+        'fingerprinted',
+        attachments:
+            <
+              ({
+                String attachmentId,
+                String contentHash,
+                String? fingerprint,
+                DirectMediaBlobCustodyState? state,
+                int? expiresAtMs,
+                String? incarnationId,
+                DirectMediaBlobCustodyDirection direction,
+              })
+            >[
+              (
+                attachmentId: 'a',
+                contentHash: '3' * 64,
+                fingerprint: computeDirectMediaBlobCommitmentFingerprint(
+                  attachmentId: 'tc351-fingerprinted-a',
+                  commitment: fingerprintCommitment,
+                ),
+                state: null,
+                expiresAtMs: null,
+                incarnationId: null,
+                direction: DirectMediaBlobCustodyDirection.outgoing,
+              ),
+            ],
+        v108: null,
+      );
+      expect(
+        (await stageDeletion(fingerprinted, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+
+      // Row 5: proven historical media stays on legacy transport. The strict
+      // stage refuses it and its exact unbound v108 is preserved.
+      final historical = await seedMediaParent(
+        'historical',
+        attachments:
+            <
+              ({
+                String attachmentId,
+                String contentHash,
+                String? fingerprint,
+                DirectMediaBlobCustodyState? state,
+                int? expiresAtMs,
+                String? incarnationId,
+                DirectMediaBlobCustodyDirection direction,
+              })
+            >[
+              (
+                attachmentId: 'a',
+                contentHash: '4' * 64,
+                fingerprint: null,
+                state: null,
+                expiresAtMs: null,
+                incarnationId: null,
+                direction: DirectMediaBlobCustodyDirection.outgoing,
+              ),
+            ],
+        v108: (incarnationId: 'e' * 32, manifestHash: null, expiresAtMs: null),
+      );
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: historical['id']! as String,
+        ),
+        OutgoingDirectDeletionLane.legacyMedia,
+      );
+      expect(
+        (await stageDeletion(historical, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+        reason: 'history is never promoted into the strict v109 owner',
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[historical['id']],
+        )).single['deleted_at'],
+        isNull,
+      );
+      expect(
+        await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[historical['id']],
+        ),
+        hasLength(1),
+      );
+
+      // Row 6 contradictions: every one changes nothing at all.
+      final contradictions =
+          <
+            String,
+            ({
+              List<
+                ({
+                  String attachmentId,
+                  String contentHash,
+                  String? fingerprint,
+                  DirectMediaBlobCustodyState? state,
+                  int? expiresAtMs,
+                  String? incarnationId,
+                  DirectMediaBlobCustodyDirection direction,
+                })
+              >
+              attachments,
+              ({String incarnationId, String? manifestHash, int? expiresAtMs})?
+              v108,
+            })
+          >{
+            'bound-without-v108': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  fingerprint: null,
+                  state: DirectMediaBlobCustodyState.outgoingStored,
+                  expiresAtMs: nowMs + 60000,
+                  incarnationId: 'f' * 32,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+              ],
+              v108: null,
+            ),
+            'manifest-bearing-v108-without-v111': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  fingerprint: null,
+                  state: null,
+                  expiresAtMs: null,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+              ],
+              v108: (
+                incarnationId: 'a' * 32,
+                manifestHash: '9' * 64,
+                expiresAtMs: nowMs + 60000,
+              ),
+            ),
+            'incomplete-generation': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  fingerprint: null,
+                  state: DirectMediaBlobCustodyState.outgoingStored,
+                  expiresAtMs: nowMs + 60000,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+                (
+                  attachmentId: 'b',
+                  contentHash: '2' * 64,
+                  fingerprint: null,
+                  state: null,
+                  expiresAtMs: null,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+              ],
+              v108: null,
+            ),
+            'active-mixed-with-cleanup': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  fingerprint: null,
+                  state: DirectMediaBlobCustodyState.outgoingStored,
+                  expiresAtMs: nowMs + 60000,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+                (
+                  attachmentId: 'b',
+                  contentHash: '2' * 64,
+                  fingerprint: null,
+                  state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+                  expiresAtMs: null,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+              ],
+              v108: null,
+            ),
+            'incoming-rows': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  fingerprint: null,
+                  state: DirectMediaBlobCustodyState.incomingCommitted,
+                  expiresAtMs: nowMs + 60000,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.incoming,
+                ),
+              ],
+              v108: null,
+            ),
+            'crossed-valid-fingerprint': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  // A well-formed digest of ANOTHER commitment: shape alone
+                  // is never proof of this row's extant v111 authority.
+                  fingerprint: computeDirectMediaBlobCommitmentFingerprint(
+                    attachmentId: 'tc351-crossed-valid-fingerprint-a',
+                    commitment: DirectMediaBlobCustodyCommitment(
+                      contentHash: '8' * 64,
+                      ciphertextSize: 41,
+                      expiresAtMs: nowMs + 60000,
+                    ),
+                  ),
+                  state: DirectMediaBlobCustodyState.outgoingStored,
+                  expiresAtMs: nowMs + 60000,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+              ],
+              v108: null,
+            ),
+            'mixed-fingerprints': (
+              attachments: [
+                (
+                  attachmentId: 'a',
+                  contentHash: '1' * 64,
+                  fingerprint: '7' * 64,
+                  state: null,
+                  expiresAtMs: null,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+                (
+                  attachmentId: 'b',
+                  contentHash: '2' * 64,
+                  fingerprint: null,
+                  state: null,
+                  expiresAtMs: null,
+                  incarnationId: null,
+                  direction: DirectMediaBlobCustodyDirection.outgoing,
+                ),
+              ],
+              v108: null,
+            ),
+          };
+      for (final entry in contradictions.entries) {
+        final parent = await seedMediaParent(
+          entry.key,
+          attachments: entry.value.attachments,
+          v108: entry.value.v108,
+        );
+        final messageId = parent['id']! as String;
+        expect(
+          await dbClassifyOutgoingDirectDeletionLane(db, messageId: messageId),
+          OutgoingDirectDeletionLane.contradiction,
+          reason: entry.key,
+        );
+        final blobBefore = await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        expect(
+          (await stageDeletion(parent, eventId: nextEventId())).outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+          reason: entry.key,
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single['deleted_at'],
+          isNull,
+          reason: entry.key,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          blobBefore,
+          reason: entry.key,
+        );
+      }
+
+      // A live v108 completes AFTER the tombstone: it retires only its own
+      // incarnation, leaves the tombstone, and moves v111 to cleanup once.
+      final bound = await seedBoundStrictParent('later-completion');
+      expect(
+        (await stageDeletion(bound.current, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      final v108Row = (await db.query(
+        'direct_inbox_custody_outbox',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[bound.messageId],
+      )).single;
+      expect(
+        await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: recipient,
+          messageId: bound.messageId,
+          expectedIncarnationId: bound.incarnationId,
+          expectedWireEnvelope: v108Row['wire_envelope']! as String,
+          relayExpiresAt:
+              (v108Row['media_blob_expires_at_ms']! as num).toInt() - 1,
+        ),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+      final preservedTombstone = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[bound.messageId],
+      )).single;
+      expect(preservedTombstone['deleted_at'], t1);
+      expect(preservedTombstone['status'], 'sending');
+      expect(
+        await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[bound.messageId],
+        ),
+        isEmpty,
+      );
+      expect(
+        (await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[bound.messageId],
+        )).map((row) => row['state']).toSet(),
+        <String>{'outgoing_cleanup_pending'},
+      );
+
+      // Shared v109 capacity refusal never mutates the parent or v111.
+      final capacityParent = await seedBoundStrictParent('capacity');
+      final capacityEnvelope = deletionEnvelope(nextEventId());
+      final capacityEventId =
+          (jsonDecode(capacityEnvelope) as Map<String, Object?>)['eventId']!
+              as String;
+      expect(
+        (await dbStageOutgoingDirectMediaDeletionInboxCustody(
+          db,
+          expectedRow: capacityParent.current,
+          stagedRow: tombstoneOf(
+            capacityParent.current,
+            wireEnvelope: capacityEnvelope,
+          ),
+          kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+          recipientPeerId: recipient,
+          eventId: capacityEventId,
+          wireEnvelope: capacityEnvelope,
+          updatedAt: t1,
+          capacity: 0,
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+      );
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[capacityParent.messageId],
+        )).single['deleted_at'],
+        isNull,
+      );
+    });
+  });
 }

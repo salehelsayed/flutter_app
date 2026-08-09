@@ -657,6 +657,114 @@ void main() {
       );
     },
   );
+
+  test(
+    'TC-351-04 tombstone and direct message display marker cannot coexist',
+    () async {
+      final db = await _openCurrent(path);
+      addTearDown(() async {
+        if (db.isOpen) await db.close();
+      });
+      await _insertContact(db, 'peer-a');
+
+      // Deletion wins first: a later message marker for the exact tombstoned
+      // parent can never enter the display outbox.
+      await _insertMessage(db, peerId: 'peer-a', messageId: 'deleted-first');
+      await db.update(
+        'messages',
+        <String, Object?>{
+          'text': '',
+          'deleted_at': _t1,
+          'deleted_by_peer_id': 'peer-a',
+        },
+        where: 'id = ?',
+        whereArgs: <Object?>['deleted-first'],
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        db,
+        const DirectNotificationDisplayOutboxEntry.message(
+          eventId: 'deleted-first',
+          peerId: 'peer-a',
+          messageId: 'deleted-first',
+          actorPeerId: 'peer-a',
+          eventTimestamp: _t0,
+          createdAt: _t1,
+          updatedAt: _t1,
+        ).toMap(),
+      );
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          db,
+          peerId: 'peer-a',
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: 'deleted-first',
+        ),
+        isNull,
+        reason: 'display custody must not outlive a durable author tombstone',
+      );
+
+      // Marker wins first: the deletion-side message-scoped retirement removes
+      // it, and a crossed promotion observes durable retirement without
+      // throwing.
+      await _insertMessage(db, peerId: 'peer-a', messageId: 'marker-first');
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        db,
+        const DirectNotificationDisplayOutboxEntry.message(
+          eventId: 'marker-first',
+          peerId: 'peer-a',
+          messageId: 'marker-first',
+          actorPeerId: 'peer-a',
+          eventTimestamp: _t0,
+          createdAt: _t0,
+          updatedAt: _t0,
+        ).toMap(),
+      );
+      expect(
+        await dbDeleteDirectNotificationDisplayOutboxForMessage(
+          db,
+          peerId: 'peer-a',
+          messageId: 'marker-first',
+        ),
+        1,
+      );
+      expect(
+        await dbPromoteDirectNotificationDisplayOutboxReadyIfExact(
+          db,
+          peerId: 'peer-a',
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: 'marker-first',
+          expectedRevision: 1,
+          updatedAt: _t2,
+        ),
+        isFalse,
+        reason: 'a missing marker after retirement is durable, not an error',
+      );
+
+      // Exact replay of a live marker stays idempotent: the parent-conditional
+      // guard must not turn a legitimate re-stage into a conflict.
+      await _insertMessage(db, peerId: 'peer-a', messageId: 'live-message');
+      const live = DirectNotificationDisplayOutboxEntry.message(
+        eventId: 'live-message',
+        peerId: 'peer-a',
+        messageId: 'live-message',
+        actorPeerId: 'peer-a',
+        eventTimestamp: _t0,
+        createdAt: _t0,
+        updatedAt: _t0,
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(db, live.toMap());
+      await dbStageDirectNotificationDisplayOutboxEntry(db, live.toMap());
+      expect(
+        (await dbLoadDirectNotificationDisplayOutboxEntry(
+          db,
+          peerId: 'peer-a',
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: 'live-message',
+        ))!['readiness'],
+        'not_ready',
+      );
+    },
+  );
 }
 
 Future<Database> _openCurrent(String path) => databaseFactoryFfi.openDatabase(
