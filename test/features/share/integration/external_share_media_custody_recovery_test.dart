@@ -300,6 +300,243 @@ void main() {
       expect(custodyIdentity.attachmentId, claimedAttachments.single.id);
     },
   );
+
+  test(
+    'TC-350-03c committed internal forward survives source loss and restart with exact provenance',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'tc350_internal_forward_recovery_',
+      );
+      final documents = Directory(p.join(root.path, 'documents'))
+        ..createSync(recursive: true);
+      // A dispatch-owned snapshot the entry disposes normally after delivery.
+      final snapshotDir = Directory(p.join(root.path, 'forward-snapshot'))
+        ..createSync(recursive: true);
+      final snapshotSource = File(p.join(snapshotDir.path, 'source_0.jpg'))
+        ..writeAsBytesSync(List<int>.generate(160, (index) => index));
+      final databasePath = p.join(root.path, 'identity.sqlite');
+      final previousPathProvider = PathProviderPlatform.instance;
+      PathProviderPlatform.instance = _RecoveryPathProvider(documents.path);
+      mediaUploadInFlightTracker.clearAll();
+
+      late MediaRepositoryRealDbFixture fixture;
+      var fixtureOpen = false;
+      addTearDown(() async {
+        mediaUploadInFlightTracker.clearAll();
+        PathProviderPlatform.instance = previousPathProvider;
+        if (fixtureOpen) await fixture.dispose();
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+
+      fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: databasePath,
+      );
+      fixtureOpen = true;
+      final identity = IdentityModel(
+        peerId: 'tc350-recovery-local',
+        publicKey: 'tc350-recovery-public',
+        privateKey: 'tc350-recovery-private',
+        mnemonic12:
+            'one two three four five six seven eight nine ten eleven twelve',
+        username: 'Forward Sender',
+        createdAt: '2026-08-09T16:00:00.000Z',
+        updatedAt: '2026-08-09T16:00:00.000Z',
+      );
+      const contact = ContactModel(
+        peerId: 'tc350-recovery-recipient',
+        publicKey: 'tc350-recovery-contact-key',
+        rendezvous: '/dns4/relay/tcp/443',
+        username: 'Forward Recipient',
+        signature: 'tc350-recovery-signature',
+        scannedAt: '2026-08-09T16:00:00.000Z',
+        mlKemPublicKey: 'tc350-recovery-mlkem',
+      );
+      const forwardToken = 'tc350-recovery-forward-token';
+      final identityRepository = FakeIdentityRepository()..seed(identity);
+      final contacts = InMemoryContactRepository();
+      await contacts.addContact(contact);
+      final bridge = _RecoveryStrictBridge();
+      final p2pService = _RecoveryP2PService(
+        initialState: NodeState(isStarted: true, peerId: identity.peerId),
+      );
+      final fileManager = _BlockingRefusingPreviewFileManager(documents.path);
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: identityRepository,
+        contactRepository: contacts,
+        messageRepository: fixture.messageRepo,
+        mediaAttachmentRepository: fixture.repo,
+        groupRepository: null,
+        groupMessageRepository: null,
+        bridge: bridge,
+        p2pService: p2pService,
+        mediaFileManager: fileManager,
+        imageProcessor: _recoveryImageProcessor(),
+        directMediaBlobCustodyClientEnabled: true,
+        forwardNow: () => DateTime.utc(2026, 8, 9, 16),
+        processSharedMediaFn: (intent) async => ProcessedShareMediaBatch(
+          processedMedia: <PendingComposerMedia>[
+            PendingComposerMedia(
+              file: File(intent.filePaths.single),
+              budgetBytes: File(intent.filePaths.single).lengthSync(),
+            ),
+          ],
+        ),
+      );
+
+      // The revalidated direct-library port is the reviewed entry here.
+      final deliveryFuture = coordinator.deliverDirectMediaBatchForwardStrict(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: <String>[snapshotSource.path],
+          forwardProvenance: const ForwardProvenance(
+            operationDedupKey: forwardToken,
+          ),
+        ),
+        contacts: const <ContactModel>[contact],
+      );
+      await fileManager.copyEntered.future.timeout(const Duration(seconds: 5));
+      fileManager.refuseCopy.complete();
+      final delivery = await deliveryFuture;
+      expect(delivery.queuedCount, 1);
+      expect(delivery.failureCount, 0);
+      expect(bridge.mediaUploadPaths, isEmpty);
+
+      final parentRows = await fixture.db.query(
+        'messages',
+        where: 'contact_peer_id = ? AND is_incoming = 0',
+        whereArgs: <Object?>[contact.peerId],
+      );
+      expect(parentRows, hasLength(1));
+      final committedParent = ConversationMessage.fromMap(parentRows.single);
+      expect(committedParent.isForwarded, isTrue);
+      expect(committedParent.dedupKey, forwardToken);
+      final committedAttachments = await fixture.repo.getAttachmentsForMessage(
+        committedParent.id,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(committedAttachments, hasLength(1));
+      final custodyRepository =
+          fixture.repo as DirectMediaBlobCustodyRepository;
+      expect(
+        await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+          committedParent.id,
+        ),
+        hasLength(1),
+      );
+
+      // Normal snapshot disposal plus source loss: recovery is source-free.
+      snapshotDir.deleteSync(recursive: true);
+      expect(snapshotSource.existsSync(), isFalse);
+
+      fixture = await fixture.reopen();
+      final reopenedParent = await fixture.messageRepo.getMessage(
+        committedParent.id,
+      );
+      final reopenedAttachments = await fixture.repo.getAttachmentsForMessage(
+        committedParent.id,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(reopenedParent, isNotNull);
+      expect(
+        reopenedParent!.isForwarded,
+        isTrue,
+        reason: 'restart rebuilds nothing — the exact forwarded row survives',
+      );
+      expect(reopenedParent.dedupKey, forwardToken);
+      expect(reopenedParent.contactPeerId, contact.peerId);
+      expect(reopenedAttachments.map((attachment) => attachment.id), <String>[
+        committedAttachments.single.id,
+      ]);
+      expect(
+        reopenedAttachments.single.encryptionNonce,
+        committedAttachments.single.encryptionNonce,
+        reason: 'the exact encrypted inner projection is preserved',
+      );
+
+      final artifactStore = DirectMediaBlobArtifactStore(
+        documentsDirectoryProvider: () async => documents,
+      );
+      var matchingV108ObservedBeforeInboxStore = false;
+      p2pService.onMediaExpiryStore = () async {
+        final rows = await fixture.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[committedParent.id],
+        );
+        matchingV108ObservedBeforeInboxStore =
+            rows.length == 1 &&
+            rows.single['incarnation_id'] ==
+                committedParent.directMediaCustodyIntentId;
+      };
+      if (kDirectMediaBlobCustodyClientEnabled) {
+        expect(
+          await retryIncompleteUploads(
+            mediaAttachmentRepo: fixture.repo,
+            messageRepo: fixture.messageRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: identityRepository,
+            contactRepo: contacts,
+            mediaFileManager: fileManager,
+            directMediaBlobArtifactStore: artifactStore,
+            tryClaimUploadLease: (ids) => mediaUploadInFlightTracker
+                .tryClaimAll(ids, source: MediaUploadTriggerSource.manual),
+            releaseUploadLease: mediaUploadInFlightTracker.release,
+          ),
+          1,
+        );
+      } else {
+        final strictCoordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: fixture.repo as DirectMediaBlobCustodyRepository,
+          artifactStore: artifactStore,
+        );
+        final reopened = await strictCoordinator.reopenAndUpload(
+          bridge: bridge,
+          identityPeerId: identity.peerId,
+          recipientPeerId: contact.peerId,
+          expectedParent: reopenedParent,
+          expectedAttachments: reopenedAttachments,
+        );
+        expect(reopened.isComplete, isTrue);
+        final (sendResult, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: fixture.messageRepo,
+          targetPeerId: contact.peerId,
+          text: reopenedParent.text,
+          senderPeerId: identity.peerId,
+          senderUsername: identity.username,
+          messageId: reopenedParent.id,
+          timestamp: reopenedParent.timestamp,
+          createdAt: reopenedParent.createdAt,
+          dedupKey: forwardToken,
+          isForwarded: true,
+          bridge: bridge,
+          recipientMlKemPublicKey: contact.mlKemPublicKey,
+          mediaAttachments: reopened.attachments,
+          mediaAttachmentRepo: fixture.repo,
+        );
+        expect(sendResult, SendChatMessageResult.success);
+      }
+
+      expect(bridge.mediaUploadPaths, hasLength(1));
+      expect(
+        bridge.mediaUploadPaths.single.replaceAll('\\', '/'),
+        contains('direct_media_blob_custody_v1/'),
+        reason:
+            'restart uploads the v111 ciphertext without the lost source or '
+            'any plaintext preview',
+      );
+      expect(bridge.mediaUploadIds, <String>[committedAttachments.single.id]);
+      expect(matchingV108ObservedBeforeInboxStore, isTrue);
+      expect(p2pService.storeInInboxCallCount, 1);
+
+      final settledParent = await fixture.messageRepo.getMessage(
+        committedParent.id,
+      );
+      expect(settledParent!.isForwarded, isTrue);
+      expect(settledParent.dedupKey, forwardToken);
+    },
+  );
 }
 
 ImageProcessor _recoveryImageProcessor() => ImageProcessor(

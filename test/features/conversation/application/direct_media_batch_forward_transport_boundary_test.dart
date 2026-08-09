@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
@@ -14,13 +17,17 @@ import 'package:flutter_app/features/conversation/application/build_direct_media
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/share/application/direct_media_batch_forward_delivery_coordinator.dart';
 import 'package:flutter_app/features/share/application/share_batch_delivery_coordinator.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -86,13 +93,14 @@ ImageProcessor _imageProcessor() => ImageProcessor(
 );
 
 class _AckCustodyP2PService extends FakeP2PService
-    implements AckOrExpiryInboxStore {
+    implements AckOrExpiryInboxStore, MediaExpiryBoundedInboxStore {
   _AckCustodyP2PService()
     : super(
         initialState: const NodeState(isStarted: true, peerId: 'sender-peer'),
       );
 
   final List<_AckCustodyStoreEvidence> custodyStores = [];
+  final List<_AckCustodyStoreEvidence> mediaBoundedStores = [];
 
   @override
   Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
@@ -115,6 +123,28 @@ class _AckCustodyP2PService extends FakeP2PService
       custodyContract: ackOrExpiryInboxCustodyContract,
     );
   }
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    mediaBoundedStores.add(
+      _AckCustodyStoreEvidence(
+        recipientPeerId: toPeerId,
+        wireEnvelope: message,
+        kind: AckCustodyKind.directTextV108,
+      ),
+    );
+    return InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      expiresAtMs: custodyExpiresAtOrBeforeMs,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
 }
 
 class _AckCustodyStoreEvidence {
@@ -130,11 +160,19 @@ class _AckCustodyStoreEvidence {
 }
 
 class _Harness {
-  _Harness({InMemoryContactRepository? contacts})
-    : contacts = contacts ?? InMemoryContactRepository(),
-      messages = InMemoryMessageRepository(),
-      attachments = InMemoryMediaAttachmentRepository() {
-    attachments.onStageOutgoingDirectMediaInboxCustody =
+  _Harness({
+    InMemoryContactRepository? contacts,
+    InMemoryMessageRepository? messageRepository,
+    InMemoryMediaAttachmentRepository? attachments,
+    PassthroughCryptoBridge? bridge,
+    MediaFileManager? mediaFileManager,
+    this.directMediaBlobCustodyClientEnabled = false,
+  }) : contacts = contacts ?? InMemoryContactRepository(),
+       messages = messageRepository ?? InMemoryMessageRepository(),
+       attachments = attachments ?? InMemoryMediaAttachmentRepository(),
+       bridge = bridge ?? PassthroughCryptoBridge(),
+       mediaFileManager = mediaFileManager ?? FakeMediaFileManager() {
+    this.attachments.onStageOutgoingDirectMediaInboxCustody =
         ({
           required expected,
           required staged,
@@ -233,7 +271,9 @@ class _Harness {
   final InMemoryContactRepository contacts;
   final InMemoryMessageRepository messages;
   final InMemoryMediaAttachmentRepository attachments;
-  final PassthroughCryptoBridge bridge = PassthroughCryptoBridge();
+  final PassthroughCryptoBridge bridge;
+  final MediaFileManager mediaFileManager;
+  final bool directMediaBlobCustodyClientEnabled;
   final _AckCustodyP2PService p2pService = _AckCustodyP2PService();
   int directMediaCustodyStageCallCount = 0;
   final List<_FreshDirectMediaCustodyEvidence> directMediaCustodyStages = [];
@@ -248,8 +288,10 @@ class _Harness {
         groupMessageRepository: InMemoryGroupMessageRepository(),
         bridge: bridge,
         p2pService: p2pService,
-        mediaFileManager: FakeMediaFileManager(),
+        mediaFileManager: mediaFileManager,
         imageProcessor: _imageProcessor(),
+        directMediaBlobCustodyClientEnabled:
+            directMediaBlobCustodyClientEnabled,
         processSharedMediaFn: (intent) async {
           final path = intent.filePaths.single;
           final file = File(path);
@@ -299,6 +341,193 @@ class _FreshDirectMediaCustodyEvidence {
   final ConversationMessage parent;
   final List<MediaAttachment> attachments;
   final DirectInboxCustodyOutboxEntry custody;
+}
+
+/// Narrow v111 recorder over the existing recording application repositories.
+///
+/// It records every fresh-generation stage request (including the independently
+/// supplied forward authorization) and commits the parent, attachments, and
+/// custody rows in memory, so a causal test can read complete authority at the
+/// first network call without a second real-SQLite harness.
+class _RecordingFreshBlobCustodyRepository
+    extends InMemoryMediaAttachmentRepository
+    implements
+        DirectMediaBlobCustodyRepository,
+        FreshOutgoingDirectMediaBlobGenerationRepository {
+  _RecordingFreshBlobCustodyRepository(this.messages);
+
+  final InMemoryMessageRepository messages;
+  final Map<String, DirectMediaBlobCustodyRow> custodyRowsByAttachmentId = {};
+  final List<_FreshBlobStageRecord> freshStages = [];
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  bool get supportsFreshOutgoingDirectMediaBlobGeneration => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async => const DirectMediaBlobGenerationStageResult.refused();
+
+  @override
+  Future<FreshOutgoingDirectMediaBlobGenerationStageResult>
+  stageFreshOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage parent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authorizedForwardDedupKey,
+  }) async {
+    freshStages.add(
+      _FreshBlobStageRecord(
+        parent: parent,
+        authorizedForwardDedupKey: authorizedForwardDedupKey,
+        preparedAttachments: List<MediaAttachment>.unmodifiable(
+          preparedAttachments,
+        ),
+        custodyRows: List<DirectMediaBlobCustodyRow>.unmodifiable(custodyRows),
+      ),
+    );
+    if (await messages.getMessage(parent.id) != null) {
+      return const FreshOutgoingDirectMediaBlobGenerationStageResult.refused();
+    }
+    await messages.saveMessage(parent);
+    for (final attachment in preparedAttachments) {
+      await saveAttachment(attachment, owner: MediaOwnerLane.direct);
+    }
+    for (final row in custodyRows) {
+      custodyRowsByAttachmentId[row.attachmentId] = row;
+    }
+    return FreshOutgoingDirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.applied,
+      hasDurableAuthority: true,
+      attachments: List<MediaAttachment>.unmodifiable(preparedAttachments),
+      custodyRows: List<DirectMediaBlobCustodyRow>.unmodifiable(custodyRows),
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => custodyRowsByAttachmentId[attachmentId];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => custodyRowsByAttachmentId.values
+      .where((row) => row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => custodyRowsByAttachmentId.values
+      .where((row) => states.contains(row.state))
+      .take(limit)
+      .toList(growable: false);
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final current = custodyRowsByAttachmentId[expected.attachmentId];
+    if (current == null ||
+        !current.exactDatabaseProjectionMatches(expected) ||
+        next.attachmentId != expected.attachmentId) {
+      return false;
+    }
+    custodyRowsByAttachmentId[expected.attachmentId] = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async {
+    final current = custodyRowsByAttachmentId[expected.attachmentId];
+    if (current == null || !current.exactDatabaseProjectionMatches(expected)) {
+      return false;
+    }
+    custodyRowsByAttachmentId.remove(expected.attachmentId);
+    return true;
+  }
+}
+
+class _FreshBlobStageRecord {
+  const _FreshBlobStageRecord({
+    required this.parent,
+    required this.authorizedForwardDedupKey,
+    required this.preparedAttachments,
+    required this.custodyRows,
+  });
+
+  final ConversationMessage parent;
+  final String? authorizedForwardDedupKey;
+  final List<MediaAttachment> preparedAttachments;
+  final List<DirectMediaBlobCustodyRow> custodyRows;
+}
+
+/// Records the durable authority visible at each recipient's FIRST relay call.
+class _FirstNetworkObservingBridge extends PassthroughCryptoBridge {
+  _FirstNetworkObservingBridge({required this.onMediaUpload});
+
+  final Future<void> Function(Map<String, dynamic> payload) onMediaUpload;
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    final command = request['cmd'] as String?;
+    final payload = request['payload'] as Map<String, dynamic>?;
+    if (command == 'media:upload' && payload != null) {
+      await onMediaUpload(payload);
+    }
+    final response = await super.send(message);
+    if (command == 'media:upload' &&
+        payload != null &&
+        payload['custodyContract'] != null) {
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      return jsonEncode(<String, dynamic>{
+        ...decoded,
+        'id': payload['id'],
+        'storeStatus': 'stored',
+        'custodyKind': payload['custodyKind'],
+        'custodyContract': payload['custodyContract'],
+        'contentHash': payload['contentHash'],
+        'size': File(payload['filePath'] as String).lengthSync(),
+        'mime': payload['mime'],
+        'expiresAtMs': DateTime.now()
+            .toUtc()
+            .add(const Duration(days: 1))
+            .millisecondsSinceEpoch,
+        'custodyRelayPeerId': 'relay-350-library',
+      });
+    }
+    return response;
+  }
+}
+
+class _DocumentsPathProvider extends Fake
+    with MockPlatformInterfaceMixin
+    implements PathProviderPlatform {
+  _DocumentsPathProvider(this.documentsPath);
+
+  final String documentsPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => documentsPath;
 }
 
 class _InvalidateOnSecondReadContacts extends InMemoryContactRepository {
@@ -634,6 +863,226 @@ void main() {
         ),
       );
       expect(contacts.reads[invalid.peerId], greaterThanOrEqualTo(2));
+    },
+  );
+
+  test(
+    'TC-350-01b revalidated direct-library cells publish custody before network',
+    () async {
+      final previousPathProvider = PathProviderPlatform.instance;
+      final documents = Directory.systemTemp.createTempSync(
+        'direct_library_350_',
+      );
+      PathProviderPlatform.instance = _DocumentsPathProvider(documents.path);
+      mediaUploadInFlightTracker.clearAll();
+      addTearDown(() {
+        mediaUploadInFlightTracker.clearAll();
+        PathProviderPlatform.instance = previousPathProvider;
+        if (documents.existsSync()) documents.deleteSync(recursive: true);
+      });
+
+      final sourceFile = File('${documents.path}/library-source.jpg')
+        ..writeAsBytesSync(List<int>.generate(96, (index) => index));
+      final first = _contact('library-recipient-one');
+      final second = _contact('library-recipient-two');
+
+      final messages = InMemoryMessageRepository();
+      final blobRepository = _RecordingFreshBlobCustodyRepository(messages);
+      final observedAtFirstNetwork = <String, ConversationMessage?>{};
+      final strictAtFirstNetwork = <String, bool>{};
+      final custodyAtFirstNetwork = <String, int>{};
+      late final _Harness harness;
+      final bridge = _FirstNetworkObservingBridge(
+        onMediaUpload: (payload) async {
+          final recipient = payload['to'] as String?;
+          if (recipient == null ||
+              observedAtFirstNetwork.containsKey(recipient)) {
+            return;
+          }
+          final parents = (await harness.messages.getMessagesForContact(
+            recipient,
+          )).where((message) => !message.isIncoming).toList(growable: false);
+          final parent = parents.length == 1 ? parents.single : null;
+          observedAtFirstNetwork[recipient] = parent;
+          strictAtFirstNetwork[recipient] = payload['custodyContract'] != null;
+          custodyAtFirstNetwork[recipient] = parent == null
+              ? 0
+              : (await blobRepository.loadDirectMediaBlobCustodyForMessage(
+                  parent.id,
+                )).length;
+        },
+      );
+      harness = _Harness(
+        messageRepository: messages,
+        attachments: blobRepository,
+        bridge: bridge,
+        mediaFileManager: MediaFileManager(),
+        directMediaBlobCustodyClientEnabled: true,
+      );
+      // Use the shared strict-capable v108 seam: the fresh v111 owner commits
+      // the parent first, so send completion arrives as an exact
+      // manifest-bound prepared predecessor rather than a fresh attempt.
+      blobRepository.enableDirectMediaInboxCustodyForTest(messages);
+      expect(identical(harness.attachments, blobRepository), isTrue);
+      await harness.contacts.addContact(first);
+      await harness.contacts.addContact(second);
+
+      const itemToken = 'library-op-350';
+      final draft = DirectMediaLibraryBatchForwardDraft(
+        items: [
+          _item(
+            id: 'one',
+            path: sourceFile.path,
+            caption: 'library caption',
+            token: itemToken,
+          ),
+        ],
+      );
+
+      var revalidations = 0;
+      final app = DirectMediaBatchForwardDeliveryCoordinator(
+        revalidateForDispatch:
+            ({required contactPeerId, required draft}) async {
+              revalidations++;
+              expect(contactPeerId, _sourceContactPeerId);
+              return DirectMediaLibraryBatchForwardResult.ready(draft);
+            },
+        contactRepository: harness.contacts,
+        deliverStrict:
+            ({required shareIntent, required contacts, onProgress}) =>
+                harness.ordinary.deliverDirectMediaBatchForwardStrict(
+                  shareIntent: shareIntent,
+                  contacts: contacts,
+                  onProgress: onProgress,
+                ),
+      );
+
+      final result = await app.deliverInitial(
+        sourceContactPeerId: _sourceContactPeerId,
+        draft: draft,
+        contactPeerIds: [first.peerId, second.peerId],
+      );
+
+      expect(revalidations, 1);
+      expect(result.matrix, isNotNull);
+      expect(
+        result.matrix!.cells.map((cell) => cell.status),
+        everyElement(isNot(DirectMediaBatchForwardCellStatus.failed)),
+      );
+
+      for (final contact in <ContactModel>[first, second]) {
+        final parent = observedAtFirstNetwork[contact.peerId];
+        expect(
+          parent,
+          isNotNull,
+          reason:
+              'no complete forwarded parent existed before the first network '
+              'call for ${contact.peerId}',
+        );
+        expect(strictAtFirstNetwork[contact.peerId], isTrue);
+        expect(custodyAtFirstNetwork[contact.peerId], 1);
+        expect(parent!.isForwarded, isTrue);
+        // Plan 249's intentional per-item token is reused across the fan-out.
+        expect(parent.dedupKey, itemToken);
+        expect(parent.directMediaCustodyIntentId, isNotNull);
+      }
+
+      // Every target still owns fresh message/attachment identities.
+      final firstParent = observedAtFirstNetwork[first.peerId]!;
+      final secondParent = observedAtFirstNetwork[second.peerId]!;
+      expect(firstParent.id, isNot(secondParent.id));
+      expect(
+        (await blobRepository.getAttachmentsForMessage(
+              firstParent.id,
+              owner: MediaOwnerLane.direct,
+            ))
+            .map((attachment) => attachment.id)
+            .toSet()
+            .intersection(
+              (await blobRepository.getAttachmentsForMessage(
+                secondParent.id,
+                owner: MediaOwnerLane.direct,
+              )).map((attachment) => attachment.id).toSet(),
+            ),
+        isEmpty,
+      );
+
+      // The authorization token is supplied independently, never derived.
+      expect(blobRepository.freshStages, hasLength(2));
+      for (final stage in blobRepository.freshStages) {
+        expect(stage.authorizedForwardDedupKey, itemToken);
+        expect(stage.parent.isForwarded, isTrue);
+      }
+    },
+  );
+
+  test(
+    'TC-350-01b rejected direct-library revalidation performs zero stage or network',
+    () async {
+      final previousPathProvider = PathProviderPlatform.instance;
+      final documents = Directory.systemTemp.createTempSync(
+        'direct_library_350_denied_',
+      );
+      PathProviderPlatform.instance = _DocumentsPathProvider(documents.path);
+      mediaUploadInFlightTracker.clearAll();
+      addTearDown(() {
+        mediaUploadInFlightTracker.clearAll();
+        PathProviderPlatform.instance = previousPathProvider;
+        if (documents.existsSync()) documents.deleteSync(recursive: true);
+      });
+
+      final sourceFile = File('${documents.path}/library-source.jpg')
+        ..writeAsBytesSync(List<int>.generate(96, (index) => index));
+      final contact = _contact('library-denied-recipient');
+      final messages = InMemoryMessageRepository();
+      final blobRepository = _RecordingFreshBlobCustodyRepository(messages);
+      final harness = _Harness(
+        messageRepository: messages,
+        attachments: blobRepository,
+        mediaFileManager: MediaFileManager(),
+        directMediaBlobCustodyClientEnabled: true,
+      );
+      await harness.contacts.addContact(contact);
+
+      final app = DirectMediaBatchForwardDeliveryCoordinator(
+        revalidateForDispatch:
+            ({required contactPeerId, required draft}) async =>
+                const DirectMediaLibraryBatchForwardResult.denied(
+                  DirectMediaLibraryBatchForwardDenial.sourceNotEligible,
+                ),
+        contactRepository: harness.contacts,
+        deliverStrict:
+            ({required shareIntent, required contacts, onProgress}) =>
+                harness.ordinary.deliverDirectMediaBatchForwardStrict(
+                  shareIntent: shareIntent,
+                  contacts: contacts,
+                  onProgress: onProgress,
+                ),
+      );
+
+      final result = await app.deliverInitial(
+        sourceContactPeerId: _sourceContactPeerId,
+        draft: DirectMediaLibraryBatchForwardDraft(
+          items: [
+            _item(
+              id: 'denied',
+              path: sourceFile.path,
+              caption: '',
+              token: 'library-op-denied-350',
+            ),
+          ],
+        ),
+        contactPeerIds: [contact.peerId],
+      );
+
+      expect(result.matrix, isNull);
+      expect(blobRepository.freshStages, isEmpty);
+      expect(blobRepository.custodyRowsByAttachmentId, isEmpty);
+      expect(harness.bridge.commandLog, isNot(contains('media:upload')));
+      expect(
+        await harness.messages.getMessagesForContact(contact.peerId),
+        isEmpty,
+      );
     },
   );
 }

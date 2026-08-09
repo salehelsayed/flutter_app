@@ -465,6 +465,219 @@ void main() {
     );
 
     test(
+      'TC-350-02b fresh forwarded repository requires exact authorization token',
+      () async {
+        const forwardToken = 'tc350-repo-forward-token';
+        ({
+          ConversationMessage parent,
+          MediaAttachment pending,
+          MediaAttachment prepared,
+          DirectMediaBlobCustodyRow custody,
+        })
+        forwardCandidate({
+          required String suffix,
+          String? dedupKeyOverride,
+          bool isForwarded = true,
+        }) {
+          final messageId = 'tc350-repo-$suffix';
+          final attachmentId = 'tc350-repo-$suffix-attachment';
+          const createdAt = '2026-08-09T15:30:00.000Z';
+          final parent = ConversationMessage(
+            id: messageId,
+            contactPeerId: 'tc350-repo-recipient-$suffix',
+            senderPeerId: 'tc350-repo-local',
+            text: 'forwarded repository media',
+            timestamp: createdAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: createdAt,
+            directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+              messageId: messageId,
+              attachmentIds: <String>[attachmentId],
+            ),
+            dedupKey: dedupKeyOverride ?? forwardToken,
+            isForwarded: isForwarded,
+          );
+          final pending = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 31,
+            mediaType: 'image',
+            localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+            downloadStatus: 'upload_pending',
+            createdAt: createdAt,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final hash = 'd' * 64;
+          return (
+            parent: parent,
+            pending: pending,
+            prepared: pending.copyWith(
+              contentHash: hash,
+              encryptionKeyBase64: 'tc350-key-$suffix',
+              encryptionNonce: 'tc350-nonce-$suffix',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+            custody: DirectMediaBlobCustodyRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: DirectMediaBlobCustodyState.outgoingPrepared,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: parent.contactPeerId,
+              ciphertextRelativePath:
+                  'direct_media_blob_custody_v1/${'3' * 64}/$attachmentId.blob',
+              contentHash: hash,
+              ciphertextSize: 47,
+              expiresAtMs: null,
+              custodyRelayPeerId: null,
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: createdAt,
+              updatedAt: createdAt,
+            ),
+          );
+        }
+
+        Future<FreshOutgoingDirectMediaBlobGenerationStageResult> stageFresh(
+          ({
+            ConversationMessage parent,
+            MediaAttachment pending,
+            MediaAttachment prepared,
+            DirectMediaBlobCustodyRow custody,
+          })
+          candidate, {
+          required String? authorizedForwardDedupKey,
+        }) => (fixture.repo as FreshOutgoingDirectMediaBlobGenerationRepository)
+            .stageFreshOutgoingDirectMediaBlobGeneration(
+              parent: candidate.parent,
+              expectedAttachments: <MediaAttachment>[candidate.pending],
+              preparedAttachments: <MediaAttachment>[candidate.prepared],
+              custodyRows: <DirectMediaBlobCustodyRow>[candidate.custody],
+              authorizedForwardDedupKey: authorizedForwardDedupKey,
+            );
+
+        // The one authorized forwarded alternative applies.
+        final authorized = forwardCandidate(suffix: 'authorized');
+        final applied = await stageFresh(
+          authorized,
+          authorizedForwardDedupKey: forwardToken,
+        );
+        expect(applied.outcome.name, 'applied');
+        expect(applied.hasDurableAuthority, isTrue);
+        final durable = await fixture.messageRepo.getMessage(
+          authorized.parent.id,
+        );
+        expect(durable?.isForwarded, isTrue);
+        expect(durable?.dedupKey, forwardToken);
+
+        // Every crossed shape refuses with no parent, attachment, key, or row.
+        final refusals =
+            <
+              String,
+              ({
+                ConversationMessage parent,
+                MediaAttachment pending,
+                String? token,
+              })
+            >{
+              'no authorization for a forwarded parent': (
+                parent: forwardCandidate(suffix: 'no-auth').parent,
+                pending: forwardCandidate(suffix: 'no-auth').pending,
+                token: null,
+              ),
+              'blank authorization': (
+                parent: forwardCandidate(suffix: 'blank-auth').parent,
+                pending: forwardCandidate(suffix: 'blank-auth').pending,
+                token: '   ',
+              ),
+              'mismatched authorization': (
+                parent: forwardCandidate(suffix: 'mismatch').parent,
+                pending: forwardCandidate(suffix: 'mismatch').pending,
+                token: 'tc350-other-token',
+              ),
+              'authorization on a non-forwarded parent': (
+                parent: forwardCandidate(
+                  suffix: 'not-forwarded',
+                  isForwarded: false,
+                ).parent,
+                pending: forwardCandidate(
+                  suffix: 'not-forwarded',
+                  isForwarded: false,
+                ).pending,
+                token: forwardToken,
+              ),
+              'forwarded parent under the external alternative': (
+                parent: forwardCandidate(
+                  suffix: 'external-shaped',
+                  dedupKeyOverride: 'tc350-repo-external-shaped',
+                ).parent,
+                pending: forwardCandidate(
+                  suffix: 'external-shaped',
+                  dedupKeyOverride: 'tc350-repo-external-shaped',
+                ).pending,
+                token: null,
+              ),
+            };
+        for (final entry in refusals.entries) {
+          final suffix = entry.value.parent.id.replaceFirst('tc350-repo-', '');
+          final candidate = forwardCandidate(
+            suffix: suffix,
+            dedupKeyOverride: entry.value.parent.dedupKey,
+            isForwarded: entry.value.parent.isForwarded,
+          );
+          final keyName = mediaAttachmentEncryptionKeyStoreName(
+            candidate.pending.id,
+          );
+          final keyBefore = await fixture.secureKeyStore.read(keyName);
+          final refused = await stageFresh(
+            candidate,
+            authorizedForwardDedupKey: entry.value.token,
+          );
+          expect(refused.outcome.name, 'refused', reason: entry.key);
+          expect(refused.hasDurableAuthority, isFalse, reason: entry.key);
+          expect(
+            await fixture.messageRepo.getMessage(candidate.parent.id),
+            isNull,
+            reason: entry.key,
+          );
+          expect(
+            await fixture.repo.getAttachmentById(candidate.pending.id),
+            isNull,
+            reason: entry.key,
+          );
+          expect(
+            await fixture.repo.loadDirectMediaBlobCustodyForMessage(
+              candidate.parent.id,
+            ),
+            isEmpty,
+            reason: entry.key,
+          );
+          expect(
+            await fixture.secureKeyStore.read(keyName),
+            keyBefore,
+            reason: entry.key,
+          );
+        }
+
+        // The exact external alternative remains publishable.
+        final external = forwardCandidate(
+          suffix: 'external-canonical',
+          dedupKeyOverride: 'tc350-repo-external-canonical',
+          isForwarded: false,
+        );
+        expect(
+          (await stageFresh(
+            external,
+            authorizedForwardDedupKey: null,
+          )).outcome.name,
+          'applied',
+        );
+      },
+    );
+
+    test(
       'TC-347-02c concurrent preparers adopt one artifact generation',
       () async {
         final documents = await Directory.systemTemp.createTemp(

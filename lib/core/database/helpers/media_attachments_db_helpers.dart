@@ -1261,6 +1261,10 @@ dbProjectOutgoingDirectMediaCustodyUploadFailure(
 /// Unlike [dbStageOutgoingDirectMediaBlobGeneration], this entry requires the
 /// parent and all attachment predecessors to be absent. An already-complete
 /// exact winner is adopted idempotently; partial/crossed state is refused.
+///
+/// [authorizedForwardDedupKey] selects between the two canonical parent shapes
+/// documented on [_isCanonicalFreshDirectMediaBlobParent]. It is never
+/// persisted and never derived from the candidate parent.
 Future<DirectMediaBlobGenerationDbStageResult>
 dbStageFreshOutgoingDirectMediaBlobGeneration(
   Database db, {
@@ -1268,6 +1272,7 @@ dbStageFreshOutgoingDirectMediaBlobGeneration(
   required List<Map<String, Object?>> expectedAttachmentRows,
   required List<Map<String, Object?>> preparedAttachmentRows,
   required List<DirectMediaBlobCustodyRow> custodyRows,
+  String? authorizedForwardDedupKey,
 }) async {
   final messageId = parentRow['id'] as String? ?? '';
   final recipientPeerId = parentRow['contact_peer_id'] as String? ?? '';
@@ -1308,6 +1313,7 @@ dbStageFreshOutgoingDirectMediaBlobGeneration(
         parentRow,
         recipientPeerId: recipientPeerId,
         intentId: intentId!,
+        authorizedForwardDedupKey: authorizedForwardDedupKey,
       ) &&
       expectedAttachmentRows.every(
         (row) => _isValidDirectMediaCustodyPreparationAttachment(
@@ -2344,21 +2350,42 @@ bool _isEligiblePreparedDirectMediaCustodyParent(
       Map<String, Object?>.from(row)..['status'] = 'sending',
     );
 
+/// Exactly two canonical fresh-parent shapes are publishable here.
+///
+/// [authorizedForwardDedupKey] is null for the marker-free external OS share
+/// (`id == dedup_key`, not forwarded). A nonblank value is one entry-authorized
+/// internal forward: the parent MUST be forwarded and its dedup key MUST equal
+/// that exact token. The token is supplied independently by a reviewed caller
+/// and is never derived from the candidate row. Every other canonical
+/// invariant is identical in both shapes.
 bool _isCanonicalFreshDirectMediaBlobParent(
   Map<String, Object?> row, {
   required String recipientPeerId,
   required String intentId,
-}) =>
-    _isEligiblePreparedDirectMediaCustodyParent(
-      row,
-      recipientPeerId: recipientPeerId,
-      intentId: intentId,
-    ) &&
-    row['id'] == row['dedup_key'] &&
-    row['timestamp'] == row['created_at'] &&
-    ((row['is_forwarded'] as num?)?.toInt() ?? 0) == 0 &&
-    row['read_at'] == null &&
-    row['quoted_message_id'] == null;
+  required String? authorizedForwardDedupKey,
+}) {
+  final isForwarded = ((row['is_forwarded'] as num?)?.toInt() ?? 0) == 1;
+  final bool canonicalIdentity;
+  if (authorizedForwardDedupKey == null) {
+    canonicalIdentity = !isForwarded && row['id'] == row['dedup_key'];
+  } else {
+    final token = authorizedForwardDedupKey.trim();
+    canonicalIdentity =
+        token.isNotEmpty &&
+        token == authorizedForwardDedupKey &&
+        isForwarded &&
+        row['dedup_key'] == authorizedForwardDedupKey;
+  }
+  return canonicalIdentity &&
+      _isEligiblePreparedDirectMediaCustodyParent(
+        row,
+        recipientPeerId: recipientPeerId,
+        intentId: intentId,
+      ) &&
+      row['timestamp'] == row['created_at'] &&
+      row['read_at'] == null &&
+      row['quoted_message_id'] == null;
+}
 
 bool hasImmutableDirectMediaCustodyAttachmentProjection(
   Map<String, Object?> row,

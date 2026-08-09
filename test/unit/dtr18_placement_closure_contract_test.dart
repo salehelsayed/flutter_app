@@ -30,8 +30,9 @@ const _relocations = <String, List<String>>{
         'media_attachment_repository_impl.dart',
     // Plans 347/348 add exact v111 generation, terminalization, incoming
     // custody ownership, and the reviewed fresh absent-parent stage to the
-    // already-relocated Conversation adapter.
-    'f5af330e7aaaf17a893664f6a29c110243e585439e48b16e0a846c33d050e985',
+    // already-relocated Conversation adapter. Plan 350 generalizes that stage
+    // to exactly two canonical parent shapes without relocating anything.
+    '8a0426702352a17209a05890c06db5535009df091a47e70b030dc3ee2d5b573c',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

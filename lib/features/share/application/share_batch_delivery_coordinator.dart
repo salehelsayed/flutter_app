@@ -391,6 +391,22 @@ class DefaultShareBatchDeliveryCoordinator
     return peerId == null || peerId.isEmpty ? null : peerId;
   }
 
+  /// Reads the reviewed operation token at an entry leg whose source gate has
+  /// ALREADY succeeded.
+  ///
+  /// Called only from the received-direct, direct-library, and group-origin
+  /// entries. An uncleared [DirectForwardSourceAuthority] or a blank token
+  /// means no authorization, so the target stays on its existing legacy owner.
+  /// `_sendToContact` and every fresh-owner layer below it receive the returned
+  /// value as an opaque argument and never recompute it.
+  String? _entryAuthorizedForwardDedupKey(ShareIntent entryIntent) {
+    if (entryIntent.directForwardSourceAuthority != null) return null;
+    final token = entryIntent.forwardProvenance?.operationDedupKey;
+    if (token == null) return null;
+    final trimmed = token.trim();
+    return trimmed.isEmpty || trimmed != token ? null : token;
+  }
+
   ShareIntent _targetScopedForwardIntent({
     required ShareIntent shareIntent,
     required ShareTargetSelection target,
@@ -495,6 +511,10 @@ class DefaultShareBatchDeliveryCoordinator
         onProgress: onProgress,
         preloadedIdentity: identity,
         internalForwardTargetResolutions: targetResolutions,
+        // 350: the immutable capture above IS the received-direct source gate.
+        // Only after it succeeds (and clears the source authority) may a
+        // contact destination read this entry's reviewed operation token.
+        sourceGatedInternalForward: true,
       );
     } finally {
       await lease.dispose();
@@ -508,6 +528,7 @@ class DefaultShareBatchDeliveryCoordinator
     IdentityModel? preloadedIdentity,
     List<_InternalForwardTargetResolution>? internalForwardTargetResolutions,
     bool externalOrdinaryShare = false,
+    bool sourceGatedInternalForward = false,
   }) async {
     final identity =
         preloadedIdentity ?? await identityRepository.loadIdentity();
@@ -607,6 +628,9 @@ class DefaultShareBatchDeliveryCoordinator
                       requireCurrentContact:
                           internalForwardTargetResolutions != null,
                       externalOrdinaryShare: externalOrdinaryShare,
+                      authorizedForwardDedupKey: sourceGatedInternalForward
+                          ? _entryAuthorizedForwardDedupKey(targetIntent)
+                          : null,
                     ),
             ShareTargetSelectionKind.group =>
               await (sendToGroupFn ?? _sendToGroup)(
@@ -786,6 +810,12 @@ class DefaultShareBatchDeliveryCoordinator
       return failAll('Source media is unavailable.');
     }
     final processedMedia = processedBatch.processedMedia;
+    // 350: this is the trusted application port reached only after
+    // `DirectMediaBatchForwardDeliveryCoordinator` revalidated the exact
+    // source. Plan 249's per-item token is intentionally NOT contact-scoped.
+    final authorizedForwardDedupKey = _entryAuthorizedForwardDedupKey(
+      shareIntent,
+    );
 
     final mediaBytes = processedMedia.single.budgetBytes;
     final totalBytes = mediaBytes * contacts.length;
@@ -842,6 +872,7 @@ class DefaultShareBatchDeliveryCoordinator
                   processedMedia: processedMedia,
                   uploadHooks: uploadHooks,
                   useSuppliedContact: true,
+                  authorizedForwardDedupKey: authorizedForwardDedupKey,
                 );
           results.add(result);
         } catch (_) {
@@ -990,6 +1021,9 @@ class DefaultShareBatchDeliveryCoordinator
             processedMedia: processedMedia,
             sourceGroupIdToExclude: sourceGroupIdToExclude,
             allowAnnouncementTarget: allowAnnouncementTarget,
+            // 350: the verified source + immutable snapshot above IS this
+            // entry's source gate.
+            sourceGatedInternalForward: true,
           ),
         );
       }
@@ -1014,6 +1048,7 @@ class DefaultShareBatchDeliveryCoordinator
     required List<PendingComposerMedia> processedMedia,
     String? sourceGroupIdToExclude,
     required bool allowAnnouncementTarget,
+    bool sourceGatedInternalForward = false,
   }) async {
     ShareBatchTargetResult failed(String detail) {
       return ShareBatchTargetResult(
@@ -1059,6 +1094,9 @@ class DefaultShareBatchDeliveryCoordinator
                   processedMedia: processedMedia,
                   uploadHooks: ShareBatchUploadHooks.none,
                   requireCurrentContact: true,
+                  authorizedForwardDedupKey: sourceGatedInternalForward
+                      ? _entryAuthorizedForwardDedupKey(targetIntent)
+                      : null,
                 );
         case ShareTargetSelectionKind.group:
           final groupRepo = groupRepository!;
@@ -1229,14 +1267,23 @@ class DefaultShareBatchDeliveryCoordinator
     );
   }
 
-  Future<ShareBatchTargetResult> _sendExternalDirectMediaWithBlobCustody({
+  /// Shared fresh-parent custody sender for the two authorized producers.
+  ///
+  /// [authorizedForwardDedupKey] is null for a marker-free external OS share.
+  /// A nonblank value is the reviewed entry's exact operation token: the parent
+  /// and its send completion are forwarded and carry that dedup key. This
+  /// method never derives the token from [shareIntent].
+  Future<ShareBatchTargetResult> _sendFreshDirectMediaWithBlobCustody({
     required IdentityModel identity,
     required ShareIntent shareIntent,
     required ContactModel contact,
     required List<PendingComposerMedia> processedMedia,
     required ShareBatchUploadHooks uploadHooks,
     required DirectMediaBlobCustodyRepository repository,
+    required String? authorizedForwardDedupKey,
   }) async {
+    final isForwardedParent = authorizedForwardDedupKey != null;
+    final parentDedupKey = authorizedForwardDedupKey;
     final messageId = _shareBatchUuid.v4();
     final timestamp = _forwardNow().toUtc().toIso8601String();
     final attachmentIds = List<String>.generate(
@@ -1318,8 +1365,8 @@ class DefaultShareBatchDeliveryCoordinator
         isIncoming: false,
         createdAt: timestamp,
         directMediaCustodyIntentId: intentId,
-        dedupKey: messageId,
-        isForwarded: false,
+        dedupKey: parentDedupKey ?? messageId,
+        isForwarded: isForwardedParent,
       );
       attemptedParent = parent;
       attemptedAttachments = List<MediaAttachment>.unmodifiable(
@@ -1343,8 +1390,9 @@ class DefaultShareBatchDeliveryCoordinator
         recipientPeerId: contact.peerId,
         parent: parent,
         sources: sources,
+        authorizedForwardDedupKey: authorizedForwardDedupKey,
         onAuthorityReady: (winnerAttachments) =>
-            _copyExternalSharePreviewAfterAuthority(
+            _copyFreshDirectMediaPreviewAfterAuthority(
               messageId: messageId,
               processedMedia: processedMedia,
               expectedAttachments: expectedAttachments,
@@ -1375,10 +1423,11 @@ class DefaultShareBatchDeliveryCoordinator
       if (!uploadResult.isComplete) {
         hasDurableAuthority =
             hasDurableAuthority ||
-            await _hasExactFreshExternalShareAuthority(
+            await _hasExactFreshDirectMediaAuthority(
               parent: parent,
               expectedAttachments: expectedAttachments,
               repository: repository,
+              authorizedForwardDedupKey: authorizedForwardDedupKey,
             );
         return ShareBatchTargetResult(
           target: ShareTargetSelection.contact(contact),
@@ -1403,8 +1452,8 @@ class DefaultShareBatchDeliveryCoordinator
           messageId: messageId,
           timestamp: timestamp,
           createdAt: timestamp,
-          dedupKey: messageId,
-          isForwarded: false,
+          dedupKey: parentDedupKey ?? messageId,
+          isForwarded: isForwardedParent,
           bridge: bridge,
           recipientMlKemPublicKey: contact.mlKemPublicKey,
           mediaAttachments: uploadResult.attachments,
@@ -1430,10 +1479,11 @@ class DefaultShareBatchDeliveryCoordinator
       try {
         final parent = attemptedParent;
         if (!hasDurableAuthority && parent != null) {
-          hasDurableAuthority = await _hasExactFreshExternalShareAuthority(
+          hasDurableAuthority = await _hasExactFreshDirectMediaAuthority(
             parent: parent,
             expectedAttachments: attemptedAttachments,
             repository: repository,
+            authorizedForwardDedupKey: authorizedForwardDedupKey,
           );
         }
       } on Object {
@@ -1459,7 +1509,7 @@ class DefaultShareBatchDeliveryCoordinator
     }
   }
 
-  Future<bool> _copyExternalSharePreviewAfterAuthority({
+  Future<bool> _copyFreshDirectMediaPreviewAfterAuthority({
     required String messageId,
     required List<PendingComposerMedia> processedMedia,
     required List<MediaAttachment> expectedAttachments,
@@ -1502,16 +1552,33 @@ class DefaultShareBatchDeliveryCoordinator
     return true;
   }
 
-  Future<bool> _hasExactFreshExternalShareAuthority({
+  /// Exact share-level authority re-read after an ambiguous commit.
+  ///
+  /// [authorizedForwardDedupKey] null requires the marker-free external shape;
+  /// a nonblank value requires the exact forwarded shape. Any drift in
+  /// recipient, token, `isForwarded`, ID, or projection is NOT authority.
+  Future<bool> _hasExactFreshDirectMediaAuthority({
     required ConversationMessage parent,
     required List<MediaAttachment> expectedAttachments,
     required DirectMediaBlobCustodyRepository repository,
+    required String? authorizedForwardDedupKey,
   }) async {
     final attachmentIds = expectedAttachments
         .map((attachment) => attachment.id)
         .toList(growable: false);
     final ids = attachmentIds.toSet();
     if (attachmentIds.isEmpty || ids.length != attachmentIds.length) {
+      return false;
+    }
+    if (authorizedForwardDedupKey != null) {
+      final token = authorizedForwardDedupKey.trim();
+      if (token.isEmpty ||
+          token != authorizedForwardDedupKey ||
+          !parent.isForwarded ||
+          parent.dedupKey != authorizedForwardDedupKey) {
+        return false;
+      }
+    } else if (parent.isForwarded || parent.id != parent.dedupKey) {
       return false;
     }
     final currentParent = await messageRepository.getMessage(parent.id);
@@ -1541,9 +1608,9 @@ class DefaultShareBatchDeliveryCoordinator
         currentParent.text == parent.text &&
         currentParent.timestamp == parent.timestamp &&
         currentParent.createdAt == parent.createdAt &&
-        currentParent.id == currentParent.dedupKey &&
+        currentParent.dedupKey == parent.dedupKey &&
+        currentParent.isForwarded == parent.isForwarded &&
         currentParent.timestamp == currentParent.createdAt &&
-        !currentParent.isForwarded &&
         currentParent.editedAt == null &&
         currentParent.quotedMessageId == null &&
         currentParent.deletedAt == null &&
@@ -1599,6 +1666,10 @@ class DefaultShareBatchDeliveryCoordinator
         });
   }
 
+  /// [authorizedForwardDedupKey] is read ONLY at a reviewed forward entry leg
+  /// whose source gate already succeeded, and is passed here as an independent
+  /// value. This method and every layer below it must never re-derive it from
+  /// [shareIntent]'s provenance, the candidate parent, or the attachments.
   Future<ShareBatchTargetResult> _sendToContact({
     required IdentityModel identity,
     required ShareIntent shareIntent,
@@ -1608,6 +1679,7 @@ class DefaultShareBatchDeliveryCoordinator
     bool useSuppliedContact = false,
     bool requireCurrentContact = false,
     bool externalOrdinaryShare = false,
+    String? authorizedForwardDedupKey,
   }) async {
     assert(!(useSuppliedContact && requireCurrentContact));
     final currentContact = useSuppliedContact
@@ -1651,13 +1723,25 @@ class DefaultShareBatchDeliveryCoordinator
       _ => null,
     };
     final resolvedMlKemKey = resolvedContact.mlKemPublicKey?.trim();
-    final strictExternalSelected =
-        directMediaBlobCustodyClientEnabled &&
+    // Exactly one of two authorized fresh producers may select strict custody.
+    final externalOrdinaryAuthorized =
+        authorizedForwardDedupKey == null &&
         externalOrdinaryShare &&
         !useSuppliedContact &&
         !requireCurrentContact &&
         shareIntent.forwardProvenance == null &&
-        shareIntent.directForwardSourceAuthority == null &&
+        shareIntent.directForwardSourceAuthority == null;
+    // An uncleared source authority means the entry's snapshot gate has not
+    // completed; it can never reach strict selection.
+    final internalForwardAuthorized =
+        authorizedForwardDedupKey != null &&
+        authorizedForwardDedupKey.trim() == authorizedForwardDedupKey &&
+        authorizedForwardDedupKey.isNotEmpty &&
+        !externalOrdinaryShare &&
+        shareIntent.directForwardSourceAuthority == null;
+    final strictFreshSelected =
+        directMediaBlobCustodyClientEnabled &&
+        (externalOrdinaryAuthorized || internalForwardAuthorized) &&
         processedMedia.isNotEmpty &&
         GroupMediaForwardPolicy.canTargetContact(resolvedContact) &&
         resolvedMlKemKey != null &&
@@ -1669,14 +1753,17 @@ class DefaultShareBatchDeliveryCoordinator
         messageRepository is OutgoingTransportMutationRepository &&
         p2pService is AckOrExpiryInboxStore &&
         p2pService is MediaExpiryBoundedInboxStore;
-    if (strictExternalSelected) {
-      return _sendExternalDirectMediaWithBlobCustody(
+    if (strictFreshSelected) {
+      return _sendFreshDirectMediaWithBlobCustody(
         identity: identity,
         shareIntent: shareIntent,
         contact: resolvedContact,
         processedMedia: processedMedia,
         uploadHooks: uploadHooks,
         repository: directBlobRepository,
+        authorizedForwardDedupKey: internalForwardAuthorized
+            ? authorizedForwardDedupKey
+            : null,
       );
     }
     final attachments = <MediaAttachment>[];
@@ -2087,13 +2174,19 @@ class _ShareBatchProgressTracker {
     final sentBytes = (_completedBytes + _currentBytes)
         .clamp(0, totalBytes)
         .toInt();
-    onProgress(
-      ShareBatchDeliveryProgress(
-        sentBytes: sentBytes,
-        totalBytes: totalBytes,
-        phase: phase,
-      ),
-    );
+    try {
+      onProgress(
+        ShareBatchDeliveryProgress(
+          sentBytes: sentBytes,
+          totalBytes: totalBytes,
+          phase: phase,
+        ),
+      );
+    } catch (_) {
+      // Progress observers are non-authoritative UI telemetry. A throwing
+      // observer must never turn a target that already owns durable v111
+      // authority into a picker-owned `failed` result and duplicate work.
+    }
   }
 }
 

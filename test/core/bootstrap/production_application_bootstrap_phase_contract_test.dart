@@ -543,6 +543,38 @@ void main() {
     );
   });
 
+  test('TC-350-02c production wires fresh forward authorization exactly once', () {
+    final production = File(_productionPath).readAsStringSync();
+
+    expect(
+      'authorizedForwardDedupKey'.allMatches(production),
+      hasLength(3),
+      reason:
+          'exactly one declaration plus one verbatim pass-through: production '
+          'must never drop the token and never derive a second one',
+    );
+    expect(
+      'authorizedForwardDedupKey: authorizedForwardDedupKey'.allMatches(
+        production,
+      ),
+      hasLength(1),
+      reason: 'the token reaches the SQLite helper unmodified',
+    );
+    expect(
+      production,
+      matches(
+        RegExp(
+          r'dbStageFreshOutgoingDirectMediaBlobGeneration:\s*\n?\s*\(\{[\s\S]{0,400}?'
+          r'authorizedForwardDedupKey,\s*\n?\s*\}\)\s*=>\s*'
+          r'dbStageFreshOutgoingDirectMediaBlobGeneration\s*\([\s\S]{0,400}?'
+          r'authorizedForwardDedupKey:\s*authorizedForwardDedupKey,',
+        ),
+      ),
+      reason:
+          'the wired capability must forward the caller-supplied token verbatim',
+    );
+  });
+
   test(
     'TC-343-06a direct reaction caller census stays on the capable wired route',
     () {

@@ -161,11 +161,17 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     }
   }
 
-  /// Plan 348 absent-parent entry used only by an eligible external OS share.
+  /// Plan 348/350 absent-parent entry used by an eligible external OS share or
+  /// by one already-authorized internal media forward.
   ///
   /// [onAuthorityReady] copies/verifies the sender-local plaintext preview after
   /// v110/v111 commit and before LAN or relay. Its failure retains ciphertext
   /// authority for the existing restart retry owner.
+  ///
+  /// [authorizedForwardDedupKey] is null for the marker-free external shape. A
+  /// nonblank value is one ephemeral authorization read at a reviewed forward
+  /// entry: [parent] must then be forwarded with exactly that dedup key. This
+  /// owner never derives the token from [parent], [sources], or provenance.
   Future<PreparedDirectMediaBlobUploadResult> prepareAndUploadFreshMessage({
     required Bridge bridge,
     required String identityPeerId,
@@ -174,6 +180,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required List<PreparedDirectMediaBlobSource> sources,
     required DirectMediaBlobAuthorityReadyFn onAuthorityReady,
     DirectMediaBlobGenerationReadyFn? onGenerationReady,
+    String? authorizedForwardDedupKey,
   }) async {
     final freshRepository = switch (_repository) {
       FreshOutgoingDirectMediaBlobGenerationRepository repository
@@ -181,6 +188,17 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
         repository,
       _ => null,
     };
+    final bool canonicalIdentity;
+    if (authorizedForwardDedupKey == null) {
+      canonicalIdentity = parent.id == parent.dedupKey && !parent.isForwarded;
+    } else {
+      final token = authorizedForwardDedupKey.trim();
+      canonicalIdentity =
+          token.isNotEmpty &&
+          token == authorizedForwardDedupKey &&
+          parent.isForwarded &&
+          parent.dedupKey == authorizedForwardDedupKey;
+    }
     if (!_repository.supportsDirectMediaBlobCustody ||
         freshRepository == null ||
         !_validFreshRequest(
@@ -189,9 +207,8 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           parent: parent,
           sources: sources,
         ) ||
-        parent.id != parent.dedupKey ||
-        parent.timestamp != parent.createdAt ||
-        parent.isForwarded) {
+        !canonicalIdentity ||
+        parent.timestamp != parent.createdAt) {
       return const PreparedDirectMediaBlobUploadResult.refused();
     }
 
@@ -205,6 +222,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           expectedParent: parent,
           sources: sources,
           freshRepository: freshRepository,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
         );
         hasDurableAuthority = publication.hasDurableAuthority;
         final generation = publication.generation;
@@ -340,6 +358,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required ConversationMessage expectedParent,
     required List<PreparedDirectMediaBlobSource> sources,
     FreshOutgoingDirectMediaBlobGenerationRepository? freshRepository,
+    String? authorizedForwardDedupKey,
   }) async {
     final candidates = <_CandidateGenerationEntry>[];
     var stageAttempted = false;
@@ -432,6 +451,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
               expectedAttachments: expectedAttachments,
               preparedAttachments: prepared,
               custodyRows: custodyRows,
+              authorizedForwardDedupKey: authorizedForwardDedupKey,
             );
         authorizesStrictUpload = staged.authorizesStrictUpload;
         hasDurableAuthority = staged.hasDurableAuthority;

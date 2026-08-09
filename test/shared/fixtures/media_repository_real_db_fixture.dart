@@ -161,6 +161,9 @@ class MediaRepositoryRealDbFixture {
               required expectedAttachmentRows,
               required preparedAttachmentRows,
               required custodyRows,
+              // 350: the optional forward authorization is forwarded verbatim.
+              // The fixture never supplies, drops, or derives it.
+              authorizedForwardDedupKey,
             }) => dbStageFreshOutgoingDirectMediaBlobGenerationAround == null
                 ? dbStageFreshOutgoingDirectMediaBlobGeneration(
                     db,
@@ -168,6 +171,7 @@ class MediaRepositoryRealDbFixture {
                     expectedAttachmentRows: expectedAttachmentRows,
                     preparedAttachmentRows: preparedAttachmentRows,
                     custodyRows: custodyRows,
+                    authorizedForwardDedupKey: authorizedForwardDedupKey,
                   )
                 : dbStageFreshOutgoingDirectMediaBlobGenerationAround(
                     () => dbStageFreshOutgoingDirectMediaBlobGeneration(
@@ -176,6 +180,7 @@ class MediaRepositoryRealDbFixture {
                       expectedAttachmentRows: expectedAttachmentRows,
                       preparedAttachmentRows: preparedAttachmentRows,
                       custodyRows: custodyRows,
+                      authorizedForwardDedupKey: authorizedForwardDedupKey,
                     ),
                   )
           : null,

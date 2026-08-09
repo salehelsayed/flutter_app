@@ -166,6 +166,7 @@ class MediaAttachmentRepositoryImpl
     required List<Map<String, Object?>> expectedAttachmentRows,
     required List<Map<String, Object?>> preparedAttachmentRows,
     required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authorizedForwardDedupKey,
   })?
   dbStageFreshOutgoingDirectMediaBlobGeneration;
   final Future<DirectMediaBlobCustodyRow?> Function({
@@ -811,21 +812,36 @@ class MediaAttachmentRepositoryImpl
     required List<MediaAttachment> expectedAttachments,
     required List<MediaAttachment> preparedAttachments,
     required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authorizedForwardDedupKey,
   }) async {
     final stage = dbStageFreshOutgoingDirectMediaBlobGeneration;
     final intentId = parent.directMediaCustodyIntentId;
     final expectedIds = expectedAttachments
         .map((attachment) => attachment.id)
         .toSet();
+    // Exactly two canonical alternatives: the marker-free external shape, or
+    // one independently authorized internal forward whose parent must be
+    // forwarded with the exact supplied token. The token is never derived from
+    // [parent] here — a mismatch refuses rather than adopts.
+    final bool canonicalIdentity;
+    if (authorizedForwardDedupKey == null) {
+      canonicalIdentity = parent.id == parent.dedupKey && !parent.isForwarded;
+    } else {
+      final token = authorizedForwardDedupKey.trim();
+      canonicalIdentity =
+          token.isNotEmpty &&
+          token == authorizedForwardDedupKey &&
+          parent.isForwarded &&
+          parent.dedupKey == authorizedForwardDedupKey;
+    }
     final validParent =
         parent.id.isNotEmpty &&
-        parent.id == parent.dedupKey &&
+        canonicalIdentity &&
         parent.contactPeerId.trim().isNotEmpty &&
         parent.senderPeerId.trim().isNotEmpty &&
         !parent.isIncoming &&
         parent.status == 'sending' &&
         parent.timestamp == parent.createdAt &&
-        !parent.isForwarded &&
         parent.editedAt == null &&
         parent.readAt == null &&
         parent.quotedMessageId == null &&
@@ -889,6 +905,7 @@ class MediaAttachmentRepositoryImpl
           expectedAttachmentRows: expectedRows,
           preparedAttachmentRows: referenceRows,
           custodyRows: custodyRows,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
         );
       }
 
@@ -925,6 +942,7 @@ class MediaAttachmentRepositoryImpl
           expectedAttachmentRows: expectedRows,
           preparedAttachmentRows: preparedRows,
           custodyRows: custodyRows,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
         );
         if (result.outcome != DirectMediaBlobGenerationDbStageOutcome.applied) {
           await restoreAll();
@@ -940,6 +958,7 @@ class MediaAttachmentRepositoryImpl
           expectedAttachmentRows: expectedRows,
           preparedAttachmentRows: referenceRows,
           custodyRows: custodyRows,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
         );
         if (!winner.outcome.authorizesStrictUpload) {
           await restoreAll();

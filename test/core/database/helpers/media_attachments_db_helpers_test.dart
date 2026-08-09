@@ -21,6 +21,9 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
+/// One reviewed entry's ephemeral forward authorization token.
+const _tc350ForwardToken = 'tc350-authorized-forward-token';
+
 void main() {
   late Database db;
 
@@ -1007,6 +1010,283 @@ void main() {
           ),
           isEmpty,
           reason: 'canonical validation must happen before the transaction',
+        );
+      },
+    );
+
+    test(
+      'TC-350-02a fresh blob owner requires exact independent forward authorization',
+      () async {
+        ({
+          List<DirectMediaBlobCustodyRow> custody,
+          List<Map<String, Object?>> expected,
+          String hash,
+          Map<String, Object?> parent,
+          List<Map<String, Object?>> prepared,
+        })
+        candidate({
+          required String suffix,
+          String? dedupKeyOverride,
+          bool isForwarded = true,
+          bool quoted = false,
+          String hashDigit = 'a',
+        }) {
+          final messageId = 'tc350-fresh-$suffix';
+          final attachmentId = 'tc350-fresh-$suffix-attachment';
+          const createdAt = '2026-08-09T15:00:00.000Z';
+          const recipientPeerId = 'tc350-recipient';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          final parent = ConversationMessage(
+            id: messageId,
+            contactPeerId: recipientPeerId,
+            senderPeerId: 'tc350-local-peer',
+            text: 'forwarded media',
+            timestamp: createdAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: createdAt,
+            directMediaCustodyIntentId: intent,
+            dedupKey: dedupKeyOverride ?? _tc350ForwardToken,
+            isForwarded: isForwarded,
+            quotedMessageId: quoted ? 'tc350-quoted' : null,
+          ).toMap();
+          final expected = makeAttachmentRow(
+            id: attachmentId,
+            messageId: messageId,
+            size: 17,
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            ),
+            downloadStatus: 'upload_pending',
+            createdAt: createdAt,
+          );
+          final hash = hashDigit * 64;
+          final prepared = <String, Object?>{
+            ...expected,
+            'content_hash': hash,
+            'encryption_key_base64': secureStoreReferenceForKey(
+              mediaAttachmentEncryptionKeyStoreName(attachmentId),
+            ),
+            'encryption_nonce': 'nonce-$suffix-$hashDigit',
+            'encryption_scheme': 'blob_aes_256_gcm_v1',
+          };
+          final custody = DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingPrepared,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: recipientPeerId,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'1' * 64}/$attachmentId.blob',
+            contentHash: hash,
+            ciphertextSize: 33,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          );
+          return (
+            custody: <DirectMediaBlobCustodyRow>[custody],
+            expected: <Map<String, Object?>>[expected],
+            hash: hash,
+            parent: parent,
+            prepared: <Map<String, Object?>>[prepared],
+          );
+        }
+
+        Future<DirectMediaBlobGenerationDbStageResult> stage(
+          ({
+            List<DirectMediaBlobCustodyRow> custody,
+            List<Map<String, Object?>> expected,
+            String hash,
+            Map<String, Object?> parent,
+            List<Map<String, Object?>> prepared,
+          })
+          value, {
+          required String? authorizedForwardDedupKey,
+        }) => dbStageFreshOutgoingDirectMediaBlobGeneration(
+          db,
+          parentRow: value.parent,
+          expectedAttachmentRows: value.expected,
+          preparedAttachmentRows: value.prepared,
+          custodyRows: value.custody,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
+        );
+
+        Future<void> expectNothingPersisted(
+          Map<String, Object?> parentRow,
+        ) async {
+          final messageId = parentRow['id'];
+          expect(
+            await db.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+          expect(
+            await db.query(
+              'media_attachments',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+          expect(
+            await db.query(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+        }
+
+        // The exact authorized forwarded alternative applies atomically.
+        final authorized = candidate(suffix: 'authorized');
+        final applied = await stage(
+          authorized,
+          authorizedForwardDedupKey: _tc350ForwardToken,
+        );
+        expect(
+          applied.outcome,
+          DirectMediaBlobGenerationDbStageOutcome.applied,
+        );
+        expect(applied.attachmentRows, hasLength(1));
+        expect(applied.custodyRows, hasLength(1));
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[authorized.parent['id']],
+          )).single['dedup_key'],
+          _tc350ForwardToken,
+        );
+
+        // …and re-adopts the exact winner idempotently.
+        expect(
+          (await stage(
+            authorized,
+            authorizedForwardDedupKey: _tc350ForwardToken,
+          )).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.idempotent,
+        );
+
+        // Every crossed or unauthorized shape refuses atomically.
+        final refusals =
+            <
+              String,
+              ({
+                Map<String, Object?> parent,
+                Future<DirectMediaBlobGenerationDbStageResult> Function() run,
+              })
+            >{};
+        final missingAuthorization = candidate(suffix: 'missing-auth');
+        refusals['forwarded parent with no authorization'] = (
+          parent: missingAuthorization.parent,
+          run: () =>
+              stage(missingAuthorization, authorizedForwardDedupKey: null),
+        );
+        final blankAuthorization = candidate(suffix: 'blank-auth');
+        refusals['blank authorization token'] = (
+          parent: blankAuthorization.parent,
+          run: () => stage(blankAuthorization, authorizedForwardDedupKey: '  '),
+        );
+        final untrimmedAuthorization = candidate(
+          suffix: 'untrimmed-auth',
+          dedupKeyOverride: ' $_tc350ForwardToken ',
+        );
+        refusals['untrimmed authorization token'] = (
+          parent: untrimmedAuthorization.parent,
+          run: () => stage(
+            untrimmedAuthorization,
+            authorizedForwardDedupKey: ' $_tc350ForwardToken ',
+          ),
+        );
+        final mismatched = candidate(suffix: 'mismatched');
+        refusals['authorization that is not the parent dedup key'] = (
+          parent: mismatched.parent,
+          run: () =>
+              stage(mismatched, authorizedForwardDedupKey: 'other-token-350'),
+        );
+        final notForwarded = candidate(
+          suffix: 'not-forwarded',
+          isForwarded: false,
+        );
+        refusals['authorized token on a non-forwarded parent'] = (
+          parent: notForwarded.parent,
+          run: () => stage(
+            notForwarded,
+            authorizedForwardDedupKey: _tc350ForwardToken,
+          ),
+        );
+        final externalShapedForward = candidate(
+          suffix: 'external-shaped',
+          dedupKeyOverride: 'tc350-fresh-external-shaped',
+        );
+        refusals['external shape carrying a forwarded marker'] = (
+          parent: externalShapedForward.parent,
+          run: () =>
+              stage(externalShapedForward, authorizedForwardDedupKey: null),
+        );
+        final quotedForward = candidate(suffix: 'quoted', quoted: true);
+        refusals['authorized forward carrying quote state'] = (
+          parent: quotedForward.parent,
+          run: () => stage(
+            quotedForward,
+            authorizedForwardDedupKey: _tc350ForwardToken,
+          ),
+        );
+
+        for (final entry in refusals.entries) {
+          expect(
+            (await entry.value.run()).outcome,
+            DirectMediaBlobGenerationDbStageOutcome.refused,
+            reason: entry.key,
+          );
+          await expectNothingPersisted(entry.value.parent);
+        }
+
+        // The exact external alternative still applies unchanged.
+        final external = candidate(
+          suffix: 'external-canonical',
+          isForwarded: false,
+          dedupKeyOverride: 'tc350-fresh-external-canonical',
+        );
+        expect(
+          (await stage(external, authorizedForwardDedupKey: null)).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.applied,
+        );
+
+        // A committed exact winner is not adopted under another token.
+        final crossedToken = candidate(
+          suffix: 'authorized',
+          dedupKeyOverride: 'tc350-other-token',
+        );
+        expect(
+          (await stage(
+            crossedToken,
+            authorizedForwardDedupKey: 'tc350-other-token',
+          )).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+          reason: 'a same-message winner under another token is not authority',
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[authorized.parent['id']],
+          )).single['dedup_key'],
+          _tc350ForwardToken,
         );
       },
     );

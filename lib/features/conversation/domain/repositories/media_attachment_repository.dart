@@ -145,18 +145,26 @@ abstract interface class DirectMediaBlobCustodyRepository {
 ///
 /// This capability is intentionally independent from
 /// [DirectMediaBlobCustodyRepository]. Composer/voice preparation keeps its
-/// predecessor-CAS meaning, while an eligible external OS share can atomically
-/// publish its canonical parent, complete attachment projection, v110 intent,
-/// and v111 generation before its first network request.
+/// predecessor-CAS meaning, while an eligible external OS share or an
+/// entry-authorized internal media forward can atomically publish its canonical
+/// parent, complete attachment projection, v110 intent, and v111 generation
+/// before its first network request.
 abstract interface class FreshOutgoingDirectMediaBlobGenerationRepository {
   bool get supportsFreshOutgoingDirectMediaBlobGeneration;
 
+  /// [authorizedForwardDedupKey] null requires the marker-free external shape
+  /// (`parent.id == parent.dedupKey`, not forwarded). A nonblank value is one
+  /// ephemeral authorization supplied by an already-reviewed forward entry: the
+  /// parent must be forwarded and its dedup key must equal that exact token.
+  /// It is never persisted, never derived from [parent], and carries no
+  /// cryptographic meaning.
   Future<FreshOutgoingDirectMediaBlobGenerationStageResult>
   stageFreshOutgoingDirectMediaBlobGeneration({
     required ConversationMessage parent,
     required List<MediaAttachment> expectedAttachments,
     required List<MediaAttachment> preparedAttachments,
     required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authorizedForwardDedupKey,
   });
 }
 

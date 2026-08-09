@@ -188,4 +188,4 @@ require_fixed 'MEDIA_CUSTODY_COMMIT_INDETERMINATE' go-mknoon/node/media.go
 
 jq empty "$DASHBOARD"
 
-printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347/348 adopter contract\n'
+printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347/348/350 adopter contract\n'

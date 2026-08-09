@@ -1914,15 +1914,902 @@ void main() {
         reason: 'strict selection never falls back to the legacy writer',
       );
 
-      final internalForward = await runScenario(
+      // 350: an internal forward is no longer excluded as a class. What is
+      // excluded is provenance WITHOUT a reviewed entry's source gate — this
+      // scenario reaches `deliver()` with bare provenance and no source
+      // authority, so it must still stay on the legacy owner.
+      final unGatedInternalForward = await runScenario(
         selector: true,
         internalForward: true,
       );
-      expect(internalForward.result.failureCount, 0);
-      expect(internalForward.uploads, hasLength(1));
-      expect(internalForward.uploads.single['custodyContract'], isNull);
-      expect(await v111Rows(internalForward.fixture), isEmpty);
+      expect(unGatedInternalForward.result.failureCount, 0);
+      expect(unGatedInternalForward.uploads, hasLength(1));
+      expect(
+        unGatedInternalForward.uploads.single['custodyContract'],
+        isNull,
+        reason:
+            'generic provenance is not source authorization; only a reviewed '
+            'entry leg may supply the forward authorization token '
+            '(TC-350-01a/04 own the authorized cases)',
+      );
+      expect(await v111Rows(unGatedInternalForward.fixture), isEmpty);
     });
+
+    test(
+      'TC-350-04 internal forward custody decision table varies one authority at a time',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final root = Directory.systemTemp.createTempSync(
+          'internal_forward_350_decision_',
+        );
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        });
+
+        final fixtureBytes = File(
+          'integration_test/fixtures/received_media_egress_fixture.jpg',
+        ).readAsBytesSync();
+        var scenarioIndex = 0;
+
+        /// Every scenario runs selector-on with COMPLETE runtime capability and
+        /// production `_sendToContact`; exactly one authority is varied, so no
+        /// negative can pass because support was accidentally absent.
+        Future<
+          ({
+            MediaRepositoryRealDbFixture fixture,
+            ShareBatchDeliveryResult result,
+            List<Map<String, dynamic>> uploads,
+            File sourceFile,
+            String sourceMessageId,
+            String sourceAttachmentId,
+          })
+        >
+        runScenario({
+          bool selector = true,
+          bool sourceGated = true,
+          bool hiddenSource = false,
+          bool privateSource = false,
+          bool textOnly = false,
+          bool groupDestination = false,
+          bool externalShare = false,
+        }) async {
+          scenarioIndex++;
+          final documents = Directory('${root.path}/scenario-$scenarioIndex')
+            ..createSync(recursive: true);
+          PathProviderPlatform.instance = _SharePathProvider(documents.path);
+          final fixture = await MediaRepositoryRealDbFixture.create(
+            databasePath: '${documents.path}/identity.sqlite',
+          );
+          addTearDown(fixture.dispose);
+          final fileManager = MediaFileManager();
+
+          final sourcePeerId = 'peer-350-decision-source-$scenarioIndex';
+          final sourceMessageId = 'msg-350-decision-$scenarioIndex';
+          final sourceAttachmentId = 'att-350-decision-$scenarioIndex';
+          var sourceParent = ConversationMessage(
+            id: sourceMessageId,
+            contactPeerId: sourcePeerId,
+            senderPeerId: sourcePeerId,
+            text: 'decision caption',
+            timestamp: '2026-08-09T10:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-08-09T10:00:00.000Z',
+          );
+          if (hiddenSource) {
+            sourceParent = sourceParent.copyWith(
+              hiddenAt: '2026-08-09T10:01:00.000Z',
+            );
+          }
+          if (privateSource) {
+            sourceParent = sourceParent.copyWith(
+              privateMediaPolicy: const PrivateMediaPolicy.protected(),
+              privateMediaState: PrivateMediaLifecycleState.available,
+            );
+          }
+          await fixture.messageRepo.saveMessage(sourceParent);
+          final sourceFile = File(
+            await fileManager.localPathForAttachment(
+              contactPeerId: sourcePeerId,
+              blobId: sourceAttachmentId,
+              mime: 'image/jpeg',
+            ),
+          );
+          sourceFile.parent.createSync(recursive: true);
+          sourceFile.writeAsBytesSync(fixtureBytes);
+          await fixture.repo.saveAttachment(
+            MediaAttachment(
+              id: sourceAttachmentId,
+              messageId: sourceMessageId,
+              mime: 'image/jpeg',
+              size: fixtureBytes.length,
+              mediaType: 'image',
+              localPath: sourceFile.path,
+              downloadStatus: 'done',
+              createdAt: '2026-08-09T10:00:00.000Z',
+              contentHash: List.filled(64, 'e').join(),
+              encryptionKeyBase64: 'decision-source-key',
+              encryptionNonce: 'decision-source-nonce',
+              encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              ownerLane: MediaOwnerLane.direct,
+            ),
+            owner: MediaOwnerLane.direct,
+          );
+
+          final contact = _makeMlKemContact(
+            'peer-350-decision-target-$scenarioIndex',
+            'Decision $scenarioIndex',
+          );
+          final contacts = InMemoryContactRepository();
+          await contacts.addContact(contact);
+          final groups = InMemoryGroupRepository();
+          final group = _makeGroup(
+            'group-350-decision-$scenarioIndex',
+            'Decision Group',
+          );
+          await groups.saveGroup(group);
+          await _seedGroupMembers(groups, group.id);
+          await _saveLatestGroupKey(groups, group.id);
+
+          final uploads = <Map<String, dynamic>>[];
+          final bridge = _RecipientAuthorityObservingBridge(
+            onMediaUpload: (payload) async =>
+                uploads.add(Map<String, dynamic>.from(payload)),
+          );
+          final coordinator = DefaultShareBatchDeliveryCoordinator(
+            identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+            contactRepository: contacts,
+            messageRepository: fixture.messageRepo,
+            mediaAttachmentRepository: fixture.repo,
+            groupRepository: groups,
+            groupMessageRepository: InMemoryGroupMessageRepository(),
+            bridge: bridge,
+            p2pService: _DirectMediaCustodyFakeP2PService(
+              initialState: const NodeState(
+                isStarted: true,
+                peerId: 'my-peer-id-12345',
+              ),
+            )..isConnectedToPeerResult = false,
+            mediaFileManager: fileManager,
+            imageProcessor: _imageProcessor(),
+            directMediaBlobCustodyClientEnabled: selector,
+            // Varying ONE authority: `textOnly` removes the media itself while
+            // the source gate, selector, and every capability stay identical.
+            processSharedMediaFn: (intent) async => ProcessedShareMediaBatch(
+              processedMedia: textOnly
+                  ? const <PendingComposerMedia>[]
+                  : intent.filePaths
+                        .where((filePath) => File(filePath).existsSync())
+                        .map(
+                          (filePath) => PendingComposerMedia(
+                            file: File(filePath),
+                            budgetBytes: File(filePath).lengthSync(),
+                          ),
+                        )
+                        .toList(growable: false),
+            ),
+          );
+
+          final result = await coordinator.deliver(
+            shareIntent: ShareIntent(
+              type: ShareIntentType.mixed,
+              text: 'decision caption',
+              filePaths: <String>[sourceFile.path],
+              forwardProvenance: externalShare
+                  ? null
+                  : ForwardProvenance(
+                      operationDedupKey: 'tc350-decision-$scenarioIndex',
+                    ),
+              directForwardSourceAuthority: (externalShare || !sourceGated)
+                  ? null
+                  : DirectForwardSourceAuthority(
+                      contactPeerId: sourcePeerId,
+                      messageId: sourceMessageId,
+                      attachmentIds: <String>[sourceAttachmentId],
+                    ),
+            ),
+            targets: <ShareTargetSelection>[
+              groupDestination
+                  ? ShareTargetSelection.group(group)
+                  : ShareTargetSelection.contact(contact),
+            ],
+          );
+          return (
+            fixture: fixture,
+            result: result,
+            uploads: uploads,
+            sourceFile: sourceFile,
+            sourceMessageId: sourceMessageId,
+            sourceAttachmentId: sourceAttachmentId,
+          );
+        }
+
+        Future<List<Map<String, Object?>>> v111Rows(
+          MediaRepositoryRealDbFixture fixture,
+        ) => fixture.db.query(kDirectMediaBlobCustodyTable);
+
+        Future<void> expectSourcePreserved(
+          ({
+            MediaRepositoryRealDbFixture fixture,
+            ShareBatchDeliveryResult result,
+            List<Map<String, dynamic>> uploads,
+            File sourceFile,
+            String sourceMessageId,
+            String sourceAttachmentId,
+          })
+          scenario,
+        ) async {
+          final row = await scenario.fixture.repo.getAttachmentById(
+            scenario.sourceAttachmentId,
+          );
+          expect(row, isNotNull);
+          expect(row!.localPath, scenario.sourceFile.path);
+          expect(row.encryptionKeyBase64, 'decision-source-key');
+          expect(row.encryptionNonce, 'decision-source-nonce');
+          expect(scenario.sourceFile.readAsBytesSync(), fixtureBytes);
+        }
+
+        // POSITIVE control: one entry-authorized, source-gated ordinary media
+        // forward to a current direct contact selects strict.
+        final authorized = await runScenario();
+        expect(authorized.result.failureCount, 0);
+        expect(authorized.uploads, hasLength(1));
+        expect(
+          authorized.uploads.single['custodyContract'],
+          'ack_or_expiry_v1',
+        );
+        expect(await v111Rows(authorized.fixture), hasLength(1));
+        await expectSourcePreserved(authorized);
+
+        // Selector off remains legacy with identical authority everywhere else.
+        final selectorOff = await runScenario(selector: false);
+        expect(selectorOff.result.failureCount, 0);
+        expect(selectorOff.uploads, hasLength(1));
+        expect(selectorOff.uploads.single['custodyContract'], isNull);
+        expect(await v111Rows(selectorOff.fixture), isEmpty);
+        await expectSourcePreserved(selectorOff);
+
+        // Forged generic provenance with NO source gate stays legacy.
+        final forgedProvenance = await runScenario(sourceGated: false);
+        expect(forgedProvenance.result.failureCount, 0);
+        expect(forgedProvenance.uploads, hasLength(1));
+        expect(forgedProvenance.uploads.single['custodyContract'], isNull);
+        expect(await v111Rows(forgedProvenance.fixture), isEmpty);
+        await expectSourcePreserved(forgedProvenance);
+
+        // A failed source gate is fail-closed with zero custody and network.
+        for (final denied in <({String label, bool hidden, bool private})>[
+          (label: 'hidden source parent', hidden: true, private: false),
+          (label: 'private source parent', hidden: false, private: true),
+        ]) {
+          final scenario = await runScenario(
+            hiddenSource: denied.hidden,
+            privateSource: denied.private,
+          );
+          expect(scenario.result.failureCount, 1, reason: denied.label);
+          expect(scenario.uploads, isEmpty, reason: denied.label);
+          expect(
+            await v111Rows(scenario.fixture),
+            isEmpty,
+            reason: denied.label,
+          );
+          expect(
+            await scenario.fixture.db.query(
+              'messages',
+              where: 'is_incoming = 0',
+            ),
+            isEmpty,
+            reason: denied.label,
+          );
+          await expectSourcePreserved(scenario);
+        }
+
+        // Text-only and group destinations retain their existing owners.
+        final textOnly = await runScenario(textOnly: true);
+        expect(await v111Rows(textOnly.fixture), isEmpty);
+        expect(textOnly.uploads, isEmpty);
+        await expectSourcePreserved(textOnly);
+
+        final groupDestination = await runScenario(groupDestination: true);
+        expect(await v111Rows(groupDestination.fixture), isEmpty);
+        expect(
+          groupDestination.uploads.every(
+            (payload) => payload['custodyContract'] == null,
+          ),
+          isTrue,
+        );
+        await expectSourcePreserved(groupDestination);
+
+        // Plan 348's marker-free external share remains the strict adopter.
+        final external = await runScenario(externalShare: true);
+        expect(external.result.failureCount, 0);
+        expect(external.uploads, hasLength(1));
+        expect(external.uploads.single['custodyContract'], 'ack_or_expiry_v1');
+        expect(await v111Rows(external.fixture), hasLength(1));
+      },
+    );
+
+    test(
+      'TC-350-03a internal authority reread distinguishes precommit commit ambiguity and drift',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final root = Directory.systemTemp.createTempSync(
+          'internal_forward_350_authority_',
+        );
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        });
+
+        const forwardToken = 'tc350-authority-forward-token';
+        var scenarioIndex = 0;
+
+        /// One reviewed direct-library forward whose SQLite commit outcome is
+        /// controlled: `precommit` never commits, `ambiguous` commits and then
+        /// makes every wrapper call throw, and `drift` additionally mutates one
+        /// exact parent field before throwing.
+        Future<
+          ({
+            MediaRepositoryRealDbFixture fixture,
+            ShareBatchDeliveryResult result,
+            List<Map<String, dynamic>> uploads,
+          })
+        >
+        runScenario(String mode) async {
+          scenarioIndex++;
+          final documents = Directory('${root.path}/scenario-$scenarioIndex')
+            ..createSync(recursive: true);
+          PathProviderPlatform.instance = _SharePathProvider(documents.path);
+          late MediaRepositoryRealDbFixture fixture;
+          final fixtureReady = <String>[];
+          fixture = await MediaRepositoryRealDbFixture.create(
+            databasePath: '${documents.path}/identity.sqlite',
+            dbStageFreshOutgoingDirectMediaBlobGenerationAround: (stage) async {
+              if (mode == 'precommit') {
+                throw StateError('injected pre-commit staging failure');
+              }
+              final result = await stage();
+              if (mode == 'drift' && fixtureReady.isEmpty) {
+                fixtureReady.add('drifted');
+                await fixture.db.update(
+                  'messages',
+                  <String, Object?>{'dedup_key': 'tc350-drifted-token'},
+                  where: 'dedup_key = ?',
+                  whereArgs: <Object?>[forwardToken],
+                );
+              }
+              throw StateError('injected post-commit wrapper failure');
+              // ignore: dead_code
+              return result;
+            },
+          );
+          addTearDown(fixture.dispose);
+          final contact = _makeMlKemContact(
+            'peer-350-authority-$scenarioIndex',
+            'Authority $scenarioIndex',
+          );
+          final contacts = InMemoryContactRepository();
+          await contacts.addContact(contact);
+          final source = File('${documents.path}/forward.jpg')
+            ..writeAsBytesSync(List<int>.generate(64, (index) => index));
+          final uploads = <Map<String, dynamic>>[];
+          final bridge = _RecipientAuthorityObservingBridge(
+            onMediaUpload: (payload) async =>
+                uploads.add(Map<String, dynamic>.from(payload)),
+          );
+          final coordinator = DefaultShareBatchDeliveryCoordinator(
+            identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+            contactRepository: contacts,
+            messageRepository: fixture.messageRepo,
+            mediaAttachmentRepository: fixture.repo,
+            groupRepository: InMemoryGroupRepository(),
+            groupMessageRepository: InMemoryGroupMessageRepository(),
+            bridge: bridge,
+            p2pService: _DirectMediaCustodyFakeP2PService(
+              initialState: const NodeState(
+                isStarted: true,
+                peerId: 'my-peer-id-12345',
+              ),
+            )..isConnectedToPeerResult = false,
+            mediaFileManager: MediaFileManager(),
+            imageProcessor: _imageProcessor(),
+            directMediaBlobCustodyClientEnabled: true,
+            processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+              processedMedia: <PendingComposerMedia>[
+                PendingComposerMedia(
+                  file: source,
+                  budgetBytes: source.lengthSync(),
+                ),
+              ],
+            ),
+          );
+          final result = await coordinator.deliverDirectMediaBatchForwardStrict(
+            shareIntent: ShareIntent(
+              type: ShareIntentType.files,
+              filePaths: <String>[source.path],
+              forwardProvenance: const ForwardProvenance(
+                operationDedupKey: forwardToken,
+              ),
+            ),
+            contacts: <ContactModel>[contact],
+          );
+          return (fixture: fixture, result: result, uploads: uploads);
+        }
+
+        // Pre-commit refusal is picker-owned failure with zero side effects.
+        final precommit = await runScenario('precommit');
+        expect(
+          precommit.result.results.single.status,
+          ShareBatchTargetStatus.failed,
+        );
+        expect(await precommit.fixture.db.query('messages'), isEmpty);
+        expect(
+          await precommit.fixture.db.query(kDirectMediaBlobCustodyTable),
+          isEmpty,
+        );
+        expect(precommit.uploads, isEmpty);
+
+        // An exact forwarded commit whose result and reconciliation are BOTH
+        // ambiguous is resolved only by the share-level authority re-read.
+        final ambiguous = await runScenario('ambiguous');
+        expect(
+          ambiguous.result.results.single.status,
+          ShareBatchTargetStatus.queued,
+        );
+        final ambiguousParents = await ambiguous.fixture.db.query('messages');
+        expect(ambiguousParents, hasLength(1));
+        expect(ambiguousParents.single['dedup_key'], forwardToken);
+        expect(ambiguousParents.single['is_forwarded'], 1);
+        expect(
+          await ambiguous.fixture.db.query(kDirectMediaBlobCustodyTable),
+          hasLength(1),
+        );
+        expect(
+          ambiguous.uploads,
+          isEmpty,
+          reason: 'the wrapper failed before any strict upload',
+        );
+
+        // One exact-field drift is NOT authority and never legacy-falls back.
+        final drift = await runScenario('drift');
+        expect(
+          drift.result.results.single.status,
+          ShareBatchTargetStatus.failed,
+        );
+        final driftedParents = await drift.fixture.db.query('messages');
+        expect(driftedParents, hasLength(1));
+        expect(driftedParents.single['dedup_key'], 'tc350-drifted-token');
+        expect(
+          drift.uploads,
+          isEmpty,
+          reason: 'strict selection never falls back to the legacy uploader',
+        );
+      },
+    );
+
+    test(
+      'TC-350-03b postcommit progress observer cannot replace durable result',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final documents = Directory.systemTemp.createTempSync(
+          'internal_forward_350_observer_',
+        );
+        PathProviderPlatform.instance = _SharePathProvider(documents.path);
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (documents.existsSync()) documents.deleteSync(recursive: true);
+        });
+
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${documents.path}/identity.sqlite',
+        );
+        addTearDown(fixture.dispose);
+        final contact = _makeMlKemContact(
+          'peer-350-observer-target',
+          'Observer 350',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(contact);
+        final source = File('${documents.path}/observer.jpg')
+          ..writeAsBytesSync(List<int>.generate(64, (index) => index));
+        final bridge = _RecipientAuthorityObservingBridge(
+          onMediaUpload: (_) async {},
+        );
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: _DirectMediaCustodyFakeP2PService(
+            initialState: const NodeState(
+              isStarted: true,
+              peerId: 'my-peer-id-12345',
+            ),
+          )..isConnectedToPeerResult = false,
+          mediaFileManager: MediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          directMediaBlobCustodyClientEnabled: true,
+          processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: source,
+                budgetBytes: source.lengthSync(),
+              ),
+            ],
+          ),
+        );
+
+        var observerCalls = 0;
+        final result = await coordinator.deliverDirectMediaBatchForwardStrict(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+            forwardProvenance: const ForwardProvenance(
+              operationDedupKey: 'tc350-observer-token',
+            ),
+          ),
+          contacts: <ContactModel>[contact],
+          onProgress: (_) {
+            observerCalls++;
+            throw StateError('injected progress observer failure');
+          },
+        );
+
+        expect(observerCalls, greaterThan(0));
+        expect(
+          result.results.single.status,
+          isNot(ShareBatchTargetStatus.failed),
+          reason:
+              'a throwing UI observer cannot turn a durable v111 target into '
+              'picker-owned failure',
+        );
+        final parents = await fixture.db.query('messages');
+        expect(parents, hasLength(1));
+        expect(parents.single['is_forwarded'], 1);
+        expect(parents.single['dedup_key'], 'tc350-observer-token');
+        expect(
+          await fixture.db.query(kDirectMediaBlobCustodyTable),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'TC-350-01a source-gated received and group-origin forwards publish custody before network',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final documents = Directory.systemTemp.createTempSync(
+          'internal_forward_350_causal_',
+        );
+        PathProviderPlatform.instance = _SharePathProvider(documents.path);
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (documents.existsSync()) documents.deleteSync(recursive: true);
+        });
+
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final fileManager = MediaFileManager();
+        final sourceBytes = File(
+          'integration_test/fixtures/received_media_egress_fixture.jpg',
+        ).readAsBytesSync();
+
+        // ---- Source A: received direct media held by its exact source gate.
+        const receivedSourcePeerId = 'peer-350-received-source';
+        const receivedSourceMessageId = 'msg-350-received-source';
+        const receivedSourceAttachmentId = 'att-350-received-source';
+        await fixture.messageRepo.saveMessage(
+          ConversationMessage(
+            id: receivedSourceMessageId,
+            contactPeerId: receivedSourcePeerId,
+            senderPeerId: receivedSourcePeerId,
+            text: 'received caption',
+            timestamp: '2026-08-09T09:00:00.000Z',
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: '2026-08-09T09:00:00.000Z',
+          ),
+        );
+        final receivedSourceFile = File(
+          await fileManager.localPathForAttachment(
+            contactPeerId: receivedSourcePeerId,
+            blobId: receivedSourceAttachmentId,
+            mime: 'image/jpeg',
+          ),
+        );
+        receivedSourceFile.parent.createSync(recursive: true);
+        receivedSourceFile.writeAsBytesSync(sourceBytes);
+        await fixture.repo.saveAttachment(
+          MediaAttachment(
+            id: receivedSourceAttachmentId,
+            messageId: receivedSourceMessageId,
+            mime: 'image/jpeg',
+            size: sourceBytes.length,
+            mediaType: 'image',
+            localPath: receivedSourceFile.path,
+            downloadStatus: 'done',
+            createdAt: '2026-08-09T09:00:00.000Z',
+            contentHash: List.filled(64, 'b').join(),
+            encryptionKeyBase64: 'received-source-key',
+            encryptionNonce: 'received-source-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+
+        // ---- Source B: verified discussion media held by its group gate.
+        const groupSourceId = 'group-350-source';
+        const groupSourceMessageId = 'msg-350-group-source';
+        const groupSourceAttachmentId = 'att-350-group-source';
+        final groups = InMemoryGroupRepository();
+        final groupMessages = InMemoryGroupMessageRepository();
+        await groups.saveGroup(_makeGroup(groupSourceId, 'Source Group 350'));
+        await _seedGroupMembers(groups, groupSourceId);
+        await _saveLatestGroupKey(groups, groupSourceId);
+        await groupMessages.saveMessage(
+          GroupMessage(
+            id: groupSourceMessageId,
+            groupId: groupSourceId,
+            senderPeerId: 'peer-350-group-sender',
+            text: 'group caption',
+            timestamp: DateTime.utc(2026, 8, 9, 9),
+            isIncoming: true,
+            createdAt: DateTime.utc(2026, 8, 9, 9),
+          ),
+        );
+        final groupSourceFile = File(
+          await fileManager.localPathForAttachment(
+            contactPeerId: groupSourceId,
+            blobId: groupSourceAttachmentId,
+            mime: 'image/jpeg',
+          ),
+        );
+        groupSourceFile.parent.createSync(recursive: true);
+        groupSourceFile.writeAsBytesSync(sourceBytes);
+        await fixture.repo.saveAttachment(
+          MediaAttachment(
+            id: groupSourceAttachmentId,
+            messageId: groupSourceMessageId,
+            mime: 'image/jpeg',
+            size: sourceBytes.length,
+            mediaType: 'image',
+            localPath: groupSourceFile.path,
+            downloadStatus: 'done',
+            createdAt: '2026-08-09T09:00:00.000Z',
+            contentHash: List.filled(64, 'c').join(),
+            encryptionKeyBase64: 'group-source-key',
+            encryptionNonce: 'group-source-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.group,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        // ---- Destinations.
+        final relayContact = _makeMlKemContact(
+          'peer-350-relay-target',
+          'Relay 350',
+        );
+        final lanContact = _makeMlKemContact('peer-350-lan-target', 'Lan 350');
+        final groupForwardContact = _makeMlKemContact(
+          'peer-350-group-target',
+          'GroupFwd 350',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(relayContact);
+        await contacts.addContact(lanContact);
+        await contacts.addContact(groupForwardContact);
+
+        final observedAtFirstNetwork = <String, _ForwardAuthoritySnapshot>{};
+        Future<void> observe(
+          String recipientPeerId, {
+          bool strictRelayRequest = false,
+          String? lanFilePath,
+        }) async {
+          if (observedAtFirstNetwork.containsKey(recipientPeerId)) return;
+          final snapshot = await _readForwardAuthority(
+            fixture,
+            recipientPeerId,
+          );
+          // A LAN leg is strict only when it streams the exact v111 artifact
+          // that already exists for this target.
+          final lanStreamsCustodyArtifact =
+              lanFilePath != null &&
+              snapshot.ciphertextRelativePaths.any(
+                (relative) =>
+                    lanFilePath.replaceAll('\\', '/').endsWith(relative),
+              );
+          observedAtFirstNetwork[recipientPeerId] = snapshot.withStrict(
+            strictRelayRequest || lanStreamsCustodyArtifact,
+          );
+        }
+
+        final bridge = _RecipientAuthorityObservingBridge(
+          onMediaUpload: (payload) async {
+            final recipient = payload['to'] as String?;
+            if (recipient != null) {
+              await observe(
+                recipient,
+                strictRelayRequest: payload['custodyContract'] != null,
+              );
+            }
+          },
+        );
+        final p2pService = _LanForPeerFakeP2PService(
+          localPeerIds: <String>{lanContact.peerId},
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+          onSendLocalMedia: (peerId, filePath) =>
+              observe(peerId, lanFilePath: filePath),
+        )..isConnectedToPeerResult = false;
+
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: groups,
+          groupMessageRepository: groupMessages,
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: fileManager,
+          imageProcessor: _imageProcessor(),
+          directMediaBlobCustodyClientEnabled: true,
+          processSharedMediaFn: (intent) async => ProcessedShareMediaBatch(
+            processedMedia: intent.filePaths
+                .map(
+                  (filePath) => PendingComposerMedia(
+                    file: File(filePath),
+                    budgetBytes: File(filePath).lengthSync(),
+                  ),
+                )
+                .toList(growable: false),
+          ),
+        );
+
+        // ---- Case 1: received-direct forward fans out to a relay peer and a
+        // LAN peer through the real capture lease.
+        const receivedBaseToken = 'tc350-received-operation';
+        final receivedResult = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.mixed,
+            text: 'received caption',
+            filePaths: const <String>['/stale/picker/path.jpg'],
+            forwardProvenance: const ForwardProvenance(
+              operationDedupKey: receivedBaseToken,
+            ),
+            directForwardSourceAuthority: DirectForwardSourceAuthority(
+              contactPeerId: receivedSourcePeerId,
+              messageId: receivedSourceMessageId,
+              attachmentIds: const <String>[receivedSourceAttachmentId],
+            ),
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(relayContact),
+            ShareTargetSelection.contact(lanContact),
+          ],
+        );
+        expect(
+          receivedResult.failureCount,
+          0,
+          reason: receivedResult.results.map((r) => r.detail).join('; '),
+        );
+
+        // ---- Case 2: verified discussion media forwarded to a contact.
+        const groupBaseToken = 'tc350-group-operation';
+        final groupResult = await coordinator.deliverGroupMediaForward(
+          request: const GroupMediaForwardRequest(
+            groupId: groupSourceId,
+            messageId: groupSourceMessageId,
+            attachmentId: groupSourceAttachmentId,
+            initialCaption: 'group caption',
+            provenance: ForwardProvenance(operationDedupKey: groupBaseToken),
+          ),
+          caption: 'group caption',
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(groupForwardContact),
+          ],
+        );
+        expect(
+          groupResult.failureCount,
+          0,
+          reason: groupResult.results.map((r) => r.detail).join('; '),
+        );
+
+        // Every reviewed entry observed complete forwarded authority at its
+        // FIRST network observation (LAN for the local peer, relay otherwise).
+        for (final entry in <(String, String)>[
+          (relayContact.peerId, receivedBaseToken),
+          (lanContact.peerId, receivedBaseToken),
+          (groupForwardContact.peerId, groupBaseToken),
+        ]) {
+          final recipientPeerId = entry.$1;
+          final baseToken = entry.$2;
+          final snapshot = observedAtFirstNetwork[recipientPeerId];
+          expect(
+            snapshot,
+            isNotNull,
+            reason: 'no network observation for $recipientPeerId',
+          );
+          expect(
+            snapshot!.complete,
+            isTrue,
+            reason:
+                'no complete parent/attachment/v110/v111 authority existed '
+                'before the first network call for $recipientPeerId',
+          );
+          expect(snapshot.isForwarded, isTrue, reason: recipientPeerId);
+          expect(
+            snapshot.dedupKey,
+            announcementForwardProvenanceForContact(
+              base: ForwardProvenance(operationDedupKey: baseToken),
+              contactPeerId: recipientPeerId,
+            ).operationDedupKey,
+            reason: 'generic and group-origin tokens stay contact-scoped',
+          );
+          expect(snapshot.strictRequestObserved, isTrue);
+        }
+
+        // Fan-out targets keep fresh, target-owned identities.
+        final relaySnapshot = observedAtFirstNetwork[relayContact.peerId]!;
+        final lanSnapshot = observedAtFirstNetwork[lanContact.peerId]!;
+        expect(relaySnapshot.messageId, isNot(lanSnapshot.messageId));
+        expect(
+          relaySnapshot.attachmentIds.intersection(lanSnapshot.attachmentIds),
+          isEmpty,
+        );
+        expect(relaySnapshot.dedupKey, isNot(lanSnapshot.dedupKey));
+
+        // Source rows and files are untouched by the adopter.
+        final receivedSourceAfter = await fixture.repo.getAttachmentById(
+          receivedSourceAttachmentId,
+        );
+        expect(receivedSourceAfter?.localPath, receivedSourceFile.path);
+        expect(receivedSourceFile.readAsBytesSync(), sourceBytes);
+        expect(groupSourceFile.readAsBytesSync(), sourceBytes);
+
+        // Strict success bound exactly one v108 media-custody envelope per
+        // target, and the durable parent kept its exact forwarded identity.
+        for (final recipientPeerId in <String>[
+          relayContact.peerId,
+          lanContact.peerId,
+          groupForwardContact.peerId,
+        ]) {
+          final snapshot = observedAtFirstNetwork[recipientPeerId]!;
+          expect(
+            p2pService.mediaCustodyStoresByPeerId[recipientPeerId],
+            hasLength(1),
+            reason: recipientPeerId,
+          );
+          expect(
+            p2pService.mediaCustodyStoresByPeerId[recipientPeerId]!.single,
+            contains(snapshot.messageId!),
+            reason: recipientPeerId,
+          );
+          final durable = await fixture.messageRepo.getMessage(
+            snapshot.messageId!,
+          );
+          expect(durable, isNotNull, reason: recipientPeerId);
+          expect(durable!.isForwarded, isTrue, reason: recipientPeerId);
+          expect(durable.dedupKey, snapshot.dedupKey, reason: recipientPeerId);
+        }
+      },
+    );
 
     test(
       'TC-345-05b fresh direct media share enters insert-fresh custody without preparation token',
@@ -4209,6 +5096,205 @@ class _AuthorityObservingShareBridge extends PassthroughCryptoBridge {
       });
     }
     return response;
+  }
+}
+
+/// One durable-authority observation taken at a target's FIRST network call.
+class _ForwardAuthoritySnapshot {
+  const _ForwardAuthoritySnapshot({
+    required this.complete,
+    required this.dedupKey,
+    required this.isForwarded,
+    required this.messageId,
+    required this.attachmentIds,
+    required this.ciphertextRelativePaths,
+    required this.strictRequestObserved,
+  });
+
+  final bool complete;
+  final String? dedupKey;
+  final bool isForwarded;
+  final String? messageId;
+  final Set<String> attachmentIds;
+  final Set<String> ciphertextRelativePaths;
+  final bool strictRequestObserved;
+
+  _ForwardAuthoritySnapshot withStrict(bool strict) =>
+      _ForwardAuthoritySnapshot(
+        complete: complete,
+        dedupKey: dedupKey,
+        isForwarded: isForwarded,
+        messageId: messageId,
+        attachmentIds: attachmentIds,
+        ciphertextRelativePaths: ciphertextRelativePaths,
+        strictRequestObserved: strict,
+      );
+}
+
+Future<_ForwardAuthoritySnapshot> _readForwardAuthority(
+  MediaRepositoryRealDbFixture fixture,
+  String recipientPeerId,
+) async {
+  final parentRows = await fixture.db.query(
+    'messages',
+    where: 'contact_peer_id = ? AND is_incoming = 0',
+    whereArgs: <Object?>[recipientPeerId],
+  );
+  if (parentRows.length != 1) {
+    return const _ForwardAuthoritySnapshot(
+      complete: false,
+      dedupKey: null,
+      isForwarded: false,
+      messageId: null,
+      attachmentIds: <String>{},
+      ciphertextRelativePaths: <String>{},
+      strictRequestObserved: false,
+    );
+  }
+  final parent = ConversationMessage.fromMap(parentRows.single);
+  final attachments = await fixture.repo.getAttachmentsForMessage(
+    parent.id,
+    owner: MediaOwnerLane.direct,
+  );
+  final custodyRows = await fixture.repo.loadDirectMediaBlobCustodyForMessage(
+    parent.id,
+  );
+  final complete =
+      attachments.isNotEmpty &&
+      attachments.length == custodyRows.length &&
+      parent.directMediaCustodyIntentId != null &&
+      parent.timestamp == parent.createdAt &&
+      !parent.isIncoming &&
+      attachments.every(
+        (attachment) =>
+            attachment.messageId == parent.id &&
+            attachment.ownerLane == MediaOwnerLane.direct &&
+            attachment.downloadStatus == 'upload_pending' &&
+            attachment.encryptionNonce?.isNotEmpty == true,
+      ) &&
+      custodyRows.every(
+        (row) =>
+            row.messageId == parent.id &&
+            row.recipientPeerId == recipientPeerId &&
+            row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+            row.state == DirectMediaBlobCustodyState.outgoingPrepared,
+      );
+  return _ForwardAuthoritySnapshot(
+    complete: complete,
+    dedupKey: parent.dedupKey,
+    isForwarded: parent.isForwarded,
+    messageId: parent.id,
+    attachmentIds: attachments.map((attachment) => attachment.id).toSet(),
+    ciphertextRelativePaths: custodyRows
+        .map((row) => row.ciphertextRelativePath)
+        .whereType<String>()
+        .toSet(),
+    strictRequestObserved: false,
+  );
+}
+
+/// Observes every `media:upload` and returns the strict stored response so a
+/// strict-selected target can complete without a real relay.
+class _RecipientAuthorityObservingBridge extends PassthroughCryptoBridge {
+  _RecipientAuthorityObservingBridge({required this.onMediaUpload});
+
+  final Future<void> Function(Map<String, dynamic> payload) onMediaUpload;
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    final command = request['cmd'] as String?;
+    final payload = request['payload'] as Map<String, dynamic>?;
+    if (command == 'media:upload' && payload != null) {
+      await onMediaUpload(payload);
+    }
+    final response = await super.send(message);
+    if (command == 'media:upload' &&
+        payload != null &&
+        payload['custodyContract'] != null) {
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      return jsonEncode(<String, dynamic>{
+        ...decoded,
+        'id': payload['id'],
+        'storeStatus': 'stored',
+        'custodyKind': payload['custodyKind'],
+        'custodyContract': payload['custodyContract'],
+        'contentHash': payload['contentHash'],
+        'size': File(payload['filePath'] as String).lengthSync(),
+        'mime': payload['mime'],
+        'expiresAtMs': DateTime.now()
+            .toUtc()
+            .add(const Duration(days: 1))
+            .millisecondsSinceEpoch,
+        'custodyRelayPeerId': 'relay-350',
+      });
+    }
+    return response;
+  }
+}
+
+/// LAN-local only for the named peers, so one target's FIRST network call is
+/// `sendLocalMedia` while the others reach the relay first.
+class _LanForPeerFakeP2PService extends _DirectMediaCustodyFakeP2PService {
+  _LanForPeerFakeP2PService({
+    required this.localPeerIds,
+    required this.onSendLocalMedia,
+    super.initialState,
+  });
+
+  final Set<String> localPeerIds;
+  final Future<void> Function(String peerId, String filePath) onSendLocalMedia;
+
+  /// Every strict media-expiry-bounded v108 envelope store, by recipient.
+  final Map<String, List<String>> mediaCustodyStoresByPeerId = {};
+
+  @override
+  bool isLocalPeer(String peerId) => localPeerIds.contains(peerId);
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) {
+    mediaCustodyStoresByPeerId
+        .putIfAbsent(toPeerId, () => <String>[])
+        .add(message);
+    return super.storeInMediaExpiryBoundedInboxDetailed(
+      toPeerId,
+      message,
+      custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+      timeoutMs: timeoutMs,
+    );
+  }
+
+  @override
+  Future<bool> sendLocalMedia({
+    required String peerId,
+    required String filePath,
+    required String mime,
+    required String mediaId,
+    required String fromPeerId,
+    int? durationMs,
+    List<double>? waveform,
+    String? filename,
+    bool enc = false,
+    String? encScheme,
+  }) async {
+    await onSendLocalMedia(peerId, filePath);
+    return super.sendLocalMedia(
+      peerId: peerId,
+      filePath: filePath,
+      mime: mime,
+      mediaId: mediaId,
+      fromPeerId: fromPeerId,
+      durationMs: durationMs,
+      waveform: waveform,
+      filename: filename,
+      enc: enc,
+      encScheme: encScheme,
+    );
   }
 }
 

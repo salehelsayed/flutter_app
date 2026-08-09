@@ -1795,12 +1795,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required expectedAttachmentRows,
             required preparedAttachmentRows,
             required custodyRows,
+            authorizedForwardDedupKey,
           }) => dbStageFreshOutgoingDirectMediaBlobGeneration(
             db,
             parentRow: parentRow,
             expectedAttachmentRows: expectedAttachmentRows,
             preparedAttachmentRows: preparedAttachmentRows,
             custodyRows: custodyRows,
+            authorizedForwardDedupKey: authorizedForwardDedupKey,
           ),
       dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
           dbLoadDirectMediaBlobCustodyForAttachment(
