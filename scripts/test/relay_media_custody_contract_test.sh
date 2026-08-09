@@ -146,13 +146,17 @@ if [[ "$schema_token_owners" != "$expected_schema_token_owners" ]]; then
   fail 'strict relay-media custody schema owner allowlist changed'
 fi
 
+# Plan 348 permits the external-share coordinator to adopt the prepared sender
+# owner, but feature producers still may not inline strict wire/schema tokens.
+# Keeping this literal-token guard over share/groups/posts allows the reviewed
+# coordinator call while continuing to reject a raw strict helper/schema fork.
 if rg -n -g '*.dart' \
   'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId|blobCustody' \
   lib/features/share lib/features/groups lib/features/posts >/dev/null; then
   rg -n -g '*.dart' \
     'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId|blobCustody' \
     lib/features/share lib/features/groups lib/features/posts >&2 || true
-  fail 'excluded external-share/group/post producer adopted strict blob custody'
+  fail 'feature producer inlined strict blob custody wire/schema ownership'
 fi
 
 require_fixed "'MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED'" \
@@ -184,4 +188,4 @@ require_fixed 'MEDIA_CUSTODY_COMMIT_INDETERMINATE' go-mknoon/node/media.go
 
 jq empty "$DASHBOARD"
 
-printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347 adopter contract\n'
+printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347/348 adopter contract\n'

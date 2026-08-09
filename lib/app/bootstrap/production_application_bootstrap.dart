@@ -1730,6 +1730,19 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             preparedAttachmentRows: preparedAttachmentRows,
             custodyRows: custodyRows,
           ),
+      dbStageFreshOutgoingDirectMediaBlobGeneration:
+          ({
+            required parentRow,
+            required expectedAttachmentRows,
+            required preparedAttachmentRows,
+            required custodyRows,
+          }) => dbStageFreshOutgoingDirectMediaBlobGeneration(
+            db,
+            parentRow: parentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            preparedAttachmentRows: preparedAttachmentRows,
+            custodyRows: custodyRows,
+          ),
       dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
           dbLoadDirectMediaBlobCustodyForAttachment(
             db,

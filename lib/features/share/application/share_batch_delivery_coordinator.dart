@@ -6,18 +6,30 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
+import 'package:flutter_app/core/utils/text_sanitizer.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/build_received_media_forward.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -341,6 +353,7 @@ class DefaultShareBatchDeliveryCoordinator
   final SendToGroupFn? sendToGroupFn;
   final Stream<Map<String, dynamic>>? mediaUploadProgressEvents;
   final String shareStoredOfflinePromise;
+  final bool directMediaBlobCustodyClientEnabled;
   final DateTime Function() _forwardNow;
   final Map<String, DateTime> _forwardTimestampByOperationKey = {};
 
@@ -362,11 +375,15 @@ class DefaultShareBatchDeliveryCoordinator
     this.sendToContactFn,
     this.sendToGroupFn,
     this.mediaUploadProgressEvents,
+    bool? directMediaBlobCustodyClientEnabled,
     String? shareStoredOfflinePromise,
     DateTime Function()? forwardNow,
   }) : shareStoredOfflinePromise =
            shareStoredOfflinePromise ??
            AppLocalizationsEn().share_stored_offline_promise,
+       directMediaBlobCustodyClientEnabled =
+           directMediaBlobCustodyClientEnabled ??
+           kDirectMediaBlobCustodyClientEnabled,
        _forwardNow = forwardNow ?? _defaultForwardNow;
 
   String? get _currentSenderDeviceId {
@@ -416,6 +433,7 @@ class DefaultShareBatchDeliveryCoordinator
         shareIntent: shareIntent,
         targets: targets,
         onProgress: onProgress,
+        externalOrdinaryShare: true,
       );
     }
 
@@ -489,6 +507,7 @@ class DefaultShareBatchDeliveryCoordinator
     ShareBatchDeliveryProgressCallback? onProgress,
     IdentityModel? preloadedIdentity,
     List<_InternalForwardTargetResolution>? internalForwardTargetResolutions,
+    bool externalOrdinaryShare = false,
   }) async {
     final identity =
         preloadedIdentity ?? await identityRepository.loadIdentity();
@@ -587,6 +606,7 @@ class DefaultShareBatchDeliveryCoordinator
                       uploadHooks: uploadHooks,
                       requireCurrentContact:
                           internalForwardTargetResolutions != null,
+                      externalOrdinaryShare: externalOrdinaryShare,
                     ),
             ShareTargetSelectionKind.group =>
               await (sendToGroupFn ?? _sendToGroup)(
@@ -1209,6 +1229,376 @@ class DefaultShareBatchDeliveryCoordinator
     );
   }
 
+  Future<ShareBatchTargetResult> _sendExternalDirectMediaWithBlobCustody({
+    required IdentityModel identity,
+    required ShareIntent shareIntent,
+    required ContactModel contact,
+    required List<PendingComposerMedia> processedMedia,
+    required ShareBatchUploadHooks uploadHooks,
+    required DirectMediaBlobCustodyRepository repository,
+  }) async {
+    final messageId = _shareBatchUuid.v4();
+    final timestamp = _forwardNow().toUtc().toIso8601String();
+    final attachmentIds = List<String>.generate(
+      processedMedia.length,
+      (_) => _shareBatchUuid.v4(),
+      growable: false,
+    );
+    final lease = mediaUploadInFlightTracker.tryClaimAll(
+      attachmentIds,
+      source: MediaUploadTriggerSource.foreground,
+    );
+    if (lease == null) {
+      return ShareBatchTargetResult(
+        target: ShareTargetSelection.contact(contact),
+        status: ShareBatchTargetStatus.failed,
+        detail: 'Media upload is already in progress.',
+      );
+    }
+
+    var hasDurableAuthority = false;
+    var progressStarted = false;
+    var progressSettled = false;
+    PreparedDirectMediaBlobUploadResult? uploadResult;
+    ConversationMessage? attemptedParent;
+    List<MediaAttachment> attemptedAttachments = const <MediaAttachment>[];
+    try {
+      final expectedAttachments = <MediaAttachment>[];
+      final sources = <PreparedDirectMediaBlobSource>[];
+      for (var index = 0; index < processedMedia.length; index++) {
+        final media = processedMedia[index];
+        final attachmentId = attachmentIds[index];
+        final mime = _mimeFromPath(media.file.path);
+        final size = await media.file.length();
+        if (size <= 0) {
+          return ShareBatchTargetResult(
+            target: ShareTargetSelection.contact(contact),
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Media is unavailable.',
+          );
+        }
+        final localPath = MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: mime,
+        );
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: mime,
+          size: size,
+          mediaType: MediaAttachment.mediaTypeFromMime(mime),
+          width: media.width,
+          height: media.height,
+          durationMs: media.durationMs,
+          localPath: localPath,
+          downloadStatus: 'upload_pending',
+          createdAt: timestamp,
+          ownerLane: MediaOwnerLane.direct,
+        );
+        expectedAttachments.add(attachment);
+        sources.add(
+          PreparedDirectMediaBlobSource(
+            attachment: attachment,
+            plaintextPath: media.file.path,
+          ),
+        );
+      }
+      final intentId = computeDirectMediaCustodyIntentId(
+        messageId: messageId,
+        attachmentIds: attachmentIds,
+      );
+      final parent = ConversationMessage(
+        id: messageId,
+        contactPeerId: contact.peerId,
+        senderPeerId: identity.peerId,
+        text: sanitizeMessageText(shareIntent.text ?? ''),
+        timestamp: timestamp,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: timestamp,
+        directMediaCustodyIntentId: intentId,
+        dedupKey: messageId,
+        isForwarded: false,
+      );
+      attemptedParent = parent;
+      attemptedAttachments = List<MediaAttachment>.unmodifiable(
+        expectedAttachments,
+      );
+      for (var index = 0; index < expectedAttachments.length; index++) {
+        uploadHooks.started(
+          blobId: expectedAttachments[index].id,
+          budgetBytes: processedMedia[index].budgetBytes,
+        );
+      }
+      progressStarted = true;
+
+      final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+        repository: repository,
+        artifactStore: DirectMediaBlobArtifactStore(),
+      );
+      uploadResult = await coordinator.prepareAndUploadFreshMessage(
+        bridge: bridge,
+        identityPeerId: identity.peerId,
+        recipientPeerId: contact.peerId,
+        parent: parent,
+        sources: sources,
+        onAuthorityReady: (winnerAttachments) =>
+            _copyExternalSharePreviewAfterAuthority(
+              messageId: messageId,
+              processedMedia: processedMedia,
+              expectedAttachments: expectedAttachments,
+              winnerAttachments: winnerAttachments,
+            ),
+        onGenerationReady: p2pService.isLocalPeer(contact.peerId)
+            ? (artifacts) async {
+                for (final artifact in artifacts) {
+                  await p2pService.sendLocalMedia(
+                    peerId: contact.peerId,
+                    filePath: artifact.absoluteCiphertextPath,
+                    mime: kOpaqueMediaTransportMime,
+                    mediaId: artifact.attachment.id,
+                    fromPeerId: identity.peerId,
+                    durationMs: artifact.attachment.durationMs,
+                    enc: true,
+                    encScheme: artifact.attachment.encryptionScheme,
+                  );
+                }
+              }
+            : null,
+      );
+      hasDurableAuthority = uploadResult.hasDurableAuthority;
+      for (final _ in attachmentIds) {
+        uploadHooks.settled(succeeded: uploadResult.isComplete);
+      }
+      progressSettled = true;
+      if (!uploadResult.isComplete) {
+        hasDurableAuthority =
+            hasDurableAuthority ||
+            await _hasExactFreshExternalShareAuthority(
+              parent: parent,
+              expectedAttachments: expectedAttachments,
+              repository: repository,
+            );
+        return ShareBatchTargetResult(
+          target: ShareTargetSelection.contact(contact),
+          status: hasDurableAuthority
+              ? ShareBatchTargetStatus.queued
+              : ShareBatchTargetStatus.failed,
+          detail: hasDurableAuthority
+              ? 'Saved locally for later retry.'
+              : 'Media preparation failed.',
+        );
+      }
+
+      uploadHooks.sending();
+      try {
+        final (result, _) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepository,
+          targetPeerId: contact.peerId,
+          text: parent.text,
+          senderPeerId: identity.peerId,
+          senderUsername: identity.username,
+          messageId: messageId,
+          timestamp: timestamp,
+          createdAt: timestamp,
+          dedupKey: messageId,
+          isForwarded: false,
+          bridge: bridge,
+          recipientMlKemPublicKey: contact.mlKemPublicKey,
+          mediaAttachments: uploadResult.attachments,
+          mediaAttachmentRepo: mediaAttachmentRepository,
+        );
+        return ShareBatchTargetResult(
+          target: ShareTargetSelection.contact(contact),
+          status: result == SendChatMessageResult.success
+              ? ShareBatchTargetStatus.sent
+              : ShareBatchTargetStatus.queued,
+          detail: result == SendChatMessageResult.success
+              ? 'Sent.'
+              : 'Saved locally for later retry.',
+        );
+      } on Object {
+        return ShareBatchTargetResult(
+          target: ShareTargetSelection.contact(contact),
+          status: ShareBatchTargetStatus.queued,
+          detail: 'Saved locally for later retry.',
+        );
+      }
+    } on Object {
+      try {
+        final parent = attemptedParent;
+        if (!hasDurableAuthority && parent != null) {
+          hasDurableAuthority = await _hasExactFreshExternalShareAuthority(
+            parent: parent,
+            expectedAttachments: attemptedAttachments,
+            repository: repository,
+          );
+        }
+      } on Object {
+        // Keep the known authority fact. A failed re-read cannot revoke it.
+      }
+      return ShareBatchTargetResult(
+        target: ShareTargetSelection.contact(contact),
+        status: hasDurableAuthority
+            ? ShareBatchTargetStatus.queued
+            : ShareBatchTargetStatus.failed,
+        detail: hasDurableAuthority
+            ? 'Saved locally for later retry.'
+            : 'Share failed.',
+      );
+    } finally {
+      if (progressStarted && !progressSettled) {
+        final succeeded = uploadResult?.isComplete == true;
+        for (final _ in attachmentIds) {
+          uploadHooks.settled(succeeded: succeeded);
+        }
+      }
+      mediaUploadInFlightTracker.release(lease);
+    }
+  }
+
+  Future<bool> _copyExternalSharePreviewAfterAuthority({
+    required String messageId,
+    required List<PendingComposerMedia> processedMedia,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> winnerAttachments,
+  }) async {
+    final winnerById = <String, MediaAttachment>{
+      for (final attachment in winnerAttachments) attachment.id: attachment,
+    };
+    if (winnerById.length != processedMedia.length ||
+        expectedAttachments.length != processedMedia.length) {
+      return false;
+    }
+    for (var index = 0; index < processedMedia.length; index++) {
+      final source = processedMedia[index].file;
+      final expectedId = expectedAttachments[index].id;
+      final winner = winnerById[expectedId];
+      if (winner == null || winner.messageId != messageId) return false;
+      final expectedPath = MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: winner.id,
+        mime: winner.mime,
+      );
+      if (winner.localPath != expectedPath) return false;
+      final copiedPath = await mediaFileManager.copyToDurableStorage(
+        sourceFilePath: source.path,
+        messageId: messageId,
+        attachmentId: winner.id,
+        mime: winner.mime,
+      );
+      if (copiedPath.replaceAll('\\', '/') != expectedPath) return false;
+      final absolutePath = await mediaFileManager.resolveStoredPath(copiedPath);
+      if (await FileSystemEntity.type(absolutePath, followLinks: false) !=
+          FileSystemEntityType.file) {
+        return false;
+      }
+      final sourceDigest = await sha256.bind(source.openRead()).first;
+      final copyDigest = await sha256.bind(File(absolutePath).openRead()).first;
+      if (sourceDigest.toString() != copyDigest.toString()) return false;
+    }
+    return true;
+  }
+
+  Future<bool> _hasExactFreshExternalShareAuthority({
+    required ConversationMessage parent,
+    required List<MediaAttachment> expectedAttachments,
+    required DirectMediaBlobCustodyRepository repository,
+  }) async {
+    final attachmentIds = expectedAttachments
+        .map((attachment) => attachment.id)
+        .toList(growable: false);
+    final ids = attachmentIds.toSet();
+    if (attachmentIds.isEmpty || ids.length != attachmentIds.length) {
+      return false;
+    }
+    final currentParent = await messageRepository.getMessage(parent.id);
+    final currentAttachments = await mediaAttachmentRepository
+        .getAttachmentsForMessage(parent.id, owner: MediaOwnerLane.direct);
+    final currentRows = await repository.loadDirectMediaBlobCustodyForMessage(
+      parent.id,
+    );
+    final exactIntent = computeDirectMediaCustodyIntentId(
+      messageId: parent.id,
+      attachmentIds: attachmentIds,
+    );
+    final expectedById = <String, MediaAttachment>{
+      for (final attachment in expectedAttachments) attachment.id: attachment,
+    };
+    final currentById = <String, MediaAttachment>{
+      for (final attachment in currentAttachments) attachment.id: attachment,
+    };
+    final rowById = <String, DirectMediaBlobCustodyRow>{
+      for (final row in currentRows) row.attachmentId: row,
+    };
+    return currentParent != null &&
+        !currentParent.isIncoming &&
+        currentParent.id == parent.id &&
+        currentParent.contactPeerId == parent.contactPeerId &&
+        currentParent.senderPeerId == parent.senderPeerId &&
+        currentParent.text == parent.text &&
+        currentParent.timestamp == parent.timestamp &&
+        currentParent.createdAt == parent.createdAt &&
+        currentParent.id == currentParent.dedupKey &&
+        currentParent.timestamp == currentParent.createdAt &&
+        !currentParent.isForwarded &&
+        currentParent.editedAt == null &&
+        currentParent.quotedMessageId == null &&
+        currentParent.deletedAt == null &&
+        currentParent.deletedByPeerId == null &&
+        currentParent.hiddenAt == null &&
+        currentParent.directMediaCustodyIntentId == exactIntent &&
+        currentParent.privateMediaPolicy.version == 0 &&
+        currentParent.privateMediaMode == PrivateMediaMode.ordinary &&
+        currentParent.privateMediaDurationSeconds == null &&
+        currentParent.privateMediaState == PrivateMediaLifecycleState.none &&
+        currentAttachments.length == ids.length &&
+        currentRows.length == ids.length &&
+        expectedById.length == ids.length &&
+        currentById.length == ids.length &&
+        rowById.length == ids.length &&
+        ids.every((attachmentId) {
+          final expected = expectedById[attachmentId];
+          final current = currentById[attachmentId];
+          final row = rowById[attachmentId];
+          if (expected == null || current == null || row == null) return false;
+          final expectedPath =
+              MediaFilePathConvention.relativePathForPendingUpload(
+                messageId: parent.id,
+                attachmentId: attachmentId,
+                mime: expected.mime,
+              );
+          return expected.messageId == parent.id &&
+              expected.ownerLane == MediaOwnerLane.direct &&
+              expected.localPath == expectedPath &&
+              expected.downloadStatus == 'upload_pending' &&
+              expected.contentHash == null &&
+              current.messageId == parent.id &&
+              current.ownerLane == MediaOwnerLane.direct &&
+              current.mime == expected.mime &&
+              current.size == expected.size &&
+              current.mediaType == expected.mediaType &&
+              current.width == expected.width &&
+              current.height == expected.height &&
+              current.durationMs == expected.durationMs &&
+              current.createdAt == expected.createdAt &&
+              current.localPath == expectedPath &&
+              current.downloadStatus == 'upload_pending' &&
+              current.contentHash == row.contentHash &&
+              current.encryptionNonce != null &&
+              current.encryptionNonce!.isNotEmpty &&
+              current.encryptionScheme != null &&
+              current.encryptionScheme!.isNotEmpty &&
+              row.messageId == parent.id &&
+              row.recipientPeerId == parent.contactPeerId &&
+              row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+              (row.state == DirectMediaBlobCustodyState.outgoingPrepared ||
+                  row.state == DirectMediaBlobCustodyState.outgoingStored);
+        });
+  }
+
   Future<ShareBatchTargetResult> _sendToContact({
     required IdentityModel identity,
     required ShareIntent shareIntent,
@@ -1217,6 +1607,7 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareBatchUploadHooks uploadHooks,
     bool useSuppliedContact = false,
     bool requireCurrentContact = false,
+    bool externalOrdinaryShare = false,
   }) async {
     assert(!(useSuppliedContact && requireCurrentContact));
     final currentContact = useSuppliedContact
@@ -1235,6 +1626,59 @@ class DefaultShareBatchDeliveryCoordinator
       );
     }
     final resolvedContact = currentContact ?? contact;
+    final directBlobRepository = switch (mediaAttachmentRepository) {
+      DirectMediaBlobCustodyRepository repository
+          when repository.supportsDirectMediaBlobCustody =>
+        repository,
+      _ => null,
+    };
+    final freshBlobRepository = switch (mediaAttachmentRepository) {
+      FreshOutgoingDirectMediaBlobGenerationRepository repository
+          when repository.supportsFreshOutgoingDirectMediaBlobGeneration =>
+        repository,
+      _ => null,
+    };
+    final directInboxCapability = switch (mediaAttachmentRepository) {
+      OutgoingDirectMediaInboxCustodyStagingRepository repository
+          when repository.supportsDirectMediaInboxCustody =>
+        repository,
+      _ => null,
+    };
+    final textCustodyCapability = switch (messageRepository) {
+      OutgoingDirectTextInboxCustodyRepository repository
+          when repository.supportsDirectTextInboxCustody =>
+        repository,
+      _ => null,
+    };
+    final resolvedMlKemKey = resolvedContact.mlKemPublicKey?.trim();
+    final strictExternalSelected =
+        directMediaBlobCustodyClientEnabled &&
+        externalOrdinaryShare &&
+        !useSuppliedContact &&
+        !requireCurrentContact &&
+        shareIntent.forwardProvenance == null &&
+        shareIntent.directForwardSourceAuthority == null &&
+        processedMedia.isNotEmpty &&
+        GroupMediaForwardPolicy.canTargetContact(resolvedContact) &&
+        resolvedMlKemKey != null &&
+        resolvedMlKemKey.isNotEmpty &&
+        directBlobRepository != null &&
+        freshBlobRepository != null &&
+        directInboxCapability != null &&
+        textCustodyCapability != null &&
+        messageRepository is OutgoingTransportMutationRepository &&
+        p2pService is AckOrExpiryInboxStore &&
+        p2pService is MediaExpiryBoundedInboxStore;
+    if (strictExternalSelected) {
+      return _sendExternalDirectMediaWithBlobCustody(
+        identity: identity,
+        shareIntent: shareIntent,
+        contact: resolvedContact,
+        processedMedia: processedMedia,
+        uploadHooks: uploadHooks,
+        repository: directBlobRepository,
+      );
+    }
     final attachments = <MediaAttachment>[];
 
     for (final media in processedMedia) {

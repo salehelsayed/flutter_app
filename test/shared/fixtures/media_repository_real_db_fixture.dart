@@ -63,6 +63,11 @@ class MediaRepositoryRealDbFixture {
       Future<List<Map<String, Object?>>> Function() load,
     )?
     dbLoadMediaForMessageAround,
+    Future<DirectMediaBlobGenerationDbStageResult> Function(
+      Future<DirectMediaBlobGenerationDbStageResult> Function() stage,
+    )?
+    dbStageFreshOutgoingDirectMediaBlobGenerationAround,
+    bool wireFreshOutgoingDirectMediaBlobGeneration = true,
     Future<bool> Function(
       Map<String, Object?> row, {
       required String messageId,
@@ -149,6 +154,31 @@ class MediaRepositoryRealDbFixture {
             preparedAttachmentRows: preparedAttachmentRows,
             custodyRows: custodyRows,
           ),
+      dbStageFreshOutgoingDirectMediaBlobGeneration:
+          wireFreshOutgoingDirectMediaBlobGeneration
+          ? ({
+              required parentRow,
+              required expectedAttachmentRows,
+              required preparedAttachmentRows,
+              required custodyRows,
+            }) => dbStageFreshOutgoingDirectMediaBlobGenerationAround == null
+                ? dbStageFreshOutgoingDirectMediaBlobGeneration(
+                    db,
+                    parentRow: parentRow,
+                    expectedAttachmentRows: expectedAttachmentRows,
+                    preparedAttachmentRows: preparedAttachmentRows,
+                    custodyRows: custodyRows,
+                  )
+                : dbStageFreshOutgoingDirectMediaBlobGenerationAround(
+                    () => dbStageFreshOutgoingDirectMediaBlobGeneration(
+                      db,
+                      parentRow: parentRow,
+                      expectedAttachmentRows: expectedAttachmentRows,
+                      preparedAttachmentRows: preparedAttachmentRows,
+                      custodyRows: custodyRows,
+                    ),
+                  )
+          : null,
       dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
           dbLoadDirectMediaBlobCustodyForAttachment(
             db,

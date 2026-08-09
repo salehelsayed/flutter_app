@@ -5,14 +5,20 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
+import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/pending_composer_media.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/video_process_result.dart';
@@ -23,6 +29,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -44,6 +51,7 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
 
 class _DissolveOnForwardSnapshotRepository extends InMemoryGroupRepository {
@@ -1438,6 +1446,483 @@ void main() {
       );
       return (result: result, bridge: bridge, p2pService: p2pService);
     }
+
+    test(
+      'TC-348-01 external direct media follows production selector and publishes authority before network',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final documents = Directory.systemTemp.createTempSync(
+          'external_share_348_docs_',
+        );
+        PathProviderPlatform.instance = _SharePathProvider(documents.path);
+        addTearDown(() async {
+          PathProviderPlatform.instance = previousPathProvider;
+          if (documents.existsSync()) documents.deleteSync(recursive: true);
+        });
+
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final identityRepository = FakeIdentityRepository()
+          ..seed(_makeIdentity());
+        final contact = ContactModel(
+          peerId: 'peer-share-348-causal',
+          publicKey: 'pk-peer-share-348-causal',
+          rendezvous: '/dns4/relay/tcp/443',
+          username: 'Share 348',
+          signature: 'sig-peer-share-348-causal',
+          scannedAt: '2026-08-08T12:00:00.000Z',
+          mlKemPublicKey: 'mlkem-peer-share-348-causal',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(contact);
+        final source = File('${documents.path}/external-share.jpg')
+          ..writeAsBytesSync(List<int>.generate(256, (index) => index));
+        final sourceBytes = source.readAsBytesSync();
+        final fileManager = MediaFileManager();
+        var firstNetworkObserved = false;
+        var strictRequestObserved = false;
+        var authorityCompleteAtFirstNetwork = false;
+        var pendingCopyCompleteAtFirstNetwork = false;
+        final bridge = _AuthorityObservingShareBridge(
+          onFirstMediaUpload: (payload) async {
+            if (firstNetworkObserved) return;
+            firstNetworkObserved = true;
+            strictRequestObserved = payload['custodyContract'] != null;
+            final parentRows = await fixture.db.query(
+              'messages',
+              where: 'contact_peer_id = ? AND is_incoming = 0',
+              whereArgs: <Object?>[contact.peerId],
+            );
+            if (parentRows.length != 1) return;
+            final parent = ConversationMessage.fromMap(parentRows.single);
+            final attachments = await fixture.repo.getAttachmentsForMessage(
+              parent.id,
+              owner: MediaOwnerLane.direct,
+            );
+            final custodyRows = await fixture.repo
+                .loadDirectMediaBlobCustodyForMessage(parent.id);
+            authorityCompleteAtFirstNetwork =
+                parent.id == parent.dedupKey &&
+                parent.timestamp == parent.createdAt &&
+                parent.directMediaCustodyIntentId != null &&
+                !parent.isForwarded &&
+                attachments.isNotEmpty &&
+                attachments.length == custodyRows.length &&
+                custodyRows.every(
+                  (row) =>
+                      row.messageId == parent.id &&
+                      row.state == DirectMediaBlobCustodyState.outgoingPrepared,
+                );
+            if (!authorityCompleteAtFirstNetwork) return;
+            pendingCopyCompleteAtFirstNetwork = attachments.every((attachment) {
+              final storedPath = attachment.localPath;
+              if (storedPath == null ||
+                  !storedPath.startsWith('pending_uploads/${parent.id}/')) {
+                return false;
+              }
+              final absolute = path.join(documents.path, storedPath);
+              final file = File(absolute);
+              return file.existsSync() &&
+                  _sameBytesForShare(file.readAsBytesSync(), sourceBytes);
+            });
+          },
+        );
+        final p2pService = _DirectMediaCustodyFakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+        )..isConnectedToPeerResult = true;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: identityRepository,
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: fileManager,
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: source,
+                budgetBytes: sourceBytes.length,
+              ),
+            ],
+          ),
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(contact),
+          ],
+        );
+
+        expect(firstNetworkObserved, isTrue);
+        if (kDirectMediaBlobCustodyClientEnabled) {
+          expect(strictRequestObserved, isTrue);
+          expect(authorityCompleteAtFirstNetwork, isTrue);
+          expect(pendingCopyCompleteAtFirstNetwork, isTrue);
+          expect(result.sentCount, 1);
+        } else {
+          expect(strictRequestObserved, isFalse);
+          expect(authorityCompleteAtFirstNetwork, isFalse);
+          expect(result.failureCount, 0);
+        }
+      },
+    );
+
+    test(
+      'TC-348-04 external fanout preserves progress and authority truth',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final documents = Directory.systemTemp.createTempSync(
+          'external_share_348_fanout_',
+        );
+        PathProviderPlatform.instance = _SharePathProvider(documents.path);
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (documents.existsSync()) documents.deleteSync(recursive: true);
+        });
+
+        var freshStageCalls = 0;
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          dbStageFreshOutgoingDirectMediaBlobGenerationAround: (stage) async {
+            freshStageCalls++;
+            if (freshStageCalls <= 2) {
+              throw StateError('injected pre-commit fresh-stage refusal');
+            }
+            return stage();
+          },
+        );
+        addTearDown(fixture.dispose);
+        final failedContact = _makeMlKemContact(
+          'peer-share-348-failed',
+          'Failed',
+        );
+        final queuedContact = _makeMlKemContact(
+          'peer-share-348-queued',
+          'Queued',
+        );
+        final sentContact = _makeMlKemContact('peer-share-348-sent', 'Sent');
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(failedContact);
+        await contacts.addContact(queuedContact);
+        await contacts.addContact(sentContact);
+        final source = File('${documents.path}/fanout-source.jpg')
+          ..writeAsBytesSync(List<int>.generate(96, (index) => index));
+        var processCalls = 0;
+        final uploadRecipients = <String>[];
+        final uploadAttachmentIds = <String>[];
+        final authorityAtUpload = <String, bool>{};
+        final bridge = _AuthorityObservingShareBridge(
+          onFirstMediaUpload: (payload) async {
+            final recipient = payload['to'] as String;
+            final attachmentId = payload['id'] as String;
+            uploadRecipients.add(recipient);
+            uploadAttachmentIds.add(attachmentId);
+            final row = await fixture.repo
+                .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+            final parent = row == null
+                ? null
+                : await fixture.messageRepo.getMessage(row.messageId);
+            final attachments = parent == null
+                ? const <MediaAttachment>[]
+                : await fixture.repo.getAttachmentsForMessage(
+                    parent.id,
+                    owner: MediaOwnerLane.direct,
+                  );
+            authorityAtUpload[recipient] =
+                payload['custodyContract'] != null &&
+                row != null &&
+                parent != null &&
+                parent.id == parent.dedupKey &&
+                attachments.length == 1 &&
+                attachments.single.id == attachmentId;
+          },
+        );
+        final p2pService = _FanoutAuthorityP2PService(
+          queuedPeerId: queuedContact.peerId,
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+        )..isConnectedToPeerResult = false;
+        final progress = <ShareBatchDeliveryProgress>[];
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: MediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          directMediaBlobCustodyClientEnabled: true,
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            return ProcessedShareMediaBatch(
+              processedMedia: <PendingComposerMedia>[
+                PendingComposerMedia(
+                  file: source,
+                  budgetBytes: source.lengthSync(),
+                ),
+              ],
+            );
+          },
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(failedContact),
+            ShareTargetSelection.contact(queuedContact),
+            ShareTargetSelection.contact(sentContact),
+          ],
+          onProgress: progress.add,
+        );
+
+        expect(processCalls, 1);
+        expect(
+          result.results.map((entry) => entry.status),
+          <ShareBatchTargetStatus>[
+            ShareBatchTargetStatus.failed,
+            ShareBatchTargetStatus.queued,
+            ShareBatchTargetStatus.sent,
+          ],
+        );
+        expect(uploadRecipients, <String>[
+          queuedContact.peerId,
+          sentContact.peerId,
+        ]);
+        expect(uploadAttachmentIds.toSet(), hasLength(2));
+        expect(authorityAtUpload, <String, bool>{
+          queuedContact.peerId: true,
+          sentContact.peerId: true,
+        });
+
+        Future<List<Map<String, Object?>>> parentsFor(String peerId) =>
+            fixture.db.query(
+              'messages',
+              where: 'contact_peer_id = ? AND is_incoming = 0',
+              whereArgs: <Object?>[peerId],
+            );
+        expect(await parentsFor(failedContact.peerId), isEmpty);
+        final queuedParents = await parentsFor(queuedContact.peerId);
+        final sentParents = await parentsFor(sentContact.peerId);
+        expect(queuedParents, hasLength(1));
+        expect(sentParents, hasLength(1));
+        expect(queuedParents.single['id'], isNot(sentParents.single['id']));
+        expect(
+          await fixture.repo.loadDirectMediaBlobCustodyForMessage(
+            queuedParents.single['id']! as String,
+          ),
+          hasLength(1),
+          reason: 'post-authority envelope failure stays retry-owned',
+        );
+
+        expect(progress.map((entry) => entry.phase), <ShareBatchDeliveryPhase>[
+          ShareBatchDeliveryPhase.uploading,
+          ShareBatchDeliveryPhase.uploading,
+          ShareBatchDeliveryPhase.uploading,
+          ShareBatchDeliveryPhase.uploading,
+          ShareBatchDeliveryPhase.sending,
+          ShareBatchDeliveryPhase.uploading,
+          ShareBatchDeliveryPhase.uploading,
+          ShareBatchDeliveryPhase.sending,
+        ]);
+        expect(progress.map((entry) => entry.sentBytes), <int>[
+          0,
+          0,
+          0,
+          96,
+          96,
+          96,
+          192,
+          192,
+        ]);
+        expect(progress.map((entry) => entry.totalBytes).toSet(), <int>{288});
+      },
+    );
+
+    test('TC-348-05 external strict adopter decision table is exact', () async {
+      final previousPathProvider = PathProviderPlatform.instance;
+      final root = Directory.systemTemp.createTempSync(
+        'external_share_348_decision_',
+      );
+      mediaUploadInFlightTracker.clearAll();
+      addTearDown(() async {
+        mediaUploadInFlightTracker.clearAll();
+        PathProviderPlatform.instance = previousPathProvider;
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+
+      var scenarioIndex = 0;
+      Future<
+        ({
+          MediaRepositoryRealDbFixture fixture,
+          ShareBatchDeliveryResult result,
+          List<Map<String, dynamic>> uploads,
+        })
+      >
+      runScenario({
+        required bool selector,
+        bool wireFreshCapability = true,
+        bool addCurrentContact = true,
+        bool failFreshStage = false,
+        bool internalForward = false,
+      }) async {
+        scenarioIndex++;
+        final suffix = scenarioIndex.toString();
+        final documents = Directory('${root.path}/scenario-$suffix')
+          ..createSync(recursive: true);
+        PathProviderPlatform.instance = _SharePathProvider(documents.path);
+        var freshCalls = 0;
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${documents.path}/identity.sqlite',
+          wireFreshOutgoingDirectMediaBlobGeneration: wireFreshCapability,
+          dbStageFreshOutgoingDirectMediaBlobGenerationAround: failFreshStage
+              ? (stage) async {
+                  freshCalls++;
+                  if (freshCalls <= 2) {
+                    throw StateError('injected strict selection failure');
+                  }
+                  return stage();
+                }
+              : null,
+        );
+        addTearDown(fixture.dispose);
+        final contact = _makeMlKemContact(
+          'peer-share-348-decision-$suffix',
+          'Decision $suffix',
+        );
+        final contacts = InMemoryContactRepository();
+        if (addCurrentContact) await contacts.addContact(contact);
+        final source = File('${documents.path}/decision.jpg')
+          ..writeAsBytesSync(List<int>.generate(48, (index) => index));
+        final uploads = <Map<String, dynamic>>[];
+        final bridge = _AuthorityObservingShareBridge(
+          onFirstMediaUpload: (payload) async {
+            uploads.add(Map<String, dynamic>.from(payload));
+          },
+        );
+        final p2pService = _DirectMediaCustodyFakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+        )..isConnectedToPeerResult = false;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: MediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          directMediaBlobCustodyClientEnabled: selector,
+          processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: source,
+                budgetBytes: source.lengthSync(),
+              ),
+            ],
+          ),
+        );
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+            forwardProvenance: internalForward
+                ? ForwardProvenance(operationDedupKey: 'tc348-forward-$suffix')
+                : null,
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(contact),
+          ],
+        );
+        return (fixture: fixture, result: result, uploads: uploads);
+      }
+
+      Future<List<Map<String, Object?>>> v111Rows(
+        MediaRepositoryRealDbFixture fixture,
+      ) => fixture.db.query(kDirectMediaBlobCustodyTable);
+
+      final selectorOff = await runScenario(selector: false);
+      expect(selectorOff.result.failureCount, 0);
+      expect(selectorOff.uploads, hasLength(1));
+      expect(selectorOff.uploads.single['custodyContract'], isNull);
+      expect(await v111Rows(selectorOff.fixture), isEmpty);
+
+      final missingFresh = await runScenario(
+        selector: true,
+        wireFreshCapability: false,
+      );
+      expect(
+        (missingFresh.fixture.repo as DirectMediaBlobCustodyRepository)
+            .supportsDirectMediaBlobCustody,
+        isTrue,
+      );
+      expect(
+        (missingFresh.fixture.repo
+                as FreshOutgoingDirectMediaBlobGenerationRepository)
+            .supportsFreshOutgoingDirectMediaBlobGeneration,
+        isFalse,
+      );
+      expect(missingFresh.uploads, hasLength(1));
+      expect(missingFresh.uploads.single['custodyContract'], isNull);
+      expect(await v111Rows(missingFresh.fixture), isEmpty);
+
+      final suppliedFallback = await runScenario(
+        selector: true,
+        addCurrentContact: false,
+      );
+      expect(suppliedFallback.result.sentCount, 1);
+      expect(suppliedFallback.uploads, hasLength(1));
+      expect(
+        suppliedFallback.uploads.single['custodyContract'],
+        'ack_or_expiry_v1',
+      );
+
+      final strictFailure = await runScenario(
+        selector: true,
+        failFreshStage: true,
+      );
+      expect(strictFailure.result.failureCount, 1);
+      expect(strictFailure.uploads, isEmpty);
+      expect(await v111Rows(strictFailure.fixture), isEmpty);
+      expect(
+        await strictFailure.fixture.db.query('messages'),
+        isEmpty,
+        reason: 'strict selection never falls back to the legacy writer',
+      );
+
+      final internalForward = await runScenario(
+        selector: true,
+        internalForward: true,
+      );
+      expect(internalForward.result.failureCount, 0);
+      expect(internalForward.uploads, hasLength(1));
+      expect(internalForward.uploads.single['custodyContract'], isNull);
+      expect(await v111Rows(internalForward.fixture), isEmpty);
+    });
 
     test(
       'TC-345-05b fresh direct media share enters insert-fresh custody without preparation token',
@@ -3614,7 +4099,7 @@ class _ExactRowAwaitMutationRepository
 }
 
 class _DirectMediaCustodyFakeP2PService extends FakeP2PService
-    implements AckOrExpiryInboxStore {
+    implements AckOrExpiryInboxStore, MediaExpiryBoundedInboxStore {
   _DirectMediaCustodyFakeP2PService({super.initialState});
 
   @override
@@ -3632,6 +4117,107 @@ class _DirectMediaCustodyFakeP2PService extends FakeP2PService
       custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
     );
   }
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    final stored = await storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+    return InboxStoreOutcome(
+      status: stored ? InboxStoreStatus.stored : InboxStoreStatus.failed,
+      errorCode: stored ? null : 'STORE_RETURNED_FALSE',
+      storeStatus: stored ? 'stored' : null,
+      custodyContract: stored ? ackOrExpiryInboxCustodyContract : null,
+      expiresAtMs: stored ? custodyExpiresAtOrBeforeMs : null,
+    );
+  }
+}
+
+class _FanoutAuthorityP2PService extends _DirectMediaCustodyFakeP2PService {
+  _FanoutAuthorityP2PService({
+    required this.queuedPeerId,
+    required super.initialState,
+  });
+
+  final String queuedPeerId;
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) {
+    if (toPeerId == queuedPeerId) {
+      throw StateError('injected post-authority envelope-store failure');
+    }
+    return super.storeInMediaExpiryBoundedInboxDetailed(
+      toPeerId,
+      message,
+      custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+      timeoutMs: timeoutMs,
+    );
+  }
+}
+
+class _SharePathProvider extends Fake
+    with MockPlatformInterfaceMixin
+    implements PathProviderPlatform {
+  _SharePathProvider(this.documentsPath);
+
+  final String documentsPath;
+
+  @override
+  Future<String?> getApplicationDocumentsPath() async => documentsPath;
+}
+
+class _AuthorityObservingShareBridge extends PassthroughCryptoBridge {
+  _AuthorityObservingShareBridge({required this.onFirstMediaUpload});
+
+  final Future<void> Function(Map<String, dynamic> payload) onFirstMediaUpload;
+
+  @override
+  Future<String> send(String message) async {
+    final request = jsonDecode(message) as Map<String, dynamic>;
+    final command = request['cmd'] as String?;
+    final payload = request['payload'] as Map<String, dynamic>?;
+    if (command == 'media:upload' && payload != null) {
+      await onFirstMediaUpload(payload);
+    }
+    final response = await super.send(message);
+    if (command == 'media:upload' &&
+        payload != null &&
+        payload['custodyContract'] != null) {
+      final decoded = jsonDecode(response) as Map<String, dynamic>;
+      return jsonEncode(<String, dynamic>{
+        ...decoded,
+        'id': payload['id'],
+        'storeStatus': 'stored',
+        'custodyKind': payload['custodyKind'],
+        'custodyContract': payload['custodyContract'],
+        'contentHash': payload['contentHash'],
+        'size': File(payload['filePath'] as String).lengthSync(),
+        'mime': payload['mime'],
+        'expiresAtMs': DateTime.now()
+            .toUtc()
+            .add(const Duration(days: 1))
+            .millisecondsSinceEpoch,
+        'custodyRelayPeerId': 'relay-348',
+      });
+    }
+    return response;
+  }
+}
+
+bool _sameBytesForShare(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 class _LanFakeP2PService extends _DirectMediaCustodyFakeP2PService {

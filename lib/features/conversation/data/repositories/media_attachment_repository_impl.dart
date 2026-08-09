@@ -25,6 +25,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -126,6 +127,7 @@ class MediaAttachmentRepositoryImpl
         OutgoingOrdinaryAttemptStagingRepository,
         OutgoingDirectMediaInboxCustodyStagingRepository,
         DirectMediaBlobCustodyRepository,
+        FreshOutgoingDirectMediaBlobGenerationRepository,
         OutgoingDirectMediaBlobTerminalizationRepository,
         IncomingDirectMediaBlobCustodyRepository,
         OutgoingDirectMediaCustodyFailureRepository,
@@ -159,6 +161,13 @@ class MediaAttachmentRepositoryImpl
     required List<DirectMediaBlobCustodyRow> custodyRows,
   })?
   dbStageOutgoingDirectMediaBlobGeneration;
+  final Future<DirectMediaBlobGenerationDbStageResult> Function({
+    required Map<String, Object?> parentRow,
+    required List<Map<String, Object?>> expectedAttachmentRows,
+    required List<Map<String, Object?>> preparedAttachmentRows,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  })?
+  dbStageFreshOutgoingDirectMediaBlobGeneration;
   final Future<DirectMediaBlobCustodyRow?> Function({
     required String attachmentId,
   })?
@@ -545,6 +554,7 @@ class MediaAttachmentRepositoryImpl
     this.dbStageOutgoingOrdinaryAttemptWithMedia,
     this.dbStageOutgoingDirectMediaInboxCustody,
     this.dbStageOutgoingDirectMediaBlobGeneration,
+    this.dbStageFreshOutgoingDirectMediaBlobGeneration,
     this.dbLoadDirectMediaBlobCustodyForAttachment,
     this.dbLoadDirectMediaBlobCustodyForMessage,
     this.dbLoadDirectMediaBlobCustodyByStates,
@@ -633,6 +643,11 @@ class MediaAttachmentRepositoryImpl
       dbTransitionDirectMediaBlobCustodyIfExact != null &&
       dbDeleteDirectMediaBlobCleanupPendingIfExact != null &&
       dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact != null;
+
+  @override
+  bool get supportsFreshOutgoingDirectMediaBlobGeneration =>
+      dbStageFreshOutgoingDirectMediaBlobGeneration != null &&
+      dbLoadDirectMediaBlobCustodyForMessage != null;
 
   @override
   bool get supportsOutgoingDirectMediaBlobTerminalization =>
@@ -784,6 +799,233 @@ class MediaAttachmentRepositoryImpl
     };
     return DirectMediaBlobGenerationStageResult(
       outcome: outcome,
+      attachments: attachments,
+      custodyRows: rows,
+    );
+  }
+
+  @override
+  Future<FreshOutgoingDirectMediaBlobGenerationStageResult>
+  stageFreshOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage parent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    final stage = dbStageFreshOutgoingDirectMediaBlobGeneration;
+    final intentId = parent.directMediaCustodyIntentId;
+    final expectedIds = expectedAttachments
+        .map((attachment) => attachment.id)
+        .toSet();
+    final validParent =
+        parent.id.isNotEmpty &&
+        parent.id == parent.dedupKey &&
+        parent.contactPeerId.trim().isNotEmpty &&
+        parent.senderPeerId.trim().isNotEmpty &&
+        !parent.isIncoming &&
+        parent.status == 'sending' &&
+        parent.timestamp == parent.createdAt &&
+        !parent.isForwarded &&
+        parent.editedAt == null &&
+        parent.readAt == null &&
+        parent.quotedMessageId == null &&
+        parent.deletedAt == null &&
+        parent.deletedByPeerId == null &&
+        parent.hiddenAt == null &&
+        parent.transport == null &&
+        parent.wireEnvelope == null &&
+        parent.relayExpiresAt == null &&
+        parent.custodyCheckedAt == null &&
+        intentId != null &&
+        intentId.isNotEmpty &&
+        parent.privateMediaPolicy.version == 0 &&
+        parent.privateMediaMode == PrivateMediaMode.ordinary &&
+        parent.privateMediaDurationSeconds == null &&
+        parent.privateMediaState == PrivateMediaLifecycleState.none;
+    if (!supportsFreshOutgoingDirectMediaBlobGeneration ||
+        stage == null ||
+        !validParent ||
+        expectedAttachments.isEmpty ||
+        expectedIds.length != expectedAttachments.length ||
+        preparedAttachments.length != expectedAttachments.length ||
+        custodyRows.length != expectedAttachments.length ||
+        preparedAttachments.any(
+          (attachment) =>
+              !expectedIds.contains(attachment.id) ||
+              attachment.messageId != parent.id ||
+              attachment.ownerLane != MediaOwnerLane.direct ||
+              attachment.encryptionKeyBase64 == null ||
+              attachment.encryptionKeyBase64!.isEmpty ||
+              isSecureStoreReference(attachment.encryptionKeyBase64),
+        ) ||
+        custodyRows.any(
+          (row) =>
+              !expectedIds.contains(row.attachmentId) ||
+              row.messageId != parent.id ||
+              row.recipientPeerId != parent.contactPeerId,
+        )) {
+      return const FreshOutgoingDirectMediaBlobGenerationStageResult.refused();
+    }
+
+    final stamped = preparedAttachments
+        .map(
+          (attachment) => attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        )
+        .toList(growable: false);
+    final expectedRows = expectedAttachments
+        .map((attachment) => attachment.toMap())
+        .toList(growable: false);
+    final referenceRows = stamped
+        .map(_toStorageReferenceRowWithoutKeyWrite)
+        .toList(growable: false);
+
+    final dbResult = await lifecycleLock.synchronizedAll(() async {
+      final existingRows = await dbLoadDirectMediaBlobCustodyForMessage!(
+        messageId: parent.id,
+      );
+      if (existingRows.isNotEmpty) {
+        return stage(
+          parentRow: parent.toMap(),
+          expectedAttachmentRows: expectedRows,
+          preparedAttachmentRows: referenceRows,
+          custodyRows: custodyRows,
+        );
+      }
+
+      final snapshots = <_MediaEncryptionKeyWriteSnapshot>[];
+      var restored = false;
+      Future<void> restoreAll() async {
+        if (restored) return;
+        restored = true;
+        Object? firstError;
+        for (final snapshot in snapshots.reversed) {
+          try {
+            await snapshot.restore();
+          } catch (error) {
+            firstError ??= error;
+          }
+        }
+        if (firstError != null) {
+          throw StateError(
+            'fresh direct-media blob key compensation failed: $firstError',
+          );
+        }
+      }
+
+      final preparedRows = <Map<String, Object?>>[];
+      try {
+        for (final attachment in stamped) {
+          snapshots.add(await _captureEncryptionKeyWriteSnapshot(attachment));
+        }
+        for (final attachment in stamped) {
+          preparedRows.add(await _toStorageRow(attachment));
+        }
+        final result = await stage(
+          parentRow: parent.toMap(),
+          expectedAttachmentRows: expectedRows,
+          preparedAttachmentRows: preparedRows,
+          custodyRows: custodyRows,
+        );
+        if (result.outcome != DirectMediaBlobGenerationDbStageOutcome.applied) {
+          await restoreAll();
+        }
+        return result;
+      } catch (_) {
+        // The idempotent stage call is the exact parent/attachment/v110/v111
+        // re-read. If it also throws, authority is unresolved: preserve the
+        // candidate key snapshot and propagate rather than compensating a
+        // possible commit or inferring authority from v111 IDs alone.
+        final winner = await stage(
+          parentRow: parent.toMap(),
+          expectedAttachmentRows: expectedRows,
+          preparedAttachmentRows: referenceRows,
+          custodyRows: custodyRows,
+        );
+        if (!winner.outcome.authorizesStrictUpload) {
+          await restoreAll();
+          return winner;
+        }
+        final winnerById = <String, Map<String, Object?>>{
+          for (final row in winner.attachmentRows)
+            if (row['id'] is String) row['id']! as String: row,
+        };
+        final candidateWon =
+            preparedRows.length == expectedAttachments.length &&
+            preparedRows.every((candidate) {
+              final winnerRow = winnerById[candidate['id']];
+              return winnerRow != null &&
+                  winnerRow['content_hash'] == candidate['content_hash'] &&
+                  winnerRow['encryption_nonce'] ==
+                      candidate['encryption_nonce'] &&
+                  winnerRow['encryption_scheme'] ==
+                      candidate['encryption_scheme'];
+            });
+        if (!candidateWon) await restoreAll();
+        if (candidateWon &&
+            winner.outcome ==
+                DirectMediaBlobGenerationDbStageOutcome.idempotent) {
+          return DirectMediaBlobGenerationDbStageResult(
+            outcome: DirectMediaBlobGenerationDbStageOutcome.applied,
+            attachmentRows: winner.attachmentRows,
+            custodyRows: winner.custodyRows,
+          );
+        }
+        return winner;
+      }
+    });
+
+    if (!dbResult.outcome.authorizesStrictUpload) {
+      return const FreshOutgoingDirectMediaBlobGenerationStageResult.refused();
+    }
+    if (dbResult.attachmentRows.length != expectedAttachments.length ||
+        dbResult.custodyRows.length != custodyRows.length) {
+      return FreshOutgoingDirectMediaBlobGenerationStageResult.authorityOnly(
+        outcome: switch (dbResult.outcome) {
+          DirectMediaBlobGenerationDbStageOutcome.applied =>
+            DirectMediaBlobGenerationStageOutcome.applied,
+          _ => DirectMediaBlobGenerationStageOutcome.idempotent,
+        },
+      );
+    }
+
+    final rows = <DirectMediaBlobCustodyRow>[];
+    try {
+      rows.addAll(dbResult.custodyRows.map(DirectMediaBlobCustodyRow.fromMap));
+    } on FormatException {
+      return FreshOutgoingDirectMediaBlobGenerationStageResult.authorityOnly(
+        outcome: switch (dbResult.outcome) {
+          DirectMediaBlobGenerationDbStageOutcome.applied =>
+            DirectMediaBlobGenerationStageOutcome.applied,
+          _ => DirectMediaBlobGenerationStageOutcome.idempotent,
+        },
+      );
+    }
+    List<MediaAttachment> attachments;
+    try {
+      attachments = await _attachmentsFromRows(dbResult.attachmentRows);
+    } on Object {
+      // SQLite authority is already exact. A transient secure-store hydration
+      // failure must retain it for restart rather than compensate committed
+      // keys or misclassify the target as picker-owned failure.
+      return FreshOutgoingDirectMediaBlobGenerationStageResult.authorityOnly(
+        outcome: switch (dbResult.outcome) {
+          DirectMediaBlobGenerationDbStageOutcome.applied =>
+            DirectMediaBlobGenerationStageOutcome.applied,
+          _ => DirectMediaBlobGenerationStageOutcome.idempotent,
+        },
+      );
+    }
+    final outcome = switch (dbResult.outcome) {
+      DirectMediaBlobGenerationDbStageOutcome.applied =>
+        DirectMediaBlobGenerationStageOutcome.applied,
+      DirectMediaBlobGenerationDbStageOutcome.idempotent =>
+        DirectMediaBlobGenerationStageOutcome.idempotent,
+      DirectMediaBlobGenerationDbStageOutcome.refused =>
+        DirectMediaBlobGenerationStageOutcome.refused,
+    };
+    return FreshOutgoingDirectMediaBlobGenerationStageResult(
+      outcome: outcome,
+      hasDurableAuthority: true,
       attachments: attachments,
       custodyRows: rows,
     );

@@ -1081,6 +1081,7 @@ Future<int> retryIncompleteUploads({
                 message: refreshedMsg,
                 expectedSenderPeerId: identity.peerId,
                 attachments: refreshedAttachments,
+                allowPublishedPending: hasDirectMediaBlobGeneration,
               ))) {
         emitFlowEvent(
           layer: 'FL',

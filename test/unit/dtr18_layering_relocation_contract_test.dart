@@ -138,12 +138,13 @@ const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
-// Plan 347's reviewed composition delta wires the same cleanup/drain through
-// MyApp and production bootstrap. Posts adapter bodies remain byte-identical.
+// Plans 347/348 wire the reviewed cleanup/drain and absent-parent v111 stage
+// through MyApp and production bootstrap. Posts adapter bodies remain
+// byte-identical.
 const _applicationRootNormalizedSha256 =
     '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
 const _productionBootstrapNormalizedSha256 =
-    'c61e5486dd7af8e9f83422a7426bcfc8d8848e13ce02b5de1e9d5a4ba86c42e0';
+    'd763febdac9accd355e2aa1dd6c8244a879ecfa6ea5386d20159417707af8919';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

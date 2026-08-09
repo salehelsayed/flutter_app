@@ -759,6 +759,259 @@ void main() {
     });
   });
 
+  group('fresh direct media blob generation authority', () {
+    test(
+      'TC-348-02a fresh blob owner is canonical all-or-none and exact-winner',
+      () async {
+        ({
+          List<DirectMediaBlobCustodyRow> custody,
+          List<Map<String, Object?>> expected,
+          String hash,
+          Map<String, Object?> parent,
+          List<Map<String, Object?>> prepared,
+        })
+        candidate({
+          required String suffix,
+          required String recipientPeerId,
+          String? messageIdOverride,
+          String? attachmentIdOverride,
+          String? dedupKeyOverride,
+          String hashDigit = 'a',
+        }) {
+          final messageId = messageIdOverride ?? 'tc348-fresh-$suffix';
+          final attachmentId =
+              attachmentIdOverride ?? 'tc348-fresh-$suffix-attachment';
+          const createdAt = '2026-08-08T15:00:00.000Z';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          final parent = ConversationMessage(
+            id: messageId,
+            contactPeerId: recipientPeerId,
+            senderPeerId: 'tc348-local-peer',
+            text: 'fresh external share',
+            timestamp: createdAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: createdAt,
+            directMediaCustodyIntentId: intent,
+            dedupKey: dedupKeyOverride ?? messageId,
+          ).toMap();
+          final expected = makeAttachmentRow(
+            id: attachmentId,
+            messageId: messageId,
+            size: 17,
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            ),
+            downloadStatus: 'upload_pending',
+            createdAt: createdAt,
+          );
+          final hash = hashDigit * 64;
+          final prepared = <String, Object?>{
+            ...expected,
+            'content_hash': hash,
+            'encryption_key_base64': secureStoreReferenceForKey(
+              mediaAttachmentEncryptionKeyStoreName(attachmentId),
+            ),
+            'encryption_nonce': 'nonce-$suffix-$hashDigit',
+            'encryption_scheme': 'blob_aes_256_gcm_v1',
+          };
+          final custody = DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingPrepared,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: recipientPeerId,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'1' * 64}/$attachmentId.blob',
+            contentHash: hash,
+            ciphertextSize: 33,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: createdAt,
+            updatedAt: createdAt,
+          );
+          return (
+            custody: <DirectMediaBlobCustodyRow>[custody],
+            expected: <Map<String, Object?>>[expected],
+            hash: hash,
+            parent: parent,
+            prepared: <Map<String, Object?>>[prepared],
+          );
+        }
+
+        Future<DirectMediaBlobGenerationDbStageResult> stage(
+          ({
+            List<DirectMediaBlobCustodyRow> custody,
+            List<Map<String, Object?>> expected,
+            String hash,
+            Map<String, Object?> parent,
+            List<Map<String, Object?>> prepared,
+          })
+          value,
+        ) => dbStageFreshOutgoingDirectMediaBlobGeneration(
+          db,
+          parentRow: value.parent,
+          expectedAttachmentRows: value.expected,
+          preparedAttachmentRows: value.prepared,
+          custodyRows: value.custody,
+        );
+
+        final winner = candidate(
+          suffix: 'winner',
+          recipientPeerId: 'tc348-recipient-winner',
+        );
+        final applied = await stage(winner);
+        expect(
+          applied.outcome,
+          DirectMediaBlobGenerationDbStageOutcome.applied,
+        );
+        expect(applied.attachmentRows, hasLength(1));
+        expect(applied.custodyRows, hasLength(1));
+        expect(applied.attachmentRows.single['content_hash'], winner.hash);
+        expect(
+          await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[winner.parent['id']],
+          ),
+          hasLength(1),
+        );
+        expect(
+          await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[winner.parent['id']],
+          ),
+          hasLength(1),
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[winner.parent['id']],
+          ),
+          hasLength(1),
+        );
+
+        final losingCandidate = candidate(
+          suffix: 'loser',
+          recipientPeerId: 'tc348-recipient-winner',
+          messageIdOverride: winner.parent['id']! as String,
+          attachmentIdOverride: winner.expected.single['id']! as String,
+          hashDigit: 'b',
+        );
+        final adopted = await stage(losingCandidate);
+        expect(
+          adopted.outcome,
+          DirectMediaBlobGenerationDbStageOutcome.idempotent,
+        );
+        expect(adopted.attachmentRows.single['content_hash'], winner.hash);
+        expect(
+          adopted.custodyRows.single['content_hash'],
+          winner.hash,
+          reason: 'an idempotent caller receives only the exact DB winner',
+        );
+
+        final crossedRecipient = candidate(
+          suffix: 'crossed-recipient',
+          recipientPeerId: 'tc348-other-recipient',
+          messageIdOverride: winner.parent['id']! as String,
+          attachmentIdOverride: winner.expected.single['id']! as String,
+          hashDigit: 'c',
+        );
+        expect(
+          (await stage(crossedRecipient)).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+        );
+
+        final partial = candidate(
+          suffix: 'partial',
+          recipientPeerId: 'tc348-recipient-partial',
+        );
+        await db.insert('messages', partial.parent);
+        expect(
+          (await stage(partial)).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+        );
+        expect(
+          await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[partial.parent['id']],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[partial.parent['id']],
+          ),
+          isEmpty,
+        );
+
+        final crossedLane = candidate(
+          suffix: 'crossed-lane',
+          recipientPeerId: 'tc348-recipient-crossed-lane',
+        );
+        await db.insert('media_attachments', <String, Object?>{
+          ...crossedLane.expected.single,
+          'owner_lane': MediaOwnerLane.group.dbValue,
+        });
+        expect(
+          (await stage(crossedLane)).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+          reason:
+              'a same-message attachment from another owner lane is a '
+              'collision, not an absent fresh generation',
+        );
+        expect(
+          await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[crossedLane.parent['id']],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[crossedLane.parent['id']],
+          ),
+          isEmpty,
+        );
+
+        final nonCanonical = candidate(
+          suffix: 'non-canonical',
+          recipientPeerId: 'tc348-recipient-non-canonical',
+          dedupKeyOverride: 'wrong-dedup-key',
+        );
+        expect(
+          (await stage(nonCanonical)).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+        );
+        expect(
+          await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[nonCanonical.parent['id']],
+          ),
+          isEmpty,
+          reason: 'canonical validation must happen before the transaction',
+        );
+      },
+    );
+  });
+
   group('direct media custody final authority gate', () {
     String envelope(String messageId, {String senderPeerId = 'peer-local'}) =>
         jsonEncode(<String, Object?>{

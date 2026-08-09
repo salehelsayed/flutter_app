@@ -141,6 +141,25 @@ abstract interface class DirectMediaBlobCustodyRepository {
   );
 }
 
+/// Optional absent-parent entry into the existing direct-media v111 owner.
+///
+/// This capability is intentionally independent from
+/// [DirectMediaBlobCustodyRepository]. Composer/voice preparation keeps its
+/// predecessor-CAS meaning, while an eligible external OS share can atomically
+/// publish its canonical parent, complete attachment projection, v110 intent,
+/// and v111 generation before its first network request.
+abstract interface class FreshOutgoingDirectMediaBlobGenerationRepository {
+  bool get supportsFreshOutgoingDirectMediaBlobGeneration;
+
+  Future<FreshOutgoingDirectMediaBlobGenerationStageResult>
+  stageFreshOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage parent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  });
+}
+
 /// Narrow authority that may publish cleanup for a complete outgoing v111
 /// generation after proving exact v108 absence and one terminal reason.
 ///

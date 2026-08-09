@@ -28,6 +28,7 @@ import 'package:flutter_app/features/conversation/application/strict_direct_medi
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -269,6 +270,200 @@ void main() {
   }
 
   group('MediaAttachmentRepositoryImpl', () {
+    test(
+      'TC-348-02b fresh blob owner resolves commit ambiguity before key compensation',
+      () async {
+        ({
+          ConversationMessage parent,
+          MediaAttachment pending,
+          MediaAttachment prepared,
+          DirectMediaBlobCustodyRow custody,
+        })
+        freshCandidate({
+          required String suffix,
+          String hashDigit = 'a',
+          String? key,
+          ConversationMessage? parentOverride,
+          MediaAttachment? pendingOverride,
+        }) {
+          final messageId = parentOverride?.id ?? 'tc348-repo-$suffix';
+          final attachmentId =
+              pendingOverride?.id ?? 'tc348-repo-$suffix-attachment';
+          const createdAt = '2026-08-08T15:30:00.000Z';
+          final parent =
+              parentOverride ??
+              ConversationMessage(
+                id: messageId,
+                contactPeerId: 'tc348-repo-recipient-$suffix',
+                senderPeerId: 'tc348-repo-local',
+                text: 'fresh repository ambiguity',
+                timestamp: createdAt,
+                status: 'sending',
+                isIncoming: false,
+                createdAt: createdAt,
+                directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+                  messageId: messageId,
+                  attachmentIds: <String>[attachmentId],
+                ),
+                dedupKey: messageId,
+              );
+          final pending =
+              pendingOverride ??
+              MediaAttachment(
+                id: attachmentId,
+                messageId: messageId,
+                mime: 'image/jpeg',
+                size: 31,
+                mediaType: 'image',
+                localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+                downloadStatus: 'upload_pending',
+                createdAt: createdAt,
+                ownerLane: MediaOwnerLane.direct,
+              );
+          final hash = hashDigit * 64;
+          final prepared = pending.copyWith(
+            contentHash: hash,
+            encryptionKeyBase64: key ?? 'tc348-key-$suffix-$hashDigit',
+            encryptionNonce: 'tc348-nonce-$suffix-$hashDigit',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          );
+          return (
+            parent: parent,
+            pending: pending,
+            prepared: prepared,
+            custody: DirectMediaBlobCustodyRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: DirectMediaBlobCustodyState.outgoingPrepared,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: parent.contactPeerId,
+              ciphertextRelativePath:
+                  'direct_media_blob_custody_v1/${'2' * 64}/$attachmentId.blob',
+              contentHash: hash,
+              ciphertextSize: 47,
+              expiresAtMs: null,
+              custodyRelayPeerId: null,
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: createdAt,
+              updatedAt: createdAt,
+            ),
+          );
+        }
+
+        Future<FreshOutgoingDirectMediaBlobGenerationStageResult> stageFresh(
+          ({
+            ConversationMessage parent,
+            MediaAttachment pending,
+            MediaAttachment prepared,
+            DirectMediaBlobCustodyRow custody,
+          })
+          candidate,
+        ) => (fixture.repo as FreshOutgoingDirectMediaBlobGenerationRepository)
+            .stageFreshOutgoingDirectMediaBlobGeneration(
+              parent: candidate.parent,
+              expectedAttachments: <MediaAttachment>[candidate.pending],
+              preparedAttachments: <MediaAttachment>[candidate.prepared],
+              custodyRows: <DirectMediaBlobCustodyRow>[candidate.custody],
+            );
+
+        await fixture.dispose();
+        var throwAfterFirstCommit = true;
+        fixture = await MediaRepositoryRealDbFixture.create(
+          dbStageFreshOutgoingDirectMediaBlobGenerationAround: (stage) async {
+            final result = await stage();
+            if (throwAfterFirstCommit) {
+              throwAfterFirstCommit = false;
+              throw StateError('injected wrapper failure after SQLite commit');
+            }
+            return result;
+          },
+        );
+        final winner = freshCandidate(suffix: 'commit-winner');
+        final committed = await stageFresh(winner);
+        expect(committed.hasDurableAuthority, isTrue);
+        expect(committed.outcome.name, 'applied');
+        expect(committed.attachments, hasLength(1));
+        expect(committed.attachments.single.contentHash, 'a' * 64);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(winner.pending.id),
+          ),
+          winner.prepared.encryptionKeyBase64,
+          reason:
+              'a real committed candidate keeps its stable key after the '
+              'wrapper throws',
+        );
+
+        final writesAfterWinner = fixture.secureKeyStore.writtenKeys.length;
+        final loser = freshCandidate(
+          suffix: 'losing-candidate',
+          hashDigit: 'b',
+          parentOverride: winner.parent,
+          pendingOverride: winner.pending,
+        );
+        final adopted = await stageFresh(loser);
+        expect(adopted.outcome.name, 'idempotent');
+        expect(adopted.attachments.single.contentHash, 'a' * 64);
+        expect(
+          adopted.attachments.single.encryptionKeyBase64,
+          winner.prepared.encryptionKeyBase64,
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys,
+          hasLength(writesAfterWinner),
+          reason: 'a losing candidate must not publish its key',
+        );
+
+        final rejected = freshCandidate(suffix: 'precommit-rejection');
+        await fixture.messageRepo.saveMessage(rejected.parent);
+        final keyName = mediaAttachmentEncryptionKeyStoreName(
+          rejected.pending.id,
+        );
+        await fixture.secureKeyStore.write(keyName, 'previous-stable-key');
+        final refused = await stageFresh(rejected);
+        expect(refused.hasDurableAuthority, isFalse);
+        expect(refused.outcome.name, 'refused');
+        expect(
+          await fixture.secureKeyStore.read(keyName),
+          'previous-stable-key',
+          reason: 'a proven pre-commit refusal compensates the candidate key',
+        );
+        expect(
+          await fixture.repo.loadDirectMediaBlobCustodyForMessage(
+            rejected.parent.id,
+          ),
+          isEmpty,
+        );
+
+        await fixture.dispose();
+        final hydrationStore = _FailingSnapshotSecureKeyStore()
+          ..failRead = true;
+        fixture = await MediaRepositoryRealDbFixture.create(
+          secureKeyStore: hydrationStore,
+        );
+        final hydrationCandidate = freshCandidate(suffix: 'hydration-failure');
+        final authorityOnly = await stageFresh(hydrationCandidate);
+        expect(authorityOnly.hasDurableAuthority, isTrue);
+        expect(authorityOnly.attachments, isEmpty);
+        expect(
+          await fixture.repo.loadDirectMediaBlobCustodyForMessage(
+            hydrationCandidate.parent.id,
+          ),
+          hasLength(1),
+        );
+        hydrationStore.failRead = false;
+        expect(
+          (await fixture.repo.getAttachmentById(
+            hydrationCandidate.pending.id,
+          ))?.encryptionKeyBase64,
+          hydrationCandidate.prepared.encryptionKeyBase64,
+          reason: 'post-commit hydration failure retains the exact winner key',
+        );
+      },
+    );
+
     test(
       'TC-347-02c concurrent preparers adopt one artifact generation',
       () async {

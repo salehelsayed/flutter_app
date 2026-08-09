@@ -25,6 +25,9 @@ typedef DirectMediaBlobStrictUploadFn =
 typedef DirectMediaBlobGenerationReadyFn =
     Future<void> Function(List<PreparedDirectMediaBlobArtifact> artifacts);
 
+typedef DirectMediaBlobAuthorityReadyFn =
+    Future<bool> Function(List<MediaAttachment> authoritativeAttachments);
+
 final class PreparedDirectMediaBlobSource {
   const PreparedDirectMediaBlobSource({
     required this.attachment,
@@ -58,6 +61,7 @@ enum PreparedDirectMediaBlobUploadState { complete, retained, refused }
 final class PreparedDirectMediaBlobUploadResult {
   const PreparedDirectMediaBlobUploadResult._({
     required this.state,
+    required this.hasDurableAuthority,
     this.attachments = const <MediaAttachment>[],
   });
 
@@ -65,16 +69,22 @@ final class PreparedDirectMediaBlobUploadResult {
     List<MediaAttachment> attachments,
   ) : this._(
         state: PreparedDirectMediaBlobUploadState.complete,
+        hasDurableAuthority: true,
         attachments: attachments,
       );
 
-  const PreparedDirectMediaBlobUploadResult.retained()
-    : this._(state: PreparedDirectMediaBlobUploadState.retained);
+  const PreparedDirectMediaBlobUploadResult.retained({
+    this.hasDurableAuthority = true,
+  }) : state = PreparedDirectMediaBlobUploadState.retained,
+       attachments = const <MediaAttachment>[];
 
-  const PreparedDirectMediaBlobUploadResult.refused()
-    : this._(state: PreparedDirectMediaBlobUploadState.refused);
+  const PreparedDirectMediaBlobUploadResult.refused({
+    this.hasDurableAuthority = false,
+  }) : state = PreparedDirectMediaBlobUploadState.refused,
+       attachments = const <MediaAttachment>[];
 
   final PreparedDirectMediaBlobUploadState state;
+  final bool hasDurableAuthority;
   final List<MediaAttachment> attachments;
 
   bool get isComplete => state == PreparedDirectMediaBlobUploadState.complete;
@@ -125,15 +135,18 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
 
     try {
       return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
-        final generation = await _publishFreshGeneration(
+        final publication = await _publishFreshGeneration(
           bridge: bridge,
           identityPeerId: identityPeerId,
           recipientPeerId: recipientPeerId,
           expectedParent: expectedParent,
           sources: sources,
         );
+        final generation = publication.generation;
         if (generation == null) {
-          return const PreparedDirectMediaBlobUploadResult.refused();
+          return PreparedDirectMediaBlobUploadResult.refused(
+            hasDurableAuthority: publication.hasDurableAuthority,
+          );
         }
         return _uploadPublishedGeneration(
           bridge: bridge,
@@ -145,6 +158,88 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
       });
     } on Object {
       return const PreparedDirectMediaBlobUploadResult.refused();
+    }
+  }
+
+  /// Plan 348 absent-parent entry used only by an eligible external OS share.
+  ///
+  /// [onAuthorityReady] copies/verifies the sender-local plaintext preview after
+  /// v110/v111 commit and before LAN or relay. Its failure retains ciphertext
+  /// authority for the existing restart retry owner.
+  Future<PreparedDirectMediaBlobUploadResult> prepareAndUploadFreshMessage({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String recipientPeerId,
+    required ConversationMessage parent,
+    required List<PreparedDirectMediaBlobSource> sources,
+    required DirectMediaBlobAuthorityReadyFn onAuthorityReady,
+    DirectMediaBlobGenerationReadyFn? onGenerationReady,
+  }) async {
+    final freshRepository = switch (_repository) {
+      FreshOutgoingDirectMediaBlobGenerationRepository repository
+          when repository.supportsFreshOutgoingDirectMediaBlobGeneration =>
+        repository,
+      _ => null,
+    };
+    if (!_repository.supportsDirectMediaBlobCustody ||
+        freshRepository == null ||
+        !_validFreshRequest(
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          parent: parent,
+          sources: sources,
+        ) ||
+        parent.id != parent.dedupKey ||
+        parent.timestamp != parent.createdAt ||
+        parent.isForwarded) {
+      return const PreparedDirectMediaBlobUploadResult.refused();
+    }
+
+    var hasDurableAuthority = false;
+    try {
+      return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
+        final publication = await _publishFreshGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          expectedParent: parent,
+          sources: sources,
+          freshRepository: freshRepository,
+        );
+        hasDurableAuthority = publication.hasDurableAuthority;
+        final generation = publication.generation;
+        if (generation == null) {
+          return hasDurableAuthority
+              ? const PreparedDirectMediaBlobUploadResult.retained()
+              : const PreparedDirectMediaBlobUploadResult.refused();
+        }
+        bool previewReady;
+        try {
+          previewReady = await onAuthorityReady(
+            List<MediaAttachment>.unmodifiable(
+              generation.artifacts
+                  .map((artifact) => artifact.attachment)
+                  .toList(growable: false),
+            ),
+          );
+        } on Object {
+          previewReady = false;
+        }
+        if (!previewReady) {
+          return const PreparedDirectMediaBlobUploadResult.retained();
+        }
+        return _uploadPublishedGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          generation: generation,
+          onGenerationReady: onGenerationReady,
+        );
+      });
+    } on Object {
+      return hasDurableAuthority
+          ? const PreparedDirectMediaBlobUploadResult.retained()
+          : const PreparedDirectMediaBlobUploadResult.refused();
     }
   }
 
@@ -238,15 +333,17 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     }
   }
 
-  Future<_PublishedGeneration?> _publishFreshGeneration({
+  Future<_GenerationPublication> _publishFreshGeneration({
     required Bridge bridge,
     required String identityPeerId,
     required String recipientPeerId,
     required ConversationMessage expectedParent,
     required List<PreparedDirectMediaBlobSource> sources,
+    FreshOutgoingDirectMediaBlobGenerationRepository? freshRepository,
   }) async {
     final candidates = <_CandidateGenerationEntry>[];
     var stageAttempted = false;
+    var hasDurableAuthority = false;
     try {
       for (final source in sources) {
         final encrypted =
@@ -308,28 +405,71 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
         );
       }
       stageAttempted = true;
-      final staged = await _repository.stageOutgoingDirectMediaBlobGeneration(
-        expectedParent: expectedParent,
-        expectedAttachments: sources
-            .map((source) => source.attachment)
-            .toList(growable: false),
-        preparedAttachments: prepared,
-        custodyRows: custodyRows,
-      );
-      if (!staged.authorizesStrictUpload) {
-        await _deleteCandidates(identityPeerId, candidates);
-        return null;
+      final expectedAttachments = sources
+          .map((source) => source.attachment)
+          .toList(growable: false);
+      late final bool authorizesStrictUpload;
+      late final bool idempotent;
+      late final List<MediaAttachment> stagedAttachments;
+      late final List<DirectMediaBlobCustodyRow> stagedRows;
+      if (freshRepository == null) {
+        final staged = await _repository.stageOutgoingDirectMediaBlobGeneration(
+          expectedParent: expectedParent,
+          expectedAttachments: expectedAttachments,
+          preparedAttachments: prepared,
+          custodyRows: custodyRows,
+        );
+        authorizesStrictUpload = staged.authorizesStrictUpload;
+        hasDurableAuthority = staged.authorizesStrictUpload;
+        idempotent =
+            staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+        stagedAttachments = staged.attachments;
+        stagedRows = staged.custodyRows;
+      } else {
+        final staged = await freshRepository
+            .stageFreshOutgoingDirectMediaBlobGeneration(
+              parent: expectedParent,
+              expectedAttachments: expectedAttachments,
+              preparedAttachments: prepared,
+              custodyRows: custodyRows,
+            );
+        authorizesStrictUpload = staged.authorizesStrictUpload;
+        hasDurableAuthority = staged.hasDurableAuthority;
+        idempotent =
+            staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+        stagedAttachments = staged.attachments;
+        stagedRows = staged.custodyRows;
       }
-      if (staged.outcome.name == 'idempotent') {
+      if (!authorizesStrictUpload) {
+        if (hasDurableAuthority) {
+          await _deleteOnlyProvablyUnreferencedCandidates(
+            identityPeerId: identityPeerId,
+            messageId: expectedParent.id,
+            candidates: candidates,
+          );
+        } else {
+          await _deleteCandidates(identityPeerId, candidates);
+        }
+        await _deleteEncryptedTemps(candidates);
+        return _GenerationPublication(
+          generation: null,
+          hasDurableAuthority: hasDurableAuthority,
+        );
+      }
+      if (idempotent) {
         await _deleteCandidates(identityPeerId, candidates);
       }
       await _deleteEncryptedTemps(candidates);
-      return _reopenCompleteGeneration(
+      final generation = await _reopenCompleteGeneration(
         identityPeerId: identityPeerId,
         recipientPeerId: recipientPeerId,
         messageId: expectedParent.id,
-        attachments: staged.attachments,
-        rows: staged.custodyRows,
+        attachments: stagedAttachments,
+        rows: stagedRows,
+      );
+      return _GenerationPublication(
+        generation: generation,
+        hasDurableAuthority: true,
       );
     } on Object {
       if (stageAttempted) {
@@ -342,6 +482,12 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
         await _deleteCandidates(identityPeerId, candidates);
       }
       await _deleteEncryptedTemps(candidates);
+      if (hasDurableAuthority) {
+        return const _GenerationPublication(
+          generation: null,
+          hasDurableAuthority: true,
+        );
+      }
       rethrow;
     }
   }
@@ -449,7 +595,9 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           !storedProofIsLive ||
           current.inboxCustodyIncarnationId != null ||
           current.recipientPeerId != recipientPeerId) {
-        return const PreparedDirectMediaBlobUploadResult.refused();
+        return const PreparedDirectMediaBlobUploadResult.refused(
+          hasDurableAuthority: true,
+        );
       }
       final artifact = await _artifactStore.verifyOwnedArtifact(
         identityPeerId: identityPeerId,
@@ -458,7 +606,9 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
         expectedCiphertextSize: current.ciphertextSize,
       );
       if (artifact == null) {
-        return const PreparedDirectMediaBlobUploadResult.refused();
+        return const PreparedDirectMediaBlobUploadResult.refused(
+          hasDurableAuthority: true,
+        );
       }
       liveArtifacts.add(
         PreparedDirectMediaBlobArtifact(
@@ -476,7 +626,9 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           (entry.custody.expiresAtMs == null ||
               entry.custody.expiresAtMs! <= generationReadyNowMs),
     )) {
-      return const PreparedDirectMediaBlobUploadResult.refused();
+      return const PreparedDirectMediaBlobUploadResult.refused(
+        hasDurableAuthority: true,
+      );
     }
 
     if (onGenerationReady != null) {
@@ -678,6 +830,16 @@ final class _PublishedGeneration {
   const _PublishedGeneration(this.artifacts);
 
   final List<PreparedDirectMediaBlobArtifact> artifacts;
+}
+
+final class _GenerationPublication {
+  const _GenerationPublication({
+    required this.generation,
+    required this.hasDurableAuthority,
+  });
+
+  final _PublishedGeneration? generation;
+  final bool hasDurableAuthority;
 }
 
 Future<Map<String, dynamic>> _callStrictUpload({

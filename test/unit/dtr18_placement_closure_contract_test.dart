@@ -28,9 +28,10 @@ const _relocations = <String, List<String>>{
       'media_attachment_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/'
         'media_attachment_repository_impl.dart',
-    // Plan 347 adds exact v111 generation, terminalization, and incoming
-    // custody ownership to the already-relocated Conversation adapter.
-    '5f2d1a8f5fb9b4643f3d6f082c85de47464eaaf2c09a23c2e21f8f315a5c511a',
+    // Plans 347/348 add exact v111 generation, terminalization, incoming
+    // custody ownership, and the reviewed fresh absent-parent stage to the
+    // already-relocated Conversation adapter.
+    'f5af330e7aaaf17a893664f6a29c110243e585439e48b16e0a846c33d050e985',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

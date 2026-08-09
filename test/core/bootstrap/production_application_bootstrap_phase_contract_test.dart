@@ -23,60 +23,81 @@ enum _SendChatMessageCallerKind {
   excludedVoice,
 }
 
+final class _ExpectedSendChatMessageCaller {
+  const _ExpectedSendChatMessageCaller({
+    required this.kind,
+    this.callee = 'sendChatMessage',
+    this.freshIntent,
+    this.mediaAttachments,
+  });
+
+  final _SendChatMessageCallerKind kind;
+  final String callee;
+  final String? freshIntent;
+  final String? mediaAttachments;
+}
+
 const _expectedSendChatMessageCallers =
-    <
-      String,
-      ({_SendChatMessageCallerKind kind, String callee, String? freshIntent})
-    >{
-      'lib/core/debug/intro_e2e_runner.dart': (
-        kind: _SendChatMessageCallerKind.generatedIdFresh,
-        callee: 'sendChatMessage',
-        freshIntent: null,
-      ),
-      'lib/core/debug/keepalive_drop_e2e.dart': (
-        kind: _SendChatMessageCallerKind.generatedIdFresh,
-        callee: 'sendChatMessage',
-        freshIntent: null,
-      ),
+    <String, List<_ExpectedSendChatMessageCaller>>{
+      'lib/core/debug/intro_e2e_runner.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.generatedIdFresh,
+        ),
+      ],
+      'lib/core/debug/keepalive_drop_e2e.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.generatedIdFresh,
+        ),
+      ],
       'lib/features/conversation/application/'
-          'retry_failed_messages_use_case.dart': (
-        kind: _SendChatMessageCallerKind.excludedRetry,
-        callee: 'sendChatMessage',
-        freshIntent: null,
-      ),
+          'retry_failed_messages_use_case.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.excludedRetry,
+        ),
+      ],
       'lib/features/conversation/application/'
-          'retry_incomplete_uploads_use_case.dart': (
-        kind: _SendChatMessageCallerKind.excludedMedia,
-        callee: 'sendChatMessage',
-        freshIntent: null,
-      ),
-      'lib/features/conversation/application/send_chat_message_use_case.dart': (
-        kind: _SendChatMessageCallerKind.excludedEdit,
-        callee: 'sendChatMessage',
-        freshIntent: null,
-      ),
+          'retry_incomplete_uploads_use_case.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.excludedMedia,
+          mediaAttachments: 'fullAttachmentList',
+        ),
+      ],
+      'lib/features/conversation/application/send_chat_message_use_case.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.excludedEdit,
+        ),
+      ],
       'lib/features/conversation/application/send_voice_message_use_case.dart':
-          (
-            kind: _SendChatMessageCallerKind.excludedVoice,
-            callee: 'sendChatMessage',
-            freshIntent: 'preassignedMessageIdIsFresh',
-          ),
+          [
+            _ExpectedSendChatMessageCaller(
+              kind: _SendChatMessageCallerKind.excludedVoice,
+              freshIntent: 'preassignedMessageIdIsFresh',
+              mediaAttachments: 'attachments',
+            ),
+          ],
       'lib/features/conversation/presentation/screens/conversation_wired.dart':
-          (
-            kind: _SendChatMessageCallerKind.preassignedIdFresh,
-            callee: 'sendChatMessageFn',
-            freshIntent: 'stagesFreshDirectTextCustody',
-          ),
-      'lib/features/feed/presentation/screens/feed_wired.dart': (
-        kind: _SendChatMessageCallerKind.preassignedIdFresh,
-        callee: 'sendChatMessage',
-        freshIntent: 'true',
-      ),
-      'lib/features/share/application/share_batch_delivery_coordinator.dart': (
-        kind: _SendChatMessageCallerKind.generatedIdFresh,
-        callee: 'sendChatMessage',
-        freshIntent: null,
-      ),
+          [
+            _ExpectedSendChatMessageCaller(
+              kind: _SendChatMessageCallerKind.preassignedIdFresh,
+              callee: 'sendChatMessageFn',
+              freshIntent: 'stagesFreshDirectTextCustody',
+            ),
+          ],
+      'lib/features/feed/presentation/screens/feed_wired.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.preassignedIdFresh,
+          freshIntent: 'true',
+        ),
+      ],
+      'lib/features/share/application/share_batch_delivery_coordinator.dart': [
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.generatedIdFresh,
+        ),
+        _ExpectedSendChatMessageCaller(
+          kind: _SendChatMessageCallerKind.excludedMedia,
+          mediaAttachments: 'uploadResult.attachments',
+        ),
+      ],
     };
 
 final class _SendChatMessageInvocationCollector
@@ -189,6 +210,33 @@ String _sendCallerLabel(
   ({String path, int line, String callee, Map<String, String> namedArguments})
   caller,
 ) => '${caller.path}:${caller.line} (${caller.callee})';
+
+bool _matchesExpectedSendChatMessageCaller(
+  ({String path, int line, String callee, Map<String, String> namedArguments})
+  caller,
+  _ExpectedSendChatMessageCaller expected,
+) {
+  if (caller.callee != expected.callee) return false;
+  final arguments = caller.namedArguments;
+  return switch (expected.kind) {
+    _SendChatMessageCallerKind.generatedIdFresh => !arguments.containsKey(
+      'messageId',
+    ),
+    _SendChatMessageCallerKind.preassignedIdFresh =>
+      arguments.containsKey('messageId') &&
+          arguments['preassignedMessageIdIsFresh'] == expected.freshIntent,
+    _SendChatMessageCallerKind.excludedEdit =>
+      arguments['action'] == 'MessagePayload.actionEdit',
+    _SendChatMessageCallerKind.excludedRetry =>
+      arguments['action'] == 'retryAction',
+    _SendChatMessageCallerKind.excludedMedia =>
+      arguments.containsKey('messageId') &&
+          arguments['mediaAttachments'] == expected.mediaAttachments,
+    _SendChatMessageCallerKind.excludedVoice =>
+      arguments['mediaAttachments'] == expected.mediaAttachments &&
+          arguments['preassignedMessageIdIsFresh'] == expected.freshIntent,
+  };
+}
 
 ClassDeclaration _productionClass(String source) {
   final unit = parseString(content: source, path: _productionPath).unit;
@@ -476,6 +524,25 @@ void main() {
     );
   });
 
+  test('TC-348-02c production wires fresh blob stage exactly once', () {
+    final production = File(_productionPath).readAsStringSync();
+
+    expect(
+      'dbStageFreshOutgoingDirectMediaBlobGeneration:'.allMatches(production),
+      hasLength(1),
+      reason:
+          'production must expose the absent-parent v111 capability exactly '
+          'once',
+    );
+    expect(
+      RegExp(
+        r'\)\s*=>\s*dbStageFreshOutgoingDirectMediaBlobGeneration\s*\(',
+      ).allMatches(production),
+      hasLength(1),
+      reason: 'the capability must delegate to the real atomic SQLite helper',
+    );
+  });
+
   test(
     'TC-343-06a direct reaction caller census stays on the capable wired route',
     () {
@@ -532,7 +599,12 @@ void main() {
       );
       expect(
         callers,
-        hasLength(_expectedSendChatMessageCallers.length),
+        hasLength(
+          _expectedSendChatMessageCallers.values.fold<int>(
+            0,
+            (count, expected) => count + expected.length,
+          ),
+        ),
         reason:
             'the exact caller inventory must reject missing and duplicate '
             'call sites as well as new files',
@@ -541,71 +613,91 @@ void main() {
       for (final expected in _expectedSendChatMessageCallers.entries) {
         final matches = callers
             .where((caller) => caller.path == expected.key)
-            .toList(growable: false);
+            .toList();
         expect(
           matches,
-          hasLength(1),
-          reason: '${expected.key} must own exactly one classified invocation',
+          hasLength(expected.value.length),
+          reason: '${expected.key} must own exactly the classified invocations',
         );
-        final caller = matches.single;
-        final arguments = caller.namedArguments;
-        expect(
-          caller.callee,
-          expected.value.callee,
-          reason: _sendCallerLabel(caller),
-        );
+        for (final expectedCaller in expected.value) {
+          final candidates = matches
+              .where(
+                (caller) => _matchesExpectedSendChatMessageCaller(
+                  caller,
+                  expectedCaller,
+                ),
+              )
+              .toList(growable: false);
+          expect(
+            candidates,
+            hasLength(1),
+            reason:
+                '${expected.key} must have one ${expectedCaller.kind.name} '
+                'invocation',
+          );
+          final caller = candidates.single;
+          matches.remove(caller);
+          final arguments = caller.namedArguments;
 
-        switch (expected.value.kind) {
-          case _SendChatMessageCallerKind.generatedIdFresh:
-            expect(
-              arguments,
-              isNot(contains('messageId')),
-              reason:
-                  '${_sendCallerLabel(caller)} must let sendChatMessage '
-                  'generate the fresh attempt ID',
-            );
-            expect(
-              arguments,
-              isNot(contains('preassignedMessageIdIsFresh')),
-              reason: _sendCallerLabel(caller),
-            );
-            expect(arguments, isNot(contains('action')));
-          case _SendChatMessageCallerKind.preassignedIdFresh:
-            expect(
-              arguments,
-              contains('messageId'),
-              reason:
-                  '${_sendCallerLabel(caller)} is the reviewed preassigned-ID '
-                  'fresh producer',
-            );
-            expect(
-              arguments['preassignedMessageIdIsFresh'],
-              expected.value.freshIntent,
-              reason:
-                  '${_sendCallerLabel(caller)} must carry explicit custody '
-                  'intent whenever it preassigns a fresh message ID',
-            );
-            expect(arguments, isNot(contains('action')));
-          case _SendChatMessageCallerKind.excludedEdit:
-            expect(arguments['action'], 'MessagePayload.actionEdit');
-            expect(arguments, contains('messageId'));
-            expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
-          case _SendChatMessageCallerKind.excludedRetry:
-            expect(arguments['action'], 'retryAction');
-            expect(arguments, contains('messageId'));
-            expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
-          case _SendChatMessageCallerKind.excludedMedia:
-            expect(arguments['mediaAttachments'], 'fullAttachmentList');
-            expect(arguments, contains('messageId'));
-            expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
-          case _SendChatMessageCallerKind.excludedVoice:
-            expect(arguments['mediaAttachments'], 'attachments');
-            expect(arguments, contains('messageId'));
-            expect(
-              arguments['preassignedMessageIdIsFresh'],
-              expected.value.freshIntent,
-            );
+          switch (expectedCaller.kind) {
+            case _SendChatMessageCallerKind.generatedIdFresh:
+              expect(
+                arguments,
+                isNot(contains('messageId')),
+                reason:
+                    '${_sendCallerLabel(caller)} must let sendChatMessage '
+                    'generate the fresh attempt ID',
+              );
+              expect(
+                arguments,
+                isNot(contains('preassignedMessageIdIsFresh')),
+                reason: _sendCallerLabel(caller),
+              );
+              expect(arguments, isNot(contains('action')));
+            case _SendChatMessageCallerKind.preassignedIdFresh:
+              expect(
+                arguments,
+                contains('messageId'),
+                reason:
+                    '${_sendCallerLabel(caller)} is the reviewed preassigned-ID '
+                    'fresh producer',
+              );
+              expect(
+                arguments['preassignedMessageIdIsFresh'],
+                expectedCaller.freshIntent,
+                reason:
+                    '${_sendCallerLabel(caller)} must carry explicit custody '
+                    'intent whenever it preassigns a fresh message ID',
+              );
+              expect(arguments, isNot(contains('action')));
+            case _SendChatMessageCallerKind.excludedEdit:
+              expect(arguments['action'], 'MessagePayload.actionEdit');
+              expect(arguments, contains('messageId'));
+              expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
+            case _SendChatMessageCallerKind.excludedRetry:
+              expect(arguments['action'], 'retryAction');
+              expect(arguments, contains('messageId'));
+              expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
+            case _SendChatMessageCallerKind.excludedMedia:
+              expect(
+                arguments['mediaAttachments'],
+                expectedCaller.mediaAttachments,
+              );
+              expect(arguments, contains('messageId'));
+              expect(arguments, isNot(contains('preassignedMessageIdIsFresh')));
+            case _SendChatMessageCallerKind.excludedVoice:
+              expect(
+                arguments['mediaAttachments'],
+                expectedCaller.mediaAttachments,
+              );
+              expect(arguments, contains('messageId'));
+              expect(
+                arguments['preassignedMessageIdIsFresh'],
+                expectedCaller.freshIntent,
+              );
+          }
         }
+        expect(matches, isEmpty);
       }
 
       final preassignedWithoutFreshIntent = callers
@@ -627,10 +719,11 @@ void main() {
               'retry_incomplete_uploads_use_case.dart',
           'lib/features/conversation/application/'
               'send_chat_message_use_case.dart',
+          'lib/features/share/application/share_batch_delivery_coordinator.dart',
         },
         reason:
-            'only classified existing edit/retry/media attempts may pass a '
-            'messageId without explicit fresh-custody intent',
+            'only classified existing edit/retry or pre-owned media attempts '
+            'may pass a messageId without explicit fresh-custody intent',
       );
     },
   );
