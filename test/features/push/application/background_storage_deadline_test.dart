@@ -31,11 +31,29 @@ void main() {
   const secureStorageChannel = MethodChannel(
     'plugins.it_nomads.com/flutter_secure_storage',
   );
-  const storageAggregateBudget = Duration(milliseconds: 270);
-  const storagePhaseBudget = Duration(milliseconds: 250);
-  const observationBudget = Duration(milliseconds: 380);
-  const lateEffectWindow = Duration(milliseconds: 60);
-  const cleanupBudget = Duration(seconds: 3);
+  // These five values are ONE self-consistent set, not measurements of how
+  // fast production is. `debugSetBackgroundStorageDeadlineDurations` below
+  // INSTALLS the aggregate/phase deadlines the handler must honour, so
+  // `observationBudget` is only "the installed aggregate plus slack" and
+  // `lateEffectWindow` is "long enough for a released phase to misbehave".
+  //
+  // What every assertion here proves is BOUNDEDNESS, not speed: each held
+  // resolver/stager is released strictly AFTER its `_completesWithin` check, so
+  // the failure mode under guard is an UNBOUNDED wait. Scaling the installed
+  // deadline and the observation window together therefore proves exactly the
+  // same property — the handler still must fail closed at the deadline it was
+  // given — while removing the wall-clock race.
+  //
+  // The original 270/250/380/60ms set lost that race in a batched `host-all`,
+  // which runs four suites in parallel; the tests passed serially on the same
+  // tree. Tune `deadlineScale` alone if a loaded host ever needs more headroom.
+  const deadlineScale = 8;
+  const storageAggregateBudget = Duration(milliseconds: 270 * deadlineScale);
+  const storagePhaseBudget = Duration(milliseconds: 250 * deadlineScale);
+  const observationBudget = Duration(milliseconds: 380 * deadlineScale);
+  const lateEffectWindow = Duration(milliseconds: 60 * deadlineScale);
+  // Must comfortably exceed observationBudget so teardown never masks a result.
+  const cleanupBudget = Duration(seconds: 30);
 
   late Directory root;
   late Directory livenessJournalDirectory;
@@ -397,7 +415,8 @@ void main() {
     () async {
       final monotonicClock = _FakeMonotonicClock();
       debugSetBackgroundStorageMonotonicClockFactory(
-        () => () => monotonicClock.elapsed,
+        () =>
+            () => monotonicClock.elapsed,
       );
       const eventId = 'group-overlay-stall-event';
       const message = RemoteMessage(
@@ -430,7 +449,7 @@ void main() {
           // observer only distinguishes bounded completion from an indefinitely
           // retained callback, so leave enough scheduling margin for the full
           // concurrent groups gate.
-          await _completesWithin(handler, const Duration(seconds: 2)),
+          await _completesWithin(handler, observationBudget),
           isTrue,
           reason: 'secure overlay storage cannot retain the serial callback',
         );
@@ -822,7 +841,8 @@ void main() {
   test('group post-show stall keeps committed generation', () async {
     final monotonicClock = _FakeMonotonicClock();
     debugSetBackgroundStorageMonotonicClockFactory(
-      () => () => monotonicClock.elapsed,
+      () =>
+          () => monotonicClock.elapsed,
     );
     const eventId = 'group-post-show-event';
     const groupId = 'group-post-show';
@@ -1075,7 +1095,7 @@ void main() {
       try {
         await _awaitSignal(firstResolverEntered.future, 'first resolver');
         expect(
-          await _completesWithin(secondHandler, const Duration(seconds: 1)),
+          await _completesWithin(secondHandler, observationBudget),
           isTrue,
           reason:
               'the first callback must release the serial queue using one '

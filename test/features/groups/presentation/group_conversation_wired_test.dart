@@ -1745,6 +1745,18 @@ MediaAttachment successfulGroupUploadFixture({
   );
 }
 
+/// Ceiling for "the upload actually started" waits.
+///
+/// Upload start is signalled by a `Completer`, so every wait below is already
+/// event-driven and this value is a HANG ceiling, not a latency assertion: a
+/// passing run completes in milliseconds regardless of the number here. The
+/// four voice tests that used a 10s ceiling were the only ones to fail in a
+/// batched `host-all` (four suites in parallel), while their 30s siblings
+/// passed — the work being awaited is a real file copy plus SQLite writes, so
+/// the ceiling was racing host load rather than proving anything. One generous
+/// shared constant keeps the proof event-driven and machine-speed independent.
+const _uploadStartCeiling = Duration(seconds: 60);
+
 void main() {
   group('GroupConversationWired', () {
     late InMemoryGroupRepository groupRepo;
@@ -2625,7 +2637,7 @@ void main() {
 
         final send = await startScreenSend(tester, 'leased media');
         await tester.runAsync(
-          () => uploadStarted[0].future.timeout(const Duration(seconds: 10)),
+          () => uploadStarted[0].future.timeout(_uploadStartCeiling),
         );
         uploadGates[0].complete();
         await pumpUntilAsyncWorkSettles(
@@ -4712,7 +4724,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 30));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         expect(uploadStarted.isCompleted, isTrue);
         await pumpFrames(tester, count: 5);
@@ -6472,7 +6484,7 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 200));
       });
       await tester.runAsync(() async {
-        await uploadStarted.future.timeout(const Duration(seconds: 10));
+        await uploadStarted.future.timeout(_uploadStartCeiling);
       });
       final emptyRoster = runGroupMembershipMutationLocked<void>(
         groupId: group.id,
@@ -15461,7 +15473,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 10));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         await pumpFrames(tester, count: 5);
 
@@ -15602,7 +15614,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 10));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         await pumpFrames(tester, count: 5);
 
@@ -16133,7 +16145,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 30));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         await pumpFrames(tester, count: 5);
 
@@ -16293,7 +16305,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 10));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         await pumpUntilAsync(tester, () async {
           final messages = await msgRepo.getMessagesPage(group.id);
@@ -16535,7 +16547,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 10));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         final deleteGroup = runGroupMembershipMutationLocked<void>(
           groupId: missingGroup.id,
@@ -16685,7 +16697,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 200));
         });
         await tester.runAsync(() async {
-          await uploadStarted.future.timeout(const Duration(seconds: 6));
+          await uploadStarted.future.timeout(_uploadStartCeiling);
         });
         await pumpFrames(tester, count: 5);
 
