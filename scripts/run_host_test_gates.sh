@@ -540,6 +540,37 @@ is_android_dropped_push_manifest_contract() {
   [ "$1" = "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT" ]
 }
 
+# Both Android manifest contracts shell out to `./android/gradlew`. Unlike
+# `flutter`, gradlew is invoked path-qualified and is therefore NOT satisfied by
+# the host shims on PATH, so inside the Claude container these two members are
+# the only ones that execute locally for real -- with no /Users, no Flutter SDK,
+# and no Android SDK. Gradle then cannot resolve android/local.properties'
+# (correct) macOS `flutter.sdk` path and the build fails for an environment
+# reason rather than a code one. When the host bridge is mounted, run them on
+# the host instead. A native macOS run has no /claude-host-bin, so its command
+# plan and execution are unchanged.
+readonly HOST_RUN_BRIDGE="/claude-host-bin/host-run"
+
+android_contract_is_bridged() {
+  [ -x "$HOST_RUN_BRIDGE" ]
+}
+
+print_android_contract_command() {
+  if android_contract_is_bridged; then
+    printf '%s bash ./%s' "$HOST_RUN_BRIDGE" "$1"
+  else
+    printf './%s' "$1"
+  fi
+}
+
+run_android_contract() {
+  if android_contract_is_bridged; then
+    "$HOST_RUN_BRIDGE" bash "./$1"
+  else
+    "./$1"
+  fi
+}
+
 readonly GO_NODE_ADDR_VISIBILITY_RUN='AnnouncedAddrsSurvive|SignedPeerRecord|IdentifyLearnedAddr|InterfaceChangeUpdates|Fdc11PortMining|NoEnumerationErrorSpam|NotSuppressed|HolePunchInputAddrs|DoesNotLeakNonRoutable'
 
 print_command_for_path() {
@@ -577,11 +608,11 @@ print_command_for_path() {
     return
   fi
   if is_android_renderer_manifest_contract "$path"; then
-    printf './%s' "$ANDROID_RENDERER_MANIFEST_CONTRACT"
+    print_android_contract_command "$ANDROID_RENDERER_MANIFEST_CONTRACT"
     return
   fi
   if is_android_dropped_push_manifest_contract "$path"; then
-    printf './%s' "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
+    print_android_contract_command "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
     return
   fi
   printf 'flutter test %s' "$(quote_for_display "$path")"
@@ -622,11 +653,11 @@ run_path() {
     return
   fi
   if is_android_renderer_manifest_contract "$path"; then
-    "./$ANDROID_RENDERER_MANIFEST_CONTRACT"
+    run_android_contract "$ANDROID_RENDERER_MANIFEST_CONTRACT"
     return
   fi
   if is_android_dropped_push_manifest_contract "$path"; then
-    "./$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
+    run_android_contract "$ANDROID_DROPPED_PUSH_MANIFEST_CONTRACT"
     return
   fi
   flutter test "$path"
