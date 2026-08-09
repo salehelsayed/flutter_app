@@ -9,3 +9,4 @@ Before starting work, read the latest line for the assigned plan.
 - Plan 348 — EXECUTION_COMPLETED
 - Plan 349 — EXECUTION_READY
 - Plan 349 — EXECUTION_COMPLETED
+- Plan 350 — EXECUTION_READY

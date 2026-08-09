@@ -9,6 +9,8 @@
 
 > **Version 1.2 change:** The PRD now distinguishes an OS notification, a locally posted OS notification and a remote push/wake. It also adds a story-creation gate: OQ-01 through OQ-05 must map the current same-chat cue, chat-open cleanup, local read predicate, linked-device read clearing and any existing mute components before the affected clauses become final stories.
 
+> **Implementation-economy addendum (8 August 2026):** Close the requirements through the smallest dependency-ordered vertical slices that produce usable behavior. Reuse existing custody, retry, ledger, platform-adapter and test-harness owners by default. A new durable owner requires evidence of a different authority, lifetime or atomic transition; a new protocol, scheduler, queue or harness requires a concrete compatibility or otherwise unprovable execution boundary.
+
 > **Privacy limit:** Apple or Google must receive a device push token to route a push. They can observe that this app sent a push to a device at a certain time. This design prevents the push payload from revealing sender, conversation, group, message type, content or media URL. It does not eliminate timing correlation.
 
 ## 1. Executive summary
@@ -86,6 +88,20 @@ The delivery path and the user-visible result are different concepts. The same i
 - Incoming-call architecture.
 - Cloud-side generation of plaintext previews.
 - Claiming distributed visual notification delivery is mathematically exactly-once. The hard guarantee is one local event and one unread transition; visual duplicates must be minimized, measured and promptly coalesced rather than allowing message loss.
+- Building a separate inbox/outbox, ledger, retry scheduler, provider adapter or device harness for every message modality, audit item, platform entry point or gap number when one existing owner can satisfy the same contract.
+
+### 3.1 Implementation economy and finish line
+
+These rules constrain how the target architecture is delivered; they do not weaken its privacy, durability, acknowledgement, lifecycle or local-idempotence requirements.
+
+- Plan an owner-aligned vertical slice around the smallest coherent set of related reliability or privacy outcomes, not around every PRD sentence, event subtype or test permutation.
+- Prefer an adopter that extends an existing authenticated event, custody owner, retry cadence, notification ledger, platform adapter or test fixture. Introduce a new persistent state owner only when the required lifetime or atomic transition cannot be represented safely by an existing owner.
+- Do not create parallel modality-specific pipelines for text, media, reactions, edits, deletes and groups. Normalize them at the earliest contract they genuinely share; keep a specialized owner only where the authority or lifetime is materially different.
+- An enabling primitive may be default-off for compatibility, but it must have a named near-term adopter and does not count as closing user-visible acceptance until adopted. Do not accumulate unadopted primitives within the same dependency chain.
+- Stop a slice when its named PRD risk and preservation boundary pass. Unrelated cleanup, speculative generalization, aesthetic symmetry and infrastructure for hypothetical future requirements go to a later backlog only when concrete evidence justifies them.
+- Do not fully specify downstream execution plans against moving interfaces. Retain lightweight dependency and risk outlines until prerequisite APIs and evidence boundaries stabilize.
+- Use focused causal tests, exact preservation sentinels and only the affected curated/family gates during a slice. Reuse existing Android automation and defer irreducible Apple device evidence to the consolidated iOS closure phase; do not construct a new cross-platform lab per gap.
+- “Done for this slice” means the scoped production behavior and its proportional evidence are complete and the remaining exclusions are truthful. It does not require solving every later modality, retiring all legacy code or designing the final universal framework in advance.
 
 ## 4. Privacy contract
 
@@ -437,6 +453,14 @@ For A-01 through A-30:
 - privacy, reliability, lifecycle, duplicate or stale-notification gaps
 - smallest safe change
 - automated or real-device acceptance test
+
+Group findings by shared production owner and dependency order; do not create
+one story, table, queue, scheduler, protocol or harness per A-control or event
+type. For every proposed new durable owner or infrastructure surface, state why
+the current owner cannot satisfy the required authority, atomicity, privacy or
+recovery boundary. Otherwise reuse it. Keep downstream work as lightweight
+dependency/risk outlines until its interfaces stabilize, and stop each
+executable slice when its named risk and preservation tests pass.
 
 Explicitly trace:
 1. foreground-active on the same chat;
