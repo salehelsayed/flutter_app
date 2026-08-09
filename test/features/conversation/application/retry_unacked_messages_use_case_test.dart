@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -735,6 +736,76 @@ void main() {
             messageId,
           ))?.directMediaCustodyIntentId,
           intent,
+        );
+      },
+    );
+
+    test(
+      'TC-353-03 unacked media caption edit with a v109 owner never re-stores',
+      () async {
+        const messageId = 'tc353-unacked-media-edit';
+        const eventId = '35300000-0000-4000-8000-000000000301';
+        const recipient = 'peer-target';
+        final envelope =
+            '{"type":"chat_message","version":"2","id":"$messageId",'
+            '"eventId":"$eventId","senderPeerId":"my-peer-id",'
+            '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+        final parent =
+            _makeSentMessage(
+              id: messageId,
+              contactPeerId: recipient,
+              wireEnvelope: envelope,
+            ).copyWith(
+              editedAt: '2026-01-01T00:00:01.000Z',
+              media: const <MediaAttachment>[
+                MediaAttachment(
+                  id: '$messageId-a',
+                  messageId: messageId,
+                  mime: 'image/jpeg',
+                  size: 800,
+                  mediaType: 'image',
+                  downloadStatus: 'done',
+                  createdAt: '2026-01-01T00:00:00.000Z',
+                ),
+              ],
+            );
+        messageRepo.seed(<ConversationMessage>[parent]);
+        messageRepo.unackedOutgoingOverride = <ConversationMessage>[parent];
+        messageRepo.directMutationCustodyRows['$recipient\u0000$eventId'] =
+            DirectReactionInboxCustodyOutboxEntry(
+              recipientPeerId: recipient,
+              eventId: eventId,
+              wireEnvelope: envelope,
+              retryCount: 0,
+              lastAttemptAt: null,
+              lastErrorCode: null,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            );
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+          olderThan: Duration.zero,
+        );
+
+        expect(count, 0);
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason: 'the exact v109 owner blocks every legacy store leg',
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(
+          messageRepo.directMutationCustodyRows,
+          hasLength(1),
+          reason: 'the exact event stays retained for its own drain',
         );
       },
     );

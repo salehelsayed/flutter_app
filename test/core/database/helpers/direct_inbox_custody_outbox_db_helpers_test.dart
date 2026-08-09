@@ -1,11 +1,16 @@
 import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -1041,6 +1046,375 @@ void main() {
       );
     },
   );
+
+  group('Plan 353 direct-delivered strict media lineage', () {
+    const nowMs = 1900000000000;
+    var incarnationSeq = 0;
+
+    /// Seeds one strict ordinary outgoing initial whose complete v111
+    /// generation is still bound to a live v108 incarnation.
+    Future<({String messageId, List<String> attachmentIds, String incarnation})>
+    seedBoundStrictInitial(String suffix) async {
+      final messageId = 'tc353-01a-$suffix';
+      final incarnation =
+          'd0d0d0d0d0d0d0d0d0d0d0d0'
+          '${(++incarnationSeq).toRadixString(16).padLeft(8, '0')}';
+      final envelope = _envelope(messageId, 'cipher-$suffix');
+      final attachmentIds = <String>['$messageId-a', '$messageId-b'];
+      await db.insert(
+        'messages',
+        _message(messageId, envelope: envelope).toMap(),
+      );
+      final manifest = <DirectMediaBlobManifestProjection>[];
+      for (var index = 0; index < attachmentIds.length; index++) {
+        final attachmentId = attachmentIds[index];
+        // Two DISTINCT commitments: no generation-level manifest hash and no
+        // shared expiry can stand in for either row's own lineage digest.
+        final contentHash = index == 0 ? '1' * 64 : '2' * 64;
+        final ciphertextSize = 71 + index;
+        final expiresAtMs = nowMs + 60000 + (index * 1000);
+        await dbInsertMediaAttachment(db, <String, Object?>{
+          'id': attachmentId,
+          'message_id': messageId,
+          'owner_lane': 'direct',
+          'mime': 'image/jpeg',
+          'size': 900 + index,
+          'media_type': 'image',
+          'created_at': _t0,
+          'download_status': 'done',
+          'local_path': 'media/direct/$attachmentId.jpg',
+          'content_hash': contentHash,
+          'encryption_key_base64': secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'encryption_nonce': 'nonce-$attachmentId',
+          'encryption_scheme': 'blob_aes_256_gcm_v1',
+        });
+        await db.insert(
+          kDirectMediaBlobCustodyTable,
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            inboxCustodyIncarnationId: incarnation,
+            recipientPeerId: _peer,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'a' * 64}/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: 'relay-$index',
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: _t0,
+            updatedAt: _t0,
+          ).toMap(),
+        );
+        manifest.add(
+          DirectMediaBlobManifestProjection(
+            attachmentId: attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              expiresAtMs: expiresAtMs,
+            ),
+          ),
+        );
+      }
+      await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+        'recipient_peer_id': _peer,
+        'message_id': messageId,
+        'incarnation_id': incarnation,
+        'wire_envelope': envelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': _t0,
+        'updated_at': _t0,
+        'media_blob_expires_at_ms': earliestDirectMediaBlobExpiryMs(manifest),
+        'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
+          manifest,
+        ),
+      });
+      return (
+        messageId: messageId,
+        attachmentIds: attachmentIds,
+        incarnation: incarnation,
+      );
+    }
+
+    Future<Map<String, String>> expectedLineageOf(String messageId) async {
+      final rows = (await db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        orderBy: 'attachment_id ASC',
+      )).map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
+      return <String, String>{
+        for (final row in rows)
+          row.attachmentId: computeDirectMediaBlobCommitmentFingerprint(
+            attachmentId: row.attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              kind: row.custodyKind,
+              contract: row.custodyContract,
+              contentHash: row.contentHash,
+              ciphertextSize: row.ciphertextSize,
+              transportMime: row.transportMime,
+              expiresAtMs: row.expiresAtMs!,
+            ),
+          ),
+      };
+    }
+
+    Future<Map<String, Object?>> lineageOf(String messageId) async => {
+      for (final row in await db.query(
+        'media_attachments',
+        columns: const <String>['id', 'direct_media_blob_custody_fingerprint'],
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        orderBy: 'id ASC',
+      ))
+        row['id']! as String: row['direct_media_blob_custody_fingerprint'],
+    };
+
+    Future<DirectInboxCustodyCompletionOutcome> completeBound(
+      ({String messageId, List<String> attachmentIds, String incarnation})
+      bound,
+    ) async {
+      final v108 = (await db.query(
+        'direct_inbox_custody_outbox',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[bound.messageId],
+      )).single;
+      return dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: _peer,
+        messageId: bound.messageId,
+        expectedIncarnationId: bound.incarnation,
+        expectedWireEnvelope: v108['wire_envelope']! as String,
+        relayExpiresAt: (v108['media_blob_expires_at_ms']! as num).toInt() - 1,
+      );
+    }
+
+    /// The exact projection a direct/LAN delivery receipt commits: `delivered`
+    /// with the initial envelope cleared and every settlement field released.
+    Future<void> deliverDirectly(
+      String messageId, {
+      String? transport = 'direct',
+    }) async {
+      expect(
+        await db.update(
+          'messages',
+          <String, Object?>{
+            'status': 'delivered',
+            'transport': transport,
+            'wire_envelope': null,
+            'relay_expires_at': null,
+            'custody_checked_at': null,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        1,
+      );
+    }
+
+    test('TC-353-01a direct-delivered strict media keeps lineage through v108 '
+        'completion', () async {
+      // 1. The canonical delivered successor: a direct receipt already cleared
+      //    the initial envelope before protected v108 acceptance landed.
+      final delivered = await seedBoundStrictInitial('delivered');
+      final expectedLineage = await expectedLineageOf(delivered.messageId);
+      expect(expectedLineage, hasLength(2));
+      expect(expectedLineage.values.toSet(), hasLength(2));
+      await deliverDirectly(delivered.messageId);
+
+      expect(
+        await completeBound(delivered),
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+      );
+      expect(
+        await lineageOf(delivered.messageId),
+        expectedLineage,
+        reason: 'the delivered successor still owns exactly this generation',
+      );
+      final settled = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[delivered.messageId],
+      )).single;
+      expect(settled['status'], 'delivered');
+      expect(settled['transport'], 'direct');
+      expect(settled['wire_envelope'], isNull);
+      expect(settled['relay_expires_at'], isNull);
+      expect(settled['custody_checked_at'], isNull);
+      expect(
+        await db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[delivered.messageId],
+        ),
+        isEmpty,
+      );
+      final cleanup = (await db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[delivered.messageId],
+        orderBy: 'attachment_id ASC',
+      )).map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
+      expect(
+        cleanup.map((row) => row.state).toSet(),
+        <DirectMediaBlobCustodyState>{
+          DirectMediaBlobCustodyState.outgoingCleanupPending,
+        },
+      );
+      for (final row in cleanup) {
+        expect(
+          await dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: row),
+          isTrue,
+        );
+      }
+      expect(
+        await lineageOf(delivered.messageId),
+        expectedLineage,
+        reason: 'lineage must survive the physical v111 drain',
+      );
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: delivered.messageId,
+        ),
+        OutgoingDirectDeletionLane.strictMedia,
+        reason: 'the existing delete classifier stays strict post-drain',
+      );
+
+      // 2. Every supported and null transport label is the same canonical
+      //    delivered shape.
+      for (final transport in <String?>[
+        null,
+        'wifi',
+        'local',
+        'direct',
+        'reuse',
+        'relay',
+        'inbox',
+      ]) {
+        final supported = await seedBoundStrictInitial(
+          'transport-${transport ?? 'null'}',
+        );
+        final expected = await expectedLineageOf(supported.messageId);
+        await deliverDirectly(supported.messageId, transport: transport);
+        expect(
+          await completeBound(supported),
+          DirectInboxCustodyCompletionOutcome.messagePreserved,
+          reason: 'transport $transport',
+        );
+        expect(
+          await lineageOf(supported.messageId),
+          expected,
+          reason: 'transport $transport must still own its lineage',
+        );
+      }
+
+      // 3. Successors that are NOT the canonical delivered settlement never
+      //    gain authorship, and each keeps its current completion outcome.
+      final unauthored = <String, Future<void> Function(String messageId)>{
+        'later edit': (messageId) async {
+          await db.update(
+            'messages',
+            <String, Object?>{
+              'status': 'sending',
+              'transport': null,
+              'edited_at': _t1,
+              'wire_envelope': _envelope(messageId, 'cipher-edit-attempt'),
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        },
+        'delivered row that still carries an edit': (messageId) async {
+          await deliverDirectly(messageId);
+          await db.update(
+            'messages',
+            <String, Object?>{'edited_at': _t1},
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        },
+        'author tombstone': (messageId) async {
+          await db.update(
+            'messages',
+            <String, Object?>{
+              'text': '',
+              'status': 'sending',
+              'deleted_at': _t1,
+              'deleted_by_peer_id': 'peer-self',
+              'wire_envelope': _envelope(messageId, 'cipher-tombstone'),
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        },
+        'crossed recipient': (messageId) async {
+          await deliverDirectly(messageId);
+          await db.update(
+            'messages',
+            const <String, Object?>{'contact_peer_id': 'peer-crossed'},
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        },
+        'malformed delivered relay expiry': (messageId) async {
+          await deliverDirectly(messageId);
+          await db.update(
+            'messages',
+            const <String, Object?>{'relay_expires_at': 1900000123456},
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        },
+        'malformed delivered custody check': (messageId) async {
+          await deliverDirectly(messageId);
+          await db.update(
+            'messages',
+            const <String, Object?>{'custody_checked_at': _t1},
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        },
+        'malformed delivered transport': (messageId) async {
+          await deliverDirectly(messageId, transport: 'carrier-pigeon');
+        },
+      };
+      for (final entry in unauthored.entries) {
+        final seeded = await seedBoundStrictInitial(
+          entry.key.replaceAll(' ', '-'),
+        );
+        await entry.value(seeded.messageId);
+        final before = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[seeded.messageId],
+        )).single;
+        await completeBound(seeded);
+        expect(
+          await lineageOf(seeded.messageId),
+          <String, Object?>{for (final id in seeded.attachmentIds) id: null},
+          reason: '${entry.key} must never receive lineage authorship',
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[seeded.messageId],
+          )).single,
+          before,
+          reason: '${entry.key} keeps its current completion outcome',
+        );
+      }
+    });
+  });
 }
 
 ConversationMessage _message(

@@ -7,6 +7,7 @@ import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.d
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -4233,5 +4234,1145 @@ void main() {
         );
       },
     );
+  });
+
+  group('Plan 353 ordinary direct-media caption-only edit custody', () {
+    const sender = 'peer-local';
+    const recipient = 'tc353-recipient';
+    const t0 = '2026-08-09T09:00:00.000Z';
+    const t1 = '2026-08-09T09:00:01.000Z';
+    const t2 = '2026-08-09T09:00:02.000Z';
+    const nowMs = 1900000000000;
+
+    var eventSeq = 0;
+    String nextEventId() =>
+        '35300000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+
+    String editEnvelope(String messageId, String eventId) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'eventId': eventId,
+          'senderPeerId': sender,
+          'encrypted': <String, Object?>{
+            'kem': 'kem-353',
+            'ciphertext': 'cipher-$eventId',
+            'nonce': 'nonce-353',
+          },
+        });
+
+    String initialEnvelope(String messageId) => jsonEncode(<String, Object?>{
+      'type': 'chat_message',
+      'version': '2',
+      'id': messageId,
+      'senderPeerId': sender,
+      'encrypted': const <String, Object?>{
+        'kem': 'kem-initial',
+        'ciphertext': 'cipher-initial',
+        'nonce': 'nonce-initial',
+      },
+    });
+
+    /// One physical direct attachment carrying only storage-reference key
+    /// material — SQLite never sees a raw key.
+    Map<String, Object?> attachmentRow({
+      required String messageId,
+      required String attachmentId,
+      required String contentHash,
+      String createdAt = t0,
+      String? fingerprint,
+    }) => <String, Object?>{
+      ...makeAttachmentRow(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 800,
+        mediaType: 'image',
+        width: 640,
+        height: 480,
+        localPath: 'media/direct/$attachmentId.jpg',
+        downloadStatus: 'done',
+        createdAt: createdAt,
+        contentHash: contentHash,
+        encryptionKeyBase64: secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        encryptionNonce: 'nonce-$attachmentId',
+        encryptionScheme: 'blob_aes_256_gcm_v1',
+      ),
+      'direct_media_blob_custody_fingerprint': fingerprint,
+    };
+
+    Map<String, Object?> parentRowFor(
+      String messageId, {
+      String status = 'delivered',
+      String? wireEnvelope,
+      String? transport = 'direct',
+    }) => ConversationMessage(
+      id: messageId,
+      contactPeerId: recipient,
+      senderPeerId: sender,
+      text: 'original caption',
+      timestamp: t0,
+      status: status,
+      isIncoming: false,
+      createdAt: t0,
+      transport: transport,
+      wireEnvelope: wireEnvelope,
+      dedupKey: messageId,
+    ).toMap();
+
+    /// A caption-only staged projection: only text, editedAt and the exact
+    /// edit-attempt transport fields differ from the persisted parent.
+    Map<String, Object?> captionEditOf(
+      Map<String, Object?> current, {
+      required String wireEnvelope,
+      String caption = 'edited caption',
+      String editedAt = t1,
+    }) => <String, Object?>{
+      ...current,
+      'text': caption,
+      'edited_at': editedAt,
+      'status': 'sending',
+      'transport': null,
+      'relay_expires_at': null,
+      'custody_checked_at': null,
+      'wire_envelope': wireEnvelope,
+    };
+
+    var v108Seq = 0;
+
+    /// Seeds one ordinary outgoing direct parent with [attachments] physical
+    /// rows, [blobRows] v111 rows and an optional v108 owner.
+    Future<Map<String, Object?>> seedMediaParent(
+      String suffix, {
+      required List<Map<String, Object?>> attachments,
+      List<DirectMediaBlobCustodyRow> blobRows = const [],
+      Map<String, Object?>? v108,
+      String status = 'delivered',
+      String? transport = 'direct',
+      String? wireEnvelope,
+    }) async {
+      final messageId = 'tc353-$suffix';
+      await db.insert(
+        'messages',
+        parentRowFor(
+          messageId,
+          status: status,
+          transport: transport,
+          wireEnvelope: wireEnvelope,
+        ),
+      );
+      for (final attachment in attachments) {
+        await dbInsertMediaAttachment(db, <String, Object?>{
+          ...attachment,
+          'message_id': messageId,
+        });
+      }
+      for (final row in blobRows) {
+        expect(row.messageId, messageId);
+        await db.insert(kDirectMediaBlobCustodyTable, row.toMap());
+      }
+      if (v108 != null) {
+        await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+          'recipient_peer_id': recipient,
+          'message_id': messageId,
+          'incarnation_id':
+              'e0e0e0e0e0e0e0e0e0e0e0e0'
+              '${(++v108Seq).toRadixString(16).padLeft(8, '0')}',
+          'wire_envelope': initialEnvelope(messageId),
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': t0,
+          'updated_at': t0,
+          ...v108,
+        });
+      }
+      return (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
+    }
+
+    /// A complete two-row strict generation with DISTINCT commitments.
+    ({
+      List<Map<String, Object?>> attachments,
+      List<DirectMediaBlobCustodyRow> blobRows,
+      Map<String, Object?> v108,
+      Map<String, String> lineage,
+      List<String> attachmentIds,
+    })
+    strictGeneration({
+      required String messageId,
+      required DirectMediaBlobCustodyState state,
+      String? incarnationId,
+      bool fingerprinted = false,
+      int attachmentCount = 2,
+      int blobCount = 2,
+      // Tied created_at makes the canonical order depend on the id tiebreak.
+      String createdAt = t0,
+    }) {
+      final attachments = <Map<String, Object?>>[];
+      final blobRows = <DirectMediaBlobCustodyRow>[];
+      final manifest = <DirectMediaBlobManifestProjection>[];
+      final lineage = <String, String>{};
+      final attachmentIds = <String>[];
+      for (var index = 0; index < attachmentCount; index++) {
+        final attachmentId = '$messageId-${String.fromCharCode(97 + index)}';
+        final contentHash = '${index + 1}' * 64;
+        final ciphertextSize = 91 + index;
+        final expiresAtMs = nowMs + 60000 + (index * 1000);
+        attachmentIds.add(attachmentId);
+        final commitment = DirectMediaBlobCustodyCommitment(
+          contentHash: contentHash,
+          ciphertextSize: ciphertextSize,
+          expiresAtMs: expiresAtMs,
+        );
+        lineage[attachmentId] = computeDirectMediaBlobCommitmentFingerprint(
+          attachmentId: attachmentId,
+          commitment: commitment,
+        );
+        attachments.add(
+          attachmentRow(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            contentHash: contentHash,
+            createdAt: createdAt,
+            fingerprint: fingerprinted ? lineage[attachmentId] : null,
+          ),
+        );
+        if (index < blobCount) {
+          blobRows.add(
+            DirectMediaBlobCustodyRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: state,
+              inboxCustodyIncarnationId: incarnationId,
+              recipientPeerId: recipient,
+              ciphertextRelativePath:
+                  'direct_media_blob_custody_v1/${'a' * 64}/$attachmentId.blob',
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              expiresAtMs: expiresAtMs,
+              custodyRelayPeerId: 'relay-$index',
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: t0,
+              updatedAt: t0,
+            ),
+          );
+          manifest.add(
+            DirectMediaBlobManifestProjection(
+              attachmentId: attachmentId,
+              commitment: commitment,
+            ),
+          );
+        }
+      }
+      return (
+        attachments: attachments,
+        blobRows: blobRows,
+        v108: <String, Object?>{
+          'media_blob_manifest_hash': manifest.isEmpty
+              ? null
+              : computeDirectMediaBlobManifestHash(manifest),
+          'media_blob_expires_at_ms': manifest.isEmpty
+              ? null
+              : earliestDirectMediaBlobExpiryMs(manifest),
+        },
+        lineage: lineage,
+        attachmentIds: attachmentIds,
+      );
+    }
+
+    Future<
+      ({
+        Map<String, Object?> message,
+        List<Map<String, Object?>> attachments,
+        List<Map<String, Object?>> v108,
+        List<Map<String, Object?>> v111,
+        List<Map<String, Object?>> v109,
+      })
+    >
+    snapshot(String messageId) async => (
+      message: (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single,
+      attachments: await db.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        orderBy: 'id ASC',
+      ),
+      v108: await db.query(
+        'direct_inbox_custody_outbox',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+      ),
+      v111: await db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+        orderBy: 'attachment_id ASC',
+      ),
+      v109: await db.query(kDirectReactionInboxCustodyOutboxTable),
+    );
+
+    /// The storage-reference expectations SQLite may see: the hydrated raw key
+    /// is repository proof and never crosses this boundary.
+    List<Map<String, Object?>> expectationsFrom(
+      List<Map<String, Object?>> attachmentRows,
+    ) => attachmentRows
+        .map(
+          (row) => <String, Object?>{
+            'id': row['id'],
+            'content_hash': row['content_hash'],
+            'encryption_key_base64': row['encryption_key_base64'],
+            'encryption_nonce': row['encryption_nonce'],
+            'encryption_scheme': row['encryption_scheme'],
+          },
+        )
+        .toList(growable: false);
+
+    Future<DirectMediaCaptionEditCustodyDbStageResult> stageCaptionEdit(
+      Map<String, Object?> current, {
+      required String eventId,
+      String caption = 'edited caption',
+      String editedAt = t1,
+      List<Map<String, Object?>>? expectedAttachmentRows,
+      int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+      Future<void> Function()? beforeCustodyInsertForTest,
+    }) async {
+      final messageId = current['id']! as String;
+      final envelope = editEnvelope(messageId, eventId);
+      final projection = await dbLoadOutgoingDirectMediaCaptionEditProjection(
+        db,
+        messageId: messageId,
+      );
+      return dbStageOutgoingDirectMediaCaptionEditInboxCustody(
+        db,
+        expectedRow: current,
+        stagedRow: captionEditOf(
+          current,
+          wireEnvelope: envelope,
+          caption: caption,
+          editedAt: editedAt,
+        ),
+        kind: OutgoingOrdinaryAttemptKind.edit,
+        recipientPeerId: recipient,
+        eventId: eventId,
+        wireEnvelope: envelope,
+        expectedAttachmentRows:
+            expectedAttachmentRows ??
+            expectationsFrom(projection.attachmentRows),
+        capacity: capacity,
+        beforeCustodyInsertForTest: beforeCustodyInsertForTest,
+      );
+    }
+
+    test('TC-353-01b strict media caption edit stages lineage parent and '
+        'raw-event v109 atomically', () async {
+      // ---- Row 1: a text-only parent still belongs to Plan 349. ----
+      final textParent = await seedMediaParent(
+        'not-media',
+        attachments: const [],
+      );
+      final textProjection =
+          await dbLoadOutgoingDirectMediaCaptionEditProjection(
+            db,
+            messageId: textParent['id']! as String,
+          );
+      expect(textProjection.lane, OutgoingDirectMediaCaptionEditLane.notMedia);
+      expect(textProjection.attachmentRows, isEmpty);
+
+      // ---- Row 2: exact live manifest v108 + complete bound stored v111. ----
+      final boundGeneration = strictGeneration(
+        messageId: 'tc353-bound-live',
+        state: DirectMediaBlobCustodyState.outgoingStored,
+        incarnationId: 'e0e0e0e0e0e0e0e0e0e0e0e000000001',
+      );
+      final boundParent = await seedMediaParent(
+        'bound-live',
+        attachments: boundGeneration.attachments,
+        blobRows: boundGeneration.blobRows,
+        v108: <String, Object?>{
+          ...boundGeneration.v108,
+          'incarnation_id': 'e0e0e0e0e0e0e0e0e0e0e0e000000001',
+        },
+      );
+      final boundId = boundParent['id']! as String;
+      final boundBeforeV111 = (await snapshot(boundId)).v111;
+      expect(
+        (await dbLoadOutgoingDirectMediaCaptionEditProjection(
+          db,
+          messageId: boundId,
+        )).lane,
+        OutgoingDirectMediaCaptionEditLane.strictMedia,
+      );
+      final boundStage = await stageCaptionEdit(
+        boundParent,
+        eventId: nextEventId(),
+      );
+      expect(boundStage.outcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(boundStage.ownsMutationEvent, isTrue);
+      final boundAfter = await snapshot(boundId);
+      expect(boundAfter.message['text'], 'edited caption');
+      expect(boundAfter.message['edited_at'], t1);
+      expect(boundAfter.message['status'], 'sending');
+      expect(boundAfter.message['transport'], isNull);
+      expect(boundAfter.message['relay_expires_at'], isNull);
+      expect(boundAfter.message['custody_checked_at'], isNull);
+      // Provable null-to-exact lineage is stamped in the same transaction.
+      expect(<String, Object?>{
+        for (final row in boundAfter.attachments)
+          row['id']! as String: row['direct_media_blob_custody_fingerprint'],
+      }, boundGeneration.lineage);
+      // v111 stays byte-identical: the live blob owner is untouched.
+      expect(boundAfter.v111, boundBeforeV111);
+      expect(boundAfter.v108, hasLength(1));
+      expect(boundAfter.v109, hasLength(1));
+
+      // ---- Row 3: no v108 + complete cleanup-pending v111, all-null. ----
+      final cleanupGeneration = strictGeneration(
+        messageId: 'tc353-cleanup-complete',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+      );
+      final cleanupParent = await seedMediaParent(
+        'cleanup-complete',
+        attachments: cleanupGeneration.attachments,
+        blobRows: cleanupGeneration.blobRows,
+      );
+      final cleanupId = cleanupParent['id']! as String;
+      final cleanupBeforeV111 = (await snapshot(cleanupId)).v111;
+      expect(
+        (await stageCaptionEdit(cleanupParent, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      final cleanupAfter = await snapshot(cleanupId);
+      expect(<String, Object?>{
+        for (final row in cleanupAfter.attachments)
+          row['id']! as String: row['direct_media_blob_custody_fingerprint'],
+      }, cleanupGeneration.lineage);
+      expect(cleanupAfter.v111, cleanupBeforeV111);
+
+      // ---- Row 4: cleanup-pending SUBSET with every fingerprint exact. ----
+      final subsetGeneration = strictGeneration(
+        messageId: 'tc353-cleanup-subset',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: true,
+        blobCount: 1,
+      );
+      final subsetParent = await seedMediaParent(
+        'cleanup-subset',
+        attachments: subsetGeneration.attachments,
+        blobRows: subsetGeneration.blobRows,
+      );
+      final subsetId = subsetParent['id']! as String;
+      final subsetBefore = await snapshot(subsetId);
+      expect(
+        (await stageCaptionEdit(subsetParent, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      final subsetAfter = await snapshot(subsetId);
+      expect(subsetAfter.attachments, subsetBefore.attachments);
+      expect(subsetAfter.v111, subsetBefore.v111);
+
+      // ---- Row 5: fully drained, every fingerprint exact. ----
+      final drainedGeneration = strictGeneration(
+        messageId: 'tc353-drained',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: true,
+        blobCount: 0,
+      );
+      final drainedParent = await seedMediaParent(
+        'drained',
+        attachments: drainedGeneration.attachments,
+      );
+      final drainedId = drainedParent['id']! as String;
+      final drainedBefore = await snapshot(drainedId);
+      expect(
+        (await stageCaptionEdit(drainedParent, eventId: nextEventId())).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      expect(
+        (await snapshot(drainedId)).attachments,
+        drainedBefore.attachments,
+      );
+
+      // ---- Row 6: historical all-null/no-v111 stays legacy, never promoted. ----
+      final historicalGeneration = strictGeneration(
+        messageId: 'tc353-historical',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        blobCount: 0,
+      );
+      for (final historical in <({String suffix, Map<String, Object?>? v108})>[
+        (suffix: 'historical-no-v108', v108: null),
+        (
+          suffix: 'historical-unbound-v108',
+          v108: const <String, Object?>{
+            'media_blob_manifest_hash': null,
+            'media_blob_expires_at_ms': null,
+          },
+        ),
+      ]) {
+        final parent = await seedMediaParent(
+          historical.suffix,
+          attachments: historicalGeneration.attachments,
+          v108: historical.v108,
+        );
+        final id = parent['id']! as String;
+        expect(
+          (await dbLoadOutgoingDirectMediaCaptionEditProjection(
+            db,
+            messageId: id,
+          )).lane,
+          OutgoingDirectMediaCaptionEditLane.legacyMedia,
+          reason: historical.suffix,
+        );
+        final before = await snapshot(id);
+        expect(
+          (await stageCaptionEdit(parent, eventId: nextEventId())).outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+          reason: historical.suffix,
+        );
+        final after = await snapshot(id);
+        expect(after.message, before.message, reason: historical.suffix);
+        expect(
+          after.attachments,
+          before.attachments,
+          reason: '${historical.suffix} gains no lineage backfill',
+        );
+        expect(after.v109, before.v109, reason: historical.suffix);
+      }
+
+      // ---- Row 7: every contradiction fails closed and changes nothing. ----
+      final contradictions =
+          <
+            String,
+            ({
+              List<Map<String, Object?>> attachments,
+              List<DirectMediaBlobCustodyRow> blobRows,
+              Map<String, Object?>? v108,
+            })
+          >{
+            'mixed-fingerprints': (
+              attachments: <Map<String, Object?>>[
+                strictGeneration(
+                  messageId: 'tc353-mixed-fingerprints',
+                  state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+                  fingerprinted: true,
+                  blobCount: 0,
+                ).attachments.first,
+                strictGeneration(
+                  messageId: 'tc353-mixed-fingerprints',
+                  state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+                  blobCount: 0,
+                ).attachments.last,
+              ],
+              blobRows: const [],
+              v108: null,
+            ),
+            'manifest-v108-without-any-v111': (
+              attachments: strictGeneration(
+                messageId: 'tc353-manifest-v108-without-any-v111',
+                state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+                fingerprinted: true,
+                blobCount: 0,
+              ).attachments,
+              blobRows: const [],
+              v108: strictGeneration(
+                messageId: 'tc353-manifest-v108-without-any-v111',
+                state: DirectMediaBlobCustodyState.outgoingStored,
+              ).v108,
+            ),
+            'active-unbound-v111': (
+              attachments: strictGeneration(
+                messageId: 'tc353-active-unbound-v111',
+                state: DirectMediaBlobCustodyState.outgoingStored,
+              ).attachments,
+              blobRows: strictGeneration(
+                messageId: 'tc353-active-unbound-v111',
+                state: DirectMediaBlobCustodyState.outgoingStored,
+              ).blobRows,
+              v108: null,
+            ),
+            'incoming-direction-rows': (
+              attachments: strictGeneration(
+                messageId: 'tc353-incoming-direction-rows',
+                state: DirectMediaBlobCustodyState.outgoingStored,
+              ).attachments,
+              blobRows:
+                  strictGeneration(
+                        messageId: 'tc353-incoming-direction-rows',
+                        state: DirectMediaBlobCustodyState.outgoingStored,
+                      ).blobRows
+                      .map(
+                        (row) => DirectMediaBlobCustodyRow(
+                          attachmentId: row.attachmentId,
+                          messageId: row.messageId,
+                          direction: DirectMediaBlobCustodyDirection.incoming,
+                          state: DirectMediaBlobCustodyState.incomingCommitted,
+                          inboxCustodyIncarnationId: null,
+                          recipientPeerId: null,
+                          ciphertextRelativePath: null,
+                          contentHash: row.contentHash,
+                          ciphertextSize: row.ciphertextSize,
+                          expiresAtMs: row.expiresAtMs,
+                          custodyRelayPeerId: null,
+                          lastAttemptAt: null,
+                          nextAttemptAt: null,
+                          createdAt: row.createdAt,
+                          updatedAt: row.updatedAt,
+                        ),
+                      )
+                      .toList(growable: false),
+              v108: null,
+            ),
+            'partial-v111-under-live-v108': (
+              attachments: strictGeneration(
+                messageId: 'tc353-partial-v111-under-live-v108',
+                state: DirectMediaBlobCustodyState.outgoingStored,
+                incarnationId: 'e0e0e0e0e0e0e0e0e0e0e0e0000000ff',
+              ).attachments,
+              blobRows: strictGeneration(
+                messageId: 'tc353-partial-v111-under-live-v108',
+                state: DirectMediaBlobCustodyState.outgoingStored,
+                incarnationId: 'e0e0e0e0e0e0e0e0e0e0e0e0000000ff',
+                blobCount: 1,
+              ).blobRows,
+              v108: <String, Object?>{
+                ...strictGeneration(
+                  messageId: 'tc353-partial-v111-under-live-v108',
+                  state: DirectMediaBlobCustodyState.outgoingStored,
+                ).v108,
+                'incarnation_id': 'e0e0e0e0e0e0e0e0e0e0e0e0000000ff',
+              },
+            ),
+          };
+      for (final entry in contradictions.entries) {
+        final parent = await seedMediaParent(
+          entry.key,
+          attachments: entry.value.attachments,
+          blobRows: entry.value.blobRows,
+          v108: entry.value.v108,
+        );
+        final id = parent['id']! as String;
+        expect(
+          (await dbLoadOutgoingDirectMediaCaptionEditProjection(
+            db,
+            messageId: id,
+          )).lane,
+          OutgoingDirectMediaCaptionEditLane.contradiction,
+          reason: entry.key,
+        );
+        final before = await snapshot(id);
+        expect(
+          (await stageCaptionEdit(parent, eventId: nextEventId())).outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+          reason: entry.key,
+        );
+        final after = await snapshot(id);
+        expect(after.message, before.message, reason: entry.key);
+        expect(after.attachments, before.attachments, reason: entry.key);
+        expect(after.v111, before.v111, reason: entry.key);
+        expect(after.v109, before.v109, reason: entry.key);
+      }
+
+      // Tightened Plan 351 contract: a manifest-bearing live v108 with no v111
+      // stays a contradiction even once its attachments are fingerprinted.
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: 'tc353-manifest-v108-without-any-v111',
+        ),
+        OutgoingDirectDeletionLane.contradiction,
+      );
+
+      // ---- Canonical projection order: created_at ASC, id ASC. ----
+      final tiedGeneration = strictGeneration(
+        messageId: 'tc353-tied-order',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: true,
+        blobCount: 0,
+      );
+      final tiedParent = await seedMediaParent(
+        'tied-order',
+        attachments: <Map<String, Object?>>[
+          tiedGeneration.attachments.last,
+          tiedGeneration.attachments.first,
+        ],
+      );
+      expect(
+        (await dbLoadOutgoingDirectMediaCaptionEditProjection(
+          db,
+          messageId: tiedParent['id']! as String,
+        )).attachmentRows.map((row) => row['id']).toList(),
+        tiedGeneration.attachmentIds,
+        reason: 'tied created_at resolves through the id tiebreak',
+      );
+
+      // ---- Exact replay of A after B never regresses the parent. ----
+      final replayGeneration = strictGeneration(
+        messageId: 'tc353-replay',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: true,
+        blobCount: 0,
+      );
+      final replayParent = await seedMediaParent(
+        'replay',
+        attachments: replayGeneration.attachments,
+      );
+      final replayId = replayParent['id']! as String;
+      final eventA = nextEventId();
+      final eventB = nextEventId();
+      expect(
+        (await stageCaptionEdit(
+          replayParent,
+          eventId: eventA,
+          caption: 'caption A',
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      final afterA = (await snapshot(replayId)).message;
+      expect(
+        (await stageCaptionEdit(
+          afterA,
+          eventId: eventB,
+          caption: 'caption B',
+          editedAt: t2,
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      final afterB = (await snapshot(replayId)).message;
+      expect(afterB['text'], 'caption B');
+      final replayA = await stageCaptionEdit(
+        replayParent,
+        eventId: eventA,
+        caption: 'caption A',
+      );
+      expect(replayA.outcome, OutgoingOrdinaryMutationOutcome.idempotent);
+      expect(replayA.ownsMutationEvent, isTrue);
+      expect(
+        (await snapshot(replayId)).message,
+        afterB,
+        reason: 'replaying A must not regress the current parent',
+      );
+
+      // A DIFFERENT envelope under the same raw event id refuses atomically.
+      final collisionEnvelope = editEnvelope(replayId, eventA);
+      expect(
+        (await dbStageOutgoingDirectMediaCaptionEditInboxCustody(
+          db,
+          expectedRow: afterB,
+          stagedRow: captionEditOf(
+            afterB,
+            wireEnvelope: '$collisionEnvelope ',
+            caption: 'forged caption',
+            editedAt: t2,
+          ),
+          kind: OutgoingOrdinaryAttemptKind.edit,
+          recipientPeerId: recipient,
+          eventId: eventA,
+          wireEnvelope: '$collisionEnvelope ',
+          expectedAttachmentRows: expectationsFrom(
+            replayGeneration.attachments,
+          ),
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+      );
+      expect((await snapshot(replayId)).message, afterB);
+
+      // ---- Shared v109 capacity refusal changes nothing. ----
+      final capacityGeneration = strictGeneration(
+        messageId: 'tc353-capacity',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: true,
+        blobCount: 0,
+      );
+      final capacityParent = await seedMediaParent(
+        'capacity',
+        attachments: capacityGeneration.attachments,
+      );
+      final capacityBefore = await snapshot(capacityParent['id']! as String);
+      expect(
+        (await stageCaptionEdit(
+          capacityParent,
+          eventId: nextEventId(),
+          capacity: 0,
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+      );
+      final capacityAfter = await snapshot(capacityParent['id']! as String);
+      expect(capacityAfter.message, capacityBefore.message);
+      expect(capacityAfter.attachments, capacityBefore.attachments);
+
+      // ---- Drifted secure-storage expectations refuse before any write. ----
+      final driftGeneration = strictGeneration(
+        messageId: 'tc353-key-drift',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: true,
+        blobCount: 0,
+      );
+      final driftParent = await seedMediaParent(
+        'key-drift',
+        attachments: driftGeneration.attachments,
+      );
+      final driftBefore = await snapshot(driftParent['id']! as String);
+      expect(
+        (await stageCaptionEdit(
+          driftParent,
+          eventId: nextEventId(),
+          expectedAttachmentRows: expectationsFrom(driftGeneration.attachments)
+              .map(
+                (row) => <String, Object?>{
+                  ...row,
+                  'encryption_nonce': 'drifted-nonce',
+                },
+              )
+              .toList(growable: false),
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+      );
+      final driftAfter = await snapshot(driftParent['id']! as String);
+      expect(driftAfter.message, driftBefore.message);
+      expect(driftAfter.v109, driftBefore.v109);
+
+      // ---- A late v109 insert abort rolls back parent AND lineage. ----
+      final abortGeneration = strictGeneration(
+        messageId: 'tc353-late-abort',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+      );
+      final abortParent = await seedMediaParent(
+        'late-abort',
+        attachments: abortGeneration.attachments,
+        blobRows: abortGeneration.blobRows,
+      );
+      final abortId = abortParent['id']! as String;
+      final abortBefore = await snapshot(abortId);
+      await expectLater(
+        stageCaptionEdit(
+          abortParent,
+          eventId: nextEventId(),
+          // The barrier stands in for a lost late CAS or an aborted v109
+          // insert: it fires AFTER the parent projection and the lineage
+          // stamps, so only a single shared transaction can roll both back.
+          beforeCustodyInsertForTest: () async =>
+              throw StateError('late v109 insert failure'),
+        ),
+        throwsA(isA<StateError>()),
+      );
+      final abortAfter = await snapshot(abortId);
+      expect(abortAfter.message, abortBefore.message);
+      expect(
+        abortAfter.attachments,
+        abortBefore.attachments,
+        reason: 'a late abort rolls the lineage stamps back too',
+      );
+      expect(abortAfter.v111, abortBefore.v111);
+    });
+
+    /// One incoming strict parent with hydrated attachments, all-exact
+    /// fingerprints and an optional incoming v111 subset.
+    Future<({String messageId, List<Map<String, Object?>> attachments})>
+    seedIncomingStrictParent(
+      String suffix, {
+      DirectMediaBlobCustodyState? v111State,
+      int v111Count = 2,
+      bool fingerprinted = true,
+      String? deletedAt,
+      int isIncoming = 1,
+    }) async {
+      final messageId = 'tc353-in-$suffix';
+      final generation = strictGeneration(
+        messageId: messageId,
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        fingerprinted: fingerprinted,
+        blobCount: 0,
+      );
+      await db.insert('messages', <String, Object?>{
+        ...ConversationMessage(
+          id: messageId,
+          contactPeerId: sender,
+          senderPeerId: sender,
+          text: 'original caption',
+          timestamp: t0,
+          status: 'delivered',
+          isIncoming: isIncoming == 1,
+          createdAt: t0,
+          transport: 'inbox',
+          dedupKey: messageId,
+        ).toMap(),
+        if (deletedAt != null) ...<String, Object?>{
+          'text': '',
+          'deleted_at': deletedAt,
+          'deleted_by_peer_id': sender,
+        },
+      });
+      for (final attachment in generation.attachments) {
+        await dbInsertMediaAttachment(db, attachment);
+      }
+      if (v111State != null) {
+        for (var index = 0; index < v111Count; index++) {
+          final attachmentId = generation.attachmentIds[index];
+          await db.insert(
+            kDirectMediaBlobCustodyTable,
+            DirectMediaBlobCustodyRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              direction: DirectMediaBlobCustodyDirection.incoming,
+              state: v111State,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: null,
+              ciphertextRelativePath: null,
+              contentHash: '${index + 1}' * 64,
+              ciphertextSize: 91 + index,
+              expiresAtMs: nowMs + 60000 + (index * 1000),
+              custodyRelayPeerId:
+                  v111State == DirectMediaBlobCustodyState.incomingAckPending
+                  ? 'relay-ack-$index'
+                  : null,
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: t0,
+              updatedAt: t0,
+            ).toMap(),
+          );
+        }
+      }
+      return (
+        messageId: messageId,
+        attachments: (await db.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+          orderBy: 'id ASC',
+        )),
+      );
+    }
+
+    Future<IncomingDirectMediaCaptionEditDbResult> applyIncoming(
+      ({String messageId, List<Map<String, Object?>> attachments}) seeded, {
+      String caption = 'edited caption',
+      String editedAt = t1,
+      List<Map<String, Object?>>? expectedAttachmentRows,
+      Map<String, Object?> identityOverrides = const <String, Object?>{},
+    }) => dbApplyIncomingDirectMediaCaptionEdit(
+      db,
+      expectedParentIdentity: <String, Object?>{
+        'id': seeded.messageId,
+        'sender_peer_id': sender,
+        'contact_peer_id': sender,
+        'timestamp': t0,
+        'quoted_message_id': null,
+        'dedup_key': seeded.messageId,
+        'is_forwarded': 0,
+        ...identityOverrides,
+      },
+      expectedAttachmentRows:
+          expectedAttachmentRows ?? expectationsFrom(seeded.attachments),
+      text: caption,
+      editedAt: editedAt,
+    );
+
+    test('TC-353-04 incoming strict media caption edit applies atomically over '
+        'the exact descriptor set', () async {
+      // 1. Accepted authority: absent v111, exact incomingCommitted subset and
+      //    exact incomingAckPending subset.
+      for (final accepted
+          in <({String suffix, DirectMediaBlobCustodyState? state, int count})>[
+            (suffix: 'no-v111', state: null, count: 0),
+            (
+              suffix: 'committed',
+              state: DirectMediaBlobCustodyState.incomingCommitted,
+              count: 2,
+            ),
+            (
+              suffix: 'ack-pending-subset',
+              state: DirectMediaBlobCustodyState.incomingAckPending,
+              count: 1,
+            ),
+          ]) {
+        final seeded = await seedIncomingStrictParent(
+          accepted.suffix,
+          v111State: accepted.state,
+          v111Count: accepted.count,
+        );
+        final before = await snapshot(seeded.messageId);
+        final applied = await applyIncoming(seeded);
+        expect(
+          applied.outcome,
+          IncomingDirectMediaCaptionEditOutcome.applied,
+          reason: accepted.suffix,
+        );
+        final after = await snapshot(seeded.messageId);
+        expect(after.message['text'], 'edited caption');
+        expect(after.message['edited_at'], t1);
+        // Only text and editedAt move; every other parent field is preserved.
+        expect(
+          <String, Object?>{
+            ...after.message,
+            'text': before.message['text'],
+            'edited_at': before.message['edited_at'],
+          },
+          before.message,
+          reason: accepted.suffix,
+        );
+        expect(
+          after.attachments,
+          before.attachments,
+          reason: '${accepted.suffix} must never rewrite attachments',
+        );
+        expect(after.v111, before.v111, reason: accepted.suffix);
+
+        // Exact replay is durable, not a second write.
+        expect(
+          (await applyIncoming(seeded)).outcome,
+          IncomingDirectMediaCaptionEditOutcome.durableReplay,
+          reason: accepted.suffix,
+        );
+      }
+
+      // 2. A live all-null/no-v111 legacy parent resumes the generic path.
+      final legacy = await seedIncomingStrictParent(
+        'legacy',
+        fingerprinted: false,
+      );
+      final legacyBefore = await snapshot(legacy.messageId);
+      expect(
+        (await applyIncoming(legacy)).outcome,
+        IncomingDirectMediaCaptionEditOutcome.legacyParent,
+      );
+      expect((await snapshot(legacy.messageId)).message, legacyBefore.message);
+
+      // 3. An author tombstone is durable supersession without attachments.
+      final tombstoned = await seedIncomingStrictParent(
+        'tombstone',
+        deletedAt: t1,
+      );
+      final tombstoneBefore = await snapshot(tombstoned.messageId);
+      expect(
+        (await applyIncoming(tombstoned)).outcome,
+        IncomingDirectMediaCaptionEditOutcome.superseded,
+      );
+      expect(
+        (await snapshot(tombstoned.messageId)).message,
+        tombstoneBefore.message,
+      );
+
+      // 4. A stale edit is validated supersession; a newer one still applies.
+      final ordered = await seedIncomingStrictParent('ordering');
+      expect(
+        (await applyIncoming(ordered, caption: 'first', editedAt: t1)).outcome,
+        IncomingDirectMediaCaptionEditOutcome.applied,
+      );
+      expect(
+        (await applyIncoming(ordered, caption: 'stale', editedAt: t0)).outcome,
+        IncomingDirectMediaCaptionEditOutcome.superseded,
+      );
+      expect((await snapshot(ordered.messageId)).message['text'], 'first');
+      expect(
+        (await applyIncoming(ordered, caption: 'newest', editedAt: t2)).outcome,
+        IncomingDirectMediaCaptionEditOutcome.applied,
+      );
+      expect((await snapshot(ordered.messageId)).message['text'], 'newest');
+
+      // 5. Refusals: mixed fingerprints, crossed descriptors, missing/extra
+      //    descriptors, outgoing v111 direction, and wrong-direction parents.
+      final refusals =
+          <String, Future<IncomingDirectMediaCaptionEditDbResult> Function()>{};
+
+      final mixed = await seedIncomingStrictParent('mixed', v111State: null);
+      await db.update(
+        'media_attachments',
+        const <String, Object?>{'direct_media_blob_custody_fingerprint': null},
+        where: 'id = ?',
+        whereArgs: <Object?>[mixed.attachments.first['id']],
+      );
+      refusals['mixed fingerprints'] = () => applyIncoming(mixed);
+
+      final crossed = await seedIncomingStrictParent('crossed-descriptor');
+      refusals['crossed descriptor'] = () => applyIncoming(
+        crossed,
+        expectedAttachmentRows: expectationsFrom(crossed.attachments)
+            .map((row) => <String, Object?>{...row, 'content_hash': '9' * 64})
+            .toList(growable: false),
+      );
+
+      final missing = await seedIncomingStrictParent('missing-descriptor');
+      refusals['missing descriptor'] = () => applyIncoming(
+        missing,
+        expectedAttachmentRows: expectationsFrom(
+          missing.attachments,
+        ).take(1).toList(growable: false),
+      );
+
+      final extra = await seedIncomingStrictParent('extra-descriptor');
+      refusals['extra descriptor'] = () => applyIncoming(
+        extra,
+        expectedAttachmentRows: <Map<String, Object?>>[
+          ...expectationsFrom(extra.attachments),
+          <String, Object?>{
+            'id': 'ghost',
+            'content_hash': '3' * 64,
+            'encryption_key_base64': 'ref',
+            'encryption_nonce': 'nonce-ghost',
+            'encryption_scheme': 'blob_aes_256_gcm_v1',
+          },
+        ],
+      );
+
+      final outgoingV111 = await seedIncomingStrictParent('outgoing-v111');
+      await db.insert(
+        kDirectMediaBlobCustodyTable,
+        DirectMediaBlobCustodyRow(
+          attachmentId: outgoingV111.attachments.first['id']! as String,
+          messageId: outgoingV111.messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: recipient,
+          ciphertextRelativePath:
+              'direct_media_blob_custody_v1/${'a' * 64}/x.blob',
+          contentHash: '1' * 64,
+          ciphertextSize: 91,
+          expiresAtMs: nowMs + 60000,
+          custodyRelayPeerId: 'relay-outgoing',
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      refusals['outgoing v111 direction'] = () => applyIncoming(outgoingV111);
+
+      final wrongDirection = await seedIncomingStrictParent(
+        'outgoing-parent',
+        isIncoming: 0,
+      );
+      refusals['outgoing parent'] = () => applyIncoming(wrongDirection);
+
+      final crossedAuthor = await seedIncomingStrictParent('crossed-author');
+      refusals['crossed author'] = () => applyIncoming(
+        crossedAuthor,
+        identityOverrides: const <String, Object?>{
+          'sender_peer_id': 'peer-impostor',
+        },
+      );
+
+      for (final entry in refusals.entries) {
+        final result = await entry.value();
+        expect(
+          result.outcome,
+          IncomingDirectMediaCaptionEditOutcome.refused,
+          reason: entry.key,
+        );
+      }
+    });
   });
 }

@@ -597,6 +597,234 @@ END
       }
     },
   );
+
+  test('TC-353-03 media caption edit reuses one exact v109 lifecycle', () async {
+    const relayExpiresAt = 1900000060000;
+    var eventSeq = 0;
+    String nextEventId() =>
+        '35300000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+
+    String editEnvelope(String messageId, String eventId) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'eventId': eventId,
+          'senderPeerId': _sender,
+          'encrypted': <String, Object?>{
+            'kem': 'kem-353',
+            'ciphertext': 'cipher-$eventId',
+            'nonce': 'nonce-353',
+          },
+        });
+
+    /// Seeds one already-authorized caption EDIT: the parent projects the
+    /// exact edit attempt and the raw event is retained in v109.
+    Future<({String messageId, String eventId, String envelope})>
+    seedStagedCaptionEdit(String suffix, {bool withAttachment = true}) async {
+      final messageId = 'tc353-03-$suffix';
+      final eventId = nextEventId();
+      final envelope = editEnvelope(messageId, eventId);
+      await db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _recipient,
+        'sender_peer_id': _sender,
+        'text': 'edited caption',
+        'timestamp': _t0,
+        'status': 'sending',
+        'is_incoming': 0,
+        'created_at': _t0,
+        'edited_at': _t1,
+        'wire_envelope': envelope,
+        'private_media_policy_version': 0,
+        'private_media_mode': 'ordinary',
+        'private_media_state': 'none',
+      });
+      if (withAttachment) {
+        await db.insert('media_attachments', <String, Object?>{
+          'id': '$messageId-a',
+          'message_id': messageId,
+          'owner_lane': 'direct',
+          'mime': 'image/jpeg',
+          'size': 800,
+          'media_type': 'image',
+          'created_at': _t0,
+          'download_status': 'done',
+          'local_path': 'media/direct/$messageId-a.jpg',
+        });
+      }
+      await db.insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+        'recipient_peer_id': _recipient,
+        'event_id': eventId,
+        'wire_envelope': envelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': _t0,
+        'updated_at': _t0,
+      });
+      return (messageId: messageId, eventId: eventId, envelope: envelope);
+    }
+
+    Future<DirectMutationInboxCustodyCompletionOutcome> complete(
+      ({String messageId, String eventId, String envelope}) staged,
+    ) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+      db,
+      recipientPeerId: _recipient,
+      eventId: staged.eventId,
+      expectedWireEnvelope: staged.envelope,
+      relayExpiresAt: relayExpiresAt,
+    );
+
+    Future<Map<String, Object?>> parentOf(String messageId) async =>
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+
+    // 1. Physical attachments present: stage-time authority is decisive, so
+    //    acceptance settles the exact current parent and retires only its row.
+    final present = await seedStagedCaptionEdit('attachments-present');
+    final attachmentsBefore = await db.query(
+      'media_attachments',
+      where: 'message_id = ?',
+      whereArgs: <Object?>[present.messageId],
+    );
+    expect(
+      await complete(present),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    final settled = await parentOf(present.messageId);
+    expect(settled['status'], 'inboxed');
+    expect(settled['transport'], 'inbox');
+    expect(settled['relay_expires_at'], relayExpiresAt);
+    expect(settled['custody_checked_at'], isNull);
+    expect(settled['text'], 'edited caption');
+    expect(
+      await db.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[present.messageId],
+      ),
+      attachmentsBefore,
+      reason: 'completion must never inspect or mutate blob state',
+    );
+    expect(
+      await db.query(
+        'direct_reaction_inbox_custody_outbox',
+        where: 'event_id = ?',
+        whereArgs: <Object?>[present.eventId],
+      ),
+      isEmpty,
+    );
+
+    // 2. Locally evicted attachments converge identically.
+    final evicted = await seedStagedCaptionEdit(
+      'attachments-evicted',
+      withAttachment: false,
+    );
+    expect(
+      await complete(evicted),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect((await parentOf(evicted.messageId))['status'], 'inboxed');
+
+    // 3. A newer edit already won: the event retires without regressing it.
+    final superseded = await seedStagedCaptionEdit('newer-edit');
+    final newerEnvelope = editEnvelope(superseded.messageId, nextEventId());
+    await db.update(
+      'messages',
+      <String, Object?>{
+        'text': 'newest caption',
+        'edited_at': _t2,
+        'status': 'sending',
+        'wire_envelope': newerEnvelope,
+      },
+      where: 'id = ?',
+      whereArgs: <Object?>[superseded.messageId],
+    );
+    final newerBefore = await parentOf(superseded.messageId);
+    expect(
+      await complete(superseded),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect(await parentOf(superseded.messageId), newerBefore);
+
+    // 4. A deletion winner and an absent parent both converge. A staged
+    //    tombstone replaces the parent's projected envelope, exactly as the
+    //    Plan 351 media deletion owner commits it.
+    final deleted = await seedStagedCaptionEdit('deleted-parent');
+    await db.update(
+      'messages',
+      <String, Object?>{
+        'text': '',
+        'status': 'sending',
+        'deleted_at': _t2,
+        'deleted_by_peer_id': _sender,
+        'wire_envelope': jsonEncode(<String, Object?>{
+          'type': 'message_deletion',
+          'version': '2',
+          'eventId': nextEventId(),
+          'senderPeerId': _sender,
+          'encrypted': const <String, Object?>{
+            'kem': 'kem-353',
+            'ciphertext': 'cipher-tombstone',
+            'nonce': 'nonce-353',
+          },
+        }),
+      },
+      where: 'id = ?',
+      whereArgs: <Object?>[deleted.messageId],
+    );
+    final deletedBefore = await parentOf(deleted.messageId);
+    expect(
+      await complete(deleted),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect(await parentOf(deleted.messageId), deletedBefore);
+
+    final absent = await seedStagedCaptionEdit('absent-parent');
+    await db.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[absent.messageId],
+    );
+    expect(
+      await complete(absent),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+
+    // 5. Duplicate acceptance is explicit convergence; a crossed envelope is
+    //    stale and retains the exact event.
+    expect(
+      await complete(present),
+      DirectMutationInboxCustodyCompletionOutcome.absent,
+    );
+    final retained = await seedStagedCaptionEdit('crossed-envelope');
+    expect(
+      await dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+        db,
+        recipientPeerId: _recipient,
+        eventId: retained.eventId,
+        expectedWireEnvelope: editEnvelope(
+          retained.messageId,
+          retained.eventId,
+        ).replaceAll('cipher-', 'forged-'),
+        relayExpiresAt: relayExpiresAt,
+      ),
+      DirectMutationInboxCustodyCompletionOutcome.stale,
+    );
+    expect(
+      await db.query(
+        'direct_reaction_inbox_custody_outbox',
+        where: 'event_id = ?',
+        whereArgs: <Object?>[retained.eventId],
+      ),
+      hasLength(1),
+    );
+    expect((await parentOf(retained.messageId))['status'], 'sending');
+  });
 }
 
 ReactionRepositoryImpl _repository(Database db, {required int capacity}) =>

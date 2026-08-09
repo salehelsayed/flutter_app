@@ -531,21 +531,12 @@ dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
       if (!validParent) {
         return DirectMutationInboxCustodyCompletionOutcome.stale;
       }
-      if (!isDeletion) {
-        // Media EDIT stays excluded: its persisted commitment lifetime is a
-        // different decision. Terminal deletion settlement, by contrast, can
-        // never be invalidated by attachment presence or absence — exact v109
-        // staging already owned the event, and best-effort artifact cleanup
-        // may legitimately have removed those rows before this acceptance.
-        final directMedia = await txn.rawQuery(
-          'SELECT 1 FROM media_attachments '
-          'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
-          <Object?>[parent['id'], 'direct'],
-        );
-        if (directMedia.isNotEmpty) {
-          return DirectMutationInboxCustodyCompletionOutcome.stale;
-        }
-      }
+      // Settlement is deliberately attachment-independent for BOTH mutation
+      // kinds. Exact v109 staging already proved the owner at authorization
+      // time, so acceptance must never inspect or require blob state: a
+      // caption EDIT keeps its immutable generation, a deletion may have had
+      // its rows cleaned up, and either way this transaction only retires the
+      // one exact event and settles the parent that still projects it.
       final alreadyProjected =
           status == 'inboxed' &&
           parent['transport'] == 'inbox' &&

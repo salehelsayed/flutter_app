@@ -33,8 +33,10 @@ const _relocations = <String, List<String>>{
     // already-relocated Conversation adapter. Plan 350 generalizes that stage
     // to exactly two canonical parent shapes and Plan 351 adds the deletion
     // lane selector plus the atomic strict-media deletion stage — all without
-    // relocating anything.
-    'bf13e4932c7c94c5f5517cfe7cb5f8e8e40619b6bb719d3dff2e225dbfaae803',
+    // relocating anything. Plan 353 adds the caption-edit qualification, the
+    // atomic caption stage and the incoming conditional apply to the same
+    // adapter — still no relocation.
+    '3d392f5ba2c29759c2e928ed4ca111f29b875a03cc615f79ebd3d21e78049916',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

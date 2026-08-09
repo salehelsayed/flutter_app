@@ -2,7 +2,10 @@ import 'dart:async';
 
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show OutgoingDirectDeletionLane;
+    show
+        IncomingDirectMediaCaptionEditOutcome,
+        OutgoingDirectDeletionLane,
+        OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -221,6 +224,117 @@ abstract interface class OutgoingDirectMediaDeletionInboxCustodyRepository {
     required String recipientPeerId,
     required String eventId,
     required String wireEnvelope,
+  });
+}
+
+/// The persisted classification plus the canonical projection one caption-only
+/// EDIT of an outgoing ordinary direct-media parent must be built from.
+///
+/// [attachments] is the deterministic `created_at ASC, id ASC` physical
+/// projection with its raw encryption keys hydrated under the media lifecycle
+/// lock. It is never the caller's UI snapshot.
+final class OutgoingDirectMediaCaptionEditAuthority {
+  const OutgoingDirectMediaCaptionEditAuthority({
+    required this.lane,
+    this.parent,
+    this.attachments = const <MediaAttachment>[],
+  });
+
+  const OutgoingDirectMediaCaptionEditAuthority.contradiction()
+    : lane = OutgoingDirectMediaCaptionEditLane.contradiction,
+      parent = null,
+      attachments = const <MediaAttachment>[];
+
+  final OutgoingDirectMediaCaptionEditLane lane;
+  final ConversationMessage? parent;
+  final List<MediaAttachment> attachments;
+}
+
+/// Outcome of the atomic caption/lineage/v109 stage.
+final class OutgoingDirectMediaCaptionEditCustodyStageResult {
+  const OutgoingDirectMediaCaptionEditCustodyStageResult({
+    required this.outcome,
+    required this.message,
+    required this.custody,
+  });
+
+  const OutgoingDirectMediaCaptionEditCustodyStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      message = null,
+      custody = null;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final ConversationMessage? message;
+  final DirectReactionInboxCustodyOutboxEntry? custody;
+
+  bool get authorizesTransport => outcome.authorizesTransport;
+}
+
+/// Fail-closed authority for a newly authored caption-only EDIT of a strict
+/// ordinary direct-media parent.
+///
+/// The exact edit-attempt projection, any provable null-to-exact lineage and
+/// the raw-event v109 obligation commit together under the message-wide media
+/// lifecycle lock, or nothing changes. Nothing here replaces, reorders,
+/// re-encrypts, uploads or deletes an attachment: the persisted generation is
+/// immutable across a caption EDIT.
+abstract interface class OutgoingDirectMediaCaptionEditInboxCustodyRepository {
+  bool get supportsDirectMediaCaptionEditInboxCustody;
+
+  /// Classifies [messageId] and returns the canonical persisted projection.
+  ///
+  /// Advisory only: the staging transaction repeats every predicate, so a
+  /// lane that drifts before the commit fails closed there.
+  Future<OutgoingDirectMediaCaptionEditAuthority>
+  qualifyOutgoingDirectMediaCaptionEdit(String messageId);
+
+  Future<OutgoingDirectMediaCaptionEditCustodyStageResult>
+  stageOutgoingDirectMediaCaptionEditInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  });
+}
+
+/// Durable result of one incoming caption-only EDIT apply.
+final class IncomingDirectMediaCaptionEditApplyResult {
+  const IncomingDirectMediaCaptionEditApplyResult({
+    required this.outcome,
+    required this.message,
+  });
+
+  const IncomingDirectMediaCaptionEditApplyResult.refused()
+    : outcome = IncomingDirectMediaCaptionEditOutcome.refused,
+      message = null;
+
+  final IncomingDirectMediaCaptionEditOutcome outcome;
+  final ConversationMessage? message;
+
+  /// True for every outcome that durably settles the sender's exact event.
+  bool get isDurable =>
+      outcome == IncomingDirectMediaCaptionEditOutcome.applied ||
+      outcome == IncomingDirectMediaCaptionEditOutcome.durableReplay ||
+      outcome == IncomingDirectMediaCaptionEditOutcome.superseded;
+}
+
+/// Receiver-only conditional apply for one incoming ordinary direct-media
+/// caption EDIT.
+///
+/// Only the caption text and its monotonic editedAt may change. Every parent
+/// transport/lifecycle field, every attachment descriptor and every v111 row
+/// is preserved. Keeping this separate from the sender interfaces prevents an
+/// outgoing coordinator or its fakes from acquiring incoming authority.
+abstract interface class IncomingDirectMediaCaptionEditApplyRepository {
+  bool get supportsIncomingDirectMediaCaptionEditApply;
+
+  Future<IncomingDirectMediaCaptionEditApplyResult>
+  applyIncomingDirectMediaCaptionEdit({
+    required ConversationMessage incoming,
+    required List<MediaAttachment> attachments,
   });
 }
 

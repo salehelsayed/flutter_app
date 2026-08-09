@@ -356,6 +356,14 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
           message['deleted_at'] != null || message['hidden_at'] != null;
       final stillProjectsOwnedAttempt =
           message['wire_envelope'] == expectedWireEnvelope;
+      // A direct/LAN receipt commits `delivered` and CLEARS the initial
+      // envelope, so the common successful path reaches this transaction with
+      // no projected attempt at all. That successor was CAS-derived from this
+      // exact owned initial and is still the same generation, so it owns the
+      // same lineage. Only the full canonical delivered settlement qualifies:
+      // a later edit/send/tombstone or a malformed delivered projection is
+      // excluded, exactly like the ordinary settlement CAS.
+      final ownsDeliveredSuccessor = _isCanonicalDeliveredSuccessor(message);
 
       // This transaction is the last point at which the complete bound
       // generation is still provable: it retires the exact v108 owner below,
@@ -373,10 +381,10 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
           strictBlobRows.isNotEmpty &&
           ownsMessage &&
           !userTerminal &&
-          stillProjectsOwnedAttempt &&
+          (stillProjectsOwnedAttempt || ownsDeliveredSuccessor) &&
           isStrictOrdinaryOutgoingDirectPolicy(message);
       if (ownsExactLineage &&
-          !await _stampExactStrictOutgoingLineage(
+          !await dbStampExactStrictOutgoingLineageWithinTransaction(
             txn,
             messageId: messageId,
             strictBlobRows: strictBlobRows,
@@ -485,7 +493,7 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
 /// Each digest commits to that row's own full public commitment. The v108
 /// manifest hash, the generation's earliest expiry and the accepted relay
 /// expiry are all generation-level values and can never stand in for it.
-Future<bool> _stampExactStrictOutgoingLineage(
+Future<bool> dbStampExactStrictOutgoingLineageWithinTransaction(
   DatabaseExecutor txn, {
   required String messageId,
   required List<DirectMediaBlobCustodyRow> strictBlobRows,
@@ -576,6 +584,37 @@ Future<bool> _stampExactStrictOutgoingLineage(
     );
   }
   return true;
+}
+
+/// Every transport label the ordinary settlement CAS accepts on a delivered
+/// row. Duplicated here deliberately: this predicate must not widen when an
+/// unrelated caller changes, and the shared settlement file stays untouched.
+const _supportedDeliveredTransportLabels = <String>{
+  'wifi',
+  'local',
+  'direct',
+  'reuse',
+  'relay',
+  'inbox',
+};
+
+/// True only for the full canonical delivered settlement a live receipt
+/// commits from the owned initial attempt.
+///
+/// Delivery is terminal: it clears the envelope and releases every custody
+/// field. Anything else that happens to read `delivered` — a later edit, a
+/// tombstone, or a malformed/hand-written projection — is NOT this owner's
+/// successor and must never inherit its lineage authorship.
+bool _isCanonicalDeliveredSuccessor(Map<String, Object?> row) {
+  final transport = row['transport'];
+  return row['status'] == 'delivered' &&
+      row['wire_envelope'] == null &&
+      row['edited_at'] == null &&
+      row['relay_expires_at'] == null &&
+      row['custody_checked_at'] == null &&
+      (transport == null ||
+          (transport is String &&
+              _supportedDeliveredTransportLabels.contains(transport)));
 }
 
 bool _immutableCustodyMatches(

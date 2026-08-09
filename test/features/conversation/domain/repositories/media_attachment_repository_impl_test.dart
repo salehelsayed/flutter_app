@@ -12,6 +12,10 @@ import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show
+        IncomingDirectMediaCaptionEditOutcome,
+        OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
@@ -7537,5 +7541,175 @@ END
         expect((await rawRow('att-group-bookmark'))!['is_bookmarked'], 1);
       },
     );
+  });
+
+  group('Plan 353 media caption-only edit repository authority', () {
+    const messageId = 'tc353-repo-parent';
+    const recipient = 'tc353-repo-recipient';
+    const sender = 'peer-local';
+    const t0 = '2026-08-09T09:00:00.000Z';
+    const t1 = '2026-08-09T09:00:01.000Z';
+    const fingerprintA =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const fingerprintB =
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+    /// Seeds one fully drained but still provable strict generation whose raw
+    /// keys live ONLY in the secure store.
+    Future<void> seedStrictParent({
+      bool isIncoming = false,
+      List<String> fingerprints = const <String>[fingerprintA, fingerprintB],
+    }) async {
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': isIncoming ? sender : recipient,
+        'sender_peer_id': sender,
+        'text': 'original caption',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': isIncoming ? 1 : 0,
+        'created_at': t0,
+        'transport': isIncoming ? 'inbox' : 'direct',
+      });
+      // Deliberately inserted newest-id-first so the canonical projection has
+      // to impose `created_at ASC, id ASC` itself.
+      for (final index in const <int>[1, 0]) {
+        final attachmentId = '$messageId-${String.fromCharCode(97 + index)}';
+        await fixture.db.insert('media_attachments', <String, Object?>{
+          'id': attachmentId,
+          'message_id': messageId,
+          'owner_lane': 'direct',
+          'mime': 'image/jpeg',
+          'size': 800 + index,
+          'media_type': 'image',
+          'created_at': t0,
+          'download_status': 'done',
+          'local_path': 'media/direct/$attachmentId.jpg',
+          'content_hash': '${index + 1}' * 64,
+          'encryption_key_base64': secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'encryption_nonce': 'nonce-$attachmentId',
+          'encryption_scheme': 'blob_aes_256_gcm_v1',
+          'direct_media_blob_custody_fingerprint': fingerprints[index],
+        });
+        await fixture.secureKeyStore.write(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          'raw-key-$attachmentId',
+        );
+      }
+    }
+
+    test('TC-353-02 qualification hydrates canonical keys and never sends raw '
+        'key material into SQLite', () async {
+      await seedStrictParent();
+
+      final authority = await fixture.repo
+          .qualifyOutgoingDirectMediaCaptionEdit(messageId);
+      expect(authority.lane, OutgoingDirectMediaCaptionEditLane.strictMedia);
+      expect(authority.parent!.id, messageId);
+      expect(authority.parent!.contactPeerId, recipient);
+      expect(
+        authority.attachments.map((a) => a.id).toList(),
+        <String>['$messageId-a', '$messageId-b'],
+        reason: 'canonical order is created_at ASC then id ASC',
+      );
+      expect(
+        authority.attachments.map((a) => a.encryptionKeyBase64).toList(),
+        <String>['raw-key-$messageId-a', 'raw-key-$messageId-b'],
+        reason: 'raw keys are hydrated OUTSIDE the SQL transaction',
+      );
+      for (final row in await fixture.db.query('media_attachments')) {
+        expect(
+          isSecureStoreReference(row['encryption_key_base64']! as String),
+          isTrue,
+          reason: 'SQLite only ever holds the storage reference',
+        );
+      }
+
+      // A hydration failure is fail-closed, never a weaker fallback.
+      await fixture.secureKeyStore.delete(
+        mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
+      );
+      expect(
+        (await fixture.repo.qualifyOutgoingDirectMediaCaptionEdit(
+          messageId,
+        )).lane,
+        OutgoingDirectMediaCaptionEditLane.contradiction,
+      );
+    });
+
+    test('TC-353-04 incoming apply proves hydrated keys and preserves every '
+        'attachment descriptor', () async {
+      await seedStrictParent(isIncoming: true);
+      final attachmentsBefore = await fixture.db.query(
+        'media_attachments',
+        orderBy: 'id ASC',
+      );
+      final descriptors = <MediaAttachment>[
+        for (final index in const <int>[0, 1])
+          MediaAttachment(
+            id: '$messageId-${String.fromCharCode(97 + index)}',
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 800 + index,
+            mediaType: 'image',
+            downloadStatus: 'done',
+            createdAt: t0,
+            contentHash: '${index + 1}' * 64,
+            encryptionKeyBase64:
+                'raw-key-$messageId-${String.fromCharCode(97 + index)}',
+            encryptionNonce:
+                'nonce-$messageId-${String.fromCharCode(97 + index)}',
+            encryptionScheme: 'blob_aes_256_gcm_v1',
+            ownerLane: MediaOwnerLane.direct,
+          ),
+      ];
+      final incoming = ConversationMessage(
+        id: messageId,
+        contactPeerId: sender,
+        senderPeerId: sender,
+        text: 'edited caption',
+        timestamp: t0,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: t0,
+        editedAt: t1,
+      );
+
+      final applied = await fixture.repo.applyIncomingDirectMediaCaptionEdit(
+        incoming: incoming,
+        attachments: descriptors,
+      );
+      expect(applied.outcome, IncomingDirectMediaCaptionEditOutcome.applied);
+      expect(applied.message!.text, 'edited caption');
+      expect(applied.message!.editedAt, t1);
+      expect(
+        await fixture.db.query('media_attachments', orderBy: 'id ASC'),
+        attachmentsBefore,
+        reason: 'the immutable generation survives the caption apply',
+      );
+
+      // A drifted raw key refuses; SQLite still performs no secure-store I/O.
+      final drifted = await fixture.repo.applyIncomingDirectMediaCaptionEdit(
+        incoming: incoming.copyWith(
+          text: 'forged caption',
+          editedAt: '2026-08-09T09:00:09.000Z',
+        ),
+        attachments: <MediaAttachment>[
+          descriptors.first.copyWith(encryptionKeyBase64: 'forged-key'),
+          descriptors.last,
+        ],
+      );
+      expect(drifted.outcome, IncomingDirectMediaCaptionEditOutcome.refused);
+      expect(
+        (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single['text'],
+        'edited caption',
+      );
+    });
   });
 }

@@ -140,12 +140,14 @@ const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
 // Plans 347/348 wire the reviewed cleanup/drain and absent-parent v111 stage
 // through MyApp and production bootstrap; Plan 350 adds only the optional
-// forward-authorization pass-through on that same wired stage. Posts adapter
-// bodies remain byte-identical.
+// forward-authorization pass-through on that same wired stage. Plan 353 adds
+// three more closures on that same wired media adapter (caption-edit
+// qualification, the atomic caption+v109 stage, and the incoming conditional
+// apply) and relocates nothing. Posts adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
     '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
 const _productionBootstrapNormalizedSha256 =
-    'dd989abc9b04ce99b0ea6a4f26ceaa474fcf00c91b7e7dbdb04877d877eb498f';
+    '770eef00358fe235e55121d100907e5aee7990e473f44936ee998935ec749ac9';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

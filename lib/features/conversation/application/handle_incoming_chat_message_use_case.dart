@@ -4,6 +4,8 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show IncomingDirectMediaCaptionEditOutcome;
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
@@ -403,6 +405,110 @@ handleIncomingChatMessage({
       },
     );
     return (HandleChatMessageResult.unauthorized, null, null);
+  }
+
+  // 353: an exact event-bearing proof-less media caption EDIT is routed BEFORE
+  // the generic missing/stale/deleted branches. Its authority is the persisted
+  // strict generation, so it must never reach the family-agnostic placeholder
+  // save or the non-atomic parent/attachment writes below.
+  final isDirectMediaCaptionEditCandidate =
+      payload.isEdit &&
+      !strictMediaProjection.selected &&
+      (payload.media?.isNotEmpty ?? false) &&
+      payload.privateMediaPolicy.version == 0 &&
+      payload.privateMediaPolicy.mode == PrivateMediaMode.ordinary &&
+      v2Envelope != null &&
+      outerEventId is String &&
+      outerEventId.trim().isNotEmpty &&
+      outerEventId == payloadEventId;
+  if (isDirectMediaCaptionEditCandidate) {
+    final captionEditRepo =
+        mediaAttachmentRepo is IncomingDirectMediaCaptionEditApplyRepository
+        ? mediaAttachmentRepo as IncomingDirectMediaCaptionEditApplyRepository
+        : null;
+    if (captionEditRepo == null ||
+        !captionEditRepo.supportsIncomingDirectMediaCaptionEditApply) {
+      // Fail closed and retryable: the exact staged envelope stays the owner
+      // until a capable build can validate it.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_MEDIA_CAPTION_EDIT_AUTHORITY_UNAVAILABLE',
+        details: {'id': shortenMessageId(payload.id)},
+      );
+      return (HandleChatMessageResult.editMissingOriginal, null, null);
+    }
+    // Dart cannot retain the nullable payload's promotion across a closure.
+    final captionEditMessageId = payload.id;
+    final descriptors = payload.media!
+        .map(
+          (mediaJson) => MediaAttachment.fromJson(mediaJson).copyWith(
+            messageId: captionEditMessageId,
+            ownerLane: MediaOwnerLane.direct,
+          ),
+        )
+        .toList(growable: false);
+    final candidate = payload.toConversationMessage(
+      contactPeerId: payload.senderPeerId,
+      isIncoming: true,
+      status: 'delivered',
+      editedAt: payload.editedAt ?? payload.timestamp,
+      transport: transport,
+    );
+    IncomingDirectMediaCaptionEditApplyResult applied;
+    try {
+      applied = await captionEditRepo.applyIncomingDirectMediaCaptionEdit(
+        incoming: candidate,
+        attachments: descriptors,
+      );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_MEDIA_CAPTION_EDIT_APPLY_ERROR',
+        details: {
+          'id': shortenMessageId(payload.id),
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+      return (HandleChatMessageResult.editMissingOriginal, null, null);
+    }
+    switch (applied.outcome) {
+      case IncomingDirectMediaCaptionEditOutcome.missingOriginal:
+        // Zero writes: no parent, no attachment, no marker, no receipt.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL',
+          details: {'id': shortenMessageId(payload.id)},
+        );
+        return (HandleChatMessageResult.editMissingOriginal, null, null);
+      case IncomingDirectMediaCaptionEditOutcome.refused:
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_MEDIA_CAPTION_EDIT_REFUSED',
+          details: {'id': shortenMessageId(payload.id)},
+        );
+        return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+      case IncomingDirectMediaCaptionEditOutcome.legacyParent:
+        // A live pre-353 all-null/no-v111 parent keeps its exact existing
+        // generic media-edit apply and its existing event-aware receipt.
+        break;
+      case IncomingDirectMediaCaptionEditOutcome.applied:
+        final durable = applied.message;
+        if (durable != null) {
+          await stageNotificationDisplayCustody?.call(durable);
+        }
+        await maybeSendDeliveryReceipt(
+          payload.id,
+          mutationEventId: payload.eventId,
+        );
+        return (HandleChatMessageResult.chatMessage, durable, null);
+      case IncomingDirectMediaCaptionEditOutcome.durableReplay:
+      case IncomingDirectMediaCaptionEditOutcome.superseded:
+        await maybeSendDeliveryReceipt(
+          payload.id,
+          mutationEventId: payload.eventId,
+        );
+        return (HandleChatMessageResult.ignoredEdit, null, null);
+    }
   }
 
   // 3. Check for duplicate / same-ID edit update

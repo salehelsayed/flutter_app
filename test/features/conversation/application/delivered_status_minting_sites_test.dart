@@ -94,8 +94,12 @@ void main() {
         // separately audited by the R2 failed-delete retry test.
         // Receiver-side writers marking INCOMING rows 'delivered' — not
         // sender-side custody minting; G4 scopes to outgoing truthfulness.
+        // Plan 353 adds the sixth: the ordinary direct-media caption EDIT
+        // candidate is built with the same incoming shape as its sibling
+        // generic edit branch, and the conditional apply it feeds writes only
+        // `text` and `edited_at` — this status is never persisted at all.
         'lib/features/conversation/application/handle_incoming_chat_message_use_case.dart':
-            5,
+            6,
         'lib/features/conversation/application/handle_incoming_message_deletion_use_case.dart':
             2,
         // Local/system row writers: no transport, terminal by construction.

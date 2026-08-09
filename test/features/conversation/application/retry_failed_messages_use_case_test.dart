@@ -10,6 +10,8 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -494,6 +496,89 @@ void main() {
         );
 
         expect(count, 1);
+      },
+    );
+
+    test(
+      'TC-353-03 failed media caption edit with a v109 owner blocks legacy send',
+      () async {
+        identityRepo.seed(makeIdentity());
+        const messageId = 'tc353-failed-media-edit';
+        const eventId = '35300000-0000-4000-8000-000000000302';
+        const recipient = 'peer-target';
+        const envelope =
+            '{"type":"chat_message","version":"2","id":"$messageId",'
+            '"eventId":"$eventId","senderPeerId":"my-peer-id",'
+            '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+        messageRepo.seed(<ConversationMessage>[
+          makeFailedMessage(
+            id: messageId,
+            contactPeerId: recipient,
+            text: 'edited caption',
+          ).copyWith(
+            wireEnvelope: envelope,
+            editedAt: '2026-01-01T00:00:01.000Z',
+            media: const <MediaAttachment>[
+              MediaAttachment(
+                id: '$messageId-a',
+                messageId: messageId,
+                mime: 'image/jpeg',
+                size: 800,
+                mediaType: 'image',
+                downloadStatus: 'done',
+                createdAt: '2026-01-01T00:00:00.000Z',
+              ),
+            ],
+          ),
+        ]);
+        contactRepo.seed([makeContact(peerId: recipient)]);
+        messageRepo.directMutationCustodyRows['$recipient\u0000$eventId'] =
+            const DirectReactionInboxCustodyOutboxEntry(
+              recipientPeerId: recipient,
+              eventId: eventId,
+              wireEnvelope: envelope,
+              retryCount: 0,
+              lastAttemptAt: null,
+              lastErrorCode: null,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            );
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: recipient,
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+        );
+
+        final count = await retryFailedMessage(
+          messageId: messageId,
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(count, 0);
+        expect(
+          p2pService.sendMessageWithReplyCallCount,
+          0,
+          reason: 'the exact v109 owner blocks the legacy send leg',
+        );
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.ordinaryAttemptStages, isEmpty);
+        expect(
+          messageRepo.directMutationCustodyRows,
+          hasLength(1),
+          reason: 'the exact event is retained for its own drain',
+        );
       },
     );
 

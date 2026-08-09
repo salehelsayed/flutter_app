@@ -1812,6 +1812,43 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             wireEnvelope: wireEnvelope,
             updatedAt: updatedAt,
           ),
+      dbLoadOutgoingDirectMediaCaptionEditProjection: ({required messageId}) =>
+          dbLoadOutgoingDirectMediaCaptionEditProjection(
+            db,
+            messageId: messageId,
+          ),
+      dbStageOutgoingDirectMediaCaptionEditInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+            required expectedAttachmentRows,
+          }) => dbStageOutgoingDirectMediaCaptionEditInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+            expectedAttachmentRows: expectedAttachmentRows,
+          ),
+      dbApplyIncomingDirectMediaCaptionEdit:
+          ({
+            required expectedParentIdentity,
+            required expectedAttachmentRows,
+            required text,
+            required editedAt,
+          }) => dbApplyIncomingDirectMediaCaptionEdit(
+            db,
+            expectedParentIdentity: expectedParentIdentity,
+            expectedAttachmentRows: expectedAttachmentRows,
+            text: text,
+            editedAt: editedAt,
+          ),
       dbStageOutgoingDirectMediaBlobGeneration:
           ({
             required expectedParentRow,

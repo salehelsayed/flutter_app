@@ -6,6 +6,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
@@ -654,10 +656,21 @@ class _R3DelayedCryptoBridge extends PassthroughCryptoBridge {
 class _CountingCryptoBridge extends PassthroughCryptoBridge {
   int encryptCalls = 0;
 
+  /// The exact inner plaintext of every `message.encrypt` call, so a test can
+  /// prove the serialized wire descriptor without decrypting an envelope.
+  final List<String> encryptedPlaintexts = <String>[];
+
   @override
   Future<String> send(String message) {
-    final command = (jsonDecode(message) as Map<String, dynamic>)['cmd'];
-    if (command == 'message.encrypt') encryptCalls++;
+    final decoded = jsonDecode(message) as Map<String, dynamic>;
+    if (decoded['cmd'] == 'message.encrypt') {
+      encryptCalls++;
+      final payload = decoded['payload'];
+      final plaintext = payload is Map<String, dynamic>
+          ? payload['plaintext']
+          : null;
+      if (plaintext is String) encryptedPlaintexts.add(plaintext);
+    }
     return super.send(message);
   }
 }
@@ -10958,6 +10971,351 @@ void main() {
       });
     });
   });
+
+  group('Plan 353 ordinary direct-media caption-only edit custody', () {
+    const messageId = 'tc353-02-parent';
+    const target = 'target-peer';
+    const selfPeer = 'my-peer';
+    const t0 = '2026-08-09T09:00:00.000Z';
+    const t1 = '2026-08-09T09:00:01.000Z';
+
+    /// The exact persisted generation the DB owns. Its raw keys are hydrated
+    /// repository state; the caller never supplies them.
+    List<MediaAttachment> persistedAttachments() => <MediaAttachment>[
+      MediaAttachment(
+        id: '$messageId-a',
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 800,
+        mediaType: 'image',
+        width: 640,
+        height: 480,
+        localPath: 'media/direct/$messageId-a.jpg',
+        downloadStatus: 'done',
+        createdAt: t0,
+        contentHash: '1' * 64,
+        thumbnailHash: 'thumb-a',
+        encryptionKeyBase64: 'raw-key-a',
+        encryptionNonce: 'nonce-a',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ownerLane: MediaOwnerLane.direct,
+      ),
+      MediaAttachment(
+        id: '$messageId-b',
+        messageId: messageId,
+        mime: 'video/mp4',
+        size: 1600,
+        mediaType: 'video',
+        durationMs: 4200,
+        localPath: 'media/direct/$messageId-b.mp4',
+        downloadStatus: 'done',
+        createdAt: t0,
+        contentHash: '2' * 64,
+        encryptionKeyBase64: 'raw-key-b',
+        encryptionNonce: 'nonce-b',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ownerLane: MediaOwnerLane.direct,
+      ),
+    ];
+
+    ConversationMessage persistedParent({bool isForwarded = false}) =>
+        ConversationMessage(
+          id: messageId,
+          contactPeerId: target,
+          senderPeerId: selfPeer,
+          text: 'original caption',
+          timestamp: t0,
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: t0,
+          transport: 'direct',
+          dedupKey: messageId,
+          isForwarded: isForwarded,
+          media: persistedAttachments(),
+        );
+
+    ({FakeMessageRepository messages, _CaptionEditCustodyFakeRepository media})
+    buildOwners({
+      OutgoingDirectMediaCaptionEditLane lane =
+          OutgoingDirectMediaCaptionEditLane.strictMedia,
+      bool isForwarded = false,
+      FakeP2PService? service,
+    }) {
+      final messages = FakeMessageRepository()
+        ..forceCurrent(persistedParent(isForwarded: isForwarded));
+      final media = _CaptionEditCustodyFakeRepository(messages)
+        ..lane = lane
+        ..canonicalParent = persistedParent(isForwarded: isForwarded)
+        ..canonicalAttachments = persistedAttachments()
+        ..transportProbe = service;
+      return (messages: messages, media: media);
+    }
+
+    test('TC-353-02 strict media caption edit owns v109 before transport and '
+        'ignores caller media', () async {
+      // 1. Non-identity caller drift is ignored in favor of the DB projection.
+      final service = FakeP2PService();
+      final owners = buildOwners(service: service);
+      final bridge = _CountingCryptoBridge();
+      final (result, message) = await sendChatMessage(
+        p2pService: service,
+        messageRepo: owners.messages,
+        mediaAttachmentRepo: owners.media,
+        targetPeerId: target,
+        text: 'edited caption',
+        senderPeerId: selfPeer,
+        senderUsername: 'Me',
+        action: MessagePayload.actionEdit,
+        messageId: messageId,
+        timestamp: t0,
+        createdAt: t0,
+        editedAt: t1,
+        bridge: bridge,
+        // Forged/extra/reordered caller media must never be interpreted as
+        // attachment replacement.
+        mediaAttachments: <MediaAttachment>[
+          persistedAttachments().last.copyWith(
+            contentHash: 'forged-hash',
+            encryptionKeyBase64: 'forged-key',
+          ),
+          MediaAttachment(
+            id: 'ghost-attachment',
+            messageId: messageId,
+            mime: 'image/png',
+            size: 1,
+            mediaType: 'image',
+            downloadStatus: 'done',
+            createdAt: t0,
+          ),
+        ],
+      );
+
+      expect(result, isNot(SendChatMessageResult.sendFailed));
+      expect(message, isNotNull);
+      expect(owners.media.stageCalls, 1);
+      expect(
+        owners.media.stagedAttachments!.map((a) => a.id).toList(),
+        persistedAttachments().map((a) => a.id).toList(),
+        reason: 'the persisted generation is the only attachment authority',
+      );
+      expect(
+        owners.media.v109RowsAfterStage,
+        1,
+        reason: 'the exact v109 obligation precedes LAN and relay',
+      );
+      expect(owners.media.v109ExistedBeforeFirstTransport, isTrue);
+      expect(
+        owners.media.transportCallsAtStage,
+        0,
+        reason: 'no LAN or relay leg may run before the exact v109 stage',
+      );
+      expect(owners.media.blobTransportCalls, 0);
+
+      // The proof-less wire descriptor carries immutable identity only.
+      expect(bridge.encryptedPlaintexts, hasLength(1));
+      final wireMedia =
+          ((jsonDecode(bridge.encryptedPlaintexts.single)
+                      as Map<String, dynamic>)['media']
+                  as List)
+              .cast<Map<String, dynamic>>();
+      expect(wireMedia, hasLength(2));
+      for (final entry in wireMedia) {
+        expect(entry.containsKey('blobCustody'), isFalse);
+        expect(entry.containsKey('ownerLane'), isFalse);
+        expect(entry.containsKey('localPath'), isFalse);
+        expect(entry.containsKey('downloadStatus'), isFalse);
+        expect(entry.containsKey('directMediaBlobCustodyFingerprint'), isFalse);
+      }
+      expect(wireMedia.first['encryptionKeyBase64'], 'raw-key-a');
+      expect(wireMedia.first['contentHash'], '1' * 64);
+
+      // 2. Identity drift refuses BEFORE encryption and network.
+      for (final drift in <({String reason, String sender, String recipient})>[
+        (reason: 'sender drift', sender: 'peer-impostor', recipient: target),
+        (reason: 'recipient drift', sender: selfPeer, recipient: 'peer-other'),
+      ]) {
+        final drifted = buildOwners();
+        final driftBridge = _CountingCryptoBridge();
+        final driftService = FakeP2PService();
+        final (driftResult, _) = await sendChatMessage(
+          p2pService: driftService,
+          messageRepo: drifted.messages,
+          mediaAttachmentRepo: drifted.media,
+          targetPeerId: drift.recipient,
+          text: 'edited caption',
+          senderPeerId: drift.sender,
+          senderUsername: 'Me',
+          action: MessagePayload.actionEdit,
+          messageId: messageId,
+          timestamp: t0,
+          createdAt: t0,
+          editedAt: t1,
+          bridge: driftBridge,
+        );
+        expect(
+          driftResult,
+          SendChatMessageResult.sendFailed,
+          reason: drift.reason,
+        );
+        expect(driftBridge.encryptCalls, 0, reason: drift.reason);
+        expect(driftService.sendCallCount, 0, reason: drift.reason);
+        expect(drifted.media.stageCalls, 0, reason: drift.reason);
+      }
+
+      // 3. A contradiction fails closed and never falls back to legacy.
+      final contradicted = buildOwners(
+        lane: OutgoingDirectMediaCaptionEditLane.contradiction,
+      );
+      final contradictionBridge = _CountingCryptoBridge();
+      final contradictionService = FakeP2PService();
+      final (contradictionResult, _) = await sendChatMessage(
+        p2pService: contradictionService,
+        messageRepo: contradicted.messages,
+        mediaAttachmentRepo: contradicted.media,
+        targetPeerId: target,
+        text: 'edited caption',
+        senderPeerId: selfPeer,
+        senderUsername: 'Me',
+        action: MessagePayload.actionEdit,
+        messageId: messageId,
+        timestamp: t0,
+        createdAt: t0,
+        editedAt: t1,
+        bridge: contradictionBridge,
+      );
+      expect(contradictionResult, SendChatMessageResult.sendFailed);
+      expect(contradictionBridge.encryptCalls, 0);
+      expect(contradictionService.sendCallCount, 0);
+      expect(contradicted.messages.directMutationCustodyRows, isEmpty);
+
+      // 4. A stopped node still acquires and retains the exact obligation.
+      final offline = buildOwners();
+      final offlineService = FakeP2PService(
+        currentState: const NodeState(isStarted: false),
+      );
+      final (offlineResult, _) = await sendChatMessage(
+        p2pService: offlineService,
+        messageRepo: offline.messages,
+        mediaAttachmentRepo: offline.media,
+        targetPeerId: target,
+        text: 'edited caption',
+        senderPeerId: selfPeer,
+        senderUsername: 'Me',
+        action: MessagePayload.actionEdit,
+        messageId: messageId,
+        timestamp: t0,
+        createdAt: t0,
+        editedAt: t1,
+        bridge: _CountingCryptoBridge(),
+      );
+      expect(offlineResult, SendChatMessageResult.nodeNotRunning);
+      expect(offline.messages.directMutationCustodyRows, hasLength(1));
+
+      // 5. Missing capability fails closed with no partial mutation.
+      final incapable = FakeMessageRepository()
+        ..forceCurrent(persistedParent());
+      final incapableMedia = _CaptionEditCustodyFakeRepository(incapable)
+        ..lane = OutgoingDirectMediaCaptionEditLane.strictMedia
+        ..canonicalParent = persistedParent()
+        ..canonicalAttachments = persistedAttachments()
+        ..supportsCaptionEditCustody = false;
+      final incapableBridge = _CountingCryptoBridge();
+      final incapableService = FakeP2PService();
+      final (incapableResult, _) = await sendChatMessage(
+        p2pService: incapableService,
+        messageRepo: incapable,
+        mediaAttachmentRepo: incapableMedia,
+        targetPeerId: target,
+        text: 'edited caption',
+        senderPeerId: selfPeer,
+        senderUsername: 'Me',
+        action: MessagePayload.actionEdit,
+        messageId: messageId,
+        timestamp: t0,
+        createdAt: t0,
+        editedAt: t1,
+        bridge: incapableBridge,
+      );
+      expect(incapableResult, SendChatMessageResult.sendFailed);
+      expect(incapableBridge.encryptCalls, 0);
+      expect(incapableService.sendCallCount, 0);
+      expect(incapable.directMutationCustodyRows, isEmpty);
+    });
+  });
+}
+
+/// Fake caption-edit custody owner: returns the persisted classification and
+/// projection, then delegates the atomic stage to the shared message fake.
+class _CaptionEditCustodyFakeRepository extends FakeMediaAttachmentRepository
+    implements OutgoingDirectMediaCaptionEditInboxCustodyRepository {
+  _CaptionEditCustodyFakeRepository(this.messageRepository);
+
+  final FakeMessageRepository messageRepository;
+
+  OutgoingDirectMediaCaptionEditLane lane =
+      OutgoingDirectMediaCaptionEditLane.notMedia;
+  ConversationMessage? canonicalParent;
+  List<MediaAttachment> canonicalAttachments = const <MediaAttachment>[];
+  bool supportsCaptionEditCustody = true;
+
+  int stageCalls = 0;
+  int blobTransportCalls = 0;
+  List<MediaAttachment>? stagedAttachments;
+  bool? v109ExistedBeforeFirstTransport;
+  int v109RowsAfterStage = 0;
+  FakeP2PService? transportProbe;
+  int? transportCallsAtStage;
+
+  @override
+  bool get supportsDirectMediaCaptionEditInboxCustody =>
+      supportsCaptionEditCustody;
+
+  @override
+  Future<OutgoingDirectMediaCaptionEditAuthority>
+  qualifyOutgoingDirectMediaCaptionEdit(String messageId) async =>
+      OutgoingDirectMediaCaptionEditAuthority(
+        lane: lane,
+        parent: canonicalParent,
+        attachments: canonicalAttachments,
+      );
+
+  @override
+  Future<OutgoingDirectMediaCaptionEditCustodyStageResult>
+  stageOutgoingDirectMediaCaptionEditInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    stageCalls++;
+    stagedAttachments = attachments;
+    final probe = transportProbe;
+    if (probe != null) {
+      transportCallsAtStage =
+          probe.sendCallCount +
+          probe.storeInInboxCallCount +
+          probe.ackCustodyStoreCallCount;
+    }
+    final result = await messageRepository
+        .stageOutgoingDirectTextMutationInboxCustody(
+          expected: expected,
+          staged: staged,
+          kind: kind,
+          recipientPeerId: recipientPeerId,
+          eventId: eventId,
+          wireEnvelope: wireEnvelope,
+        );
+    v109RowsAfterStage = messageRepository.directMutationCustodyRows.length;
+    v109ExistedBeforeFirstTransport = v109RowsAfterStage > 0;
+    return OutgoingDirectMediaCaptionEditCustodyStageResult(
+      outcome: result.outcome,
+      message: result.message,
+      custody: result.custody,
+    );
+  }
 }
 
 /// P2P service where discover/dial succeed but storeInInbox throws.

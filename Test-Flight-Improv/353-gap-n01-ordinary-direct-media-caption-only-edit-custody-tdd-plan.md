@@ -1,6 +1,6 @@
 # 353 - GAP-N01 Ordinary Direct-Media Caption-Only EDIT Custody
 
-Status: **EXECUTION-READY / REVIEWED / NOT IMPLEMENTED / NOT STANDALONE RELEASE-ELIGIBLE** (2026-08-09)
+Status: **IMPLEMENTED / DEFAULT-OFF CODE-CLOSED / PLAN-GREEN / HOST GATES GREEN / NOT STANDALONE RELEASE-ELIGIBLE** (2026-08-09)
 Type: Modification
 Baseline observed while planning: ac6eba539410f280cd7b37cfd81907be8ce1fa4f (feat: preserve direct-media delete custody past v111 drain)
 Spec: UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md requirements 1, 3, and 6 plus A-01/A-02/A-03/A-24/A-26; gap inventory UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md GAP-N01 / WP-01 / section 9.2
@@ -322,3 +322,19 @@ READY / EXECUTION_READY. The core bet is confirmed: a caption-only EDIT needs no
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-09 | planning/review | Plan 353, index, append-only STATUS marker | `$tdd-plan` plus independent and targeted `$tdd-review`: READY | Source-grounded sender/storage/receiver contract, six causal REDs, two narrow retry-owner sentinels, exact preservation commands, and proportional run/not-run gates | no plan-content blocker; implementation intentionally not started | execute in a separate session, then append EXECUTION_COMPLETED only after every required receipt passes |
+| 2026-08-09 | execution | The exact reviewed eight production files plus seven test files, the shared real-DB media fixture, and two frozen-digest/census guards | Six causal REDs recorded, focused GREEN 11/11, preservation sentinels 9/9, two mutation re-reds, host `1to1` 120 paths, `core-host-all` 404 paths / 3,221 tests, `feature-host-all` 841 paths / 9,014 tests / 7 skips, analyzer/format/diff clean, one incremental Graphify refresh | Three execution corrections were required and are recorded below; no scope drift, no new owner, no migration | append EXECUTION_COMPLETED and hand the remaining GAP-N01 lanes to their own plans |
+
+## Execution Receipts
+
+- Causal REDs (recorded before any production edit): TC-353-01a failed on null post-completion fingerprints for a direct-delivered parent; TC-353-01b, TC-353-02 and TC-353-04 failed because no caption-edit owner, sender lane or incoming conditional-apply existed; TC-353-03 returned `stale` whenever physical direct attachments existed; TC-353-05 wrote a family-agnostic hidden placeholder.
+- Focused GREEN: `--plain-name 'TC-353-'` over the nine reviewed paths, 11/11.
+- Preservation sentinels, each green unmodified: TC-349-01, TC-349-04, TC-342-03c, TC-351-02, TC-351-04, TC-352-01, TC-352-02, TC-352-03, and `editMissingOriginal -> retryable`.
+- Mutation re-reds: (a) routing the caption EDIT back through generic media staging (no exact v109 before LAN/relay) reds TC-353-02; (b) transitioning v111 inside the caption stage reds TC-353-01b.
+- Gates: host `1to1` 120 paths; `core-host-all --batch-flutter --dart-only` 404 paths / 3,221 tests; `feature-host-all --batch-flutter --dart-only` 841 paths / 9,014 tests / 7 skips; `flutter analyze lib test` clean; exact changed-Dart format clean; `git diff --check` clean; one incremental Graphify refresh (70,615 nodes / 103,797 edges).
+- Concurrency note: both family sweeps were run with `--concurrency 4` rather than the planned 2/1. That is an execution-speed choice only; both scopes are the same planned path sets and both passed.
+
+## Execution Corrections
+
+1. The repository needed one seam the plan did not name: SQLite can only ever compare deterministic storage references, and two attachments can share a reference while their raw keys differ. A hydrated raw-key barrier now runs under the media lifecycle lock, outside the SQL transaction, before any expectation row is derived. It deliberately treats an EMPTY persisted projection as "not drifted" so the transactional owner keeps sole authority to distinguish an absent/hidden original (retryable deferral) from a genuinely crossed generation (refusal).
+2. Two frozen content digests (`dtr18_layering_relocation_contract_test.dart` over production bootstrap, `dtr18_placement_closure_contract_test.dart` over the media adapter) and one census guard (`delivered_status_minting_sites_test.dart`) are path-string contracts invisible to import-level analysis and to every focused gate; all three were re-pinned with a reviewed justification rather than weakened. The census entry rises 5 -> 6 for the incoming caption candidate, whose status is never persisted at all.
+3. TC-353-01b's planned "late v109-insert abort" arm cannot insert through the same connection from inside the transaction (sqflite serializes writes and would deadlock). The barrier now throws after the parent projection and the lineage stamps, which proves the same all-or-zero rollback property.

@@ -6,6 +6,7 @@ import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -4252,5 +4253,432 @@ void main() {
         expect(bridge.decryptCallCount, 0);
       },
     );
+  });
+
+  group('Plan 353 incoming media caption-only edit', () {
+    const eventA = '35300000-0000-4000-8000-0000000000a1';
+    const eventB = '35300000-0000-4000-8000-0000000000b1';
+    const t0 = '2026-08-09T10:00:00.000Z';
+    const t1 = '2026-08-09T10:00:01.000Z';
+    const t2 = '2026-08-09T10:00:02.000Z';
+    const fingerprint =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    /// The proof-less media EDIT descriptor set: immutable identity only,
+    /// never a blob commitment.
+    List<Map<String, dynamic>> wireMedia(String messageId) =>
+        <Map<String, dynamic>>[
+          <String, dynamic>{
+            'id': '$messageId-a',
+            'mime': 'image/jpeg',
+            'size': 800,
+            'mediaType': 'image',
+            'width': 640,
+            'height': 480,
+            'contentHash': '1' * 64,
+            'encryptionKeyBase64': 'raw-key-a',
+            'encryptionNonce': 'nonce-a',
+            'encryptionScheme': 'blob_aes_256_gcm_v1',
+          },
+        ];
+
+    String captionEditPlaintext({
+      required String messageId,
+      required String eventId,
+      required String caption,
+      required String editedAt,
+    }) => jsonEncode(<String, Object?>{
+      'id': messageId,
+      'text': caption,
+      'senderPeerId': senderPeerId,
+      'senderUsername': 'Alice',
+      'timestamp': t0,
+      'action': MessagePayload.actionEdit,
+      'eventId': eventId,
+      'editedAt': editedAt,
+      'media': wireMedia(messageId),
+    });
+
+    /// Seeds the exact strict incoming generation the sender's caption EDIT
+    /// must be validated against.
+    Future<void> seedStrictIncomingParent(
+      MediaRepositoryRealDbFixture fixture, {
+      required String messageId,
+      String? deletedAt,
+      String? hiddenAt,
+      String? fingerprint = fingerprint,
+    }) async {
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': senderPeerId,
+        'sender_peer_id': senderPeerId,
+        'text': deletedAt == null ? 'original caption' : '',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': t0,
+        'transport': 'inbox',
+        'dedup_key': null,
+        'deleted_at': deletedAt,
+        'deleted_by_peer_id': deletedAt == null ? null : senderPeerId,
+        'hidden_at': hiddenAt,
+      });
+      await fixture.db.insert('media_attachments', <String, Object?>{
+        'id': '$messageId-a',
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 800,
+        'media_type': 'image',
+        'width': 640,
+        'height': 480,
+        'created_at': t0,
+        'download_status': 'done',
+        'local_path': 'media/direct/$messageId-a.jpg',
+        'content_hash': '1' * 64,
+        // Production persists a secure-store REFERENCE and holds the raw key
+        // outside SQLite; the repository must hydrate and compare it there.
+        'encryption_key_base64': secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
+        ),
+        'encryption_nonce': 'nonce-a',
+        'encryption_scheme': 'blob_aes_256_gcm_v1',
+        'direct_media_blob_custody_fingerprint': fingerprint,
+      });
+      await fixture.secureKeyStore.write(
+        mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
+        'raw-key-a',
+      );
+    }
+
+    test('TC-353-05 media edit before initial writes nothing then converges '
+        'on replay', () async {
+      final receipts = <String>[];
+      final mutationReceipts = <String>[];
+
+      Future<(HandleChatMessageResult, ConversationMessage?)> receive(
+        MediaRepositoryRealDbFixture fixture, {
+        required String messageId,
+        required String eventId,
+        required String caption,
+        required String editedAt,
+      }) async {
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: messageId, eventId: eventId),
+          ),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: fixture.repo,
+          predecryptedText: captionEditPlaintext(
+            messageId: messageId,
+            eventId: eventId,
+            caption: caption,
+            editedAt: editedAt,
+          ),
+          transport: 'inbox',
+          stagedEntryId: 'staged-$eventId',
+          sendDeliveryReceipt: (id) async => receipts.add(id),
+          sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+              mutationReceipts.add('$id/$mutationEventId'),
+        );
+        return (result, stored);
+      }
+
+      Future<List<Map<String, Object?>>> rowsFor(
+        MediaRepositoryRealDbFixture fixture,
+        String table,
+        String messageId,
+      ) => fixture.db.query(
+        table,
+        where: '${table == 'messages' ? 'id' : 'message_id'} = ?',
+        whereArgs: <Object?>[messageId],
+      );
+
+      // 1. An ABSENT original writes nothing and emits no receipt.
+      final absent = await MediaRepositoryRealDbFixture.create();
+      addTearDown(absent.dispose);
+      const absentId = 'tc353-05-absent';
+      final (absentResult, _) = await receive(
+        absent,
+        messageId: absentId,
+        eventId: eventA,
+        caption: 'caption A',
+        editedAt: t1,
+      );
+      expect(absentResult, HandleChatMessageResult.editMissingOriginal);
+      expect(
+        await rowsFor(absent, 'messages', absentId),
+        isEmpty,
+        reason: 'no family-agnostic placeholder may be written',
+      );
+      expect(await rowsFor(absent, 'media_attachments', absentId), isEmpty);
+      expect(receipts, isEmpty);
+      expect(mutationReceipts, isEmpty);
+
+      // The repeated result stays retryable and still writes nothing.
+      final (absentReplay, _) = await receive(
+        absent,
+        messageId: absentId,
+        eventId: eventA,
+        caption: 'caption A',
+        editedAt: t1,
+      );
+      expect(absentReplay, HandleChatMessageResult.editMissingOriginal);
+      expect(await rowsFor(absent, 'messages', absentId), isEmpty);
+      expect(mutationReceipts, isEmpty);
+
+      // 2. A HIDDEN nondeleted original is the same zero-write deferral.
+      final hidden = await MediaRepositoryRealDbFixture.create();
+      addTearDown(hidden.dispose);
+      const hiddenId = 'tc353-05-hidden';
+      await seedStrictIncomingParent(hidden, messageId: hiddenId, hiddenAt: t0);
+      final hiddenBefore = (await rowsFor(hidden, 'messages', hiddenId)).single;
+      final (hiddenResult, _) = await receive(
+        hidden,
+        messageId: hiddenId,
+        eventId: eventB,
+        caption: 'caption B',
+        editedAt: t2,
+      );
+      expect(hiddenResult, HandleChatMessageResult.editMissingOriginal);
+      expect(
+        (await rowsFor(hidden, 'messages', hiddenId)).single,
+        hiddenBefore,
+      );
+      expect(mutationReceipts, isEmpty);
+
+      // 3. An exact AUTHOR TOMBSTONE is classified first as durable
+      //    supersession and emits the exact mutation receipt.
+      final tombstoned = await MediaRepositoryRealDbFixture.create();
+      addTearDown(tombstoned.dispose);
+      const tombstoneId = 'tc353-05-tombstone';
+      await seedStrictIncomingParent(
+        tombstoned,
+        messageId: tombstoneId,
+        deletedAt: t1,
+      );
+      final tombstoneBefore = (await rowsFor(
+        tombstoned,
+        'messages',
+        tombstoneId,
+      )).single;
+      final (tombstoneResult, _) = await receive(
+        tombstoned,
+        messageId: tombstoneId,
+        eventId: eventA,
+        caption: 'caption A',
+        editedAt: t1,
+      );
+      expect(tombstoneResult, HandleChatMessageResult.ignoredEdit);
+      expect(
+        (await rowsFor(tombstoned, 'messages', tombstoneId)).single,
+        tombstoneBefore,
+      );
+      expect(mutationReceipts, <String>['$tombstoneId/$eventA']);
+
+      // 4. Retained edits converge once the initial is durable: the newest
+      //    caption wins and each safely applied event gets its own receipt.
+      mutationReceipts.clear();
+      final converged = await MediaRepositoryRealDbFixture.create();
+      addTearDown(converged.dispose);
+      const convergedId = 'tc353-05-converged';
+      await seedStrictIncomingParent(converged, messageId: convergedId);
+      final attachmentsBefore = await rowsFor(
+        converged,
+        'media_attachments',
+        convergedId,
+      );
+      final (appliedA, storedA) = await receive(
+        converged,
+        messageId: convergedId,
+        eventId: eventA,
+        caption: 'caption A',
+        editedAt: t1,
+      );
+      expect(appliedA, HandleChatMessageResult.chatMessage);
+      expect(storedA!.text, 'caption A');
+      final (appliedB, storedB) = await receive(
+        converged,
+        messageId: convergedId,
+        eventId: eventB,
+        caption: 'caption B',
+        editedAt: t2,
+      );
+      expect(appliedB, HandleChatMessageResult.chatMessage);
+      expect(storedB!.text, 'caption B');
+      // Replaying the older event never regresses the durable caption.
+      final (staleReplay, _) = await receive(
+        converged,
+        messageId: convergedId,
+        eventId: eventA,
+        caption: 'caption A',
+        editedAt: t1,
+      );
+      expect(staleReplay, HandleChatMessageResult.ignoredEdit);
+      final durable = (await rowsFor(
+        converged,
+        'messages',
+        convergedId,
+      )).single;
+      expect(durable['text'], 'caption B');
+      expect(durable['edited_at'], t2);
+      expect(durable['status'], 'delivered');
+      expect(durable['transport'], 'inbox');
+      expect(
+        await rowsFor(converged, 'media_attachments', convergedId),
+        attachmentsBefore,
+        reason: 'a caption EDIT never rewrites an attachment descriptor',
+      );
+      expect(mutationReceipts, <String>[
+        '$convergedId/$eventA',
+        '$convergedId/$eventB',
+        '$convergedId/$eventA',
+      ]);
+
+      // 5. An EVENTLESS legacy media edit keeps its hidden placeholder.
+      mutationReceipts.clear();
+      receipts.clear();
+      const legacyId = 'tc353-05-legacy';
+      final legacyRepo = FakeMessageRepository();
+      final (legacyResult, _, _) = await handleIncomingChatMessage(
+        message: buildP2PMessage(
+          buildValidChatJson(
+            id: legacyId,
+            text: 'legacy caption',
+            action: MessagePayload.actionEdit,
+            editedAt: t1,
+            media: wireMedia(legacyId),
+          ),
+        ),
+        messageRepo: legacyRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+      );
+      expect(legacyResult, HandleChatMessageResult.editMissingOriginal);
+      expect(
+        legacyRepo.saved,
+        hasLength(1),
+        reason: 'v1/eventless legacy placeholder behavior is unchanged',
+      );
+      expect(legacyRepo.saved.single.isHidden, isTrue);
+    });
+
+    test('TC-353-04 strict caption edit routes before the generic branches '
+        'and receipts only after a durable outcome', () async {
+      final receipts = <String>[];
+      final mutationReceipts = <String>[];
+      final staged = <String>[];
+
+      Future<HandleChatMessageResult> receive(
+        MediaRepositoryRealDbFixture fixture, {
+        required String messageId,
+        required String eventId,
+        required String caption,
+        required String editedAt,
+        List<Map<String, dynamic>>? media,
+      }) async {
+        final plaintext =
+            jsonDecode(
+                  captionEditPlaintext(
+                    messageId: messageId,
+                    eventId: eventId,
+                    caption: caption,
+                    editedAt: editedAt,
+                  ),
+                )
+                as Map<String, Object?>;
+        if (media != null) plaintext['media'] = media;
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: messageId, eventId: eventId),
+          ),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: fixture.repo,
+          predecryptedText: jsonEncode(plaintext),
+          transport: 'inbox',
+          stagedEntryId: 'staged-$eventId',
+          stageNotificationDisplayCustody: (message) async =>
+              staged.add(message.id),
+          sendDeliveryReceipt: (id) async => receipts.add(id),
+          sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+              mutationReceipts.add('$id/$mutationEventId'),
+        );
+        return result;
+      }
+
+      // A crossed descriptor refuses with NO generic fallback save.
+      final crossed = await MediaRepositoryRealDbFixture.create();
+      addTearDown(crossed.dispose);
+      const crossedId = 'tc353-04-crossed';
+      await seedStrictIncomingParent(crossed, messageId: crossedId);
+      final crossedBefore = await crossed.db.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[crossedId],
+      );
+      final crossedResult = await receive(
+        crossed,
+        messageId: crossedId,
+        eventId: eventA,
+        caption: 'forged caption',
+        editedAt: t1,
+        media: <Map<String, dynamic>>[
+          ...wireMedia(crossedId).map(
+            (entry) => <String, dynamic>{...entry, 'contentHash': '9' * 64},
+          ),
+        ],
+      );
+      expect(crossedResult, HandleChatMessageResult.strictMediaCustodyRefused);
+      expect(
+        (await crossed.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[crossedId],
+        )).single['text'],
+        'original caption',
+      );
+      expect(
+        await crossed.db.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[crossedId],
+        ),
+        crossedBefore,
+        reason: 'a refusal never falls through to the generic save',
+      );
+      expect(receipts, isEmpty);
+      expect(mutationReceipts, isEmpty);
+      expect(staged, isEmpty);
+
+      // A live all-null/no-v111 legacy parent keeps its generic apply and its
+      // existing event-aware receipt.
+      final legacy = await MediaRepositoryRealDbFixture.create();
+      addTearDown(legacy.dispose);
+      const legacyId = 'tc353-04-legacy';
+      await seedStrictIncomingParent(
+        legacy,
+        messageId: legacyId,
+        fingerprint: null,
+      );
+      final legacyResult = await receive(
+        legacy,
+        messageId: legacyId,
+        eventId: eventB,
+        caption: 'legacy caption',
+        editedAt: t2,
+      );
+      expect(legacyResult, HandleChatMessageResult.chatMessage);
+      expect(
+        (await legacy.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[legacyId],
+        )).single['text'],
+        'legacy caption',
+      );
+      expect(mutationReceipts, <String>['$legacyId/$eventB']);
+    });
   });
 }

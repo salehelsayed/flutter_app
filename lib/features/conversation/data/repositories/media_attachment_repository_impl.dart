@@ -7,13 +7,17 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
     show
         DirectMediaBlobGenerationDbStageOutcome,
         DirectMediaBlobGenerationDbStageResult,
+        DirectMediaCaptionEditCustodyDbStageResult,
         DirectMediaDeletionCustodyDbStageResult,
         DirectMediaInboxCustodyDbStageResult,
         GenericMediaAttachmentCustodySaveRefused,
         IncomingDirectMediaBlobDbStageOutcome,
         IncomingDirectMediaBlobDbStageResult,
+        IncomingDirectMediaCaptionEditDbResult,
         mediaLocalPathIsTransient,
         OutgoingDirectDeletionLane,
+        OutgoingDirectMediaCaptionEditLane,
+        OutgoingDirectMediaCaptionEditProjection,
         shouldPreserveImmutableDirectMediaCustodyAttachmentProjection;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -131,6 +135,8 @@ class MediaAttachmentRepositoryImpl
         OutgoingDirectMediaInboxCustodyStagingRepository,
         OutgoingDirectDeletionLaneRepository,
         OutgoingDirectMediaDeletionInboxCustodyRepository,
+        OutgoingDirectMediaCaptionEditInboxCustodyRepository,
+        IncomingDirectMediaCaptionEditApplyRepository,
         DirectMediaBlobCustodyRepository,
         FreshOutgoingDirectMediaBlobGenerationRepository,
         OutgoingDirectMediaBlobTerminalizationRepository,
@@ -173,6 +179,27 @@ class MediaAttachmentRepositoryImpl
     required String updatedAt,
   })?
   dbStageOutgoingDirectMediaDeletionInboxCustody;
+  final Future<OutgoingDirectMediaCaptionEditProjection> Function({
+    required String messageId,
+  })?
+  dbLoadOutgoingDirectMediaCaptionEditProjection;
+  final Future<DirectMediaCaptionEditCustodyDbStageResult> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+    required List<Map<String, Object?>> expectedAttachmentRows,
+  })?
+  dbStageOutgoingDirectMediaCaptionEditInboxCustody;
+  final Future<IncomingDirectMediaCaptionEditDbResult> Function({
+    required Map<String, Object?> expectedParentIdentity,
+    required List<Map<String, Object?>> expectedAttachmentRows,
+    required String text,
+    required String editedAt,
+  })?
+  dbApplyIncomingDirectMediaCaptionEdit;
   final Future<DirectMediaBlobGenerationDbStageResult> Function({
     required Map<String, Object?> expectedParentRow,
     required List<Map<String, Object?>> expectedAttachmentRows,
@@ -575,6 +602,9 @@ class MediaAttachmentRepositoryImpl
     this.dbStageOutgoingDirectMediaInboxCustody,
     this.dbClassifyOutgoingDirectDeletionLane,
     this.dbStageOutgoingDirectMediaDeletionInboxCustody,
+    this.dbLoadOutgoingDirectMediaCaptionEditProjection,
+    this.dbStageOutgoingDirectMediaCaptionEditInboxCustody,
+    this.dbApplyIncomingDirectMediaCaptionEdit,
     this.dbStageOutgoingDirectMediaBlobGeneration,
     this.dbStageFreshOutgoingDirectMediaBlobGeneration,
     this.dbLoadDirectMediaBlobCustodyForAttachment,
@@ -725,6 +755,223 @@ class MediaAttachmentRepositoryImpl
         result.custodyRow!,
       ),
     );
+  }
+
+  @override
+  bool get supportsDirectMediaCaptionEditInboxCustody =>
+      dbLoadOutgoingDirectMediaCaptionEditProjection != null &&
+      dbStageOutgoingDirectMediaCaptionEditInboxCustody != null;
+
+  @override
+  Future<OutgoingDirectMediaCaptionEditAuthority>
+  qualifyOutgoingDirectMediaCaptionEdit(String messageId) async {
+    final load = dbLoadOutgoingDirectMediaCaptionEditProjection;
+    if (!supportsDirectMediaCaptionEditInboxCustody ||
+        load == null ||
+        messageId.isEmpty) {
+      return const OutgoingDirectMediaCaptionEditAuthority.contradiction();
+    }
+    // Qualification and hydration share the message-wide lifecycle lock, so a
+    // concurrent blob/cleanup owner cannot move the generation between the
+    // classification and the keys derived from it.
+    return lifecycleLock.synchronizedAll(() async {
+      final OutgoingDirectMediaCaptionEditProjection projection;
+      try {
+        projection = await load(messageId: messageId);
+      } catch (_) {
+        return const OutgoingDirectMediaCaptionEditAuthority.contradiction();
+      }
+      if (projection.lane != OutgoingDirectMediaCaptionEditLane.strictMedia) {
+        return OutgoingDirectMediaCaptionEditAuthority(
+          lane: projection.lane,
+          parent: projection.parentRow == null
+              ? null
+              : ConversationMessage.fromMap(projection.parentRow!),
+        );
+      }
+      // Raw keys are hydrated OUTSIDE the SQL transaction. A missing,
+      // throwing or crossed hydration refuses rather than sending a
+      // half-proven generation to the wire.
+      final List<MediaAttachment> hydrated;
+      try {
+        hydrated = await _attachmentsFromRows(projection.attachmentRows);
+      } catch (_) {
+        return const OutgoingDirectMediaCaptionEditAuthority.contradiction();
+      }
+      if (hydrated.length != projection.attachmentRows.length ||
+          hydrated.any(
+            (attachment) =>
+                attachment.messageId != messageId ||
+                attachment.ownerLane != MediaOwnerLane.direct ||
+                !attachment.hasEncryptionKeyMaterial,
+          )) {
+        return const OutgoingDirectMediaCaptionEditAuthority.contradiction();
+      }
+      return OutgoingDirectMediaCaptionEditAuthority(
+        lane: OutgoingDirectMediaCaptionEditLane.strictMedia,
+        parent: projection.parentRow == null
+            ? null
+            : ConversationMessage.fromMap(projection.parentRow!),
+        attachments: hydrated,
+      );
+    });
+  }
+
+  @override
+  Future<OutgoingDirectMediaCaptionEditCustodyStageResult>
+  stageOutgoingDirectMediaCaptionEditInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    final stage = dbStageOutgoingDirectMediaCaptionEditInboxCustody;
+    if (!supportsDirectMediaCaptionEditInboxCustody ||
+        stage == null ||
+        expected.id.isEmpty ||
+        staged.id != expected.id ||
+        staged.contactPeerId != recipientPeerId ||
+        staged.wireEnvelope != wireEnvelope ||
+        eventId.trim().isEmpty ||
+        attachments.isEmpty ||
+        attachments.any((attachment) => attachment.messageId != expected.id)) {
+      return const OutgoingDirectMediaCaptionEditCustodyStageResult.refused();
+    }
+    final result = await lifecycleLock.synchronizedAll(() async {
+      if (await _hasDriftedCaptionEditKeys(
+        messageId: expected.id,
+        descriptors: attachments,
+      )) {
+        return const DirectMediaCaptionEditCustodyDbStageResult.refused();
+      }
+      return stage(
+        expectedRow: expected.toMap(),
+        stagedRow: staged.toMap(),
+        kind: kind,
+        recipientPeerId: recipientPeerId,
+        eventId: eventId,
+        wireEnvelope: wireEnvelope,
+        expectedAttachmentRows: attachments
+            .map(_toStorageReferenceRowWithoutKeyWrite)
+            .toList(growable: false),
+      );
+    });
+    if (!result.authorizesTransport || result.custodyRow == null) {
+      return OutgoingDirectMediaCaptionEditCustodyStageResult(
+        outcome: result.outcome,
+        message: null,
+        custody: null,
+      );
+    }
+    return OutgoingDirectMediaCaptionEditCustodyStageResult(
+      outcome: result.outcome,
+      message: result.messageRow == null
+          ? null
+          : ConversationMessage.fromMap(result.messageRow!),
+      custody: DirectReactionInboxCustodyOutboxEntry.fromMap(
+        result.custodyRow!,
+      ),
+    );
+  }
+
+  @override
+  bool get supportsIncomingDirectMediaCaptionEditApply =>
+      dbApplyIncomingDirectMediaCaptionEdit != null;
+
+  @override
+  Future<IncomingDirectMediaCaptionEditApplyResult>
+  applyIncomingDirectMediaCaptionEdit({
+    required ConversationMessage incoming,
+    required List<MediaAttachment> attachments,
+  }) async {
+    final apply = dbApplyIncomingDirectMediaCaptionEdit;
+    final editedAt = incoming.editedAt;
+    if (apply == null ||
+        incoming.id.isEmpty ||
+        editedAt == null ||
+        editedAt.trim().isEmpty ||
+        attachments.isEmpty ||
+        attachments.any((attachment) => attachment.messageId != incoming.id)) {
+      return const IncomingDirectMediaCaptionEditApplyResult.refused();
+    }
+    final result = await lifecycleLock.synchronizedAll(() async {
+      if (await _hasDriftedCaptionEditKeys(
+        messageId: incoming.id,
+        descriptors: attachments,
+      )) {
+        return const IncomingDirectMediaCaptionEditDbResult.refused();
+      }
+      return apply(
+        expectedParentIdentity: <String, Object?>{
+          'id': incoming.id,
+          'sender_peer_id': incoming.senderPeerId,
+          'contact_peer_id': incoming.contactPeerId,
+          'timestamp': incoming.timestamp,
+          'quoted_message_id': incoming.quotedMessageId,
+          'dedup_key': incoming.dedupKey,
+          'is_forwarded': incoming.isForwarded ? 1 : 0,
+        },
+        expectedAttachmentRows: attachments
+            .map(_toStorageReferenceRowWithoutKeyWrite)
+            .toList(growable: false),
+        text: incoming.text,
+        editedAt: editedAt,
+      );
+    });
+    return IncomingDirectMediaCaptionEditApplyResult(
+      outcome: result.outcome,
+      message: result.messageRow == null
+          ? null
+          : ConversationMessage.fromMap(result.messageRow!),
+    );
+  }
+
+  /// Prepare-to-stage / prepare-to-apply key barrier.
+  ///
+  /// Two attachments can carry the SAME deterministic storage reference while
+  /// their raw keys differ, so SQLite can never detect key drift. Hydrate the
+  /// persisted generation here — outside the SQL transaction, under the media
+  /// lifecycle lock — and require exact raw-key equality before any storage
+  /// reference is derived from a caller-supplied descriptor.
+  ///
+  /// An EMPTY persisted projection is deliberately not a refusal: only the
+  /// transactional owner may distinguish an absent/hidden original (a
+  /// retryable deferral) from a parent whose generation is genuinely crossed.
+  Future<bool> _hasDriftedCaptionEditKeys({
+    required String messageId,
+    required List<MediaAttachment> descriptors,
+  }) async {
+    final List<MediaAttachment> persisted;
+    try {
+      persisted = await getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
+    } catch (_) {
+      return true;
+    }
+    if (persisted.isEmpty) return false;
+    if (persisted.length != descriptors.length) return true;
+    final persistedById = <String, MediaAttachment>{};
+    for (final attachment in persisted) {
+      if (persistedById.containsKey(attachment.id)) return true;
+      persistedById[attachment.id] = attachment;
+    }
+    for (final descriptor in descriptors) {
+      final actual = persistedById[descriptor.id];
+      if (actual == null ||
+          !actual.hasEncryptionKeyMaterial ||
+          actual.encryptionKeyBase64 != descriptor.encryptionKeyBase64 ||
+          actual.encryptionNonce != descriptor.encryptionNonce ||
+          actual.encryptionScheme != descriptor.encryptionScheme ||
+          actual.contentHash != descriptor.contentHash) {
+        return true;
+      }
+    }
+    return false;
   }
 
   @override

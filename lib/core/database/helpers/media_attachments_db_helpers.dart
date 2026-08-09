@@ -6772,6 +6772,13 @@ Future<_DirectDeletionLaneAuthority> _loadDirectDeletionLaneAuthority(
   final v108ExpiresAtMs = (v108?['media_blob_expires_at_ms'] as num?)?.toInt();
 
   if (blobRows.isEmpty) {
+    // A manifest-bearing v108 with no v111 at all is impossible under valid
+    // transitions: retirement and cleanup are atomic. Plan 353 makes this
+    // shape reachable for FINGERPRINTED rows too, so the contradiction is
+    // checked before the strict-lineage answer rather than after it.
+    if (v108 != null && (v108ManifestHash != null || v108ExpiresAtMs != null)) {
+      return const _DirectDeletionLaneAuthority.contradiction();
+    }
     if (allStrictFingerprints) {
       // Every remaining row still retains a valid strict commitment digest, so
       // the strict owner keeps custody even after v111 has fully converged.
@@ -6779,18 +6786,11 @@ Future<_DirectDeletionLaneAuthority> _loadDirectDeletionLaneAuthority(
         OutgoingDirectDeletionLane.strictMedia,
       );
     }
-    if (v108 == null) {
-      return const _DirectDeletionLaneAuthority(
-        OutgoingDirectDeletionLane.legacyMedia,
-      );
-    }
-    // A historical unbound v108 continues its original lifecycle on legacy
-    // transport. A manifest-bearing v108 with no v111 is a contradiction.
-    return v108ManifestHash == null && v108ExpiresAtMs == null
-        ? const _DirectDeletionLaneAuthority(
-            OutgoingDirectDeletionLane.legacyMedia,
-          )
-        : const _DirectDeletionLaneAuthority.contradiction();
+    // No v108, or a historical unbound one continuing its original lifecycle
+    // on legacy transport.
+    return const _DirectDeletionLaneAuthority(
+      OutgoingDirectDeletionLane.legacyMedia,
+    );
   }
 
   // Fingerprint parity: a persisted digest must be recomputable from the exact
@@ -6888,3 +6888,780 @@ Future<_DirectDeletionLaneAuthority> _loadDirectDeletionLaneAuthority(
     OutgoingDirectDeletionLane.strictMedia,
   );
 }
+
+/// DB-authoritative caption-only EDIT lane for one outgoing ordinary direct
+/// parent.
+///
+/// The caller's `ConversationMessage.media` is a UI snapshot and is never
+/// authority here: only the persisted attachment projection, the independent
+/// v111 generation, the immutable v108 row and the per-attachment lineage
+/// decide whether a caption EDIT may take exact v109 custody.
+enum OutgoingDirectMediaCaptionEditLane {
+  /// No direct attachment rows: the Plan 349 text mutation owner applies.
+  notMedia,
+
+  /// A provable immutable strict generation: this caption owner applies.
+  strictMedia,
+
+  /// Historical fingerprint-less media without v111 authority. The legacy
+  /// ordinary transport owner keeps it and never promotes it.
+  legacyMedia,
+
+  /// Crossed, partial, or ambiguous authority. Every owner fails closed.
+  contradiction,
+}
+
+/// The canonical persisted parent and attachment projection a caption-only
+/// EDIT must be built from.
+final class OutgoingDirectMediaCaptionEditProjection {
+  const OutgoingDirectMediaCaptionEditProjection({
+    required this.lane,
+    this.parentRow,
+    this.attachmentRows = const <Map<String, Object?>>[],
+  });
+
+  const OutgoingDirectMediaCaptionEditProjection.contradiction()
+    : lane = OutgoingDirectMediaCaptionEditLane.contradiction,
+      parentRow = null,
+      attachmentRows = const <Map<String, Object?>>[];
+
+  final OutgoingDirectMediaCaptionEditLane lane;
+  final Map<String, Object?>? parentRow;
+
+  /// Deterministic `created_at ASC, id ASC` order.
+  final List<Map<String, Object?>> attachmentRows;
+}
+
+/// Storage result of the atomic ordinary direct-media caption EDIT.
+final class DirectMediaCaptionEditCustodyDbStageResult {
+  const DirectMediaCaptionEditCustodyDbStageResult({
+    required this.outcome,
+    this.messageRow,
+    this.custodyRow,
+  });
+
+  const DirectMediaCaptionEditCustodyDbStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      messageRow = null,
+      custodyRow = null;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final Map<String, Object?>? messageRow;
+  final Map<String, Object?>? custodyRow;
+
+  bool get authorizesTransport => outcome.authorizesTransport;
+
+  /// True only while this caption EDIT owns an exact retained v109 event.
+  bool get ownsMutationEvent => custodyRow != null;
+}
+
+/// Loads the persisted classification and canonical projection for a
+/// caption-only EDIT of [messageId].
+///
+/// This is advisory only: the staging transaction below re-derives every
+/// predicate before it mutates anything, so a lane that drifts between
+/// selection and commit fails closed there instead of downgrading.
+Future<OutgoingDirectMediaCaptionEditProjection>
+dbLoadOutgoingDirectMediaCaptionEditProjection(
+  DatabaseExecutor db, {
+  required String messageId,
+}) async {
+  final authority = await _loadDirectCaptionEditAuthority(
+    db,
+    messageId: messageId,
+  );
+  return OutgoingDirectMediaCaptionEditProjection(
+    lane: authority.lane,
+    parentRow: authority.parentRow,
+    attachmentRows: authority.attachmentRows,
+  );
+}
+
+/// Atomically commits one caption-only EDIT of a strict ordinary direct-media
+/// parent: the exact edit-attempt projection, any provable null-to-exact
+/// lineage stamps, and one raw-event v109 obligation.
+///
+/// Either all of them land or none does. Nothing here transitions, cancels,
+/// acknowledges, re-encrypts, uploads or deletes a v111 obligation, retires a
+/// live v108 incarnation, or rewrites a single attachment descriptor: the
+/// persisted media generation is immutable across a caption EDIT.
+///
+/// [expectedAttachmentRows] carries ONLY deterministic storage-reference
+/// expectations derived by the repository outside this transaction. Raw
+/// encryption keys are hydrated under the media lifecycle lock and never
+/// reach SQLite.
+///
+/// [capacity] and [beforeCustodyInsertForTest] are test seams. Production uses
+/// the shared 512-row default and supplies no barrier.
+Future<DirectMediaCaptionEditCustodyDbStageResult>
+dbStageOutgoingDirectMediaCaptionEditInboxCustody(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String recipientPeerId,
+  required String eventId,
+  required String wireEnvelope,
+  required List<Map<String, Object?>> expectedAttachmentRows,
+  int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeCustodyInsertForTest,
+}) {
+  final classified = classifyDirectInboxEventEnvelope(wireEnvelope);
+  final messageId = stagedRow['id'];
+  final senderPeerId = stagedRow['sender_peer_id'];
+  final createdAt = stagedRow['created_at'];
+  final valid =
+      capacity >= 0 &&
+      kind == OutgoingOrdinaryAttemptKind.edit &&
+      expectedRow != null &&
+      expectedAttachmentRows.isNotEmpty &&
+      _isNonBlankDatabaseString(recipientPeerId) &&
+      _isNonBlankDatabaseString(eventId) &&
+      _isNonBlankDatabaseString(messageId) &&
+      _isNonBlankDatabaseString(senderPeerId) &&
+      _isNonBlankDatabaseString(createdAt) &&
+      DateTime.tryParse(createdAt! as String) != null &&
+      classified != null &&
+      classified.kind == DirectInboxEventEnvelopeKind.edit &&
+      classified.eventId == eventId &&
+      classified.senderPeerId == senderPeerId &&
+      classified.targetMessageId == messageId &&
+      expectedRow['id'] == messageId &&
+      stagedRow['contact_peer_id'] == recipientPeerId &&
+      stagedRow['wire_envelope'] == wireEnvelope &&
+      _isNonBlankDatabaseString(stagedRow['edited_at']) &&
+      stagedRow['deleted_at'] == null &&
+      stagedRow['deleted_by_peer_id'] == null &&
+      stagedRow['hidden_at'] == null &&
+      isStrictOrdinaryOutgoingDirectPolicy(expectedRow) &&
+      isStrictOrdinaryOutgoingDirectPolicy(stagedRow);
+  if (!valid) {
+    return Future<DirectMediaCaptionEditCustodyDbStageResult>.value(
+      const DirectMediaCaptionEditCustodyDbStageResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    // Exact replay is checked before shared capacity so an already-owned event
+    // stays idempotent without replaying an older parent projection.
+    final existingCustody = await txn.query(
+      kDirectReactionInboxCustodyOutboxTable,
+      where: 'recipient_peer_id = ? AND event_id = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId],
+      limit: 1,
+    );
+    if (existingCustody.isNotEmpty) {
+      final row = existingCustody.single;
+      if (row['wire_envelope'] != wireEnvelope) {
+        return const DirectMediaCaptionEditCustodyDbStageResult.refused();
+      }
+      final currentParents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      return DirectMediaCaptionEditCustodyDbStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.idempotent,
+        messageRow: currentParents.isEmpty
+            ? null
+            : Map<String, Object?>.from(currentParents.single),
+        custodyRow: Map<String, Object?>.from(row),
+      );
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $kDirectReactionInboxCustodyOutboxTable',
+    );
+    if (((countRows.single['count'] as num?)?.toInt() ?? 0) >= capacity) {
+      return const DirectMediaCaptionEditCustodyDbStageResult.refused();
+    }
+
+    // FULL prevalidation before the first write: the lane, the canonical
+    // projection and the caller's storage-reference expectations must all
+    // still agree, or nothing changes.
+    final authority = await _loadDirectCaptionEditAuthority(
+      txn,
+      messageId: messageId! as String,
+    );
+    if (authority.lane != OutgoingDirectMediaCaptionEditLane.strictMedia ||
+        !_matchesStorageReferenceExpectations(
+          persisted: authority.attachmentRows,
+          expected: expectedAttachmentRows,
+        )) {
+      return const DirectMediaCaptionEditCustodyDbStageResult.refused();
+    }
+
+    final messageOutcome =
+        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+          allowDirectAttachments: true,
+        );
+    if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+      return DirectMediaCaptionEditCustodyDbStageResult(
+        outcome: messageOutcome == OutgoingOrdinaryMutationOutcome.idempotent
+            ? OutgoingOrdinaryMutationOutcome.refused
+            : messageOutcome,
+      );
+    }
+
+    // The last point at which the complete bound generation is still provable
+    // gets its already-proven per-attachment digests. A lost CAS throws so the
+    // shared transaction rolls the caption and the v109 insert back with it.
+    if (authority.stampableBlobRows.isNotEmpty &&
+        !await dbStampExactStrictOutgoingLineageWithinTransaction(
+          txn,
+          messageId: messageId as String,
+          strictBlobRows: authority.stampableBlobRows,
+        )) {
+      throw StateError('direct media caption edit lost its exact lineage');
+    }
+
+    final custodyRow = <String, Object?>{
+      'recipient_peer_id': recipientPeerId,
+      'event_id': eventId,
+      'wire_envelope': wireEnvelope,
+      'retry_count': 0,
+      'last_attempt_at': null,
+      'last_error_code': null,
+      'created_at': createdAt,
+      'updated_at': createdAt,
+    };
+    // Test-only barrier between the parent/lineage writes and the v109 insert.
+    await beforeCustodyInsertForTest?.call();
+    await txn.insert(
+      kDirectReactionInboxCustodyOutboxTable,
+      custodyRow,
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    final committed = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (committed.length != 1) {
+      throw StateError('direct media caption edit lost its exact parent');
+    }
+    return DirectMediaCaptionEditCustodyDbStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      messageRow: Map<String, Object?>.from(committed.single),
+      custodyRow: custodyRow,
+    );
+  });
+}
+
+/// Durable disposition of one incoming ordinary direct-media caption EDIT.
+enum IncomingDirectMediaCaptionEditOutcome {
+  /// The caption and its monotonic editedAt became durable.
+  applied,
+
+  /// The exact same caption/editedAt is already durable.
+  durableReplay,
+
+  /// A newer edit or an author tombstone already won. The event is settled.
+  superseded,
+
+  /// The original is absent or hidden and NOT deleted. Nothing was written and
+  /// the caller retains its exact envelope for a later replay.
+  missingOriginal,
+
+  /// A live pre-353 all-null/no-v111 parent. The caller resumes its existing
+  /// generic media-edit path unchanged.
+  legacyParent,
+
+  /// Crossed, partial or ambiguous authority. Nothing changed and there is no
+  /// generic fallback.
+  refused,
+}
+
+/// Result of the atomic incoming caption apply.
+final class IncomingDirectMediaCaptionEditDbResult {
+  const IncomingDirectMediaCaptionEditDbResult({
+    required this.outcome,
+    this.messageRow,
+  });
+
+  const IncomingDirectMediaCaptionEditDbResult.refused()
+    : outcome = IncomingDirectMediaCaptionEditOutcome.refused,
+      messageRow = null;
+
+  final IncomingDirectMediaCaptionEditOutcome outcome;
+  final Map<String, Object?>? messageRow;
+
+  /// True for every outcome that settles the sender's event durably.
+  bool get isDurable =>
+      outcome == IncomingDirectMediaCaptionEditOutcome.applied ||
+      outcome == IncomingDirectMediaCaptionEditOutcome.durableReplay ||
+      outcome == IncomingDirectMediaCaptionEditOutcome.superseded;
+}
+
+/// Conditionally applies one incoming caption-only EDIT over an exact
+/// immutable strict media descriptor set.
+///
+/// Only `text` and `edited_at` may change. Status, transport, read and
+/// lifecycle fields, every attachment descriptor and every v111 row are
+/// preserved. An author tombstone is classified first as durable supersession;
+/// an absent or hidden nondeleted original writes NOTHING so the caller's
+/// exact retained envelope stays the retry owner.
+Future<IncomingDirectMediaCaptionEditDbResult>
+dbApplyIncomingDirectMediaCaptionEdit(
+  Database db, {
+  required Map<String, Object?> expectedParentIdentity,
+  required List<Map<String, Object?>> expectedAttachmentRows,
+  required String text,
+  required String editedAt,
+}) {
+  final messageId = expectedParentIdentity['id'];
+  final senderPeerId = expectedParentIdentity['sender_peer_id'];
+  if (!_isNonBlankDatabaseString(messageId) ||
+      !_isNonBlankDatabaseString(senderPeerId) ||
+      !_isNonBlankDatabaseString(editedAt) ||
+      DateTime.tryParse(editedAt) == null ||
+      expectedAttachmentRows.isEmpty) {
+    return Future<IncomingDirectMediaCaptionEditDbResult>.value(
+      const IncomingDirectMediaCaptionEditDbResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final rows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (rows.isEmpty) {
+      return const IncomingDirectMediaCaptionEditDbResult(
+        outcome: IncomingDirectMediaCaptionEditOutcome.missingOriginal,
+      );
+    }
+    final current = rows.single;
+
+    // Deletion precedence is decided BEFORE hidden/missing handling: an exact
+    // author tombstone is durable supersession, never a deferral.
+    if (_isExactIncomingAuthorTombstone(current, senderPeerId: senderPeerId)) {
+      return IncomingDirectMediaCaptionEditDbResult(
+        outcome: IncomingDirectMediaCaptionEditOutcome.superseded,
+        messageRow: Map<String, Object?>.from(current),
+      );
+    }
+    if (current['hidden_at'] != null || current['deleted_at'] != null) {
+      // A hidden NONDELETED original cannot prove this caption's authority.
+      // Write nothing; the caller's exact envelope remains retryable.
+      return const IncomingDirectMediaCaptionEditDbResult(
+        outcome: IncomingDirectMediaCaptionEditOutcome.missingOriginal,
+      );
+    }
+
+    if (((current['is_incoming'] as num?)?.toInt() ?? 0) != 1 ||
+        current['sender_peer_id'] != senderPeerId ||
+        current['contact_peer_id'] !=
+            expectedParentIdentity['contact_peer_id'] ||
+        current['timestamp'] != expectedParentIdentity['timestamp'] ||
+        current['quoted_message_id'] !=
+            expectedParentIdentity['quoted_message_id'] ||
+        current['dedup_key'] != expectedParentIdentity['dedup_key'] ||
+        ((current['is_forwarded'] as num?)?.toInt() ?? 0) !=
+            ((expectedParentIdentity['is_forwarded'] as num?)?.toInt() ?? 0) ||
+        !_isOrdinaryIncomingMediaPolicy(current)) {
+      return const IncomingDirectMediaCaptionEditDbResult.refused();
+    }
+
+    final lane = await _classifyIncomingCaptionEditAuthority(
+      txn,
+      messageId: messageId! as String,
+      expectedAttachmentRows: expectedAttachmentRows,
+    );
+    switch (lane) {
+      case _IncomingCaptionEditLane.refused:
+        return const IncomingDirectMediaCaptionEditDbResult.refused();
+      case _IncomingCaptionEditLane.legacy:
+        return IncomingDirectMediaCaptionEditDbResult(
+          outcome: IncomingDirectMediaCaptionEditOutcome.legacyParent,
+          messageRow: Map<String, Object?>.from(current),
+        );
+      case _IncomingCaptionEditLane.strict:
+        break;
+    }
+
+    final currentEditedAt = current['edited_at'] as String?;
+    if (current['text'] == text && currentEditedAt == editedAt) {
+      return IncomingDirectMediaCaptionEditDbResult(
+        outcome: IncomingDirectMediaCaptionEditOutcome.durableReplay,
+        messageRow: Map<String, Object?>.from(current),
+      );
+    }
+    if (currentEditedAt != null) {
+      final incoming = DateTime.tryParse(editedAt);
+      final durable = DateTime.tryParse(currentEditedAt);
+      if (incoming == null || durable == null) {
+        return const IncomingDirectMediaCaptionEditDbResult.refused();
+      }
+      if (!incoming.isAfter(durable)) {
+        return IncomingDirectMediaCaptionEditDbResult(
+          outcome: IncomingDirectMediaCaptionEditOutcome.superseded,
+          messageRow: Map<String, Object?>.from(current),
+        );
+      }
+    }
+
+    final changed = await txn.update(
+      'messages',
+      <String, Object?>{'text': text, 'edited_at': editedAt},
+      where:
+          'id = ? AND is_incoming = 1 AND sender_peer_id = ? '
+          'AND deleted_at IS NULL AND hidden_at IS NULL '
+          'AND ${currentEditedAt == null ? 'edited_at IS NULL' : 'edited_at = ?'}',
+      whereArgs: <Object?>[messageId, senderPeerId, ?currentEditedAt],
+    );
+    if (changed != 1) {
+      throw StateError('incoming media caption edit lost its exact parent');
+    }
+    final committed = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    return IncomingDirectMediaCaptionEditDbResult(
+      outcome: IncomingDirectMediaCaptionEditOutcome.applied,
+      messageRow: Map<String, Object?>.from(committed.single),
+    );
+  });
+}
+
+enum _IncomingCaptionEditLane { strict, legacy, refused }
+
+/// Incoming authority: all-exact fingerprints plus an absent or exact-subset
+/// incoming v111 set whose state is exactly committed or ack-pending.
+Future<_IncomingCaptionEditLane> _classifyIncomingCaptionEditAuthority(
+  DatabaseExecutor txn, {
+  required String messageId,
+  required List<Map<String, Object?>> expectedAttachmentRows,
+}) async {
+  final attachments = await txn.query(
+    'media_attachments',
+    where: 'message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    orderBy: 'created_at ASC, id ASC',
+  );
+  if (attachments.isEmpty) return _IncomingCaptionEditLane.refused;
+
+  final rawBlobRows = await txn.query(
+    kDirectMediaBlobCustodyTable,
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    orderBy: 'attachment_id ASC',
+  );
+  List<DirectMediaBlobCustodyRow> blobRows;
+  try {
+    blobRows = rawBlobRows
+        .map(DirectMediaBlobCustodyRow.fromMap)
+        .toList(growable: false);
+  } on FormatException {
+    return _IncomingCaptionEditLane.refused;
+  }
+
+  final fingerprints = attachments
+      .map((row) => row['direct_media_blob_custody_fingerprint'] as String?)
+      .toList(growable: false);
+  final allNull = fingerprints.every((value) => value == null);
+  final allExact = fingerprints.every(
+    (value) => _isExactLowercaseHex(value, 64),
+  );
+  if (!allNull && !allExact) return _IncomingCaptionEditLane.refused;
+
+  if (allNull) {
+    // A live pre-353 parent keeps its unchanged generic media-edit path, but
+    // only while no v111 obligation claims otherwise.
+    return blobRows.isEmpty
+        ? _IncomingCaptionEditLane.legacy
+        : _IncomingCaptionEditLane.refused;
+  }
+
+  final attachmentIds = <String>{};
+  for (final row in attachments) {
+    final id = row['id'];
+    if (id is! String || !attachmentIds.add(id)) {
+      return _IncomingCaptionEditLane.refused;
+    }
+  }
+  for (final row in blobRows) {
+    if (row.direction != DirectMediaBlobCustodyDirection.incoming ||
+        !attachmentIds.contains(row.attachmentId) ||
+        (row.state != DirectMediaBlobCustodyState.incomingCommitted &&
+            row.state != DirectMediaBlobCustodyState.incomingAckPending)) {
+      return _IncomingCaptionEditLane.refused;
+    }
+  }
+
+  return _matchesStorageReferenceExpectations(
+        persisted: attachments,
+        expected: expectedAttachmentRows,
+      )
+      ? _IncomingCaptionEditLane.strict
+      : _IncomingCaptionEditLane.refused;
+}
+
+/// The lane plus the canonical projection and the v111 rows whose exact
+/// lineage this transaction may still stamp.
+final class _DirectCaptionEditAuthority {
+  const _DirectCaptionEditAuthority(
+    this.lane, {
+    this.parentRow,
+    this.attachmentRows = const <Map<String, Object?>>[],
+    this.stampableBlobRows = const <DirectMediaBlobCustodyRow>[],
+  });
+
+  const _DirectCaptionEditAuthority.contradiction()
+    : lane = OutgoingDirectMediaCaptionEditLane.contradiction,
+      parentRow = null,
+      attachmentRows = const <Map<String, Object?>>[],
+      stampableBlobRows = const <DirectMediaBlobCustodyRow>[];
+
+  final OutgoingDirectMediaCaptionEditLane lane;
+  final Map<String, Object?>? parentRow;
+  final List<Map<String, Object?>> attachmentRows;
+  final List<DirectMediaBlobCustodyRow> stampableBlobRows;
+}
+
+Future<_DirectCaptionEditAuthority> _loadDirectCaptionEditAuthority(
+  DatabaseExecutor db, {
+  required String messageId,
+}) async {
+  final parents = await db.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  if (parents.isEmpty) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+  final parent = Map<String, Object?>.from(parents.single);
+  if (!isStrictOrdinaryOutgoingDirectPolicy(parent) ||
+      parent['deleted_at'] != null ||
+      parent['deleted_by_peer_id'] != null ||
+      parent['hidden_at'] != null) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+
+  // Deterministic canonical order. A tied created_at resolves through id.
+  final attachments = await db.query(
+    'media_attachments',
+    where: 'message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    orderBy: 'created_at ASC, id ASC',
+  );
+  final rawBlobRows = await db.query(
+    kDirectMediaBlobCustodyTable,
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    orderBy: 'attachment_id ASC',
+  );
+  List<DirectMediaBlobCustodyRow> blobRows;
+  try {
+    blobRows = rawBlobRows
+        .map(DirectMediaBlobCustodyRow.fromMap)
+        .toList(growable: false);
+  } on FormatException {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+
+  if (attachments.isEmpty) {
+    return blobRows.isEmpty
+        ? _DirectCaptionEditAuthority(
+            OutgoingDirectMediaCaptionEditLane.notMedia,
+            parentRow: parent,
+          )
+        : const _DirectCaptionEditAuthority.contradiction();
+  }
+  if (blobRows.any(
+    (row) => row.direction != DirectMediaBlobCustodyDirection.outgoing,
+  )) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+
+  final fingerprintById = <String, String?>{};
+  for (final attachment in attachments) {
+    final id = attachment['id'];
+    if (id is! String || fingerprintById.containsKey(id)) {
+      return const _DirectCaptionEditAuthority.contradiction();
+    }
+    fingerprintById[id] =
+        attachment['direct_media_blob_custody_fingerprint'] as String?;
+  }
+  final fingerprints = fingerprintById.values.toList(growable: false);
+  final allNullFingerprints = fingerprints.every((value) => value == null);
+  final allExactFingerprints = fingerprints.every(
+    (value) => _isExactLowercaseHex(value, 64),
+  );
+  if (!allNullFingerprints && !allExactFingerprints) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+
+  final v108Rows = await db.query(
+    _directInboxCustodyOutboxTable,
+    columns: const <String>[
+      'incarnation_id',
+      'media_blob_manifest_hash',
+      'media_blob_expires_at_ms',
+    ],
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 2,
+  );
+  if (v108Rows.length > 1) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+  final v108 = v108Rows.isEmpty ? null : v108Rows.single;
+  final v108ManifestHash = v108?['media_blob_manifest_hash'] as String?;
+  final v108ExpiresAtMs = (v108?['media_blob_expires_at_ms'] as num?)?.toInt();
+
+  _DirectCaptionEditAuthority strict({
+    List<DirectMediaBlobCustodyRow> stampable = const [],
+  }) => _DirectCaptionEditAuthority(
+    OutgoingDirectMediaCaptionEditLane.strictMedia,
+    parentRow: parent,
+    attachmentRows: attachments,
+    stampableBlobRows: stampable,
+  );
+
+  if (blobRows.isEmpty) {
+    // v108 retirement and v111 cleanup are atomic, so a manifest-bearing v108
+    // with no generation at all is impossible however the digests look.
+    if (v108 != null && (v108ManifestHash != null || v108ExpiresAtMs != null)) {
+      return const _DirectCaptionEditAuthority.contradiction();
+    }
+    // Fully drained but still provable, or the exact historical shape.
+    return allExactFingerprints
+        ? strict()
+        : _DirectCaptionEditAuthority(
+            OutgoingDirectMediaCaptionEditLane.legacyMedia,
+            parentRow: parent,
+            attachmentRows: attachments,
+          );
+  }
+
+  // Every extant row must carry a provable commitment, and a persisted digest
+  // must be recomputable from it. A different well-formed value is crossed.
+  for (final row in blobRows) {
+    if (!fingerprintById.containsKey(row.attachmentId) ||
+        row.expiresAtMs == null) {
+      return const _DirectCaptionEditAuthority.contradiction();
+    }
+    final fingerprint = fingerprintById[row.attachmentId];
+    if (fingerprint != null &&
+        fingerprint !=
+            computeDirectMediaBlobCommitmentFingerprint(
+              attachmentId: row.attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                kind: row.custodyKind,
+                contract: row.custodyContract,
+                contentHash: row.contentHash,
+                ciphertextSize: row.ciphertextSize,
+                transportMime: row.transportMime,
+                expiresAtMs: row.expiresAtMs!,
+              ),
+            )) {
+      return const _DirectCaptionEditAuthority.contradiction();
+    }
+  }
+
+  final complete = blobRows.length == attachments.length;
+  final terminal = blobRows.every(
+    (row) => row.state == DirectMediaBlobCustodyState.outgoingCleanupPending,
+  );
+
+  if (v108 == null) {
+    if (!terminal) {
+      // An active generation with no v108 is still mid-acquisition: a caption
+      // EDIT cannot prove that this is the immutable published generation.
+      return const _DirectCaptionEditAuthority.contradiction();
+    }
+    if (complete) {
+      return strict(stampable: allNullFingerprints ? blobRows : const []);
+    }
+    // A subset left after physical cleanup is only provable when every
+    // physical attachment already carries its own exact digest.
+    return allExactFingerprints
+        ? strict()
+        : const _DirectCaptionEditAuthority.contradiction();
+  }
+
+  final incarnationId = v108['incarnation_id'];
+  if (v108ManifestHash == null ||
+      v108ExpiresAtMs == null ||
+      !complete ||
+      blobRows.any(
+        (row) =>
+            row.state != DirectMediaBlobCustodyState.outgoingStored ||
+            row.inboxCustodyIncarnationId != incarnationId,
+      )) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+  final manifest = blobRows
+      .map(
+        (row) => DirectMediaBlobManifestProjection(
+          attachmentId: row.attachmentId,
+          commitment: DirectMediaBlobCustodyCommitment(
+            contentHash: row.contentHash,
+            ciphertextSize: row.ciphertextSize,
+            expiresAtMs: row.expiresAtMs!,
+          ),
+        ),
+      )
+      .toList(growable: false);
+  if (computeDirectMediaBlobManifestHash(manifest) != v108ManifestHash ||
+      earliestDirectMediaBlobExpiryMs(manifest) != v108ExpiresAtMs) {
+    return const _DirectCaptionEditAuthority.contradiction();
+  }
+  return strict(stampable: allNullFingerprints ? blobRows : const []);
+}
+
+/// The exact immutable identity every caption EDIT must agree on, keyed by
+/// attachment id. Only storage-reference values are compared: raw keys are
+/// hydrated outside SQLite and never enter this boundary.
+const _captionEditImmutableAttachmentColumns = <String>[
+  'content_hash',
+  'encryption_key_base64',
+  'encryption_nonce',
+  'encryption_scheme',
+];
+
+bool _matchesStorageReferenceExpectations({
+  required List<Map<String, Object?>> persisted,
+  required List<Map<String, Object?>> expected,
+}) {
+  if (persisted.length != expected.length || persisted.isEmpty) return false;
+  final persistedById = <String, Map<String, Object?>>{};
+  for (final row in persisted) {
+    final id = row['id'];
+    if (id is! String || persistedById.containsKey(id)) return false;
+    persistedById[id] = row;
+  }
+  final seen = <String>{};
+  for (final row in expected) {
+    final id = row['id'];
+    if (id is! String || !seen.add(id)) return false;
+    final actual = persistedById[id];
+    if (actual == null) return false;
+    for (final column in _captionEditImmutableAttachmentColumns) {
+      if (actual[column] != row[column]) return false;
+    }
+  }
+  return seen.length == persistedById.length;
+}
+
+/// The ordinary incoming media policy a caption EDIT may apply over. Private,
+/// view-once and disappearing rows keep their own owners.
+bool _isOrdinaryIncomingMediaPolicy(Map<String, Object?> row) =>
+    (row['private_media_policy_version'] as num?)?.toInt() == 0 &&
+    (row['private_media_mode'] as String? ?? 'ordinary') == 'ordinary' &&
+    row['private_media_duration_seconds'] == null &&
+    (row['private_media_state'] as String? ?? 'none') == 'none' &&
+    row['direct_media_custody_intent_id'] == null;
