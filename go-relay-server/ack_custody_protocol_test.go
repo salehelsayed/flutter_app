@@ -210,6 +210,107 @@ func TestRelayNotificationClosure_AckCustodyEligibilityIsNarrow(t *testing.T) {
 	}
 }
 
+func TestRelayNotificationClosure_DirectMutationCustody(t *testing.T) {
+	server := miniredis.RunT(t)
+	backend := newAckCustodyRedisBackend(t, server, "ack-mutation:", 16)
+	inbox := NewInboxStoreWithBackendAndCapacity(
+		backend,
+		NewPushServiceWithBackend(newMemoryPushTokenStore()),
+		16,
+	)
+	inbox.SetAckCustodyAdmissionEnabled(true)
+	env := setupInboxStreamEnv(t, inbox, NewGroupInboxStore(500, 7*24*time.Hour))
+	recipient := env.recipient.ID().String()
+	sender := env.sender.ID().String()
+
+	eligible := []struct {
+		name    string
+		message string
+		prefix  string
+	}{
+		{
+			name:    "exact edit",
+			message: ackCustodyEditEnvelope("target", "edit-event", sender, "edit"),
+			prefix:  directInboxEditEventIDDedupePrefix,
+		},
+		{
+			name:    "exact deletion",
+			message: ackCustodyDeletionEnvelope("deletion-event", sender, "deletion"),
+			prefix:  directInboxDeletionEventIDDedupePrefix,
+		},
+	}
+	for _, tc := range eligible {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := sendAckCustodyStoreRequest(
+				t,
+				env,
+				recipient,
+				ackCustodyDirectMutationKind,
+				ackCustodyContract,
+				tc.message,
+			)
+			if resp.Status != "OK" ||
+				resp.StoreStatus != string(InboxStoreResultStored) ||
+				resp.CustodyContract != ackCustodyContract {
+				t.Fatalf("mutation response = %#v", resp)
+			}
+			key, ok := extractAckCustodyDedupeKey(
+				ackCustodyDirectMutationKind,
+				tc.message,
+				sender,
+			)
+			if !ok || !strings.HasPrefix(key, tc.prefix) {
+				t.Fatalf("mutation key = %q, %v; want prefix %q", key, ok, tc.prefix)
+			}
+		})
+	}
+
+	ineligible := []struct {
+		name    string
+		kind    string
+		message string
+	}{
+		{
+			name:    "edit under reaction kind",
+			kind:    ackCustodyDirectReactionKind,
+			message: ackCustodyEditEnvelope("target-x", "cross-edit", sender, "edit"),
+		},
+		{
+			name:    "reaction under mutation kind",
+			kind:    ackCustodyDirectMutationKind,
+			message: ackCustodyReactionEnvelope("cross-reaction", "add", "target", sender, "reaction"),
+		},
+		{
+			name: "deletion with extra target id",
+			kind: ackCustodyDirectMutationKind,
+			message: fmt.Sprintf(
+				`{"type":"message_deletion","version":"2","id":"target","eventId":"extra","senderPeerId":%q,"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+				sender,
+			),
+		},
+		{
+			name:    "sender mismatch",
+			kind:    ackCustodyDirectMutationKind,
+			message: ackCustodyDeletionEnvelope("mismatch", "forged", "deletion"),
+		},
+	}
+	for _, tc := range ineligible {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := sendAckCustodyStoreRequest(
+				t,
+				env,
+				recipient,
+				tc.kind,
+				ackCustodyContract,
+				tc.message,
+			)
+			if resp.Status != "ERROR" || resp.ErrorCode != ackCustodyErrorIneligible {
+				t.Fatalf("ineligible mutation response = %#v", resp)
+			}
+		})
+	}
+}
+
 func TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling(t *testing.T) {
 	setup := func(t *testing.T, prefix string) (
 		*miniredis.Miniredis,

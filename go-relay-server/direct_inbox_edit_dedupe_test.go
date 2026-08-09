@@ -177,3 +177,14 @@ func TestDirectInboxEditEventDoesNotChangePushTargetMessageID(t *testing.T) {
 		t.Fatalf("direct inbox dedupe key = %q, want edit event key", got)
 	}
 }
+
+func TestDirectInboxDeletionUsesExactEventNamespace(t *testing.T) {
+	message := ackCustodyDeletionEnvelope("delete-event", "peer-sender", "cipher")
+	if got := extractDirectInboxDedupeKey(message); got != directInboxDeletionEventIDDedupePrefix+"delete-event" {
+		t.Fatalf("deletion dedupe key = %q", got)
+	}
+	malformed := `{"type":"message_deletion","version":"2","eventId":"delete-event","senderPeerId":"peer-sender","extra":true,"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`
+	if got := extractDirectInboxDedupeKey(malformed); got != "" {
+		t.Fatalf("malformed deletion acquired custody key %q", got)
+	}
+}

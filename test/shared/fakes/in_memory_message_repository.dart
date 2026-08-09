@@ -1,9 +1,11 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_thread_summary.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/conversation_thread_summary_repository.dart';
@@ -14,11 +16,15 @@ class InMemoryMessageRepository
         MessageRepository,
         OutgoingTransportMutationRepository,
         OutgoingDirectTextInboxCustodyRepository,
+        OutgoingDirectTextMutationInboxCustodyRepository,
+        IncomingOrdinaryTextApplyRepository,
         ConversationThreadSummaryRepository,
         MessageRepositoryChangeSource,
         ConversationReadEventSource {
   final Map<String, ConversationMessage> _messages = {};
   final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
+  final Map<String, DirectReactionInboxCustodyOutboxEntry>
+  directMutationCustodyRows = {};
   int directInboxCustodyStageCallCount = 0;
   Future<void> Function(ConversationMessage staged)?
   afterDirectInboxCustodyStage;
@@ -68,6 +74,99 @@ class InMemoryMessageRepository
   Future<void> saveMessage(ConversationMessage message) async {
     _messages[message.id] = message;
     _messageChangeController.add(message);
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    final current = _messages[incoming.id];
+    if (current == null) {
+      await saveMessage(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.inserted,
+        message: incoming,
+      );
+    }
+    if (!current.isIncoming ||
+        current.contactPeerId != incoming.contactPeerId ||
+        current.senderPeerId != incoming.senderPeerId) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
+        message: current,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.deletion) {
+      if (current.isDeleted) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: current.deletedAt == incoming.deletedAt
+              ? IncomingOrdinaryTextMutationOutcome.exactReplay
+              : IncomingOrdinaryTextMutationOutcome.superseded,
+          message: current,
+        );
+      }
+      await saveMessage(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.updated,
+        message: incoming,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.initial) {
+      if (current.isDeleted ||
+          (current.editedAt != null && current.hiddenAt == null)) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+          message: current,
+        );
+      }
+      if (current.editedAt != null && current.hiddenAt != null) {
+        final materialized = current.copyWith(
+          timestamp: incoming.timestamp,
+          status: incoming.status,
+          quotedMessageId: current.quotedMessageId ?? incoming.quotedMessageId,
+          dedupKey: incoming.dedupKey,
+          isForwarded: incoming.isForwarded,
+          transport: incoming.transport ?? current.transport,
+          hiddenAt: null,
+        );
+        await saveMessage(materialized);
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.updated,
+          message: materialized,
+        );
+      }
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.exactReplay,
+        message: current,
+      );
+    }
+    if (current.isDeleted) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    final incomingOrder = DateTime.tryParse(incoming.editedAt ?? '');
+    final currentOrder = DateTime.tryParse(current.editedAt ?? '');
+    if (incomingOrder == null ||
+        (currentOrder != null && !incomingOrder.isAfter(currentOrder))) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome:
+            incomingOrder != null &&
+                currentOrder != null &&
+                incomingOrder.isAtSameMomentAs(currentOrder) &&
+                incoming.text == current.text
+            ? IncomingOrdinaryTextMutationOutcome.exactReplay
+            : IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    await saveMessage(incoming);
+    return IncomingOrdinaryTextApplyResult(
+      outcome: IncomingOrdinaryTextMutationOutcome.updated,
+      message: incoming,
+    );
   }
 
   @override
@@ -402,6 +501,166 @@ class InMemoryMessageRepository
   }
 
   @override
+  bool get supportsDirectTextMutationInboxCustody => true;
+
+  @override
+  Future<OutgoingDirectTextMutationCustodyStageResult>
+  stageOutgoingDirectTextMutationInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    final key = _directMutationCustodyKey(recipientPeerId, eventId);
+    final current = _messages[staged.id];
+    final currentCustody = directMutationCustodyRows[key];
+    if (currentCustody != null) {
+      final exact =
+          current != null &&
+          _sameMessageSnapshot(current, staged) &&
+          currentCustody.wireEnvelope == wireEnvelope;
+      return OutgoingDirectTextMutationCustodyStageResult(
+        outcome: exact
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.refused,
+        message: current,
+        custody: exact ? currentCustody : null,
+      );
+    }
+    if (current == null || !_sameMessageSnapshot(current, expected)) {
+      return OutgoingDirectTextMutationCustodyStageResult.refused(
+        message: current,
+      );
+    }
+    final validKind =
+        (kind == OutgoingOrdinaryAttemptKind.edit && !staged.isDeleted) ||
+        (kind == OutgoingOrdinaryAttemptKind.tombstoneInitial &&
+            staged.isDeleted);
+    if (!validKind ||
+        staged.isIncoming ||
+        staged.contactPeerId != recipientPeerId ||
+        staged.wireEnvelope != wireEnvelope ||
+        eventId.trim().isEmpty ||
+        wireEnvelope.trim().isEmpty) {
+      return OutgoingDirectTextMutationCustodyStageResult.refused(
+        message: current,
+      );
+    }
+
+    final now = DateTime.now().toUtc().toIso8601String();
+    final custody = DirectReactionInboxCustodyOutboxEntry(
+      recipientPeerId: recipientPeerId,
+      eventId: eventId,
+      wireEnvelope: wireEnvelope,
+      retryCount: 0,
+      lastAttemptAt: null,
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    _messages[staged.id] = staged;
+    directMutationCustodyRows[key] = custody;
+    _messageChangeController.add(staged);
+    return OutgoingDirectTextMutationCustodyStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      message: staged,
+      custody: custody,
+    );
+  }
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) async =>
+      directMutationCustodyRows[_directMutationCustodyKey(
+        recipientPeerId,
+        eventId,
+      )];
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    if (!DirectReactionInboxCustodyErrorCode.values.contains(errorCode)) {
+      return false;
+    }
+    final key = _directMutationCustodyKey(
+      expected.recipientPeerId,
+      expected.eventId,
+    );
+    final current = directMutationCustodyRows[key];
+    if (current == null || current.wireEnvelope != expected.wireEnvelope) {
+      return false;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    directMutationCustodyRows[key] = current.copyWith(
+      retryCount: current.retryCount + 1,
+      lastAttemptAt: now,
+      lastErrorCode: errorCode,
+      updatedAt: now,
+    );
+    return true;
+  }
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final key = _directMutationCustodyKey(
+      expected.recipientPeerId,
+      expected.eventId,
+    );
+    final currentCustody = directMutationCustodyRows[key];
+    if (currentCustody == null) {
+      return DirectMutationInboxCustodyCompletionOutcome.absent;
+    }
+    if (currentCustody.wireEnvelope != expected.wireEnvelope ||
+        relayExpiresAt == null ||
+        relayExpiresAt <= 0) {
+      return DirectMutationInboxCustodyCompletionOutcome.stale;
+    }
+    final parents = _messages.values
+        .where(
+          (message) =>
+              !message.isIncoming &&
+              message.contactPeerId == expected.recipientPeerId &&
+              message.wireEnvelope == expected.wireEnvelope,
+        )
+        .take(2)
+        .toList(growable: false);
+    if (parents.length > 1) {
+      return DirectMutationInboxCustodyCompletionOutcome.ambiguous;
+    }
+    if (parents case [final parent]) {
+      if (!const <String>{
+        'sending',
+        'sent',
+        'failed',
+        'inboxed',
+      }.contains(parent.status)) {
+        return DirectMutationInboxCustodyCompletionOutcome.stale;
+      }
+      final projected = parent.copyWith(
+        status: 'inboxed',
+        transport: 'inbox',
+        relayExpiresAt: relayExpiresAt,
+        custodyCheckedAt: null,
+      );
+      _messages[parent.id] = projected;
+      _messageChangeController.add(projected);
+    }
+    directMutationCustodyRows.remove(key);
+    return DirectMutationInboxCustodyCompletionOutcome.completed;
+  }
+
+  @override
   Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
     required String messageId,
     required String expectedContactPeerId,
@@ -573,6 +832,9 @@ class InMemoryMessageRepository
 
   String _directCustodyKey(String recipientPeerId, String messageId) =>
       '$recipientPeerId\u0000$messageId';
+
+  String _directMutationCustodyKey(String recipientPeerId, String eventId) =>
+      '$recipientPeerId\u0000$eventId';
 
   @override
   Future<OutgoingOrdinaryMutationResult> stageOutgoingDirectTextInboxCustody({

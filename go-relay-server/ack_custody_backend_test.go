@@ -32,6 +32,25 @@ func ackCustodyReactionEnvelope(id, action, target, sender, ciphertext string) s
 	)
 }
 
+func ackCustodyEditEnvelope(target, event, sender, ciphertext string) string {
+	return fmt.Sprintf(
+		`{"type":"chat_message","version":"2","id":%q,"eventId":%q,"senderPeerId":%q,"encrypted":{"kem":"kem","ciphertext":%q,"nonce":"nonce"}}`,
+		target,
+		event,
+		sender,
+		ciphertext,
+	)
+}
+
+func ackCustodyDeletionEnvelope(event, sender, ciphertext string) string {
+	return fmt.Sprintf(
+		`{"type":"message_deletion","version":"2","eventId":%q,"senderPeerId":%q,"encrypted":{"kem":"kem","ciphertext":%q,"nonce":"nonce"}}`,
+		event,
+		sender,
+		ciphertext,
+	)
+}
+
 func newAckCustodyRedisBackend(
 	t *testing.T,
 	server *miniredis.Miniredis,

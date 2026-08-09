@@ -16,6 +16,7 @@ const (
 	ackCustodyAckAction                   = "ack_custody_v1"
 	ackCustodyDirectTextKind              = "direct_text_v108"
 	ackCustodyDirectReactionKind          = "direct_reaction_v109"
+	ackCustodyDirectMutationKind          = "direct_mutation_v109"
 	ackCustodyAdmissionEnabledEnv         = "DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED"
 	ackCustodyErrorAdmissionDisabled      = "CUSTODY_ADMISSION_DISABLED"
 	ackCustodyErrorIdentityConflict       = "CUSTODY_IDENTITY_CONFLICT"
@@ -200,6 +201,41 @@ func extractAckCustodyDedupeKey(
 			return "", false
 		}
 		return directInboxReactionEventIDDedupePrefix + eventID, true
+
+	case ackCustodyDirectMutationKind:
+		eventID := exactString(envelope["eventId"])
+		if eventID == "" || exactString(envelope["version"]) != "2" {
+			return "", false
+		}
+		switch exactString(envelope["type"]) {
+		case "chat_message":
+			if !hasExactJSONKeys(
+				envelope,
+				"type",
+				"version",
+				"id",
+				"eventId",
+				"senderPeerId",
+				"encrypted",
+			) || exactString(envelope["id"]) == "" {
+				return "", false
+			}
+			return directInboxEditEventIDDedupePrefix + eventID, true
+		case "message_deletion":
+			if !hasExactJSONKeys(
+				envelope,
+				"type",
+				"version",
+				"eventId",
+				"senderPeerId",
+				"encrypted",
+			) {
+				return "", false
+			}
+			return directInboxDeletionEventIDDedupePrefix + eventID, true
+		default:
+			return "", false
+		}
 	default:
 		return "", false
 	}

@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -86,6 +87,14 @@ Future<int> retryUnackedMessages({
         event: 'RETRY_UNACKED_DIRECT_MEDIA_CUSTODY_PREPARATION_OWNED',
         details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
       );
+      continue;
+    }
+
+    if (await _mustSkipOwnedOrCorruptUnackedMutation(
+      message: msg,
+      messageRepo: messageRepo,
+      phase: 'loaded',
+    )) {
       continue;
     }
 
@@ -284,6 +293,13 @@ Future<int> retryUnackedMessages({
         );
         continue;
       }
+      if (await _mustSkipOwnedOrCorruptUnackedMutation(
+        message: fresh!,
+        messageRepo: messageRepo,
+        phase: 'egress',
+      )) {
+        continue;
+      }
       if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
         final owner =
             await (messageRepo as OutgoingDirectTextInboxCustodyRepository)
@@ -372,6 +388,55 @@ Future<int> retryUnackedMessages({
   emitRetryTiming(outcome: 'complete', total: unacked.length, delivered: count);
 
   return count;
+}
+
+Future<bool> _mustSkipOwnedOrCorruptUnackedMutation({
+  required ConversationMessage message,
+  required MessageRepository messageRepo,
+  required String phase,
+}) async {
+  final envelope = message.wireEnvelope;
+  if (envelope == null || envelope.isEmpty) return false;
+  final classified = classifyDirectInboxEventEnvelope(envelope);
+  if (classified == null || !classified.isMutation) return false;
+  final repository =
+      messageRepo is OutgoingDirectTextMutationInboxCustodyRepository
+      ? messageRepo as OutgoingDirectTextMutationInboxCustodyRepository
+      : null;
+  try {
+    final owner = repository == null
+        ? null
+        : await repository.loadDirectTextMutationInboxCustodyForEvent(
+            recipientPeerId: message.contactPeerId,
+            eventId: classified.eventId,
+          );
+    if (owner != null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_DIRECT_MUTATION_CUSTODY_OWNED',
+        details: {
+          'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+          'phase': phase,
+        },
+      );
+      return true;
+    }
+    // Current event-bearing deletions have no pre-349 compatibility shape.
+    // An ownerless exact edit may be a pre-349 cached event and retains its
+    // historical exact-envelope fallback.
+    return classified.kind == DirectInboxEventEnvelopeKind.deletion;
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_UNACKED_DIRECT_MUTATION_CUSTODY_LOOKUP_FAILED',
+      details: {
+        'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+        'phase': phase,
+        'errorType': error.runtimeType.toString(),
+      },
+    );
+    return true;
+  }
 }
 
 bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>

@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
@@ -57,12 +58,25 @@ class _FakeContactRepository implements ContactRepository {
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
 
-class _FakeMessageRepository implements MessageRepository {
+class _FakeMessageRepository
+    implements MessageRepository, IncomingOrdinaryTextApplyRepository {
   final List<ConversationMessage> saved = [];
 
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     saved.add(message);
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    await saveMessage(incoming);
+    return IncomingOrdinaryTextApplyResult(
+      outcome: IncomingOrdinaryTextMutationOutcome.inserted,
+      message: incoming,
+    );
   }
 
   @override

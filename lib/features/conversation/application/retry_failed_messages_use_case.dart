@@ -5,6 +5,7 @@ import 'package:clock/clock.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
@@ -21,6 +22,7 @@ import 'package:flutter_app/features/conversation/application/delete_message_use
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/outbound_envelope_policy.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
@@ -444,6 +446,16 @@ Future<bool> _retryFailedMessageCandidate({
   MediaUploadLease? uploadLease;
   _DirectPrivateManualRetryCustody? privateCustody;
   try {
+    final loadedMutationOwner = await _retryOwnedDirectMutationIfPresent(
+      message: msg,
+      messageRepo: messageRepo,
+      storeExactCustody: storeExactCustody,
+      attemptOwnedCustody: retryDirectInboxCustody,
+    );
+    if (loadedMutationOwner.handled) {
+      return loadedMutationOwner.success;
+    }
+
     // A v108 immutable custody row is the sole retry authority for its initial
     // direct event. Resolve it from the list-loaded identity before re-reading
     // the weaker parent: settlement or physical deletion may win between list
@@ -511,6 +523,16 @@ Future<bool> _retryFailedMessageCandidate({
       return false;
     }
     msg = fresh;
+
+    final freshMutationOwner = await _retryOwnedDirectMutationIfPresent(
+      message: msg,
+      messageRepo: messageRepo,
+      storeExactCustody: storeExactCustody,
+      attemptOwnedCustody: retryDirectInboxCustody,
+    );
+    if (freshMutationOwner.handled) {
+      return freshMutationOwner.success;
+    }
 
     // A persisted fresh-media intent is exclusive provenance. Validate its
     // complete current projection before any retry path can rebuild blobs,
@@ -580,6 +602,8 @@ Future<bool> _retryFailedMessageCandidate({
         contactRepo: contactRepo,
         p2pService: p2pService,
         bridge: bridge,
+        retryDirectInboxCustody: retryDirectInboxCustody,
+        storeExactCustody: storeExactCustody,
       );
     }
 
@@ -792,6 +816,15 @@ Future<bool> _retryFailedMessageCandidate({
           (deriveRetryAction(msg) == MessagePayload.actionEdit &&
               cachedEditEventId == null);
       if (!unsafeLegacyEnvelope) {
+        final preEgressMutationOwner = await _retryOwnedDirectMutationIfPresent(
+          message: msg,
+          messageRepo: messageRepo,
+          storeExactCustody: storeExactCustody,
+          attemptOwnedCustody: retryDirectInboxCustody,
+        );
+        if (preEgressMutationOwner.handled) {
+          return preEgressMutationOwner.success;
+        }
         try {
           final stored = await p2pService.storeInInbox(
             msg.contactPeerId,
@@ -932,6 +965,59 @@ Future<bool> _retryFailedMessageCandidate({
   }
 }
 
+Future<({bool handled, bool success})> _retryOwnedDirectMutationIfPresent({
+  required ConversationMessage message,
+  required MessageRepository messageRepo,
+  required StoreInAckCustodyInboxDetailedFn storeExactCustody,
+  required bool attemptOwnedCustody,
+}) async {
+  final envelope = message.wireEnvelope;
+  if (envelope == null || envelope.isEmpty) {
+    return (handled: false, success: false);
+  }
+  final classified = classifyDirectInboxEventEnvelope(envelope);
+  if (classified == null || !classified.isMutation) {
+    return (handled: false, success: false);
+  }
+  final repository =
+      messageRepo is OutgoingDirectTextMutationInboxCustodyRepository
+      ? messageRepo as OutgoingDirectTextMutationInboxCustodyRepository
+      : null;
+  final owner = repository == null
+      ? null
+      : await repository.loadDirectTextMutationInboxCustodyForEvent(
+          recipientPeerId: message.contactPeerId,
+          eventId: classified.eventId,
+        );
+  if (owner == null) {
+    // An ownerless event-bearing edit may predate Plan 349 and keeps its exact
+    // historical cached-envelope fallback. Event-bearing deletions did not
+    // exist before this contract, so missing authority is corruption.
+    return classified.kind == DirectInboxEventEnvelopeKind.deletion
+        ? (handled: true, success: false)
+        : (handled: false, success: false);
+  }
+  if (!attemptOwnedCustody) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_DIRECT_MUTATION_CUSTODY_SKIPPED_AFTER_DRAIN',
+      details: {'id': _messageIdPreview(message.id)},
+    );
+    return (handled: true, success: false);
+  }
+  final completed = await drainOwnedDirectMutationInboxCustodyOutboxEntry(
+    entry: owner,
+    custodyRepository: repository!,
+    storeInAckCustodyInboxDetailed: storeExactCustody,
+  );
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RETRY_FAILED_DIRECT_MUTATION_CUSTODY_OWNED',
+    details: {'id': _messageIdPreview(message.id), 'completed': completed},
+  );
+  return (handled: true, success: completed);
+}
+
 /// Returns the immutable event identity from a cached v2 edit envelope.
 ///
 /// The message id remains the edit target. A missing/blank/malformed identity
@@ -964,6 +1050,8 @@ Future<bool> _retryFailedDeletedTombstone({
   required ContactRepository contactRepo,
   required P2PService p2pService,
   required Bridge bridge,
+  required bool retryDirectInboxCustody,
+  required StoreInAckCustodyInboxDetailedFn storeExactCustody,
 }) async {
   if (!p2pService.currentState.isStarted) {
     _emitDeleteTombstoneStillFailed(msg, reason: 'node_not_running');
@@ -1004,6 +1092,8 @@ Future<bool> _retryFailedDeletedTombstone({
       p2pService: p2pService,
       wireEnvelope: existingEnvelope,
       rebuilt: false,
+      retryDirectInboxCustody: retryDirectInboxCustody,
+      storeExactCustody: storeExactCustody,
     );
   }
 
@@ -1086,6 +1176,8 @@ Future<bool> _retryFailedDeletedTombstone({
     p2pService: p2pService,
     wireEnvelope: rebuiltEnvelope,
     rebuilt: true,
+    retryDirectInboxCustody: retryDirectInboxCustody,
+    storeExactCustody: storeExactCustody,
   );
 }
 
@@ -1095,6 +1187,8 @@ Future<bool> _storeOrReplayDeleteEnvelope({
   required P2PService p2pService,
   required String wireEnvelope,
   required bool rebuilt,
+  required bool retryDirectInboxCustody,
+  required StoreInAckCustodyInboxDetailedFn storeExactCustody,
 }) async {
   final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(msg);
   final privateDeleteRepository =
@@ -1132,6 +1226,16 @@ Future<bool> _storeOrReplayDeleteEnvelope({
   // Genuine deletion-envelope inbox custody is persisted as `inboxed`.
   // A `failed` tombstone carrying `transport == inbox` can be legacy state
   // inherited from the original chat envelope, so it must reacquire custody.
+  final preEgressMutationOwner = await _retryOwnedDirectMutationIfPresent(
+    message: msg,
+    messageRepo: messageRepo,
+    storeExactCustody: storeExactCustody,
+    attemptOwnedCustody: retryDirectInboxCustody,
+  );
+  if (preEgressMutationOwner.handled) {
+    return preEgressMutationOwner.success;
+  }
+
   try {
     final stored = await p2pService.storeInInbox(
       msg.contactPeerId,

@@ -91,12 +91,28 @@ Future<bool> sendDeliveryReceipt({
   required P2PService p2pService,
   required String targetPeerId,
   required List<String> messageIds,
+  Map<String, String>? mutationEventIds,
 }) async {
+  final messageIdSet = messageIds.toSet();
+  final filteredMutationEventIds = <String, String>{};
+  if (mutationEventIds != null) {
+    for (final entry in mutationEventIds.entries) {
+      final messageId = entry.key.trim();
+      final eventId = entry.value.trim();
+      if (messageId.isNotEmpty &&
+          eventId.isNotEmpty &&
+          messageIdSet.contains(messageId)) {
+        filteredMutationEventIds[messageId] = eventId;
+      }
+    }
+  }
   final envelope = jsonEncode({
     'type': 'delivery_receipt',
     'version': '1',
     'payload': {
       'messageIds': messageIds,
+      if (filteredMutationEventIds.isNotEmpty)
+        'mutationEventIds': filteredMutationEventIds,
       'ts': DateTime.now().toUtc().toIso8601String(),
     },
   });

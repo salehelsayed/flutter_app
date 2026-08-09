@@ -1310,8 +1310,37 @@ func extractMessageId(message string) string {
 const (
 	directInboxTargetIDDedupePrefix        = "target-id:"
 	directInboxEditEventIDDedupePrefix     = "edit-event-id:"
+	directInboxDeletionEventIDDedupePrefix = "deletion-event-id:"
 	directInboxReactionEventIDDedupePrefix = "reaction-event-id:"
 )
+
+func extractDirectDeletionCustodyDedupeKey(message string) string {
+	var envelope map[string]interface{}
+	if err := json.Unmarshal([]byte(message), &envelope); err != nil ||
+		!hasExactJSONKeys(
+			envelope,
+			"type",
+			"version",
+			"eventId",
+			"senderPeerId",
+			"encrypted",
+		) ||
+		exactString(envelope["type"]) != "message_deletion" ||
+		exactString(envelope["version"]) != "2" ||
+		exactString(envelope["senderPeerId"]) == "" {
+		return ""
+	}
+	eventID := exactString(envelope["eventId"])
+	encrypted, ok := envelope["encrypted"].(map[string]interface{})
+	if eventID == "" || !ok ||
+		!hasExactJSONKeys(encrypted, "kem", "ciphertext", "nonce") ||
+		exactString(encrypted["kem"]) == "" ||
+		exactString(encrypted["ciphertext"]) == "" ||
+		exactString(encrypted["nonce"]) == "" {
+		return ""
+	}
+	return directInboxDeletionEventIDDedupePrefix + eventID
+}
 
 // extractDirectReactionCustodyDedupeKey returns a namespaced custody identity
 // only for a complete, exact v2 direct reaction. Custody accepts both ADD and
@@ -1365,6 +1394,9 @@ func extractDirectInboxDedupeKey(message string) string {
 		if eventID, ok := envelope["eventId"].(string); ok && strings.TrimSpace(eventID) != "" {
 			return directInboxEditEventIDDedupePrefix + eventID
 		}
+	}
+	if deletionKey := extractDirectDeletionCustodyDedupeKey(message); deletionKey != "" {
+		return deletionKey
 	}
 	if reactionKey := extractDirectReactionCustodyDedupeKey(message); reactionKey != "" {
 		return reactionKey

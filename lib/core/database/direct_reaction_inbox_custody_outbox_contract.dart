@@ -1,3 +1,5 @@
+import 'outgoing_transport_mutation.dart';
+
 /// Bounded failure classifications persisted with a retained reaction event.
 abstract final class DirectReactionInboxCustodyErrorCode {
   static const String storeFailed = 'store_failed';
@@ -33,6 +35,33 @@ class DbDirectReactionCustodyStageResult {
 
   final DirectReactionCustodyStageOutcome outcome;
   final Map<String, Object?>? custodyRow;
+}
+
+/// Result of atomically staging one ordinary edit/deletion parent and its
+/// immutable event in the shared physical v109 outbox.
+class DbDirectTextMutationCustodyStageResult {
+  const DbDirectTextMutationCustodyStageResult({
+    required this.outcome,
+    required this.custodyRow,
+  });
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final Map<String, Object?>? custodyRow;
+}
+
+/// Result of transferring one exact mutation event to protected relay custody.
+enum DirectMutationInboxCustodyCompletionOutcome {
+  completed,
+  absent,
+  stale,
+  ambiguous,
+}
+
+extension DirectMutationInboxCustodyCompletionOutcomePolicy
+    on DirectMutationInboxCustodyCompletionOutcome {
+  bool get converged =>
+      this == DirectMutationInboxCustodyCompletionOutcome.completed ||
+      this == DirectMutationInboxCustodyCompletionOutcome.absent;
 }
 
 /// Result of retiring one remotely accepted immutable event.

@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -10,10 +12,25 @@ DirectReactionInboxCustodyOutboxEntry _entry(
   String eventId, {
   String recipientPeerId = 'peer-target',
   String? lastAttemptAt,
+  String? wireEnvelope,
 }) => DirectReactionInboxCustodyOutboxEntry(
   recipientPeerId: recipientPeerId,
   eventId: eventId,
-  wireEnvelope: 'wire-$eventId',
+  wireEnvelope:
+      wireEnvelope ??
+      jsonEncode(<String, Object?>{
+        'type': 'message_reaction',
+        'version': '2',
+        'eventId': eventId,
+        'action': 'add',
+        'targetMessageId': 'target-$eventId',
+        'senderPeerId': 'self-peer',
+        'encrypted': const <String, Object?>{
+          'kem': 'kem',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        },
+      }),
   retryCount: 0,
   lastAttemptAt: lastAttemptAt,
   lastErrorCode: null,
@@ -22,7 +39,9 @@ DirectReactionInboxCustodyOutboxEntry _entry(
 );
 
 final class _InMemoryReactionCustodyRepository
-    implements OutgoingDirectReactionInboxCustodyRepository {
+    implements
+        OutgoingDirectReactionInboxCustodyRepository,
+        OutgoingDirectTextMutationInboxCustodyRepository {
   final Map<String, DirectReactionInboxCustodyOutboxEntry> rows = {};
   final Set<String> throwCompletionOnce = <String>{};
   final List<DirectReactionInboxCustodyOutboxEntry> completionExpected = [];
@@ -42,6 +61,9 @@ final class _InMemoryReactionCustodyRepository
 
   @override
   bool get supportsDirectReactionInboxCustody => true;
+
+  @override
+  bool get supportsDirectTextMutationInboxCustody => true;
 
   @override
   Future<List<DirectReactionInboxCustodyOutboxEntry>>
@@ -117,10 +139,92 @@ final class _InMemoryReactionCustodyRepository
   }
 
   @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) => recordDirectReactionInboxCustodyFailureIfExact(
+    expected: expected,
+    errorCode: errorCode,
+  );
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    completionExpected.add(expected);
+    final key = _key(expected.recipientPeerId, expected.eventId);
+    final current = rows[key];
+    if (current == null) {
+      return DirectMutationInboxCustodyCompletionOutcome.absent;
+    }
+    if (current.wireEnvelope != expected.wireEnvelope) {
+      return DirectMutationInboxCustodyCompletionOutcome.stale;
+    }
+    rows.remove(key);
+    return DirectMutationInboxCustodyCompletionOutcome.completed;
+  }
+
+  @override
   dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
 }
 
 void main() {
+  test(
+    'TC-349-04 one fair batch routes reaction edit and deletion kinds',
+    () async {
+      final repository = _InMemoryReactionCustodyRepository();
+      final reaction = _entry('01-reaction');
+      final edit = _entry('02-edit', wireEnvelope: _editEnvelope('02-edit'));
+      final malformed = _entry('03-malformed', wireEnvelope: '{bad-json');
+      final deletion = _entry(
+        '04-deletion',
+        wireEnvelope: _deletionEnvelope('04-deletion'),
+      );
+      for (final entry in <DirectReactionInboxCustodyOutboxEntry>[
+        reaction,
+        edit,
+        malformed,
+        deletion,
+      ]) {
+        repository.seed(entry);
+      }
+
+      final routedKinds = <AckCustodyKind>[];
+      final completed = await drainDirectReactionInboxCustodyOutbox(
+        custodyRepository: repository,
+        mutationCustodyRepository: repository,
+        storeInAckCustodyInboxDetailed:
+            (
+              recipientPeerId,
+              wireEnvelope, {
+              required custodyKind,
+              timeoutMs,
+            }) async {
+              routedKinds.add(custodyKind);
+              return const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+              );
+            },
+      );
+
+      expect(completed, 3);
+      expect(routedKinds, <AckCustodyKind>[
+        AckCustodyKind.directReactionV109,
+        AckCustodyKind.directMutationV109,
+        AckCustodyKind.directMutationV109,
+      ]);
+      expect(repository.rows.values.single.eventId, malformed.eventId);
+      expect(
+        repository.rows.values.single.lastErrorCode,
+        DirectReactionInboxCustodyErrorCode.storeFailed,
+      );
+    },
+  );
+
   test('Plan 344 v109 drain retains generic stored without proof', () async {
     final repository = _InMemoryReactionCustodyRepository();
     final pending = _entry('unproven');
@@ -413,6 +517,31 @@ void main() {
     },
   );
 }
+
+String _editEnvelope(String eventId) => jsonEncode(<String, Object?>{
+  'type': 'chat_message',
+  'version': '2',
+  'id': 'target-edit',
+  'eventId': eventId,
+  'senderPeerId': 'self-peer',
+  'encrypted': const <String, Object?>{
+    'kem': 'kem',
+    'ciphertext': 'ciphertext',
+    'nonce': 'nonce',
+  },
+});
+
+String _deletionEnvelope(String eventId) => jsonEncode(<String, Object?>{
+  'type': 'message_deletion',
+  'version': '2',
+  'eventId': eventId,
+  'senderPeerId': 'self-peer',
+  'encrypted': const <String, Object?>{
+    'kem': 'kem',
+    'ciphertext': 'ciphertext',
+    'nonce': 'nonce',
+  },
+});
 
 String _keyOf(DirectReactionInboxCustodyOutboxEntry entry) =>
     '${entry.recipientPeerId}\u0000${entry.eventId}';

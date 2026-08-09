@@ -367,6 +367,32 @@ void main() {
   });
 
   test(
+    'TC-349-04 direct mutation custody kind reaches existing strict bridge command',
+    () async {
+      bridge.whenCommand(
+        'inbox:store',
+        (_) => jsonEncode({
+          'ok': true,
+          'storeStatus': 'stored',
+          'custodyContract': ackOrExpiryInboxCustodyContract,
+        }),
+      );
+
+      final outcome = await service.storeInAckCustodyInboxDetailed(
+        'remote-peer',
+        'strict-mutation-envelope',
+        custodyKind: AckCustodyKind.directMutationV109,
+      );
+
+      expect(outcome.ackOrExpiryAccepted, isTrue);
+      expect(
+        bridge.payloadsFor('inbox:store').single,
+        containsPair('custodyKind', 'direct_mutation_v109'),
+      );
+    },
+  );
+
+  test(
     'TC-347-05 media expiry-bounded capability requires exact relay expiry proof',
     () async {
       const ceiling = 2000000123456;

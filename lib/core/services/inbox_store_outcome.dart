@@ -1,13 +1,14 @@
 enum InboxStoreStatus { stored, duplicate, rejectedFull, failed }
 
-/// Relay proof required before a direct-text v108 or direct-reaction v109
-/// obligation may leave local custody.
+/// Relay proof required before a v108/v109 direct obligation may leave local
+/// custody.
 const String ackOrExpiryInboxCustodyContract = 'ack_or_expiry_v1';
 
 /// The only app-owned envelopes eligible for ACK-or-expiry relay custody.
 enum AckCustodyKind {
   directTextV108('direct_text_v108'),
-  directReactionV109('direct_reaction_v109');
+  directReactionV109('direct_reaction_v109'),
+  directMutationV109('direct_mutation_v109');
 
   const AckCustodyKind(this.wireValue);
 

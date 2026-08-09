@@ -106,7 +106,8 @@ func (s *ackCustodyMatrixState) handleStream(stream network.Stream) {
 	case "store_custody_v1":
 		if !s.validStrictRequest(req) ||
 			(req.CustodyKind != node.CustodyKindDirectTextV108 &&
-				req.CustodyKind != node.CustodyKindDirectReactionV109) {
+				req.CustodyKind != node.CustodyKindDirectReactionV109 &&
+				req.CustodyKind != node.CustodyKindDirectMutationV109) {
 			s.writeUnsupported(stream, req.Action)
 			return
 		}
@@ -376,6 +377,37 @@ func TestAckCustodyMixedVersionMatrix(t *testing.T) {
 		}
 		if acked, err := receiver.InboxAckCustody([]string{protectedPage.Messages[0].ID}, 1000); err != nil || acked != 1 {
 			t.Fatalf("protected ACK acked=%d err=%v", acked, err)
+		}
+	})
+
+	t.Run("direct mutation kind selects upgraded relay without legacy fallback", func(t *testing.T) {
+		oldRelay, oldState := startAckCustodyMatrixRelay(t, false)
+		newRelay, newState := startAckCustodyMatrixRelay(t, true)
+		sender, _ := startNodeWithRelays(t, []string{oldRelay.addr(), newRelay.addr()}, nil, nil)
+		receiver, receiverID := startNodeWithRelays(t, []string{newRelay.addr()}, nil, nil)
+
+		outcome, err := sender.InboxStoreAckCustodyDetailedWithWakeToken(
+			receiverID, "mutation-protected", 1000, "", node.CustodyKindDirectMutationV109,
+		)
+		if err != nil || outcome.CustodyContract != node.AckOrExpiryCustodyContract {
+			t.Fatalf("mutation strict store outcome=%#v err=%v", outcome, err)
+		}
+		for _, action := range oldState.snapshotActions() {
+			if action == "store" {
+				t.Fatalf("mutation strict store fell back to legacy: %v", oldState.snapshotActions())
+			}
+		}
+		legacySize, protectedSize := newState.laneSizes(receiverID)
+		if legacySize != 1 || protectedSize != 1 {
+			t.Fatalf("mutation lane sizes legacy=%d protected=%d", legacySize, protectedSize)
+		}
+		legacyMessages, err := receiver.InboxRetrieve()
+		if err != nil || len(legacyMessages) != 1 {
+			t.Fatalf("mutation legacy shadow retrieve=%#v err=%v", legacyMessages, err)
+		}
+		_, protectedSize = newState.laneSizes(receiverID)
+		if protectedSize != 1 {
+			t.Fatalf("mutation protected authority removed by legacy read")
 		}
 	})
 

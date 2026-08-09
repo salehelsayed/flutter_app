@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import '../incoming_ordinary_text_mutation.dart';
 import '../outgoing_transport_mutation.dart';
 import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
@@ -14,6 +15,281 @@ import '../../utils/flow_event_emitter.dart';
 const _visibleMessageFilter = 'hidden_at IS NULL';
 const _directMediaCustodyIntentColumn = 'direct_media_custody_intent_id';
 const _directInboxCustodyOutboxTable = 'direct_inbox_custody_outbox';
+
+/// Serializes ordinary incoming initial/edit/deletion projection for one
+/// direct-text target. Every comparison is repeated inside the write
+/// transaction so independently dispatched receiver streams cannot resurrect
+/// or regress the parent from stale snapshots.
+Future<DbIncomingOrdinaryTextMutationResult>
+dbApplyIncomingOrdinaryTextMutation(
+  Database db, {
+  required Map<String, Object?> incomingRow,
+  required IncomingOrdinaryTextMutationKind kind,
+}) {
+  if (!_validIncomingOrdinaryTextMutationRow(incomingRow, kind: kind)) {
+    return Future<DbIncomingOrdinaryTextMutationResult>.value(
+      const DbIncomingOrdinaryTextMutationResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.refused,
+        row: null,
+      ),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final messageId = incomingRow['id'] as String;
+    final currentRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (currentRows.isEmpty) {
+      await txn.insert(
+        'messages',
+        incomingRow,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      return DbIncomingOrdinaryTextMutationResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.inserted,
+        row: Map<String, Object?>.from(incomingRow),
+      );
+    }
+
+    final current = currentRows.single;
+    if (!_sameIncomingOrdinaryTextAuthority(current, incomingRow)) {
+      return DbIncomingOrdinaryTextMutationResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
+        row: Map<String, Object?>.from(current),
+      );
+    }
+    if (!_isIncomingVersionZeroOrdinaryText(current)) {
+      return DbIncomingOrdinaryTextMutationResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.refused,
+        row: Map<String, Object?>.from(current),
+      );
+    }
+    final hasMediaTable = (await txn.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'media_attachments' LIMIT 1",
+    )).isNotEmpty;
+    if (hasMediaTable) {
+      final directMedia = await txn.rawQuery(
+        'SELECT 1 FROM media_attachments '
+        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+        <Object?>[messageId, 'direct'],
+      );
+      if (directMedia.isNotEmpty) {
+        return DbIncomingOrdinaryTextMutationResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.refused,
+          row: Map<String, Object?>.from(current),
+        );
+      }
+    }
+
+    final currentDeleted =
+        _nonBlankDatabaseString(current['deleted_at']) &&
+        _nonBlankDatabaseString(current['deleted_by_peer_id']);
+    if (currentDeleted) {
+      final exactDeletion =
+          kind == IncomingOrdinaryTextMutationKind.deletion &&
+          current['deleted_at'] == incomingRow['deleted_at'] &&
+          current['deleted_by_peer_id'] == incomingRow['deleted_by_peer_id'];
+      return DbIncomingOrdinaryTextMutationResult(
+        outcome: exactDeletion
+            ? IncomingOrdinaryTextMutationOutcome.exactReplay
+            : IncomingOrdinaryTextMutationOutcome.superseded,
+        row: Map<String, Object?>.from(current),
+      );
+    }
+
+    switch (kind) {
+      case IncomingOrdinaryTextMutationKind.initial:
+        if (_nonBlankDatabaseString(current['edited_at'])) {
+          if (!_nonBlankDatabaseString(current['hidden_at'])) {
+            return DbIncomingOrdinaryTextMutationResult(
+              outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+              row: Map<String, Object?>.from(current),
+            );
+          }
+          final changed = await txn.update(
+            'messages',
+            <String, Object?>{
+              'timestamp': incomingRow['timestamp'],
+              'status': incomingRow['status'],
+              'text': current['text'],
+              'quoted_message_id':
+                  current['quoted_message_id'] ??
+                  incomingRow['quoted_message_id'],
+              'dedup_key': incomingRow['dedup_key'],
+              'is_forwarded': incomingRow['is_forwarded'] ?? 0,
+              'transport': incomingRow['transport'] ?? current['transport'],
+              'hidden_at': null,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          if (changed != 1) {
+            throw StateError('incoming initial lost its edit placeholder');
+          }
+          return DbIncomingOrdinaryTextMutationResult(
+            outcome: IncomingOrdinaryTextMutationOutcome.updated,
+            row: Map<String, Object?>.from(
+              (await txn.query(
+                'messages',
+                where: 'id = ?',
+                whereArgs: <Object?>[messageId],
+                limit: 1,
+              )).single,
+            ),
+          );
+        }
+        return DbIncomingOrdinaryTextMutationResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.exactReplay,
+          row: Map<String, Object?>.from(current),
+        );
+
+      case IncomingOrdinaryTextMutationKind.edit:
+        final incomingEditedAt = incomingRow['edited_at'] as String;
+        final incomingOrder = DateTime.tryParse(incomingEditedAt);
+        if (incomingOrder == null) {
+          return DbIncomingOrdinaryTextMutationResult(
+            outcome: IncomingOrdinaryTextMutationOutcome.refused,
+            row: Map<String, Object?>.from(current),
+          );
+        }
+        final currentEditedAt = current['edited_at'] as String?;
+        if (currentEditedAt != null) {
+          final currentOrder = DateTime.tryParse(currentEditedAt);
+          if (currentOrder == null) {
+            return DbIncomingOrdinaryTextMutationResult(
+              outcome: IncomingOrdinaryTextMutationOutcome.refused,
+              row: Map<String, Object?>.from(current),
+            );
+          }
+          if (!incomingOrder.isAfter(currentOrder)) {
+            final exact =
+                incomingOrder.isAtSameMomentAs(currentOrder) &&
+                current['text'] == incomingRow['text'];
+            return DbIncomingOrdinaryTextMutationResult(
+              outcome: exact
+                  ? IncomingOrdinaryTextMutationOutcome.exactReplay
+                  : IncomingOrdinaryTextMutationOutcome.superseded,
+              row: Map<String, Object?>.from(current),
+            );
+          }
+        }
+        final changed = await txn.update(
+          'messages',
+          <String, Object?>{
+            'text': incomingRow['text'],
+            'status': 'delivered',
+            'edited_at': incomingEditedAt,
+            'quoted_message_id':
+                incomingRow['quoted_message_id'] ??
+                current['quoted_message_id'],
+            'transport': incomingRow['transport'] ?? current['transport'],
+            'dedup_key': incomingRow['dedup_key'],
+            'is_forwarded': incomingRow['is_forwarded'] ?? 0,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        if (changed != 1) {
+          throw StateError('incoming edit lost its exact parent');
+        }
+        return DbIncomingOrdinaryTextMutationResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.updated,
+          row: Map<String, Object?>.from(
+            (await txn.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+              limit: 1,
+            )).single,
+          ),
+        );
+
+      case IncomingOrdinaryTextMutationKind.deletion:
+        final changed = await txn.update(
+          'messages',
+          <String, Object?>{
+            'text': '',
+            'status': current['status'],
+            'deleted_at': incomingRow['deleted_at'],
+            'deleted_by_peer_id': incomingRow['deleted_by_peer_id'],
+            'hidden_at': null,
+            'transport': incomingRow['transport'] ?? current['transport'],
+            'wire_envelope': null,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        if (changed != 1) {
+          throw StateError('incoming deletion lost its exact parent');
+        }
+        return DbIncomingOrdinaryTextMutationResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.updated,
+          row: Map<String, Object?>.from(
+            (await txn.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+              limit: 1,
+            )).single,
+          ),
+        );
+    }
+  });
+}
+
+bool _validIncomingOrdinaryTextMutationRow(
+  Map<String, Object?> row, {
+  required IncomingOrdinaryTextMutationKind kind,
+}) {
+  if (!_isIncomingVersionZeroOrdinaryText(row) ||
+      !_nonBlankDatabaseString(row['id']) ||
+      !_nonBlankDatabaseString(row['contact_peer_id']) ||
+      row['contact_peer_id'] != row['sender_peer_id'] ||
+      row['status'] != 'delivered' ||
+      DateTime.tryParse(row['timestamp'] as String? ?? '') == null) {
+    return false;
+  }
+  return switch (kind) {
+    IncomingOrdinaryTextMutationKind.initial =>
+      row['deleted_at'] == null &&
+          row['deleted_by_peer_id'] == null &&
+          row['edited_at'] == null &&
+          row['hidden_at'] == null,
+    IncomingOrdinaryTextMutationKind.edit =>
+      row['deleted_at'] == null &&
+          row['deleted_by_peer_id'] == null &&
+          _nonBlankDatabaseString(row['edited_at']) &&
+          DateTime.tryParse(row['edited_at'] as String) != null,
+    IncomingOrdinaryTextMutationKind.deletion =>
+      row['text'] == '' &&
+          _nonBlankDatabaseString(row['deleted_at']) &&
+          DateTime.tryParse(row['deleted_at'] as String) != null &&
+          row['deleted_by_peer_id'] == row['sender_peer_id'] &&
+          row['hidden_at'] == null,
+  };
+}
+
+bool _isIncomingVersionZeroOrdinaryText(Map<String, Object?> row) =>
+    ((row['is_incoming'] as num?)?.toInt() ?? 0) == 1 &&
+    ((row['private_media_policy_version'] as num?)?.toInt() ?? 0) == 0 &&
+    (row['private_media_mode'] as String? ?? 'ordinary') == 'ordinary' &&
+    row['direct_media_custody_intent_id'] == null;
+
+bool _sameIncomingOrdinaryTextAuthority(
+  Map<String, Object?> current,
+  Map<String, Object?> incoming,
+) =>
+    ((current['is_incoming'] as num?)?.toInt() ?? 0) == 1 &&
+    current['contact_peer_id'] == incoming['contact_peer_id'] &&
+    current['sender_peer_id'] == incoming['sender_peer_id'];
+
+bool _nonBlankDatabaseString(Object? value) =>
+    value is String && value.trim().isNotEmpty;
 
 const _custodyOwnedParentIdentityColumns = <String>[
   'contact_peer_id',

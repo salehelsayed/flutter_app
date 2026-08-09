@@ -115,6 +115,7 @@ class ChatMessageListener {
   final Future<void> Function({
     required String contactPeerId,
     required List<String> messageIds,
+    Map<String, String>? mutationEventIds,
   })?
   sendDeliveryReceipt;
 
@@ -520,6 +521,13 @@ class ChatMessageListener {
             : (messageId) => sendDeliveryReceipt!(
                 contactPeerId: message.from,
                 messageIds: [messageId],
+              ),
+        sendMutationDeliveryReceipt: sendDeliveryReceipt == null
+            ? null
+            : (messageId, {required mutationEventId}) => sendDeliveryReceipt!(
+                contactPeerId: message.from,
+                messageIds: [messageId],
+                mutationEventIds: <String, String>{messageId: mutationEventId},
               ),
         stageNotificationDisplayCustody: stageNotificationDisplayCustody,
         promoteNotificationDisplayCustody: promoteNotificationDisplayCustody,

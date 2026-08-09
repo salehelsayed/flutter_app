@@ -1160,9 +1160,18 @@ run_ack_custody_go_gate() {
       rg -x 'TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling')
   (cd go-relay-server && \
     GOTOOLCHAIN=go1.25.0 go test . \
+      -list '^TestRelayNotificationClosure_DirectMutationCustody$' | \
+      rg -x 'TestRelayNotificationClosure_DirectMutationCustody')
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test . \
       -run '^TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling$' \
       -count=1 -v | \
       rg '^--- PASS: TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling \(')
+  (cd go-relay-server && \
+    GOTOOLCHAIN=go1.25.0 go test . \
+      -run '^TestRelayNotificationClosure_DirectMutationCustody$' \
+      -count=1 -v | \
+      rg '^--- PASS: TestRelayNotificationClosure_DirectMutationCustody \(')
 
   (cd go-relay-server && \
     GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \

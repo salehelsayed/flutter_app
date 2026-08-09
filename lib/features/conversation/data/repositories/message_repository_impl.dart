@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
+import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -12,6 +14,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../../domain/models/conversation_message.dart';
 import '../../domain/models/conversation_thread_summary.dart';
 import '../../domain/models/direct_inbox_custody_outbox_entry.dart';
+import '../../domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../../domain/models/media_attachment.dart';
 import '../../domain/models/outgoing_ordinary_mutation_result.dart';
 import '../../domain/repositories/conversation_thread_summary_repository.dart';
@@ -31,6 +34,8 @@ class MessageRepositoryImpl
         DirectManualUploadRetryRearmRepository,
         OutgoingTransportMutationRepository,
         OutgoingDirectTextInboxCustodyRepository,
+        OutgoingDirectTextMutationInboxCustodyRepository,
+        IncomingOrdinaryTextApplyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
         IncomingDirectMessagePublicationRepository,
         MessageRepositoryChangeSource,
@@ -127,6 +132,40 @@ class MessageRepositoryImpl
     required int? relayExpiresAt,
   })?
   dbCompleteAcceptedDirectInboxCustodyIfExact;
+  final Future<DbDirectTextMutationCustodyStageResult> Function({
+    required Map<String, Object?> expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  })?
+  dbStageOutgoingDirectTextMutationInboxCustody;
+  final Future<Map<String, Object?>?> Function({
+    required String recipientPeerId,
+    required String eventId,
+  })?
+  dbLoadDirectTextMutationInboxCustodyForEvent;
+  final Future<bool> Function({
+    required String recipientPeerId,
+    required String eventId,
+    required String expectedWireEnvelope,
+    required String errorCode,
+    required String attemptedAt,
+  })?
+  dbRecordDirectTextMutationInboxCustodyFailureIfExact;
+  final Future<DirectMutationInboxCustodyCompletionOutcome> Function({
+    required String recipientPeerId,
+    required String eventId,
+    required String expectedWireEnvelope,
+    required int? relayExpiresAt,
+  })?
+  dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact;
+  final Future<DbIncomingOrdinaryTextMutationResult> Function({
+    required Map<String, Object?> incomingRow,
+    required IncomingOrdinaryTextMutationKind kind,
+  })?
+  dbApplyIncomingOrdinaryTextMutation;
   final Future<OutgoingOrdinaryMutationOutcome> Function({
     required String messageId,
     required String expectedContactPeerId,
@@ -341,6 +380,11 @@ class MessageRepositoryImpl
     this.dbLoadDirectInboxCustodyOutboxOwnerForMessageId,
     this.dbRecordDirectInboxCustodyFailureIfExact,
     this.dbCompleteAcceptedDirectInboxCustodyIfExact,
+    this.dbStageOutgoingDirectTextMutationInboxCustody,
+    this.dbLoadDirectTextMutationInboxCustodyForEvent,
+    this.dbRecordDirectTextMutationInboxCustodyFailureIfExact,
+    this.dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact,
+    this.dbApplyIncomingOrdinaryTextMutation,
     this.dbSettleOutgoingOrdinaryTransport,
     this.dbSettleOutgoingOrdinaryDeleteTombstone,
     this.dbInvalidateOutgoingOrdinaryEnvelope,
@@ -389,6 +433,13 @@ class MessageRepositoryImpl
       dbLoadDirectInboxCustodyOutboxOwnerForMessageId != null &&
       dbRecordDirectInboxCustodyFailureIfExact != null &&
       dbCompleteAcceptedDirectInboxCustodyIfExact != null;
+
+  @override
+  bool get supportsDirectTextMutationInboxCustody =>
+      dbStageOutgoingDirectTextMutationInboxCustody != null &&
+      dbLoadDirectTextMutationInboxCustodyForEvent != null &&
+      dbRecordDirectTextMutationInboxCustodyFailureIfExact != null &&
+      dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact != null;
 
   @override
   Stream<DirectMessageRemoval> get messageRemovals =>
@@ -688,6 +739,135 @@ class MessageRepositoryImpl
     return DirectInboxCustodyCompletionResult(
       outcome: outcome,
       message: published.message,
+    );
+  }
+
+  @override
+  Future<OutgoingDirectTextMutationCustodyStageResult>
+  stageOutgoingDirectTextMutationInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    final stage = dbStageOutgoingDirectTextMutationInboxCustody;
+    if (!supportsDirectTextMutationInboxCustody ||
+        stage == null ||
+        staged.media.isNotEmpty) {
+      return OutgoingDirectTextMutationCustodyStageResult.refused(
+        message: expected,
+      );
+    }
+    final result = await stage(
+      expectedRow: expected.toMap(),
+      stagedRow: staged.toMap(),
+      kind: kind,
+      recipientPeerId: recipientPeerId,
+      eventId: eventId,
+      wireEnvelope: wireEnvelope,
+    );
+    final custody = result.custodyRow == null
+        ? null
+        : DirectReactionInboxCustodyOutboxEntry.fromMap(result.custodyRow!);
+    final published = await _publishCommittedOutgoingOrdinaryMutationBestEffort(
+      messageId: staged.id,
+      outcome: result.outcome,
+      committedFallback: result.outcome.authorizesTransport ? staged : expected,
+    );
+    return OutgoingDirectTextMutationCustodyStageResult(
+      outcome: result.outcome,
+      message: published.message ?? expected,
+      custody: custody,
+    );
+  }
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) async {
+    final load = dbLoadDirectTextMutationInboxCustodyForEvent;
+    if (load == null) return null;
+    final row = await load(recipientPeerId: recipientPeerId, eventId: eventId);
+    return row == null
+        ? null
+        : DirectReactionInboxCustodyOutboxEntry.fromMap(row);
+  }
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) {
+    final record = dbRecordDirectTextMutationInboxCustodyFailureIfExact;
+    if (record == null) return Future<bool>.value(false);
+    return record(
+      recipientPeerId: expected.recipientPeerId,
+      eventId: expected.eventId,
+      expectedWireEnvelope: expected.wireEnvelope,
+      errorCode: errorCode,
+      attemptedAt: now().toUtc().toIso8601String(),
+    );
+  }
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final complete = dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact;
+    if (complete == null) {
+      return DirectMutationInboxCustodyCompletionOutcome.stale;
+    }
+    final outcome = await complete(
+      recipientPeerId: expected.recipientPeerId,
+      eventId: expected.eventId,
+      expectedWireEnvelope: expected.wireEnvelope,
+      relayExpiresAt: relayExpiresAt,
+    );
+    if (outcome == DirectMutationInboxCustodyCompletionOutcome.completed) {
+      await _publishCommittedOutgoingOrdinaryMutationBestEffort(
+        messageId:
+            classifyDirectInboxEventEnvelope(
+              expected.wireEnvelope,
+            )?.targetMessageId ??
+            '',
+        outcome: OutgoingOrdinaryMutationOutcome.applied,
+      );
+    }
+    return outcome;
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    final apply = dbApplyIncomingOrdinaryTextMutation;
+    if (apply == null || incoming.media.isNotEmpty) {
+      return const IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.refused,
+        message: null,
+      );
+    }
+    final result = await apply(incomingRow: incoming.toMap(), kind: kind);
+    final message = result.row == null
+        ? null
+        : _rememberMessage(ConversationMessage.fromMap(result.row!));
+    if (result.outcome.changed && message != null) {
+      try {
+        _messageChangeController.add(message);
+      } catch (_) {
+        // The DB result remains authoritative after publication failure.
+      }
+    }
+    return IncomingOrdinaryTextApplyResult(
+      outcome: result.outcome,
+      message: message,
     );
   }
 

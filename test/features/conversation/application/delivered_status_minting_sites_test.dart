@@ -62,6 +62,8 @@ void main() {
       // deliberate; adding a 'delivered' write anywhere in lib/ (outside
       // migrations) MUST update this map and pass review against G4.
       const expected = <String, int>{
+        // Atomic ordinary-text receiver projection writes incoming rows only.
+        'lib/core/database/helpers/messages_db_helpers.dart': 1,
         // (a) the delivery-receipt apply — receiver-confirmed by definition
         // (the receipt is emitted after the receiver's durable persist).
         // One typed ordinary settlement handles inboxed/sent/failed without a
@@ -91,7 +93,7 @@ void main() {
         'lib/features/conversation/application/handle_incoming_chat_message_use_case.dart':
             5,
         'lib/features/conversation/application/handle_incoming_message_deletion_use_case.dart':
-            1,
+            2,
         // Local/system row writers: no transport, terminal by construction.
         'lib/features/introduction/application/insert_intro_system_message.dart':
             1,

@@ -32,6 +32,7 @@ func TestDispatchInboxAckCustodyContract(t *testing.T) {
 	for _, kind := range []string{
 		node.CustodyKindDirectTextV108,
 		node.CustodyKindDirectReactionV109,
+		node.CustodyKindDirectMutationV109,
 	} {
 		t.Run("exact store pair selects strict "+kind, func(t *testing.T) {
 			legacyCalls := 0

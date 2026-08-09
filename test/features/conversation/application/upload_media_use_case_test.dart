@@ -1573,7 +1573,7 @@ Map<String, dynamic> _exactStrictReceipt(Map<String, dynamic> payload) =>
       'contentHash': payload['contentHash'],
       'size': File(payload['filePath'] as String).lengthSync(),
       'mime': payload['mime'],
-      'expiresAtMs': DateTime.utc(2026, 8, 9).millisecondsSinceEpoch,
+      'expiresAtMs': DateTime.utc(2036, 8, 9).millisecondsSinceEpoch,
       'custodyRelayPeerId': 'relay-347',
     };
 

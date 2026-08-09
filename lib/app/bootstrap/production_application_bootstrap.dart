@@ -1220,6 +1220,65 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             expectedWireEnvelope: expectedWireEnvelope,
             relayExpiresAt: relayExpiresAt,
           ),
+      dbStageOutgoingDirectTextMutationInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectTextMutationInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+          ),
+      dbLoadDirectTextMutationInboxCustodyForEvent:
+          ({required recipientPeerId, required eventId}) =>
+              dbLoadDirectReactionInboxCustodyOutboxForEvent(
+                db,
+                recipientPeerId: recipientPeerId,
+                eventId: eventId,
+              ),
+      dbRecordDirectTextMutationInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) => dbRecordDirectReactionInboxCustodyFailureIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            errorCode: errorCode,
+            attemptedAt: attemptedAt,
+          ),
+      dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+            db,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            expectedWireEnvelope: expectedWireEnvelope,
+            relayExpiresAt: relayExpiresAt,
+          ),
+      dbApplyIncomingOrdinaryTextMutation:
+          ({required incomingRow, required kind}) =>
+              dbApplyIncomingOrdinaryTextMutation(
+                db,
+                incomingRow: incomingRow,
+                kind: kind,
+              ),
       dbSettleOutgoingOrdinaryTransport:
           ({
             required messageId,
@@ -4120,11 +4179,13 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     Future<void> sendDeliveryReceiptForPeer({
       required String contactPeerId,
       required List<String> messageIds,
+      Map<String, String>? mutationEventIds,
     }) {
       return sendDeliveryReceipt(
         p2pService: p2pService,
         targetPeerId: contactPeerId,
         messageIds: messageIds,
+        mutationEventIds: mutationEventIds,
       );
     }
 
@@ -4314,6 +4375,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           contactPeerId: message.from,
           messageIds: [messageId],
         ),
+        sendMutationDeliveryReceipt: (messageId, {required mutationEventId}) =>
+            sendDeliveryReceiptForPeer(
+              contactPeerId: message.from,
+              messageIds: [messageId],
+              mutationEventIds: <String, String>{messageId: mutationEventId},
+            ),
         stagedEntryId: stagedEntryId,
       );
       // 172 TC-11: the recoverable-vs-terminal split lives in the extracted,
@@ -6038,6 +6105,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             try {
               completed += await drainDirectReactionInboxCustodyOutbox(
                 custodyRepository: reactionRepository,
+                mutationCustodyRepository: messageRepository,
                 storeInAckCustodyInboxDetailed:
                     p2pService.storeInAckCustodyInboxDetailed,
               );

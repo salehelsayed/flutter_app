@@ -893,6 +893,36 @@ void main() {
     );
 
     test(
+      'Plan 349 protected mutation custody wins after every live delete leg fails',
+      () async {
+        final original = makeMessage(id: 'delete-mutation-custody-tail');
+        messageRepo.seed([original]);
+
+        final network = FakeP2PNetwork();
+        final p2pService = FakeP2PService(
+          peerId: 'peer-alice',
+          network: network,
+        );
+        addTearDown(p2pService.dispose);
+
+        final (result, tombstone) = await deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          originalMessage: original,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone?.status, 'inboxed');
+        expect(tombstone?.transport, 'inbox');
+        expect(tombstone?.isHidden, isFalse);
+        expect(network.storeInInboxCallCount, 1);
+        expect(messageRepo.directMutationCustodyRows, isEmpty);
+      },
+    );
+
+    test(
       'deleteMessageForEveryone returns encryptionRequired when recipient ML-KEM key is missing',
       () async {
         final original = makeMessage();
@@ -1317,7 +1347,11 @@ void main() {
           expect(pending?.status, 'sending');
           expect(pending?.isHidden, isFalse);
           expect(pending?.wireEnvelope, isNotNull);
-          expect(network.storeInInboxCallCount, 0);
+          expect(
+            network.storeInInboxCallCount,
+            1,
+            reason: 'the mutation custody hedge starts beside live delivery',
+          );
         } finally {
           directGate.complete(
             const SendMessageResult(
@@ -1335,7 +1369,7 @@ void main() {
         expect(tombstone?.transport, 'direct');
         expect(tombstone?.isHidden, isTrue);
         expect(tombstone?.wireEnvelope, isNull);
-        expect(network.storeInInboxCallCount, 0);
+        expect(network.storeInInboxCallCount, 1);
       },
     );
   });
@@ -1349,7 +1383,9 @@ void main() {
     test(
       "delete-for-everyone via sequential inbox fallback persists tombstone status 'inboxed' and retains wire_envelope",
       () async {
-        final original = makeMessage();
+        final original = makeMessage(
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+        );
         messageRepo.seed([original]);
 
         // Recipient unreachable (not registered) → race fails; inbox enabled

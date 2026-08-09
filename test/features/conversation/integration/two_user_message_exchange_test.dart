@@ -16,6 +16,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
@@ -327,6 +328,100 @@ class InMemoryMessageRepository extends shared_fakes.InMemoryMessageRepository {
   @override
   Future<void> saveMessage(ConversationMessage message) async {
     _messages[message.id] = message;
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    final current = _messages[incoming.id];
+    if (current == null) {
+      await saveMessage(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.inserted,
+        message: incoming,
+      );
+    }
+    if (!current.isIncoming ||
+        current.contactPeerId != incoming.contactPeerId ||
+        current.senderPeerId != incoming.senderPeerId) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
+        message: current,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.deletion) {
+      if (current.isDeleted) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: current.deletedAt == incoming.deletedAt
+              ? IncomingOrdinaryTextMutationOutcome.exactReplay
+              : IncomingOrdinaryTextMutationOutcome.superseded,
+          message: current,
+        );
+      }
+      await saveMessage(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.updated,
+        message: incoming,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.initial) {
+      if (current.isDeleted ||
+          (current.editedAt != null && current.hiddenAt == null)) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+          message: current,
+        );
+      }
+      if (current.editedAt != null && current.hiddenAt != null) {
+        final materialized = current.copyWith(
+          timestamp: incoming.timestamp,
+          status: incoming.status,
+          quotedMessageId: current.quotedMessageId ?? incoming.quotedMessageId,
+          dedupKey: incoming.dedupKey,
+          isForwarded: incoming.isForwarded,
+          transport: incoming.transport ?? current.transport,
+          hiddenAt: null,
+        );
+        await saveMessage(materialized);
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.updated,
+          message: materialized,
+        );
+      }
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.exactReplay,
+        message: current,
+      );
+    }
+    if (current.isDeleted) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    final incomingOrder = DateTime.tryParse(incoming.editedAt ?? '');
+    final currentOrder = DateTime.tryParse(current.editedAt ?? '');
+    if (incomingOrder == null ||
+        (currentOrder != null && !incomingOrder.isAfter(currentOrder))) {
+      final exact =
+          incomingOrder != null &&
+          currentOrder != null &&
+          incomingOrder.isAtSameMomentAs(currentOrder) &&
+          incoming.text == current.text;
+      return IncomingOrdinaryTextApplyResult(
+        outcome: exact
+            ? IncomingOrdinaryTextMutationOutcome.exactReplay
+            : IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    await saveMessage(incoming);
+    return IncomingOrdinaryTextApplyResult(
+      outcome: IncomingOrdinaryTextMutationOutcome.updated,
+      message: incoming,
+    );
   }
 
   @override

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -42,6 +43,7 @@ Future<void> handleDeliveryReceipt({
       : message.from;
 
   List<String> messageIds;
+  var mutationEventIds = const <String, String>{};
   try {
     final json = jsonDecode(message.content) as Map<String, dynamic>;
     if (json['type'] != 'delivery_receipt') return;
@@ -49,6 +51,19 @@ Future<void> handleDeliveryReceipt({
     messageIds = (payload['messageIds'] as List<dynamic>)
         .map((id) => id.toString())
         .toList();
+    final validMessageIds = messageIds.toSet();
+    final rawMutationEventIds = payload['mutationEventIds'];
+    if (rawMutationEventIds is Map) {
+      mutationEventIds = <String, String>{
+        for (final entry in rawMutationEventIds.entries)
+          if (entry.key is String &&
+              entry.value is String &&
+              (entry.key as String).trim().isNotEmpty &&
+              (entry.value as String).trim().isNotEmpty &&
+              validMessageIds.contains((entry.key as String).trim()))
+            (entry.key as String).trim(): (entry.value as String).trim(),
+      };
+    }
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
@@ -75,6 +90,18 @@ Future<void> handleDeliveryReceipt({
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_FOREIGN_PEER',
+        details: {'from': fromPreview, 'id': idPreview},
+      );
+      continue;
+    }
+    final classified = row.wireEnvelope == null
+        ? null
+        : classifyDirectInboxEventEnvelope(row.wireEnvelope!);
+    if (classified?.isMutation == true &&
+        mutationEventIds[messageId] != classified!.eventId) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_MUTATION_EVENT_MISMATCH',
         details: {'from': fromPreview, 'id': idPreview},
       );
       continue;

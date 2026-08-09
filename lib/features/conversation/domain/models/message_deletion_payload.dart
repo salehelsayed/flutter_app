@@ -10,11 +10,13 @@ class MessageDeletionPayload {
   final String messageId;
   final String senderPeerId;
   final String timestamp;
+  final String? eventId;
 
   const MessageDeletionPayload({
     required this.messageId,
     required this.senderPeerId,
     required this.timestamp,
+    this.eventId,
   });
 
   static MessageDeletionPayload? fromJson(String jsonString) {
@@ -36,6 +38,7 @@ class MessageDeletionPayload {
         messageId: messageId,
         senderPeerId: senderPeerId,
         timestamp: timestamp,
+        eventId: payload['eventId'] as String?,
       );
     } catch (_) {
       return null;
@@ -50,6 +53,7 @@ class MessageDeletionPayload {
         'messageId': messageId,
         'senderPeerId': senderPeerId,
         'timestamp': timestamp,
+        if (eventId != null) 'eventId': eventId,
       },
     });
   }
@@ -59,16 +63,14 @@ class MessageDeletionPayload {
     required String kem,
     required String ciphertext,
     required String nonce,
+    String? eventId,
   }) {
     return jsonEncode({
       'type': 'message_deletion',
       'version': '2',
       'senderPeerId': senderPeerId,
-      'encrypted': {
-        'kem': kem,
-        'ciphertext': ciphertext,
-        'nonce': nonce,
-      },
+      'eventId': ?eventId,
+      'encrypted': {'kem': kem, 'ciphertext': ciphertext, 'nonce': nonce},
     });
   }
 
@@ -77,6 +79,9 @@ class MessageDeletionPayload {
       final json = jsonDecode(jsonString) as Map<String, dynamic>;
       if (json['type'] != 'message_deletion') return null;
       if (json['version'] != '2') return null;
+      if (json.containsKey('eventId') && json['eventId'] is! String) {
+        return null;
+      }
       final encrypted = json['encrypted'] as Map<String, dynamic>?;
       if (encrypted == null) return null;
       if (encrypted['kem'] == null ||
@@ -96,6 +101,9 @@ class MessageDeletionPayload {
       final messageId = payload['messageId'] as String?;
       final senderPeerId = payload['senderPeerId'] as String?;
       final timestamp = payload['timestamp'] as String?;
+      if (payload.containsKey('eventId') && payload['eventId'] is! String) {
+        return null;
+      }
       if (messageId == null || senderPeerId == null || timestamp == null) {
         return null;
       }
@@ -103,6 +111,7 @@ class MessageDeletionPayload {
         messageId: messageId,
         senderPeerId: senderPeerId,
         timestamp: timestamp,
+        eventId: payload['eventId'] as String?,
       );
     } catch (_) {
       return null;
@@ -114,6 +123,7 @@ class MessageDeletionPayload {
       'messageId': messageId,
       'senderPeerId': senderPeerId,
       'timestamp': timestamp,
+      if (eventId != null) 'eventId': eventId,
     });
   }
 }

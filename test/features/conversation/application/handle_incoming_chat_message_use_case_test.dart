@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -102,7 +103,23 @@ class FakeContactRepository implements ContactRepository {
 }
 
 // -- Fake Message Repository --
-class FakeMessageRepository implements MessageRepository {
+class _MessageRepositoryWithoutOrdinaryApply implements MessageRepository {
+  int saveCalls = 0;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async => null;
+
+  @override
+  Future<void> saveMessage(ConversationMessage message) async {
+    saveCalls++;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+class FakeMessageRepository
+    implements MessageRepository, IncomingOrdinaryTextApplyRepository {
   final List<ConversationMessage> saved = [];
   VoidCallback? onSave;
   final Set<String> _existingIds;
@@ -250,6 +267,92 @@ class FakeMessageRepository implements MessageRepository {
     required String fromStatus,
     required String toStatus,
   }) async => 0;
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    final current =
+        _existingMessages[incoming.id] ??
+        (_existingIds.contains(incoming.id) ? incoming : null);
+    if (current == null) {
+      await saveMessage(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.inserted,
+        message: incoming,
+      );
+    }
+    if (!current.isIncoming ||
+        current.contactPeerId != incoming.contactPeerId ||
+        current.senderPeerId != incoming.senderPeerId) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
+        message: current,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.deletion) {
+      if (current.isDeleted) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: current.deletedAt == incoming.deletedAt
+              ? IncomingOrdinaryTextMutationOutcome.exactReplay
+              : IncomingOrdinaryTextMutationOutcome.superseded,
+          message: current,
+        );
+      }
+      await saveMessage(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.updated,
+        message: incoming,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.initial) {
+      if (current.isDeleted ||
+          (current.editedAt != null && current.hiddenAt == null)) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+          message: current,
+        );
+      }
+      if (current.editedAt != null && current.hiddenAt != null) {
+        await saveMessage(incoming);
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.updated,
+          message: incoming,
+        );
+      }
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.exactReplay,
+        message: current,
+      );
+    }
+    if (current.isDeleted) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    final incomingOrder = DateTime.tryParse(incoming.editedAt ?? '');
+    final currentOrder = DateTime.tryParse(current.editedAt ?? '');
+    if (incomingOrder == null ||
+        (currentOrder != null && !incomingOrder.isAfter(currentOrder))) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome:
+            currentOrder != null &&
+                incomingOrder != null &&
+                incomingOrder.isAtSameMomentAs(currentOrder) &&
+                incoming.text == current.text
+            ? IncomingOrdinaryTextMutationOutcome.exactReplay
+            : IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    await saveMessage(incoming);
+    return IncomingOrdinaryTextApplyResult(
+      outcome: IncomingOrdinaryTextMutationOutcome.updated,
+      message: incoming,
+    );
+  }
 }
 
 // -- Fake Media Attachment Repository --
@@ -1805,11 +1908,11 @@ void main() {
 
         expect(result, HandleChatMessageResult.duplicate);
         expect(msg, isNull);
-        expect(messageRepo.saved, hasLength(1));
-        final stored = messageRepo.saved.single;
+        expect(messageRepo.saved, isEmpty);
+        final stored = (await messageRepo.getMessage('msg-uuid-001'))!;
         expect(stored.isDeleted, isTrue);
         expect(stored.text, isEmpty);
-        expect(stored.timestamp, '2026-02-09T15:30:00.000Z');
+        expect(stored.timestamp, '2026-02-09T16:05:00.000Z');
         expect(stored.deletedAt, '2026-02-09T16:05:00.000Z');
         expect(stored.deletedByPeerId, senderPeerId);
       },
@@ -3970,6 +4073,110 @@ void main() {
       }
     },
   );
+
+  group('TC-349-06 ordinary mutation receiver convergence', () {
+    test(
+      'edit placeholder stale and deleted convergence emits event receipt',
+      () async {
+        const targetId = 'tc349-receiver-target';
+        const eventId = 'fd00b6ee-c276-486b-b2d2-c345489fc0a4';
+        const editedAt = '2026-08-09T01:00:00.000Z';
+        final inner = jsonEncode({
+          'id': targetId,
+          'text': 'newest edit',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-08-09T00:00:00.000Z',
+          'action': 'edit',
+          'eventId': eventId,
+          'editedAt': editedAt,
+        });
+        final bridge = FakeDecryptBridge()
+          ..decryptResponse = {'ok': true, 'plaintext': inner};
+        final receipts = <(String, String)>[];
+
+        final (placeholderResult, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: targetId, eventId: eventId),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: 'secret',
+          transport: 'inbox',
+          sendMutationDeliveryReceipt:
+              (messageId, {required mutationEventId}) async =>
+                  receipts.add((messageId, mutationEventId)),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(placeholderResult, HandleChatMessageResult.editMissingOriginal);
+        expect(receipts, [(targetId, eventId)]);
+
+        final (staleResult, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: targetId, eventId: eventId),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: 'secret',
+          transport: 'inbox',
+          sendMutationDeliveryReceipt:
+              (messageId, {required mutationEventId}) async =>
+                  receipts.add((messageId, mutationEventId)),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(staleResult, HandleChatMessageResult.ignoredEdit);
+        expect(receipts, [(targetId, eventId), (targetId, eventId)]);
+
+        final current = await messageRepo.getMessage(targetId);
+        await messageRepo.saveMessage(
+          current!.copyWith(
+            text: '',
+            deletedAt: '2026-08-09T02:00:00.000Z',
+            deletedByPeerId: senderPeerId,
+          ),
+        );
+        final (deletedResult, _, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(
+            buildV2EncryptedEnvelopeJson(id: targetId, eventId: eventId),
+          ),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          bridge: bridge,
+          ownMlKemSecretKey: 'secret',
+          transport: 'inbox',
+          sendMutationDeliveryReceipt:
+              (messageId, {required mutationEventId}) async =>
+                  receipts.add((messageId, mutationEventId)),
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(deletedResult, HandleChatMessageResult.ignoredEdit);
+        expect(receipts.last, (targetId, eventId));
+      },
+    );
+
+    test(
+      'ordinary text apply capability absence has zero persistence or receipt',
+      () async {
+        final legacyRepository = _MessageRepositoryWithoutOrdinaryApply();
+        var receipts = 0;
+
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: buildP2PMessage(buildValidChatJson()),
+          messageRepo: legacyRepository,
+          contactRepo: contactRepo,
+          transport: 'inbox',
+          sendDeliveryReceipt: (_) async => receipts++,
+        );
+
+        expect(result, HandleChatMessageResult.unauthorized);
+        expect(stored, isNull);
+        expect(legacyRepository.saveCalls, 0);
+        expect(receipts, 0);
+      },
+    );
+  });
 
   // 147: the production inbox-drain predecrypt wiring must honor the listener's
   // blocked-sender policy — a blocked contact's ciphertext is rejected by the

@@ -21,6 +21,7 @@ import 'package:flutter_app/core/database/migrations/108_direct_inbox_custody_ou
 import 'package:flutter_app/core/database/migrations/110_direct_media_custody_intent.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -127,6 +128,61 @@ void main() {
       'blocked_at': blockedAt,
     };
   }
+
+  test(
+    'TC-349-06 concurrent initial edit deletion conditional apply cannot resurrect or regress parent',
+    () async {
+      const messageId = 'tc-349-concurrent-parent';
+      final initial = makeMessageRow(
+        id: messageId,
+        contactPeerId: 'peer-a',
+        senderPeerId: 'peer-a',
+        text: 'initial',
+        timestamp: '2026-08-09T10:00:00.000Z',
+        status: 'delivered',
+        isIncoming: 1,
+        createdAt: '2026-08-09T10:00:00.000Z',
+      );
+      final edit = <String, Object?>{
+        ...initial,
+        'text': 'edited',
+        'edited_at': '2026-08-09T10:00:01.000Z',
+      };
+      final deletion = <String, Object?>{
+        ...initial,
+        'text': '',
+        'deleted_at': '2026-08-09T10:00:02.000Z',
+        'deleted_by_peer_id': 'peer-a',
+      };
+
+      await Future.wait(<Future<Object?>>[
+        dbApplyIncomingOrdinaryTextMutation(
+          db,
+          incomingRow: initial,
+          kind: IncomingOrdinaryTextMutationKind.initial,
+        ),
+        dbApplyIncomingOrdinaryTextMutation(
+          db,
+          incomingRow: edit,
+          kind: IncomingOrdinaryTextMutationKind.edit,
+        ),
+        dbApplyIncomingOrdinaryTextMutation(
+          db,
+          incomingRow: deletion,
+          kind: IncomingOrdinaryTextMutationKind.deletion,
+        ),
+      ]);
+
+      final row = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(row['deleted_at'], '2026-08-09T10:00:02.000Z');
+      expect(row['deleted_by_peer_id'], 'peer-a');
+      expect(row['text'], '');
+    },
+  );
 
   group('dbExistsMessageByDedupKey (F8 tier-2)', () {
     test(

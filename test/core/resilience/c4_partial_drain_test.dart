@@ -1,4 +1,4 @@
-
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -16,7 +16,8 @@ import '../../shared/fakes/in_memory_message_repository.dart';
 // ThrowAfterNMessageRepo — throws on all saves after the Nth
 // ---------------------------------------------------------------------------
 
-class ThrowAfterNMessageRepo implements MessageRepository {
+class ThrowAfterNMessageRepo
+    implements MessageRepository, IncomingOrdinaryTextApplyRepository {
   final InMemoryMessageRepository _inner = InMemoryMessageRepository();
   final int throwAfterN;
   int _saveCount = 0;
@@ -35,6 +36,23 @@ class ThrowAfterNMessageRepo implements MessageRepository {
       );
     }
     return _inner.saveMessage(message);
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    _saveCount++;
+    if (throwEnabled && _saveCount > throwAfterN) {
+      throw Exception(
+        'ThrowAfterNMessageRepo: apply #$_saveCount exceeds threshold $throwAfterN',
+      );
+    }
+    return _inner.applyIncomingOrdinaryTextMutation(
+      incoming: incoming,
+      kind: kind,
+    );
   }
 
   @override
@@ -143,7 +161,8 @@ class ThrowAfterNMessageRepo implements MessageRepository {
 // ThrowOnNthMessageRepo — throws only on the Nth save, succeeds for all others
 // ---------------------------------------------------------------------------
 
-class ThrowOnNthMessageRepo implements MessageRepository {
+class ThrowOnNthMessageRepo
+    implements MessageRepository, IncomingOrdinaryTextApplyRepository {
   final InMemoryMessageRepository _inner = InMemoryMessageRepository();
   final int throwOnN;
   int _saveCount = 0;
@@ -161,6 +180,23 @@ class ThrowOnNthMessageRepo implements MessageRepository {
       );
     }
     return _inner.saveMessage(message);
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    _saveCount++;
+    if (_saveCount == throwOnN) {
+      throw Exception(
+        'ThrowOnNthMessageRepo: transient failure on apply #$_saveCount',
+      );
+    }
+    return _inner.applyIncomingOrdinaryTextMutation(
+      incoming: incoming,
+      kind: kind,
+    );
   }
 
   @override

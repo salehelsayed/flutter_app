@@ -146,6 +146,7 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
 ChatMessage buildReceipt({
   String from = 'peer-x',
   required List<String> messageIds,
+  Map<String, String>? mutationEventIds,
   String? transport = 'direct',
 }) {
   return ChatMessage(
@@ -154,7 +155,11 @@ ChatMessage buildReceipt({
     content: jsonEncode({
       'type': 'delivery_receipt',
       'version': '1',
-      'payload': {'messageIds': messageIds, 'ts': '2026-06-13T12:00:00.000Z'},
+      'payload': {
+        'messageIds': messageIds,
+        'mutationEventIds': ?mutationEventIds,
+        'ts': '2026-06-13T12:00:00.000Z',
+      },
     }),
     timestamp: '2026-06-13T12:00:00.000Z',
     isIncoming: true,
@@ -190,6 +195,140 @@ void main() {
   });
 
   group('handleDeliveryReceipt', () {
+    test(
+      'TC-349-06 delayed initial receipt cannot settle current edit',
+      () async {
+        const messageId = 'msg-current-edit';
+        const editEventId = '34900000-0000-4000-8000-000000000006';
+        final editEnvelope = jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'eventId': editEventId,
+          'senderPeerId': 'my-peer',
+          'encrypted': const <String, Object?>{
+            'kem': 'kem',
+            'ciphertext': 'cipher',
+            'nonce': 'nonce',
+          },
+        });
+        messageRepo.seed(<ConversationMessage>[
+          makeInboxedOutgoing(id: messageId).copyWith(
+            editedAt: '2026-06-13T11:30:00.000Z',
+            wireEnvelope: editEnvelope,
+          ),
+        ]);
+
+        await handleDeliveryReceipt(
+          message: buildReceipt(messageIds: const <String>[messageId]),
+          messageRepo: messageRepo,
+        );
+
+        final row = await messageRepo.getMessage(messageId);
+        expect(row!.status, 'inboxed');
+        expect(row.wireEnvelope, editEnvelope);
+      },
+    );
+    test(
+      'TC-349-06 stale edit receipt cannot settle current deletion and exact event receipt can',
+      () async {
+        const messageId = 'msg-current-deletion';
+        const deletionEventId = '34900000-0000-4000-8000-000000000007';
+        final deletionEnvelope = jsonEncode(<String, Object?>{
+          'type': 'message_deletion',
+          'version': '2',
+          'eventId': deletionEventId,
+          'senderPeerId': 'my-peer',
+          'encrypted': const <String, Object?>{
+            'kem': 'kem',
+            'ciphertext': 'cipher',
+            'nonce': 'nonce',
+          },
+        });
+        messageRepo.seed(<ConversationMessage>[
+          makeInboxedOutgoing(id: messageId).copyWith(
+            text: '',
+            deletedAt: '2026-06-13T11:40:00.000Z',
+            deletedByPeerId: 'my-peer',
+            wireEnvelope: deletionEnvelope,
+          ),
+        ]);
+
+        await handleDeliveryReceipt(
+          message: buildReceipt(
+            messageIds: const <String>[messageId],
+            mutationEventIds: const <String, String>{
+              messageId: 'stale-edit-event',
+            },
+          ),
+          messageRepo: messageRepo,
+        );
+        expect((await messageRepo.getMessage(messageId))!.status, 'inboxed');
+
+        await handleDeliveryReceipt(
+          message: buildReceipt(
+            messageIds: const <String>[messageId],
+            mutationEventIds: const <String, String>{
+              messageId: deletionEventId,
+            },
+          ),
+          messageRepo: messageRepo,
+        );
+        final settled = (await messageRepo.getMessage(messageId))!;
+        expect(settled.status, 'delivered');
+        expect(settled.wireEnvelope, isNull);
+      },
+    );
+
+    test(
+      'TC-349-06 mixed receipt batch settles legacy IDs but not blank wrong mutation entries',
+      () async {
+        const legacyId = 'legacy-message';
+        const editId = 'current-edit-message';
+        const editEventId = '34900000-0000-4000-8000-000000000008';
+        final editEnvelope = jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': editId,
+          'eventId': editEventId,
+          'senderPeerId': 'my-peer',
+          'encrypted': const <String, Object?>{
+            'kem': 'kem',
+            'ciphertext': 'cipher',
+            'nonce': 'nonce',
+          },
+        });
+        messageRepo.seed(<ConversationMessage>[
+          makeInboxedOutgoing(id: legacyId),
+          makeInboxedOutgoing(id: editId).copyWith(
+            editedAt: '2026-06-13T11:30:00.000Z',
+            wireEnvelope: editEnvelope,
+          ),
+        ]);
+        final receipt =
+            buildReceipt(messageIds: const <String>[legacyId, editId]).copyWith(
+              content: jsonEncode(<String, Object?>{
+                'type': 'delivery_receipt',
+                'version': '1',
+                'payload': <String, Object?>{
+                  'messageIds': const <String>[legacyId, editId],
+                  'mutationEventIds': const <String, Object?>{
+                    legacyId: 7,
+                    editId: ' ',
+                    'outside': editEventId,
+                  },
+                },
+              }),
+            );
+
+        await handleDeliveryReceipt(message: receipt, messageRepo: messageRepo);
+
+        expect((await messageRepo.getMessage(legacyId))!.status, 'delivered');
+        final currentEdit = (await messageRepo.getMessage(editId))!;
+        expect(currentEdit.status, 'inboxed');
+        expect(currentEdit.wireEnvelope, editEnvelope);
+      },
+    );
     test(
       'R2 receipt provenance accepts direct relay inbox and rejects wifi null unknown',
       () async {

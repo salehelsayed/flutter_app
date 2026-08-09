@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/app_owned_media_delete_telemetry.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
@@ -76,6 +77,10 @@ typedef StageDirectMessageNotificationDisplayCustody =
     Future<void> Function(ConversationMessage message);
 typedef PromoteDirectMessageNotificationDisplayCustody =
     Future<void> Function(ConversationMessage message);
+typedef SendIncomingMessageDeliveryReceipt =
+    Future<void> Function(String messageId);
+typedef SendIncomingMessageMutationDeliveryReceipt =
+    Future<void> Function(String messageId, {required String mutationEventId});
 
 /// Parses an incoming P2P ChatMessage for chat_message type,
 /// validates the sender, checks for duplicates, and persists.
@@ -114,7 +119,8 @@ handleIncomingChatMessage({
   // lost-receipt repair loop) — but ONLY for relay-inbox arrivals per the
   // shared origin contract (shouldMintDeliveryReceipt): 'direct:'/'lan:'
   // staged replays are confirmed by their own acks.
-  Future<void> Function(String messageId)? sendDeliveryReceipt,
+  SendIncomingMessageDeliveryReceipt? sendDeliveryReceipt,
+  SendIncomingMessageMutationDeliveryReceipt? sendMutationDeliveryReceipt,
   String? stagedEntryId,
   // 132 Phase 1: when true (the live default), a confirmatory receipt is minted
   // for direct/LAN/non-inbox durable arrivals too. Test seam — production passes
@@ -124,8 +130,13 @@ handleIncomingChatMessage({
   PromoteDirectMessageNotificationDisplayCustody?
   promoteNotificationDisplayCustody,
 }) async {
-  Future<void> maybeSendDeliveryReceipt(String messageId) async {
-    if (sendDeliveryReceipt == null) return;
+  Future<void> maybeSendDeliveryReceipt(
+    String messageId, {
+    String? mutationEventId,
+  }) async {
+    if (sendDeliveryReceipt == null && sendMutationDeliveryReceipt == null) {
+      return;
+    }
     final decision = deliveryReceiptMintDecision(
       stagedEntryId: stagedEntryId,
       transport: transport,
@@ -161,7 +172,14 @@ handleIncomingChatMessage({
     // returning a Future) is funnelled into the same `.catchError` — matching
     // the old `try { await ... } catch` which caught both sync and async throws.
     unawaited(
-      Future.sync(() => sendDeliveryReceipt(messageId)).catchError((Object e) {
+      Future.sync(
+        () => mutationEventId != null && sendMutationDeliveryReceipt != null
+            ? sendMutationDeliveryReceipt(
+                messageId,
+                mutationEventId: mutationEventId,
+              )
+            : sendDeliveryReceipt?.call(messageId) ?? Future<void>.value(),
+      ).catchError((Object e) {
         emitFlowEvent(
           layer: 'FL',
           event: 'DELIVERY_RECEIPT_HOOK_ERROR',
@@ -366,6 +384,26 @@ handleIncomingChatMessage({
     return (HandleChatMessageResult.unknownSender, null, null);
   }
 
+  final isOrdinaryDirectText =
+      !strictMediaProjection.selected &&
+      (payload.media == null || payload.media!.isEmpty) &&
+      payload.privateMediaPolicy.version == 0 &&
+      payload.privateMediaPolicy.mode == PrivateMediaMode.ordinary;
+  final ordinaryTextApplyRepository =
+      messageRepo is IncomingOrdinaryTextApplyRepository
+      ? messageRepo as IncomingOrdinaryTextApplyRepository
+      : null;
+  if (isOrdinaryDirectText && ordinaryTextApplyRepository == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_ORDINARY_TEXT_AUTHORITY_UNAVAILABLE',
+      details: {
+        'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
+      },
+    );
+    return (HandleChatMessageResult.unauthorized, null, null);
+  }
+
   // 3. Check for duplicate / same-ID edit update
   final existingMessage = await messageRepo.getMessage(payload.id);
   final shouldMaterializeDeferredEdit =
@@ -378,6 +416,7 @@ handleIncomingChatMessage({
       _isIncomingDeletedPlaceholder(existingMessage);
   if (existingMessage != null &&
       !payload.isEdit &&
+      !isOrdinaryDirectText &&
       !shouldMaterializeDeferredEdit &&
       !shouldPreserveDeletedPlaceholder) {
     if (payload.text != existingMessage.text) {
@@ -452,7 +491,7 @@ handleIncomingChatMessage({
     }
     return (HandleChatMessageResult.duplicate, null, null);
   }
-  if (existingMessage == null && payload.isEdit) {
+  if (existingMessage == null && payload.isEdit && !isOrdinaryDirectText) {
     final stagedEdit = _buildHiddenIncomingEditPlaceholder(
       payload: payload,
       transport: transport,
@@ -475,7 +514,7 @@ handleIncomingChatMessage({
       );
       return (HandleChatMessageResult.unauthorized, null, null);
     }
-    if (existingMessage.isDeleted) {
+    if (!isOrdinaryDirectText && existingMessage.isDeleted) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_RECEIVE_EDIT_IGNORED_DELETED',
@@ -485,7 +524,8 @@ handleIncomingChatMessage({
     }
     final incomingEditedAt = payload.editedAt ?? payload.timestamp;
     final currentEditedAt = existingMessage.editedAt;
-    if (currentEditedAt != null &&
+    if (!isOrdinaryDirectText &&
+        currentEditedAt != null &&
         !_isIncomingEditNewer(
           incomingEditedAt: incomingEditedAt,
           currentEditedAt: currentEditedAt,
@@ -564,10 +604,15 @@ handleIncomingChatMessage({
   }
 
   // 5. Persist message
-  final resultAfterSave = shouldPreserveDeletedPlaceholder
+  var resultAfterSave = shouldPreserveDeletedPlaceholder
       ? HandleChatMessageResult.duplicate
       : HandleChatMessageResult.chatMessage;
-  final candidateMessage = shouldMaterializeDeferredEdit
+  final candidateMessage = payload.isEdit && existingMessage == null
+      ? _buildHiddenIncomingEditPlaceholder(
+          payload: payload,
+          transport: transport,
+        )
+      : shouldMaterializeDeferredEdit
       ? _materializeIncomingOriginalFromHiddenEdit(
           hiddenEditMessage: existingMessage,
           payload: payload,
@@ -605,7 +650,7 @@ handleIncomingChatMessage({
           editedAt: payload.editedAt,
           transport: transport,
         );
-  final conversationMessage = _seedIncomingPrivateMediaLifecycle(
+  var conversationMessage = _seedIncomingPrivateMediaLifecycle(
     candidateMessage,
     existingMessage: existingMessage,
   );
@@ -680,16 +725,112 @@ handleIncomingChatMessage({
     );
     await maybeSendDeliveryReceipt(payload.id);
   } else {
+    if (isOrdinaryDirectText) {
+      IncomingOrdinaryTextApplyResult applied;
+      try {
+        applied = await ordinaryTextApplyRepository!
+            .applyIncomingOrdinaryTextMutation(
+              incoming: conversationMessage,
+              kind: payload.isEdit
+                  ? IncomingOrdinaryTextMutationKind.edit
+                  : IncomingOrdinaryTextMutationKind.initial,
+            );
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_ORDINARY_TEXT_APPLY_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+        return (HandleChatMessageResult.unauthorized, null, null);
+      }
+      if (!applied.isDurable || applied.message == null) {
+        return (HandleChatMessageResult.unauthorized, null, null);
+      }
+      conversationMessage = applied.message!;
+      final durableReplay = !applied.changed;
+      if (payload.isEdit &&
+          applied.outcome == IncomingOrdinaryTextMutationOutcome.inserted) {
+        await maybeSendDeliveryReceipt(
+          payload.id,
+          mutationEventId: payload.eventId,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_EDIT_MISSING_ORIGINAL',
+          details: {'id': payload.id.substring(0, 8)},
+        );
+        return (HandleChatMessageResult.editMissingOriginal, null, null);
+      }
+      if (payload.isEdit && durableReplay) {
+        await maybeSendDeliveryReceipt(
+          payload.id,
+          mutationEventId: payload.eventId,
+        );
+        return (HandleChatMessageResult.ignoredEdit, null, null);
+      }
+      if (!payload.isEdit && durableReplay) {
+        final durableMessage = applied.message!;
+        if (payload.text != durableMessage.text) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_DUPLICATE_CONTENT_MISMATCH',
+            details: {
+              'id': payload.id.length > 8
+                  ? payload.id.substring(0, 8)
+                  : payload.id,
+              'incomingTextLength': payload.text.length,
+              'existingTextLength': durableMessage.text.length,
+              'existingHasEditedAt': durableMessage.editedAt != null,
+            },
+          );
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_DUPLICATE',
+          details: {
+            'id': payload.id.length > 8
+                ? payload.id.substring(0, 8)
+                : payload.id,
+          },
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_DOUBLE_DELIVERY',
+          details: {
+            'id': payload.id.length > 8
+                ? payload.id.substring(0, 8)
+                : payload.id,
+            'kept': durableMessage.transport,
+            'dropped': transport,
+          },
+        );
+        await maybeSendDeliveryReceipt(payload.id);
+        final markerAuthorityMatchesCanonical =
+            durableMessage.id == payload.id &&
+            durableMessage.contactPeerId == payload.senderPeerId &&
+            durableMessage.senderPeerId == payload.senderPeerId &&
+            durableMessage.timestamp == payload.timestamp &&
+            durableMessage.isIncoming;
+        if (markerAuthorityMatchesCanonical) {
+          await promoteNotificationDisplayCustody?.call(durableMessage);
+        }
+        return (HandleChatMessageResult.duplicate, null, null);
+      }
+    }
     if (resultAfterSave == HandleChatMessageResult.chatMessage) {
-      // Marker first: a process death after the next line but before the
-      // canonical save leaves a not-ready row; canonical mutation cannot commit
-      // without prior recoverable display custody.
+      // Ordinary text has already crossed its atomic parent transaction. Media
+      // and legacy lanes keep their existing marker-before-save ordering.
       await stageNotificationDisplayCustody?.call(conversationMessage);
     }
-    await messageRepo.saveMessage(conversationMessage);
+    if (!isOrdinaryDirectText) {
+      await messageRepo.saveMessage(conversationMessage);
+    }
     // 115 P2: the message is durably persisted — confirm custody to the
     // sender (relay-drain arrivals only, per the origin contract).
-    await maybeSendDeliveryReceipt(payload.id);
+    await maybeSendDeliveryReceipt(
+      payload.id,
+      mutationEventId: payload.isEdit ? payload.eventId : null,
+    );
   }
   if (shouldMaterializeDeferredEdit) {
     emitFlowEvent(

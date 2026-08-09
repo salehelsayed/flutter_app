@@ -45,6 +45,52 @@ Future<List<Map<String, dynamic>>> captureFlowEvents(
 
 void main() {
   group('sendDeliveryReceipt', () {
+    test('TC-349-06 v1 receipt adds optional mutation event map', () async {
+      final peer = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'receiver'),
+        sendMessageWithReplyResult: const SendMessageResult(
+          sent: true,
+          acked: true,
+        ),
+      );
+
+      expect(
+        await sendDeliveryReceipt(
+          p2pService: peer,
+          targetPeerId: 'peer-sender',
+          messageIds: const ['legacy', 'edit', 'delete'],
+          mutationEventIds: const <String, String>{
+            'edit': 'edit-event',
+            'delete': ' delete-event ',
+            'legacy': '   ',
+            'outside': 'outside-event',
+          },
+        ),
+        isTrue,
+      );
+      final envelope =
+          jsonDecode(peer.lastSendMessageContent!) as Map<String, dynamic>;
+      final body = envelope['payload'] as Map<String, dynamic>;
+      expect(body['messageIds'], ['legacy', 'edit', 'delete']);
+      expect(body['mutationEventIds'], <String, dynamic>{
+        'edit': 'edit-event',
+        'delete': 'delete-event',
+      });
+
+      await sendDeliveryReceipt(
+        p2pService: peer,
+        targetPeerId: 'peer-sender',
+        messageIds: const ['legacy'],
+        mutationEventIds: const <String, String>{'legacy': ' '},
+      );
+      final legacyEnvelope =
+          jsonDecode(peer.lastSendMessageContent!) as Map<String, dynamic>;
+      expect(
+        legacyEnvelope['payload'] as Map<String, dynamic>,
+        isNot(contains('mutationEventIds')),
+      );
+    });
+
     test(
       "builds plaintext v1 'delivery_receipt' envelope carrying messageIds and falls back to storeInInbox when live send is unacked",
       () async {

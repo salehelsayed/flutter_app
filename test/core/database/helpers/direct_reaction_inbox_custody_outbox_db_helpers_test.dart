@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
@@ -45,6 +46,70 @@ void main() {
       await tempDirectory.delete(recursive: true);
     }
   });
+
+  test(
+    'TC-349-01 ordinary text mutations stage atomically in shared v109',
+    () async {
+      const messageId = 'ordinary-edit-target';
+      const eventId = '34900000-0000-4000-8000-000000000001';
+      final initial = <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _recipient,
+        'sender_peer_id': _sender,
+        'text': 'before',
+        'timestamp': _t0,
+        'status': 'delivered',
+        'is_incoming': 0,
+        'created_at': _t0,
+        'private_media_policy_version': 0,
+        'private_media_mode': 'ordinary',
+        'private_media_state': 'none',
+      };
+      await db.insert('messages', initial);
+      final expected = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      final envelope = jsonEncode(<String, Object?>{
+        'type': 'chat_message',
+        'version': '2',
+        'id': messageId,
+        'eventId': eventId,
+        'senderPeerId': _sender,
+        'encrypted': const <String, Object?>{
+          'kem': 'kem-edit',
+          'ciphertext': 'cipher-edit',
+          'nonce': 'nonce-edit',
+        },
+      });
+      final staged = <String, Object?>{
+        ...expected,
+        'text': 'after',
+        'status': 'sending',
+        'edited_at': _t1,
+        'wire_envelope': envelope,
+      };
+
+      final stage = await dbStageOutgoingDirectTextMutationInboxCustody(
+        db,
+        expectedRow: expected,
+        stagedRow: staged,
+        kind: OutgoingOrdinaryAttemptKind.edit,
+        recipientPeerId: _recipient,
+        eventId: eventId,
+        wireEnvelope: envelope,
+      );
+
+      expect(stage.outcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect((await db.query('messages')).single['text'], 'after');
+      final owner = (await db.query(
+        'direct_reaction_inbox_custody_outbox',
+      )).single;
+      expect(owner['event_id'], eventId);
+      expect(owner['wire_envelope'], envelope);
+    },
+  );
 
   test(
     'TC-343-02 atomic direct-reaction custody preserves every transition and fails closed',

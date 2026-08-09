@@ -36,9 +36,9 @@ const _relocations = <String, List<String>>{
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/message_repository_impl.dart',
-    // Plan 347 publishes only the already-durable strict incoming parent and
-    // attachment projection; the adapter remains in the reviewed data layer.
-    '9a9648bdbe9522cc49a5b07a5a4045f11f7a532577d2ae0a54692485e6e10781',
+    // Plans 347 and 349 publish the strict incoming parent/attachment and
+    // ordinary-text mutation projections; the adapter remains in data.
+    '564ad9413b7ce07420ccb4f4e32cc68839560ab78da9e08b88b1bf4eff285fca',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[

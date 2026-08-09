@@ -6,6 +6,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_deletion_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,6 +16,26 @@ import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+
+class _MessageRepositoryWithoutOrdinaryApply implements MessageRepository {
+  _MessageRepositoryWithoutOrdinaryApply(this.message);
+
+  ConversationMessage message;
+  int saveCalls = 0;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async =>
+      id == message.id ? message : null;
+
+  @override
+  Future<void> saveMessage(ConversationMessage value) async {
+    saveCalls++;
+    message = value;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
 
 void main() {
   late FakeMessageRepository messageRepo;
@@ -84,6 +105,121 @@ void main() {
   });
 
   group('handleIncomingMessageDeletion', () {
+    test(
+      'TC-349-03 partial blank or mismatched deletion identity has zero side effects',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        const cases = <({String? outer, String? inner})>[
+          (outer: 'outer-only', inner: null),
+          (outer: null, inner: 'inner-only'),
+          (outer: 'outer', inner: 'inner'),
+          (outer: ' ', inner: ' '),
+        ];
+        for (final tc in cases) {
+          final localRepo = FakeMessageRepository();
+          localRepo.seed([
+            makeMessage(
+              id: 'event-parity-target',
+              contactPeerId: 'peer-alice',
+              senderPeerId: 'peer-alice',
+            ),
+          ]);
+          final inner = MessageDeletionPayload(
+            messageId: 'event-parity-target',
+            senderPeerId: 'peer-alice',
+            timestamp: '2026-08-09T00:00:00.000Z',
+            eventId: tc.inner,
+          );
+          var receiptCalls = 0;
+
+          final (result, tombstone) = await handleIncomingMessageDeletion(
+            message: ChatMessage(
+              from: 'peer-alice',
+              to: 'peer-bob',
+              content: MessageDeletionPayload.buildEncryptedEnvelope(
+                senderPeerId: 'peer-alice',
+                eventId: tc.outer,
+                kem: 'kem',
+                ciphertext: inner.toInnerJson(),
+                nonce: 'nonce',
+              ),
+              timestamp: '2026-08-09T00:00:00.000Z',
+              isIncoming: true,
+              transport: 'inbox',
+            ),
+            messageRepo: localRepo,
+            contactRepo: contactRepo,
+            bridge: PassthroughCryptoBridge(),
+            ownMlKemSecretKey: 'secret',
+            sendMutationDeliveryReceipt:
+                (_, {required mutationEventId}) async => receiptCalls++,
+          );
+
+          expect(result, HandleMessageDeletionResult.unauthorized);
+          expect(tombstone, isNull);
+          expect(
+            (await localRepo.getMessage('event-parity-target'))!.isDeleted,
+            isFalse,
+          );
+          expect(receiptCalls, 0);
+        }
+      },
+    );
+
+    test(
+      'TC-349-06 ordinary text deletion capability absence has zero persistence cleanup or receipt',
+      () async {
+        contactRepo.seed([makeContact('peer-alice')]);
+        final original = makeMessage(
+          id: 'ordinary-no-authority',
+          contactPeerId: 'peer-alice',
+          senderPeerId: 'peer-alice',
+        );
+        final localRepo = _MessageRepositoryWithoutOrdinaryApply(original);
+        await reactionRepo.saveReaction(
+          const MessageReaction(
+            id: 'ordinary-no-authority-reaction',
+            messageId: 'ordinary-no-authority',
+            emoji: '👍',
+            senderPeerId: 'peer-bob',
+            timestamp: '2026-08-09T00:00:00.000Z',
+            createdAt: '2026-08-09T00:00:00.000Z',
+          ),
+        );
+        var receiptCalls = 0;
+        final payload = MessageDeletionPayload(
+          messageId: original.id,
+          senderPeerId: 'peer-alice',
+          timestamp: '2026-08-09T00:01:00.000Z',
+        );
+
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: 'peer-alice',
+            to: 'peer-bob',
+            content: payload.toJson(),
+            timestamp: payload.timestamp,
+            isIncoming: true,
+            transport: 'inbox',
+          ),
+          messageRepo: localRepo,
+          contactRepo: contactRepo,
+          reactionRepo: reactionRepo,
+          sendDeliveryReceipt: (_) async => receiptCalls++,
+        );
+
+        expect(result, HandleMessageDeletionResult.unauthorized);
+        expect(tombstone, isNull);
+        expect(localRepo.saveCalls, 0);
+        expect(localRepo.message.isDeleted, isFalse);
+        expect(
+          await reactionRepo.getReactionsForMessage(original.id),
+          hasLength(1),
+        );
+        expect(receiptCalls, 0);
+      },
+    );
+
     test(
       'applies an authorized tombstone and cleans up local artifacts',
       () async {

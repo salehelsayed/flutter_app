@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:clock/clock.dart';
+import 'package:uuid/uuid.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -11,13 +12,16 @@ import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_deletion_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -25,6 +29,8 @@ import 'package:flutter_app/features/conversation/domain/repositories/direct_pri
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart';
+
+const Uuid _deletionUuid = Uuid();
 
 Future<int> deleteMessageForMe({
   required ConversationMessage message,
@@ -161,11 +167,13 @@ Future<String> buildDeletionWireEnvelope({
   required ConversationMessage originalMessage,
   required String deletedAt,
   required String recipientMlKemPublicKey,
+  String? eventId,
 }) async {
   final payload = MessageDeletionPayload(
     messageId: originalMessage.id,
     senderPeerId: originalMessage.senderPeerId,
     timestamp: deletedAt,
+    eventId: eventId,
   );
   final innerJson = payload.toInnerJson();
   final encryptResult = await callEncryptMessage(
@@ -181,6 +189,7 @@ Future<String> buildDeletionWireEnvelope({
     kem: encryptResult['kem'] as String,
     ciphertext: encryptResult['ciphertext'] as String,
     nonce: encryptResult['nonce'] as String,
+    eventId: eventId,
   );
 }
 
@@ -193,6 +202,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   MediaFileManager? mediaFileManager,
   Bridge? bridge,
   String? recipientMlKemPublicKey,
+  StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
   bool emitTimingEvent = true,
 }) async {
   final deleteStopwatch = clock.stopwatch()..start();
@@ -279,6 +289,37 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       messageRepo is OutgoingTransportMutationRepository
       ? messageRepo as OutgoingTransportMutationRepository
       : null;
+  final mutationCustodyCapability =
+      messageRepo is OutgoingDirectTextMutationInboxCustodyRepository
+      ? messageRepo as OutgoingDirectTextMutationInboxCustodyRepository
+      : null;
+  final mutationCustodyRepository =
+      mutationCustodyCapability?.supportsDirectTextMutationInboxCustody == true
+      ? mutationCustodyCapability
+      : null;
+  final ackCustodyStoreCapability = p2pService is AckOrExpiryInboxStore
+      ? p2pService as AckOrExpiryInboxStore
+      : null;
+  final availableStrictMutationStore =
+      storeInAckCustodyInboxDetailed ??
+      ackCustodyStoreCapability?.storeInAckCustodyInboxDetailed;
+  final StoreInAckCustodyInboxDetailedFn strictMutationStore =
+      availableStrictMutationStore ??
+      (
+        String toPeerId,
+        String message, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async => const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'ACK_OR_EXPIRY_STORE_UNAVAILABLE',
+      );
+  final ownsDirectTextMutationInboxCustody =
+      !requiresPrivateTerminalCleanup &&
+      currentMessage.privateMediaPolicy.version == 0 &&
+      currentMessage.privateMediaMode == PrivateMediaMode.ordinary &&
+      currentMessage.media.isEmpty &&
+      currentMessage.directMediaCustodyIntentId == null;
   if (!requiresPrivateTerminalCleanup && ordinaryTransportRepository == null) {
     emitFlowEvent(
       layer: 'FL',
@@ -289,7 +330,18 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
-  if (!p2pService.currentState.isStarted) {
+  if (ownsDirectTextMutationInboxCustody && mutationCustodyRepository == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_MUTATION_CUSTODY_UNAVAILABLE',
+      details: {'reason': 'missing_mutation_custody_repository'},
+    );
+    emitDeleteTiming(outcome: 'mutation_custody_unavailable');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
+  final nodeWasNotRunningAtEntry = !p2pService.currentState.isStarted;
+  if (nodeWasNotRunningAtEntry && !ownsDirectTextMutationInboxCustody) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_DELETE_FOR_EVERYONE_NODE_NOT_RUNNING',
@@ -317,7 +369,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.encryptionRequired, null);
   }
 
-  final deletedAt = DateTime.now().toUtc().toIso8601String();
+  final deletedAt = clock.now().toUtc().toIso8601String();
+  final mutationEventId = ownsDirectTextMutationInboxCustody
+      ? _deletionUuid.v4()
+      : null;
 
   final privateLifecycleRepository =
       messageRepo is DirectPrivateMediaLifecycleRepository
@@ -356,6 +411,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       originalMessage: currentMessage,
       deletedAt: deletedAt,
       recipientMlKemPublicKey: recipientKey,
+      eventId: mutationEventId,
     );
   } on _DeletionWireEnvelopeEncryptFailed catch (e) {
     emitFlowEvent(
@@ -411,6 +467,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     custodyCheckedAt: null,
   );
   late final ConversationMessage pendingTombstone;
+  DirectReactionInboxCustodyOutboxEntry? stagedMutationCustody;
   if (requiresPrivateTerminalCleanup) {
     final committed = await privateDeleteRepository!
         .commitPrivateDeleteForEveryoneTombstone(
@@ -427,6 +484,29 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       return (SendChatMessageResult.invalidMessage, null);
     }
     pendingTombstone = committed;
+  } else if (ownsDirectTextMutationInboxCustody) {
+    final staged = await mutationCustodyRepository!
+        .stageOutgoingDirectTextMutationInboxCustody(
+          expected: currentMessage,
+          staged: pendingTombstoneCandidate,
+          kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+          recipientPeerId: currentMessage.contactPeerId,
+          eventId: mutationEventId!,
+          wireEnvelope: jsonString,
+        );
+    final committedCustody = staged.custody;
+    if (!staged.authorizesTransport || committedCustody == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_MUTATION_COMMIT_PRESERVED',
+        details: {'id': _messageIdPreview(currentMessage.id)},
+      );
+      emitDeleteTiming(outcome: 'mutation_commit_preserved');
+      return (SendChatMessageResult.invalidMessage, null);
+    }
+    pendingTombstone = staged.message!;
+    stagedMutationCustody = committedCustody;
+    jsonString = committedCustody.wireEnvelope;
   } else {
     final staged = await ordinaryTransportRepository!
         .stageOutgoingOrdinaryAttempt(
@@ -444,6 +524,35 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       return (SendChatMessageResult.invalidMessage, null);
     }
     pendingTombstone = staged.message!;
+  }
+
+  if (nodeWasNotRunningAtEntry && ownsDirectTextMutationInboxCustody) {
+    ConversationMessage? authoritative = pendingTombstone;
+    try {
+      final settled = await ordinaryTransportRepository!
+          .settleOutgoingOrdinaryDeleteTombstone(
+            messageId: pendingTombstone.id,
+            expectedContactPeerId: pendingTombstone.contactPeerId,
+            expectedEnvelope: jsonString,
+            status: 'failed',
+            transport: null,
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.live,
+          );
+      authoritative = settled.message ?? authoritative;
+    } catch (_) {
+      // The exact event owner and visible tombstone are already durable.
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_NODE_NOT_RUNNING',
+      details: const {'custodyStaged': true},
+    );
+    emitDeleteTiming(
+      outcome: 'node_not_running',
+      details: const {'custodyStaged': true},
+    );
+    return (SendChatMessageResult.nodeNotRunning, authoritative);
   }
   if (requiresPrivateTerminalCleanup) {
     await reactionRepo?.deleteReactionsForMessage(pendingTombstone.id);
@@ -478,6 +587,25 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     );
   }
 
+  Future<bool>? mutationCustodyHedge;
+  if (ownsDirectTextMutationInboxCustody) {
+    final custody = stagedMutationCustody!;
+    mutationCustodyHedge =
+        drainOwnedDirectMutationInboxCustodyOutboxEntry(
+          entry: custody,
+          custodyRepository: mutationCustodyRepository!,
+          storeInAckCustodyInboxDetailed: strictMutationStore,
+        ).catchError((Object error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_DELETE_MUTATION_CUSTODY_HEDGE_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+          return false;
+        });
+    unawaited(mutationCustodyHedge);
+  }
+
   final targetPeerId = currentMessage.contactPeerId;
   final isAlreadyConnected = p2pService.currentState.connections.any(
     (connection) => connection.peerId == targetPeerId,
@@ -507,6 +635,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
               preserveLocalPeerLabel: true,
             ),
             isOutgoingPrivate: requiresPrivateTerminalCleanup,
+            ownsDirectTextMutationInboxCustody:
+                ownsDirectTextMutationInboxCustody,
             emitTimingEvent: emitTimingEvent,
             deleteStopwatch: deleteStopwatch,
           );
@@ -619,6 +749,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       provesDeviceDelivery: true,
       via: raceResult.via!,
       isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      ownsDirectTextMutationInboxCustody: ownsDirectTextMutationInboxCustody,
       emitTimingEvent: emitTimingEvent,
       deleteStopwatch: deleteStopwatch,
     );
@@ -644,6 +775,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
         provesDeviceDelivery: true,
         via: relayProbeResult.via!,
         isOutgoingPrivate: requiresPrivateTerminalCleanup,
+        ownsDirectTextMutationInboxCustody: ownsDirectTextMutationInboxCustody,
         emitTimingEvent: emitTimingEvent,
         deleteStopwatch: deleteStopwatch,
       );
@@ -662,50 +794,90 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       provesDeviceDelivery: false,
       via: writtenResult.via!,
       isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      ownsDirectTextMutationInboxCustody: ownsDirectTextMutationInboxCustody,
       emitTimingEvent: emitTimingEvent,
       deleteStopwatch: deleteStopwatch,
     );
   }
 
-  try {
-    final storedInInbox = await p2pService.storeInInbox(
-      targetPeerId,
-      jsonString,
-    );
-    if (storedInInbox) {
-      // Inbox acceptance is custody, not delivery (doc 115 D-3): the
-      // tombstone stays 'inboxed' + VISIBLE with the envelope retained until
-      // a deletion delivery receipt confirms the receiver applied it.
-      final inboxedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
-        pendingTombstone.copyWith(
-          status: 'inboxed',
-          transport: 'inbox',
-          wireEnvelope: jsonString,
-        ),
-      );
-      final persisted = await _persistOutgoingDeleteTombstoneResult(
-        messageRepo: messageRepo,
-        tombstone: inboxedTombstone,
-        expectedEnvelope: jsonString,
-        isOutgoingPrivate: requiresPrivateTerminalCleanup,
-      );
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_SUCCESS',
-        details: {'id': _messageIdPreview(originalMessage.id), 'via': 'inbox'},
-      );
-      emitDeleteTiming(
-        outcome: 'success',
-        details: {'status': 'inboxed', 'via': 'inbox'},
-      );
-      return (SendChatMessageResult.success, persisted);
+  // The protected mutation store starts beside the live race and never delays
+  // an authenticated device ACK. Once every live leg has failed, however, its
+  // already-running acceptance is the only successful transport outcome and
+  // must be reflected to the caller instead of reporting peerNotFound while
+  // the exact tombstone has already converged to durable inbox custody.
+  if (ownsDirectTextMutationInboxCustody &&
+      mutationCustodyHedge != null &&
+      await mutationCustodyHedge) {
+    ConversationMessage? convergedTombstone;
+    try {
+      convergedTombstone = await messageRepo.getMessage(pendingTombstone.id);
+    } catch (_) {
+      // Protected relay acceptance already retired the exact event. A failed
+      // publication read cannot revoke that custody transfer.
     }
-  } catch (e) {
     emitFlowEvent(
       layer: 'FL',
-      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_INBOX_ERROR',
-      details: {'error': e.toString()},
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_SUCCESS',
+      details: {
+        'id': _messageIdPreview(originalMessage.id),
+        'status': convergedTombstone?.status ?? 'preserved',
+        'via': convergedTombstone?.transport ?? 'inbox',
+      },
     );
+    emitDeleteTiming(
+      outcome: 'success',
+      details: {
+        'status': convergedTombstone?.status ?? 'preserved',
+        'via': convergedTombstone?.transport ?? 'inbox',
+      },
+    );
+    return (SendChatMessageResult.success, convergedTombstone);
+  }
+
+  if (!ownsDirectTextMutationInboxCustody) {
+    try {
+      final storedInInbox = await p2pService.storeInInbox(
+        targetPeerId,
+        jsonString,
+      );
+      if (storedInInbox) {
+        // Inbox acceptance is custody, not delivery (doc 115 D-3): the
+        // tombstone stays 'inboxed' + VISIBLE with the envelope retained until
+        // a deletion delivery receipt confirms the receiver applied it.
+        final inboxedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
+          pendingTombstone.copyWith(
+            status: 'inboxed',
+            transport: 'inbox',
+            wireEnvelope: jsonString,
+          ),
+        );
+        final persisted = await _persistOutgoingDeleteTombstoneResult(
+          messageRepo: messageRepo,
+          tombstone: inboxedTombstone,
+          expectedEnvelope: jsonString,
+          isOutgoingPrivate: requiresPrivateTerminalCleanup,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_DELETE_FOR_EVERYONE_SUCCESS',
+          details: {
+            'id': _messageIdPreview(originalMessage.id),
+            'via': 'inbox',
+          },
+        );
+        emitDeleteTiming(
+          outcome: 'success',
+          details: {'status': 'inboxed', 'via': 'inbox'},
+        );
+        return (SendChatMessageResult.success, persisted);
+      }
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_FOR_EVERYONE_INBOX_ERROR',
+        details: {'error': e.toString()},
+      );
+    }
   }
 
   final failedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
@@ -959,6 +1131,7 @@ _completeSuccessfulDeleteSend({
   required bool provesDeviceDelivery,
   required String via,
   required bool isOutgoingPrivate,
+  required bool ownsDirectTextMutationInboxCustody,
   required bool emitTimingEvent,
   required Stopwatch deleteStopwatch,
 }) async {
@@ -969,6 +1142,7 @@ _completeSuccessfulDeleteSend({
     provesDeviceDelivery: provesDeviceDelivery,
     tombstone: tombstone,
     via: via,
+    allowLegacyInboxFallback: !ownsDirectTextMutationInboxCustody,
   );
   final persisted = await _persistOutgoingDeleteTombstoneResult(
     messageRepo: messageRepo,
@@ -1043,6 +1217,7 @@ Future<ConversationMessage> _persistOutgoingDeleteResult({
   required bool provesDeviceDelivery,
   required ConversationMessage tombstone,
   required String via,
+  required bool allowLegacyInboxFallback,
 }) async {
   if (provesDeviceDelivery) {
     return normalizeOutgoingDeleteTombstoneVisibility(
@@ -1050,6 +1225,16 @@ Future<ConversationMessage> _persistOutgoingDeleteResult({
         status: 'delivered',
         transport: via,
         wireEnvelope: null,
+      ),
+    );
+  }
+
+  if (!allowLegacyInboxFallback) {
+    return normalizeOutgoingDeleteTombstoneVisibility(
+      tombstone.copyWith(
+        status: 'sent',
+        transport: via,
+        wireEnvelope: jsonString,
       ),
     );
   }

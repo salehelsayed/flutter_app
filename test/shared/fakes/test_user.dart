@@ -99,11 +99,13 @@ class TestUser {
     Future<void> receiptSender({
       required String contactPeerId,
       required List<String> messageIds,
+      Map<String, String>? mutationEventIds,
     }) {
       return send_delivery_receipt_uc.sendDeliveryReceipt(
         p2pService: p2p,
         targetPeerId: contactPeerId,
         messageIds: messageIds,
+        mutationEventIds: mutationEventIds,
       );
     }
 

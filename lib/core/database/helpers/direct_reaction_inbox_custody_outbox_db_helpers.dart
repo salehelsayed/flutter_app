@@ -1,15 +1,159 @@
-import 'dart:convert';
 import 'dart:math' as math;
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import '../direct_inbox_event_envelope.dart';
 import '../direct_reaction_inbox_custody_outbox_contract.dart';
+import '../outgoing_transport_mutation.dart';
+import 'messages_db_helpers.dart';
 
 const String _table = 'direct_reaction_inbox_custody_outbox';
 
 const int kDirectReactionInboxCustodyOutboxCapacity = 512;
 const int kDirectReactionInboxCustodyOutboxMaxLoadBatch = 50;
+
+/// Atomically mutates one ordinary outgoing text parent and retains the exact
+/// edit/deletion event in the existing physical v109 outbox.
+Future<DbDirectTextMutationCustodyStageResult>
+dbStageOutgoingDirectTextMutationInboxCustody(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String recipientPeerId,
+  required String eventId,
+  required String wireEnvelope,
+  int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeCustodyInsertForTest,
+}) {
+  final classified = classifyDirectInboxEventEnvelope(wireEnvelope);
+  final messageId = stagedRow['id'];
+  final senderPeerId = stagedRow['sender_peer_id'];
+  final createdAt = stagedRow['created_at'];
+  final isEdit = kind == OutgoingOrdinaryAttemptKind.edit;
+  final isDeletion =
+      kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+      kind == OutgoingOrdinaryAttemptKind.tombstoneRetry;
+  final exactEnvelopeKind =
+      (isEdit && classified?.kind == DirectInboxEventEnvelopeKind.edit) ||
+      (isDeletion && classified?.kind == DirectInboxEventEnvelopeKind.deletion);
+  final valid =
+      capacity >= 0 &&
+      expectedRow != null &&
+      _isNonBlank(recipientPeerId) &&
+      _isNonBlank(eventId) &&
+      _isNonBlank(messageId) &&
+      _isNonBlank(senderPeerId) &&
+      _isNonBlank(createdAt) &&
+      DateTime.tryParse(createdAt as String) != null &&
+      classified != null &&
+      classified.eventId == eventId &&
+      classified.senderPeerId == senderPeerId &&
+      exactEnvelopeKind &&
+      (!isEdit || classified.targetMessageId == messageId) &&
+      stagedRow['contact_peer_id'] == recipientPeerId &&
+      stagedRow['wire_envelope'] == wireEnvelope &&
+      _isStrictOrdinaryTextPolicy(expectedRow) &&
+      _isStrictOrdinaryTextPolicy(stagedRow) &&
+      (isEdit || _isExactOutgoingDeletionProjection(stagedRow));
+  if (!valid) {
+    return Future<DbDirectTextMutationCustodyStageResult>.value(
+      const DbDirectTextMutationCustodyStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        custodyRow: null,
+      ),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final existingCustody = await txn.query(
+      _table,
+      where: 'recipient_peer_id = ? AND event_id = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId],
+      limit: 1,
+    );
+    if (existingCustody.isNotEmpty) {
+      final row = existingCustody.single;
+      if (row['wire_envelope'] != wireEnvelope) {
+        return const DbDirectTextMutationCustodyStageResult(
+          outcome: OutgoingOrdinaryMutationOutcome.refused,
+          custodyRow: null,
+        );
+      }
+      return DbDirectTextMutationCustodyStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.idempotent,
+        custodyRow: Map<String, Object?>.from(row),
+      );
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_table',
+    );
+    final count = (countRows.single['count'] as num?)?.toInt() ?? 0;
+    if (count >= capacity) {
+      return const DbDirectTextMutationCustodyStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.refused,
+        custodyRow: null,
+      );
+    }
+
+    final hasMediaTable = (await txn.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'media_attachments' LIMIT 1",
+    )).isNotEmpty;
+    if (hasMediaTable) {
+      final directMedia = await txn.rawQuery(
+        'SELECT 1 FROM media_attachments '
+        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+        <Object?>[messageId, 'direct'],
+      );
+      if (directMedia.isNotEmpty) {
+        return const DbDirectTextMutationCustodyStageResult(
+          outcome: OutgoingOrdinaryMutationOutcome.refused,
+          custodyRow: null,
+        );
+      }
+    }
+
+    final messageOutcome =
+        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+        );
+    if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+      return DbDirectTextMutationCustodyStageResult(
+        outcome: messageOutcome == OutgoingOrdinaryMutationOutcome.idempotent
+            ? OutgoingOrdinaryMutationOutcome.refused
+            : messageOutcome,
+        custodyRow: null,
+      );
+    }
+
+    final custodyRow = <String, Object?>{
+      'recipient_peer_id': recipientPeerId,
+      'event_id': eventId,
+      'wire_envelope': wireEnvelope,
+      'retry_count': 0,
+      'last_attempt_at': null,
+      'last_error_code': null,
+      'created_at': createdAt,
+      'updated_at': createdAt,
+    };
+    await beforeCustodyInsertForTest?.call();
+    await txn.insert(
+      _table,
+      custodyRow,
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    return DbDirectTextMutationCustodyStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      custodyRow: custodyRow,
+    );
+  });
+}
 
 /// Atomically applies the canonical direct-reaction transition and retains its
 /// exact encrypted inbox obligation.
@@ -308,6 +452,134 @@ dbCompleteAcceptedDirectReactionInboxCustodyIfExact(
   });
 }
 
+/// Transfers one exact edit/deletion event to protected relay custody and, if
+/// its bytes still belong to exactly one current parent, projects that parent
+/// to visible `inboxed` state in the same transaction that retires the event.
+Future<DirectMutationInboxCustodyCompletionOutcome>
+dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+  Database db, {
+  required String recipientPeerId,
+  required String eventId,
+  required String expectedWireEnvelope,
+  required int? relayExpiresAt,
+}) {
+  final classified = classifyDirectInboxEventEnvelope(expectedWireEnvelope);
+  if (!_isNonBlank(recipientPeerId) ||
+      !_isNonBlank(eventId) ||
+      classified == null ||
+      !classified.isMutation ||
+      classified.eventId != eventId ||
+      relayExpiresAt == null ||
+      relayExpiresAt <= 0) {
+    return Future<DirectMutationInboxCustodyCompletionOutcome>.value(
+      DirectMutationInboxCustodyCompletionOutcome.stale,
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final custodyRows = await txn.query(
+      _table,
+      columns: const <String>['wire_envelope'],
+      where: 'recipient_peer_id = ? AND event_id = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId],
+      limit: 1,
+    );
+    if (custodyRows.isEmpty) {
+      return DirectMutationInboxCustodyCompletionOutcome.absent;
+    }
+    if (custodyRows.single['wire_envelope'] != expectedWireEnvelope) {
+      return DirectMutationInboxCustodyCompletionOutcome.stale;
+    }
+
+    final editTarget = classified.kind == DirectInboxEventEnvelopeKind.edit
+        ? classified.targetMessageId
+        : null;
+    final parents = await txn.query(
+      'messages',
+      where:
+          'contact_peer_id = ? AND is_incoming = 0 AND wire_envelope = ?'
+          '${editTarget == null ? '' : ' AND id = ?'}',
+      whereArgs: <Object?>[recipientPeerId, expectedWireEnvelope, ?editTarget],
+      limit: 2,
+    );
+    if (parents.length > 1) {
+      return DirectMutationInboxCustodyCompletionOutcome.ambiguous;
+    }
+
+    if (parents case [final parent]) {
+      final status = parent['status'];
+      final isDeletion =
+          classified.kind == DirectInboxEventEnvelopeKind.deletion;
+      final validParent =
+          _isStrictOrdinaryTextPolicy(parent) &&
+          const <String>{
+            'sending',
+            'sent',
+            'failed',
+            'inboxed',
+          }.contains(status) &&
+          (isDeletion
+              ? _isExactOutgoingDeletionProjection(parent)
+              : parent['deleted_at'] == null &&
+                    parent['deleted_by_peer_id'] == null &&
+                    parent['hidden_at'] == null &&
+                    _isNonBlank(parent['edited_at']));
+      if (!validParent) {
+        return DirectMutationInboxCustodyCompletionOutcome.stale;
+      }
+      final directMedia = await txn.rawQuery(
+        'SELECT 1 FROM media_attachments '
+        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+        <Object?>[parent['id'], 'direct'],
+      );
+      if (directMedia.isNotEmpty) {
+        return DirectMutationInboxCustodyCompletionOutcome.stale;
+      }
+      final alreadyProjected =
+          status == 'inboxed' &&
+          parent['transport'] == 'inbox' &&
+          parent['relay_expires_at'] == relayExpiresAt;
+      if (!alreadyProjected) {
+        final changed = await txn.update(
+          'messages',
+          <String, Object?>{
+            'status': 'inboxed',
+            'transport': 'inbox',
+            'relay_expires_at': relayExpiresAt,
+            'custody_checked_at': null,
+          },
+          where:
+              'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+              'AND status = ? AND wire_envelope = ?',
+          whereArgs: <Object?>[
+            parent['id'],
+            recipientPeerId,
+            status,
+            expectedWireEnvelope,
+          ],
+        );
+        if (changed != 1) {
+          throw StateError(
+            'direct mutation custody completion lost its exact parent',
+          );
+        }
+      }
+    }
+
+    final deleted = await txn.delete(
+      _table,
+      where: 'recipient_peer_id = ? AND event_id = ? AND wire_envelope = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId, expectedWireEnvelope],
+    );
+    if (deleted != 1) {
+      throw StateError(
+        'direct mutation custody completion lost its exact event',
+      );
+    }
+    return DirectMutationInboxCustodyCompletionOutcome.completed;
+  });
+}
+
 bool _canonicalTransitionMatches(
   Map<String, Object?> current,
   Map<String, Object?> incoming, {
@@ -330,23 +602,32 @@ bool _isExactV2DirectReactionEnvelope(
   required String targetMessageId,
   required String senderPeerId,
 }) {
-  try {
-    final decoded = jsonDecode(wireEnvelope);
-    if (decoded is! Map<String, dynamic>) return false;
-    final encrypted = decoded['encrypted'];
-    return decoded['type'] == 'message_reaction' &&
-        decoded['version'] == '2' &&
-        decoded['eventId'] == eventId &&
-        decoded['action'] == action &&
-        decoded['targetMessageId'] == targetMessageId &&
-        decoded['senderPeerId'] == senderPeerId &&
-        encrypted is Map<String, dynamic> &&
-        _isNonBlank(encrypted['kem']) &&
-        _isNonBlank(encrypted['ciphertext']) &&
-        _isNonBlank(encrypted['nonce']);
-  } catch (_) {
-    return false;
-  }
+  final classified = classifyDirectInboxEventEnvelope(wireEnvelope);
+  return classified?.kind == DirectInboxEventEnvelopeKind.reaction &&
+      classified?.eventId == eventId &&
+      classified?.reactionAction == action &&
+      classified?.targetMessageId == targetMessageId &&
+      classified?.senderPeerId == senderPeerId;
 }
+
+bool _isStrictOrdinaryTextPolicy(Map<String, Object?> row) =>
+    ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+    (row['private_media_policy_version'] as num?)?.toInt() == 0 &&
+    (row['private_media_mode'] as String? ?? 'ordinary') == 'ordinary' &&
+    row['private_media_duration_seconds'] == null &&
+    (row['private_media_state'] as String? ?? 'none') == 'none' &&
+    row['private_media_received_at_ms'] == null &&
+    row['private_media_expires_at_ms'] == null &&
+    row['private_media_revealed_at_ms'] == null &&
+    row['private_media_terminal_at_ms'] == null &&
+    row['private_media_clock_high_water_ms'] == null &&
+    row['direct_media_custody_intent_id'] == null;
+
+bool _isExactOutgoingDeletionProjection(Map<String, Object?> row) =>
+    row['text'] == '' &&
+    _isNonBlank(row['deleted_at']) &&
+    _isNonBlank(row['deleted_by_peer_id']) &&
+    row['deleted_by_peer_id'] == row['sender_peer_id'] &&
+    row['hidden_at'] == null;
 
 bool _isNonBlank(Object? value) => value is String && value.trim().isNotEmpty;

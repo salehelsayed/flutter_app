@@ -60,6 +60,52 @@ void main() {
       expect(restored.timestamp, payload.timestamp);
     });
 
+    test(
+      'TC-349-03 current deletion round-trips outer and inner event identity',
+      () {
+        const current = MessageDeletionPayload(
+          messageId: 'msg-current',
+          senderPeerId: 'peer-a',
+          timestamp: '2026-08-09T00:00:00.000Z',
+          eventId: '4d171e35-e573-460b-a3ca-5ad2eea9f662',
+        );
+        final outer = MessageDeletionPayload.parseEncryptedEnvelope(
+          MessageDeletionPayload.buildEncryptedEnvelope(
+            senderPeerId: current.senderPeerId,
+            eventId: current.eventId,
+            kem: 'kem',
+            ciphertext: 'ciphertext',
+            nonce: 'nonce',
+          ),
+        );
+        final inner = MessageDeletionPayload.fromDecryptedJson(
+          current.toInnerJson(),
+        );
+
+        expect(outer!['eventId'], current.eventId);
+        expect(inner!.eventId, current.eventId);
+      },
+    );
+
+    test('TC-349-03 legacy deletion remains readable', () {
+      final restored = MessageDeletionPayload.fromJson(payload.toJson());
+      final inner = MessageDeletionPayload.fromDecryptedJson(
+        payload.toInnerJson(),
+      );
+      final outer = MessageDeletionPayload.parseEncryptedEnvelope(
+        MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: payload.senderPeerId,
+          kem: 'kem',
+          ciphertext: 'ciphertext',
+          nonce: 'nonce',
+        ),
+      );
+
+      expect(restored!.eventId, isNull);
+      expect(inner!.eventId, isNull);
+      expect(outer, isNot(contains('eventId')));
+    });
+
     test('rejects invalid or incomplete envelopes', () {
       expect(MessageDeletionPayload.fromJson('not json'), isNull);
       expect(

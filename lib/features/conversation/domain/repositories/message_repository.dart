@@ -1,7 +1,9 @@
 import '../models/conversation_message.dart';
 import '../models/direct_inbox_custody_outbox_entry.dart';
+import '../models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../models/media_attachment.dart';
 import '../models/outgoing_ordinary_mutation_result.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
@@ -266,6 +268,79 @@ abstract interface class OutgoingDirectTextInboxCustodyRepository {
   completeAcceptedDirectInboxCustodyIfExact({
     required DirectInboxCustodyOutboxEntry expected,
     required int? relayExpiresAt,
+  });
+}
+
+class OutgoingDirectTextMutationCustodyStageResult {
+  const OutgoingDirectTextMutationCustodyStageResult({
+    required this.outcome,
+    required this.message,
+    required this.custody,
+  });
+
+  const OutgoingDirectTextMutationCustodyStageResult.refused({this.message})
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      custody = null;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final ConversationMessage? message;
+  final DirectReactionInboxCustodyOutboxEntry? custody;
+
+  bool get authorizesTransport => outcome.authorizesTransport;
+}
+
+/// Optional fail-closed authority for newly authored ordinary direct-text
+/// edit/delete events stored in the shared physical v109 outbox.
+abstract interface class OutgoingDirectTextMutationInboxCustodyRepository {
+  bool get supportsDirectTextMutationInboxCustody;
+
+  Future<OutgoingDirectTextMutationCustodyStageResult>
+  stageOutgoingDirectTextMutationInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  });
+
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  });
+
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  });
+
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  });
+}
+
+class IncomingOrdinaryTextApplyResult {
+  const IncomingOrdinaryTextApplyResult({
+    required this.outcome,
+    required this.message,
+  });
+
+  final IncomingOrdinaryTextMutationOutcome outcome;
+  final ConversationMessage? message;
+
+  bool get isDurable => outcome.isDurable;
+  bool get changed => outcome.changed;
+}
+
+/// Optional narrow transaction boundary for ordinary incoming initial, edit,
+/// and deletion projections that share one target message id.
+abstract interface class IncomingOrdinaryTextApplyRepository {
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
   });
 }
 

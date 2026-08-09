@@ -1,6 +1,8 @@
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 
@@ -11,9 +13,13 @@ class FakeMessageRepository
     implements
         MessageRepository,
         OutgoingTransportMutationRepository,
-        OutgoingDirectTextInboxCustodyRepository {
+        OutgoingDirectTextInboxCustodyRepository,
+        OutgoingDirectTextMutationInboxCustodyRepository,
+        IncomingOrdinaryTextApplyRepository {
   final List<ConversationMessage> _messages = [];
   final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
+  final Map<String, DirectReactionInboxCustodyOutboxEntry>
+  directMutationCustodyRows = {};
 
   // Call tracking
   int saveMessageCallCount = 0;
@@ -33,6 +39,9 @@ class FakeMessageRepository
 
   @override
   bool get supportsDirectTextInboxCustody => true;
+
+  @override
+  bool get supportsDirectTextMutationInboxCustody => true;
 
   /// Seed messages for testing.
   void seed(List<ConversationMessage> messages) {
@@ -723,6 +732,201 @@ class FakeMessageRepository
     return DirectInboxCustodyCompletionResult(
       outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
       message: advanced,
+    );
+  }
+
+  String _directMutationCustodyKey(String recipientPeerId, String eventId) =>
+      '$recipientPeerId\u0000$eventId';
+
+  @override
+  Future<OutgoingDirectTextMutationCustodyStageResult>
+  stageOutgoingDirectTextMutationInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    final key = _directMutationCustodyKey(recipientPeerId, eventId);
+    final owner = directMutationCustodyRows[key];
+    if (owner != null) {
+      final exact = owner.wireEnvelope == wireEnvelope;
+      return OutgoingDirectTextMutationCustodyStageResult(
+        outcome: exact
+            ? OutgoingOrdinaryMutationOutcome.idempotent
+            : OutgoingOrdinaryMutationOutcome.refused,
+        message: await getMessage(staged.id),
+        custody: exact ? owner : null,
+      );
+    }
+    final stagedResult = await stageOutgoingOrdinaryAttempt(
+      expected: expected,
+      staged: staged,
+      kind: kind,
+    );
+    if (!stagedResult.authorizesTransport) {
+      return OutgoingDirectTextMutationCustodyStageResult(
+        outcome: stagedResult.outcome,
+        message: stagedResult.message,
+        custody: null,
+      );
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    final custody = DirectReactionInboxCustodyOutboxEntry(
+      recipientPeerId: recipientPeerId,
+      eventId: eventId,
+      wireEnvelope: wireEnvelope,
+      retryCount: 0,
+      lastAttemptAt: null,
+      lastErrorCode: null,
+      createdAt: now,
+      updatedAt: now,
+    );
+    directMutationCustodyRows[key] = custody;
+    return OutgoingDirectTextMutationCustodyStageResult(
+      outcome: stagedResult.outcome,
+      message: stagedResult.message,
+      custody: custody,
+    );
+  }
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) async =>
+      directMutationCustodyRows[_directMutationCustodyKey(
+        recipientPeerId,
+        eventId,
+      )];
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    final key = _directMutationCustodyKey(
+      expected.recipientPeerId,
+      expected.eventId,
+    );
+    final current = directMutationCustodyRows[key];
+    if (current?.wireEnvelope != expected.wireEnvelope) return false;
+    final now = DateTime.now().toUtc().toIso8601String();
+    directMutationCustodyRows[key] = current!.copyWith(
+      retryCount: current.retryCount + 1,
+      lastAttemptAt: now,
+      lastErrorCode: errorCode,
+      updatedAt: now,
+    );
+    return true;
+  }
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final key = _directMutationCustodyKey(
+      expected.recipientPeerId,
+      expected.eventId,
+    );
+    final owner = directMutationCustodyRows[key];
+    if (owner == null) {
+      return DirectMutationInboxCustodyCompletionOutcome.absent;
+    }
+    if (owner.wireEnvelope != expected.wireEnvelope) {
+      return DirectMutationInboxCustodyCompletionOutcome.stale;
+    }
+    final matches = _messages
+        .where(
+          (message) =>
+              !message.isIncoming &&
+              message.contactPeerId == expected.recipientPeerId &&
+              message.wireEnvelope == expected.wireEnvelope,
+        )
+        .toList(growable: false);
+    if (matches.length > 1) {
+      return DirectMutationInboxCustodyCompletionOutcome.ambiguous;
+    }
+    if (matches case [final current]) {
+      final index = _messages.indexWhere((message) => message.id == current.id);
+      if (current.status != 'delivered') {
+        _messages[index] = current.copyWith(
+          status: 'inboxed',
+          transport: 'inbox',
+          relayExpiresAt: relayExpiresAt,
+        );
+      }
+    }
+    directMutationCustodyRows.remove(key);
+    return DirectMutationInboxCustodyCompletionOutcome.completed;
+  }
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult> applyIncomingOrdinaryTextMutation({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+  }) async {
+    final index = _messages.indexWhere((message) => message.id == incoming.id);
+    if (index < 0) {
+      _messages.add(incoming);
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.inserted,
+        message: incoming,
+      );
+    }
+    final current = _messages[index];
+    if (!current.isIncoming ||
+        current.contactPeerId != incoming.contactPeerId ||
+        current.senderPeerId != incoming.senderPeerId) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
+        message: current,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.deletion) {
+      if (current.isDeleted) {
+        return IncomingOrdinaryTextApplyResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.exactReplay,
+          message: current,
+        );
+      }
+      _messages[index] = incoming;
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.updated,
+        message: incoming,
+      );
+    }
+    if (kind == IncomingOrdinaryTextMutationKind.initial) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: current.isDeleted || current.editedAt != null
+            ? IncomingOrdinaryTextMutationOutcome.superseded
+            : IncomingOrdinaryTextMutationOutcome.exactReplay,
+        message: current,
+      );
+    }
+    if (current.isDeleted) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    final candidateTime = DateTime.tryParse(incoming.editedAt ?? '');
+    final currentTime = DateTime.tryParse(current.editedAt ?? '');
+    if (candidateTime == null ||
+        (currentTime != null && !candidateTime.isAfter(currentTime))) {
+      return IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.superseded,
+        message: current,
+      );
+    }
+    _messages[index] = incoming;
+    return IncomingOrdinaryTextApplyResult(
+      outcome: IncomingOrdinaryTextMutationOutcome.updated,
+      message: incoming,
     );
   }
 

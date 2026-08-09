@@ -27,6 +27,7 @@ class MessageDeletionListener {
   final Future<void> Function({
     required String contactPeerId,
     required List<String> messageIds,
+    Map<String, String>? mutationEventIds,
   })?
   sendDeliveryReceipt;
 
@@ -104,6 +105,13 @@ class MessageDeletionListener {
             : (messageId) => sendDeliveryReceipt!(
                 contactPeerId: message.from,
                 messageIds: [messageId],
+              ),
+        sendMutationDeliveryReceipt: sendDeliveryReceipt == null
+            ? null
+            : (messageId, {required mutationEventId}) => sendDeliveryReceipt!(
+                contactPeerId: message.from,
+                messageIds: [messageId],
+                mutationEventIds: <String, String>{messageId: mutationEventId},
               ),
       );
 

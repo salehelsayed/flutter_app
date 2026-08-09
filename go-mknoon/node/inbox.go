@@ -28,6 +28,7 @@ const (
 
 	CustodyKindDirectTextV108     = "direct_text_v108"
 	CustodyKindDirectReactionV109 = "direct_reaction_v109"
+	CustodyKindDirectMutationV109 = "direct_mutation_v109"
 
 	inboxStoreAckCustodyAction    = "store_custody_v1"
 	inboxRetrieveAckCustodyAction = "retrieve_custody_pending_v1"
@@ -530,7 +531,9 @@ func (n *Node) inboxStoreAckCustodyDetailedWithWakeToken(
 }
 
 func isSupportedInboxCustodyKind(kind string) bool {
-	return kind == CustodyKindDirectTextV108 || kind == CustodyKindDirectReactionV109
+	return kind == CustodyKindDirectTextV108 ||
+		kind == CustodyKindDirectReactionV109 ||
+		kind == CustodyKindDirectMutationV109
 }
 
 func (n *Node) exchangeInboxRequest(

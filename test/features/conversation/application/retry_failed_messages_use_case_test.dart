@@ -1808,11 +1808,11 @@ void main() {
         expect((outer['eventId'] as String).trim(), isNotEmpty);
         expect(inner['eventId'], outer['eventId']);
         expect(inner['action'], MessagePayload.actionEdit);
-        expect(inner['editedAt'], '2026-01-01T00:05:00.000Z');
+        expect(inner['editedAt'], '2026-01-01T00:05:00.000001Z');
         expect(inner['timestamp'], '2026-01-01T00:00:00.000Z');
         expect(
           messageRepo.lastSavedMessage?.editedAt,
-          '2026-01-01T00:05:00.000Z',
+          '2026-01-01T00:05:00.000001Z',
         );
         expect(
           messageRepo.lastSavedMessage?.createdAt,
@@ -1853,7 +1853,7 @@ void main() {
         expect(row!.status, 'failed');
         expect(
           row.editedAt,
-          '2026-01-01T00:05:00.000Z',
+          '2026-01-01T00:05:00.000001Z',
           reason: 'a failed fallback attempt must never null the edit metadata',
         );
         // The last persisted envelope must still be an EDIT envelope — the
@@ -1887,7 +1887,11 @@ void main() {
         // durable copy on this unknown-presence retry. The direct send carries
         // the rebuilt edit payload (asserted below) and the inbox attempt carries
         // the same rebuilt jsonString — so no v1 envelope leaks.
-        expect(p2pService.storeInInboxCallCount, 1);
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason: 'newly authored edits never use the legacy bool store',
+        );
         expect(
           events.any(
             (e) =>
@@ -1898,7 +1902,7 @@ void main() {
         // The rebuilt outgoing payload carries the row's edit metadata.
         final payload = decodeWirePayload(p2pService.lastSendMessageContent!);
         expect(payload['action'], MessagePayload.actionEdit);
-        expect(payload['editedAt'], '2026-01-01T00:05:00.000Z');
+        expect(payload['editedAt'], '2026-01-01T00:05:00.000001Z');
         expect(payload['id'], 'msg-legacy-edit-001');
         expect(payload['timestamp'], '2026-01-01T00:00:00.000Z');
       },
@@ -1951,7 +1955,7 @@ void main() {
           messageRepo.ordinaryAttemptStages.single.wireEnvelope!,
         );
         expect(persisted['action'], MessagePayload.actionEdit);
-        expect(persisted['editedAt'], '2026-01-01T00:05:00.000Z');
+        expect(persisted['editedAt'], '2026-01-01T00:05:00.000001Z');
       },
     );
   });

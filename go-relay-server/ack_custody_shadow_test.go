@@ -97,6 +97,39 @@ func TestRelayNotificationClosure_AckCustodyProtectedShadowAtomicity(t *testing.
 		t.Fatalf("promotion refanout count = %d, want 1 total", got)
 	}
 
+	t.Run("direct_mutation_legacy_first_promotion", func(t *testing.T) {
+		const peerID = "peer-mutation-promotion"
+		legacy := inboxMessage{
+			ID:        "relay-mutation-legacy",
+			From:      sender,
+			Message:   ackCustodyDeletionEnvelope("mutation-promotion", sender, "cipher"),
+			Timestamp: time.Now().Add(-time.Hour).UnixMilli(),
+		}
+		if result, err := backend.Store(peerID, legacy); err != nil || result != InboxStoreResultStored {
+			t.Fatalf("seed mutation legacy row = (%q, %v)", result, err)
+		}
+		result, promoted, err := inbox.StoreAckCustody(
+			peerID,
+			inboxMessage{
+				ID:        "must-not-remint-mutation",
+				From:      sender,
+				Message:   legacy.Message,
+				Timestamp: time.Now().UnixMilli(),
+			},
+			ackCustodyDirectMutationKind,
+		)
+		if err != nil || result != InboxStoreResultDuplicate {
+			t.Fatalf("mutation promotion = (%q, %v), want duplicate", result, err)
+		}
+		if promoted.ID != legacy.ID || promoted.Timestamp != legacy.Timestamp {
+			t.Fatalf("mutation promotion reminted identity: got %#v want %#v", promoted, legacy)
+		}
+		assertAtomicShadowPair(t, backend, peerID, legacy)
+		if got := recorder.SendCallCount(); got != 1 {
+			t.Fatalf("mutation promotion refanout count = %d, want 1", got)
+		}
+	})
+
 	// A known pre-commit failure exposes neither physical copy and cannot launch.
 	const preCommitPeer = "peer-pre-commit-abort"
 	backend.ackCustodyBeforeCommit = func() error { return errors.New("known abort") }

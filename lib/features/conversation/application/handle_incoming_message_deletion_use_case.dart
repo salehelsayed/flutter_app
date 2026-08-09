@@ -1,5 +1,8 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
@@ -21,6 +24,11 @@ enum HandleMessageDeletionResult {
   unauthorized,
 }
 
+typedef SendIncomingDeletionDeliveryReceipt =
+    Future<void> Function(String messageId);
+typedef SendIncomingDeletionMutationDeliveryReceipt =
+    Future<void> Function(String messageId, {required String mutationEventId});
+
 Future<(HandleMessageDeletionResult, ConversationMessage?)>
 handleIncomingMessageDeletion({
   required ChatMessage message,
@@ -35,11 +43,17 @@ handleIncomingMessageDeletion({
   // delete-for-everyone tombstone stays pending forever on the sender.
   // Same origin contract as the chat hook (relay-drain arrivals only);
   // duplicate re-application re-invokes (lost-receipt repair loop).
-  Future<void> Function(String messageId)? sendDeliveryReceipt,
+  SendIncomingDeletionDeliveryReceipt? sendDeliveryReceipt,
+  SendIncomingDeletionMutationDeliveryReceipt? sendMutationDeliveryReceipt,
   String? stagedEntryId,
 }) async {
-  Future<void> maybeSendDeliveryReceipt(String messageId) async {
-    if (sendDeliveryReceipt == null) return;
+  Future<void> maybeSendDeliveryReceipt(
+    String messageId, {
+    String? mutationEventId,
+  }) async {
+    if (sendDeliveryReceipt == null && sendMutationDeliveryReceipt == null) {
+      return;
+    }
     if (!shouldMintDeliveryReceipt(
       stagedEntryId: stagedEntryId,
       transport: message.transport,
@@ -47,7 +61,14 @@ handleIncomingMessageDeletion({
       return;
     }
     try {
-      await sendDeliveryReceipt(messageId);
+      if (mutationEventId != null && sendMutationDeliveryReceipt != null) {
+        await sendMutationDeliveryReceipt(
+          messageId,
+          mutationEventId: mutationEventId,
+        );
+      } else if (sendDeliveryReceipt != null) {
+        await sendDeliveryReceipt(messageId);
+      }
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -59,6 +80,7 @@ handleIncomingMessageDeletion({
       );
     }
   }
+
   emitFlowEvent(
     layer: 'FL',
     event: 'CHAT_MSG_DELETE_RECEIVE_START',
@@ -74,6 +96,7 @@ handleIncomingMessageDeletion({
     message.content,
   );
   final envelopeSenderPeerId = v2Envelope?['senderPeerId'] as String?;
+  final envelopeEventId = v2Envelope?['eventId'] as String?;
   if (v2Envelope != null) {
     if (bridge == null || ownMlKemSecretKey == null) {
       return (HandleMessageDeletionResult.decryptionFailed, null);
@@ -102,6 +125,24 @@ handleIncomingMessageDeletion({
 
   if (payload == null) {
     return (HandleMessageDeletionResult.notMessageDeletion, null);
+  }
+
+  final payloadEventId = payload.eventId;
+  final hasEnvelopeEventId = envelopeEventId != null;
+  final hasPayloadEventId = payloadEventId != null;
+  final invalidEventIdentity =
+      hasEnvelopeEventId != hasPayloadEventId ||
+      (hasEnvelopeEventId &&
+          (envelopeEventId.trim().isEmpty ||
+              payloadEventId!.trim().isEmpty ||
+              envelopeEventId != payloadEventId));
+  if (invalidEventIdentity) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_EVENT_ID_MISMATCH',
+      details: {'reason': 'partial_blank_or_mismatch'},
+    );
+    return (HandleMessageDeletionResult.unauthorized, null);
   }
 
   final senderMismatch =
@@ -159,6 +200,120 @@ handleIncomingMessageDeletion({
     );
   }
 
+  if (targetMessage != null &&
+      targetMessage.senderPeerId != payload.senderPeerId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_UNAUTHORIZED',
+      details: {
+        'messageId': payload.messageId.length > 8
+            ? payload.messageId.substring(0, 8)
+            : payload.messageId,
+      },
+    );
+    return (HandleMessageDeletionResult.unauthorized, null);
+  }
+
+  var isOrdinaryDirectText =
+      targetMessage == null ||
+      (targetMessage.privateMediaPolicy.version == 0 &&
+          targetMessage.privateMediaPolicy.mode == PrivateMediaMode.ordinary &&
+          targetMessage.directMediaCustodyIntentId == null &&
+          targetMessage.media.isEmpty);
+  if (isOrdinaryDirectText &&
+      targetMessage != null &&
+      mediaAttachmentRepo != null) {
+    try {
+      final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+        targetMessage.id,
+        owner: MediaOwnerLane.direct,
+      );
+      isOrdinaryDirectText = attachments.isEmpty;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_RECEIVE_ORDINARY_TEXT_CLASSIFY_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+  }
+
+  if (isOrdinaryDirectText) {
+    final ordinaryTextApplyRepository =
+        messageRepo is IncomingOrdinaryTextApplyRepository
+        ? messageRepo as IncomingOrdinaryTextApplyRepository
+        : null;
+    if (ordinaryTextApplyRepository == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_RECEIVE_ORDINARY_TEXT_AUTHORITY_UNAVAILABLE',
+        details: {
+          'messageId': payload.messageId.length > 8
+              ? payload.messageId.substring(0, 8)
+              : payload.messageId,
+        },
+      );
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+
+    final candidate = targetMessage == null
+        ? ConversationMessage(
+            id: payload.messageId,
+            contactPeerId: payload.senderPeerId,
+            senderPeerId: payload.senderPeerId,
+            text: '',
+            timestamp: payload.timestamp,
+            status: 'delivered',
+            isIncoming: true,
+            createdAt: DateTime.now().toUtc().toIso8601String(),
+            deletedAt: payload.timestamp,
+            deletedByPeerId: payload.senderPeerId,
+            transport: message.transport,
+          )
+        : buildDeletedMessageTombstone(
+            originalMessage: targetMessage,
+            deletedAt: payload.timestamp,
+            deletedByPeerId: payload.senderPeerId,
+            hiddenLocally: false,
+            status: targetMessage.status,
+            transport: targetMessage.transport,
+            wireEnvelope: null,
+          );
+    IncomingOrdinaryTextApplyResult applied;
+    try {
+      applied = await ordinaryTextApplyRepository
+          .applyIncomingOrdinaryTextMutation(
+            incoming: candidate,
+            kind: IncomingOrdinaryTextMutationKind.deletion,
+          );
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DELETE_RECEIVE_ORDINARY_TEXT_APPLY_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+    final stored = applied.message;
+    if (!applied.isDurable || stored == null) {
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
+    if (applied.changed) {
+      await _bestEffortIncomingCleanup(
+        message: stored,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+      );
+    }
+    await maybeSendDeliveryReceipt(
+      payload.messageId,
+      mutationEventId: payload.eventId,
+    );
+    return (HandleMessageDeletionResult.success, stored);
+  }
+
   if (targetMessage == null) {
     final tombstone = ConversationMessage(
       id: payload.messageId,
@@ -183,27 +338,20 @@ handleIncomingMessageDeletion({
             : payload.messageId,
       },
     );
-    await maybeSendDeliveryReceipt(payload.messageId);
-    return (HandleMessageDeletionResult.success, tombstone);
-  }
-
-  if (targetMessage.senderPeerId != payload.senderPeerId) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_DELETE_RECEIVE_UNAUTHORIZED',
-      details: {
-        'messageId': payload.messageId.length > 8
-            ? payload.messageId.substring(0, 8)
-            : payload.messageId,
-      },
+    await maybeSendDeliveryReceipt(
+      payload.messageId,
+      mutationEventId: payload.eventId,
     );
-    return (HandleMessageDeletionResult.unauthorized, null);
+    return (HandleMessageDeletionResult.success, tombstone);
   }
 
   if (targetMessage.isDeleted) {
     // Duplicate re-application: the deletion is already durably applied —
     // re-mint the receipt (the sender may have missed the first one).
-    await maybeSendDeliveryReceipt(payload.messageId);
+    await maybeSendDeliveryReceipt(
+      payload.messageId,
+      mutationEventId: payload.eventId,
+    );
     return (HandleMessageDeletionResult.success, targetMessage);
   }
 
@@ -233,7 +381,10 @@ handleIncomingMessageDeletion({
           : payload.messageId,
     },
   );
-  await maybeSendDeliveryReceipt(payload.messageId);
+  await maybeSendDeliveryReceipt(
+    payload.messageId,
+    mutationEventId: payload.eventId,
+  );
   return (HandleMessageDeletionResult.success, tombstone);
 }
 

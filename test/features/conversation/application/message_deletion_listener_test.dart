@@ -19,17 +19,20 @@ const _senderPeerId = 'peer-alice';
 ChatMessage _makeDeletionMessage({
   String senderPeerId = _senderPeerId,
   String messageId = 'msg-1',
+  String? eventId,
 }) {
   final payload = MessageDeletionPayload(
     messageId: messageId,
     senderPeerId: senderPeerId,
     timestamp: '2026-03-31T10:05:00.000Z',
+    eventId: eventId,
   );
   return ChatMessage(
     from: senderPeerId,
     to: 'peer-bob',
     content: MessageDeletionPayload.buildEncryptedEnvelope(
       senderPeerId: senderPeerId,
+      eventId: eventId,
       kem: 'fake-kem',
       ciphertext: payload.toInnerJson(),
       nonce: 'fake-nonce',
@@ -47,6 +50,10 @@ void main() {
   late FakeMediaAttachmentRepository mediaAttachmentRepo;
   late FakeMediaFileManager mediaFileManager;
   late MessageDeletionListener listener;
+  late List<
+    ({String peerId, List<String> messageIds, Map<String, String>? events})
+  >
+  receipts;
 
   setUp(() {
     deletionStreamController = StreamController<ChatMessage>.broadcast();
@@ -77,6 +84,7 @@ void main() {
     reactionRepo = FakeReactionRepository();
     mediaAttachmentRepo = FakeMediaAttachmentRepository();
     mediaFileManager = FakeMediaFileManager();
+    receipts = [];
 
     listener = MessageDeletionListener(
       deletionStream: deletionStreamController.stream,
@@ -87,6 +95,18 @@ void main() {
       mediaFileManager: mediaFileManager,
       bridge: PassthroughCryptoBridge(),
       getOwnMlKemSecretKey: () async => 'own-secret-key',
+      sendDeliveryReceipt:
+          ({
+            required contactPeerId,
+            required messageIds,
+            mutationEventIds,
+          }) async => receipts.add((
+            peerId: contactPeerId,
+            messageIds: List<String>.from(messageIds),
+            events: mutationEventIds == null
+                ? null
+                : Map<String, String>.from(mutationEventIds),
+          )),
     );
   });
 
@@ -115,22 +135,38 @@ void main() {
       expect(stored!.isDeleted, isTrue);
     });
 
-    test('stop cancels subscription and ignores later incoming messages', () async {
-      final received = <ConversationMessage>[];
-      listener.incomingDeletionStream.listen(received.add);
-
+    test('current deletion forwards exact mutation event receipt', () async {
+      const eventId = 'bf23dfc6-86aa-4455-a5a6-b9379fe40aac';
       listener.start();
-      listener.stop();
 
-      deletionStreamController.add(_makeDeletionMessage());
+      deletionStreamController.add(_makeDeletionMessage(eventId: eventId));
       await Future.delayed(const Duration(milliseconds: 100));
 
-      expect(received, isEmpty);
-
-      final stored = await messageRepo.getMessage('msg-1');
-      expect(stored, isNotNull);
-      expect(stored!.isDeleted, isFalse);
+      expect(receipts, hasLength(1));
+      expect(receipts.single.peerId, _senderPeerId);
+      expect(receipts.single.messageIds, ['msg-1']);
+      expect(receipts.single.events, {'msg-1': eventId});
     });
+
+    test(
+      'stop cancels subscription and ignores later incoming messages',
+      () async {
+        final received = <ConversationMessage>[];
+        listener.incomingDeletionStream.listen(received.add);
+
+        listener.start();
+        listener.stop();
+
+        deletionStreamController.add(_makeDeletionMessage());
+        await Future.delayed(const Duration(milliseconds: 100));
+
+        expect(received, isEmpty);
+
+        final stored = await messageRepo.getMessage('msg-1');
+        expect(stored, isNotNull);
+        expect(stored!.isDeleted, isFalse);
+      },
+    );
 
     test('dispose closes stream', () {
       listener.start();

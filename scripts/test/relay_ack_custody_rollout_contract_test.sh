@@ -55,12 +55,17 @@ for metric in \
 done
 
 require_fixed 'run_ack_custody_go_gate()' "$GATE_SCRIPT"
+require_fixed 'direct_mutation_v109' \
+  lib/core/services/inbox_store_outcome.dart \
+  go-relay-server/ack_custody.go \
+  go-mknoon/node/inbox.go
 require_fixed 'TestInboxAckCustodyMixedRelayAndProofContract' "$GATE_SCRIPT"
 require_fixed 'TestInboxAckCustodyReceiveFanoutContract' "$GATE_SCRIPT"
 require_fixed 'TestInboxAckCustodyMediaExpiryCeiling' "$GATE_SCRIPT"
 require_fixed 'TestDispatchInboxAckCustodyContract' "$GATE_SCRIPT"
 require_fixed 'TestInboxStoreMediaExpiryCeilingBridgeContract' "$GATE_SCRIPT"
 require_fixed 'TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling' "$GATE_SCRIPT"
+require_fixed 'TestRelayNotificationClosure_DirectMutationCustody' "$GATE_SCRIPT"
 require_fixed 'TestAckCustodyMixedVersionMatrix' "$GATE_SCRIPT"
 require_fixed 'TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace' "$GATE_SCRIPT"
 require_fixed 'go_binding_staleness_contract_test.sh' "$GATE_SCRIPT"
