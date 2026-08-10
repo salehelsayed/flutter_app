@@ -1082,6 +1082,45 @@ class _ConversationWiredState extends State<ConversationWired>
     );
   }
 
+  /// 354: promotes the exact convention-pending plaintext to its canonical
+  /// private path without network work or re-encryption, then preserves the
+  /// strict generation's key, nonce, hashes and blob commitment byte-for-byte.
+  ///
+  /// Only the canonical local path may differ from the strict projection; any
+  /// crypto drift between the published v111 generation and this completion is
+  /// a hard refusal rather than a silent overwrite.
+  Future<MediaAttachment> _canonicalizeStrictPrivateCompletion({
+    required String messageId,
+    required _PreparedConversationMediaUpload plan,
+    required MediaAttachment strict,
+  }) async {
+    if (strict.id != plan.pendingAttachment.id ||
+        strict.mime != plan.pendingAttachment.mime ||
+        strict.size != plan.pendingAttachment.size ||
+        strict.mediaType != plan.pendingAttachment.mediaType ||
+        strict.blobCustody == null ||
+        strict.contentHash == null ||
+        strict.encryptionKeyBase64 == null ||
+        strict.encryptionNonce == null ||
+        strict.encryptionScheme == null) {
+      throw StateError('private strict completion identity drifted');
+    }
+    final canonical = await _buildLocalSuccessAttachmentFromPlan(
+      messageId: messageId,
+      plan: plan,
+    );
+    final canonicalPath = canonical.localPath;
+    if (canonicalPath == null || canonicalPath.isEmpty) {
+      throw StateError('private strict completion has no canonical path');
+    }
+    return strict.copyWith(
+      messageId: messageId,
+      localPath: canonicalPath,
+      downloadStatus: 'done',
+      ownerLane: MediaOwnerLane.direct,
+    );
+  }
+
   Future<MediaAttachment> _finalizeUploadedAttachmentFromPlan({
     required String messageId,
     required _PreparedConversationMediaUpload plan,
@@ -3836,6 +3875,46 @@ class _ConversationWiredState extends State<ConversationWired>
         }
       }
 
+      // 354: protected/View-Once preparation authority is the durable private
+      // parent plus its single convention-owned pending attachment. There is
+      // no v110 token here and none is minted; a crossed/partial projection
+      // deliberately leaves this snapshot absent so the unchanged legacy
+      // private upload path is used instead.
+      ConversationMessage? privateStrictParent;
+      MediaAttachment? privateStrictAttachment;
+      if (privateTransferLease != null &&
+          preparedUploads.length == 1 &&
+          mediaToUpload.length == 1) {
+        try {
+          final mediaRepository = widget.mediaAttachmentRepo;
+          final durableParent = await widget.messageRepo.getMessage(
+            optimisticMessage.id,
+          );
+          final durableAttachments = mediaRepository == null
+              ? const <MediaAttachment>[]
+              : await mediaRepository.getAttachmentsForMessage(
+                  optimisticMessage.id,
+                  owner: MediaOwnerLane.direct,
+                );
+          final authored = preparedUploads.single.pendingAttachment;
+          if (durableParent != null &&
+              durableAttachments.length == 1 &&
+              durableParent.directMediaCustodyIntentId == null &&
+              _sameComposerAuthoredPendingProjection(<MediaAttachment>[
+                authored,
+              ], durableAttachments)) {
+            privateStrictParent = durableParent;
+            privateStrictAttachment = durableAttachments.single;
+          }
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_PRIVATE_MEDIA_CUSTODY_SNAPSHOT_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
+          );
+        }
+      }
+
       // Acquire background task BEFORE upload so iOS cannot suspend during upload.
       final bgTaskId = widget.bridge != null
           ? await callBgBegin(widget.bridge!)
@@ -3890,7 +3969,115 @@ class _ConversationWiredState extends State<ConversationWired>
                 manifestFailureAttachments.length == mediaToUpload.length &&
                 preparedUploads.length == mediaToUpload.length &&
                 blobCustodyRepository != null;
-            if (strictBlobSelected) {
+            // 354: exactly one v1 Protected image/video or View-Once image
+            // initial may adopt the same strict owner. The producer matrix is
+            // re-checked here so a widened composer selection can never reach
+            // encryption or network.
+            final strictPrivateBlobSelected =
+                kDirectMediaBlobCustodyClientEnabled &&
+                privateTransferLease != null &&
+                privateStrictParent != null &&
+                privateStrictAttachment != null &&
+                preparedUploads.length == 1 &&
+                mediaToUpload.length == 1 &&
+                blobCustodyRepository != null &&
+                blobCustodyRepository
+                    is OutgoingDirectPrivateMediaBlobGenerationRepository &&
+                (blobCustodyRepository
+                        as OutgoingDirectPrivateMediaBlobGenerationRepository)
+                    .supportsOutgoingDirectPrivateMediaBlobGeneration &&
+                privateMediaInitialProducerMatrixAllows(
+                  policyVersion: privateMediaPolicy.version,
+                  mode: privateMediaPolicy.mode,
+                  mime: privateStrictAttachment.mime,
+                  mediaType: privateStrictAttachment.mediaType,
+                );
+            if (strictPrivateBlobSelected) {
+              final transferLease = privateTransferLease;
+              final plan = preparedUploads.single;
+              await _uploadActivityController.startTracking(
+                uploadOperation,
+                totalBytes: mediaToUpload.single.budgetBytes,
+              );
+              relayTrackingStarted = true;
+              _uploadActivityController.markUploadStarted(
+                uploadOperation,
+                privateStrictAttachment.id,
+              );
+              final coordinator =
+                  widget.preparedDirectMediaBlobCustodyCoordinator ??
+                  PreparedDirectMediaBlobCustodyCoordinator(
+                    repository: blobCustodyRepository,
+                    artifactStore: DirectMediaBlobArtifactStore(),
+                    prepareArtifact: widget.prepareEncryptedMediaArtifactFn,
+                  );
+              final strictResult = await coordinator.prepareAndUploadPrivate(
+                bridge: widget.bridge!,
+                identityPeerId: identity.peerId,
+                recipientPeerId: _contact.peerId,
+                expectedParent: privateStrictParent,
+                source: PreparedDirectMediaBlobSource(
+                  attachment: privateStrictAttachment,
+                  plaintextPath: plan.absoluteDurablePath,
+                ),
+                onGenerationReady:
+                    widget.p2pService.isLocalPeer(_contact.peerId)
+                    ? (artifacts) async {
+                        for (final artifact in artifacts) {
+                          await widget.p2pService.sendLocalMedia(
+                            peerId: _contact.peerId,
+                            filePath: artifact.absoluteCiphertextPath,
+                            mime: kOpaqueMediaTransportMime,
+                            mediaId: artifact.attachment.id,
+                            fromPeerId: identity.peerId,
+                            durationMs: artifact.attachment.durationMs,
+                            enc: true,
+                            encScheme: artifact.attachment.encryptionScheme,
+                          );
+                        }
+                      }
+                    : null,
+              );
+              if (!strictResult.isComplete ||
+                  strictResult.attachments.length != 1) {
+                await _uploadActivityController.complete(uploadOperation);
+                _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                if (mounted) _updateComposerState(isUploading: false);
+                return;
+              }
+              final MediaAttachment completedPrivateAttachment;
+              try {
+                completedPrivateAttachment =
+                    await _canonicalizeStrictPrivateCompletion(
+                      messageId: optimisticMessage.id,
+                      plan: plan,
+                      strict: strictResult.attachments.single,
+                    );
+              } catch (error) {
+                emitFlowEvent(
+                  layer: 'FL',
+                  event: 'CONV_FL_PRIVATE_STRICT_CANONICALIZE_ERROR',
+                  details: {'errorType': error.runtimeType.toString()},
+                );
+                await _uploadActivityController.complete(uploadOperation);
+                _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                if (mounted) _updateComposerState(isUploading: false);
+                return;
+              }
+              uploadedAttachments.add(
+                await _commitForegroundDirectPrivateCompletion(
+                  lease: transferLease,
+                  plan: plan,
+                  uploaded: completedPrivateAttachment,
+                ),
+              );
+              _uploadActivityController.markUploadCompleted(
+                uploadOperation,
+                mediaToUpload.single.budgetBytes,
+              );
+            } else if (strictBlobSelected) {
               final totalBytes = mediaToUpload.fold<int>(
                 0,
                 (sum, item) => sum + item.budgetBytes,

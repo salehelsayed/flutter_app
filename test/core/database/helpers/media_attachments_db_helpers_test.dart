@@ -9,6 +9,8 @@ import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_h
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -24,6 +26,10 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 
 /// One reviewed entry's ephemeral forward authorization token.
 const _tc350ForwardToken = 'tc350-authorized-forward-token';
+
+/// Plan 354 fixture ciphertext identity.
+const _tc354ContentHash =
+    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 
 void main() {
   late Database db;
@@ -5374,5 +5380,761 @@ void main() {
         );
       }
     });
+  });
+
+  group('Plan 354 protected and view-once direct-media blob custody', () {
+    String privatePendingPath({
+      required String messageId,
+      required String attachmentId,
+      required String mime,
+    }) => MediaFilePathConvention.relativePathForPendingUpload(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+
+    Future<Map<String, Object?>> seedPrivateParent({
+      required String messageId,
+      required String recipientPeerId,
+      String mode = 'protected',
+      String state = 'available',
+      Object? terminalAtMs,
+      Object? revealedAtMs,
+      String status = 'sending',
+      Object? wireEnvelope,
+    }) async {
+      final parent = <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': recipientPeerId,
+        'sender_peer_id': 'peer-local',
+        'text': '',
+        'timestamp': '2026-08-10T09:00:00.000Z',
+        'status': status,
+        'is_incoming': 0,
+        'created_at': '2026-08-10T09:00:00.000Z',
+        'dedup_key': messageId,
+        'wire_envelope': wireEnvelope,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_state': state,
+        'private_media_terminal_at_ms': terminalAtMs,
+        'private_media_revealed_at_ms': revealedAtMs,
+      };
+      await db.insert('messages', parent);
+      return (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
+    }
+
+    Future<Map<String, Object?>> seedPrivatePending({
+      required String messageId,
+      required String attachmentId,
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+    }) async {
+      final row = makeAttachmentRow(
+        id: attachmentId,
+        messageId: messageId,
+        mime: mime,
+        size: 4096,
+        mediaType: mediaType,
+        width: 100,
+        height: 200,
+        localPath: privatePendingPath(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: mime,
+        ),
+        downloadStatus: 'upload_pending',
+      );
+      await dbInsertMediaAttachment(db, row);
+      return (await db.query(
+        'media_attachments',
+        where: 'id = ?',
+        whereArgs: <Object?>[attachmentId],
+      )).single;
+    }
+
+    Map<String, Object?> preparedFrom(
+      Map<String, Object?> pending, {
+      String contentHash = _tc354ContentHash,
+      String nonce = 'nonce-private-354',
+      String scheme = 'blob_aes_256_gcm_v1',
+    }) => <String, Object?>{
+      ...pending,
+      'content_hash': contentHash,
+      'encryption_key_base64': secureStoreReferenceForKey(
+        mediaAttachmentEncryptionKeyStoreName(pending['id']! as String),
+      ),
+      'encryption_nonce': nonce,
+      'encryption_scheme': scheme,
+    };
+
+    DirectMediaBlobCustodyRow custodyFrom(
+      Map<String, Object?> prepared, {
+      required String messageId,
+      required String recipientPeerId,
+      DirectMediaBlobCustodyState state =
+          DirectMediaBlobCustodyState.outgoingPrepared,
+      int? expiresAtMs,
+      String? custodyRelayPeerId,
+      String? incarnationId,
+    }) => DirectMediaBlobCustodyRow(
+      attachmentId: prepared['id']! as String,
+      messageId: messageId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      state: state,
+      inboxCustodyIncarnationId: incarnationId,
+      recipientPeerId: recipientPeerId,
+      ciphertextRelativePath:
+          'direct_media_blob_custody_v1/${'b' * 64}/${prepared['id']}.blob',
+      contentHash: prepared['content_hash']! as String,
+      ciphertextSize: 5120,
+      expiresAtMs: expiresAtMs,
+      custodyRelayPeerId: custodyRelayPeerId,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: '2026-08-10T09:00:01.000Z',
+      updatedAt: '2026-08-10T09:00:01.000Z',
+    );
+
+    test(
+      'TC-354-01a private pending projection publishes exact v111 atomically',
+      () async {
+        // Positive producer matrix: Protected image, Protected video and
+        // View-Once image each publish exactly one prepared generation.
+        final positives = <({String suffix, String mode, String mime,
+            String mediaType})>[
+          (
+            suffix: 'protected-image',
+            mode: 'protected',
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          ),
+          (
+            suffix: 'protected-video',
+            mode: 'protected',
+            mime: 'video/mp4',
+            mediaType: 'video',
+          ),
+          (
+            suffix: 'viewonce-image',
+            mode: 'view_once',
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          ),
+        ];
+        for (final positive in positives) {
+          final messageId = 'tc354-01a-${positive.suffix}';
+          final recipientPeerId = 'tc354-peer-${positive.suffix}';
+          final attachmentId = '$messageId-a';
+          final parent = await seedPrivateParent(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            mode: positive.mode,
+          );
+          final pending = await seedPrivatePending(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: positive.mime,
+            mediaType: positive.mediaType,
+          );
+          final prepared = preparedFrom(pending);
+          final custody = custodyFrom(
+            prepared,
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+          );
+          final applied =
+              await dbStageOutgoingDirectPrivateMediaBlobGeneration(
+                db,
+                expectedParentRow: parent,
+                expectedAttachmentRow: pending,
+                preparedAttachmentRow: prepared,
+                custodyRow: custody,
+              );
+          expect(
+            applied.outcome,
+            DirectMediaBlobGenerationDbStageOutcome.applied,
+            reason: positive.suffix,
+          );
+          final storedAttachment = (await db.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[attachmentId],
+          )).single;
+          // The convention-owned pending row and path survive publication.
+          expect(storedAttachment['download_status'], 'upload_pending');
+          expect(storedAttachment['local_path'], pending['local_path']);
+          expect(storedAttachment['content_hash'], _tc354ContentHash);
+          expect(storedAttachment['encryption_scheme'], 'blob_aes_256_gcm_v1');
+          final storedCustody = await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          expect(storedCustody, hasLength(1));
+          expect(
+            storedCustody.single['state'],
+            DirectMediaBlobCustodyState.outgoingPrepared.dbValue,
+          );
+          expect(storedCustody.single['inbox_custody_incarnation_id'], isNull);
+          // Private preparation never mints a v110 intent.
+          expect(
+            (await db.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            )).single['direct_media_custody_intent_id'],
+            isNull,
+          );
+
+          // Exact replay adopts the same winner without a second row.
+          final replayed =
+              await dbStageOutgoingDirectPrivateMediaBlobGeneration(
+                db,
+                expectedParentRow: parent,
+                expectedAttachmentRow: pending,
+                preparedAttachmentRow: prepared,
+                custodyRow: custody,
+              );
+          expect(
+            replayed.outcome,
+            DirectMediaBlobGenerationDbStageOutcome.idempotent,
+          );
+          expect(
+            await db.query(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            hasLength(1),
+          );
+        }
+
+        // Negative producer matrix and crossed durable state: every refusal
+        // leaves both tables byte-identical.
+        final negatives =
+            <({String suffix, String mode, String mime, String mediaType})>[
+              (
+                suffix: 'viewonce-video',
+                mode: 'view_once',
+                mime: 'video/mp4',
+                mediaType: 'video',
+              ),
+              (
+                suffix: 'protected-gif',
+                mode: 'protected',
+                mime: 'image/gif',
+                mediaType: 'image',
+              ),
+              (
+                suffix: 'protected-audio',
+                mode: 'protected',
+                mime: 'audio/mp4',
+                mediaType: 'audio',
+              ),
+              (
+                suffix: 'disappearing',
+                mode: 'disappearing',
+                mime: 'image/jpeg',
+                mediaType: 'image',
+              ),
+            ];
+        for (final negative in negatives) {
+          final messageId = 'tc354-01a-neg-${negative.suffix}';
+          final recipientPeerId = 'tc354-peer-neg-${negative.suffix}';
+          final attachmentId = '$messageId-a';
+          final parent = await seedPrivateParent(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            mode: negative.mode,
+          );
+          final pending = await seedPrivatePending(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: negative.mime,
+            mediaType: negative.mediaType,
+          );
+          final prepared = preparedFrom(pending);
+          final refused =
+              await dbStageOutgoingDirectPrivateMediaBlobGeneration(
+                db,
+                expectedParentRow: parent,
+                expectedAttachmentRow: pending,
+                preparedAttachmentRow: prepared,
+                custodyRow: custodyFrom(
+                  prepared,
+                  messageId: messageId,
+                  recipientPeerId: recipientPeerId,
+                ),
+              );
+          expect(
+            refused.outcome,
+            DirectMediaBlobGenerationDbStageOutcome.refused,
+            reason: negative.suffix,
+          );
+          expect(
+            await db.query(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+          expect(
+            (await db.query(
+              'media_attachments',
+              where: 'id = ?',
+              whereArgs: <Object?>[attachmentId],
+            )).single['content_hash'],
+            isNull,
+          );
+        }
+
+        // Crossed sender state: a terminal parent may not mint a fresh
+        // generation, and a live v108 owner blocks publication entirely.
+        final terminalId = 'tc354-01a-terminal';
+        final terminalParent = await seedPrivateParent(
+          messageId: terminalId,
+          recipientPeerId: 'tc354-peer-terminal',
+          state: 'consumed',
+          terminalAtMs: 1900000000000,
+        );
+        final terminalPending = await seedPrivatePending(
+          messageId: terminalId,
+          attachmentId: '$terminalId-a',
+        );
+        final terminalPrepared = preparedFrom(terminalPending);
+        expect(
+          (await dbStageOutgoingDirectPrivateMediaBlobGeneration(
+            db,
+            expectedParentRow: terminalParent,
+            expectedAttachmentRow: terminalPending,
+            preparedAttachmentRow: terminalPrepared,
+            custodyRow: custodyFrom(
+              terminalPrepared,
+              messageId: terminalId,
+              recipientPeerId: 'tc354-peer-terminal',
+            ),
+          )).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[terminalId],
+          ),
+          isEmpty,
+        );
+
+        final v108Id = 'tc354-01a-live-v108';
+        final v108Parent = await seedPrivateParent(
+          messageId: v108Id,
+          recipientPeerId: 'tc354-peer-v108',
+        );
+        final v108Pending = await seedPrivatePending(
+          messageId: v108Id,
+          attachmentId: '$v108Id-a',
+        );
+        await db.insert('direct_inbox_custody_outbox', <String, Object?>{
+          'recipient_peer_id': 'tc354-peer-v108',
+          'message_id': v108Id,
+          'incarnation_id': 'c' * 32,
+          'wire_envelope': '{"type":"chat_message"}',
+          'retry_count': 0,
+          'created_at': '2026-08-10T09:00:02.000Z',
+          'updated_at': '2026-08-10T09:00:02.000Z',
+        });
+        final v108Prepared = preparedFrom(v108Pending);
+        expect(
+          (await dbStageOutgoingDirectPrivateMediaBlobGeneration(
+            db,
+            expectedParentRow: v108Parent,
+            expectedAttachmentRow: v108Pending,
+            preparedAttachmentRow: v108Prepared,
+            custodyRow: custodyFrom(
+              v108Prepared,
+              messageId: v108Id,
+              recipientPeerId: 'tc354-peer-v108',
+            ),
+          )).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[v108Id],
+          ),
+          isEmpty,
+        );
+
+        // A crossed prepared candidate (hash drift against its custody row)
+        // refuses all-or-zero.
+        final crossedId = 'tc354-01a-crossed';
+        final crossedParent = await seedPrivateParent(
+          messageId: crossedId,
+          recipientPeerId: 'tc354-peer-crossed',
+        );
+        final crossedPending = await seedPrivatePending(
+          messageId: crossedId,
+          attachmentId: '$crossedId-a',
+        );
+        final crossedPrepared = preparedFrom(crossedPending);
+        expect(
+          (await dbStageOutgoingDirectPrivateMediaBlobGeneration(
+            db,
+            expectedParentRow: crossedParent,
+            expectedAttachmentRow: crossedPending,
+            preparedAttachmentRow: crossedPrepared,
+            custodyRow: custodyFrom(
+              <String, Object?>{...crossedPrepared, 'content_hash': 'd' * 64},
+              messageId: crossedId,
+              recipientPeerId: 'tc354-peer-crossed',
+            ),
+          )).outcome,
+          DirectMediaBlobGenerationDbStageOutcome.refused,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[crossedId],
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'TC-354-02a private envelope v108 and blob binding are one exact '
+      'transaction',
+      () async {
+        const nowMs = 1900000000000;
+        String envelopeFor(String messageId) => jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'senderPeerId': 'peer-local',
+          'encrypted': const <String, String>{
+            'kem': 'kem-354',
+            'ciphertext': 'cipher-354',
+            'nonce': 'nonce-354',
+          },
+        });
+
+        Future<
+          ({
+            String attachmentId,
+            Map<String, Object?> completion,
+            int expiresAtMs,
+            String manifestHash,
+            String messageId,
+            String pendingPath,
+            String recipientPeerId,
+          })
+        >
+        seedStoredPrivate(
+          String suffix, {
+          int expiryOffsetMs = 60000,
+          String state = 'available',
+          Object? terminalAtMs,
+        }) async {
+          final messageId = 'tc354-02a-$suffix';
+          final recipientPeerId = 'tc354-02a-peer-$suffix';
+          final attachmentId = '$messageId-a';
+          const mime = 'image/jpeg';
+          await seedPrivateParent(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            state: state,
+            terminalAtMs: terminalAtMs,
+          );
+          final pending = await seedPrivatePending(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          final canonicalPath =
+              MediaFilePathConvention.relativePathForAttachment(
+                contactPeerId: recipientPeerId,
+                blobId: attachmentId,
+                mime: mime,
+              );
+          final completion = <String, Object?>{
+            ...preparedFrom(pending),
+            'local_path': canonicalPath,
+            'download_status': 'done',
+          };
+          await db.update(
+            'media_attachments',
+            <String, Object?>{
+              'content_hash': completion['content_hash'],
+              'encryption_key_base64': completion['encryption_key_base64'],
+              'encryption_nonce': completion['encryption_nonce'],
+              'encryption_scheme': completion['encryption_scheme'],
+              'local_path': canonicalPath,
+              'download_status': 'done',
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[attachmentId],
+          );
+          final expiresAtMs = nowMs + expiryOffsetMs;
+          final custody = custodyFrom(
+            completion,
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: 'relay-$suffix',
+          );
+          await db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+          final manifest = <DirectMediaBlobManifestProjection>[
+            DirectMediaBlobManifestProjection(
+              attachmentId: attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: custody.contentHash,
+                ciphertextSize: custody.ciphertextSize,
+                expiresAtMs: expiresAtMs,
+              ),
+            ),
+          ];
+          return (
+            attachmentId: attachmentId,
+            completion: completion,
+            expiresAtMs: expiresAtMs,
+            manifestHash: computeDirectMediaBlobManifestHash(manifest),
+            messageId: messageId,
+            pendingPath: pending['local_path']! as String,
+            recipientPeerId: recipientPeerId,
+          );
+        }
+
+        // Exact commit: envelope, one v108 row, and the bound v111 generation
+        // land in the same transaction.
+        final exact = await seedStoredPrivate('exact');
+        final committed =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+              db,
+              exact.completion,
+              expectedPendingLocalPath: exact.pendingPath,
+              envelope: envelopeFor(exact.messageId),
+              hasOwnedPendingCompletion: false,
+              wireMediaBlobManifestHash: exact.manifestHash,
+              wireMediaBlobExpiresAtMs: exact.expiresAtMs,
+              nowMs: nowMs,
+            );
+        expect(
+          committed.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+        );
+        expect(committed.custodyRow, isNotNull);
+        final incarnationId = committed.custodyRow!['incarnation_id'];
+        expect(incarnationId, isA<String>());
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          )).single['wire_envelope'],
+          envelopeFor(exact.messageId),
+        );
+        expect(
+          (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          )).single['inbox_custody_incarnation_id'],
+          incarnationId,
+        );
+        expect(
+          (await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          )).single['media_blob_expires_at_ms'],
+          exact.expiresAtMs,
+        );
+
+        // Exact replay adopts the same v108 winner without a second row.
+        final adopted =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+              db,
+              exact.completion,
+              expectedPendingLocalPath: exact.pendingPath,
+              envelope: envelopeFor(exact.messageId),
+              hasOwnedPendingCompletion: false,
+              wireMediaBlobManifestHash: exact.manifestHash,
+              wireMediaBlobExpiresAtMs: exact.expiresAtMs,
+              nowMs: nowMs,
+            );
+        expect(
+          adopted.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent,
+        );
+        expect(adopted.custodyRow!['incarnation_id'], incarnationId);
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          ),
+          hasLength(1),
+        );
+
+        // Exact-winner adoption precedes the shared capacity check.
+        final capacityAdopted =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+              db,
+              exact.completion,
+              expectedPendingLocalPath: exact.pendingPath,
+              envelope: envelopeFor(exact.messageId),
+              hasOwnedPendingCompletion: false,
+              wireMediaBlobManifestHash: exact.manifestHash,
+              wireMediaBlobExpiresAtMs: exact.expiresAtMs,
+              capacity: 0,
+              nowMs: nowMs,
+            );
+        expect(
+          capacityAdopted.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent,
+        );
+
+        // Inherited expiry floor: a proof expiring exactly at now+3000 is
+        // refused all-or-zero.
+        final floor = await seedStoredPrivate('floor', expiryOffsetMs: 3000);
+        final refusedFloor =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+              db,
+              floor.completion,
+              expectedPendingLocalPath: floor.pendingPath,
+              envelope: envelopeFor(floor.messageId),
+              hasOwnedPendingCompletion: false,
+              wireMediaBlobManifestHash: floor.manifestHash,
+              wireMediaBlobExpiresAtMs: floor.expiresAtMs,
+              nowMs: nowMs,
+            );
+        expect(
+          refusedFloor.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[floor.messageId],
+          )).single['wire_envelope'],
+          isNull,
+        );
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[floor.messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[floor.messageId],
+          )).single['inbox_custody_incarnation_id'],
+          isNull,
+        );
+
+        // A crossed wire commitment refuses without touching either table.
+        final crossed = await seedStoredPrivate('crossed');
+        final refusedCrossed =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+              db,
+              crossed.completion,
+              expectedPendingLocalPath: crossed.pendingPath,
+              envelope: envelopeFor(crossed.messageId),
+              hasOwnedPendingCompletion: false,
+              wireMediaBlobManifestHash: 'e' * 64,
+              wireMediaBlobExpiresAtMs: crossed.expiresAtMs,
+              nowMs: nowMs,
+            );
+        expect(
+          refusedCrossed.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[crossed.messageId],
+          )).single['wire_envelope'],
+          isNull,
+        );
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[crossed.messageId],
+          ),
+          isEmpty,
+        );
+
+        // Capacity is enforced for a genuinely new incarnation.
+        final full = await seedStoredPrivate('full');
+        final refusedFull =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+              db,
+              full.completion,
+              expectedPendingLocalPath: full.pendingPath,
+              envelope: envelopeFor(full.messageId),
+              hasOwnedPendingCompletion: false,
+              wireMediaBlobManifestHash: full.manifestHash,
+              wireMediaBlobExpiresAtMs: full.expiresAtMs,
+              capacity: 0,
+              nowMs: nowMs,
+            );
+        expect(
+          refusedFull.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[full.messageId],
+          )).single['wire_envelope'],
+          isNull,
+        );
+
+        // Exact accepted ACK-or-expiry completes v108 and advances the bound
+        // generation to cleanup.
+        final completion = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: exact.recipientPeerId,
+          messageId: exact.messageId,
+          expectedIncarnationId: incarnationId! as String,
+          expectedWireEnvelope: envelopeFor(exact.messageId),
+          relayExpiresAt: exact.expiresAtMs,
+        );
+        expect(completion, isNot(DirectInboxCustodyCompletionOutcome.stale));
+        expect(
+          await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[exact.messageId],
+          )).single['state'],
+          DirectMediaBlobCustodyState.outgoingCleanupPending.dbValue,
+        );
+      },
+    );
   });
 }

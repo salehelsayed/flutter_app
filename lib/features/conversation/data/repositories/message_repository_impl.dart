@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart'
+    show OutgoingDirectPrivateInboxCustodyDbResult;
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -38,6 +40,7 @@ class MessageRepositoryImpl
         IncomingOrdinaryTextApplyRepository,
         IncomingDirectDeletionApplyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
+        OutgoingDirectPrivateMediaInboxCustodyRepository,
         IncomingDirectMessagePublicationRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
@@ -229,6 +232,15 @@ class MessageRepositoryImpl
     required bool hasOwnedPendingCompletion,
   })?
   dbCommitOutgoingDirectPrivateWireEnvelope;
+  final Future<OutgoingDirectPrivateInboxCustodyDbResult> Function(
+    Map<String, Object?> completionRow, {
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+    required String wireMediaBlobManifestHash,
+    required int wireMediaBlobExpiresAtMs,
+  })?
+  dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody;
   final Future<OutgoingDirectPrivateTransportSettlementOutcome> Function({
     required String messageId,
     required String? attachmentId,
@@ -403,6 +415,7 @@ class MessageRepositoryImpl
     this.dbInvalidateWireEnvelopeBeforePrivateUpload,
     this.dbMarkOutgoingDirectPrivateUploadHandoffFailed,
     this.dbCommitOutgoingDirectPrivateWireEnvelope,
+    this.dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody,
     this.dbSettleOutgoingDirectPrivateTransport,
     this.dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone,
     this.dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope,
@@ -1200,6 +1213,50 @@ class MessageRepositoryImpl
       await _loadAndRememberMessage(messageId);
     }
     return outcome;
+  }
+
+  @override
+  bool get supportsOutgoingDirectPrivateMediaInboxCustody =>
+      dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody != null;
+
+  @override
+  Future<OutgoingDirectPrivateInboxCustodyResult>
+  commitOutgoingDirectPrivateWireEnvelopeWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+    required String wireMediaBlobManifestHash,
+    required int wireMediaBlobExpiresAtMs,
+  }) async {
+    final commit = dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody;
+    if (commit == null ||
+        messageId.isEmpty ||
+        completedAttachment.messageId != messageId ||
+        (completedAttachment.ownerLane != null &&
+            completedAttachment.ownerLane != MediaOwnerLane.direct)) {
+      return const OutgoingDirectPrivateInboxCustodyResult.refused();
+    }
+    final result = await commit(
+      completedAttachment.copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+      expectedPendingLocalPath: expectedPendingLocalPath,
+      envelope: envelope,
+      hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+      wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+      wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+    );
+    final custodyRow = result.custodyRow;
+    if (!result.outcome.authorizesTransport || custodyRow == null) {
+      return const OutgoingDirectPrivateInboxCustodyResult.refused();
+    }
+    // The atomic transaction is the authority boundary. Only the message cache
+    // is refreshed here; the returned custody projection is never re-read.
+    await _loadAndRememberMessage(messageId);
+    return OutgoingDirectPrivateInboxCustodyResult(
+      outcome: result.outcome,
+      custody: DirectInboxCustodyOutboxEntry.fromMap(custodyRow),
+    );
   }
 
   @override

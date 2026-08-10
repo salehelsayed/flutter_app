@@ -3,14 +3,18 @@ import 'dart:convert';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import '../direct_media_blob_custody.dart';
 import '../incoming_ordinary_text_mutation.dart';
 import '../outgoing_transport_mutation.dart';
+import '../../media/direct_media_blob_custody.dart';
 import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
 import '../../media/outgoing_direct_private_mutation_coordinator.dart';
 import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
+import 'direct_inbox_custody_outbox_db_helpers.dart';
+import 'direct_media_blob_custody_db_helpers.dart';
 import 'direct_notification_display_outbox_db_helpers.dart';
 
 const _visibleMessageFilter = 'hidden_at IS NULL';
@@ -2941,6 +2945,342 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
   required String envelope,
   required bool hasOwnedPendingCompletion,
 }) {
+  if (!_hasCommittableOutgoingPrivateCompletionShape(
+    completionRow,
+    envelope: envelope,
+  )) {
+    return Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>.value(
+      OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+    );
+  }
+  return dbWriteTransaction(
+    db,
+    (txn) async => (await _commitOutgoingDirectPrivateWireEnvelopeWithinTxn(
+      txn,
+      completionRow,
+      expectedPendingLocalPath: expectedPendingLocalPath,
+      envelope: envelope,
+      hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+    )).outcome,
+  );
+}
+
+/// Result of the Plan 354 private Barrier B transaction.
+///
+/// [custodyRow] is the exact committed or adopted v108 projection selected
+/// inside the same transaction. Callers must never re-read the outbox after
+/// commit: a concurrent lifecycle drain may already have retired the row,
+/// which would misclassify a committed handoff as unstaged.
+final class OutgoingDirectPrivateInboxCustodyDbResult {
+  const OutgoingDirectPrivateInboxCustodyDbResult({
+    required this.outcome,
+    this.custodyRow,
+  });
+
+  const OutgoingDirectPrivateInboxCustodyDbResult.refused()
+    : outcome = OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+      custodyRow = null;
+
+  final OutgoingDirectPrivateEnvelopeHandoffOutcome outcome;
+  final Map<String, Object?>? custodyRow;
+
+  bool get authorizesTransport =>
+      outcome.authorizesTransport && custodyRow != null;
+}
+
+/// Plan 354 Barrier B: atomically commits the exact private message envelope,
+/// one v108 initial-envelope custody row, and the complete v111 binding to
+/// that incarnation before any chat egress.
+///
+/// The v108 custody kind is unchanged `direct_text_v108`: it is the initial
+/// direct-chat envelope owner, not a plaintext-content label. An exact
+/// existing v108 winner is adopted before the shared capacity check, and the
+/// stored proof must expire strictly after the inherited `now + 3000 ms`
+/// floor.
+Future<OutgoingDirectPrivateInboxCustodyDbResult>
+dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+  Database db,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+  required String envelope,
+  required bool hasOwnedPendingCompletion,
+  required String wireMediaBlobManifestHash,
+  required int wireMediaBlobExpiresAtMs,
+  int capacity = kDirectInboxCustodyOutboxCapacity,
+  int? nowMs,
+}) async {
+  final messageId = completionRow['message_id'] as String? ?? '';
+  final attachmentId = completionRow['id'] as String? ?? '';
+  final strictPreflightNowMs =
+      nowMs ?? DateTime.now().toUtc().millisecondsSinceEpoch;
+  if (!_hasCommittableOutgoingPrivateCompletionShape(
+        completionRow,
+        envelope: envelope,
+      ) ||
+      capacity < 0 ||
+      !_isExactLowercaseHex(wireMediaBlobManifestHash, 64) ||
+      wireMediaBlobExpiresAtMs <= 0) {
+    return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+  }
+
+  try {
+    return await dbWriteTransaction(db, (txn) async {
+      final blobRows = await txn.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ? AND direction = ?',
+        whereArgs: <Object?>[
+          messageId,
+          DirectMediaBlobCustodyDirection.outgoing.dbValue,
+        ],
+        orderBy: 'attachment_id ASC',
+      );
+      List<DirectMediaBlobCustodyRow> strictBlobRows;
+      try {
+        strictBlobRows = blobRows
+            .map(DirectMediaBlobCustodyRow.fromMap)
+            .toList(growable: false);
+      } on FormatException {
+        return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+      }
+      if (strictBlobRows.length != 1 ||
+          strictBlobRows.single.attachmentId != attachmentId ||
+          strictBlobRows.single.state !=
+              DirectMediaBlobCustodyState.outgoingStored ||
+          strictBlobRows.single.expiresAtMs == null ||
+          strictBlobRows.single.expiresAtMs! <= strictPreflightNowMs + 3000 ||
+          strictBlobRows.single.custodyRelayPeerId == null ||
+          strictBlobRows.single.contentHash != completionRow['content_hash']) {
+        return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+      }
+      final manifest = strictBlobRows
+          .map(
+            (row) => DirectMediaBlobManifestProjection(
+              attachmentId: row.attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: row.contentHash,
+                ciphertextSize: row.ciphertextSize,
+                expiresAtMs: row.expiresAtMs!,
+              ),
+            ),
+          )
+          .toList(growable: false);
+      final manifestHash = computeDirectMediaBlobManifestHash(manifest);
+      final earliestExpiry = earliestDirectMediaBlobExpiryMs(manifest);
+      if (manifestHash != wireMediaBlobManifestHash ||
+          earliestExpiry != wireMediaBlobExpiresAtMs) {
+        return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+      }
+
+      // Exact-winner adoption precedes the shared capacity check and every
+      // write in this transaction.
+      final currentCustody = await txn.query(
+        _directInboxCustodyOutboxTable,
+        where: 'message_id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      if (currentCustody.isNotEmpty) {
+        final winner = currentCustody.length == 1
+            ? currentCustody.single
+            : null;
+        final incarnationId = winner?['incarnation_id'];
+        final exactWinner =
+            winner != null &&
+            winner['wire_envelope'] == envelope &&
+            winner['media_blob_manifest_hash'] == manifestHash &&
+            (winner['media_blob_expires_at_ms'] as num?)?.toInt() ==
+                earliestExpiry &&
+            _isExactLowercaseHex(incarnationId, 32) &&
+            strictBlobRows.single.inboxCustodyIncarnationId == incarnationId;
+        if (!exactWinner) {
+          return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+        }
+        final adoption =
+            await _commitOutgoingDirectPrivateWireEnvelopeWithinTxn(
+              txn,
+              completionRow,
+              expectedPendingLocalPath: expectedPendingLocalPath,
+              envelope: envelope,
+              hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+            );
+        final adoptedParent = adoption.parent;
+        if (!adoption.outcome.authorizesTransport ||
+            adoptedParent == null ||
+            adoptedParent['contact_peer_id'] != winner['recipient_peer_id']) {
+          throw const _OutgoingDirectPrivateInboxCustodyRollback();
+        }
+        return OutgoingDirectPrivateInboxCustodyDbResult(
+          outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent,
+          custodyRow: Map<String, Object?>.from(winner),
+        );
+      }
+      if (strictBlobRows.single.inboxCustodyIncarnationId != null) {
+        return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+      }
+
+      final countRows = await txn.rawQuery(
+        'SELECT COUNT(*) AS count FROM $_directInboxCustodyOutboxTable',
+      );
+      if (((countRows.single['count'] as num?)?.toInt() ?? 0) >= capacity) {
+        return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+      }
+
+      final commit = await _commitOutgoingDirectPrivateWireEnvelopeWithinTxn(
+        txn,
+        completionRow,
+        expectedPendingLocalPath: expectedPendingLocalPath,
+        envelope: envelope,
+        hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+      );
+      final parent = commit.parent;
+      if (!commit.outcome.authorizesTransport || parent == null) {
+        return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+      }
+      // Every refusal past this point has already written the envelope and
+      // must roll the whole transaction back rather than return.
+      final recipientPeerId = parent['contact_peer_id'] as String? ?? '';
+      if (recipientPeerId.trim().isEmpty ||
+          !isExactV2DirectChatInitialEnvelope(
+            envelope,
+            messageId: messageId,
+            senderPeerId: parent['sender_peer_id'],
+          )) {
+        throw const _OutgoingDirectPrivateInboxCustodyRollback();
+      }
+
+      // Private parents never carry a v110 intent, so the incarnation is
+      // minted from SQLite inside this same transaction.
+      final incarnationId = await _mintUnusedPrivateInboxCustodyIncarnation(
+        txn,
+      );
+      if (incarnationId.isEmpty) {
+        throw const _OutgoingDirectPrivateInboxCustodyRollback();
+      }
+
+      final boundAt = DateTime.fromMillisecondsSinceEpoch(
+        strictPreflightNowMs,
+        isUtc: true,
+      ).toIso8601String();
+      final bound = strictBlobRows.single.copyWith(
+        inboxCustodyIncarnationId: incarnationId,
+        updatedAt: boundAt,
+      );
+      if (!await dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
+        txn,
+        expected: strictBlobRows.single,
+        next: bound,
+      )) {
+        throw const _OutgoingDirectPrivateInboxCustodyRollback();
+      }
+
+      final createdAt = parent['created_at'] as String? ?? boundAt;
+      final custodyRow = <String, Object?>{
+        'recipient_peer_id': recipientPeerId,
+        'message_id': messageId,
+        'incarnation_id': incarnationId,
+        'wire_envelope': envelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'media_blob_manifest_hash': manifestHash,
+        'media_blob_expires_at_ms': earliestExpiry,
+        'created_at': createdAt,
+        'updated_at': createdAt,
+      };
+      await txn.insert(
+        _directInboxCustodyOutboxTable,
+        custodyRow,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+
+      final committedCustody = await txn.query(
+        _directInboxCustodyOutboxTable,
+        where: 'recipient_peer_id = ? AND message_id = ?',
+        whereArgs: <Object?>[recipientPeerId, messageId],
+        limit: 1,
+      );
+      final committedBlob = await txn.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ? AND direction = ?',
+        whereArgs: <Object?>[
+          messageId,
+          DirectMediaBlobCustodyDirection.outgoing.dbValue,
+        ],
+      );
+      final committedParent = await txn.query(
+        'messages',
+        columns: const <String>['wire_envelope'],
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      final exactCommit =
+          committedCustody.length == 1 &&
+          committedCustody.single['incarnation_id'] == incarnationId &&
+          committedCustody.single['wire_envelope'] == envelope &&
+          committedCustody.single['media_blob_manifest_hash'] ==
+              manifestHash &&
+          (committedCustody.single['media_blob_expires_at_ms'] as num?)
+                  ?.toInt() ==
+              earliestExpiry &&
+          committedBlob.length == 1 &&
+          DirectMediaBlobCustodyRow.fromMap(
+                committedBlob.single,
+              ).inboxCustodyIncarnationId ==
+              incarnationId &&
+          committedParent.length == 1 &&
+          committedParent.single['wire_envelope'] == envelope;
+      if (!exactCommit) {
+        throw const _OutgoingDirectPrivateInboxCustodyRollback();
+      }
+      return OutgoingDirectPrivateInboxCustodyDbResult(
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+        custodyRow: Map<String, Object?>.from(committedCustody.single),
+      );
+    });
+  } on _OutgoingDirectPrivateInboxCustodyRollback {
+    return const OutgoingDirectPrivateInboxCustodyDbResult.refused();
+  }
+}
+
+class _OutgoingDirectPrivateInboxCustodyRollback implements Exception {
+  const _OutgoingDirectPrivateInboxCustodyRollback();
+}
+
+Future<String> _mintUnusedPrivateInboxCustodyIncarnation(
+  DatabaseExecutor txn,
+) async {
+  for (var attempt = 0; attempt < 4; attempt++) {
+    final rows = await txn.rawQuery(
+      'SELECT lower(hex(randomblob(16))) AS incarnation_id',
+    );
+    final candidate = rows.single['incarnation_id'] as String? ?? '';
+    if (!_isExactLowercaseHex(candidate, 32)) continue;
+    final collision = await txn.query(
+      _directInboxCustodyOutboxTable,
+      columns: const <String>['incarnation_id'],
+      where: 'incarnation_id = ?',
+      whereArgs: <Object?>[candidate],
+      limit: 1,
+    );
+    if (collision.isEmpty) return candidate;
+  }
+  return '';
+}
+
+bool _isExactLowercaseHex(Object? value, int length) {
+  if (value is! String || value.length != length) return false;
+  for (final unit in value.codeUnits) {
+    final isDigit = unit >= 0x30 && unit <= 0x39;
+    final isLowerHex = unit >= 0x61 && unit <= 0x66;
+    if (!isDigit && !isLowerHex) return false;
+  }
+  return true;
+}
+
+bool _hasCommittableOutgoingPrivateCompletionShape(
+  Map<String, Object?> completionRow, {
+  required String envelope,
+}) {
   final messageId = completionRow['message_id'] as String? ?? '';
   final attachmentId = completionRow['id'] as String? ?? '';
   final mime = completionRow['mime'] as String? ?? '';
@@ -2950,23 +3290,39 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
     return value is String && value.trim().isNotEmpty;
   }
 
-  if (messageId.isEmpty ||
-      attachmentId.isEmpty ||
-      mime.isEmpty ||
-      size <= 0 ||
-      envelope.trim().isEmpty ||
-      completionRow['owner_lane'] != MediaOwnerLane.direct.dbValue ||
-      completionRow['download_status'] != 'done' ||
-      !hasValue('content_hash') ||
-      !hasValue('encryption_key_base64') ||
-      !hasValue('encryption_nonce') ||
-      !hasValue('encryption_scheme')) {
-    return Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>.value(
-      OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
-    );
-  }
+  return messageId.isNotEmpty &&
+      attachmentId.isNotEmpty &&
+      mime.isNotEmpty &&
+      size > 0 &&
+      envelope.trim().isNotEmpty &&
+      completionRow['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+      completionRow['download_status'] == 'done' &&
+      hasValue('content_hash') &&
+      hasValue('encryption_key_base64') &&
+      hasValue('encryption_nonce') &&
+      hasValue('encryption_scheme');
+}
 
-  return dbWriteTransaction(db, (txn) async {
+/// Outcome plus the exact durable parent row the caller may bind further
+/// custody to inside this same transaction.
+typedef _PrivateEnvelopeCommit = ({
+  OutgoingDirectPrivateEnvelopeHandoffOutcome outcome,
+  Map<String, Object?>? parent,
+});
+
+Future<_PrivateEnvelopeCommit>
+_commitOutgoingDirectPrivateWireEnvelopeWithinTxn(
+  DatabaseExecutor txn,
+  Map<String, Object?> completionRow, {
+  required String expectedPendingLocalPath,
+  required String envelope,
+  required bool hasOwnedPendingCompletion,
+}) async {
+  final messageId = completionRow['message_id'] as String? ?? '';
+  final attachmentId = completionRow['id'] as String? ?? '';
+  final mime = completionRow['mime'] as String? ?? '';
+  final size = (completionRow['size'] as num?)?.toInt() ?? 0;
+  {
     final parentRows = await txn.query(
       'messages',
       where: 'id = ?',
@@ -2974,7 +3330,10 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
       limit: 1,
     );
     if (parentRows.isEmpty) {
-      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
     }
     final parent = parentRows.single;
     final contactPeerId = parent['contact_peer_id'] as String? ?? '';
@@ -2992,7 +3351,10 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
           messageId: messageId,
           attachmentId: attachmentId,
         )) {
-      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
     }
 
     late final String canonicalPath;
@@ -3010,11 +3372,17 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
             mime: mime,
           );
     } catch (_) {
-      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
     }
     if (expectedPendingLocalPath != conventionPendingPath ||
         completionRow['local_path'] != canonicalPath) {
-      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
     }
 
     final rows = await txn.query(
@@ -3023,7 +3391,10 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
       whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
     );
     if (rows.length != 1 || rows.single['id'] != attachmentId) {
-      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
     }
     final persisted = rows.single;
     final expectedKeyReference = secureStoreReferenceForKey(
@@ -3063,10 +3434,16 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
       } else if (hasOwnedPendingCompletion && pendingIdentityMatches) {
         useCanonicalPredicate = false;
       } else {
-        return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+        return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
       }
     } else {
-      return OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+      return (
+        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+        parent: null,
+      );
     }
 
     final existingEnvelope = parent['wire_envelope'];
@@ -3076,8 +3453,14 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
         (existingEnvelope is List<int> && existingEnvelope.isEmpty);
     if (!envelopeMissing) {
       return existingEnvelope == envelope
-          ? OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent
-          : OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
+          ? (
+              outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent,
+              parent: parent,
+            )
+          : (
+              outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+              parent: null,
+            );
     }
 
     final statePredicate = switch (state) {
@@ -3138,9 +3521,15 @@ dbCommitOutgoingDirectPrivateWireEnvelope(
       args,
     );
     return changed == 1
-        ? OutgoingDirectPrivateEnvelopeHandoffOutcome.committed
-        : OutgoingDirectPrivateEnvelopeHandoffOutcome.refused;
-  });
+        ? (
+            outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+            parent: parent,
+          )
+        : (
+            outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+            parent: null,
+          );
+  }
 }
 
 /// Post-network transport settlement for one exact outgoing protected or

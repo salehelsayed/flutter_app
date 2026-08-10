@@ -1029,11 +1029,35 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final effectiveHasCompleteStrictBlobManifest =
       !ownsDirectMediaCaptionEditInboxCustody && hasCompleteStrictBlobManifest;
 
+  // 354: exactly one newly authored v1 Protected image/video or View-Once
+  // image initial carrying a complete strict blob manifest adopts the same
+  // exact ACK-or-expiry v108 ownership. Every other private shape (edit,
+  // delete, disappearing, proof-less legacy, selector-off) is unchanged.
+  final privateInboxCustodyCapability =
+      messageRepo is OutgoingDirectPrivateMediaInboxCustodyRepository
+      ? messageRepo as OutgoingDirectPrivateMediaInboxCustodyRepository
+      : null;
+  final ownsDirectPrivateMediaInboxCustody =
+      isOutgoingPrivateOneMoreLook &&
+      action == MessagePayload.actionSend &&
+      hasAttachments &&
+      effectiveHasCompleteStrictBlobManifest &&
+      (effectiveMediaAttachments?.length ?? 0) == 1 &&
+      privateMediaInitialProducerMatrixAllows(
+        policyVersion: effectivePrivateMediaPolicy.version,
+        mode: effectivePrivateMediaPolicy.mode,
+        mime: effectiveMediaAttachments!.single.mime,
+        mediaType: effectiveMediaAttachments.single.mediaType,
+      ) &&
+      privateInboxCustodyCapability
+              ?.supportsOutgoingDirectPrivateMediaInboxCustody ==
+          true;
   var ownsDirectInboxCustody =
       ownsDirectTextInboxCustody ||
       ownsDirectTextMutationInboxCustody ||
       ownsDirectMediaCaptionEditInboxCustody ||
-      ownsDirectMediaInboxCustody;
+      ownsDirectMediaInboxCustody ||
+      ownsDirectPrivateMediaInboxCustody;
   // Every v109-owned mutation shares one lifecycle: text and media caption
   // events retain byte-identical obligations and converge through the same
   // drain, completion and failure paths.
@@ -1093,7 +1117,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // acquisition, an exact prepared intent, or an immutable v108 replay. An
   // existing/pre-v111 row without that authority must never fall through to
   // the legacy media staging transaction, which cannot bind or validate v111.
-  if (effectiveHasAnyStrictBlobCommitment && !ownsDirectMediaInboxCustody) {
+  if (effectiveHasAnyStrictBlobCommitment &&
+      !ownsDirectMediaInboxCustody &&
+      !ownsDirectPrivateMediaInboxCustody) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_MEDIA_CUSTODY_PREFLIGHT_REFUSED',
@@ -1104,13 +1130,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   final missingStrictMediaCustodyStore =
-      ownsDirectMediaInboxCustody &&
+      (ownsDirectMediaInboxCustody || ownsDirectPrivateMediaInboxCustody) &&
       (effectiveStoreInAckCustodyInboxDetailed == null ||
           (effectiveHasCompleteStrictBlobManifest &&
               effectiveStoreInMediaExpiryBoundedInboxDetailed == null));
 
   if (ownsDirectInboxCustody &&
-      (ordinaryMutationRepo == null ||
+      ((ordinaryMutationRepo == null && !ownsDirectPrivateMediaInboxCustody) ||
+          (ownsDirectPrivateMediaInboxCustody &&
+              directTextCustodyRepo == null) ||
           (ownsDirectTextInboxCustody && directTextCustodyRepo == null) ||
           (ownsDirectTextMutationInboxCustody &&
               directMutationCustodyRepo == null) ||
@@ -1124,9 +1152,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       layer: 'FL',
       event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
       details: {
-        'reason': ordinaryMutationRepo == null
+        'reason':
+            ordinaryMutationRepo == null && !ownsDirectPrivateMediaInboxCustody
             ? 'missing_message_capability'
-            : ownsDirectTextInboxCustody && directTextCustodyRepo == null
+            : (ownsDirectTextInboxCustody ||
+                      ownsDirectPrivateMediaInboxCustody) &&
+                  directTextCustodyRepo == null
             ? 'missing_direct_inbox_custody_capability'
             : ownsDirectTextMutationInboxCustody &&
                   directMutationCustodyRepo == null
@@ -1147,7 +1178,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final canStageCustodyBeforeNodeNotRunning =
       nodeWasNotRunningAtEntry &&
       ownsDirectInboxCustody &&
-      ordinaryMutationRepo != null &&
+      (ordinaryMutationRepo != null || ownsDirectPrivateMediaInboxCustody) &&
+      (!ownsDirectPrivateMediaInboxCustody ||
+          directTextCustodyRepo != null) &&
       (!ownsDirectTextInboxCustody || directTextCustodyRepo != null) &&
       (!ownsDirectTextMutationInboxCustody ||
           directMutationCustodyRepo != null) &&
@@ -1492,15 +1525,39 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   DirectReactionInboxCustodyOutboxEntry? stagedDirectMutationInboxCustody;
   ConversationMessage? stagedCustodyMessage = replayedDirectMediaMessage;
   if (isOutgoingPrivateOneMoreLook) {
-    final handedOff =
-        messageId != null &&
-        await _commitOutgoingDirectPrivateEnvelopeForTransport(
-          messageId: messageId,
-          envelope: jsonString,
-          attachments: normalizedAttachments,
-          messageRepo: messageRepo,
-          mediaAttachmentRepo: mediaAttachmentRepo,
+    final handoff = messageId == null
+        ? const _OutgoingDirectPrivateHandoff.refused()
+        : await _commitOutgoingDirectPrivateEnvelopeForTransport(
+            messageId: messageId,
+            envelope: jsonString,
+            attachments: normalizedAttachments,
+            messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            wireMediaBlobManifestHash: ownsDirectPrivateMediaInboxCustody
+                ? wireMediaBlobManifestHash
+                : null,
+            wireMediaBlobExpiresAtMs: ownsDirectPrivateMediaInboxCustody
+                ? wireMediaBlobExpiresAtMs
+                : null,
+          );
+    final handedOff = handoff.authorized;
+    if (handedOff && ownsDirectPrivateMediaInboxCustody) {
+      stagedDirectInboxCustody = handoff.custody;
+      if (stagedDirectInboxCustody == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_PRIVATE_ENVELOPE_HANDOFF_REFUSED',
+          details: {
+            'id': shortenMessageId(resolvedMessageId),
+            'reason': 'missing_exact_custody_owner',
+          },
         );
+        emitSendTiming(outcome: 'private_envelope_handoff_refused');
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      // Replay only the exact winner's immutable bytes from this point on.
+      jsonString = stagedDirectInboxCustody.wireEnvelope;
+    }
     if (!handedOff) {
       emitFlowEvent(
         layer: 'FL',
@@ -1764,20 +1821,37 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (canStageCustodyBeforeNodeNotRunning) {
     ConversationMessage? authoritativeMessage = stagedCustodyMessage;
     try {
-      final settled = await ordinaryMutationRepo
-          .settleOutgoingOrdinaryTransport(
-            messageId: resolvedMessageId,
-            expectedContactPeerId: targetPeerId,
-            expectedEnvelope: jsonString,
-            status: 'failed',
-            transport: null,
-            relayExpiresAt: null,
-            mode: OutgoingOrdinarySettlementMode.live,
-          );
-      authoritativeMessage =
-          settled.outcome == OutgoingOrdinaryMutationOutcome.removed
-          ? null
-          : settled.message ?? authoritativeMessage;
+      if (ownsDirectPrivateMediaInboxCustody) {
+        // The exact v108/v111 obligation is already durable. Node-off settles
+        // only the private transport columns through their existing owner.
+        authoritativeMessage =
+            await _settleOutgoingDirectPrivateTransportState(
+              messageRepo: messageRepo,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              attachments: normalizedAttachments,
+              messageId: resolvedMessageId,
+              expectedEnvelope: jsonString,
+              status: 'failed',
+              transport: null,
+              relayExpiresAt: null,
+            ) ??
+            authoritativeMessage;
+      } else {
+        final settled = await ordinaryMutationRepo!
+            .settleOutgoingOrdinaryTransport(
+              messageId: resolvedMessageId,
+              expectedContactPeerId: targetPeerId,
+              expectedEnvelope: jsonString,
+              status: 'failed',
+              transport: null,
+              relayExpiresAt: null,
+              mode: OutgoingOrdinarySettlementMode.live,
+            );
+        authoritativeMessage =
+            settled.outcome == OutgoingOrdinaryMutationOutcome.removed
+            ? null
+            : settled.message ?? authoritativeMessage;
+      }
     } catch (error) {
       emitFlowEvent(
         layer: 'FL',
@@ -1835,7 +1909,30 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   Future<void> settleAcceptedInboxCustody(InboxStoreOutcome outcome) async {
     ConversationMessage? observedMessage;
     try {
-      if (isOutgoingPrivateOneMoreLook) {
+      if (ownsDirectPrivateMediaInboxCustody) {
+        // 354: exact ACK-or-expiry acceptance is the only owner that may
+        // retire this v108 incarnation and advance its bound v111 rows to
+        // cleanup. The private settlement branch cannot bypass it.
+        final custody = stagedDirectInboxCustody;
+        if (custody == null) {
+          throw StateError(
+            'accepted private media custody has no staged local authority',
+          );
+        }
+        final completion = await directTextCustodyRepo!
+            .completeAcceptedDirectInboxCustodyIfExact(
+              expected: custody,
+              relayExpiresAt: outcome.expiresAtMs,
+            );
+        if (!completion.completed) {
+          throw StateError(
+            'private media custody completion did not converge: '
+            '${completion.outcome.name}',
+          );
+        }
+        observedMessage =
+            completion.message ?? await messageRepo.getMessage(resolvedMessageId);
+      } else if (isOutgoingPrivateOneMoreLook) {
         observedMessage = await _settleOutgoingDirectPrivateTransportState(
           messageRepo: messageRepo,
           mediaAttachmentRepo: mediaAttachmentRepo,
@@ -3254,12 +3351,33 @@ Future<_RaceResult> _tryDirectSendInner(
 /// coordinator owns the exact full completion fingerprint. The lifecycle lock
 /// keeps that process-local ownership from being discarded between the check
 /// and the DB helper's exact parent/attachment compare-and-set.
-Future<bool> _commitOutgoingDirectPrivateEnvelopeForTransport({
+/// Plan 354 typed result of the private transport handoff.
+///
+/// [custody] is non-null only for a strict Barrier B commit/adoption; it is the
+/// exact v108 owner returned by the same transaction.
+final class _OutgoingDirectPrivateHandoff {
+  const _OutgoingDirectPrivateHandoff({
+    required this.authorized,
+    this.custody,
+  });
+
+  const _OutgoingDirectPrivateHandoff.refused()
+    : authorized = false,
+      custody = null;
+
+  final bool authorized;
+  final DirectInboxCustodyOutboxEntry? custody;
+}
+
+Future<_OutgoingDirectPrivateHandoff>
+_commitOutgoingDirectPrivateEnvelopeForTransport({
   required String messageId,
   required String envelope,
   required List<MediaAttachment>? attachments,
   required MessageRepository messageRepo,
   required MediaAttachmentRepository? mediaAttachmentRepo,
+  String? wireMediaBlobManifestHash,
+  int? wireMediaBlobExpiresAtMs,
 }) async {
   if (messageId.isEmpty ||
       envelope.isEmpty ||
@@ -3267,7 +3385,26 @@ Future<bool> _commitOutgoingDirectPrivateEnvelopeForTransport({
       attachments.length != 1 ||
       messageRepo is! OutgoingDirectPrivateEnvelopeCustodyRepository ||
       mediaAttachmentRepo is! OutgoingDirectPrivateMutationRepository) {
-    return false;
+    return const _OutgoingDirectPrivateHandoff.refused();
+  }
+  final strictManifestHash = wireMediaBlobManifestHash;
+  final strictManifestExpiry = wireMediaBlobExpiresAtMs;
+  final ownsStrictInboxCustody =
+      strictManifestHash != null && strictManifestExpiry != null;
+  if ((strictManifestHash == null) != (strictManifestExpiry == null)) {
+    return const _OutgoingDirectPrivateHandoff.refused();
+  }
+  final strictCustodyCapability =
+      messageRepo is OutgoingDirectPrivateMediaInboxCustodyRepository
+      ? messageRepo as OutgoingDirectPrivateMediaInboxCustodyRepository
+      : null;
+  if (ownsStrictInboxCustody &&
+      strictCustodyCapability
+              ?.supportsOutgoingDirectPrivateMediaInboxCustody !=
+          true) {
+    // Capability absence for an already selected strict private attempt fails
+    // closed before egress; it must never silently fall back.
+    return const _OutgoingDirectPrivateHandoff.refused();
   }
 
   final completed = attachments.single.copyWith(
@@ -3283,13 +3420,15 @@ Future<bool> _commitOutgoingDirectPrivateEnvelopeForTransport({
           mime: completed.mime,
         );
   } catch (_) {
-    return false;
+    return const _OutgoingDirectPrivateHandoff.refused();
   }
   final fingerprint = OutgoingDirectPrivateCompletionFingerprint.fromAttachment(
     completed,
     expectedPendingLocalPath: expectedPendingLocalPath,
   );
-  if (!fingerprint.isStructurallyComplete) return false;
+  if (!fingerprint.isStructurallyComplete) {
+    return const _OutgoingDirectPrivateHandoff.refused();
+  }
 
   final attachmentRepository = mediaAttachmentRepo!;
   final mutationRepository =
@@ -3316,8 +3455,27 @@ Future<bool> _commitOutgoingDirectPrivateEnvelopeForTransport({
       );
       if (durable.length != 1 ||
           !fingerprint.matchesHydratedAttachment(durable.single)) {
-        return false;
+        return const _OutgoingDirectPrivateHandoff.refused();
       }
+    }
+
+    if (ownsStrictInboxCustody) {
+      final result = await strictCustodyCapability!
+          .commitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+            messageId: messageId,
+            completedAttachment: completed,
+            expectedPendingLocalPath: expectedPendingLocalPath,
+            envelope: envelope,
+            hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+            wireMediaBlobManifestHash: strictManifestHash,
+            wireMediaBlobExpiresAtMs: strictManifestExpiry,
+          );
+      return result.authorizesTransport
+          ? _OutgoingDirectPrivateHandoff(
+              authorized: true,
+              custody: result.custody,
+            )
+          : const _OutgoingDirectPrivateHandoff.refused();
     }
 
     final outcome = await envelopeRepository
@@ -3328,7 +3486,9 @@ Future<bool> _commitOutgoingDirectPrivateEnvelopeForTransport({
           envelope: envelope,
           hasOwnedPendingCompletion: hasOwnedPendingCompletion,
         );
-    return outcome.authorizesTransport;
+    return _OutgoingDirectPrivateHandoff(
+      authorized: outcome.authorizesTransport,
+    );
   });
 }
 

@@ -1393,6 +1393,23 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             envelope: envelope,
             hasOwnedPendingCompletion: hasOwnedPendingCompletion,
           ),
+      dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody:
+          (
+            completionRow, {
+            required expectedPendingLocalPath,
+            required envelope,
+            required hasOwnedPendingCompletion,
+            required wireMediaBlobManifestHash,
+            required wireMediaBlobExpiresAtMs,
+          }) => dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+            db,
+            completionRow,
+            expectedPendingLocalPath: expectedPendingLocalPath,
+            envelope: envelope,
+            hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+            wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+            wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+          ),
       dbSettleOutgoingDirectPrivateTransport:
           ({
             required messageId,
@@ -1876,6 +1893,19 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             preparedAttachmentRows: preparedAttachmentRows,
             custodyRows: custodyRows,
             authorizedForwardDedupKey: authorizedForwardDedupKey,
+          ),
+      dbStageOutgoingDirectPrivateMediaBlobGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRow,
+            required preparedAttachmentRow,
+            required custodyRow,
+          }) => dbStageOutgoingDirectPrivateMediaBlobGeneration(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRow: expectedAttachmentRow,
+            preparedAttachmentRow: preparedAttachmentRow,
+            custodyRow: custodyRow,
           ),
       dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
           dbLoadDirectMediaBlobCustodyForAttachment(

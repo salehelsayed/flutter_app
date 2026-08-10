@@ -174,6 +174,28 @@ abstract interface class FreshOutgoingDirectMediaBlobGenerationRepository {
   });
 }
 
+/// Plan 354 private entry into the same physical v111 blob custody.
+///
+/// Protected and View Once keep their existing private pending/completion CAS
+/// as the sole preparation authority, so this capability deliberately requires
+/// no v110 intent and accepts exactly one convention-owned pending attachment.
+abstract interface class OutgoingDirectPrivateMediaBlobGenerationRepository {
+  bool get supportsOutgoingDirectPrivateMediaBlobGeneration;
+
+  /// Publishes the prepared encryption projection and exactly one
+  /// `outgoing_prepared` v111 row over the exact durable private pending
+  /// attachment. An already-published exact generation is adopted
+  /// idempotently; a crossed projection refuses all-or-zero and the losing
+  /// raw key is restored outside SQLite.
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectPrivateMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment preparedAttachment,
+    required DirectMediaBlobCustodyRow custodyRow,
+  });
+}
+
 class OutgoingDirectMediaDeletionCustodyStageResult {
   const OutgoingDirectMediaDeletionCustodyStageResult({
     required this.outcome,

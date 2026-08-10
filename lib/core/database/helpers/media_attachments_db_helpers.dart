@@ -10,6 +10,7 @@ import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
 import '../../media/outgoing_direct_private_mutation_coordinator.dart';
+import '../../media/private_media_policy.dart';
 import '../../media/upload_media_outcome.dart';
 import '../../media/upload_retry_projection.dart';
 import '../../secure_storage/secret_storage_references.dart';
@@ -1811,6 +1812,341 @@ dbStageOutgoingDirectMediaBlobGeneration(
         });
     if (!exactCommit) {
       throw StateError('direct-media blob generation lost atomic projection');
+    }
+    return DirectMediaBlobGenerationDbStageResult(
+      outcome: DirectMediaBlobGenerationDbStageOutcome.applied,
+      attachmentRows: committedAttachments
+          .map(Map<String, Object?>.from)
+          .toList(growable: false),
+      custodyRows: committedCustody
+          .map(Map<String, Object?>.from)
+          .toList(growable: false),
+    );
+  });
+}
+
+/// Whether one persisted outgoing private parent can still own strict blob
+/// custody for its single convention-pending attachment.
+///
+/// [requireAvailable] is true only for fresh publication, which writes the
+/// prepared encryption projection onto that pending row. Reopen/adoption also
+/// accepts the exact active-lease and consumed transport-only shapes the
+/// existing private completion coordinator already authorizes; neither may
+/// mutate the row here.
+bool _isEligibleOutgoingPrivateBlobCustodyParent(
+  Map<String, Object?> row, {
+  required String recipientPeerId,
+  required bool requireAvailable,
+}) {
+  final authority = _classifyOutgoingPrivateParentMutationAuthority(row);
+  final envelope = row['wire_envelope'];
+  final envelopeMissing =
+      envelope == null ||
+      (envelope is String && envelope.isEmpty) ||
+      (envelope is List<int> && envelope.isEmpty);
+  final terminalTransportCustody =
+      authority == _OutgoingPrivateParentMutationAuthority.terminal &&
+      row['hidden_at'] == null &&
+      row['deleted_at'] == null &&
+      row['private_media_state'] == 'consumed' &&
+      row['private_media_terminal_at_ms'] != null;
+  final authorized = requireAvailable
+      ? authority == _OutgoingPrivateParentMutationAuthority.available
+      : authority == _OutgoingPrivateParentMutationAuthority.available ||
+            authority == _OutgoingPrivateParentMutationAuthority.activeLease ||
+            terminalTransportCustody;
+  return authorized &&
+      envelopeMissing &&
+      row['contact_peer_id'] == recipientPeerId &&
+      _isNonBlankDatabaseString(row['id']) &&
+      _isNonBlankDatabaseString(row['sender_peer_id']) &&
+      _isNonBlankDatabaseString(row['timestamp']) &&
+      _isNonBlankDatabaseString(row['created_at']) &&
+      const <String>{'sending', 'failed'}.contains(row['status']) &&
+      row['edited_at'] == null &&
+      row['deleted_by_peer_id'] == null &&
+      row['transport'] == null &&
+      row['relay_expires_at'] == null &&
+      row['custody_checked_at'] == null &&
+      row[_directMediaCustodyIntentColumn] == null &&
+      row['private_media_duration_seconds'] == null &&
+      row['private_media_received_at_ms'] == null &&
+      row['private_media_expires_at_ms'] == null;
+}
+
+/// Whether one persisted attachment row is the exact convention-owned private
+/// pending projection this plan may publish over.
+bool _isExactOutgoingPrivatePendingBlobCustodyAttachment(
+  Map<String, Object?> row, {
+  required String messageId,
+}) =>
+    _isExactOutgoingPrivatePendingMutationRow(row, messageId: messageId) &&
+    _isNonBlankDatabaseString(row['created_at']) &&
+    row['media_type'] ==
+        _directMediaTypeForMime(row['mime'] as String? ?? '') &&
+    _isNullOrNonNegativeDatabaseInteger(row['width']) &&
+    _isNullOrNonNegativeDatabaseInteger(row['height']) &&
+    _isNullOrNonNegativeDatabaseInteger(row['duration_ms']) &&
+    _isValidDirectMediaCustodyWaveform(row['waveform']) &&
+    row['content_hash'] == null &&
+    row['thumbnail_hash'] == null &&
+    row['encryption_key_base64'] == null &&
+    row['encryption_nonce'] == null &&
+    row['encryption_scheme'] == null;
+
+/// Whether a prepared/stored private v111 row can still be reopened.
+bool _privateBlobCustodyRowIsReopenable(DirectMediaBlobCustodyRow row) =>
+    switch (row.state) {
+      DirectMediaBlobCustodyState.outgoingPrepared =>
+        row.inboxCustodyIncarnationId == null &&
+            row.expiresAtMs == null &&
+            row.custodyRelayPeerId == null,
+      DirectMediaBlobCustodyState.outgoingStored =>
+        row.inboxCustodyIncarnationId == null &&
+            row.expiresAtMs != null &&
+            row.expiresAtMs! > 0 &&
+            row.custodyRelayPeerId != null &&
+            row.custodyRelayPeerId!.isNotEmpty &&
+            row.custodyRelayPeerId!.trim() == row.custodyRelayPeerId,
+      _ => false,
+    };
+
+/// Atomically publishes the exact encrypted v111 generation for one newly
+/// authored protected or View-Once direct-media initial.
+///
+/// Plan 354 deliberately reuses the durable private parent plus its single
+/// convention-owned pending attachment as the sole preparation authority: no
+/// v110 intent is minted, inferred, or required. A concurrent exact winner is
+/// adopted idempotently before any capacity or write work; every crossed
+/// key/hash/path/policy/state/custody byte refuses without changing either
+/// table.
+Future<DirectMediaBlobGenerationDbStageResult>
+dbStageOutgoingDirectPrivateMediaBlobGeneration(
+  Database db, {
+  required Map<String, Object?> expectedParentRow,
+  required Map<String, Object?> expectedAttachmentRow,
+  required Map<String, Object?> preparedAttachmentRow,
+  required DirectMediaBlobCustodyRow custodyRow,
+}) async {
+  final messageId = expectedParentRow['id'] as String? ?? '';
+  final recipientPeerId = expectedParentRow['contact_peer_id'] as String? ?? '';
+  final attachmentId = expectedAttachmentRow['id'] as String? ?? '';
+  final mime = expectedAttachmentRow['mime'] as String? ?? '';
+  final validShape =
+      messageId.trim().isNotEmpty &&
+      recipientPeerId.trim().isNotEmpty &&
+      attachmentId.trim().isNotEmpty &&
+      preparedAttachmentRow['id'] == attachmentId &&
+      custodyRow.attachmentId == attachmentId &&
+      DirectPrivateMediaPathGuard.identifiersAreSafe(
+        contactPeerId: recipientPeerId,
+        messageId: messageId,
+        attachmentId: attachmentId,
+      ) &&
+      _isEligibleOutgoingPrivateBlobCustodyParent(
+        expectedParentRow,
+        recipientPeerId: recipientPeerId,
+        requireAvailable: false,
+      ) &&
+      privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
+        policyVersion: expectedParentRow['private_media_policy_version'],
+        mode: expectedParentRow['private_media_mode'],
+        durationSeconds: expectedParentRow['private_media_duration_seconds'],
+        mime: mime,
+        mediaType: expectedAttachmentRow['media_type'],
+      ) &&
+      _isExactOutgoingPrivatePendingBlobCustodyAttachment(
+        expectedAttachmentRow,
+        messageId: messageId,
+      ) &&
+      _samePreparedDirectMediaIdentity(
+        expectedAttachmentRow,
+        preparedAttachmentRow,
+      ) &&
+      preparedAttachmentRow['download_status'] ==
+          kMediaDownloadStatusUploadPending &&
+      preparedAttachmentRow['local_path'] ==
+          expectedAttachmentRow['local_path'] &&
+      hasImmutableDirectMediaCustodyAttachmentProjection(
+        preparedAttachmentRow,
+      ) &&
+      custodyRow.messageId == messageId &&
+      custodyRow.direction == DirectMediaBlobCustodyDirection.outgoing &&
+      custodyRow.state == DirectMediaBlobCustodyState.outgoingPrepared &&
+      custodyRow.inboxCustodyIncarnationId == null &&
+      custodyRow.recipientPeerId == recipientPeerId &&
+      custodyRow.contentHash == preparedAttachmentRow['content_hash'] &&
+      custodyRow.ciphertextSize > 0 &&
+      custodyRow.expiresAtMs == null &&
+      custodyRow.custodyRelayPeerId == null &&
+      _isNonBlankDatabaseString(custodyRow.ciphertextRelativePath);
+  if (!validShape) {
+    return const DirectMediaBlobGenerationDbStageResult.refused();
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final currentParents = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    final currentAttachments = await txn.query(
+      'media_attachments',
+      where: 'message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      orderBy: 'id ASC',
+    );
+    final currentCustody = await txn.query(
+      kDirectMediaBlobCustodyTable,
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+      orderBy: 'attachment_id ASC',
+    );
+    final custodyIdCollisions = await txn.query(
+      kDirectMediaBlobCustodyTable,
+      where: 'attachment_id = ?',
+      whereArgs: <Object?>[attachmentId],
+    );
+    final v108 = await txn.query(
+      _directInboxCustodyOutboxTable,
+      columns: const <String>['message_id'],
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    final exactDurableParent =
+        currentParents.length == 1 &&
+        _messageDatabaseProjectionMatches(
+          currentParents.single,
+          expectedParentRow,
+        );
+
+    // Exact-winner adoption precedes every capacity check and write.
+    if (currentCustody.isNotEmpty || custodyIdCollisions.isNotEmpty) {
+      if (v108.isNotEmpty ||
+          !exactDurableParent ||
+          currentAttachments.length != 1 ||
+          currentCustody.length != 1 ||
+          custodyIdCollisions.length != 1) {
+        return const DirectMediaBlobGenerationDbStageResult.refused();
+      }
+      final DirectMediaBlobCustodyRow winner;
+      try {
+        winner = DirectMediaBlobCustodyRow.fromMap(currentCustody.single);
+      } on FormatException {
+        return const DirectMediaBlobGenerationDbStageResult.refused();
+      }
+      final attachment = currentAttachments.single;
+      final completeWinner =
+          _privateBlobCustodyRowIsReopenable(winner) &&
+          winner.attachmentId == attachmentId &&
+          winner.messageId == messageId &&
+          winner.direction == DirectMediaBlobCustodyDirection.outgoing &&
+          winner.recipientPeerId == recipientPeerId &&
+          attachment['id'] == attachmentId &&
+          attachment['message_id'] == messageId &&
+          attachment['owner_lane'] == MediaOwnerLane.direct.dbValue &&
+          attachment['download_status'] == kMediaDownloadStatusUploadPending &&
+          attachment['local_path'] == expectedAttachmentRow['local_path'] &&
+          hasImmutableDirectMediaCustodyAttachmentProjection(attachment) &&
+          winner.contentHash == attachment['content_hash'];
+      if (!completeWinner) {
+        return const DirectMediaBlobGenerationDbStageResult.refused();
+      }
+      return DirectMediaBlobGenerationDbStageResult(
+        outcome: DirectMediaBlobGenerationDbStageOutcome.idempotent,
+        attachmentRows: currentAttachments
+            .map(Map<String, Object?>.from)
+            .toList(growable: false),
+        custodyRows: currentCustody
+            .map(Map<String, Object?>.from)
+            .toList(growable: false),
+      );
+    }
+
+    final exactPredecessor =
+        v108.isEmpty &&
+        exactDurableParent &&
+        _isEligibleOutgoingPrivateBlobCustodyParent(
+          currentParents.single,
+          recipientPeerId: recipientPeerId,
+          requireAvailable: true,
+        ) &&
+        currentAttachments.length == 1 &&
+        _exactDirectMediaCustodyFailureProjection(currentAttachments, <
+          Map<String, Object?>
+        >[
+          expectedAttachmentRow,
+        ]);
+    if (!exactPredecessor) {
+      return const DirectMediaBlobGenerationDbStageResult.refused();
+    }
+
+    // The private preparation authority owns exactly four encryption columns
+    // here. The generic preserving save is deliberately not used: it routes
+    // every private parent through the narrow non-completion mutation, which
+    // cannot publish a prepared ciphertext identity. Every other persisted
+    // column — including the convention pending path and status — stays
+    // byte-identical, and the predicate below re-proves it after commit.
+    final updated = await txn.update(
+      'media_attachments',
+      <String, Object?>{
+        'content_hash': preparedAttachmentRow['content_hash'],
+        'encryption_key_base64':
+            preparedAttachmentRow['encryption_key_base64'],
+        'encryption_nonce': preparedAttachmentRow['encryption_nonce'],
+        'encryption_scheme': preparedAttachmentRow['encryption_scheme'],
+      },
+      where:
+          'id = ? AND message_id = ? AND owner_lane = ? '
+          'AND download_status = ? AND local_path = ? '
+          'AND content_hash IS NULL AND encryption_key_base64 IS NULL '
+          'AND encryption_nonce IS NULL AND encryption_scheme IS NULL',
+      whereArgs: <Object?>[
+        attachmentId,
+        messageId,
+        MediaOwnerLane.direct.dbValue,
+        kMediaDownloadStatusUploadPending,
+        expectedAttachmentRow['local_path'],
+      ],
+    );
+    if (updated != 1) {
+      return const DirectMediaBlobGenerationDbStageResult.refused();
+    }
+    await txn.insert(
+      kDirectMediaBlobCustodyTable,
+      custodyRow.toMap(),
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+
+    final committedAttachments = await txn.query(
+      'media_attachments',
+      where: 'message_id = ? AND owner_lane = ?',
+      whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      orderBy: 'id ASC',
+    );
+    final committedCustody = await txn.query(
+      kDirectMediaBlobCustodyTable,
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+      orderBy: 'attachment_id ASC',
+    );
+    final exactCommit =
+        committedAttachments.length == 1 &&
+        committedCustody.length == 1 &&
+        _exactDirectMediaCustodyFailureProjection(committedAttachments, <
+          Map<String, Object?>
+        >[
+          preparedAttachmentRow,
+        ]) &&
+        DirectMediaBlobCustodyRow.fromMap(
+          committedCustody.single,
+        ).exactDatabaseProjectionMatches(custodyRow);
+    if (!exactCommit) {
+      throw StateError(
+        'private direct-media blob generation lost atomic projection',
+      );
     }
     return DirectMediaBlobGenerationDbStageResult(
       outcome: DirectMediaBlobGenerationDbStageOutcome.applied,

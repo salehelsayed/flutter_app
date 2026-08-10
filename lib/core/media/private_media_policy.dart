@@ -306,3 +306,78 @@ bool isPrivateMediaComposerPolicyEligible({
   return selectedPolicy.mode != PrivateMediaMode.viewOnce ||
       eligibility.attachmentKind == PrivateMediaAttachmentKind.image;
 }
+
+/// Classifies one attachment's durable media identity for the private producer
+/// matrix. GIF is deliberately separated from image even though both persist
+/// `media_type = 'image'`.
+PrivateMediaAttachmentKind privateMediaAttachmentKindForMediaIdentity({
+  required String mime,
+  required String mediaType,
+}) {
+  final normalizedMime = mime.toLowerCase();
+  final normalizedType = mediaType.toLowerCase();
+  if (normalizedMime == 'image/gif' || normalizedType == 'gif') {
+    return PrivateMediaAttachmentKind.gif;
+  }
+  if (normalizedMime.startsWith('image/') || normalizedType == 'image') {
+    return PrivateMediaAttachmentKind.image;
+  }
+  if (normalizedMime.startsWith('video/') || normalizedType == 'video') {
+    return PrivateMediaAttachmentKind.video;
+  }
+  if (normalizedMime.startsWith('audio/') || normalizedType == 'audio') {
+    return PrivateMediaAttachmentKind.audio;
+  }
+  if (normalizedMime.isNotEmpty || normalizedType == 'file') {
+    return PrivateMediaAttachmentKind.file;
+  }
+  return PrivateMediaAttachmentKind.unknown;
+}
+
+/// Exact producer matrix for one newly authored v1 private-media INITIAL.
+///
+/// v1 Protected permits exactly one image or one video; v1 View Once permits
+/// exactly one image. GIF, audio, file, unknown, disappearing and every other
+/// policy shape are refused before encryption, durable strict publication and
+/// network. Sender and receiver both consult this one predicate so a redacted
+/// envelope cannot widen the matrix.
+bool privateMediaInitialProducerMatrixAllows({
+  required int policyVersion,
+  required PrivateMediaMode mode,
+  required String mime,
+  required String mediaType,
+}) {
+  if (policyVersion != 1) return false;
+  if (mode != PrivateMediaMode.protected && mode != PrivateMediaMode.viewOnce) {
+    return false;
+  }
+  final kind = privateMediaAttachmentKindForMediaIdentity(
+    mime: mime,
+    mediaType: mediaType,
+  );
+  if (mode == PrivateMediaMode.viewOnce) {
+    return kind == PrivateMediaAttachmentKind.image;
+  }
+  return kind == PrivateMediaAttachmentKind.image ||
+      kind == PrivateMediaAttachmentKind.video;
+}
+
+/// Row-shaped form of [privateMediaInitialProducerMatrixAllows] for durable
+/// database predicates. Callers supply the persisted parent policy columns.
+bool privateMediaInitialProducerMatrixAllowsDatabaseIdentity({
+  required Object? policyVersion,
+  required Object? mode,
+  required Object? durationSeconds,
+  required Object? mime,
+  required Object? mediaType,
+}) {
+  if (durationSeconds != null) return false;
+  if (mime is! String || mediaType is! String) return false;
+  final version = policyVersion is num ? policyVersion.toInt() : -1;
+  return privateMediaInitialProducerMatrixAllows(
+    policyVersion: version,
+    mode: PrivateMediaMode.fromWireValue(mode),
+    mime: mime,
+    mediaType: mediaType,
+  );
+}

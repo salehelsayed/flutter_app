@@ -460,6 +460,48 @@ abstract interface class OutgoingDirectPrivateEnvelopeCustodyRepository {
   });
 }
 
+/// Plan 354 result of the private Barrier B transaction.
+///
+/// [custody] is the exact committed or adopted v108 owner selected inside the
+/// same transaction, so a concurrent lifecycle drain cannot make a committed
+/// handoff look unstaged.
+final class OutgoingDirectPrivateInboxCustodyResult {
+  const OutgoingDirectPrivateInboxCustodyResult({
+    required this.outcome,
+    this.custody,
+  });
+
+  const OutgoingDirectPrivateInboxCustodyResult.refused()
+    : outcome = OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+      custody = null;
+
+  final OutgoingDirectPrivateEnvelopeHandoffOutcome outcome;
+  final DirectInboxCustodyOutboxEntry? custody;
+
+  bool get authorizesTransport =>
+      outcome.authorizesTransport && custody != null;
+}
+
+/// Plan 354 Barrier B for a strict protected/View-Once media initial.
+///
+/// Implementations commit the exact private envelope, one v108 initial
+/// envelope custody row and the complete v111 binding in one transaction
+/// before any chat egress.
+abstract interface class OutgoingDirectPrivateMediaInboxCustodyRepository {
+  bool get supportsOutgoingDirectPrivateMediaInboxCustody;
+
+  Future<OutgoingDirectPrivateInboxCustodyResult>
+  commitOutgoingDirectPrivateWireEnvelopeWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+    required String wireMediaBlobManifestHash,
+    required int wireMediaBlobExpiresAtMs,
+  });
+}
+
 /// Exact, post-commit signal for physical direct-message removals.
 ///
 /// A removal cannot ride [MessageRepositoryChangeSource.messageChanges]: that

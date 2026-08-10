@@ -6,6 +6,7 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
@@ -258,6 +259,221 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
       return hasDurableAuthority
           ? const PreparedDirectMediaBlobUploadResult.retained()
           : const PreparedDirectMediaBlobUploadResult.refused();
+    }
+  }
+
+  /// Plan 354 private entry for one newly authored protected/View-Once initial.
+  ///
+  /// The exact durable private parent plus its single convention-owned pending
+  /// attachment is the whole preparation authority: no v110 intent exists and
+  /// none is minted. The complete v111 generation is published before the LAN
+  /// callback and before the same strict relay owner every ordinary generation
+  /// already uses. [reopen] is true for a failed/incomplete retry, which must
+  /// never mint a missing generation.
+  Future<PreparedDirectMediaBlobUploadResult> prepareAndUploadPrivate({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String recipientPeerId,
+    required ConversationMessage expectedParent,
+    required PreparedDirectMediaBlobSource source,
+    bool reopen = false,
+    DirectMediaBlobGenerationReadyFn? onGenerationReady,
+  }) async {
+    final privateRepository = switch (_repository) {
+      OutgoingDirectPrivateMediaBlobGenerationRepository repository
+          when repository.supportsOutgoingDirectPrivateMediaBlobGeneration =>
+        repository,
+      _ => null,
+    };
+    if (!_repository.supportsDirectMediaBlobCustody ||
+        privateRepository == null ||
+        identityPeerId.isEmpty ||
+        identityPeerId != identityPeerId.trim() ||
+        recipientPeerId.isEmpty ||
+        recipientPeerId != recipientPeerId.trim() ||
+        expectedParent.id.isEmpty ||
+        expectedParent.isIncoming ||
+        expectedParent.isDeleted ||
+        expectedParent.isHidden ||
+        expectedParent.senderPeerId != identityPeerId ||
+        expectedParent.contactPeerId != recipientPeerId ||
+        expectedParent.directMediaCustodyIntentId != null ||
+        !privateMediaInitialProducerMatrixAllows(
+          policyVersion: expectedParent.privateMediaPolicy.version,
+          mode: expectedParent.privateMediaMode,
+          mime: source.attachment.mime,
+          mediaType: source.attachment.mediaType,
+        ) ||
+        source.attachment.messageId != expectedParent.id ||
+        source.attachment.ownerLane != MediaOwnerLane.direct ||
+        source.attachment.downloadStatus != 'upload_pending' ||
+        source.attachment.contentHash != null ||
+        source.attachment.encryptionKeyBase64 != null ||
+        source.attachment.encryptionNonce != null ||
+        source.attachment.encryptionScheme != null ||
+        source.plaintextPath.isEmpty) {
+      return const PreparedDirectMediaBlobUploadResult.refused();
+    }
+
+    try {
+      return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
+        if (reopen) {
+          final rows = await _repository.loadDirectMediaBlobCustodyForMessage(
+            expectedParent.id,
+          );
+          if (rows.length != 1 ||
+              rows.single.attachmentId != source.attachment.id) {
+            return const PreparedDirectMediaBlobUploadResult.refused(
+              hasDurableAuthority: true,
+            );
+          }
+        }
+        final publication = await _publishPrivateGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          expectedParent: expectedParent,
+          source: source,
+          repository: privateRepository,
+          reopen: reopen,
+        );
+        final generation = publication.generation;
+        if (generation == null) {
+          return publication.hasDurableAuthority
+              ? const PreparedDirectMediaBlobUploadResult.retained()
+              : const PreparedDirectMediaBlobUploadResult.refused();
+        }
+        return _uploadPublishedGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          generation: generation,
+          onGenerationReady: onGenerationReady,
+        );
+      });
+    } on Object {
+      return const PreparedDirectMediaBlobUploadResult.refused();
+    }
+  }
+
+  Future<_GenerationPublication> _publishPrivateGeneration({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String recipientPeerId,
+    required ConversationMessage expectedParent,
+    required PreparedDirectMediaBlobSource source,
+    required OutgoingDirectPrivateMediaBlobGenerationRepository repository,
+    required bool reopen,
+  }) async {
+    _CandidateGenerationEntry? candidate;
+    var stageAttempted = false;
+    var hasDurableAuthority = false;
+    try {
+      final encrypted =
+          source.preparedArtifact ??
+          await _prepareArtifact(
+            bridge: bridge,
+            localFilePath: source.plaintextPath,
+          );
+      final persisted = await _artifactStore.persistCandidate(
+        identityPeerId: identityPeerId,
+        attachmentId: source.attachment.id,
+        encryptedSourcePath: encrypted.encryptedPath,
+        expectedContentHash: encrypted.contentHash,
+      );
+      candidate = _CandidateGenerationEntry(
+        source: source,
+        encrypted: encrypted,
+        artifact: persisted,
+      );
+
+      final now = _clock().toUtc().toIso8601String();
+      final prepared = source.attachment.copyWith(
+        contentHash: persisted.contentHash,
+        encryptionKeyBase64: encrypted.keyBase64,
+        encryptionNonce: encrypted.nonce,
+        encryptionScheme: encrypted.scheme,
+        downloadStatus: 'upload_pending',
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final custodyRow = DirectMediaBlobCustodyRow(
+        attachmentId: source.attachment.id,
+        messageId: expectedParent.id,
+        direction: DirectMediaBlobCustodyDirection.outgoing,
+        state: DirectMediaBlobCustodyState.outgoingPrepared,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: recipientPeerId,
+        ciphertextRelativePath: persisted.relativePath,
+        contentHash: persisted.contentHash,
+        ciphertextSize: persisted.ciphertextSize,
+        expiresAtMs: null,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: now,
+        updatedAt: now,
+      );
+      stageAttempted = true;
+      final staged = await repository
+          .stageOutgoingDirectPrivateMediaBlobGeneration(
+            expectedParent: expectedParent,
+            expectedAttachment: source.attachment,
+            preparedAttachment: prepared,
+            custodyRow: custodyRow,
+          );
+      hasDurableAuthority = staged.authorizesStrictUpload;
+      final idempotent =
+          staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+      // A reopen may never mint a generation. Only the idempotent branch can
+      // prove the caller adopted an already-published exact artifact.
+      if (!staged.authorizesStrictUpload || (reopen && !idempotent)) {
+        await _deleteOnlyProvablyUnreferencedCandidates(
+          identityPeerId: identityPeerId,
+          messageId: expectedParent.id,
+          candidates: <_CandidateGenerationEntry>[candidate],
+        );
+        await _deleteEncryptedTemps(<_CandidateGenerationEntry>[candidate]);
+        return _GenerationPublication(
+          generation: null,
+          hasDurableAuthority: hasDurableAuthority,
+        );
+      }
+      if (idempotent) {
+        await _deleteCandidates(identityPeerId, <_CandidateGenerationEntry>[
+          candidate,
+        ]);
+      }
+      await _deleteEncryptedTemps(<_CandidateGenerationEntry>[candidate]);
+      final generation = await _reopenCompleteGeneration(
+        identityPeerId: identityPeerId,
+        recipientPeerId: recipientPeerId,
+        messageId: expectedParent.id,
+        attachments: staged.attachments,
+        rows: staged.custodyRows,
+      );
+      return _GenerationPublication(
+        generation: generation,
+        hasDurableAuthority: true,
+      );
+    } on Object {
+      final candidates = <_CandidateGenerationEntry>[?candidate];
+      if (stageAttempted) {
+        await _deleteOnlyProvablyUnreferencedCandidates(
+          identityPeerId: identityPeerId,
+          messageId: expectedParent.id,
+          candidates: candidates,
+        );
+      } else {
+        await _deleteCandidates(identityPeerId, candidates);
+      }
+      await _deleteEncryptedTemps(candidates);
+      if (hasDurableAuthority) {
+        return const _GenerationPublication(
+          generation: null,
+          hasDurableAuthority: true,
+        );
+      }
+      rethrow;
     }
   }
 
