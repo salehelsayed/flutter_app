@@ -18,3 +18,4 @@ Before starting work, read the latest line for the assigned plan.
 - Plan 353 — EXECUTION_READY
 - Plan 353 — EXECUTION_COMPLETED
 - Plan 354 — EXECUTION_READY
+- Plan 354 — EXECUTION_PARTIAL_SENDER_ONLY (steps 1-7; receiver/download steps 8-9 open)
