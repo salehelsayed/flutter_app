@@ -143,11 +143,14 @@ const _privacySha256 =
 // forward-authorization pass-through on that same wired stage. Plan 353 adds
 // three more closures on that same wired media adapter (caption-edit
 // qualification, the atomic caption+v109 stage, and the incoming conditional
-// apply) and relocates nothing. Posts adapter bodies remain byte-identical.
+// apply) and relocates nothing. Plan 354 adds exactly two more closures on
+// that same wired stage — the private v111 generation stage and the private
+// envelope+v108+v111 inbox-custody handoff — and relocates nothing. Posts
+// adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
     '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
 const _productionBootstrapNormalizedSha256 =
-    '770eef00358fe235e55121d100907e5aee7990e473f44936ee998935ec749ac9';
+    '859581a4cd8d4698633aff9d74c01c11ae6b807649f19bc75423a3e131debcdf';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

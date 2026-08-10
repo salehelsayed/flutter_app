@@ -35,8 +35,9 @@ const _relocations = <String, List<String>>{
     // lane selector plus the atomic strict-media deletion stage — all without
     // relocating anything. Plan 353 adds the caption-edit qualification, the
     // atomic caption stage and the incoming conditional apply to the same
-    // adapter — still no relocation.
-    '3d392f5ba2c29759c2e928ed4ca111f29b875a03cc615f79ebd3d21e78049916',
+    // adapter. Plan 354 adds the private v111 generation stage over the exact
+    // convention-pending projection — still no relocation.
+    '28f396b6c3922395933b2668a70341ec57303a072aeb2aba80e4b177e84c7e5b',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
@@ -44,8 +45,9 @@ const _relocations = <String, List<String>>{
     // Plans 347 and 349 publish the strict incoming parent/attachment and
     // ordinary-text mutation projections; Plan 351 adds the transactional
     // incoming-deletion owner and the typed strict publication disposition.
+    // Plan 354 adds the private envelope+v108+v111 inbox-custody handoff.
     // The adapter remains in data.
-    '90ef92275e231ff4c35254e8ae24ab0da25f871f3513cbab50acc5e44a7b4232',
+    'b43a06ec8065dc6f299bf920b815d382e4c2b34c64a81d5fcbb3d7e503568b02',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
