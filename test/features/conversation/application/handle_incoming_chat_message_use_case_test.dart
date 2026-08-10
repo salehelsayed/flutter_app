@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -4679,6 +4680,131 @@ void main() {
         'legacy caption',
       );
       expect(mutationReceipts, <String>['$legacyId/$eventB']);
+    });
+  });
+
+  group('Plan 354 private strict receive', () {
+    test('TC-354-04c private strict initial eligibility post-stage race and '
+        'terminal replay matrix', () {
+      final source = File(
+        'lib/features/conversation/application/'
+        'handle_incoming_chat_message_use_case.dart',
+      ).readAsStringSync();
+
+      // 1. Exact eligibility: strict parsing admits ONLY the Plan 354
+      //    initial shapes and re-enforces the producer matrix locally.
+      final parser = source.indexOf(
+        '_StrictIncomingMediaProjection _parseStrictIncomingMediaProjection(',
+      );
+      expect(parser, greaterThan(-1));
+      final parserBody = source.substring(parser);
+      expect(
+        parserBody.contains('policy.requiresRedaction && !isPrivateInitial'),
+        isTrue,
+        reason: 'every redacted policy except the exact initial stays invalid',
+      );
+      expect(
+        parserBody.contains('privateMediaInitialProducerMatrixAllows('),
+        isTrue,
+        reason: 'the receiver never trusts the wire for the producer matrix',
+      );
+      for (final guard in <String>[
+        'attachments.length == 1',
+        'payload.text.trim().isEmpty',
+        '!payload.isForwarded',
+        'payload.quotedMessageId == null',
+      ]) {
+        expect(
+          parserBody.contains(guard),
+          isTrue,
+          reason: 'the private initial shape must require: $guard',
+        );
+      }
+
+      // 2. Capability absence for a selected strict private attempt fails
+      //    closed instead of falling back to the legacy split saves.
+      expect(
+        source.contains(
+          'strictMediaProjection.isPrivate &&\n            incomingPrivateMediaRepo',
+        ),
+        isTrue,
+      );
+
+      // 3. The atomic private owner is used, and the terminal disposition is
+      //    handled BEFORE the generic supersededByDeletion branch and before
+      //    any publication.
+      final stageCall = source.indexOf(
+        'stageIncomingDirectPrivateMediaBlobCustody(',
+      );
+      final durableBranch = source.indexOf(
+        'IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded) {',
+      );
+      final publication = source.indexOf('publishIncomingDirectMediaMessage(');
+      final markerStage = source.indexOf(
+        'await stageNotificationDisplayCustody?.call(conversationMessage);',
+      );
+      expect(stageCall, greaterThan(-1));
+      expect(durableBranch, greaterThan(stageCall));
+      expect(
+        durableBranch,
+        lessThan(markerStage),
+        reason: 'a terminal winner is decided before any marker is staged',
+      );
+      expect(markerStage, lessThan(publication));
+
+      // 4. The post-stage terminal re-read runs before marker staging and
+      //    emits the receipt with no publication.
+      final reread = source.indexOf(
+        'if (strictMediaProjection.isPrivate) {\n      final durableParent = await messageRepo.getMessage(payload.id);',
+      );
+      expect(
+        reread,
+        greaterThan(-1),
+        reason: 'terminal authority must be re-read after the atomic stage',
+      );
+      expect(reread, lessThan(markerStage));
+      final rereadBody = source.substring(reread, markerStage);
+      expect(rereadBody.contains('durableParent.hiddenAt != null'), isTrue);
+      expect(rereadBody.contains('durableParent.deletedAt != null'), isTrue);
+      expect(
+        rereadBody.contains('durableParent.privateMediaState.isTerminal'),
+        isTrue,
+      );
+      expect(
+        rereadBody.contains('await maybeSendDeliveryReceipt(payload.id);'),
+        isTrue,
+        reason: 'the exact initial receipt is still owed',
+      );
+      expect(
+        rereadBody.contains('HandleChatMessageResult.durablySuperseded'),
+        isTrue,
+      );
+      expect(
+        rereadBody.contains('publishIncomingDirectMediaMessage'),
+        isFalse,
+        reason: 'a post-stage terminal winner publishes nothing',
+      );
+
+      // 5. The terminal replay matrix itself is owned by the DB stage, and
+      //    its dedicated result never routes through the generic duplicate
+      //    branch. Both dispositions settle the event.
+      expect(
+        IncomingDirectMediaBlobCustodyStageOutcome
+            .durablySuperseded
+            .settlesEvent,
+        isTrue,
+      );
+      expect(
+        IncomingDirectMediaBlobCustodyStageOutcome
+            .durablySuperseded
+            .authorizesPublication,
+        isFalse,
+        reason: 'a terminal replay may never publish media, UI or a marker',
+      );
+      expect(
+        IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded,
+        isNot(IncomingDirectMediaBlobCustodyStageOutcome.refused),
+      );
     });
   });
 }

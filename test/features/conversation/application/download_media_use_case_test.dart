@@ -5630,6 +5630,132 @@ void main() {
       expect(File(siblingAbsolute).existsSync(), isTrue);
     });
   });
+  group('Plan 354 explicit private strict download', () {
+    test('TC-354-05a explicit private strict claim and path guard precede '
+        'network and commit precedes ACK', () async {
+      final downloadSource = File(
+        'lib/features/conversation/application/download_media_use_case.dart',
+      ).readAsStringSync();
+      final ownerSource = File(
+        'lib/features/conversation/application/'
+        'strict_direct_media_blob_download_ack_owner.dart',
+      ).readAsStringSync();
+
+      // 1. The private strict entry requires explicit user intent and an
+      //    incoming committed/ACK-pending obligation. Automatic private
+      //    download is never routed here.
+      final entry = downloadSource.indexOf(
+        'requiresDirectPrivateCommit &&\n      effectiveIntent == MediaDownloadIntent.explicitUser',
+      );
+      expect(
+        entry,
+        greaterThan(-1),
+        reason: 'automatic private download must stay refused',
+      );
+      final entryBody = downloadSource.substring(entry, entry + 3200);
+      expect(
+        entryBody.contains('DirectMediaBlobCustodyState.incomingCommitted'),
+        isTrue,
+      );
+      expect(
+        entryBody.contains('DirectMediaBlobCustodyState.incomingAckPending'),
+        isTrue,
+      );
+
+      // 2. The exact attachment-scoped transfer token AND the DB
+      //    `downloading` claim are both acquired, under the lifecycle lock,
+      //    strictly before the strict owner can make its first call.
+      final tokenIndex = entryBody.indexOf(
+        'directPrivateMediaTransferRegistry.tryBegin',
+      );
+      final claimIndex = entryBody.indexOf(
+        'beginDirectPrivateMediaDownloadWithinLock',
+      );
+      final ownerIndex = entryBody.indexOf(
+        'StrictDirectMediaBlobDownloadAckOwner(',
+      );
+      expect(tokenIndex, greaterThan(-1));
+      expect(claimIndex, greaterThan(tokenIndex));
+      expect(ownerIndex, greaterThan(claimIndex));
+      // A refused claim releases the token and performs zero network.
+      expect(
+        entryBody.contains(
+          'directPrivateMediaTransferRegistry.end(attachment.id, claimed);',
+        ),
+        isTrue,
+      );
+      expect(entryBody.contains('if (token == null) return null;'), isTrue);
+      // The token is always released.
+      expect(entryBody.contains('} finally {'), isTrue);
+
+      // 3. The owner path-authorizes the canonical target AND both
+      //    deterministic staging siblings BEFORE any bridge, network or
+      //    decrypt work.
+      final guard = ownerSource.indexOf(
+        'if (privateDeterministicStaging) {\n      // Path-authorize',
+      );
+      expect(guard, greaterThan(-1));
+      final firstNetwork = ownerSource.indexOf('await callP2PMediaDownload(');
+      final firstDecrypt = ownerSource.indexOf('await callBlobDecrypt(');
+      expect(guard, lessThan(firstNetwork));
+      expect(guard, lessThan(firstDecrypt));
+      final guardBody = ownerSource.substring(guard, firstNetwork);
+      expect(
+        guardBody.contains('DirectPrivateMediaPathGuard.authorizeTarget('),
+        isTrue,
+      );
+      expect(guardBody.contains('privateCiphertextStagingPath('), isTrue);
+      expect(guardBody.contains('privateDecryptStagingPath('), isTrue);
+      expect(
+        guardBody.contains('return null;'),
+        isTrue,
+        reason: 'an unsafe symlink refuses with zero mutation and no network',
+      );
+
+      // 4. The staging pair is deterministic, so private cleanup and restart
+      //    recovery can enumerate it without a wildcard scan.
+      expect(
+        StrictDirectMediaBlobDownloadAckOwner.privateCiphertextStagingPath(
+          '/docs/media/peer/blob.jpg',
+        ),
+        '/docs/media/peer/blob.jpg.private.enc',
+      );
+      expect(
+        StrictDirectMediaBlobDownloadAckOwner.privateDecryptStagingPath(
+          '/docs/media/peer/blob.jpg',
+        ),
+        '/docs/media/peer/blob.jpg.private.enc.dec',
+      );
+      final cleanupSource = File(
+        'lib/features/conversation/application/'
+        'direct_private_media_lifecycle.dart',
+      ).readAsStringSync();
+      expect(cleanupSource.contains(".path}.private.enc'"), isTrue);
+      expect(cleanupSource.contains(".path}.private.enc.dec'"), isTrue);
+
+      // 5. The durable local-path commit precedes the source-pinned ACK, and
+      //    a refused commit scrubs only this attempt's canonical plaintext.
+      final commitIndex = ownerSource.indexOf(
+        'commitIncomingDirectMediaBlobLocalPath(',
+      );
+      final ackIndex = ownerSource.indexOf(
+        '_acknowledgeReloadedPending(custody);',
+      );
+      expect(commitIndex, greaterThan(-1));
+      expect(
+        commitIndex,
+        lessThan(ownerSource.lastIndexOf('_acknowledgeReloadedPending(')),
+        reason: 'the DB commit always precedes the source-pinned ACK',
+      );
+      expect(ackIndex, greaterThan(-1));
+      expect(
+        ownerSource.contains(
+          'if (!didCommit) {\n              // The DB refused this promotion',
+        ),
+        isTrue,
+      );
+    });
+  });
 }
 
 class _ThrowingBridge implements Bridge {

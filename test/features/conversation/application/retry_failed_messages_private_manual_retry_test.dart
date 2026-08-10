@@ -865,6 +865,115 @@ void main() {
       expect(await _privateState(fixture, messageId), 'available');
     },
   );
+
+  test(
+    'TC-354-03b private strict failed retry canonicalizes without reminting',
+    () async {
+      // The manual failed-retry lane must reach the SAME reopen owner as the
+      // incomplete lane. This pins the production wiring that makes that true:
+      // a durable private v111 generation permanently excludes the legacy
+      // encrypt-and-upload helper for this parent.
+      final source = File(
+        'lib/features/conversation/application/retry_failed_messages_use_case.dart',
+      ).readAsStringSync();
+
+      final reopenEntry = source.indexOf(
+        '_reopenStrictPrivateFailedRetryAttachments(',
+      );
+      expect(
+        reopenEntry,
+        greaterThan(-1),
+        reason: 'the failed-retry lane must own a private strict reopen entry',
+      );
+      final legacyCall = source.indexOf('await _reuploadAttachments(');
+      expect(
+        legacyCall,
+        greaterThan(reopenEntry),
+        reason:
+            'the reopen decision must precede the legacy re-upload helper so '
+            'a published generation can never reach it',
+      );
+      // The legacy helper is reachable only when the reopen produced no
+      // attachments AND did not own the parent.
+      expect(
+        source.contains(
+          'final reuploadedAttachments =\n        strictPrivate.attachments ??',
+        ),
+        isTrue,
+      );
+      expect(
+        source.contains(
+          'if (strictPrivate.owned && strictPrivate.attachments == null) {',
+        ),
+        isTrue,
+        reason:
+            'an owned-but-unfinished reopen must fail closed, never fall back',
+      );
+
+      final helperStart = source.indexOf(
+        'Future<_StrictPrivateFailedRetry> _reopenStrictPrivateFailedRetryAttachments(',
+      );
+      expect(helperStart, greaterThan(-1));
+      final helperBody = source.substring(helperStart);
+      // It reopens through the coordinator, never through prepare/upload.
+      expect(helperBody.contains('reopenAndUploadPrivate('), isTrue);
+      expect(
+        helperBody.contains('prepareAndUploadPrivate('),
+        isFalse,
+        reason: 'a retry must never mint a fresh private generation',
+      );
+      // It canonicalizes with the shared no-network promotion and commits
+      // through the existing private completion coordinator.
+      expect(
+        helperBody.contains('canonicalizeStrictPrivateRetryCompletion('),
+        isTrue,
+      );
+      expect(
+        helperBody.contains(
+          'outgoingDirectPrivateMutationCoordinator\n      .commitCompletion(',
+        ),
+        isTrue,
+      );
+      // Every non-success path retains custody rather than re-encrypting.
+      expect(
+        'RETRY_FAILED_PRIVATE_STRICT_RETAINED'.allMatches(helperBody).length,
+        2,
+      );
+      expect(
+        helperBody.contains('RETRY_FAILED_PRIVATE_STRICT_CANONICALIZE_REFUSED'),
+        isTrue,
+      );
+      expect(
+        helperBody.contains('RETRY_FAILED_PRIVATE_STRICT_COMPLETION_REFUSED'),
+        isTrue,
+      );
+
+      // The shared canonicalization itself performs no network or crypto: it
+      // copies the exact pending plaintext and preserves the strict identity.
+      final shared = File(
+        'lib/features/conversation/application/retry_incomplete_uploads_use_case.dart',
+      ).readAsStringSync();
+      final canonicalStart = shared.indexOf(
+        'Future<MediaAttachment?> canonicalizeStrictPrivateRetryCompletion(',
+      );
+      expect(canonicalStart, greaterThan(-1));
+      final canonicalBody = shared.substring(canonicalStart);
+      for (final forbidden in <String>[
+        'callP2PMediaUpload',
+        'runUploadMedia',
+        'prepareEncryptedMediaArtifact',
+        'callBlobEncrypt',
+      ]) {
+        expect(
+          canonicalBody.contains(forbidden),
+          isFalse,
+          reason: 'canonicalization must not $forbidden',
+        );
+      }
+      expect(canonicalBody.contains('return strict.copyWith('), isTrue);
+      expect(canonicalBody.contains("downloadStatus: 'done',"), isTrue);
+    },
+  );
 }
 
 Future<({String pendingRelative, String pendingAbsolute})> _seedFailedPending(

@@ -3,6 +3,15 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'dart:io';
+
+import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -227,6 +236,137 @@ class _AbsentDirectMediaBlobRepository extends FakeMediaAttachmentRepository
     required DirectMediaBlobCustodyRow expected,
     required DirectMediaBlobCustodyRow next,
   }) async => false;
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+}
+
+/// Plan 354 private strict reopen fake.
+///
+/// Publishes one durable `outgoing_prepared` v111 row for the seeded parent and
+/// records every stage/reopen call so the test can prove the retry adopted the
+/// exact generation rather than minting or re-encrypting one.
+class _PrivateStrictBlobRepository extends FakeMediaAttachmentRepository
+    implements
+        DirectMediaBlobCustodyRepository,
+        OutgoingDirectPrivateMediaBlobGenerationRepository,
+        OutgoingDirectPrivateMutationRepository,
+        DirectPrivateMediaCleanupRuntime {
+  _PrivateStrictBlobRepository(this.row);
+
+  DirectMediaBlobCustodyRow row;
+  int privateStageCalls = 0;
+  int completionCalls = 0;
+  final List<MediaAttachment> completedAttachments = <MediaAttachment>[];
+  final MediaAttachmentLifecycleLock _lock = MediaAttachmentLifecycleLock();
+  late final OutgoingDirectPrivateMutationCoordinator _coordinator =
+      OutgoingDirectPrivateMutationCoordinator(
+        lifecycleLock: _lock,
+        classifyCompletion: (attachment, fingerprint) async =>
+            OutgoingDirectPrivateCompletionQualification.availablePending,
+        commitAvailable: (attachment, fingerprint) async {
+          completionCalls++;
+          completedAttachments.add(attachment);
+          return true;
+        },
+        commitRollback: (attachment, fingerprint, {required mode}) async =>
+            true,
+      );
+
+  @override
+  MediaAttachmentLifecycleLock get directPrivateMediaLifecycleLock => _lock;
+
+  @override
+  OutgoingDirectPrivateMutationCoordinator
+  get outgoingDirectPrivateMutationCoordinator => _coordinator;
+
+  @override
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  applyOutgoingDirectPrivateNonCompletionMutation(
+    MediaAttachment attachment,
+  ) async => OutgoingDirectPrivateNonCompletionMutationOutcome.applied;
+
+  @override
+  Future<OutgoingDirectPrivatePendingPreparationOutcome>
+  prepareOutgoingDirectPrivatePendingAttachments(
+    List<MediaAttachment> attachments,
+  ) async => OutgoingDirectPrivatePendingPreparationOutcome.inserted;
+
+  @override
+  Future<OutgoingDirectPrivateNonCompletionMutationOutcome>
+  deleteOutgoingDirectPrivatePendingAttachmentsForMessage(
+    String messageId, {
+    required MediaFileManager mediaFileManager,
+  }) async => OutgoingDirectPrivateNonCompletionMutationOutcome.applied;
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  bool get supportsOutgoingDirectPrivateMediaBlobGeneration => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => _lock.synchronizedAll(action);
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectPrivateMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment preparedAttachment,
+    required DirectMediaBlobCustodyRow custodyRow,
+  }) async {
+    privateStageCalls++;
+    // A reopen can only ever be idempotent: the generation already exists.
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.idempotent,
+      attachments: <MediaAttachment>[preparedAttachment],
+      custodyRows: <DirectMediaBlobCustodyRow>[row],
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async => const DirectMediaBlobGenerationStageResult.refused();
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => attachmentId == row.attachmentId ? row : null;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => messageId == row.messageId
+      ? <DirectMediaBlobCustodyRow>[row]
+      : const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => states.contains(row.state)
+      ? <DirectMediaBlobCustodyRow>[row]
+      : const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    if (!row.exactDatabaseProjectionMatches(expected)) return false;
+    row = next;
+    return true;
+  }
 
   @override
   Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
@@ -2145,6 +2285,161 @@ void main() {
       },
       skip: !kDirectMediaBlobCustodyClientEnabled,
     );
+
+    test('TC-354-03a private strict restart reopens completes and binds exact '
+        'generation', () async {
+      const messageId = 'tc354-03a-private';
+      const attachmentId = 'tc354-03a-private-att';
+      const contentHash =
+          'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+      final pendingPath = MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mime: 'image/jpeg',
+      );
+      final message = ConversationMessage(
+        id: messageId,
+        contactPeerId: 'peer-bob',
+        senderPeerId: 'my-peer-id',
+        text: '',
+        timestamp: '2026-08-10T13:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-08-10T13:00:00.000Z',
+        privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        privateMediaState: PrivateMediaLifecycleState.available,
+      );
+      // The already-published generation: prepared v111 plus its exact
+      // convention-pending row carrying the SAME ciphertext identity.
+      final published = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        localPath: pendingPath,
+        downloadStatus: 'upload_pending',
+        createdAt: '2026-08-10T13:00:00.000Z',
+        ownerLane: MediaOwnerLane.direct,
+        contentHash: contentHash,
+        encryptionKeyBase64: 'tc354-03a-raw-key',
+        encryptionNonce: 'tc354-03a-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final repo = _PrivateStrictBlobRepository(
+        DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: 'peer-bob',
+          ciphertextRelativePath:
+              'direct_media_blob_custody_v1/${'7' * 64}/$attachmentId.blob',
+          contentHash: contentHash,
+          ciphertextSize: 4096,
+          expiresAtMs: null,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: '2026-08-10T13:00:01.000Z',
+          updatedAt: '2026-08-10T13:00:01.000Z',
+        ),
+      )..seed(<MediaAttachment>[published]);
+      messageRepo.seed(<ConversationMessage>[message]);
+      identityRepo.seed(FakeIdentityRepository.makeIdentity());
+
+      // The reopen owner is the exact production seam both retry lanes
+      // call. It must revalidate through the private staging CAS, never
+      // re-encrypt, and never mint a missing generation.
+      var prepareArtifactCalls = 0;
+      var strictUploadCalls = 0;
+      final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+        repository: repo,
+        artifactStore: DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async =>
+              Directory.systemTemp.createTempSync('tc354_03a_'),
+        ),
+        prepareArtifact:
+            ({required Bridge bridge, required String localFilePath}) async {
+              prepareArtifactCalls++;
+              throw StateError('reopen must never re-encrypt');
+            },
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              strictUploadCalls++;
+              return <String, dynamic>{'ok': false};
+            },
+      );
+
+      final reopened = await coordinator.reopenAndUploadPrivate(
+        bridge: bridge,
+        identityPeerId: 'my-peer-id',
+        recipientPeerId: 'peer-bob',
+        expectedParent: message,
+        expectedAttachment: published,
+      );
+
+      expect(
+        prepareArtifactCalls,
+        0,
+        reason: 'an exact reopen must never re-encrypt the blob',
+      );
+      expect(
+        repo.privateStageCalls,
+        1,
+        reason: 'the reopen revalidates through the private staging CAS',
+      );
+      // The artifact store cannot verify a fixture-only ciphertext, so this
+      // reopen retains durable authority instead of uploading. What matters
+      // is that it never fell back to encrypt-and-upload.
+      expect(reopened.isComplete, isFalse);
+      expect(strictUploadCalls, 0);
+      expect(
+        repo.row.state,
+        DirectMediaBlobCustodyState.outgoingPrepared,
+        reason: 'the exact durable generation is retained for a later try',
+      );
+      expect(repo.row.contentHash, contentHash);
+
+      // The whole retry lane also refuses to route this parent through the
+      // legacy upload helper.
+      await retryIncompleteUploads(
+        mediaAttachmentRepo: repo,
+        messageRepo: messageRepo,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        uploadMediaFn: fakeUploadFn.call,
+        directMediaBlobCustodyCoordinator: coordinator,
+      );
+      expect(
+        fakeUploadFn.callCount,
+        0,
+        reason:
+            'a published private generation must never reach the legacy '
+            'upload lane',
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'media:upload'),
+        isEmpty,
+      );
+      final durable = await repo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
+      expect(durable.single.contentHash, contentHash);
+      expect(durable.single.encryptionNonce, 'tc354-03a-nonce');
+      expect(durable.single.localPath, pendingPath);
+    }, skip: !kDirectMediaBlobCustodyClientEnabled);
 
     test(
       'partial upload crash: re-uploads only pending, combines with done',
