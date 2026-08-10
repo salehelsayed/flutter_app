@@ -37,7 +37,7 @@ const _relocations = <String, List<String>>{
     // atomic caption stage and the incoming conditional apply to the same
     // adapter. Plan 354 adds the private v111 generation stage over the exact
     // convention-pending projection — still no relocation.
-    '14fab32d41bf23240621d4954494024cc1b96c795ba9870b8bbaa78f4cb2af37',
+    'd58d3a116b2259eae5b2638a0bffb58793ff19790637f222bc0c1a21d3421be4',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

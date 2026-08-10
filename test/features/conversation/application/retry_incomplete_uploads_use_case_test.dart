@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';

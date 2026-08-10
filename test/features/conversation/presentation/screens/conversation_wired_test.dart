@@ -3045,8 +3045,12 @@ void main() {
       });
       final image = File('${tempDir.path}/private.png')
         ..writeAsBytesSync(_tinyPngBytes);
+      // Plan 354 sentinel scope: this pins the LEGACY private upload lane, so
+      // the strict private generation capability is deliberately absent.
       final fixture = (await tester.runAsync(
-        MediaRepositoryRealDbFixture.create,
+        () => MediaRepositoryRealDbFixture.create(
+          wireOutgoingDirectPrivateMediaBlobGeneration: false,
+        ),
       ))!;
       addTearDown(fixture.dispose);
       final messageRepo = fixture.messageRepo;

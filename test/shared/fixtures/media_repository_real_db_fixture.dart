@@ -69,6 +69,9 @@ class MediaRepositoryRealDbFixture {
     )?
     dbStageFreshOutgoingDirectMediaBlobGenerationAround,
     bool wireFreshOutgoingDirectMediaBlobGeneration = true,
+    // Plan 354: legacy-lane tests opt out so a selector-on private send keeps
+    // exercising the unchanged legacy upload path instead of strict custody.
+    bool wireOutgoingDirectPrivateMediaBlobGeneration = true,
     Future<bool> Function(
       Map<String, Object?> row, {
       required String messageId,
@@ -214,18 +217,20 @@ class MediaRepositoryRealDbFixture {
             custodyRows: custodyRows,
           ),
       dbStageOutgoingDirectPrivateMediaBlobGeneration:
-          ({
-            required expectedParentRow,
-            required expectedAttachmentRow,
-            required preparedAttachmentRow,
-            required custodyRow,
-          }) => dbStageOutgoingDirectPrivateMediaBlobGeneration(
-            db,
-            expectedParentRow: expectedParentRow,
-            expectedAttachmentRow: expectedAttachmentRow,
-            preparedAttachmentRow: preparedAttachmentRow,
-            custodyRow: custodyRow,
-          ),
+          wireOutgoingDirectPrivateMediaBlobGeneration
+          ? ({
+              required expectedParentRow,
+              required expectedAttachmentRow,
+              required preparedAttachmentRow,
+              required custodyRow,
+            }) => dbStageOutgoingDirectPrivateMediaBlobGeneration(
+              db,
+              expectedParentRow: expectedParentRow,
+              expectedAttachmentRow: expectedAttachmentRow,
+              preparedAttachmentRow: preparedAttachmentRow,
+              custodyRow: custodyRow,
+            )
+          : null,
       dbStageIncomingDirectPrivateMediaBlobCustody:
           ({
             required messageRow,

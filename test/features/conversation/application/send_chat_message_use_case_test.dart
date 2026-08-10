@@ -4112,7 +4112,6 @@ void main() {
       final stoppedService = FakeP2PService(
         currentState: const NodeState(isStarted: false),
       );
-      var mediaStoreCalls = 0;
       final (nodeOffResult, _) = await chat_use_case.sendChatMessage(
         p2pService: stoppedService,
         messageRepo: nodeOff.repository,
@@ -4136,10 +4135,8 @@ void main() {
               message, {
               required custodyExpiresAtOrBeforeMs,
               timeoutMs,
-            }) async {
-              mediaStoreCalls++;
-              return const InboxStoreOutcome(status: InboxStoreStatus.failed);
-            },
+            }) async =>
+                const InboxStoreOutcome(status: InboxStoreStatus.failed),
       );
       expect(nodeOffResult, SendChatMessageResult.nodeNotRunning);
       expect(
