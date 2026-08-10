@@ -123,6 +123,10 @@ readonly STRICT_SCHEMA_OWNERS=(
   lib/core/bridge/p2p_bridge_client.dart
   lib/core/database/direct_media_blob_custody.dart
   lib/core/database/helpers/media_attachments_db_helpers.dart
+  # Plan 354 Barrier B validates the stored proof's relay identity inside the
+  # same private envelope+v108+v111 transaction. It is a typed schema reader,
+  # not a network owner: the stricter helper allowlist above is unchanged.
+  lib/core/database/helpers/messages_db_helpers.dart
   lib/core/database/migrations/111_direct_media_blob_custody.dart
   lib/debug/android_direct_media_blob_custody_e2e.dart
   lib/core/media/direct_media_blob_custody.dart
