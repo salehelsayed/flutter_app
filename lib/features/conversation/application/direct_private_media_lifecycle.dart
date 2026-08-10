@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
@@ -938,6 +939,16 @@ class DirectPrivateMediaLifecycle
 
     final attachments = await _cleanupRepository
         .loadDirectPrivateMediaCleanupAttachments(parent.id);
+    // 354: a strict protected/View-Once generation whose ciphertext is still
+    // live under v111 keeps its complete projection — attachment row, secure
+    // key, plaintext and ciphertext artifact — even when hide/delete/consume
+    // won. The existing global blob drain terminalizes that independent
+    // authority, and a later private cleanup pass then removes these assets.
+    // This is deliberately retention-only: it never invokes the message-wide
+    // transition from inside this per-attachment lock.
+    if (await _mustRetainLivePrivateBlobCustody(parent, attachments)) {
+      return;
+    }
     if (await _mustRetainUnhandedOffOutgoingCustody(parent, attachments)) {
       final mutationRepository = mediaAttachmentRepository;
       if (mutationRepository is OutgoingDirectPrivateMutationRepository) {
@@ -1001,6 +1012,51 @@ class DirectPrivateMediaLifecycle
         }
       }
     }
+  }
+
+  /// Whether one outgoing protected/View-Once parent still owns a live
+  /// `outgoing_prepared`/`outgoing_stored` v111 generation.
+  ///
+  /// v111 rows have no foreign key and are policy-neutral, so this obligation
+  /// legitimately outlives a terminal private parent. Removing the attachment,
+  /// its secure key, or its plaintext first would leave an unreopenable live
+  /// generation.
+  Future<bool> _mustRetainLivePrivateBlobCustody(
+    ConversationMessage parent,
+    List<DirectPrivateMediaCleanupAttachment> attachments,
+  ) async {
+    if (parent.isIncoming ||
+        parent.privateMediaPolicy.version != 1 ||
+        !_isOutgoingOneMoreLookMode(parent.privateMediaMode) ||
+        attachments.isEmpty) {
+      return false;
+    }
+    final repository = mediaAttachmentRepository;
+    if (repository is! DirectMediaBlobCustodyRepository ||
+        !(repository as DirectMediaBlobCustodyRepository)
+            .supportsDirectMediaBlobCustody) {
+      return false;
+    }
+    List<DirectMediaBlobCustodyRow> rows;
+    try {
+      rows = await (repository as DirectMediaBlobCustodyRepository)
+          .loadDirectMediaBlobCustodyForMessage(parent.id);
+    } on Object {
+      // Authority is unresolved. Retaining a bounded projection is always
+      // safer than destroying the only resumable bytes for a live generation.
+      return true;
+    }
+    final attachmentIds = attachments
+        .map((attachment) => attachment.id)
+        .toSet();
+    return rows.any(
+      (row) =>
+          row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+          (row.state == DirectMediaBlobCustodyState.outgoingPrepared ||
+              row.state == DirectMediaBlobCustodyState.outgoingStored) &&
+          row.messageId == parent.id &&
+          attachmentIds.contains(row.attachmentId),
+    );
   }
 
   Future<bool> _mustRetainUnhandedOffOutgoingCustody(

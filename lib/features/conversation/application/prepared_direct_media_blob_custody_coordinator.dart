@@ -268,15 +268,13 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
   /// attachment is the whole preparation authority: no v110 intent exists and
   /// none is minted. The complete v111 generation is published before the LAN
   /// callback and before the same strict relay owner every ordinary generation
-  /// already uses. [reopen] is true for a failed/incomplete retry, which must
-  /// never mint a missing generation.
+  /// already uses.
   Future<PreparedDirectMediaBlobUploadResult> prepareAndUploadPrivate({
     required Bridge bridge,
     required String identityPeerId,
     required String recipientPeerId,
     required ConversationMessage expectedParent,
     required PreparedDirectMediaBlobSource source,
-    bool reopen = false,
     DirectMediaBlobGenerationReadyFn? onGenerationReady,
   }) async {
     final privateRepository = switch (_repository) {
@@ -317,17 +315,6 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
 
     try {
       return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
-        if (reopen) {
-          final rows = await _repository.loadDirectMediaBlobCustodyForMessage(
-            expectedParent.id,
-          );
-          if (rows.length != 1 ||
-              rows.single.attachmentId != source.attachment.id) {
-            return const PreparedDirectMediaBlobUploadResult.refused(
-              hasDurableAuthority: true,
-            );
-          }
-        }
         final publication = await _publishPrivateGeneration(
           bridge: bridge,
           identityPeerId: identityPeerId,
@@ -335,7 +322,6 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           expectedParent: expectedParent,
           source: source,
           repository: privateRepository,
-          reopen: reopen,
         );
         final generation = publication.generation;
         if (generation == null) {
@@ -356,6 +342,112 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     }
   }
 
+  /// Plan 354 private failed/incomplete retry entry.
+  ///
+  /// This never mints a generation and never re-encrypts: it revalidates the
+  /// exact durable parent, attachment and v111 projection through the same
+  /// private staging CAS (which can only return `idempotent` while a generation
+  /// is loaded under this lease), then reopens the byte-identical ciphertext
+  /// and reuses the sole strict upload owner.
+  Future<PreparedDirectMediaBlobUploadResult> reopenAndUploadPrivate({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String recipientPeerId,
+    required ConversationMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    DirectMediaBlobGenerationReadyFn? onGenerationReady,
+  }) async {
+    final privateRepository = switch (_repository) {
+      OutgoingDirectPrivateMediaBlobGenerationRepository repository
+          when repository.supportsOutgoingDirectPrivateMediaBlobGeneration =>
+        repository,
+      _ => null,
+    };
+    if (!_repository.supportsDirectMediaBlobCustody ||
+        privateRepository == null ||
+        identityPeerId.isEmpty ||
+        identityPeerId != identityPeerId.trim() ||
+        recipientPeerId.isEmpty ||
+        recipientPeerId != recipientPeerId.trim() ||
+        expectedParent.id.isEmpty ||
+        expectedParent.isIncoming ||
+        expectedParent.isDeleted ||
+        expectedParent.isHidden ||
+        expectedParent.contactPeerId != recipientPeerId ||
+        expectedParent.directMediaCustodyIntentId != null ||
+        expectedAttachment.messageId != expectedParent.id ||
+        expectedAttachment.ownerLane != MediaOwnerLane.direct ||
+        expectedAttachment.downloadStatus != 'upload_pending' ||
+        expectedAttachment.contentHash == null ||
+        expectedAttachment.encryptionKeyBase64 == null ||
+        expectedAttachment.encryptionNonce == null ||
+        expectedAttachment.encryptionScheme == null) {
+      return const PreparedDirectMediaBlobUploadResult.refused();
+    }
+    try {
+      return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
+        final rows = await _repository.loadDirectMediaBlobCustodyForMessage(
+          expectedParent.id,
+        );
+        if (rows.length != 1 ||
+            rows.single.attachmentId != expectedAttachment.id) {
+          return const PreparedDirectMediaBlobUploadResult.refused(
+            hasDurableAuthority: true,
+          );
+        }
+        final revalidated = await privateRepository
+            .stageOutgoingDirectPrivateMediaBlobGeneration(
+              expectedParent: expectedParent,
+              expectedAttachment: expectedAttachment.copyWith(
+                clearContentHash: true,
+                clearThumbnailHash: true,
+                clearEncryptionKeyBase64: true,
+                clearEncryptionNonce: true,
+                clearEncryptionScheme: true,
+                clearBlobCustody: true,
+                clearDirectMediaBlobCustodyFingerprint: true,
+              ),
+              preparedAttachment: expectedAttachment,
+              custodyRow: rows.single.copyWith(
+                state: DirectMediaBlobCustodyState.outgoingPrepared,
+                inboxCustodyIncarnationId: null,
+                expiresAtMs: null,
+                custodyRelayPeerId: null,
+              ),
+            );
+        if (revalidated.outcome !=
+            DirectMediaBlobGenerationStageOutcome.idempotent) {
+          return const PreparedDirectMediaBlobUploadResult.refused(
+            hasDurableAuthority: true,
+          );
+        }
+        final generation = await _reopenCompleteGeneration(
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          messageId: expectedParent.id,
+          attachments: revalidated.attachments,
+          rows: revalidated.custodyRows,
+        );
+        if (generation == null) {
+          return const PreparedDirectMediaBlobUploadResult.refused(
+            hasDurableAuthority: true,
+          );
+        }
+        return _uploadPublishedGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          recipientPeerId: recipientPeerId,
+          generation: generation,
+          onGenerationReady: onGenerationReady,
+        );
+      });
+    } on Object {
+      return const PreparedDirectMediaBlobUploadResult.refused(
+        hasDurableAuthority: true,
+      );
+    }
+  }
+
   Future<_GenerationPublication> _publishPrivateGeneration({
     required Bridge bridge,
     required String identityPeerId,
@@ -363,7 +455,6 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required ConversationMessage expectedParent,
     required PreparedDirectMediaBlobSource source,
     required OutgoingDirectPrivateMediaBlobGenerationRepository repository,
-    required bool reopen,
   }) async {
     _CandidateGenerationEntry? candidate;
     var stageAttempted = false;
@@ -424,9 +515,7 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
       hasDurableAuthority = staged.authorizesStrictUpload;
       final idempotent =
           staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
-      // A reopen may never mint a generation. Only the idempotent branch can
-      // prove the caller adopted an already-published exact artifact.
-      if (!staged.authorizesStrictUpload || (reopen && !idempotent)) {
+      if (!staged.authorizesStrictUpload) {
         await _deleteOnlyProvablyUnreferencedCandidates(
           identityPeerId: identityPeerId,
           messageId: expectedParent.id,

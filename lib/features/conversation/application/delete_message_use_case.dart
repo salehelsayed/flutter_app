@@ -99,11 +99,21 @@ Future<int> deleteMessageForMe({
     final cleanupRuntime = attachments as DirectPrivateMediaCleanupRuntime;
     final attachmentRepository = attachments as MediaAttachmentRepository;
     final now = DateTime.now().toUtc();
-    final hidden = await directLifecycleRepository.hidePrivateMediaForMe(
-      currentMessage.id,
-      hiddenAt: now.toIso8601String(),
-      nowMs: now.millisecondsSinceEpoch,
-    );
+    // 354: the destructive hide is persisted under the same repository-wide
+    // media lifecycle authority that serializes strict blob staging, upload and
+    // the envelope/v108/v111 handoff. A hide that wins before the transfer
+    // claim therefore produces zero later blob or chat egress, while a hide
+    // arriving after it waits and then converges through cleanup. Terminal
+    // cleanup itself acquires the same lock, so it deliberately runs after
+    // this lease is released.
+    final hidden = await cleanupRuntime.directPrivateMediaLifecycleLock
+        .synchronizedAll(
+          () => directLifecycleRepository.hidePrivateMediaForMe(
+            currentMessage!.id,
+            hiddenAt: now.toIso8601String(),
+            nowMs: now.millisecondsSinceEpoch,
+          ),
+        );
     if (!hidden) return 0;
     await reactionRepo?.deleteReactionsForMessage(currentMessage.id);
     final adapter = DirectPrivateMediaLifecycle(

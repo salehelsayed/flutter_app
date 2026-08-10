@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
@@ -712,6 +714,122 @@ Future<int> retryIncompleteUploads({
         retryPendingAttachments = const <MediaAttachment>[];
       }
 
+      // 354: an already-published protected/View-Once generation is reopened
+      // byte-identically. It never calls the legacy upload path, never
+      // re-encrypts, never rotates keys, and never invalidates the guarded
+      // envelope. A crossed or partial strict private projection fails closed
+      // and retains its durable custody for a later attempt.
+      var privateStrictReopened = false;
+      if (kDirectMediaBlobCustodyClientEnabled &&
+          isOutgoingPrivateOneMoreLook &&
+          directMediaIntent == null &&
+          mediaFileManager != null &&
+          mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
+          (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
+              .supportsDirectMediaBlobCustody) {
+        final blobRepository =
+            mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+        final privateRows = await blobRepository
+            .loadDirectMediaBlobCustodyForMessage(messageId);
+        if (privateRows.isNotEmpty) {
+          final pending = retryPendingAttachments.length == 1
+              ? retryPendingAttachments.single
+              : null;
+          final pendingPath = pending?.localPath;
+          if (privateRows.length != 1 ||
+              pending == null ||
+              pendingPath == null ||
+              pendingPath.isEmpty ||
+              privateRows.single.attachmentId != pending.id) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_RETAINED',
+              details: {'messageId': messageId},
+            );
+            await _releaseIncompletePrivateTransferClaims(
+              runtime: privateCleanupRuntime!,
+              tokens: privateTransferTokens,
+            );
+            continue;
+          }
+          final coordinator =
+              directMediaBlobCustodyCoordinator ??
+              PreparedDirectMediaBlobCustodyCoordinator(
+                repository: blobRepository,
+                artifactStore:
+                    directMediaBlobArtifactStore ??
+                    DirectMediaBlobArtifactStore(),
+              );
+          final strictResult = await coordinator.reopenAndUploadPrivate(
+            bridge: bridge,
+            identityPeerId: identity.peerId,
+            recipientPeerId: msg.contactPeerId,
+            expectedParent: msg,
+            expectedAttachment: pending,
+          );
+          if (!strictResult.isComplete ||
+              strictResult.attachments.length != 1) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_RETAINED',
+              details: {'messageId': messageId},
+            );
+            await _releaseIncompletePrivateTransferClaims(
+              runtime: privateCleanupRuntime!,
+              tokens: privateTransferTokens,
+            );
+            continue;
+          }
+          final canonical = await _canonicalizeStrictPrivateRetryCompletion(
+            mediaFileManager: mediaFileManager,
+            contactPeerId: msg.contactPeerId,
+            messageId: messageId,
+            pendingLocalPath: pendingPath,
+            strict: strictResult.attachments.single,
+          );
+          if (canonical == null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_CANONICALIZE_REFUSED',
+              details: {'messageId': messageId},
+            );
+            await _releaseIncompletePrivateTransferClaims(
+              runtime: privateCleanupRuntime!,
+              tokens: privateTransferTokens,
+            );
+            continue;
+          }
+          final mutation = await mutationRepository!
+              .outgoingDirectPrivateMutationCoordinator
+              .commitCompletion(
+                attachment: canonical,
+                expectedPendingLocalPath: pendingPath,
+              );
+          if (!mutation.authorizesTransportHandoff) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_COMPLETION_REFUSED',
+              details: {'messageId': messageId},
+            );
+            await _releaseIncompletePrivateTransferClaims(
+              runtime: privateCleanupRuntime!,
+              tokens: privateTransferTokens,
+            );
+            continue;
+          }
+          carriedPrivateCompletions[canonical.id] = canonical;
+          retryPendingAttachments = const <MediaAttachment>[];
+          privateStrictReopened = true;
+        }
+      }
+      if (privateStrictReopened) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_REOPENED',
+          details: {'messageId': messageId},
+        );
+      }
+
       for (final attachment in retryPendingAttachments) {
         var localPath = attachment.localPath;
         if (localPath == null || localPath.isEmpty) {
@@ -1343,4 +1461,56 @@ String? _lateSendAbortReason({
     return 'attachments_not_done';
   }
   return null;
+}
+
+/// 354: promotes the exact convention-pending plaintext to its canonical
+/// private path without network work or re-encryption, preserving the reopened
+/// strict generation's key, nonce, hashes and blob commitment byte-for-byte.
+///
+/// Returns null when the pending source is missing or the strict projection
+/// drifted; the caller then retains its durable custody instead of writing.
+Future<MediaAttachment?> _canonicalizeStrictPrivateRetryCompletion({
+  required MediaFileManager mediaFileManager,
+  required String contactPeerId,
+  required String messageId,
+  required String pendingLocalPath,
+  required MediaAttachment strict,
+}) async {
+  if (strict.messageId != messageId ||
+      strict.blobCustody == null ||
+      strict.contentHash == null ||
+      strict.encryptionKeyBase64 == null ||
+      strict.encryptionNonce == null ||
+      strict.encryptionScheme == null) {
+    return null;
+  }
+  final canonicalRelativePath = mediaFileManager.relativePathForAttachment(
+    contactPeerId: contactPeerId,
+    blobId: strict.id,
+    mime: strict.mime,
+  );
+  final absoluteCanonical = await mediaFileManager.localPathForAttachment(
+    contactPeerId: contactPeerId,
+    blobId: strict.id,
+    mime: strict.mime,
+  );
+  final absolutePending = await mediaFileManager.resolveStoredPath(
+    pendingLocalPath,
+  );
+  if (absoluteCanonical != absolutePending) {
+    final source = File(absolutePending);
+    if (!await source.exists()) return null;
+    final target = File(absoluteCanonical);
+    final parent = target.parent;
+    if (!await parent.exists()) {
+      await parent.create(recursive: true);
+    }
+    await source.copy(absoluteCanonical);
+  }
+  return strict.copyWith(
+    messageId: messageId,
+    localPath: canonicalRelativePath,
+    downloadStatus: 'done',
+    ownerLane: MediaOwnerLane.direct,
+  );
 }
