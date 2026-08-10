@@ -20,6 +20,7 @@ import '../direct_inbox_event_envelope.dart';
 import '../direct_media_blob_custody.dart';
 import '../outgoing_transport_mutation.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
+import 'direct_notification_display_outbox_db_helpers.dart';
 import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'group_messages_db_helpers.dart';
 import 'group_parent_write_guard.dart';
@@ -6890,6 +6891,15 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
               ))) {
         return const IncomingDirectMediaBlobDbStageResult.refused();
       }
+      // 355: the terminal winner owns presentation too. Retire the exact
+      // message-kind display marker in this same transaction so a replay can
+      // never leave a card for media the user can no longer open. Same-message
+      // reaction rows and every other message survive.
+      await dbDeleteDirectNotificationDisplayOutboxMessageEntriesForMessage(
+        txn,
+        peerId: senderPeerId as String,
+        messageId: messageId,
+      );
       if (existingCustody.isEmpty) {
         // No surviving obligation: the reduced durable-parent equivalence plus
         // any surviving attachment identity is the whole proof.

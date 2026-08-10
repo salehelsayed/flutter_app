@@ -1,12 +1,32 @@
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 
 import 'strict_direct_media_blob_download_ack_owner.dart';
 
 typedef RetryIncomingDirectMediaBlob =
     Future<bool> Function(DirectMediaBlobCustodyRow row);
+
+/// Whether the automatic v111 drain may complete one incoming parent's
+/// transfer over the network.
+///
+/// A tombstoned or hidden parent keeps its independent obligation (ACK or
+/// expiry still converge) but its plaintext must never be re-downloaded after
+/// the user's deletion won. A redacted Protected/View-Once parent is likewise
+/// RETAINED without network: its plaintext requires explicit user intent
+/// through `downloadMedia`, which this drain deliberately bypasses.
+///
+/// Production and its proof call this one predicate; neither copies its body.
+bool directMediaBlobDrainMayDownloadIncomingParent(
+  ConversationMessage? parent,
+) =>
+    parent != null &&
+    parent.isIncoming &&
+    !parent.isDeleted &&
+    parent.hiddenAt == null &&
+    !parent.privateMediaPolicy.requiresRedaction;
 
 final class DirectMediaBlobCustodyDrainResult {
   const DirectMediaBlobCustodyDrainResult({

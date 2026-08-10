@@ -442,6 +442,26 @@ Future<int> dbDeleteDirectNotificationDisplayOutboxForMessage(
   );
 }
 
+/// Retires ONLY the message-kind display markers for one peer + message event.
+///
+/// 355: a private terminal winner must leave no card behind, in either
+/// readiness. Reaction rows for the same message and every other message's
+/// rows are deliberately untouched, so this is safe to call from inside a
+/// terminal/stage transaction that owns just this one message event.
+Future<int> dbDeleteDirectNotificationDisplayOutboxMessageEntriesForMessage(
+  DatabaseExecutor db, {
+  required String peerId,
+  required String messageId,
+}) async {
+  if (peerId.isEmpty || messageId.isEmpty) return 0;
+  if (!await _tableExists(db)) return 0;
+  return db.delete(
+    _table,
+    where: 'peer_id = ? AND message_id = ? AND event_kind = ?',
+    whereArgs: <Object?>[peerId, messageId, 'message'],
+  );
+}
+
 Future<int> dbDeleteDirectNotificationDisplayOutboxForReaction(
   DatabaseExecutor db, {
   required String peerId,

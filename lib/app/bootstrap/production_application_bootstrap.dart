@@ -4080,30 +4080,24 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       strictDownloadAckOwner: strictDirectMediaBlobDownloadAckOwner,
       retryIncomingDownload: (row) async {
         final parent = await messageRepository.getMessage(row.messageId);
-        // A tombstoned or hidden parent keeps its independent v111 obligation
-        // (ACK or expiry still converge), but its plaintext must never be
-        // re-downloaded after the user's deletion won.
-        if (parent == null ||
-            !parent.isIncoming ||
-            parent.isDeleted ||
-            parent.hiddenAt != null) {
-          return false;
-        }
-        // 354: a protected/View-Once parent is RETAINED without network here.
-        // Its plaintext requires explicit user intent through downloadMedia,
-        // which this callback deliberately bypasses. The independent v111
-        // obligation still converges on its own: an already ACK-pending row
-        // keeps retrying its source ACK, and expiry still applies.
-        if (parent.privateMediaPolicy.requiresRedaction) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'DIRECT_MEDIA_BLOB_DRAIN_PRIVATE_RETAINED',
-            details: {
-              'id': row.messageId.length > 8
-                  ? row.messageId.substring(0, 8)
-                  : row.messageId,
-            },
-          );
+        // 355: the exact shared drain predicate decides. A tombstoned, hidden
+        // or redacted parent is retained WITHOUT network; an ordinary strict
+        // parent still converges automatically. The independent v111
+        // obligation converges on its own either way: an already ACK-pending
+        // row keeps retrying its source ACK, and expiry still applies.
+        if (!directMediaBlobDrainMayDownloadIncomingParent(parent)) {
+          if (parent != null &&
+              parent.privateMediaPolicy.requiresRedaction) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'DIRECT_MEDIA_BLOB_DRAIN_PRIVATE_RETAINED',
+              details: {
+                'id': row.messageId.length > 8
+                    ? row.messageId.substring(0, 8)
+                    : row.messageId,
+              },
+            );
+          }
           return false;
         }
         final attachments = await mediaAttachmentRepository
@@ -4118,7 +4112,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         return await strictDirectMediaBlobDownloadAckOwner
                 .downloadAndAcknowledge(
                   attachment: candidates.single,
-                  contactPeerId: parent.contactPeerId,
+                  contactPeerId: parent!.contactPeerId,
                 ) !=
             null;
       },
@@ -4922,7 +4916,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                   message.isIncoming &&
                   message.readAt == null &&
                   !message.isDeleted &&
-                  message.hiddenAt == null
+                  message.hiddenAt == null &&
+                  // 355: a consumed or expired private parent is terminal, so
+                  // its canonical card must be retired like a deleted one.
+                  !message.privateMediaState.isTerminal
               ? DirectNotificationCanonicalContentDecision.keep
               : DirectNotificationCanonicalContentDecision.retire;
         case ConversationNotificationContentKind.reaction:
@@ -5083,7 +5080,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 !message.isIncoming ||
                 message.readAt != null ||
                 message.isDeleted ||
-                message.hiddenAt != null) {
+                message.hiddenAt != null ||
+                // 355: consumption and expiry are terminal too. Showing a card
+                // for private media the user can no longer open is the same
+                // defect as showing one for deleted or hidden content.
+                message.privateMediaState.isTerminal) {
               return null;
             }
             return maybeShowNotification(

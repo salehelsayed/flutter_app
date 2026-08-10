@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -1077,6 +1078,110 @@ void main() {
       expect(page.length, 2);
       expect(page[0].id, 'msg-1');
       expect(page[1].id, 'msg-2');
+    });
+  });
+
+  group('Plan 355 private terminal publication', () {
+    ConversationMessage privateParent({
+      required String id,
+      PrivateMediaLifecycleState state = PrivateMediaLifecycleState.available,
+      String? hiddenAt,
+      String? deletedAt,
+    }) => ConversationMessage(
+      id: id,
+      contactPeerId: 'peer-private',
+      senderPeerId: 'peer-private',
+      text: '',
+      timestamp: '2026-08-10T19:00:00.000Z',
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: '2026-08-10T19:00:00.000Z',
+      hiddenAt: hiddenAt,
+      deletedAt: deletedAt,
+      deletedByPeerId: deletedAt == null ? null : 'peer-private',
+      privateMediaPolicy: const PrivateMediaPolicy.protected(),
+      privateMediaState: state,
+    );
+
+    MediaAttachment attachmentFor(String messageId) => MediaAttachment(
+      id: '$messageId-a',
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: 13,
+      mediaType: 'image',
+      downloadStatus: 'pending',
+      createdAt: '2026-08-10T19:00:00.000Z',
+      ownerLane: MediaOwnerLane.direct,
+    );
+
+    test('TC-355-04c private terminal publication emits no message', () async {
+      // Consumed and expired are terminal too: publishing behind them would
+      // push stale private media into an open conversation stream.
+      for (final terminal in const <PrivateMediaLifecycleState>[
+        PrivateMediaLifecycleState.consumed,
+        PrivateMediaLifecycleState.expired,
+      ]) {
+        final id = 'private-terminal-${terminal.wireValue}';
+        final parent = privateParent(id: id, state: terminal);
+        await repo.saveMessage(parent);
+        final emitted = <ConversationMessage>[];
+        final sub = repo.messageChanges.listen(emitted.add);
+        addTearDown(sub.cancel);
+
+        expect(
+          await repo.publishIncomingDirectMediaMessage(
+            message: parent,
+            attachments: <MediaAttachment>[attachmentFor(id)],
+          ),
+          StrictIncomingMediaPublicationDisposition.durablySuperseded,
+          reason: terminal.wireValue,
+        );
+        await Future<void>.delayed(Duration.zero);
+        expect(emitted, isEmpty, reason: terminal.wireValue);
+      }
+
+      // Deleted and hidden keep their existing suppression.
+      for (final suppressed in <String, ConversationMessage>{
+        'deleted': privateParent(
+          id: 'private-terminal-deleted',
+          deletedAt: '2026-08-10T19:05:00.000Z',
+        ),
+        'hidden': privateParent(
+          id: 'private-terminal-hidden',
+          hiddenAt: '2026-08-10T19:05:00.000Z',
+        ),
+      }.entries) {
+        await repo.saveMessage(suppressed.value);
+        expect(
+          await repo.publishIncomingDirectMediaMessage(
+            message: suppressed.value,
+            attachments: <MediaAttachment>[
+              attachmentFor(suppressed.value.id),
+            ],
+          ),
+          StrictIncomingMediaPublicationDisposition.durablySuperseded,
+          reason: suppressed.key,
+        );
+      }
+
+      // An ACTIVE private parent still publishes exactly once.
+      const activeId = 'private-active';
+      final active = privateParent(id: activeId);
+      await repo.saveMessage(active);
+      final activeEmitted = <ConversationMessage>[];
+      final activeSub = repo.messageChanges.listen(activeEmitted.add);
+      addTearDown(activeSub.cancel);
+      expect(
+        await repo.publishIncomingDirectMediaMessage(
+          message: active,
+          attachments: <MediaAttachment>[attachmentFor(activeId)],
+        ),
+        StrictIncomingMediaPublicationDisposition.published,
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(activeEmitted, hasLength(1));
+      expect(activeEmitted.single.id, activeId);
+      expect(activeEmitted.single.media, hasLength(1));
     });
   });
 }

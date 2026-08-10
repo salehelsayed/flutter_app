@@ -3954,20 +3954,51 @@ Future<int> dbConsumeDirectPrivateMedia(
     storedLocalPath: storedLocalPath,
   );
   if (!identity.valid) return Future<int>.value(0);
-  return db.rawUpdate(
-    "UPDATE messages SET private_media_state = 'consumed', "
-    'private_media_terminal_at_ms = '
-    'COALESCE(private_media_terminal_at_ms, ?), '
-    'private_media_clock_high_water_ms = '
-    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
-    "WHERE id = ? AND hidden_at IS NULL "
-    "AND deleted_at IS NULL AND private_media_policy_version = 1 "
-    "AND ((is_incoming = 1 AND private_media_mode = 'view_once') "
-    "OR (is_incoming = 0 AND private_media_mode IN ('protected','view_once'))) "
-    '${identity.sql}'
-    "AND private_media_state IN ('opening', 'viewing') "
-    'AND private_media_terminal_at_ms IS NULL',
-    <Object?>[nowMs, nowMs, id, ...identity.args],
+  return dbWriteTransaction(db, (txn) async {
+    final consumed = await txn.rawUpdate(
+      "UPDATE messages SET private_media_state = 'consumed', "
+      'private_media_terminal_at_ms = '
+      'COALESCE(private_media_terminal_at_ms, ?), '
+      'private_media_clock_high_water_ms = '
+      'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+      "WHERE id = ? AND hidden_at IS NULL "
+      "AND deleted_at IS NULL AND private_media_policy_version = 1 "
+      "AND ((is_incoming = 1 AND private_media_mode = 'view_once') "
+      "OR (is_incoming = 0 AND private_media_mode IN "
+      "('protected','view_once'))) "
+      '${identity.sql}'
+      "AND private_media_state IN ('opening', 'viewing') "
+      'AND private_media_terminal_at_ms IS NULL',
+      <Object?>[nowMs, nowMs, id, ...identity.args],
+    );
+    if (consumed > 0) {
+      await _retireDirectPrivateMessageDisplayMarker(txn, messageId: id);
+    }
+    return consumed;
+  });
+}
+
+/// Retires the exact message-kind display marker for one now-terminal private
+/// parent, inside the caller's terminal transaction.
+///
+/// Same-message reaction rows and every other message's rows survive.
+Future<void> _retireDirectPrivateMessageDisplayMarker(
+  DatabaseExecutor txn, {
+  required String messageId,
+}) async {
+  final rows = await txn.query(
+    'messages',
+    columns: const <String>['contact_peer_id'],
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  final peerId = rows.isEmpty ? null : rows.single['contact_peer_id'];
+  if (peerId is! String || peerId.isEmpty) return;
+  await dbDeleteDirectNotificationDisplayOutboxMessageEntriesForMessage(
+    txn,
+    peerId: peerId,
+    messageId: messageId,
   );
 }
 
@@ -4085,17 +4116,23 @@ Future<int> dbHideDirectPrivateMediaForMe(
   required String hiddenAt,
   required int nowMs,
 }) {
-  return db.rawUpdate(
-    'UPDATE messages SET hidden_at = ?, text = ?, wire_envelope = NULL, '
-    'private_media_terminal_at_ms = '
-    'COALESCE(private_media_terminal_at_ms, ?), '
-    'private_media_clock_high_water_ms = '
-    'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
-    'WHERE id = ? AND hidden_at IS NULL '
-    "AND private_media_mode IN "
-    "('protected', 'view_once', 'disappearing', 'unsupported')",
-    [hiddenAt, '', nowMs, nowMs, id],
-  );
+  return dbWriteTransaction(db, (txn) async {
+    final hidden = await txn.rawUpdate(
+      'UPDATE messages SET hidden_at = ?, text = ?, wire_envelope = NULL, '
+      'private_media_terminal_at_ms = '
+      'COALESCE(private_media_terminal_at_ms, ?), '
+      'private_media_clock_high_water_ms = '
+      'MAX(COALESCE(private_media_clock_high_water_ms, 0), ?) '
+      'WHERE id = ? AND hidden_at IS NULL '
+      "AND private_media_mode IN "
+      "('protected', 'view_once', 'disappearing', 'unsupported')",
+      [hiddenAt, '', nowMs, nowMs, id],
+    );
+    if (hidden > 0) {
+      await _retireDirectPrivateMessageDisplayMarker(txn, messageId: id);
+    }
+    return hidden;
+  });
 }
 
 /// Cross-table final commit for a direct private download.

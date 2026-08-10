@@ -27,6 +27,8 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_media_blob_custody_use_case.dart'
+    show directMediaBlobDrainMayDownloadIncomingParent;
 import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_media_blob_custody_use_case.dart';
@@ -8254,84 +8256,99 @@ END
       expect(fixture.secureKeyStore.writtenKeys, hasLength(writesBefore + 1));
     });
 
-    test('TC-354-05d network drain policy retains private committed custody '
-        'without download', () async {
-      // The production drain reaches the strict owner only through its
-      // policy callback. This executes the production-equivalent predicate:
-      // a redacted parent is retained WITHOUT network, while an ordinary
-      // strict parent still converges automatically.
-      Future<bool> productionRetryPolicy(ConversationMessage? parent) async {
-        if (parent == null ||
-            !parent.isIncoming ||
-            parent.isDeleted ||
-            parent.hiddenAt != null) {
-          return false;
+    test(
+      'TC-355-04d production blob drain predicate retains private committed '
+      'rows without download',
+      () {
+        // GREEN-only preservation sentinel: this invokes the SAME callable
+        // predicate the production drain callback uses. It never copies its
+        // body, so unhooking production from it cannot leave this green.
+        const senderPeerId = 'tc355-drain-peer';
+        ConversationMessage incoming({
+          required String id,
+          required PrivateMediaPolicy policy,
+          PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
+          String? deletedAt,
+          String? hiddenAt,
+          bool isIncoming = true,
+        }) => ConversationMessage(
+          id: id,
+          contactPeerId: senderPeerId,
+          senderPeerId: senderPeerId,
+          text: '',
+          timestamp: createdAt,
+          status: 'delivered',
+          isIncoming: isIncoming,
+          createdAt: createdAt,
+          dedupKey: id,
+          deletedAt: deletedAt,
+          deletedByPeerId: deletedAt == null ? null : senderPeerId,
+          hiddenAt: hiddenAt,
+          privateMediaPolicy: policy,
+          privateMediaState: state,
+        );
+
+        // Every redacted policy is retained WITHOUT network.
+        for (final policy in <PrivateMediaPolicy>[
+          const PrivateMediaPolicy.protected(),
+          const PrivateMediaPolicy.viewOnce(),
+          PrivateMediaPolicy.disappearing(3600),
+        ]) {
+          expect(
+            directMediaBlobDrainMayDownloadIncomingParent(
+              incoming(
+                id: 'tc355-drain-${policy.mode.wireValue}',
+                policy: policy,
+                state: PrivateMediaLifecycleState.available,
+              ),
+            ),
+            isFalse,
+            reason: '${policy.mode.wireValue} stays explicit-intent only',
+          );
         }
-        if (parent.privateMediaPolicy.requiresRedaction) return false;
-        return true;
-      }
-
-      const senderPeerId = 'tc354-drain-peer';
-      ConversationMessage incoming({
-        required String id,
-        required PrivateMediaPolicy policy,
-        PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
-      }) => ConversationMessage(
-        id: id,
-        contactPeerId: senderPeerId,
-        senderPeerId: senderPeerId,
-        text: '',
-        timestamp: createdAt,
-        status: 'delivered',
-        isIncoming: true,
-        createdAt: createdAt,
-        dedupKey: id,
-        privateMediaPolicy: policy,
-        privateMediaState: state,
-      );
-
-      expect(
-        await productionRetryPolicy(
-          incoming(
-            id: 'tc354-drain-protected',
-            policy: const PrivateMediaPolicy.protected(),
-            state: PrivateMediaLifecycleState.available,
+        // Unchanged ordinary behavior: strict ordinary media still converges.
+        expect(
+          directMediaBlobDrainMayDownloadIncomingParent(
+            incoming(
+              id: 'tc355-drain-ordinary',
+              policy: const PrivateMediaPolicy.ordinary(),
+            ),
           ),
-        ),
-        isFalse,
-        reason: 'a protected incoming row is retained without network',
-      );
-      expect(
-        await productionRetryPolicy(
-          incoming(
-            id: 'tc354-drain-viewonce',
-            policy: const PrivateMediaPolicy.viewOnce(),
-            state: PrivateMediaLifecycleState.available,
+          isTrue,
+        );
+        // A missing, outgoing, tombstoned or hidden parent never downloads.
+        expect(directMediaBlobDrainMayDownloadIncomingParent(null), isFalse);
+        expect(
+          directMediaBlobDrainMayDownloadIncomingParent(
+            incoming(
+              id: 'tc355-drain-outgoing',
+              policy: const PrivateMediaPolicy.ordinary(),
+              isIncoming: false,
+            ),
           ),
-        ),
-        isFalse,
-      );
-      expect(
-        await productionRetryPolicy(
-          incoming(
-            id: 'tc354-drain-disappearing',
-            policy: PrivateMediaPolicy.disappearing(3600),
-            state: PrivateMediaLifecycleState.available,
+          isFalse,
+        );
+        expect(
+          directMediaBlobDrainMayDownloadIncomingParent(
+            incoming(
+              id: 'tc355-drain-deleted',
+              policy: const PrivateMediaPolicy.ordinary(),
+              deletedAt: createdAt,
+            ),
           ),
-        ),
-        isFalse,
-        reason: 'every redacted policy stays explicit-intent only',
-      );
-      // Unchanged ordinary behaviour: strict ordinary media still converges.
-      expect(
-        await productionRetryPolicy(
-          incoming(
-            id: 'tc354-drain-ordinary',
-            policy: const PrivateMediaPolicy.ordinary(),
+          isFalse,
+        );
+        expect(
+          directMediaBlobDrainMayDownloadIncomingParent(
+            incoming(
+              id: 'tc355-drain-hidden',
+              policy: const PrivateMediaPolicy.ordinary(),
+              hiddenAt: createdAt,
+            ),
           ),
-        ),
-        isTrue,
-      );
-    });
+          isFalse,
+        );
+      },
+    );
   });
 }
