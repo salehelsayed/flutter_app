@@ -25,6 +25,8 @@ import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_media_blob_custody_use_case.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
@@ -7709,6 +7711,410 @@ END
           whereArgs: <Object?>[messageId],
         )).single['text'],
         'edited caption',
+      );
+    });
+  });
+
+  group('Plan 354 private direct-media blob repository authority', () {
+    const createdAt = '2026-08-10T15:30:00.000Z';
+
+    ({
+      ConversationMessage parent,
+      MediaAttachment pending,
+      MediaAttachment prepared,
+      DirectMediaBlobCustodyRow custody,
+    })
+    privateCandidate({
+      required String suffix,
+      String hashDigit = 'a',
+      String mode = 'protected',
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+    }) {
+      final messageId = 'tc354-repo-$suffix';
+      final attachmentId = 'tc354-repo-$suffix-attachment';
+      final extension = mime == 'video/mp4' ? 'mp4' : 'jpg';
+      final parent = ConversationMessage(
+        id: messageId,
+        contactPeerId: 'tc354-repo-recipient-$suffix',
+        senderPeerId: 'tc354-repo-local',
+        text: '',
+        timestamp: createdAt,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: createdAt,
+        dedupKey: messageId,
+        privateMediaPolicy: mode == 'protected'
+            ? const PrivateMediaPolicy.protected()
+            : const PrivateMediaPolicy.viewOnce(),
+        privateMediaState: PrivateMediaLifecycleState.available,
+      );
+      final pending = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: mime,
+        size: 31,
+        mediaType: mediaType,
+        localPath: 'pending_uploads/$messageId/$attachmentId.$extension',
+        downloadStatus: 'upload_pending',
+        createdAt: createdAt,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final hash = hashDigit * 64;
+      return (
+        parent: parent,
+        pending: pending,
+        prepared: pending.copyWith(
+          contentHash: hash,
+          encryptionKeyBase64: 'tc354-key-$suffix-$hashDigit',
+          encryptionNonce: 'tc354-nonce-$suffix-$hashDigit',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ),
+        custody: DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: parent.contactPeerId,
+          ciphertextRelativePath:
+              'direct_media_blob_custody_v1/${'3' * 64}/$attachmentId.blob',
+          contentHash: hash,
+          ciphertextSize: 47,
+          expiresAtMs: null,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+      );
+    }
+
+    Future<void> seedPrivatePending(
+      ({
+        ConversationMessage parent,
+        MediaAttachment pending,
+        MediaAttachment prepared,
+        DirectMediaBlobCustodyRow custody,
+      })
+      candidate,
+    ) async {
+      await fixture.db.insert('messages', candidate.parent.toMap());
+      await fixture.db.insert('media_attachments', candidate.pending.toMap());
+    }
+
+    test(
+      'TC-354-01b private blob winner and key compensation are exact',
+      () async {
+        final winner = privateCandidate(suffix: 'winner');
+        await seedPrivatePending(winner);
+        final repo =
+            fixture.repo as OutgoingDirectPrivateMediaBlobGenerationRepository;
+        expect(repo.supportsOutgoingDirectPrivateMediaBlobGeneration, isTrue);
+
+        final applied = await repo
+            .stageOutgoingDirectPrivateMediaBlobGeneration(
+              expectedParent: winner.parent,
+              expectedAttachment: winner.pending,
+              preparedAttachment: winner.prepared,
+              custodyRow: winner.custody,
+            );
+        expect(applied.outcome, DirectMediaBlobGenerationStageOutcome.applied);
+        expect(applied.attachments, hasLength(1));
+        expect(applied.custodyRows, hasLength(1));
+        // The raw key is published only under the canonical secure-store name;
+        // SQLite receives a reference, never the key bytes.
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(winner.pending.id),
+          ),
+          winner.prepared.encryptionKeyBase64,
+        );
+        final persisted = (await fixture.db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[winner.pending.id],
+        )).single;
+        expect(
+          persisted['encryption_key_base64'],
+          secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(winner.pending.id),
+          ),
+        );
+        // The convention-owned pending identity survives publication intact.
+        expect(persisted['download_status'], 'upload_pending');
+        expect(persisted['local_path'], winner.pending.localPath);
+
+        // A losing candidate with different ciphertext adopts the exact winner
+        // and never overwrites the stable per-attachment key.
+        final writesAfterWinner = fixture.secureKeyStore.writtenKeys.length;
+        final loser = privateCandidate(suffix: 'winner', hashDigit: 'b');
+        final adopted = await repo
+            .stageOutgoingDirectPrivateMediaBlobGeneration(
+              expectedParent: loser.parent,
+              expectedAttachment: loser.pending,
+              preparedAttachment: loser.prepared,
+              custodyRow: loser.custody,
+            );
+        expect(
+          adopted.outcome,
+          DirectMediaBlobGenerationStageOutcome.idempotent,
+        );
+        expect(adopted.attachments.single.contentHash, 'a' * 64);
+        expect(
+          adopted.attachments.single.encryptionKeyBase64,
+          winner.prepared.encryptionKeyBase64,
+        );
+        expect(
+          fixture.secureKeyStore.writtenKeys,
+          hasLength(writesAfterWinner),
+          reason: 'a losing private candidate must not publish its key',
+        );
+
+        // A refused candidate restores the previous secure-store state: a
+        // View-Once video is outside the producer matrix.
+        final refusedCandidate = privateCandidate(
+          suffix: 'viewonce-video',
+          mode: 'view_once',
+          mime: 'video/mp4',
+          mediaType: 'video',
+        );
+        await seedPrivatePending(refusedCandidate);
+        final refused = await repo
+            .stageOutgoingDirectPrivateMediaBlobGeneration(
+              expectedParent: refusedCandidate.parent,
+              expectedAttachment: refusedCandidate.pending,
+              preparedAttachment: refusedCandidate.prepared,
+              custodyRow: refusedCandidate.custody,
+            );
+        expect(refused.outcome, DirectMediaBlobGenerationStageOutcome.refused);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName(refusedCandidate.pending.id),
+          ),
+          isNull,
+          reason: 'a refused private stage compensates its raw key write',
+        );
+        expect(
+          (await fixture.db.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[refusedCandidate.pending.id],
+          )).single['content_hash'],
+          isNull,
+        );
+      },
+    );
+
+    test('TC-354-04b private strict receive key CAS is exact', () async {
+      const senderPeerId = 'tc354-repo-incoming-peer';
+      const messageId = 'tc354-repo-incoming';
+      const attachmentId = 'tc354-repo-incoming-attachment';
+      const nowMs = 1900000000000;
+      final repo =
+          fixture.repo as IncomingDirectPrivateMediaBlobCustodyRepository;
+      expect(repo.supportsIncomingDirectPrivateMediaBlobCustody, isTrue);
+
+      final parent = ConversationMessage(
+        id: messageId,
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: '',
+        timestamp: createdAt,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: createdAt,
+        dedupKey: messageId,
+        privateMediaPolicy: const PrivateMediaPolicy.viewOnce(),
+        privateMediaState: PrivateMediaLifecycleState.available,
+        privateMediaReceivedAtMs: nowMs,
+        privateMediaClockHighWaterMs: nowMs,
+      );
+      const commitment = DirectMediaBlobCustodyCommitment(
+        contentHash:
+            'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+        ciphertextSize: 4096,
+        expiresAtMs: nowMs + 600000,
+      );
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 3000,
+        mediaType: 'image',
+        downloadStatus: 'pending',
+        createdAt: createdAt,
+        ownerLane: MediaOwnerLane.direct,
+        contentHash: commitment.contentHash,
+        encryptionKeyBase64: 'tc354-incoming-raw-key',
+        encryptionNonce: 'tc354-incoming-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        blobCustody: commitment,
+      );
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        contentHash: commitment.contentHash,
+        ciphertextSize: commitment.ciphertextSize,
+        expiresAtMs: commitment.expiresAtMs,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+
+      final applied = await repo.stageIncomingDirectPrivateMediaBlobCustody(
+        message: parent,
+        attachment: attachment,
+        custodyRow: custody,
+      );
+      expect(
+        applied.outcome,
+        IncomingDirectMediaBlobCustodyStageOutcome.applied,
+      );
+      expect(applied.outcome.authorizesPublication, isTrue);
+      expect(
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        'tc354-incoming-raw-key',
+      );
+      expect(
+        (await fixture.db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[attachmentId],
+        )).single['encryption_key_base64'],
+        secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+      );
+
+      // A refused crossed replay compensates its raw key write and leaves the
+      // durable projection untouched.
+      const otherId = 'tc354-repo-incoming-crossed';
+      final writesBefore = fixture.secureKeyStore.writtenKeys.length;
+      final crossed = await repo.stageIncomingDirectPrivateMediaBlobCustody(
+        message: parent.copyWith(id: otherId),
+        attachment: attachment.copyWith(id: otherId, messageId: otherId),
+        custodyRow: DirectMediaBlobCustodyRow(
+          attachmentId: otherId,
+          messageId: otherId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          ciphertextRelativePath: null,
+          contentHash: commitment.contentHash,
+          ciphertextSize: commitment.ciphertextSize,
+          // Drifted expiry: the persisted fingerprint can no longer match its
+          // commitment, so the stage must refuse all-or-zero.
+          expiresAtMs: commitment.expiresAtMs + 1,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: createdAt,
+          updatedAt: createdAt,
+        ),
+      );
+      expect(
+        crossed.outcome,
+        IncomingDirectMediaBlobCustodyStageOutcome.refused,
+        reason: 'a fingerprint that does not match its commitment refuses',
+      );
+      expect(
+        await fixture.secureKeyStore.read(
+          mediaAttachmentEncryptionKeyStoreName(otherId),
+        ),
+        isNull,
+      );
+      expect(fixture.secureKeyStore.writtenKeys, hasLength(writesBefore + 1));
+    });
+
+    test('TC-354-05d network drain policy retains private committed custody '
+        'without download', () async {
+      // The production drain reaches the strict owner only through its
+      // policy callback. This executes the production-equivalent predicate:
+      // a redacted parent is retained WITHOUT network, while an ordinary
+      // strict parent still converges automatically.
+      Future<bool> productionRetryPolicy(ConversationMessage? parent) async {
+        if (parent == null ||
+            !parent.isIncoming ||
+            parent.isDeleted ||
+            parent.hiddenAt != null) {
+          return false;
+        }
+        if (parent.privateMediaPolicy.requiresRedaction) return false;
+        return true;
+      }
+
+      const senderPeerId = 'tc354-drain-peer';
+      ConversationMessage incoming({
+        required String id,
+        required PrivateMediaPolicy policy,
+        PrivateMediaLifecycleState state = PrivateMediaLifecycleState.none,
+      }) => ConversationMessage(
+        id: id,
+        contactPeerId: senderPeerId,
+        senderPeerId: senderPeerId,
+        text: '',
+        timestamp: createdAt,
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: createdAt,
+        dedupKey: id,
+        privateMediaPolicy: policy,
+        privateMediaState: state,
+      );
+
+      expect(
+        await productionRetryPolicy(
+          incoming(
+            id: 'tc354-drain-protected',
+            policy: const PrivateMediaPolicy.protected(),
+            state: PrivateMediaLifecycleState.available,
+          ),
+        ),
+        isFalse,
+        reason: 'a protected incoming row is retained without network',
+      );
+      expect(
+        await productionRetryPolicy(
+          incoming(
+            id: 'tc354-drain-viewonce',
+            policy: const PrivateMediaPolicy.viewOnce(),
+            state: PrivateMediaLifecycleState.available,
+          ),
+        ),
+        isFalse,
+      );
+      expect(
+        await productionRetryPolicy(
+          incoming(
+            id: 'tc354-drain-disappearing',
+            policy: PrivateMediaPolicy.disappearing(3600),
+            state: PrivateMediaLifecycleState.available,
+          ),
+        ),
+        isFalse,
+        reason: 'every redacted policy stays explicit-intent only',
+      );
+      // Unchanged ordinary behaviour: strict ordinary media still converges.
+      expect(
+        await productionRetryPolicy(
+          incoming(
+            id: 'tc354-drain-ordinary',
+            policy: const PrivateMediaPolicy.ordinary(),
+          ),
+        ),
+        isTrue,
       );
     });
   });

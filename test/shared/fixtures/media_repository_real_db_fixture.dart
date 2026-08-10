@@ -213,6 +213,30 @@ class MediaRepositoryRealDbFixture {
             preparedAttachmentRows: preparedAttachmentRows,
             custodyRows: custodyRows,
           ),
+      dbStageOutgoingDirectPrivateMediaBlobGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRow,
+            required preparedAttachmentRow,
+            required custodyRow,
+          }) => dbStageOutgoingDirectPrivateMediaBlobGeneration(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRow: expectedAttachmentRow,
+            preparedAttachmentRow: preparedAttachmentRow,
+            custodyRow: custodyRow,
+          ),
+      dbStageIncomingDirectPrivateMediaBlobCustody:
+          ({
+            required messageRow,
+            required attachmentRow,
+            required custodyRow,
+          }) => dbStageIncomingDirectPrivateMediaBlobCustody(
+            db,
+            messageRow: messageRow,
+            attachmentRow: attachmentRow,
+            custodyRow: custodyRow,
+          ),
       dbStageFreshOutgoingDirectMediaBlobGeneration:
           wireFreshOutgoingDirectMediaBlobGeneration
           ? ({
