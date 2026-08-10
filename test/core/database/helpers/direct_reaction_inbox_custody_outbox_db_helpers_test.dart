@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -824,6 +825,491 @@ END
       hasLength(1),
     );
     expect((await parentOf(retained.messageId))['status'], 'sending');
+  });
+
+  test('TC-356-01b private deletion v109 stage and completion preserve '
+      'independent lifecycle authority', () async {
+    const relayExpiresAt = 1900000060000;
+    final current = await databaseFactoryFfi.openDatabase(
+      '${tempDirectory.path}/current.db',
+      options: OpenDatabaseOptions(
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      ),
+    );
+    addTearDown(current.close);
+
+    var eventSeq = 0;
+    String nextEventId() =>
+        '35600000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+
+    String deletionEnvelope(String eventId) => jsonEncode(<String, Object?>{
+      'type': 'message_deletion',
+      'version': '2',
+      'eventId': eventId,
+      'senderPeerId': _sender,
+      'encrypted': <String, Object?>{
+        'kem': 'kem-356',
+        'ciphertext': 'cipher-$eventId',
+        'nonce': 'nonce-356',
+      },
+    });
+
+    String editEnvelope(String messageId, String eventId) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'eventId': eventId,
+          'senderPeerId': _sender,
+          'encrypted': <String, Object?>{
+            'kem': 'kem-356',
+            'ciphertext': 'cipher-$eventId',
+            'nonce': 'nonce-356',
+          },
+        });
+
+    /// Seeds one already-staged private deletion: the exact P/VO tombstone
+    /// projects the deletion envelope and the raw event is retained in v109.
+    Future<({String messageId, String eventId, String envelope})>
+    seedStagedPrivateDeletion(
+      String suffix, {
+      String mode = 'protected',
+      String? hiddenAt,
+      bool asEdit = false,
+      int? durationSeconds,
+      String state = 'available',
+    }) async {
+      final messageId = 'tc356-01b-$suffix';
+      final eventId = nextEventId();
+      final envelope = asEdit
+          ? editEnvelope(messageId, eventId)
+          : deletionEnvelope(eventId);
+      await current.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _recipient,
+        'sender_peer_id': _sender,
+        'text': asEdit ? 'edited private caption' : '',
+        'timestamp': _t0,
+        'status': 'sending',
+        'is_incoming': 0,
+        'created_at': _t0,
+        'deleted_at': asEdit ? null : _t1,
+        'deleted_by_peer_id': asEdit ? null : _sender,
+        'edited_at': asEdit ? _t1 : null,
+        'hidden_at': hiddenAt,
+        'wire_envelope': envelope,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_duration_seconds': durationSeconds,
+        'private_media_state': state,
+        'private_media_received_at_ms': 1000,
+        'private_media_clock_high_water_ms': 1000,
+      });
+      await current
+          .insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+            'recipient_peer_id': _recipient,
+            'event_id': eventId,
+            'wire_envelope': envelope,
+            'retry_count': 0,
+            'last_attempt_at': null,
+            'last_error_code': null,
+            'created_at': _t0,
+            'updated_at': _t0,
+          });
+      return (messageId: messageId, eventId: eventId, envelope: envelope);
+    }
+
+    Future<DirectMutationInboxCustodyCompletionOutcome> complete(
+      ({String messageId, String eventId, String envelope}) staged,
+    ) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+      current,
+      recipientPeerId: _recipient,
+      eventId: staged.eventId,
+      expectedWireEnvelope: staged.envelope,
+      relayExpiresAt: relayExpiresAt,
+    );
+
+    Future<Map<String, Object?>> parentOf(String messageId) async =>
+        (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+
+    Future<List<Map<String, Object?>>> eventRows(String eventId) =>
+        current.query(
+          'direct_reaction_inbox_custody_outbox',
+          where: 'event_id = ?',
+          whereArgs: <Object?>[eventId],
+        );
+
+    // 1. A live P/VO deletion tombstone settles and retires its exact event
+    //    while every private lifecycle column survives byte-identically.
+    final live = await seedStagedPrivateDeletion('live');
+    final beforeLive = await parentOf(live.messageId);
+    expect(
+      await complete(live),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    final settledLive = await parentOf(live.messageId);
+    expect(settledLive['status'], 'inboxed');
+    expect(settledLive['transport'], 'inbox');
+    expect(settledLive['relay_expires_at'], relayExpiresAt);
+    expect(settledLive['custody_checked_at'], isNull);
+    expect(settledLive['deleted_at'], beforeLive['deleted_at']);
+    expect(settledLive['deleted_by_peer_id'], beforeLive['deleted_by_peer_id']);
+    expect(settledLive['hidden_at'], beforeLive['hidden_at']);
+    for (final column in const <String>[
+      'private_media_policy_version',
+      'private_media_mode',
+      'private_media_duration_seconds',
+      'private_media_state',
+      'private_media_received_at_ms',
+      'private_media_expires_at_ms',
+      'private_media_revealed_at_ms',
+      'private_media_terminal_at_ms',
+      'private_media_clock_high_water_ms',
+    ]) {
+      expect(
+        settledLive[column],
+        beforeLive[column],
+        reason: 'completion must never rewrite $column',
+      );
+    }
+    expect(await eventRows(live.eventId), isEmpty);
+
+    // 2. A hidden (locally terminal) P/VO tombstone still completes, and its
+    //    hidden claim is never cleared by settlement.
+    final hidden = await seedStagedPrivateDeletion('hidden', hiddenAt: _t2);
+    expect(
+      await complete(hidden),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    final settledHidden = await parentOf(hidden.messageId);
+    expect(settledHidden['status'], 'inboxed');
+    expect(settledHidden['hidden_at'], _t2);
+
+    // 3. View-Once behaves identically to Protected.
+    final viewOnce = await seedStagedPrivateDeletion(
+      'view-once',
+      mode: 'view_once',
+      state: 'consumed',
+    );
+    expect(
+      await complete(viewOnce),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect(
+      (await parentOf(viewOnce.messageId))['private_media_state'],
+      'consumed',
+    );
+
+    // 4. A physically removed parent converges: the event alone retires.
+    final removed = await seedStagedPrivateDeletion('removed-parent');
+    await current.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[removed.messageId],
+    );
+    expect(
+      await complete(removed),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect(await eventRows(removed.eventId), isEmpty);
+
+    // 5. Private EDIT is never admitted by the widened deletion branch.
+    final privateEdit = await seedStagedPrivateDeletion(
+      'private-edit',
+      asEdit: true,
+    );
+    final editBefore = await parentOf(privateEdit.messageId);
+    expect(
+      await complete(privateEdit),
+      DirectMutationInboxCustodyCompletionOutcome.stale,
+    );
+    expect(await parentOf(privateEdit.messageId), editBefore);
+    expect(await eventRows(privateEdit.eventId), hasLength(1));
+
+    // 6. Disappearing deletion stays outside this slice.
+    final disappearing = await seedStagedPrivateDeletion(
+      'disappearing',
+      mode: 'disappearing',
+      durationSeconds: 3600,
+    );
+    final disappearingBefore = await parentOf(disappearing.messageId);
+    expect(
+      await complete(disappearing),
+      DirectMutationInboxCustodyCompletionOutcome.stale,
+    );
+    expect(await parentOf(disappearing.messageId), disappearingBefore);
+    expect(await eventRows(disappearing.eventId), hasLength(1));
+
+    // 7. A crossed envelope is stale and retains the exact event.
+    final crossed = await seedStagedPrivateDeletion('crossed');
+    expect(
+      await dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+        current,
+        recipientPeerId: _recipient,
+        eventId: crossed.eventId,
+        expectedWireEnvelope: crossed.envelope.replaceAll('cipher-', 'forged-'),
+        relayExpiresAt: relayExpiresAt,
+      ),
+      DirectMutationInboxCustodyCompletionOutcome.stale,
+    );
+    expect(await eventRows(crossed.eventId), hasLength(1));
+
+    // 8. Two parents projecting the same envelope stay ambiguous.
+    final ambiguous = await seedStagedPrivateDeletion('ambiguous');
+    await current.insert('messages', <String, Object?>{
+      'id': '${ambiguous.messageId}-twin',
+      'contact_peer_id': _recipient,
+      'sender_peer_id': _sender,
+      'text': '',
+      'timestamp': _t0,
+      'status': 'sending',
+      'is_incoming': 0,
+      'created_at': _t0,
+      'deleted_at': _t1,
+      'deleted_by_peer_id': _sender,
+      'wire_envelope': ambiguous.envelope,
+      'private_media_policy_version': 1,
+      'private_media_mode': 'protected',
+      'private_media_state': 'available',
+    });
+    expect(
+      await complete(ambiguous),
+      DirectMutationInboxCustodyCompletionOutcome.ambiguous,
+    );
+    expect(await eventRows(ambiguous.eventId), hasLength(1));
+
+    // --- Atomic stage: the tombstone and its exact event land together, or
+    // every row, attachment and independent obligation stays untouched. ---
+    Future<
+      ({
+        Map<String, Object?> expected,
+        Map<String, Object?> tombstone,
+        String eventId,
+        String envelope,
+      })
+    >
+    seedLivePrivateParent(String suffix, {String mode = 'protected'}) async {
+      final messageId = 'tc356-01b-stage-$suffix';
+      final eventId = nextEventId();
+      final envelope = deletionEnvelope(eventId);
+      await current.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _recipient,
+        'sender_peer_id': _sender,
+        'text': 'private caption',
+        'timestamp': _t0,
+        'status': 'delivered',
+        'is_incoming': 0,
+        'created_at': _t0,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_state': 'available',
+        'private_media_received_at_ms': 1000,
+        'private_media_clock_high_water_ms': 1000,
+      });
+      await current.insert('media_attachments', <String, Object?>{
+        'id': '$messageId-a',
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 800,
+        'media_type': 'image',
+        'created_at': _t0,
+        'download_status': 'upload_pending',
+        'local_path': 'pending_uploads/$messageId/$messageId-a.jpg',
+      });
+      final expected = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
+      return (
+        expected: expected,
+        tombstone: <String, Object?>{
+          ...expected,
+          'text': '',
+          'status': 'sending',
+          'transport': null,
+          'deleted_at': _t1,
+          'deleted_by_peer_id': _sender,
+          'wire_envelope': envelope,
+        },
+        eventId: eventId,
+        envelope: envelope,
+      );
+    }
+
+    /// The complete ordered inventory a refusal must leave byte-identical.
+    Future<Map<String, List<Map<String, Object?>>>> inventory() async => {
+      'messages': await current.query('messages', orderBy: 'id ASC'),
+      'v109': await current.query(
+        'direct_reaction_inbox_custody_outbox',
+        orderBy: 'recipient_peer_id ASC, event_id ASC',
+      ),
+      'v108': await current.query(
+        'direct_inbox_custody_outbox',
+        orderBy: 'recipient_peer_id ASC, message_id ASC',
+      ),
+      'v111': await current.query(
+        'direct_media_blob_custody',
+        orderBy: 'attachment_id ASC',
+      ),
+      'attachments': await current.query(
+        'media_attachments',
+        orderBy: 'id ASC',
+      ),
+    };
+
+    Future<DbDirectPrivateDeletionCustodyStageResult> stage(
+      ({
+        Map<String, Object?> expected,
+        Map<String, Object?> tombstone,
+        String eventId,
+        String envelope,
+      })
+      seed, {
+      String? recipientPeerId,
+      String? eventId,
+      String? wireEnvelope,
+      Map<String, Object?>? tombstone,
+      int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+      Future<void> Function()? beforeCustodyInsertForTest,
+    }) => dbStageOutgoingDirectPrivateDeletionInboxCustody(
+      current,
+      expectedRow: seed.expected,
+      tombstoneRow: tombstone ?? seed.tombstone,
+      recipientPeerId: recipientPeerId ?? _recipient,
+      eventId: eventId ?? seed.eventId,
+      wireEnvelope: wireEnvelope ?? seed.envelope,
+      capacity: capacity,
+      beforeCustodyInsertForTest: beforeCustodyInsertForTest,
+    );
+
+    // Applied: one tombstone plus exactly one event, attachment untouched.
+    final applied = await seedLivePrivateParent('applied');
+    final appliedResult = await stage(applied);
+    expect(appliedResult.outcome, OutgoingOrdinaryMutationOutcome.applied);
+    expect(appliedResult.authorizesTransport, isTrue);
+    expect(appliedResult.messageRow!['deleted_at'], _t1);
+    expect(appliedResult.messageRow!['status'], 'sending');
+    expect(appliedResult.custodyRow!['event_id'], applied.eventId);
+    expect(await eventRows(applied.eventId), hasLength(1));
+    expect(
+      await current.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: <Object?>['${applied.expected['id']}'],
+      ),
+      hasLength(1),
+      reason: 'the stage authorizes cleanup, it never performs it',
+    );
+
+    // Exact replay wins BEFORE capacity.
+    final replayed = await stage(applied, capacity: 0);
+    expect(replayed.outcome, OutgoingOrdinaryMutationOutcome.idempotent);
+    expect(replayed.custodyRow!['event_id'], applied.eventId);
+
+    // A crossed envelope on the same event id refuses.
+    final crossedBytes = await stage(
+      applied,
+      wireEnvelope: applied.envelope.replaceAll('cipher-', 'forged-'),
+    );
+    expect(crossedBytes.outcome, OutgoingOrdinaryMutationOutcome.refused);
+
+    // Capacity, envelope/identity drift, disappearing duration and a removed
+    // parent all refuse with an unchanged inventory.
+    Future<void> expectRefusedWithNoEffect(
+      String label,
+      Future<DbDirectPrivateDeletionCustodyStageResult> Function() action,
+    ) async {
+      final before = await inventory();
+      final result = await action();
+      expect(
+        result.outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+        reason: label,
+      );
+      expect(result.messageRow, isNull);
+      expect(result.custodyRow, isNull);
+      expect(await inventory(), before, reason: label);
+    }
+
+    final full = await seedLivePrivateParent('capacity');
+    await expectRefusedWithNoEffect(
+      'a full outbox refuses',
+      () => stage(full, capacity: 0),
+    );
+
+    final drift = await seedLivePrivateParent('identity-drift');
+    await expectRefusedWithNoEffect(
+      'a crossed recipient refuses',
+      () => stage(drift, recipientPeerId: 'peer-someone-else'),
+    );
+    await expectRefusedWithNoEffect(
+      'an envelope whose event id differs from the key refuses',
+      () => stage(drift, eventId: nextEventId()),
+    );
+    await expectRefusedWithNoEffect(
+      'a tombstone that keeps its text refuses',
+      () => stage(
+        drift,
+        tombstone: <String, Object?>{...drift.tombstone, 'text': 'kept'},
+      ),
+    );
+    await expectRefusedWithNoEffect(
+      'a crossed deletion author refuses',
+      () => stage(
+        drift,
+        tombstone: <String, Object?>{
+          ...drift.tombstone,
+          'deleted_by_peer_id': 'peer-impostor',
+        },
+      ),
+    );
+
+    final disappearing2 = await seedLivePrivateParent(
+      'disappearing',
+      mode: 'disappearing',
+    );
+    await expectRefusedWithNoEffect(
+      'disappearing stays outside this slice',
+      () => stage(disappearing2),
+    );
+
+    final removed2 = await seedLivePrivateParent('removed-parent');
+    await current.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[removed2.expected['id']],
+    );
+    await expectRefusedWithNoEffect(
+      'a physically removed parent is authoritative',
+      () => stage(removed2),
+    );
+
+    // An injected v109 insert failure rolls the parent update back.
+    final aborted = await seedLivePrivateParent('insert-abort');
+    final beforeAbort = await inventory();
+    await expectLater(
+      stage(
+        aborted,
+        beforeCustodyInsertForTest: () async =>
+            throw StateError('injected v109 insert failure'),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await inventory(),
+      beforeAbort,
+      reason: 'a failed event insert must roll the tombstone back',
+    );
   });
 }
 

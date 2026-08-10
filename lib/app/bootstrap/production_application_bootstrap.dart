@@ -1449,6 +1449,21 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 tombstoneRow,
                 expectedEnvelope: expectedEnvelope,
               ),
+      dbStageOutgoingDirectPrivateDeletionInboxCustody:
+          ({
+            required expectedRow,
+            required tombstoneRow,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) => dbStageOutgoingDirectPrivateDeletionInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            tombstoneRow: tombstoneRow,
+            recipientPeerId: recipientPeerId,
+            eventId: eventId,
+            wireEnvelope: wireEnvelope,
+          ),
       dbLoadStuckSendingOutgoingMessages:
           ({required DateTime olderThan, int limit = 50}) =>
               dbLoadStuckSendingOutgoingMessages(

@@ -81,6 +81,9 @@ class MediaRepositoryRealDbFixture {
     Future<bool> Function(Map<String, Object?> row, {required String groupId})?
     dbSaveGroupMediaAttachmentGuardedOverride,
     MediaAttachmentLifecycleLock? lifecycleLock,
+    // 356: fires INSIDE the atomic private tombstone + v109 transaction, after
+    // the parent update and before the event insert.
+    Future<void> Function()? beforePrivateDeletionCustodyInsert,
   }) async {
     sqfliteFfiInit();
     final db = await databaseFactoryFfi.openDatabase(
@@ -99,6 +102,7 @@ class MediaRepositoryRealDbFixture {
         messageId,
         owner: MediaOwnerLane.direct,
       ),
+      beforePrivateDeletionCustodyInsert: beforePrivateDeletionCustodyInsert,
     );
     repo = MediaAttachmentRepositoryImpl(
       dbSaveMediaAttachmentPreservingLocalState:
@@ -930,6 +934,7 @@ MessageRepositoryImpl _buildMessageRepository(
   Database db, {
   required Future<List<MediaAttachment>> Function(String messageId)
   loadOutgoingOrdinaryMedia,
+  Future<void> Function()? beforePrivateDeletionCustodyInsert,
 }) {
   return MessageRepositoryImpl(
     dbInsertMessage: (row) => dbInsertMessage(db, row),
@@ -1238,6 +1243,22 @@ MessageRepositoryImpl _buildMessageRepository(
               tombstoneRow,
               expectedEnvelope: expectedEnvelope,
             ),
+    dbStageOutgoingDirectPrivateDeletionInboxCustody:
+        ({
+          required expectedRow,
+          required tombstoneRow,
+          required recipientPeerId,
+          required eventId,
+          required wireEnvelope,
+        }) => dbStageOutgoingDirectPrivateDeletionInboxCustody(
+          db,
+          expectedRow: expectedRow,
+          tombstoneRow: tombstoneRow,
+          recipientPeerId: recipientPeerId,
+          eventId: eventId,
+          wireEnvelope: wireEnvelope,
+          beforeCustodyInsertForTest: beforePrivateDeletionCustodyInsert,
+        ),
     dbLoadStuckSendingOutgoingMessages: ({required olderThan, limit = 50}) =>
         dbLoadStuckSendingOutgoingMessages(
           db,

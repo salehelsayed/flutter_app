@@ -11,9 +11,12 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_deletion_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
@@ -678,7 +681,292 @@ void main() {
       expect(terminalResult, HandleChatMessageResult.durablySuperseded);
       expect(replayEffects, <String>['receipt']);
     });
+
+    test('TC-356-04c current private deletion and strict presentation '
+        'serialize in both lifecycle lock orders', () async {
+      const author = _senderPeerId;
+
+      /// Builds one authenticated current deletion event for [messageId].
+      ChatMessage deletionEvent(String messageId, String eventId) {
+        final inner = MessageDeletionPayload(
+          messageId: messageId,
+          senderPeerId: author,
+          timestamp: '2026-07-29T11:00:00.000Z',
+          eventId: eventId,
+        );
+        return ChatMessage(
+          from: author,
+          to: 'me',
+          content: MessageDeletionPayload.buildEncryptedEnvelope(
+            senderPeerId: author,
+            eventId: eventId,
+            kem: 'kem',
+            ciphertext: inner.toInnerJson(),
+            nonce: 'nonce',
+          ),
+          timestamp: '2026-07-29T11:00:00.000Z',
+          isIncoming: true,
+          transport: 'inbox',
+        );
+      }
+
+      // --- Lock order A: the DELETION owns the exclusive lease first. ---
+      const deletedId = 'tc356-04c-delete-first';
+      const deletedAttachment = '$deletedId-a';
+      final seeded = strictProtectedPhoto(
+        messageId: deletedId,
+        attachmentId: deletedAttachment,
+        thumbnail: validThumbnailBase64(),
+      );
+      expect(
+        (await handleIncomingChatMessage(
+          message: seeded,
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: seeded.predecryptedText,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          transport: 'direct',
+        )).$1,
+        HandleChatMessageResult.chatMessage,
+      );
+
+      final deletionHoldsLease = Completer<void>();
+      final releaseDeletion = Completer<void>();
+      addTearDown(() {
+        if (!releaseDeletion.isCompleted) releaseDeletion.complete();
+      });
+      final gatedFileManager = _GatedPrivateCleanupFileManager(
+        onFirstDelete: () async {
+          if (!deletionHoldsLease.isCompleted) deletionHoldsLease.complete();
+          await releaseDeletion.future;
+        },
+      );
+      final deletionReceipts = <String>[];
+      final deletion = handleIncomingMessageDeletion(
+        message: deletionEvent(deletedId, '35600000-0000-4000-8000-04c1'),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: gatedFileManager,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'secret',
+        stagedEntryId: 'relay-uuid-tc356-04c-a',
+        sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+            deletionReceipts.add(mutationEventId),
+      );
+      await Future.any(<Future<Object?>>[
+        deletionHoldsLease.future,
+        deletion,
+      ]).timeout(const Duration(seconds: 10));
+      expect(
+        deletionHoldsLease.isCompleted,
+        isTrue,
+        reason:
+            'the current private deletion must hold the same exclusive private '
+            'lifecycle lease that strict presentation uses',
+      );
+
+      // A competing strict initial cannot make any presentation progress.
+      const competingId = 'tc356-04c-competing-strict';
+      final competingEffects = <String>[];
+      final competing = strictProtectedPhoto(
+        messageId: competingId,
+        attachmentId: '$competingId-a',
+        thumbnail: validThumbnailBase64(),
+      );
+      final competingReceive = handleIncomingChatMessage(
+        message: competing,
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: competing.predecryptedText,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        transport: 'direct',
+        stageNotificationDisplayCustody: (_) async =>
+            competingEffects.add('marker-stage'),
+        promoteNotificationDisplayCustody: (_) async =>
+            competingEffects.add('marker-promote'),
+        sendDeliveryReceipt: (_) async => competingEffects.add('receipt'),
+      );
+      for (var i = 0; i < 5; i += 1) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        competingEffects,
+        isEmpty,
+        reason:
+            'no strict presentation may start while the deletion holds the '
+            'exclusive private lifecycle lease',
+      );
+      expect(
+        await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[competingId],
+        ),
+        isEmpty,
+        reason: 'the competing strict DB stage has not run yet',
+      );
+      expect(deletionReceipts, isEmpty);
+
+      releaseDeletion.complete();
+      final (deletionResult, deletedRow) = await deletion.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(deletionResult, HandleMessageDeletionResult.success);
+      expect(deletedRow?.isDeleted, isTrue);
+      expect(deletionReceipts, hasLength(1));
+      expect(
+        (await competingReceive.timeout(const Duration(seconds: 10))).$1,
+        HandleChatMessageResult.chatMessage,
+      );
+      expect(competingEffects, contains('marker-stage'));
+      expect(
+        File(
+          await expectedThumbnailPath(
+            contactPeerId: author,
+            blobId: deletedAttachment,
+          ),
+        ).existsSync(),
+        isFalse,
+        reason: 'the deletion winner leaves no thumbnail behind',
+      );
+
+      // --- Lock order B: strict RECEIVE owns the lease first. ---
+      const receiveFirstId = 'tc356-04c-receive-first';
+      final receiveEffects = <String>[];
+      var deletionProgressDuringLease = false;
+      final startDeletion = Completer<void>();
+      final laterReceipts = <String>[];
+      // Started OUTSIDE the receive's zone so it genuinely competes.
+      final laterDeletion = Future<void>(() async {
+        await startDeletion.future;
+        final (_, _) = await handleIncomingMessageDeletion(
+          message: deletionEvent(
+            receiveFirstId,
+            '35600000-0000-4000-8000-04c2',
+          ),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'secret',
+          stagedEntryId: 'relay-uuid-tc356-04c-b',
+          sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+              laterReceipts.add(mutationEventId),
+        );
+        deletionProgressDuringLease = true;
+      });
+
+      Future<void> assertDeletionBlocked() async {
+        for (var i = 0; i < 5; i += 1) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        expect(
+          deletionProgressDuringLease,
+          isFalse,
+          reason: 'no deletion may interleave inside the presentation lease',
+        );
+        expect(
+          (await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[receiveFirstId],
+          )).single['deleted_at'],
+          isNull,
+          reason: 'no tombstone may commit inside the presentation lease',
+        );
+        expect(laterReceipts, isEmpty);
+      }
+
+      final receiveFirstMessage = strictProtectedPhoto(
+        messageId: receiveFirstId,
+        attachmentId: '$receiveFirstId-a',
+        thumbnail: validThumbnailBase64(),
+      );
+      final (receiveResult, _, _) = await handleIncomingChatMessage(
+        message: receiveFirstMessage,
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: receiveFirstMessage.predecryptedText,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        transport: 'direct',
+        stageNotificationDisplayCustody: (_) async {
+          receiveEffects.add('marker-stage');
+          if (!startDeletion.isCompleted) startDeletion.complete();
+          await assertDeletionBlocked();
+        },
+        promoteNotificationDisplayCustody: (_) async {
+          receiveEffects.add('marker-promote');
+          await assertDeletionBlocked();
+        },
+        sendDeliveryReceipt: (_) async => receiveEffects.add('receipt'),
+      );
+
+      expect(receiveResult, HandleChatMessageResult.chatMessage);
+      expect(receiveEffects, <String>[
+        'marker-stage',
+        'marker-promote',
+        'receipt',
+      ]);
+      await laterDeletion.timeout(const Duration(seconds: 10));
+      expect(deletionProgressDuringLease, isTrue);
+      expect(laterReceipts, hasLength(1));
+      expect(
+        (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[receiveFirstId],
+        )).single['deleted_at'],
+        isNotNull,
+      );
+      expect(
+        File(
+          await expectedThumbnailPath(
+            contactPeerId: author,
+            blobId: '$receiveFirstId-a',
+          ),
+        ).existsSync(),
+        isFalse,
+        reason: 'a receive-first winner leaves no marker or thumbnail behind',
+      );
+    });
   });
+}
+
+/// Pauses inside the deletion's private artifact cleanup, which the shared
+/// handler runs under the same exclusive private lifecycle lease.
+class _GatedPrivateCleanupFileManager extends MediaFileManager {
+  _GatedPrivateCleanupFileManager({required this.onFirstDelete});
+
+  final Future<void> Function() onFirstDelete;
+  bool _observed = false;
+
+  @override
+  Future<void> deleteFile(
+    String localPath, {
+    String caller = 'MediaFileManager.deleteFile',
+    String reason = 'media_file_delete',
+    String? storedPath,
+    Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
+  }) async {
+    if (!_observed) {
+      _observed = true;
+      await onFirstDelete();
+    }
+    return super.deleteFile(
+      localPath,
+      caller: caller,
+      reason: reason,
+      storedPath: storedPath,
+      details: details,
+      redactTelemetry: redactTelemetry,
+    );
+  }
 }
 
 ContactModel _contact(String peerId) => ContactModel(

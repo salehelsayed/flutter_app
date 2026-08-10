@@ -1,4 +1,8 @@
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
@@ -16,6 +20,7 @@ import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
 import '../domain/repositories/fake_reaction_repository.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 class _MessageRepositoryWithoutOrdinaryApply implements MessageRepository {
   _MessageRepositoryWithoutOrdinaryApply(this.message);
@@ -1031,5 +1036,174 @@ void main() {
         expect(mediaFileManager.deletedFilePaths, isEmpty);
       },
     );
+  });
+
+  group('Plan 356 current private deletion convergence', () {
+    const author = 'peer-alice';
+    const t0 = '2026-08-10T09:00:00.000Z';
+    const t1 = '2026-08-10T09:00:01.000Z';
+
+    test('TC-356-04b event-bearing protected and view-once deletion use private '
+        'cleanup reactions and exact receipt', () async {
+      Future<void> proveOneMode({
+        required String suffix,
+        required String mode,
+      }) async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final messageId = 'tc356-04b-$suffix';
+        final attachmentId = '$messageId-blob';
+        final eventId =
+            '35600000-0000-4000-8000-0000000004${suffix.length.toString().padLeft(2, '0')}';
+
+        await fixture.db.insert('messages', <String, Object?>{
+          'id': messageId,
+          'contact_peer_id': author,
+          'sender_peer_id': author,
+          'text': '',
+          'timestamp': t0,
+          'status': 'delivered',
+          'is_incoming': 1,
+          'created_at': t0,
+          'private_media_policy_version': 1,
+          'private_media_mode': mode,
+          'private_media_state': 'available',
+          'private_media_received_at_ms': 1000,
+          'private_media_clock_high_water_ms': 1000,
+        });
+        final localPath = MediaFilePathConvention.relativePathForAttachment(
+          contactPeerId: author,
+          blobId: attachmentId,
+          mime: 'image/jpeg',
+        );
+        await fixture.repo.saveAttachment(
+          MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 4,
+            mediaType: 'image',
+            localPath: localPath,
+            downloadStatus: 'done',
+            createdAt: t0,
+            encryptionKeyBase64: 'cHJpdmF0ZS1rZXk=',
+            encryptionNonce: 'bm9uY2U=',
+            encryptionScheme: 'blob_aes_256_gcm_v1',
+          ),
+          owner: MediaOwnerLane.direct,
+        );
+        // The independent no-FK v111 obligation must survive its own owner.
+        await fixture.db.insert(
+          kDirectMediaBlobCustodyTable,
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.incoming,
+            state: DirectMediaBlobCustodyState.incomingCommitted,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: null,
+            ciphertextRelativePath: null,
+            contentHash: 'c' * 64,
+            ciphertextSize: 64,
+            expiresAtMs: 1900003000000,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: t0,
+            updatedAt: t0,
+          ).toMap(),
+        );
+        final localReactionRepo = FakeReactionRepository();
+        await localReactionRepo.saveReaction(
+          MessageReaction(
+            id: '$messageId-r',
+            messageId: messageId,
+            emoji: '👍',
+            senderPeerId: author,
+            timestamp: t0,
+            createdAt: t0,
+          ),
+        );
+        contactRepo.seed([makeContact(author)]);
+
+        final inner = MessageDeletionPayload(
+          messageId: messageId,
+          senderPeerId: author,
+          timestamp: t1,
+          eventId: eventId,
+        );
+        final receipts = <String>[];
+        final manager = FakeMediaFileManager();
+
+        final (result, stored) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: author,
+            to: 'peer-bob',
+            content: MessageDeletionPayload.buildEncryptedEnvelope(
+              senderPeerId: author,
+              eventId: eventId,
+              kem: 'kem',
+              ciphertext: inner.toInnerJson(),
+              nonce: 'nonce',
+            ),
+            timestamp: t1,
+            isIncoming: true,
+            transport: 'inbox',
+          ),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: localReactionRepo,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'secret',
+          stagedEntryId: 'relay-uuid-tc356-$suffix',
+          sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+              receipts.add('$id/$mutationEventId'),
+        );
+
+        expect(result, HandleMessageDeletionResult.success);
+        expect(stored, isNotNull);
+        expect(stored!.isDeleted, isTrue);
+        expect(stored.deletedAt, t1);
+        expect(
+          stored.privateMediaMode,
+          mode == 'protected'
+              ? PrivateMediaMode.protected
+              : PrivateMediaMode.viewOnce,
+          reason: 'the private policy survives the deletion transaction',
+        );
+
+        // Exact private cleanup, never the generic attachment path: only the
+        // private lifecycle engine removes the secure key with the row.
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          isFalse,
+          reason: 'generic attachment deletion never retires a secure key',
+        );
+        expect(
+          await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(1),
+          reason:
+              'the no-FK v111 obligation converges by its own ACK or expiry',
+        );
+        expect(
+          await localReactionRepo.getReactionsForMessage(messageId),
+          isEmpty,
+          reason: 'reaction records are retired separately',
+        );
+        expect(receipts, <String>['$messageId/$eventId']);
+      }
+
+      await proveOneMode(suffix: 'protected', mode: 'protected');
+      await proveOneMode(suffix: 'view-once', mode: 'view_once');
+    });
   });
 }

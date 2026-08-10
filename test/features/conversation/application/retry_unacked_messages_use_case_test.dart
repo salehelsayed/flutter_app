@@ -1,5 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/application/retry_unacked_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
@@ -740,6 +742,106 @@ void main() {
       },
     );
 
+    test('TC-356-03b unacked private deletion with lifecycle-only v109 owner '
+        'blocks legacy replay', () async {
+      const messageId = 'tc356-03b-private-deletion';
+      const eventId = '35600000-0000-4000-8000-000000000301';
+      const recipient = 'peer-target';
+      const envelope =
+          '{"type":"message_deletion","version":"2","eventId":"$eventId",'
+          '"senderPeerId":"my-peer-id",'
+          '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+      final tombstone = _makeSentDeletedMessage(
+        id: messageId,
+        contactPeerId: recipient,
+        wireEnvelope: envelope,
+      ).copyWith(privateMediaPolicy: const PrivateMediaPolicy.protected());
+      final backing = FakeMessageRepository();
+      backing.seed(<ConversationMessage>[tombstone]);
+      backing.unackedOutgoingOverride = <ConversationMessage>[tombstone];
+      // Seeded with the SAME physical v109 shape every mutation kind uses.
+      backing.directMutationCustodyRows['$recipient\u0000$eventId'] =
+          const DirectReactionInboxCustodyOutboxEntry(
+            recipientPeerId: recipient,
+            eventId: eventId,
+            wireEnvelope: envelope,
+            retryCount: 0,
+            lastAttemptAt: null,
+            lastErrorCode: null,
+            createdAt: '2026-01-01T00:00:00.000Z',
+            updatedAt: '2026-01-01T00:00:00.000Z',
+          );
+      final messageRepository = _LifecycleOnlyMutationCustodyRepository(
+        backing,
+      );
+
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      final count = await retryUnackedMessages(
+        messageRepo: messageRepository,
+        p2pService: p2pService,
+        olderThan: Duration.zero,
+      );
+
+      expect(count, 0);
+      expect(
+        messageRepository.lifecycleLookups,
+        greaterThanOrEqualTo(1),
+        reason: 'ownership is resolved through the generic v109 lifecycle',
+      );
+      expect(
+        p2pService.storeInInboxCallCount,
+        0,
+        reason: 'the exact v109 owner blocks the generic unacked store',
+      );
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect(backing.saveMessageCallCount, 0);
+      expect(
+        backing.directMutationCustodyRows,
+        hasLength(1),
+        reason: 'the exact event is retained for its own drain',
+      );
+      expect((await backing.getMessage(messageId))!.toMap(), tombstone.toMap());
+
+      // An ownerless event-bearing private deletion fails closed: the legacy
+      // store is never reacquired for it.
+      const orphanId = 'tc356-03b-ownerless';
+      const orphanEvent = '35600000-0000-4000-8000-000000000302';
+      const orphanEnvelope =
+          '{"type":"message_deletion","version":"2",'
+          '"eventId":"$orphanEvent","senderPeerId":"my-peer-id",'
+          '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+      final orphan = _makeSentDeletedMessage(
+        id: orphanId,
+        contactPeerId: recipient,
+        wireEnvelope: orphanEnvelope,
+      ).copyWith(privateMediaPolicy: const PrivateMediaPolicy.viewOnce());
+      final orphanBacking = FakeMessageRepository();
+      orphanBacking.seed(<ConversationMessage>[orphan]);
+      orphanBacking.unackedOutgoingOverride = <ConversationMessage>[orphan];
+      final orphanRepository = _LifecycleOnlyMutationCustodyRepository(
+        orphanBacking,
+      );
+      final orphanP2p = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      expect(
+        await retryUnackedMessages(
+          messageRepo: orphanRepository,
+          p2pService: orphanP2p,
+          olderThan: Duration.zero,
+        ),
+        0,
+      );
+      expect(orphanP2p.storeInInboxCallCount, 0);
+      expect(orphanBacking.saveMessageCallCount, 0);
+    });
+
     test(
       'TC-353-03 unacked media caption edit with a v109 owner never re-stores',
       () async {
@@ -903,4 +1005,67 @@ class _ThrowingInboxP2PService extends FakeP2PService {
     }
     return true;
   }
+}
+
+/// Exposes ONLY the shared v109 lifecycle capability.
+///
+/// 356: a private deletion event is staged by the private owner, so unacked
+/// retry must resolve its exact custody through the generic lifecycle
+/// interface, never through the ordinary text-stage capability.
+class _LifecycleOnlyMutationCustodyRepository
+    implements
+        MessageRepository,
+        DirectMutationInboxCustodyLifecycleRepository {
+  _LifecycleOnlyMutationCustodyRepository(this.delegate);
+
+  final FakeMessageRepository delegate;
+  int lifecycleLookups = 0;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle => true;
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) {
+    lifecycleLookups++;
+    return delegate.loadDirectTextMutationInboxCustodyForEvent(
+      recipientPeerId: recipientPeerId,
+      eventId: eventId,
+    );
+  }
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) => delegate.recordDirectTextMutationInboxCustodyFailureIfExact(
+    expected: expected,
+    errorCode: errorCode,
+  );
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) => delegate.completeAcceptedDirectTextMutationInboxCustodyIfExact(
+    expected: expected,
+    relayExpiresAt: relayExpiresAt,
+  );
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) => delegate.getUnackedOutgoingMessages(olderThan: olderThan);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'lifecycle-only repository received ${invocation.memberName}',
+  );
 }

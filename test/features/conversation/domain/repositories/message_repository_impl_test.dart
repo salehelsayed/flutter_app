@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/database/direct_reaction_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -23,6 +24,16 @@ void main() {
   late int ordinarySettlementCallCount;
   late int ordinaryTombstoneSettlementCallCount;
   late bool removeAfterAppliedSettlement;
+  late int privateDeletionStageCallCount;
+  late DbDirectPrivateDeletionCustodyStageResult nextPrivateDeletionStage;
+  ({
+    Map<String, Object?> expectedRow,
+    Map<String, Object?> tombstoneRow,
+    String recipientPeerId,
+    String eventId,
+    String wireEnvelope,
+  })?
+  lastPrivateDeletionStageArgs;
 
   setUp(() async {
     store = {};
@@ -35,6 +46,10 @@ void main() {
     ordinarySettlementCallCount = 0;
     ordinaryTombstoneSettlementCallCount = 0;
     removeAfterAppliedSettlement = false;
+    privateDeletionStageCallCount = 0;
+    lastPrivateDeletionStageArgs = null;
+    nextPrivateDeletionStage =
+        const DbDirectPrivateDeletionCustodyStageResult.refused();
     directReactionProjection = DirectReactionNotificationProjection(
       store: _MemorySecureKeyStore(),
     );
@@ -259,6 +274,41 @@ void main() {
       dbRecoverStuckSendingMessages:
           ({required DateTime olderThan, int limit = 50}) async => 0,
       dbUpdateWireEnvelope: (id, wireEnvelope) async {},
+      dbLoadDirectTextMutationInboxCustodyForEvent:
+          ({required recipientPeerId, required eventId}) async => null,
+      dbRecordDirectTextMutationInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) async => false,
+      dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) async => DirectMutationInboxCustodyCompletionOutcome.stale,
+      dbStageOutgoingDirectPrivateDeletionInboxCustody:
+          ({
+            required expectedRow,
+            required tombstoneRow,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) async {
+            privateDeletionStageCallCount++;
+            lastPrivateDeletionStageArgs = (
+              expectedRow: expectedRow,
+              tombstoneRow: tombstoneRow,
+              recipientPeerId: recipientPeerId,
+              eventId: eventId,
+              wireEnvelope: wireEnvelope,
+            );
+            return nextPrivateDeletionStage;
+          },
       dbStageOutgoingOrdinaryAttempt:
           ({required expectedRow, required stagedRow, required kind}) async {
             ordinaryStageCallCount++;
@@ -1180,6 +1230,108 @@ void main() {
       expect(activeEmitted, hasLength(1));
       expect(activeEmitted.single.id, activeId);
       expect(activeEmitted.single.media, hasLength(1));
+    });
+  });
+
+  group('Plan 356 private deletion custody publication', () {
+    ConversationMessage privateParent(String id) => ConversationMessage(
+      id: id,
+      contactPeerId: 'peer-private',
+      senderPeerId: 'peer-self',
+      text: 'private',
+      timestamp: '2026-08-10T19:00:00.000Z',
+      status: 'delivered',
+      isIncoming: false,
+      createdAt: '2026-08-10T19:00:00.000Z',
+      privateMediaPolicy: const PrivateMediaPolicy.protected(),
+    );
+
+    test('TC-356-01c repository returns exact private deletion custody after '
+        'atomic commit', () async {
+      const messageId = 'tc356-01c-private';
+      const eventId = '35600000-0000-4000-8000-00000000010c';
+      const envelope =
+          '{"type":"message_deletion","version":"2","eventId":"$eventId",'
+          '"senderPeerId":"peer-self",'
+          '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+      final expected = privateParent(messageId);
+      final tombstone = expected.copyWith(
+        text: '',
+        status: 'sending',
+        deletedAt: '2026-08-10T19:00:01.000Z',
+        deletedByPeerId: 'peer-self',
+        wireEnvelope: envelope,
+      );
+      final committedRow = <String, Object?>{...tombstone.toMap(), 'text': ''};
+
+      // The capability is fail-closed: a repository without the DB delegate
+      // refuses instead of silently committing a tombstone-only row.
+      expect(repo.supportsDirectPrivateDeletionInboxCustody, isTrue);
+
+      nextPrivateDeletionStage = DbDirectPrivateDeletionCustodyStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.applied,
+        messageRow: committedRow,
+        custodyRow: <String, Object?>{
+          'recipient_peer_id': 'peer-private',
+          'event_id': eventId,
+          'wire_envelope': envelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': '2026-08-10T19:00:00.000Z',
+          'updated_at': '2026-08-10T19:00:00.000Z',
+        },
+      );
+      // The parent is physically gone by the time any post-commit publication
+      // reload could run: committed custody must survive that anyway.
+      store.remove(messageId);
+
+      final staged = await repo.stageOutgoingDirectPrivateDeletionInboxCustody(
+        expected: expected,
+        tombstone: tombstone,
+        recipientPeerId: 'peer-private',
+        eventId: eventId,
+        wireEnvelope: envelope,
+      );
+
+      expect(privateDeletionStageCallCount, 1);
+      expect(lastPrivateDeletionStageArgs?.eventId, eventId);
+      expect(lastPrivateDeletionStageArgs?.recipientPeerId, 'peer-private');
+      expect(
+        lastPrivateDeletionStageArgs?.tombstoneRow['wire_envelope'],
+        envelope,
+      );
+      expect(staged.authorizesTransport, isTrue);
+      expect(staged.outcome, OutgoingOrdinaryMutationOutcome.applied);
+      expect(staged.custody?.eventId, eventId);
+      expect(staged.custody?.wireEnvelope, envelope);
+      expect(staged.message?.id, messageId);
+      expect(staged.message?.isDeleted, isTrue);
+
+      // A refusal returns neither a message nor custody.
+      nextPrivateDeletionStage =
+          const DbDirectPrivateDeletionCustodyStageResult.refused();
+      final refused = await repo.stageOutgoingDirectPrivateDeletionInboxCustody(
+        expected: expected,
+        tombstone: tombstone,
+        recipientPeerId: 'peer-private',
+        eventId: eventId,
+        wireEnvelope: envelope,
+      );
+      expect(refused.authorizesTransport, isFalse);
+      expect(refused.message, isNull);
+      expect(refused.custody, isNull);
+
+      // Crossed identity never reaches storage at all.
+      final crossed = await repo.stageOutgoingDirectPrivateDeletionInboxCustody(
+        expected: expected,
+        tombstone: tombstone.copyWith(id: 'other-message'),
+        recipientPeerId: 'peer-private',
+        eventId: eventId,
+        wireEnvelope: envelope,
+      );
+      expect(crossed.authorizesTransport, isFalse);
+      expect(privateDeletionStageCallCount, 2);
     });
   });
 }

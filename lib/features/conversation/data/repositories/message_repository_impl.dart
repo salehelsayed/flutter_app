@@ -31,6 +31,7 @@ class MessageRepositoryImpl
         DirectPrivateMediaExactOpeningLeaseRepository,
         DirectPrivateMediaIndeterminateQuarantineRepository,
         DirectPrivateDeleteForEveryoneRepository,
+        OutgoingDirectPrivateDeletionInboxCustodyRepository,
         ConversationThreadSummaryRepository,
         DirectUploadRetryProjectionRepository,
         DirectManualUploadRetryRearmRepository,
@@ -266,6 +267,14 @@ class MessageRepositoryImpl
     required String expectedEnvelope,
   })?
   dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone;
+  final Future<DbDirectPrivateDeletionCustodyStageResult> Function({
+    required Map<String, Object?> expectedRow,
+    required Map<String, Object?> tombstoneRow,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  })?
+  dbStageOutgoingDirectPrivateDeletionInboxCustody;
   final Future<List<Map<String, Object?>>> Function({
     required DateTime olderThan,
     int limit,
@@ -420,6 +429,7 @@ class MessageRepositoryImpl
     this.dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone,
     this.dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope,
     this.dbSettleOutgoingDirectPrivateDeleteForEveryoneTombstone,
+    this.dbStageOutgoingDirectPrivateDeletionInboxCustody,
     required this.dbLoadStuckSendingOutgoingMessages,
     required this.dbLoadSendingOutgoingMessages,
     required this.dbConditionalTransitionStatus,
@@ -460,6 +470,11 @@ class MessageRepositoryImpl
   @override
   bool get supportsDirectTextMutationInboxCustody =>
       dbStageOutgoingDirectTextMutationInboxCustody != null &&
+      supportsDirectMutationInboxCustodyLifecycle;
+
+  @override
+  bool get supportsDirectPrivateDeletionInboxCustody =>
+      dbStageOutgoingDirectPrivateDeletionInboxCustody != null &&
       supportsDirectMutationInboxCustodyLifecycle;
 
   @override
@@ -1315,6 +1330,56 @@ class MessageRepositoryImpl
     if (!_isExactPrivateDeleteTombstone(current, tombstone)) return null;
     _messageChangeController.add(current!);
     return current;
+  }
+
+  @override
+  Future<OutgoingDirectPrivateDeletionCustodyStageResult>
+  stageOutgoingDirectPrivateDeletionInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage tombstone,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    final stage = dbStageOutgoingDirectPrivateDeletionInboxCustody;
+    if (!supportsDirectPrivateDeletionInboxCustody ||
+        stage == null ||
+        expected.id != tombstone.id ||
+        expected.contactPeerId != tombstone.contactPeerId ||
+        expected.senderPeerId != tombstone.senderPeerId) {
+      return const OutgoingDirectPrivateDeletionCustodyStageResult.refused();
+    }
+    final result = await stage(
+      expectedRow: expected.toMap(),
+      tombstoneRow: tombstone.toMap(),
+      recipientPeerId: recipientPeerId,
+      eventId: eventId,
+      wireEnvelope: wireEnvelope,
+    );
+    final committedRow = result.messageRow;
+    if (!result.authorizesTransport || result.custodyRow == null) {
+      return const OutgoingDirectPrivateDeletionCustodyStageResult.refused();
+    }
+    // The transaction's own committed row is authoritative: a post-commit
+    // reload can lose the parent to contact deletion or terminal cleanup, and
+    // that must never revoke a custody transfer that already happened.
+    final committed = committedRow == null
+        ? null
+        : _rememberMessage(ConversationMessage.fromMap(committedRow));
+    if (committed != null) {
+      try {
+        _messageChangeController.add(committed);
+      } catch (_) {
+        // The DB result remains authoritative after publication failure.
+      }
+    }
+    return OutgoingDirectPrivateDeletionCustodyStageResult(
+      outcome: result.outcome,
+      message: committed,
+      custody: DirectReactionInboxCustodyOutboxEntry.fromMap(
+        result.custodyRow!,
+      ),
+    );
   }
 
   @override

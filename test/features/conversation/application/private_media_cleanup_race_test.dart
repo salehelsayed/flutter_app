@@ -1,14 +1,25 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
+import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/fake_p2p_network.dart';
+import '../../../shared/fakes/fake_p2p_service_integration.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 class _UnreadableExistingKeyStore extends RecordingSecureKeyStore {
@@ -1289,4 +1300,321 @@ void main() {
       );
     });
   });
+
+  group('Plan 356 private deletion custody lifecycle serialization', () {
+    const sender = 'peer-alice';
+    const recipient = 'contact-1';
+    const recipientMlKemPublicKey = 'recipient-mlkem-public-key';
+
+    /// Seeds one delivered v1 Protected parent whose single pending attachment
+    /// is still awaiting its initial private handoff.
+    Future<ConversationMessage> seedLivePrivateParent(
+      MediaRepositoryRealDbFixture target,
+      String messageId,
+      String attachmentId,
+    ) async {
+      await target.seedDirectParent(messageId, contactPeerId: recipient);
+      await target.db.update(
+        'messages',
+        <String, Object?>{
+          'sender_peer_id': sender,
+          'status': 'delivered',
+          'is_incoming': 0,
+          'private_media_policy_version': 1,
+          'private_media_mode': 'protected',
+          'private_media_state': 'available',
+          'private_media_received_at_ms': 1000,
+          'private_media_clock_high_water_ms': 1000,
+        },
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      await target.repo.saveAttachment(
+        MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-08-10T12:00:00.000Z',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      return (await target.messageRepo.getMessage(messageId))!;
+    }
+
+    /// The real private initial handoff body, run under the incumbent
+    /// per-attachment lifecycle lease exactly as production claims it.
+    Future<OutgoingDirectPrivateInboxCustodyDbResult> runInitialHandoff(
+      MediaRepositoryRealDbFixture target, {
+      required String messageId,
+      required String attachmentId,
+      void Function()? onEnter,
+      Future<void> Function()? gate,
+    }) {
+      return target.repo.lifecycleLock.synchronized(attachmentId, () async {
+        onEnter?.call();
+        if (gate != null) await gate();
+        return dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+          target.db,
+          <String, Object?>{
+            'id': attachmentId,
+            'message_id': messageId,
+            'owner_lane': 'direct',
+            'mime': 'image/jpeg',
+            'size': 2048,
+            'media_type': 'image',
+            'local_path': MediaFilePathConvention.relativePathForAttachment(
+              contactPeerId: recipient,
+              blobId: attachmentId,
+              mime: 'image/jpeg',
+            ),
+            'download_status': 'done',
+            'created_at': '2026-08-10T12:00:00.000Z',
+            'content_hash': 'a' * 64,
+            'encryption_key_base64': 'ref',
+            'encryption_nonce': 'nonce',
+            'encryption_scheme': 'blob_aes_256_gcm_v1',
+          },
+          expectedPendingLocalPath:
+              'pending_uploads/$messageId/$attachmentId.jpg',
+          envelope: '{"type":"chat_message"}',
+          hasOwnedPendingCompletion: false,
+          wireMediaBlobManifestHash: 'f' * 64,
+          wireMediaBlobExpiresAtMs: 2100000000000,
+        );
+      });
+    }
+
+    /// In-memory fixtures share one SQLite instance in a test file, so every
+    /// v109 assertion here is scoped to its own deletion target.
+    Future<List<Map<String, Object?>>> v109RowsFor(
+      MediaRepositoryRealDbFixture target,
+      String messageId,
+    ) async => (await target.db.query('direct_reaction_inbox_custody_outbox'))
+        .where((row) => (row['wire_envelope']! as String).contains(messageId))
+        .toList(growable: false);
+
+    Future<List<Map<String, Object?>>> v108Rows(
+      MediaRepositoryRealDbFixture target,
+      String messageId,
+    ) => target.db.query(
+      'direct_inbox_custody_outbox',
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+    );
+
+    test('TC-356-02 private initial and deletion custody converge in both '
+        'lifecycle lock orders', () async {
+      // ORDER A — the deletion owns the exclusive lease first.
+      final first = await MediaRepositoryRealDbFixture.create();
+      addTearDown(first.dispose);
+      const messageIdA = 'tc356-02-delete-first';
+      const attachmentIdA = '$messageIdA-att';
+      final parentA = await seedLivePrivateParent(
+        first,
+        messageIdA,
+        attachmentIdA,
+      );
+
+      final deletionHoldsLease = Completer<void>();
+      final releaseDeletion = Completer<void>();
+      final gatedManager = _GatedCleanupMediaFileManager(
+        onFirstDelete: () async {
+          if (!deletionHoldsLease.isCompleted) deletionHoldsLease.complete();
+          await releaseDeletion.future;
+        },
+      );
+      final networkA = FakeP2PNetwork();
+      final stoppedA = _StoppedPrivateDeleteP2PService(
+        peerId: sender,
+        network: networkA,
+      );
+      addTearDown(stoppedA.dispose);
+
+      final deletionA = deleteMessageForEveryone(
+        p2pService: stoppedA,
+        messageRepo: first.messageRepo,
+        originalMessage: parentA,
+        mediaAttachmentRepo: first.repo,
+        mediaFileManager: gatedManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+      addTearDown(() {
+        if (!releaseDeletion.isCompleted) releaseDeletion.complete();
+      });
+      await Future.any(<Future<Object?>>[
+        deletionHoldsLease.future,
+        deletionA,
+      ]).timeout(const Duration(seconds: 10));
+      expect(
+        deletionHoldsLease.isCompleted,
+        isTrue,
+        reason:
+            'a node-off private deletion must stage its exact v109 event and '
+            'run incumbent cleanup under the private lifecycle lease',
+      );
+
+      var handoffStarted = false;
+      final handoffA = runInitialHandoff(
+        first,
+        messageId: messageIdA,
+        attachmentId: attachmentIdA,
+        onEnter: () => handoffStarted = true,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(
+        handoffStarted,
+        isFalse,
+        reason:
+            'the competing initial handoff may not even start while the '
+            'deletion holds the repository-wide private lifecycle lease',
+      );
+      expect(await v108Rows(first, messageIdA), isEmpty);
+      expect(
+        await first.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageIdA],
+        ),
+        isEmpty,
+      );
+      expect(networkA.deliverCallCount, 0);
+      expect(networkA.storeInInboxCallCount, 0);
+
+      releaseDeletion.complete();
+      final (resultA, tombstoneA) = await deletionA.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(resultA, SendChatMessageResult.nodeNotRunning);
+      expect(tombstoneA?.isDeleted, isTrue);
+      expect(
+        await v109RowsFor(first, messageIdA),
+        hasLength(1),
+        reason: 'the exact deletion event is retained across the race',
+      );
+
+      // The later handoff now observes the tombstone and refuses before any
+      // new v108/v111 obligation or network work.
+      final handoffResultA = await handoffA.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(handoffStarted, isTrue);
+      expect(handoffResultA.authorizesTransport, isFalse);
+      expect(await v108Rows(first, messageIdA), isEmpty);
+      expect(networkA.deliverCallCount, 0);
+
+      // ORDER B — the incumbent initial handoff owns the lease first.
+      final second = await MediaRepositoryRealDbFixture.create();
+      addTearDown(second.dispose);
+      const messageIdB = 'tc356-02-handoff-first';
+      const attachmentIdB = '$messageIdB-att';
+      final parentB = await seedLivePrivateParent(
+        second,
+        messageIdB,
+        attachmentIdB,
+      );
+
+      final handoffHoldsLease = Completer<void>();
+      final releaseHandoff = Completer<void>();
+      final handoffB = runInitialHandoff(
+        second,
+        messageId: messageIdB,
+        attachmentId: attachmentIdB,
+        onEnter: () {
+          if (!handoffHoldsLease.isCompleted) handoffHoldsLease.complete();
+        },
+        gate: () => releaseHandoff.future,
+      );
+      await handoffHoldsLease.future.timeout(const Duration(seconds: 5));
+
+      final networkB = FakeP2PNetwork();
+      final stoppedB = _StoppedPrivateDeleteP2PService(
+        peerId: sender,
+        network: networkB,
+      );
+      addTearDown(stoppedB.dispose);
+      final observingManager = FakeMediaFileManager();
+      final deletionB = deleteMessageForEveryone(
+        p2pService: stoppedB,
+        messageRepo: second.messageRepo,
+        originalMessage: parentB,
+        mediaAttachmentRepo: second.repo,
+        mediaFileManager: observingManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+
+      expect(
+        (await second.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageIdB],
+        )).single['deleted_at'],
+        isNull,
+        reason:
+            'no tombstone may commit while the incumbent initial handoff '
+            'still owns the private lifecycle lease',
+      );
+      expect(await v109RowsFor(second, messageIdB), isEmpty);
+      expect(observingManager.deletedFilePaths, isEmpty);
+      expect(networkB.deliverCallCount, 0);
+      expect(networkB.storeInInboxCallCount, 0);
+
+      releaseHandoff.complete();
+      await handoffB.timeout(const Duration(seconds: 10));
+      final (resultB, tombstoneB) = await deletionB.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(resultB, SendChatMessageResult.nodeNotRunning);
+      expect(tombstoneB?.isDeleted, isTrue);
+      expect(await v109RowsFor(second, messageIdB), hasLength(1));
+    });
+  });
+}
+
+/// Pauses inside the deletion's private artifact cleanup, which runs under the
+/// same repository-wide exclusive lease that owns its atomic stage.
+class _GatedCleanupMediaFileManager extends FakeMediaFileManager {
+  _GatedCleanupMediaFileManager({required this.onFirstDelete});
+
+  final Future<void> Function() onFirstDelete;
+  bool _observed = false;
+
+  @override
+  Future<void> deleteFile(
+    String localPath, {
+    String caller = 'MediaFileManager.deleteFile',
+    String reason = 'media_file_delete',
+    String? storedPath,
+    Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
+  }) async {
+    if (!_observed) {
+      _observed = true;
+      await onFirstDelete();
+    }
+    return super.deleteFile(
+      localPath,
+      caller: caller,
+      reason: reason,
+      storedPath: storedPath,
+      details: details,
+      redactTelemetry: redactTelemetry,
+    );
+  }
+}
+
+class _StoppedPrivateDeleteP2PService extends FakeP2PService {
+  _StoppedPrivateDeleteP2PService({
+    required super.peerId,
+    required super.network,
+  });
+
+  @override
+  NodeState get currentState => NodeState(isStarted: false, peerId: peerId);
 }

@@ -159,6 +159,134 @@ dbStageOutgoingDirectTextMutationInboxCustody(
   });
 }
 
+/// Atomically commits one v1 Protected/View-Once delete-for-everyone tombstone
+/// and retains its exact deletion event in the same physical v109 outbox.
+///
+/// Either both writes land or neither does. The helper deliberately performs no
+/// artifact, secure-key, v108 or v111 work: those remain independent lifecycle
+/// owners, and cleanup is a caller operation this transaction only authorizes.
+///
+/// [capacity] and [beforeCustodyInsertForTest] are test seams. Production uses
+/// the shared 512-row default and supplies no barrier.
+Future<DbDirectPrivateDeletionCustodyStageResult>
+dbStageOutgoingDirectPrivateDeletionInboxCustody(
+  Database db, {
+  required Map<String, Object?> expectedRow,
+  required Map<String, Object?> tombstoneRow,
+  required String recipientPeerId,
+  required String eventId,
+  required String wireEnvelope,
+  int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeCustodyInsertForTest,
+}) {
+  final classified = classifyDirectInboxEventEnvelope(wireEnvelope);
+  final messageId = tombstoneRow['id'];
+  final senderPeerId = tombstoneRow['sender_peer_id'];
+  final createdAt = tombstoneRow['created_at'];
+  final valid =
+      capacity >= 0 &&
+      _isNonBlank(recipientPeerId) &&
+      _isNonBlank(eventId) &&
+      _isNonBlank(messageId) &&
+      _isNonBlank(senderPeerId) &&
+      _isNonBlank(createdAt) &&
+      DateTime.tryParse(createdAt! as String) != null &&
+      classified != null &&
+      classified.kind == DirectInboxEventEnvelopeKind.deletion &&
+      classified.eventId == eventId &&
+      classified.senderPeerId == senderPeerId &&
+      tombstoneRow['contact_peer_id'] == recipientPeerId &&
+      tombstoneRow['wire_envelope'] == wireEnvelope &&
+      isExactOutgoingDirectPrivateDeleteTombstoneShape(
+        expectedRow: expectedRow,
+        tombstoneRow: tombstoneRow,
+      );
+  if (!valid) {
+    return Future<DbDirectPrivateDeletionCustodyStageResult>.value(
+      const DbDirectPrivateDeletionCustodyStageResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    // Exact replay is checked before shared capacity, so an already-owned event
+    // stays idempotent even when the outbox is full.
+    final existingCustody = await txn.query(
+      _table,
+      where: 'recipient_peer_id = ? AND event_id = ?',
+      whereArgs: <Object?>[recipientPeerId, eventId],
+      limit: 1,
+    );
+    if (existingCustody.isNotEmpty) {
+      final row = existingCustody.single;
+      if (row['wire_envelope'] != wireEnvelope) {
+        return const DbDirectPrivateDeletionCustodyStageResult.refused();
+      }
+      final currentParents = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+        limit: 1,
+      );
+      return DbDirectPrivateDeletionCustodyStageResult(
+        outcome: OutgoingOrdinaryMutationOutcome.idempotent,
+        messageRow: currentParents.isEmpty
+            ? null
+            : Map<String, Object?>.from(currentParents.single),
+        custodyRow: Map<String, Object?>.from(row),
+      );
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_table',
+    );
+    if (((countRows.single['count'] as num?)?.toInt() ?? 0) >= capacity) {
+      return const DbDirectPrivateDeletionCustodyStageResult.refused();
+    }
+
+    final committedTombstone =
+        await dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstoneWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          tombstoneRow: tombstoneRow,
+        );
+    if (!committedTombstone) {
+      return const DbDirectPrivateDeletionCustodyStageResult.refused();
+    }
+
+    final custodyRow = <String, Object?>{
+      'recipient_peer_id': recipientPeerId,
+      'event_id': eventId,
+      'wire_envelope': wireEnvelope,
+      'retry_count': 0,
+      'last_attempt_at': null,
+      'last_error_code': null,
+      'created_at': createdAt,
+      'updated_at': createdAt,
+    };
+    // Test-only barrier between the private parent update and the v109 insert.
+    await beforeCustodyInsertForTest?.call();
+    await txn.insert(
+      _table,
+      custodyRow,
+      conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    final committed = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (committed.length != 1) {
+      throw StateError('private deletion lost its exact tombstone');
+    }
+    return DbDirectPrivateDeletionCustodyStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      messageRow: Map<String, Object?>.from(committed.single),
+      custodyRow: custodyRow,
+    );
+  });
+}
+
 /// Atomically applies the canonical direct-reaction transition and retains its
 /// exact encrypted inbox obligation.
 ///
@@ -514,8 +642,14 @@ dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
       final status = parent['status'];
       final isDeletion =
           classified.kind == DirectInboxEventEnvelopeKind.deletion;
+      // 356: a v1 Protected/View-Once tombstone is admitted for the DELETION
+      // branch only. Private EDIT, disappearing and every non-deletion private
+      // transition keep their existing refusal, and a hidden private parent
+      // stays valid because local hide is not a settlement conflict.
+      final isPrivateDeletionParent =
+          isDeletion && _isExactOutgoingPrivateDeletionParent(parent);
       final validParent =
-          _isStrictOrdinaryTextPolicy(parent) &&
+          (_isStrictOrdinaryTextPolicy(parent) || isPrivateDeletionParent) &&
           const <String>{
             'sending',
             'sent',
@@ -523,7 +657,8 @@ dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
             'inboxed',
           }.contains(status) &&
           (isDeletion
-              ? _isExactOutgoingDeletionProjection(parent)
+              ? (isPrivateDeletionParent ||
+                    _isExactOutgoingDeletionProjection(parent))
               : parent['deleted_at'] == null &&
                     parent['deleted_by_peer_id'] == null &&
                     parent['hidden_at'] == null &&
@@ -635,6 +770,22 @@ bool _isStrictOrdinaryTextPolicy(Map<String, Object?> row) =>
     row['private_media_terminal_at_ms'] == null &&
     row['private_media_clock_high_water_ms'] == null &&
     row['direct_media_custody_intent_id'] == null;
+
+/// The exact outgoing v1 Protected/View-Once deletion tombstone admitted by
+/// v109 completion. Hidden state is deliberately allowed: a local hide is an
+/// independent terminal claim, not a conflicting deletion projection.
+bool _isExactOutgoingPrivateDeletionParent(Map<String, Object?> row) =>
+    ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+    (row['private_media_policy_version'] as num?)?.toInt() == 1 &&
+    const <String>{
+      'protected',
+      'view_once',
+    }.contains(row['private_media_mode'] as String?) &&
+    row['private_media_duration_seconds'] == null &&
+    row['text'] == '' &&
+    _isNonBlank(row['deleted_at']) &&
+    _isNonBlank(row['deleted_by_peer_id']) &&
+    row['deleted_by_peer_id'] == row['sender_peer_id'];
 
 bool _isExactOutgoingDeletionProjection(Map<String, Object?> row) =>
     row['text'] == '' &&

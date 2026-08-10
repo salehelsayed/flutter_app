@@ -4,8 +4,10 @@ import 'dart:convert';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -581,6 +583,155 @@ void main() {
         );
       },
     );
+
+    test('TC-356-03a failed private deletion with lifecycle-only v109 owner '
+        'blocks legacy replay', () async {
+      Future<void> proveOwnerWins({required String suffix}) async {
+        identityRepo.seed(makeIdentity());
+        final messageId = 'tc356-03a-$suffix';
+        final eventId =
+            '35600000-0000-4000-8000-${suffix.hashCode.abs().toString().padLeft(12, '0').substring(0, 12)}';
+        const recipient = 'peer-target';
+        final envelope =
+            '{"type":"message_deletion","version":"2","eventId":"$eventId",'
+            '"senderPeerId":"my-peer-id",'
+            '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+        final backing = FakeMessageRepository();
+        backing.seed(<ConversationMessage>[
+          makeFailedMessage(
+            id: messageId,
+            contactPeerId: recipient,
+            text: '',
+          ).copyWith(
+            deletedAt: '2026-01-01T00:00:02.000Z',
+            deletedByPeerId: 'my-peer-id',
+            wireEnvelope: envelope,
+            privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          ),
+        ]);
+        // The exact owner is seeded with the SAME physical v109 shape every
+        // other mutation kind uses. It is never created through a private
+        // stage capability here.
+        backing.directMutationCustodyRows['$recipient\u0000$eventId'] =
+            DirectReactionInboxCustodyOutboxEntry(
+              recipientPeerId: recipient,
+              eventId: eventId,
+              wireEnvelope: envelope,
+              retryCount: 0,
+              lastAttemptAt: null,
+              lastErrorCode: null,
+              createdAt: '2026-01-01T00:00:00.000Z',
+              updatedAt: '2026-01-01T00:00:00.000Z',
+            );
+        final messageRepository = _LifecycleOnlyMutationCustodyRepository(
+          backing,
+        );
+        contactRepo.seed([makeContact(peerId: recipient)]);
+
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          discoverPeerResult: const DiscoveredPeer(
+            id: recipient,
+            addresses: ['/ip4/127.0.0.1/tcp/4001'],
+          ),
+          dialPeerResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessage(
+          messageId: messageId,
+          messageRepo: messageRepository,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: PassthroughCryptoBridge(),
+        );
+
+        expect(count, 0);
+        expect(
+          messageRepository.lifecycleLookups,
+          greaterThanOrEqualTo(1),
+          reason: 'ownership is resolved through the generic v109 lifecycle',
+        );
+        expect(
+          p2pService.sendMessageWithReplyCallCount,
+          0,
+          reason: 'the exact v109 owner blocks the legacy send leg',
+        );
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(backing.ordinaryAttemptStages, isEmpty);
+        expect(
+          backing.directMutationCustodyRows,
+          hasLength(1),
+          reason: 'a retained failure leaves the exact event retryable',
+        );
+        expect(
+          (await backing.getMessage(messageId))!.status,
+          'failed',
+          reason: 'retry never settles the tombstone on its own',
+        );
+      }
+
+      await proveOwnerWins(suffix: 'protected');
+
+      // An event-bearing private deletion with NO owner fails closed.
+      identityRepo.seed(makeIdentity());
+      const orphanId = 'tc356-03a-ownerless';
+      const orphanEvent = '35600000-0000-4000-8000-000000000999';
+      const recipient = 'peer-target';
+      const orphanEnvelope =
+          '{"type":"message_deletion","version":"2",'
+          '"eventId":"$orphanEvent","senderPeerId":"my-peer-id",'
+          '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+      final orphanBacking = FakeMessageRepository();
+      orphanBacking.seed(<ConversationMessage>[
+        makeFailedMessage(
+          id: orphanId,
+          contactPeerId: recipient,
+          text: '',
+        ).copyWith(
+          deletedAt: '2026-01-01T00:00:02.000Z',
+          deletedByPeerId: 'my-peer-id',
+          wireEnvelope: orphanEnvelope,
+          privateMediaPolicy: const PrivateMediaPolicy.viewOnce(),
+        ),
+      ]);
+      final orphanRepository = _LifecycleOnlyMutationCustodyRepository(
+        orphanBacking,
+      );
+      contactRepo.seed([makeContact(peerId: recipient)]);
+      final orphanP2p = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        discoverPeerResult: const DiscoveredPeer(
+          id: recipient,
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+        dialPeerResult: true,
+        sendMessageWithReplyResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: 'ack',
+        ),
+        storeInInboxResult: true,
+      );
+
+      expect(
+        await retryFailedMessage(
+          messageId: orphanId,
+          messageRepo: orphanRepository,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: orphanP2p,
+          bridge: PassthroughCryptoBridge(),
+        ),
+        0,
+      );
+      expect(orphanP2p.sendMessageWithReplyCallCount, 0);
+      expect(orphanP2p.storeInInboxCallCount, 0);
+    });
 
     test(
       'targeted failed text retry reuses the original row as first delivery',
@@ -2160,4 +2311,63 @@ void main() {
       },
     );
   });
+}
+
+/// Exposes ONLY the shared v109 lifecycle capability.
+///
+/// 356: a private deletion event is staged by the private owner, so retry must
+/// resolve its exact custody through [DirectMutationInboxCustodyLifecycleRepository]
+/// and never through the ordinary text-stage capability. Anything this wrapper
+/// does not forward is a call the retry path had no business making.
+class _LifecycleOnlyMutationCustodyRepository
+    implements
+        MessageRepository,
+        DirectMutationInboxCustodyLifecycleRepository {
+  _LifecycleOnlyMutationCustodyRepository(this.delegate);
+
+  final FakeMessageRepository delegate;
+  int lifecycleLookups = 0;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle => true;
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) {
+    lifecycleLookups++;
+    return delegate.loadDirectTextMutationInboxCustodyForEvent(
+      recipientPeerId: recipientPeerId,
+      eventId: eventId,
+    );
+  }
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) => delegate.recordDirectTextMutationInboxCustodyFailureIfExact(
+    expected: expected,
+    errorCode: errorCode,
+  );
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) => delegate.completeAcceptedDirectTextMutationInboxCustodyIfExact(
+    expected: expected,
+    relayExpiresAt: relayExpiresAt,
+  );
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'lifecycle-only repository received ${invocation.memberName}',
+  );
 }

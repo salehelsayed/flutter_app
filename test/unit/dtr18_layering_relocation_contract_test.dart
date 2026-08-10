@@ -149,12 +149,14 @@ const _privacySha256 =
 // closure and the drain's private no-auto-download retention policy, and
 // relocates nothing. Plan 355 additionally makes canonical keep and the
 // display projection retire terminal private media and routes the drain
-// through one shared predicate, still relocating nothing. Posts
+// through one shared predicate, still relocating nothing. Plan 356 adds exactly
+// one more closure on that same wired message adapter — the atomic private
+// tombstone + physical-v109 stage — and relocates nothing. Posts
 // adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
     '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
 const _productionBootstrapNormalizedSha256 =
-    '0bc598032a861ef9940f1f33d6d8b4de85ce1a0611a2e8ce416b226ba31a6e7c';
+    'fcb3c6f354cb16f568bdfd5d473207db6b28dd92c44258756eb5b33d46d2eb84';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

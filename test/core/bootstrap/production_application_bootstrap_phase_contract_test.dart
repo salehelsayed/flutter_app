@@ -524,6 +524,58 @@ void main() {
     );
   });
 
+  test(
+    'TC-356-01d production wires private deletion stage to physical v109',
+    () {
+      final unit = parseString(
+        content: File(_productionPath).readAsStringSync(),
+        path: _productionPath,
+      ).unit;
+      final visitor = _MessageRepositoryConstructionVisitor();
+      unit.accept(visitor);
+
+      expect(
+        visitor.constructions,
+        hasLength(1),
+        reason: 'production composes exactly one MessageRepositoryImpl',
+      );
+      final argument = visitor.constructions.single.arguments
+          .whereType<NamedExpression>()
+          .where(
+            (named) =>
+                named.name.label.name ==
+                'dbStageOutgoingDirectPrivateDeletionInboxCustody',
+          )
+          .toList(growable: false);
+      expect(
+        argument,
+        hasLength(1),
+        reason:
+            'the private deletion custody capability must be wired exactly once',
+      );
+
+      // The delegate must call the REAL atomic helper, not a local shim.
+      final calls = _InvokedFunctionNameVisitor();
+      argument.single.expression.accept(calls);
+      expect(
+        calls.names,
+        contains('dbStageOutgoingDirectPrivateDeletionInboxCustody'),
+        reason:
+            'the wired capability must delegate to the shared physical v109 '
+            'stage helper',
+      );
+      expect(
+        calls.names.where(
+          (name) => name.startsWith('dbCommitOutgoingDirectPrivateDelete'),
+        ),
+        isEmpty,
+        reason:
+            'the staging capability must never fall back to the tombstone-only '
+            'commit',
+      );
+    },
+  );
+
   test('TC-348-02c production wires fresh blob stage exactly once', () {
     final production = File(_productionPath).readAsStringSync();
 
@@ -1058,4 +1110,47 @@ void main() {
       hasLength(1),
     );
   });
+}
+
+/// Collects every `MessageRepositoryImpl(...)` construction in a unit.
+///
+/// An unresolved parse represents an implicit-new constructor call as a
+/// [MethodInvocation], so both shapes are collected.
+class _MessageRepositoryConstructionVisitor extends RecursiveAstVisitor<void> {
+  final List<ArgumentList> constructions = <ArgumentList>[];
+
+  @override
+  void visitInstanceCreationExpression(InstanceCreationExpression node) {
+    if (node.constructorName.type.name.lexeme == 'MessageRepositoryImpl') {
+      constructions.add(node.argumentList);
+    }
+    super.visitInstanceCreationExpression(node);
+  }
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    if (node.target == null &&
+        node.methodName.name == 'MessageRepositoryImpl') {
+      constructions.add(node.argumentList);
+    }
+    super.visitMethodInvocation(node);
+  }
+}
+
+/// Collects the simple names of every function invoked inside an expression.
+class _InvokedFunctionNameVisitor extends RecursiveAstVisitor<void> {
+  final Set<String> names = <String>{};
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    names.add(node.methodName.name);
+    super.visitMethodInvocation(node);
+  }
+
+  @override
+  void visitFunctionExpressionInvocation(FunctionExpressionInvocation node) {
+    final function = node.function;
+    if (function is SimpleIdentifier) names.add(function.name);
+    super.visitFunctionExpressionInvocation(node);
+  }
 }

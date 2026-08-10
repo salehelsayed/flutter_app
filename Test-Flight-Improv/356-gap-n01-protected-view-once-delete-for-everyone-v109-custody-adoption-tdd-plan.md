@@ -1,6 +1,6 @@
 # 356 - GAP-N01 Protected/View-Once Delete-for-Everyone v109 Custody Adoption
 
-Status: execution-ready
+Status: execution-completed
 Type: Modification
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
 Classification: implementation-ready
@@ -253,16 +253,16 @@ Explicitly NOT RUN per plan:
 - Environment blocker: none. Host SQLite/file tests prove this existing Dart/DB owner adoption. No schema, native, relay or OS/device claim exists.
 - Scope drift: a new schema/type/drain/flag, relay/native edit, private EDIT/disappearing admission, broad repository behavior change, or feature-family-only failure requiring architecture expansion blocks completion and triggers review.
 
-- [ ] Every P/VO delete stages one exact v109 with its tombstone before cleanup/network, or refuses all-zero.
-- [ ] v108/v111 and private lifecycle ownership remain independent in both lock orders.
-- [ ] Exact protected acceptance completes P/VO deletion without admitting private EDIT/disappearing or requiring attachments.
-- [ ] Node-off/live ACK/failed/unacked/restart/pause behavior retains the exact owner and never uses legacy as authoritative completion.
-- [ ] Event-bearing incoming P/VO deletion converges transactionally, uses private cleanup, preserves v111/lifecycle, and receipts only exact durable apply.
-- [ ] Pre-356 eventless private DFE and legacy proof-less receive remain unchanged with no v109 promotion.
-- [ ] Four causal RED bundles, focused GREEN and four representative mutation re-reds are recorded and reverted.
-- [ ] Exact sentinels, host `1to1`, dart-only core family, analyzer/format/diff and Graphify pass; feature family remains omitted unless its condition triggers.
-- [ ] Both exact DTR-18 frozen-content preflights pass on the formatted tree; any necessary digest change is reasoned and re-pinned rather than weakened before the single core-family run.
-- [ ] No harness registration, migration, device/relay proof, activation, GAP-N01 closure or release claim is added.
+- [x] Every P/VO delete stages one exact v109 with its tombstone before cleanup/network, or refuses all-zero.
+- [x] v108/v111 and private lifecycle ownership remain independent in both lock orders.
+- [x] Exact protected acceptance completes P/VO deletion without admitting private EDIT/disappearing or requiring attachments.
+- [x] Node-off/live ACK/failed/unacked/restart/pause behavior retains the exact owner and never uses legacy as authoritative completion.
+- [x] Event-bearing incoming P/VO deletion converges transactionally, uses private cleanup, preserves v111/lifecycle, and receipts only exact durable apply.
+- [x] Pre-356 eventless private DFE and legacy proof-less receive remain unchanged with no v109 promotion.
+- [x] Four causal RED bundles, focused GREEN and four representative mutation re-reds are recorded and reverted.
+- [x] Exact sentinels, host `1to1`, dart-only core family, analyzer/format/diff and Graphify pass; feature family remains omitted unless its condition triggers.
+- [x] Both exact DTR-18 frozen-content preflights pass on the formatted tree; any necessary digest change is reasoned and re-pinned rather than weakened before the single core-family run.
+- [x] No harness registration, migration, device/relay proof, activation, GAP-N01 closure or release claim is added.
 
 ## Handoff
 
@@ -292,3 +292,48 @@ Disposition: execute from clean baseline `418f92e7f2d7de8b77c7e982f05c89c72df1a0
 |---|---|---|---|---|---|---|
 | 2026-08-10 | planning | Plan 356 draft, current source/tests/gates | `$tdd-plan` + Graphify TDD context | Four existing-owner bundles; no schema/protocol/platform work | independent review required | run `$tdd-review` |
 | 2026-08-10 | review | Plan 356 plus current source and literal commands | two independent review passes plus targeted re-review; core gate dry-run 404 paths at concurrency 4 | all required deltas incorporated; final verdict READY | none | execute separately from accepted baseline |
+| 2026-08-10 | RED | the nine causal test rows across their eight existing files | four causal RED commands | 01a: zero v109 at the first live callback. 01b: existing completion returns `stale` on an exact P/VO tombstone. 02: node-off returns a null tombstone and never enters the lease. 03a/03b: the lifecycle-only wrapper is consulted zero times. 04a: the transactional owner returns `refused`. 04b/04c: the handler returns `unauthorized` and holds no lease | every RED is behavioral and HEAD-compilable | implement the four owners |
+| 2026-08-10 | GREEN | `messages_db_helpers.dart`, `direct_reaction_inbox_custody_outbox_db_helpers.dart` + contract, `direct_private_media_lifecycle_repository.dart`, `message_repository_impl.dart`, `delete_message_use_case.dart`, both retry use cases, `handle_incoming_message_deletion_use_case.dart`, `production_application_bootstrap.dart` | combined concurrency-4 focused + preservation invocation | 23 selected tests green: all 12 `TC-356-` rows plus all 11 named preservation sentinels, verified from the selected-name receipt | none | run the mutation bundles |
+| 2026-08-10 | MUTATION | one representative edit per bundle, each reverted | (1) skip the v109 insert (2) drop the outgoing `synchronizedAll` lease (3) restore the text-stage retry cast (4) restore the receiver v0-only predicate | (1) TC-356-01a/01b RED (2) TC-356-02 lock-order RED (3) TC-356-03a RED (4) TC-356-04a/04b RED; all four reverted green | none | run the gate cadence |
+| 2026-08-10 | GATES | formatted union of committed/staged/unstaged/untracked Dart | DTR-18 preflight, host `1to1`, dart-only `core-host-all` at concurrency 4, `flutter analyze`, diff hygiene, Graphify | two DTR-18 digests re-pinned with adjacent Plan-356 reasons (never weakened); host `1to1` 121 paths green; `core-host-all` 404 paths / 3,232 tests green; analyzer clean; format and `--check` hygiene clean; one incremental Graphify refresh | two incidental in-scope preservation assertions updated (see Execution Corrections) | record receipts |
+
+## Execution Corrections
+
+Two pre-existing assertions inside `delete_message_use_case_test.dart` and
+`private_cached_envelope_retry_delete_race_test.dart` observed the *legacy*
+private delete-for-everyone route and had to move to the v109 owner this plan
+authorizes. Neither is a named preservation sentinel, and neither invariant was
+weakened:
+
+- `private delete-for-everyone final settlement cannot reinsert after contact
+  deletion` sampled the tombstone's transient status at the live-send barrier
+  and required `sending`. The private lane now schedules its protected hedge
+  beside the live race, so accepted custody may already have projected the exact
+  tombstone to `inboxed`. The assertion now accepts either, and the test's real
+  invariant — no reinsert after contact deletion — is untouched.
+- `inboxed private DFE failure clears inherited custody before cached retry`
+  required one legacy `storeInInbox` at authoring and a second on retry. A newly
+  authored private deletion now owns an exact v109 event, so it never enters the
+  legacy inbox store, and retry fails closed on the exact owner instead of
+  replaying its bytes. The assertions now pin that behavior plus the retained
+  event's byte identity, and still pin the original invariant that the tombstone
+  never inherits the chat envelope's `inbox` transport.
+
+Two DTR-18 frozen-content digests were re-pinned rather than relaxed:
+`message_repository_impl.dart`
+(`f1268996…` -> `31b40cc5…`) for the one optional delegate, capability getter and
+staging method, and `production_application_bootstrap.dart`
+(`0bc598032a…` -> `fcb3c6f354…`) for the single wired stage closure. Both carry
+an adjacent Plan-356 reason and no assertion was removed.
+
+`commitPrivateDeleteForEveryoneTombstone` is deliberately retained on the
+private delete boundary even though newly authored deletions no longer call it:
+the plan required the incumbent tombstone-only commit to stay unchanged, and
+both it and the new v109 stage now share one within-transaction predicate body
+so they cannot disagree about which parents a deletion may replace. Its doc
+comment records that Plan 356 moved the production authoring path.
+
+No new test path was created, so the completeness check remains correctly
+omitted. `feature-host-all` remains omitted: the change adds one narrow optional
+capability to `MessageRepositoryImpl` and does not broaden its common
+save/load/publication semantics.

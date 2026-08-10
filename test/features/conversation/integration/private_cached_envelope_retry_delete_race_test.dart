@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
@@ -418,9 +419,20 @@ void main() {
       );
 
       expect(p2pService.sendMessageWithReplyCallCount, 1);
-      expect(p2pService.storeInInboxCallCount, 1);
+      // 356: this newly authored private DFE owns an exact v109 event, so the
+      // inherited chat-envelope custody is still cleared but the legacy inbox
+      // store is never entered on its behalf.
+      expect(p2pService.storeInInboxCallCount, 0);
       expect(deletion.$2?.status, 'failed');
-      expect(deletion.$2?.transport, isNull);
+      expect(
+        deletion.$2?.transport,
+        isNull,
+        reason: 'the tombstone never inherits the original inbox custody',
+      );
+      final owner = await fixture.db.query(
+        'direct_reaction_inbox_custody_outbox',
+      );
+      expect(owner, hasLength(1));
 
       p2pService.storeInInboxResult = true;
       final retried = await retryFailedMessages(
@@ -432,12 +444,24 @@ void main() {
         mediaAttachmentRepo: fixture.repo,
       );
 
-      expect(retried, 1);
-      expect(p2pService.storeInInboxCallCount, 2);
-      expect(p2pService.lastStoreInInboxMessage, deletion.$2?.wireEnvelope);
+      // The exact owner is the only retry authority: with no ack-or-expiry
+      // store configured it fails closed and stays retryable rather than
+      // replaying its bytes through the legacy inbox.
+      expect(retried, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+      final retained = await fixture.db.query(
+        'direct_reaction_inbox_custody_outbox',
+      );
+      expect(retained, hasLength(1));
+      expect(retained.single['event_id'], owner.single['event_id']);
+      expect(
+        retained.single['wire_envelope'],
+        owner.single['wire_envelope'],
+        reason: 'a bounded failure never rewrites the exact retained event',
+      );
       final persisted = await fixture.messageRepo.getMessage(messageId);
-      expect(persisted?.status, 'inboxed');
-      expect(persisted?.transport, 'inbox');
+      expect(persisted?.status, 'failed');
+      expect(persisted?.transport, isNull);
     },
   );
 
@@ -817,6 +841,97 @@ void main() {
       );
     },
   );
+
+  test('TC-356-03c private deletion v109 survives reopen and pause '
+      'compatibility deposit', () async {
+    // A file-backed database proves durability across a real close/reopen:
+    // ownership is reconstructed from the retained event plus the persisted
+    // parent alone — no process token and no attachment are required.
+    final directory = await Directory.systemTemp.createTemp('tc356_03c_');
+    addTearDown(() async {
+      if (await directory.exists()) await directory.delete(recursive: true);
+    });
+    final path = '${directory.path}/identity.db';
+    var reopened = await MediaRepositoryRealDbFixture.create(
+      databasePath: path,
+    );
+    addTearDown(() async => reopened.dispose());
+
+    const eventBearingId = 'tc356-03c-event-bearing';
+    const eventId = '35600000-0000-4000-8000-00000000030c';
+    const eventEnvelope =
+        '{"type":"message_deletion","version":"2","eventId":"$eventId",'
+        '"senderPeerId":"self-peer",'
+        '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+    await _seedPrivateDeleteTombstone(
+      reopened,
+      messageId: eventBearingId,
+      status: 'sending',
+      wireEnvelope: eventEnvelope,
+    );
+    await reopened.db
+        .insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+          'recipient_peer_id': _contactPeerId,
+          'event_id': eventId,
+          'wire_envelope': eventEnvelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': '2020-01-01T00:00:00.000Z',
+          'updated_at': '2020-01-01T00:00:00.000Z',
+        });
+
+    // A pre-356 eventless private tombstone stays legacy forever: it owns no
+    // v109 row and this plan never promotes one.
+    const legacyId = 'tc356-03c-legacy-eventless';
+    await _seedPrivateDeleteTombstone(
+      reopened,
+      messageId: legacyId,
+      status: 'sending',
+    );
+
+    Future<List<Map<String, Object?>>> custodyRows() => reopened.db.query(
+      'direct_reaction_inbox_custody_outbox',
+      orderBy: 'recipient_peer_id ASC, event_id ASC',
+    );
+    final beforeReopen = await custodyRows();
+    expect(beforeReopen, hasLength(1));
+
+    await reopened.dispose();
+    reopened = await MediaRepositoryRealDbFixture.create(databasePath: path);
+    expect(
+      await custodyRows(),
+      beforeReopen,
+      reason: 'the exact event survives a real close and reopen byte-wise',
+    );
+
+    // The enabled pause flush may make its incumbent compatibility deposit,
+    // but it is not a second custody owner: it never removes or completes
+    // the exact v109 row.
+    final p2pService = _p2pService();
+    final result = await handleAppPaused(
+      messageRepo: reopened.messageRepo,
+      mediaAttachmentRepo: reopened.repo,
+      enablePauseFlush: true,
+      p2pService: p2pService,
+      bridge: FakeBridge(),
+    );
+
+    expect(result.flushDepositedCount, greaterThanOrEqualTo(1));
+    expect(
+      await custodyRows(),
+      beforeReopen,
+      reason: 'a pause deposit is never exact v109 acceptance',
+    );
+    expect(
+      (await reopened.messageRepo.getMessage(eventBearingId))?.deletedAt,
+      isNotNull,
+    );
+    expect(
+      (await reopened.messageRepo.getMessage(legacyId))?.deletedAt,
+      isNotNull,
+    );
+  });
 
   test(
     'failed ordinary cached replay retains generic inbox persistence',

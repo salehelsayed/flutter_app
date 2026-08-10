@@ -2,10 +2,13 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart'
     show shouldMintDeliveryReceipt;
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -241,36 +244,68 @@ handleIncomingMessageDeletion({
       );
       return (HandleMessageDeletionResult.unauthorized, null);
     }
-    IncomingDirectDeletionApplyResult applied;
-    try {
-      applied = await directDeletionRepository
-          .applyIncomingDirectMessageDeletion(
-            messageId: payload.messageId,
-            senderPeerId: payload.senderPeerId,
-            deletedAt: payload.timestamp,
-            transport: message.transport,
+    // 356: current-event selection, apply and every marker/presentation-
+    // sensitive cleanup run under the SAME repository-wide exclusive private
+    // lifecycle lease that strict private receive uses, so the live listener
+    // and recovered replay share one seam. Receipt/contact work begins only
+    // after the lease is released.
+    final leased = await _underPrivateLifecycleAuthority(
+      mediaAttachmentRepo,
+      () async {
+        IncomingDirectDeletionApplyResult applied;
+        try {
+          applied = await directDeletionRepository
+              .applyIncomingDirectMessageDeletion(
+                messageId: payload!.messageId,
+                senderPeerId: payload.senderPeerId,
+                deletedAt: payload.timestamp,
+                transport: message.transport,
+              );
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_DELETE_RECEIVE_CURRENT_APPLY_ERROR',
+            details: {'errorType': error.runtimeType.toString()},
           );
-    } catch (error) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_DELETE_RECEIVE_CURRENT_APPLY_ERROR',
-        details: {'errorType': error.runtimeType.toString()},
-      );
-      return (HandleMessageDeletionResult.unauthorized, null);
-    }
-    final stored = applied.message;
-    if (!applied.isDurable || stored == null) {
-      return (HandleMessageDeletionResult.unauthorized, null);
-    }
-    // The tombstone alone is deletion authority. Duplicate re-application
-    // re-drives the same idempotent best-effort cleanup, and a cleanup failure
-    // never revokes durable deletion or withholds its receipt.
-    await _bestEffortIncomingCleanup(
-      message: stored,
-      reactionRepo: reactionRepo,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      mediaFileManager: mediaFileManager,
+          return null;
+        }
+        final stored = applied.message;
+        if (!applied.isDurable || stored == null) return null;
+        // The tombstone alone is deletion authority. Duplicate re-application
+        // re-drives the same idempotent best-effort cleanup, and a cleanup
+        // failure never revokes durable deletion or withholds its receipt.
+        if (stored.privateMediaPolicy.requiresRedaction) {
+          await _privateIncomingTerminalCleanupBestEffort(
+            message: stored,
+            messageRepo: messageRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          );
+          // Reaction records are a separate best-effort owner: their failure
+          // must never revoke the durable deletion or its receipt.
+          try {
+            await reactionRepo?.deleteReactionsForMessage(stored.id);
+          } catch (error) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CHAT_MSG_DELETE_RECEIVE_REACTION_RETIRE_FAILED',
+              details: {'errorType': error.runtimeType.toString()},
+            );
+          }
+        } else {
+          await _bestEffortIncomingCleanup(
+            message: stored,
+            reactionRepo: reactionRepo,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+          );
+        }
+        return (message: stored, outcome: applied.outcome);
+      },
     );
+    if (leased == null) {
+      return (HandleMessageDeletionResult.unauthorized, null);
+    }
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_DELETE_RECEIVE_SUCCESS',
@@ -278,14 +313,14 @@ handleIncomingMessageDeletion({
         'messageId': payload.messageId.length > 8
             ? payload.messageId.substring(0, 8)
             : payload.messageId,
-        'outcome': applied.outcome.name,
+        'outcome': leased.outcome.name,
       },
     );
     await maybeSendDeliveryReceipt(
       payload.messageId,
       mutationEventId: payload.eventId,
     );
-    return (HandleMessageDeletionResult.success, stored);
+    return (HandleMessageDeletionResult.success, leased.message);
   }
 
   var isOrdinaryDirectText =
@@ -460,6 +495,82 @@ handleIncomingMessageDeletion({
     mutationEventId: payload.eventId,
   );
   return (HandleMessageDeletionResult.success, tombstone);
+}
+
+/// Runs [action] under the incumbent repository-wide exclusive private
+/// lifecycle lease when the repository owns one.
+///
+/// Nested repository acquisitions inside [action] are reentrant, and the lease
+/// is never upgraded from an exact-ID section.
+Future<T> _underPrivateLifecycleAuthority<T>(
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  Future<T> Function() action,
+) {
+  final runtime = mediaAttachmentRepo;
+  if (runtime is DirectPrivateMediaCleanupRuntime) {
+    return (runtime as DirectPrivateMediaCleanupRuntime)
+        .directPrivateMediaLifecycleLock
+        .synchronizedAll(action);
+  }
+  return action();
+}
+
+/// Removes an incoming v1 Protected/View-Once parent's exact artifacts through
+/// the incumbent private lifecycle owner.
+///
+/// Generic attachment deletion is deliberately never used here: it would drop
+/// the row without retiring the secure key or the private artifact siblings.
+/// A missing optional capability records a bounded failure and leaves the
+/// durable tombstone (and its receipt) intact — it never falls back.
+Future<void> _privateIncomingTerminalCleanupBestEffort({
+  required ConversationMessage message,
+  required MessageRepository messageRepo,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required MediaFileManager? mediaFileManager,
+}) async {
+  final lifecycleRepository =
+      messageRepo is DirectPrivateMediaLifecycleRepository
+      ? messageRepo as DirectPrivateMediaLifecycleRepository
+      : null;
+  final cleanupRuntime = mediaAttachmentRepo is DirectPrivateMediaCleanupRuntime
+      ? mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime
+      : null;
+  final cleanupRepository =
+      mediaAttachmentRepo is DirectPrivateMediaCleanupRepository
+      ? mediaAttachmentRepo as DirectPrivateMediaCleanupRepository
+      : null;
+  if (lifecycleRepository == null ||
+      cleanupRuntime == null ||
+      cleanupRepository == null ||
+      mediaAttachmentRepo == null ||
+      mediaFileManager == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_PRIVATE_CLEANUP_UNAVAILABLE',
+      details: {
+        'id': message.id.length > 8 ? message.id.substring(0, 8) : message.id,
+      },
+    );
+    return;
+  }
+  final engine = PrivateMediaLifecycleEngine(
+    adapter: DirectPrivateMediaLifecycle(
+      messageRepository: lifecycleRepository,
+      mediaAttachmentRepository: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+    ),
+    lifecycleLock: cleanupRuntime.directPrivateMediaLifecycleLock,
+    nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+  );
+  try {
+    await engine.cleanupTerminalMessage(message.id);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_RECEIVE_PRIVATE_CLEANUP_RETAINED',
+      details: {'errorType': error.runtimeType.toString()},
+    );
+  }
 }
 
 Future<void> _bestEffortIncomingCleanup({

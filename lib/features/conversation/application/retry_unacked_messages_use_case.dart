@@ -399,9 +399,16 @@ Future<bool> _mustSkipOwnedOrCorruptUnackedMutation({
   if (envelope == null || envelope.isEmpty) return false;
   final classified = classifyDirectInboxEventEnvelope(envelope);
   if (classified == null || !classified.isMutation) return false;
+  // 356: ownership is a property of the shared v109 outbox, not of whichever
+  // owner staged the event. A private deletion is staged by the private owner,
+  // so casting through the text-stage capability would miss it entirely.
+  final lifecycleCapability =
+      messageRepo is DirectMutationInboxCustodyLifecycleRepository
+      ? messageRepo as DirectMutationInboxCustodyLifecycleRepository
+      : null;
   final repository =
-      messageRepo is OutgoingDirectTextMutationInboxCustodyRepository
-      ? messageRepo as OutgoingDirectTextMutationInboxCustodyRepository
+      lifecycleCapability?.supportsDirectMutationInboxCustodyLifecycle == true
+      ? lifecycleCapability
       : null;
   try {
     final owner = repository == null

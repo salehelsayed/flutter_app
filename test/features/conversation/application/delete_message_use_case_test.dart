@@ -12,6 +12,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart'
     show RelayProbeResult;
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -21,6 +22,9 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart'
     as p2p_state;
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
@@ -674,7 +678,14 @@ void main() {
         final pending = await fixture.messageRepo.getMessage(messageId);
         expect(pending, isNotNull);
         expect(pending!.isDeleted, isTrue);
-        expect(pending.status, 'sending');
+        expect(
+          pending.status,
+          anyOf('sending', 'inboxed'),
+          reason:
+              '356: the private lane now owns an exact v109 event, so accepted '
+              'protected custody may already have projected the durable '
+              'tombstone to inboxed while the live leg is still in flight',
+        );
 
         await deleteContactAndMessages(
           contactRepo: contact_fakes.FakeContactRepository(),
@@ -2183,4 +2194,496 @@ void main() {
       );
     });
   });
+
+  group('Plan 356 private delete-for-everyone v109 custody', () {
+    const sender = 'peer-alice';
+    const recipient = 'peer-bob';
+
+    /// Reads the one physical v109 outbox, which the private deletion event
+    /// must share byte-for-byte with every other direct mutation owner.
+    Future<List<Map<String, Object?>>> v109Rows(
+      MediaRepositoryRealDbFixture fixture,
+    ) => fixture.db.query('direct_reaction_inbox_custody_outbox');
+
+    /// In-memory fixtures share one SQLite instance in a test file, so every
+    /// v109 assertion here is scoped to its own deletion target.
+    Future<List<Map<String, Object?>>> v109RowsFor(
+      MediaRepositoryRealDbFixture fixture,
+      String messageId,
+    ) async => (await v109Rows(fixture))
+        .where((row) => (row['wire_envelope']! as String).contains(messageId))
+        .toList(growable: false);
+
+    Future<Map<String, Object?>?> parentRow(
+      MediaRepositoryRealDbFixture fixture,
+      String messageId,
+    ) async {
+      final rows = await fixture.db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      return rows.isEmpty ? null : rows.single;
+    }
+
+    test('TC-356-01a private deletion atomically stages tombstone and v109 '
+        'before cleanup or network', () async {
+      Future<void> proveOneMode({
+        required String suffix,
+        required String mode,
+        required String parentStatus,
+        String? hiddenAt,
+      }) async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final messageId = 'tc356-01a-$suffix';
+        final attachmentId = '$messageId-att';
+        await seedPrivateDeleteForEveryoneParent(
+          fixture,
+          messageId: messageId,
+          attachmentId: attachmentId,
+        );
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'private_media_mode': mode,
+            'status': parentStatus,
+            'hidden_at': hiddenAt,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        final original = (await fixture.messageRepo.getMessage(messageId))!;
+
+        // The first artifact removal must already observe the durable
+        // tombstone AND its exact v109 obligation.
+        List<Map<String, Object?>>? custodyAtFirstCleanup;
+        Map<String, Object?>? parentAtFirstCleanup;
+        final fileManager = _ObservingDeleteMediaFileManager(
+          onFirstDelete: () async {
+            custodyAtFirstCleanup = await v109Rows(fixture);
+            parentAtFirstCleanup = await parentRow(fixture, messageId);
+          },
+        );
+
+        final network = FakeP2PNetwork();
+        final p2pService = _GatedNetworkDeleteP2PService(
+          peerId: sender,
+          network: network,
+        );
+        final peer = FakeP2PService(peerId: recipient, network: network);
+        addTearDown(p2pService.releaseAll);
+        addTearDown(p2pService.dispose);
+        addTearDown(peer.dispose);
+
+        final deletion = deleteMessageForEveryone(
+          p2pService: p2pService,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: fileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+        await p2pService.sendEntered.future.timeout(const Duration(seconds: 5));
+        expect(
+          p2pService.legacyStoreInInboxCalls,
+          0,
+          reason: 'a v109 owner never enters the legacy inbox store',
+        );
+
+        // Network entered: the exact event is already durable.
+        final custodyAtNetwork = await v109RowsFor(fixture, messageId);
+        expect(
+          custodyAtNetwork,
+          hasLength(1),
+          reason: 'no live transport may precede the exact v109 obligation',
+        );
+        final custody = custodyAtNetwork.single;
+        expect(custody['recipient_peer_id'], recipient);
+        final eventId = custody['event_id'] as String?;
+        expect(eventId, isNotNull);
+        expect(eventId!.trim(), isNotEmpty);
+
+        // One raw identity across the v109 key, the clear outer envelope and
+        // the decrypted inner deletion payload.
+        final outer =
+            jsonDecode(custody['wire_envelope']! as String)
+                as Map<String, dynamic>;
+        expect(outer['type'], 'message_deletion');
+        expect(outer['version'], '2');
+        expect(outer['eventId'], eventId);
+        expect(outer['senderPeerId'], sender);
+        final inner =
+            jsonDecode(
+                  (outer['encrypted'] as Map<String, dynamic>)['ciphertext']!
+                      as String,
+                )
+                as Map<String, dynamic>;
+        expect(inner['eventId'], eventId);
+        expect(inner['senderPeerId'], sender);
+        expect(inner['messageId'], messageId);
+
+        final tombstoneAtNetwork = (await parentRow(fixture, messageId))!;
+        expect(tombstoneAtNetwork['text'], '');
+        expect(tombstoneAtNetwork['deleted_by_peer_id'], sender);
+        expect(tombstoneAtNetwork['deleted_at'], isNotNull);
+        expect(
+          tombstoneAtNetwork['wire_envelope'],
+          custody['wire_envelope'],
+          reason: 'the parent projects the exact retained event',
+        );
+        expect(tombstoneAtNetwork['private_media_policy_version'], 1);
+        expect(tombstoneAtNetwork['private_media_mode'], mode);
+
+        // Cleanup observed the same atomic commit, never a half state.
+        expect(
+          custodyAtFirstCleanup,
+          hasLength(1),
+          reason: 'private artifact cleanup may not precede the v109 stage',
+        );
+        expect(parentAtFirstCleanup?['deleted_at'], isNotNull);
+
+        p2pService.releaseSend.complete();
+        final (result, tombstone) = await deletion.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(result, SendChatMessageResult.success);
+        expect(tombstone?.isDeleted, isTrue);
+        expect(
+          await v109RowsFor(fixture, messageId),
+          hasLength(1),
+          reason: 'a live ACK never awaits or cancels the scheduled hedge',
+        );
+        p2pService.releaseAckCustody.complete();
+        await p2pService.ackCustodySettled.timeout(const Duration(seconds: 5));
+        expect(p2pService.legacyStoreInInboxCalls, 0);
+        expect(
+          await fixture.repo.getAttachmentsForMessage(
+            messageId,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+          reason: 'the terminal private claim removes its artifacts',
+        );
+      }
+
+      await proveOneMode(
+        suffix: 'protected-delivered',
+        mode: 'protected',
+        parentStatus: 'delivered',
+      );
+      await proveOneMode(
+        suffix: 'view-once-inboxed',
+        mode: 'view_once',
+        parentStatus: 'inboxed',
+      );
+      await proveOneMode(
+        suffix: 'protected-hidden',
+        mode: 'protected',
+        parentStatus: 'delivered',
+        hiddenAt: '2026-08-10T12:30:00.000Z',
+      );
+    });
+
+    test(
+      'TC-356-02 protected and view-once delete retain v109 across lifecycle '
+      'node-off and live ACK',
+      () async {
+        // 1. Node-off: the exact owner is staged, private cleanup runs, the
+        //    still-present tombstone settles to failed and nothing is sent.
+        final offline = await MediaRepositoryRealDbFixture.create();
+        addTearDown(offline.dispose);
+        const offlineId = 'tc356-02-node-off';
+        final offlineParent = await seedPrivateDeleteForEveryoneParent(
+          offline,
+          messageId: offlineId,
+          attachmentId: '$offlineId-att',
+        );
+        final offlineNetwork = FakeP2PNetwork();
+        final stopped = _StoppedDeleteP2PService(
+          peerId: sender,
+          network: offlineNetwork,
+        );
+        addTearDown(stopped.dispose);
+
+        final (
+          offlineResult,
+          offlineTombstone,
+        ) = await deleteMessageForEveryone(
+          p2pService: stopped,
+          messageRepo: offline.messageRepo,
+          originalMessage: offlineParent,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: offline.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(offlineResult, SendChatMessageResult.nodeNotRunning);
+        expect(offlineTombstone, isNotNull);
+        expect(offlineTombstone!.isDeleted, isTrue);
+        expect(offlineTombstone.status, 'failed');
+        expect(offlineNetwork.storeInInboxCallCount, 0);
+        expect(offlineNetwork.deliverCallCount, 0);
+        expect(
+          await v109RowsFor(offline, offlineId),
+          hasLength(1),
+          reason: 'a stopped node never discards the exact deletion event',
+        );
+        final offlineRow = (await parentRow(offline, offlineId))!;
+        expect(offlineRow['status'], 'failed');
+        expect(offlineRow['deleted_at'], isNotNull);
+        expect(offlineRow['private_media_policy_version'], 1);
+        expect(
+          await offline.repo.getAttachmentsForMessage(
+            offlineId,
+            owner: MediaOwnerLane.direct,
+          ),
+          isEmpty,
+          reason: 'incumbent private cleanup still runs behind the stage',
+        );
+
+        // 2. Live ACK returns without awaiting the scheduled hedge, and the
+        //    accepted protected custody settles the exact tombstone.
+        final live = await MediaRepositoryRealDbFixture.create();
+        addTearDown(live.dispose);
+        const liveId = 'tc356-02-live-ack';
+        final liveParent = await seedPrivateDeleteForEveryoneParent(
+          live,
+          messageId: liveId,
+          attachmentId: '$liveId-att',
+        );
+        final liveNetwork = FakeP2PNetwork();
+        final liveService = _GatedNetworkDeleteP2PService(
+          peerId: sender,
+          network: liveNetwork,
+        );
+        final livePeer = FakeP2PService(
+          peerId: recipient,
+          network: liveNetwork,
+        );
+        addTearDown(liveService.releaseAll);
+        addTearDown(liveService.dispose);
+        addTearDown(livePeer.dispose);
+        // The live leg answers immediately; only the protected hedge is gated.
+        liveService.releaseSend.complete();
+
+        final (liveResult, liveTombstone) = await deleteMessageForEveryone(
+          p2pService: liveService,
+          messageRepo: live.messageRepo,
+          originalMessage: liveParent,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: live.repo,
+          mediaFileManager: mediaFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(liveResult, SendChatMessageResult.success);
+        expect(liveTombstone, isNotNull);
+        expect(liveTombstone!.isDeleted, isTrue);
+        expect(
+          liveService.legacyStoreInInboxCalls,
+          0,
+          reason: 'a v109 owner never enters the legacy inbox store',
+        );
+        expect(
+          await v109RowsFor(live, liveId),
+          hasLength(1),
+          reason: 'the live ACK returned without awaiting the hedge',
+        );
+
+        // Accepted protected custody then settles the exact tombstone and
+        // retires only that event.
+        liveService.releaseAckCustody.complete();
+        await liveService.ackCustodySettled.timeout(const Duration(seconds: 5));
+        expect(await v109RowsFor(live, liveId), isEmpty);
+        final settledLive = (await parentRow(live, liveId))!;
+        expect(settledLive['deleted_at'], isNotNull);
+        expect(settledLive['private_media_policy_version'], 1);
+
+        // 3. A repository without the private staging capability performs zero
+        //    cleanup and zero transport.
+        final refused = await MediaRepositoryRealDbFixture.create();
+        addTearDown(refused.dispose);
+        const refusedId = 'tc356-02-capability-absent';
+        final refusedParent = await seedPrivateDeleteForEveryoneParent(
+          refused,
+          messageId: refusedId,
+          attachmentId: '$refusedId-att',
+        );
+        final refusedNetwork = FakeP2PNetwork();
+        final refusedService = FakeP2PService(
+          peerId: sender,
+          network: refusedNetwork,
+        );
+        addTearDown(refusedService.dispose);
+        final refusedFileManager = FakeMediaFileManager();
+
+        final (
+          capabilityResult,
+          capabilityTombstone,
+        ) = await deleteMessageForEveryone(
+          p2pService: refusedService,
+          messageRepo: _PrivateStageIncapableMessageRepository(
+            refused.messageRepo,
+          ),
+          originalMessage: refusedParent,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: refused.repo,
+          mediaFileManager: refusedFileManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(capabilityResult, SendChatMessageResult.sendFailed);
+        expect(capabilityTombstone, isNull);
+        expect(refusedNetwork.deliverCallCount, 0);
+        expect(refusedNetwork.storeInInboxCallCount, 0);
+        expect(await v109RowsFor(refused, refusedId), isEmpty);
+        expect((await parentRow(refused, refusedId))!['deleted_at'], isNull);
+        expect(refusedFileManager.deletedFilePaths, isEmpty);
+        expect(
+          await refused.repo.getAttachmentsForMessage(
+            refusedId,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+        );
+      },
+    );
+  });
+}
+
+/// Gates BOTH network legs a v109-owning deletion uses: the live send and the
+/// protected ack-or-expiry hedge. Legacy inbox stores are counted separately so
+/// a test can prove an owned event never falls back to them.
+class _GatedNetworkDeleteP2PService extends FakeP2PService {
+  _GatedNetworkDeleteP2PService({
+    required super.peerId,
+    required super.network,
+  });
+
+  final Completer<void> sendEntered = Completer<void>();
+  final Completer<void> releaseSend = Completer<void>();
+  final Completer<void> ackCustodyEntered = Completer<void>();
+  final Completer<void> releaseAckCustody = Completer<void>();
+  final Completer<void> _ackCustodySettled = Completer<void>();
+  int legacyStoreInInboxCalls = 0;
+
+  Future<void> get ackCustodySettled => _ackCustodySettled.future;
+
+  void releaseAll() {
+    if (!releaseSend.isCompleted) releaseSend.complete();
+    if (!releaseAckCustody.isCompleted) releaseAckCustody.complete();
+  }
+
+  @override
+  Future<SendMessageResult> sendMessageWithReply(
+    String targetPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    if (!sendEntered.isCompleted) sendEntered.complete();
+    await releaseSend.future;
+    return const SendMessageResult(
+      sent: true,
+      acked: true,
+      transport: 'direct',
+    );
+  }
+
+  @override
+  Future<bool> storeInInbox(
+    String toPeerId,
+    String message, {
+    int? timeoutMs,
+  }) async {
+    legacyStoreInInboxCalls++;
+    return super.storeInInbox(toPeerId, message, timeoutMs: timeoutMs);
+  }
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    if (!ackCustodyEntered.isCompleted) ackCustodyEntered.complete();
+    await releaseAckCustody.future;
+    try {
+      return await super.storeInAckCustodyInboxDetailed(
+        toPeerId,
+        message,
+        custodyKind: custodyKind,
+        timeoutMs: timeoutMs,
+      );
+    } finally {
+      // Completion runs after this future resolves; yield once so the caller's
+      // exact-event retirement lands before the test observes it.
+      Future<void>.delayed(Duration.zero, () {
+        if (!_ackCustodySettled.isCompleted) _ackCustodySettled.complete();
+      });
+    }
+  }
+}
+
+/// A repository that keeps every incumbent private capability but deliberately
+/// withholds the Plan-356 staging capability.
+class _PrivateStageIncapableMessageRepository
+    implements
+        MessageRepository,
+        DirectPrivateMediaLifecycleRepository,
+        DirectPrivateDeleteForEveryoneRepository,
+        OutgoingDirectPrivateDeletionInboxCustodyRepository {
+  _PrivateStageIncapableMessageRepository(this.delegate);
+
+  final MessageRepositoryImpl delegate;
+
+  @override
+  bool get supportsDirectPrivateDeletionInboxCustody => false;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'private-stage-incapable repository received ${invocation.memberName}',
+  );
+}
+
+/// Snapshots durable state at the FIRST artifact removal, so a test can prove
+/// the deletion event was already retained before any cleanup ran.
+class _ObservingDeleteMediaFileManager extends FakeMediaFileManager {
+  _ObservingDeleteMediaFileManager({required this.onFirstDelete});
+
+  final Future<void> Function() onFirstDelete;
+  bool _observed = false;
+
+  @override
+  Future<void> deleteFile(
+    String localPath, {
+    String caller = 'MediaFileManager.deleteFile',
+    String reason = 'media_file_delete',
+    String? storedPath,
+    Map<String, Object?> details = const {},
+    bool redactTelemetry = false,
+  }) async {
+    if (!_observed) {
+      _observed = true;
+      await onFirstDelete();
+    }
+    return super.deleteFile(
+      localPath,
+      caller: caller,
+      reason: reason,
+      storedPath: storedPath,
+      details: details,
+      redactTelemetry: redactTelemetry,
+    );
+  }
 }

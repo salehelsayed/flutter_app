@@ -981,9 +981,16 @@ Future<({bool handled, bool success})> _retryOwnedDirectMutationIfPresent({
   if (classified == null || !classified.isMutation) {
     return (handled: false, success: false);
   }
+  // 356: ownership is a property of the shared v109 outbox, not of whichever
+  // owner staged the event. A private deletion is staged by the private owner,
+  // so casting through the text-stage capability would miss it entirely.
+  final lifecycleCapability =
+      messageRepo is DirectMutationInboxCustodyLifecycleRepository
+      ? messageRepo as DirectMutationInboxCustodyLifecycleRepository
+      : null;
   final repository =
-      messageRepo is OutgoingDirectTextMutationInboxCustodyRepository
-      ? messageRepo as OutgoingDirectTextMutationInboxCustodyRepository
+      lifecycleCapability?.supportsDirectMutationInboxCustodyLifecycle == true
+      ? lifecycleCapability
       : null;
   final owner = repository == null
       ? null

@@ -49,6 +49,30 @@ class DbDirectTextMutationCustodyStageResult {
   final Map<String, Object?>? custodyRow;
 }
 
+/// Result of atomically staging one v1 Protected/View-Once delete-for-everyone
+/// tombstone and its immutable event in the same shared physical v109 outbox.
+///
+/// 356: the committed parent row is returned with the custody row so the caller
+/// never re-reads a parent that private cleanup may already have terminalized.
+class DbDirectPrivateDeletionCustodyStageResult {
+  const DbDirectPrivateDeletionCustodyStageResult({
+    required this.outcome,
+    this.messageRow,
+    this.custodyRow,
+  });
+
+  const DbDirectPrivateDeletionCustodyStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      messageRow = null,
+      custodyRow = null;
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final Map<String, Object?>? messageRow;
+  final Map<String, Object?>? custodyRow;
+
+  bool get authorizesTransport => outcome.authorizesTransport;
+}
+
 /// Result of transferring one exact mutation event to protected relay custody.
 enum DirectMutationInboxCustodyCompletionOutcome {
   completed,

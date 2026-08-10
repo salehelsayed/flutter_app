@@ -18,6 +18,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../domain/repositories/fake_message_repository.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 
 class _ReceiptMutationSpy extends FakeMessageRepository {
   int getMessageCallCount = 0;
@@ -279,6 +280,90 @@ void main() {
         expect(settled.wireEnvelope, isNull);
       },
     );
+
+    test('TC-356-04d exact private deletion receipt settles only the matching '
+        'event', () async {
+      // The private tombstone settles through its own durable owner, so this
+      // uses the real repository rather than the ordinary-only fake.
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'msg-private-deletion';
+      const deletionEventId = '35600000-0000-4000-8000-00000000040d';
+      final deletionEnvelope = jsonEncode(<String, Object?>{
+        'type': 'message_deletion',
+        'version': '2',
+        'eventId': deletionEventId,
+        'senderPeerId': 'my-peer',
+        'encrypted': const <String, Object?>{
+          'kem': 'kem',
+          'ciphertext': 'cipher',
+          'nonce': 'nonce',
+        },
+      });
+      await fixture.seedDirectParent(messageId, contactPeerId: 'peer-remote');
+      await fixture.db.update(
+        'messages',
+        <String, Object?>{
+          'sender_peer_id': 'my-peer',
+          'text': '',
+          'status': 'inboxed',
+          'transport': 'inbox',
+          'is_incoming': 0,
+          'wire_envelope': deletionEnvelope,
+          'deleted_at': '2026-06-13T11:45:00.000Z',
+          'deleted_by_peer_id': 'my-peer',
+          'hidden_at': null,
+          'private_media_policy_version': 1,
+          'private_media_mode': 'protected',
+          'private_media_state': 'available',
+          'private_media_received_at_ms': 1000,
+          'private_media_clock_high_water_ms': 1000,
+        },
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      );
+
+      ChatMessage receipt(Map<String, String>? mutationEventIds) =>
+          buildReceipt(
+            from: 'peer-remote',
+            messageIds: const <String>[messageId],
+            mutationEventIds: mutationEventIds,
+          );
+
+      // Target-only, blank and crossed event maps cannot settle the exact
+      // private tombstone.
+      for (final wrong in <Map<String, String>?>[
+        null,
+        const <String, String>{messageId: ''},
+        const <String, String>{messageId: 'some-other-event'},
+      ]) {
+        await handleDeliveryReceipt(
+          message: receipt(wrong),
+          messageRepo: fixture.messageRepo,
+        );
+        final row = (await fixture.messageRepo.getMessage(messageId))!;
+        expect(row.status, 'inboxed');
+        expect(row.wireEnvelope, deletionEnvelope);
+      }
+
+      await handleDeliveryReceipt(
+        message: receipt(const <String, String>{messageId: deletionEventId}),
+        messageRepo: fixture.messageRepo,
+      );
+      final settled = (await fixture.messageRepo.getMessage(messageId))!;
+      expect(settled.status, 'delivered');
+      expect(settled.wireEnvelope, isNull);
+      expect(
+        settled.privateMediaMode,
+        PrivateMediaMode.protected,
+        reason: 'a receipt never rewrites private lifecycle policy',
+      );
+      expect(
+        await fixture.db.query('direct_reaction_inbox_custody_outbox'),
+        isEmpty,
+        reason: 'a device receipt is not v109 acceptance; it retires nothing',
+      );
+    });
 
     test(
       'TC-349-06 mixed receipt batch settles legacy IDs but not blank wrong mutation entries',

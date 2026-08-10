@@ -427,10 +427,38 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.sendFailed, null);
   }
 
-  // Both v109 lanes retain their exact authenticated event before any network
+  // 356: a newly authored v1 Protected/View-Once deletion takes the same exact
+  // v109 custody. Its capability is qualified BEFORE encryption so an event id
+  // is never minted for a transport that cannot retain it.
+  final privateDeletionCustodyCapability =
+      messageRepo is OutgoingDirectPrivateDeletionInboxCustodyRepository
+      ? messageRepo as OutgoingDirectPrivateDeletionInboxCustodyRepository
+      : null;
+  final privateDeletionCustodyRepository =
+      privateDeletionCustodyCapability
+              ?.supportsDirectPrivateDeletionInboxCustody ==
+          true
+      ? privateDeletionCustodyCapability
+      : null;
+  final ownsDirectPrivateDeletionInboxCustody = requiresPrivateTerminalCleanup;
+  if (ownsDirectPrivateDeletionInboxCustody &&
+      (privateDeletionCustodyRepository == null ||
+          mutationLifecycleRepository == null)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_MUTATION_CUSTODY_UNAVAILABLE',
+      details: {'reason': 'missing_private_deletion_repository'},
+    );
+    emitDeleteTiming(outcome: 'mutation_custody_unavailable');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
+  // Every v109 lane retains its exact authenticated event before any network
   // request, so a stopped node is no longer a pre-authority refusal for them.
   final ownsDirectMutationInboxCustody =
-      ownsDirectTextMutationInboxCustody || ownsDirectMediaDeletionInboxCustody;
+      ownsDirectTextMutationInboxCustody ||
+      ownsDirectMediaDeletionInboxCustody ||
+      ownsDirectPrivateDeletionInboxCustody;
   final nodeWasNotRunningAtEntry = !p2pService.currentState.isStarted;
   if (nodeWasNotRunningAtEntry && !ownsDirectMutationInboxCustody) {
     emitFlowEvent(
@@ -567,12 +595,37 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   late final ConversationMessage pendingTombstone;
   DirectReactionInboxCustodyOutboxEntry? stagedMutationCustody;
   if (requiresPrivateTerminalCleanup) {
-    final committed = await privateDeleteRepository!
-        .commitPrivateDeleteForEveryoneTombstone(
-          expectedMessage: currentMessage,
-          tombstone: pendingTombstoneCandidate,
-        );
-    if (committed == null) {
+    // One exclusive private lifecycle lease spans the atomic tombstone + v109
+    // stage AND the incumbent terminal cleanup, so a competing initial handoff
+    // can neither interleave between them nor publish behind the tombstone.
+    // The lease is released before any node, live or protected-store work.
+    final authorized = await privateCleanupRuntime!
+        .directPrivateMediaLifecycleLock
+        .synchronizedAll(() async {
+          final staged = await privateDeletionCustodyRepository!
+              .stageOutgoingDirectPrivateDeletionInboxCustody(
+                expected: currentMessage!,
+                tombstone: pendingTombstoneCandidate,
+                recipientPeerId: currentMessage.contactPeerId,
+                eventId: mutationEventId!,
+                wireEnvelope: jsonString,
+              );
+          final committedCustody = staged.custody;
+          if (!staged.authorizesTransport || committedCustody == null) {
+            return null;
+          }
+          final committed = staged.message ?? pendingTombstoneCandidate;
+          await _privateTerminalCleanupBestEffort(
+            tombstone: committed,
+            reactionRepo: reactionRepo,
+            privateLifecycleRepository: privateLifecycleRepository!,
+            mediaAttachmentRepo: mediaAttachmentRepo!,
+            mediaFileManager: mediaFileManager!,
+            privateCleanupRuntime: privateCleanupRuntime,
+          );
+          return (message: committed, custody: committedCustody);
+        });
+    if (authorized == null) {
       emitFlowEvent(
         layer: 'FL',
         event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_COMMIT_PRESERVED',
@@ -581,7 +634,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       emitDeleteTiming(outcome: 'private_commit_preserved');
       return (SendChatMessageResult.invalidMessage, null);
     }
-    pendingTombstone = committed;
+    pendingTombstone = authorized.message;
+    stagedMutationCustody = authorized.custody;
+    jsonString = authorized.custody.wireEnvelope;
   } else if (ownsDirectMediaDeletionInboxCustody) {
     final staged = await mediaDeletionRepository!
         .stageOutgoingDirectMediaDeletionInboxCustody(
@@ -651,31 +706,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     pendingTombstone = staged.message!;
   }
 
-  if (requiresPrivateTerminalCleanup) {
-    await reactionRepo?.deleteReactionsForMessage(pendingTombstone.id);
-    final adapter = DirectPrivateMediaLifecycle(
-      messageRepository: privateLifecycleRepository!,
-      mediaAttachmentRepository: mediaAttachmentRepo!,
-      mediaFileManager: mediaFileManager!,
-    );
-    final engine = PrivateMediaLifecycleEngine(
-      adapter: adapter,
-      lifecycleLock: privateCleanupRuntime!.directPrivateMediaLifecycleLock,
-      nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
-    );
-    try {
-      // The durable deleted_at tombstone is the terminal authority. Exact
-      // lifecycle cleanup (not generic attachment deletion) discards any
-      // deferred completion and removes file/key/row state under that claim.
-      await engine.cleanupTerminalMessage(pendingTombstone.id);
-    } catch (error) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_CLEANUP_RETAINED',
-        details: {'error': error.runtimeType.toString()},
-      );
-    }
-  } else {
+  if (!requiresPrivateTerminalCleanup) {
     await _bestEffortCleanup(
       message: pendingTombstone,
       reactionRepo: reactionRepo,
@@ -687,17 +718,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   if (nodeWasNotRunningAtEntry && ownsDirectMutationInboxCustody) {
     ConversationMessage? authoritative = pendingTombstone;
     try {
-      final settled = await ordinaryTransportRepository!
-          .settleOutgoingOrdinaryDeleteTombstone(
-            messageId: pendingTombstone.id,
-            expectedContactPeerId: pendingTombstone.contactPeerId,
-            expectedEnvelope: jsonString,
+      // A stopped private node settles through the private owner: the ordinary
+      // transport repository is not an authority for a v1 P/VO tombstone and
+      // dereferencing it here would be a null crash.
+      final settled = await _persistOutgoingDeleteTombstoneResult(
+        messageRepo: messageRepo,
+        tombstone: normalizeOutgoingDeleteTombstoneVisibility(
+          pendingTombstone.copyWith(
             status: 'failed',
             transport: null,
             relayExpiresAt: null,
-            mode: OutgoingOrdinarySettlementMode.live,
-          );
-      authoritative = settled.message ?? authoritative;
+            custodyCheckedAt: null,
+            wireEnvelope: jsonString,
+          ),
+        ),
+        expectedEnvelope: jsonString,
+        isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      );
+      authoritative = settled ?? authoritative;
     } catch (_) {
       // The exact event owner and visible tombstone are already durable.
     }
@@ -1174,6 +1212,44 @@ Future<bool> _authorizeOutgoingDirectMediaBlobParentDeletion({
     );
     return true;
   });
+}
+
+/// Runs the incumbent private terminal cleanup for an already-durable
+/// tombstone. The caller owns the exclusive lifecycle lease; the engine's
+/// nested per-attachment sections are reentrant inside it.
+///
+/// A cleanup failure never revokes the durable deletion or its retained event:
+/// startup/resume recovery retries raw file/key/row removal.
+Future<void> _privateTerminalCleanupBestEffort({
+  required ConversationMessage tombstone,
+  required ReactionRepository? reactionRepo,
+  required DirectPrivateMediaLifecycleRepository privateLifecycleRepository,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required MediaFileManager mediaFileManager,
+  required DirectPrivateMediaCleanupRuntime privateCleanupRuntime,
+}) async {
+  await reactionRepo?.deleteReactionsForMessage(tombstone.id);
+  final engine = PrivateMediaLifecycleEngine(
+    adapter: DirectPrivateMediaLifecycle(
+      messageRepository: privateLifecycleRepository,
+      mediaAttachmentRepository: mediaAttachmentRepo,
+      mediaFileManager: mediaFileManager,
+    ),
+    lifecycleLock: privateCleanupRuntime.directPrivateMediaLifecycleLock,
+    nowMs: () => DateTime.now().toUtc().millisecondsSinceEpoch,
+  );
+  try {
+    // The durable deleted_at tombstone is the terminal authority. Exact
+    // lifecycle cleanup (not generic attachment deletion) discards any deferred
+    // completion and removes file/key/row state under that claim.
+    await engine.cleanupTerminalMessage(tombstone.id);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_CLEANUP_RETAINED',
+      details: {'error': error.runtimeType.toString()},
+    );
+  }
 }
 
 Future<void> _bestEffortCleanup({

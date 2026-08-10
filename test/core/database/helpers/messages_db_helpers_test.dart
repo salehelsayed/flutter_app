@@ -2362,6 +2362,359 @@ void main() {
       }
     });
   });
+
+  group('Plan 356 incoming private deletion convergence', () {
+    const sender = 'tc356-author';
+    const other = 'tc356-other-peer';
+    const t0 = '2026-08-10T09:00:00.000Z';
+    const t1 = '2026-08-10T09:00:01.000Z';
+    const t2 = '2026-08-10T09:00:02.000Z';
+    const expiresAtMs = 1900003000000;
+
+    late Directory tempDir;
+    late String path;
+    late Database current;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('tc356_incoming_');
+      path = '${tempDir.path}/identity.db';
+      current = await _openCurrentSchema(path);
+    });
+
+    tearDown(() async {
+      if (current.isOpen) await current.close();
+      if (await tempDir.exists()) await tempDir.delete(recursive: true);
+    });
+
+    /// Seeds one durable incoming v1 Protected/View-Once parent with a live
+    /// attachment and its independent no-FK v111 obligation.
+    Future<void> seedStrictPrivateParent(
+      String messageId, {
+      String mode = 'protected',
+      String state = 'available',
+      String? hiddenAt,
+    }) async {
+      await current.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': sender,
+        'sender_peer_id': sender,
+        'text': '',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': t0,
+        'hidden_at': hiddenAt,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_state': state,
+        'private_media_received_at_ms': 1000,
+        'private_media_expires_at_ms': 5000,
+        'private_media_clock_high_water_ms': 1000,
+      });
+      await current.insert('media_attachments', <String, Object?>{
+        'id': '$messageId-blob',
+        'message_id': messageId,
+        'owner_lane': MediaOwnerLane.direct.dbValue,
+        'mime': 'image/jpeg',
+        'size': 42,
+        'media_type': 'image',
+        'download_status': 'pending',
+        'created_at': t0,
+        'content_hash': 'b' * 64,
+        'encryption_key_base64': 'key-$messageId',
+        'encryption_nonce': 'nonce-$messageId',
+        'encryption_scheme': 'blob_aes_256_gcm_v1',
+      });
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        DirectMediaBlobCustodyRow(
+          attachmentId: '$messageId-blob',
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          ciphertextRelativePath: null,
+          contentHash: 'b' * 64,
+          ciphertextSize: 64,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+    }
+
+    test('TC-356-04a current private deletion and strict initial converge '
+        'without lifecycle regression', () async {
+      // 1. A live Protected parent is tombstoned transactionally while every
+      //    private lifecycle column and its independent v111 row survive.
+      const live = 'tc356-04a-live';
+      await seedStrictPrivateParent(live);
+      final before = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[live],
+      )).single;
+      // Exact peer+target display rows plus rows that must be preserved.
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        current,
+        const DirectNotificationDisplayOutboxEntry.message(
+          eventId: live,
+          peerId: sender,
+          messageId: live,
+          actorPeerId: sender,
+          eventTimestamp: t0,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        current,
+        const DirectNotificationDisplayOutboxEntry.reaction(
+          eventId: '$live-reaction',
+          peerId: sender,
+          messageId: live,
+          actorPeerId: sender,
+          reactionId: '$live-reaction',
+          reactionAction: 'add',
+          reactionTombstone: false,
+          eventTimestamp: t0,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        current,
+        const DirectNotificationDisplayOutboxEntry.message(
+          eventId: 'tc356-04a-other-message',
+          peerId: sender,
+          messageId: 'tc356-04a-other-message',
+          actorPeerId: sender,
+          eventTimestamp: t0,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        current,
+        const DirectNotificationDisplayOutboxEntry.message(
+          eventId: '$live-other-peer',
+          peerId: other,
+          messageId: live,
+          actorPeerId: other,
+          eventTimestamp: t0,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+
+      final applied = await dbApplyIncomingDirectMessageDeletion(
+        current,
+        messageId: live,
+        senderPeerId: sender,
+        deletedAt: t1,
+        transport: 'relay',
+        createdAt: t1,
+      );
+      expect(applied.outcome, IncomingDirectDeletionOutcome.tombstoned);
+      expect(applied.row!['text'], '');
+      expect(applied.row!['deleted_at'], t1);
+      expect(applied.row!['deleted_by_peer_id'], sender);
+      for (final column in const <String>[
+        'private_media_policy_version',
+        'private_media_mode',
+        'private_media_duration_seconds',
+        'private_media_state',
+        'private_media_received_at_ms',
+        'private_media_expires_at_ms',
+        'private_media_revealed_at_ms',
+        'private_media_terminal_at_ms',
+        'private_media_clock_high_water_ms',
+        'hidden_at',
+      ]) {
+        expect(
+          applied.row![column],
+          before[column],
+          reason: 'the deletion transaction must preserve $column',
+        );
+      }
+      expect(
+        await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[live],
+        ),
+        hasLength(1),
+        reason: 'a deletion receipt is not a blob ACK and never deletes v111',
+      );
+      expect(
+        await current.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[live],
+        ),
+        hasLength(1),
+        reason: 'exact private artifact cleanup is a post-commit owner',
+      );
+      // Exact peer+target message AND reaction display rows retire together;
+      // every other message and peer keeps its own rows.
+      expect(
+        await current.query(
+          'direct_notification_display_outbox',
+          where: 'peer_id = ? AND message_id = ?',
+          whereArgs: const <Object?>[sender, live],
+        ),
+        isEmpty,
+      );
+      expect(
+        await current.query(
+          'direct_notification_display_outbox',
+          where: 'peer_id = ? AND message_id = ?',
+          whereArgs: const <Object?>[sender, 'tc356-04a-other-message'],
+        ),
+        hasLength(1),
+      );
+      expect(
+        await current.query(
+          'direct_notification_display_outbox',
+          where: 'peer_id = ?',
+          whereArgs: const <Object?>[other],
+        ),
+        hasLength(1),
+      );
+
+      // 2. A hidden View-Once parent keeps its hidden claim and terminal state.
+      const hidden = 'tc356-04a-hidden';
+      await seedStrictPrivateParent(
+        hidden,
+        mode: 'view_once',
+        state: 'consumed',
+        hiddenAt: t0,
+      );
+      final hiddenApplied = await dbApplyIncomingDirectMessageDeletion(
+        current,
+        messageId: hidden,
+        senderPeerId: sender,
+        deletedAt: t1,
+        transport: 'relay',
+        createdAt: t1,
+      );
+      expect(hiddenApplied.outcome, IncomingDirectDeletionOutcome.tombstoned);
+      expect(hiddenApplied.row!['hidden_at'], t0);
+      expect(hiddenApplied.row!['private_media_state'], 'consumed');
+
+      // 3. Durable precedence still holds for private parents.
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: live,
+          senderPeerId: sender,
+          deletedAt: t1,
+          transport: 'relay',
+          createdAt: t2,
+        )).outcome,
+        IncomingDirectDeletionOutcome.exactReplay,
+      );
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: live,
+          senderPeerId: sender,
+          deletedAt: t0,
+          transport: 'relay',
+          createdAt: t2,
+        )).outcome,
+        IncomingDirectDeletionOutcome.superseded,
+      );
+
+      // 4. Disappearing and a crossed sender refuse with zero mutation.
+      const disappearing = 'tc356-04a-disappearing';
+      await seedStrictPrivateParent(disappearing, mode: 'disappearing');
+      await current.update(
+        'messages',
+        <String, Object?>{'private_media_duration_seconds': 3600},
+        where: 'id = ?',
+        whereArgs: const <Object?>[disappearing],
+      );
+      final disappearingBefore = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[disappearing],
+      )).single;
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: disappearing,
+          senderPeerId: sender,
+          deletedAt: t1,
+          transport: 'relay',
+          createdAt: t1,
+        )).outcome,
+        IncomingDirectDeletionOutcome.refused,
+      );
+      expect(
+        (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[disappearing],
+        )).single,
+        disappearingBefore,
+      );
+
+      const impostorTarget = 'tc356-04a-impostor';
+      await seedStrictPrivateParent(impostorTarget);
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: impostorTarget,
+          senderPeerId: 'tc356-impostor',
+          deletedAt: t1,
+          transport: 'relay',
+          createdAt: t1,
+        )).outcome,
+        IncomingDirectDeletionOutcome.unauthorized,
+      );
+      expect(
+        (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[impostorTarget],
+        )).single['deleted_at'],
+        isNull,
+      );
+
+      // 5. Deletion-first keeps the existing absent-target placeholder, and a
+      //    reopened database still reads every durable tombstone.
+      const absent = 'tc356-04a-absent';
+      expect(
+        (await dbApplyIncomingDirectMessageDeletion(
+          current,
+          messageId: absent,
+          senderPeerId: sender,
+          deletedAt: t1,
+          transport: 'relay',
+          createdAt: t1,
+        )).outcome,
+        IncomingDirectDeletionOutcome.tombstoned,
+      );
+
+      await current.close();
+      current = await _openCurrentSchema(path);
+      for (final messageId in <String>[live, hidden, absent]) {
+        final reopened = (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+        expect(reopened['deleted_at'], t1);
+        expect(reopened['deleted_by_peer_id'], sender);
+        expect(reopened['text'], '');
+      }
+    });
+  });
 }
 
 Future<Database> _openCurrentSchema(String path) =>

@@ -340,10 +340,18 @@ Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
         row: snapshot,
       );
     }
-    if (((current['private_media_policy_version'] as num?)?.toInt() ?? 0) !=
-            0 ||
-        (current['private_media_mode'] as String? ?? 'ordinary') !=
-            'ordinary' ||
+    // 356: deletion is the ONLY private transition admitted here. A v1
+    // Protected/View-Once parent may be tombstoned; disappearing, unsupported
+    // and every private EDIT keep their existing refusal.
+    final policyVersion =
+        (current['private_media_policy_version'] as num?)?.toInt() ?? 0;
+    final privateMode = current['private_media_mode'] as String? ?? 'ordinary';
+    final isOrdinaryPolicy = policyVersion == 0 && privateMode == 'ordinary';
+    final isStrictPrivatePolicy =
+        policyVersion == 1 &&
+        const <String>{'protected', 'view_once'}.contains(privateMode) &&
+        current['private_media_duration_seconds'] == null;
+    if ((!isOrdinaryPolicy && !isStrictPrivatePolicy) ||
         current['direct_media_custody_intent_id'] != null) {
       return DbIncomingDirectDeletionResult(
         outcome: IncomingDirectDeletionOutcome.refused,
@@ -370,7 +378,10 @@ Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
         'text': '',
         'deleted_at': deletedAt,
         'deleted_by_peer_id': senderPeerId,
-        'hidden_at': null,
+        // An ordinary row clears a stale local hide. A private parent's hide,
+        // reveal clock and lifecycle state belong to its own owner and stay
+        // byte-identical through this transaction.
+        if (!isStrictPrivatePolicy) 'hidden_at': null,
         'transport': transport ?? current['transport'],
         'wire_envelope': null,
       },
@@ -2540,6 +2551,32 @@ Future<bool> dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
   Map<String, Object?> expectedRow,
   Map<String, Object?> tombstoneRow,
 ) {
+  if (!isExactOutgoingDirectPrivateDeleteTombstoneShape(
+    expectedRow: expectedRow,
+    tombstoneRow: tombstoneRow,
+  )) {
+    return Future<bool>.value(false);
+  }
+  return dbWriteTransaction(
+    db,
+    (txn) =>
+        dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstoneWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          tombstoneRow: tombstoneRow,
+        ),
+  );
+}
+
+/// The exact shape both private delete-for-everyone commit callers require.
+///
+/// 356: the v109 owner re-checks this before it opens its own transaction, so
+/// the legacy update-only commit and the atomic tombstone+event stage can never
+/// disagree about which parents may be replaced by a deletion tombstone.
+bool isExactOutgoingDirectPrivateDeleteTombstoneShape({
+  required Map<String, Object?> expectedRow,
+  required Map<String, Object?> tombstoneRow,
+}) {
   final messageId = tombstoneRow['id'] as String? ?? '';
   final contactPeerId = tombstoneRow['contact_peer_id'] as String? ?? '';
   final senderPeerId = tombstoneRow['sender_peer_id'] as String? ?? '';
@@ -2548,8 +2585,7 @@ Future<bool> dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
   final envelope = tombstoneRow['wire_envelope'] as String? ?? '';
   final mode = tombstoneRow['private_media_mode'] as String?;
   final expectedStatus = expectedRow['status'] as String?;
-  final shapeIsValid =
-      messageId.isNotEmpty &&
+  return messageId.isNotEmpty &&
       contactPeerId.isNotEmpty &&
       senderPeerId.isNotEmpty &&
       deletedAt.isNotEmpty &&
@@ -2561,6 +2597,7 @@ Future<bool> dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
       (tombstoneRow['is_incoming'] as num?)?.toInt() == 0 &&
       (tombstoneRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
       const <String>{'protected', 'view_once'}.contains(mode) &&
+      tombstoneRow['private_media_duration_seconds'] == null &&
       expectedRow['id'] == messageId &&
       expectedRow['contact_peer_id'] == contactPeerId &&
       expectedRow['sender_peer_id'] == senderPeerId &&
@@ -2568,7 +2605,26 @@ Future<bool> dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
       (expectedRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
       expectedRow['private_media_mode'] == mode &&
       (expectedStatus == 'delivered' || expectedStatus == 'inboxed');
-  if (!shapeIsValid) return Future<bool>.value(false);
+}
+
+/// The update-only private tombstone body, callable from an owning transaction.
+///
+/// Callers MUST have validated [isExactOutgoingDirectPrivateDeleteTombstoneShape]
+/// first. Physical parent removal stays authoritative (this never INSERTs), and
+/// `hidden_at` plus every private lifecycle column remain outside the update.
+Future<bool>
+dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstoneWithinTransaction(
+  DatabaseExecutor txn, {
+  required Map<String, Object?> expectedRow,
+  required Map<String, Object?> tombstoneRow,
+}) async {
+  final messageId = tombstoneRow['id'] as String? ?? '';
+  final contactPeerId = tombstoneRow['contact_peer_id'] as String? ?? '';
+  final senderPeerId = tombstoneRow['sender_peer_id'] as String? ?? '';
+  final deletedAt = tombstoneRow['deleted_at'] as String? ?? '';
+  final deletedByPeerId = tombstoneRow['deleted_by_peer_id'] as String? ?? '';
+  final envelope = tombstoneRow['wire_envelope'] as String? ?? '';
+  final mode = tombstoneRow['private_media_mode'] as String?;
 
   bool exactTombstone(Map<String, Object?> row) =>
       row['contact_peer_id'] == contactPeerId &&
@@ -2582,53 +2638,51 @@ Future<bool> dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone(
       row['deleted_by_peer_id'] == deletedByPeerId &&
       row['wire_envelope'] == envelope;
 
-  return dbWriteTransaction(db, (txn) async {
-    final rows = await txn.query(
-      'messages',
-      where: 'id = ?',
-      whereArgs: <Object?>[messageId],
-      limit: 1,
-    );
-    if (rows.isEmpty) return false;
-    final current = rows.single;
-    if (current['deleted_at'] != null) return exactTombstone(current);
-    if (current['contact_peer_id'] != contactPeerId ||
-        current['sender_peer_id'] != senderPeerId ||
-        (current['is_incoming'] as num?)?.toInt() != 0 ||
-        (current['private_media_policy_version'] as num?)?.toInt() != 1 ||
-        current['private_media_mode'] != mode ||
-        !const <String>{'delivered', 'inboxed'}.contains(current['status'])) {
-      return false;
-    }
+  final rows = await txn.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  if (rows.isEmpty) return false;
+  final current = rows.single;
+  if (current['deleted_at'] != null) return exactTombstone(current);
+  if (current['contact_peer_id'] != contactPeerId ||
+      current['sender_peer_id'] != senderPeerId ||
+      (current['is_incoming'] as num?)?.toInt() != 0 ||
+      (current['private_media_policy_version'] as num?)?.toInt() != 1 ||
+      current['private_media_mode'] != mode ||
+      !const <String>{'delivered', 'inboxed'}.contains(current['status'])) {
+    return false;
+  }
 
-    final changed = await txn.rawUpdate(
-      'UPDATE messages SET text = ?, status = ?, transport = NULL, '
-      'deleted_at = ?, deleted_by_peer_id = ?, wire_envelope = ? '
-      'WHERE id = ? AND contact_peer_id = ? AND sender_peer_id = ? '
-      'AND is_incoming = 0 AND deleted_at IS NULL '
-      'AND private_media_policy_version = 1 '
-      "AND private_media_mode IN ('protected','view_once') "
-      "AND status IN ('delivered','inboxed')",
-      <Object?>[
-        '',
-        'sending',
-        deletedAt,
-        deletedByPeerId,
-        envelope,
-        messageId,
-        contactPeerId,
-        senderPeerId,
-      ],
-    );
-    if (changed == 1) return true;
-    final after = await txn.query(
-      'messages',
-      where: 'id = ?',
-      whereArgs: <Object?>[messageId],
-      limit: 1,
-    );
-    return after.isNotEmpty && exactTombstone(after.single);
-  });
+  final changed = await txn.rawUpdate(
+    'UPDATE messages SET text = ?, status = ?, transport = NULL, '
+    'deleted_at = ?, deleted_by_peer_id = ?, wire_envelope = ? '
+    'WHERE id = ? AND contact_peer_id = ? AND sender_peer_id = ? '
+    'AND is_incoming = 0 AND deleted_at IS NULL '
+    'AND private_media_policy_version = 1 '
+    "AND private_media_mode IN ('protected','view_once') "
+    "AND status IN ('delivered','inboxed')",
+    <Object?>[
+      '',
+      'sending',
+      deletedAt,
+      deletedByPeerId,
+      envelope,
+      messageId,
+      contactPeerId,
+      senderPeerId,
+    ],
+  );
+  if (changed == 1) return true;
+  final after = await txn.query(
+    'messages',
+    where: 'id = ?',
+    whereArgs: <Object?>[messageId],
+    limit: 1,
+  );
+  return after.isNotEmpty && exactTombstone(after.single);
 }
 
 /// Update-only staging for a rebuilt private deletion retry envelope.
