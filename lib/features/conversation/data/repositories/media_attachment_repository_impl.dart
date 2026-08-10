@@ -142,6 +142,7 @@ class MediaAttachmentRepositoryImpl
         OutgoingDirectPrivateMediaBlobGenerationRepository,
         OutgoingDirectMediaBlobTerminalizationRepository,
         IncomingDirectMediaBlobCustodyRepository,
+        IncomingDirectPrivateMediaBlobCustodyRepository,
         OutgoingDirectMediaCustodyFailureRepository,
         NewMessageMediaPersistenceRollback {
   final Future<void> Function(Map<String, Object?> row)
@@ -255,6 +256,12 @@ class MediaAttachmentRepositoryImpl
     required List<DirectMediaBlobCustodyRow> custodyRows,
   })?
   dbStageIncomingDirectMediaBlobCustody;
+  final Future<IncomingDirectMediaBlobDbStageResult> Function({
+    required Map<String, Object?> messageRow,
+    required Map<String, Object?> attachmentRow,
+    required DirectMediaBlobCustodyRow custodyRow,
+  })?
+  dbStageIncomingDirectPrivateMediaBlobCustody;
   final Future<bool> Function({
     required Map<String, Object?> expectedAttachmentRow,
     required DirectMediaBlobCustodyRow expectedCustody,
@@ -623,6 +630,7 @@ class MediaAttachmentRepositoryImpl
     this.dbDeleteDirectMediaBlobCleanupPendingIfExact,
     this.dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact,
     this.dbStageIncomingDirectMediaBlobCustody,
+    this.dbStageIncomingDirectPrivateMediaBlobCustody,
     this.dbCommitIncomingDirectMediaBlobLocalPath,
     this.dbDeleteIncomingDirectMediaBlobAckPendingIfExact,
     this.dbDeleteIncomingDirectMediaBlobIfExpired,
@@ -1692,6 +1700,12 @@ class MediaAttachmentRepositoryImpl
             IncomingDirectMediaBlobCustodyStageOutcome.supersededByDeletion,
       );
     }
+    if (dbResult.outcome ==
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded) {
+      return const IncomingDirectMediaBlobCustodyStageResult(
+        outcome: IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded,
+      );
+    }
     if (dbResult.messageRow == null ||
         dbResult.attachmentRows.length != attachments.length) {
       return const IncomingDirectMediaBlobCustodyStageResult.refused();
@@ -1702,11 +1716,110 @@ class MediaAttachmentRepositoryImpl
       IncomingDirectMediaBlobDbStageOutcome.idempotent =>
         IncomingDirectMediaBlobCustodyStageOutcome.idempotent,
       IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion ||
+      IncomingDirectMediaBlobDbStageOutcome.durablySuperseded ||
       IncomingDirectMediaBlobDbStageOutcome.refused =>
         IncomingDirectMediaBlobCustodyStageOutcome.refused,
     };
     return IncomingDirectMediaBlobCustodyStageResult(
       outcome: outcome,
+      attachments: await _attachmentsFromRows(dbResult.attachmentRows),
+    );
+  }
+
+  @override
+  bool get supportsIncomingDirectPrivateMediaBlobCustody =>
+      dbStageIncomingDirectPrivateMediaBlobCustody != null &&
+      supportsIncomingDirectMediaBlobCustody;
+
+  @override
+  Future<IncomingDirectMediaBlobCustodyStageResult>
+  stageIncomingDirectPrivateMediaBlobCustody({
+    required ConversationMessage message,
+    required MediaAttachment attachment,
+    required DirectMediaBlobCustodyRow custodyRow,
+  }) async {
+    final stage = dbStageIncomingDirectPrivateMediaBlobCustody;
+    if (!supportsIncomingDirectPrivateMediaBlobCustody ||
+        stage == null ||
+        message.id.isEmpty ||
+        !message.isIncoming ||
+        attachment.messageId != message.id ||
+        attachment.id.isEmpty ||
+        attachment.blobCustody == null ||
+        attachment.encryptionKeyBase64 == null ||
+        attachment.encryptionKeyBase64!.isEmpty ||
+        isSecureStoreReference(attachment.encryptionKeyBase64) ||
+        custodyRow.attachmentId != attachment.id ||
+        custodyRow.messageId != message.id) {
+      return const IncomingDirectMediaBlobCustodyStageResult.refused();
+    }
+
+    final dbResult = await lifecycleLock.synchronizedAll(() async {
+      _MediaEncryptionKeyWriteSnapshot? snapshot;
+      var restored = false;
+      Future<void> restore() async {
+        final captured = snapshot;
+        if (restored || captured == null) return;
+        restored = true;
+        try {
+          await captured.restore();
+        } catch (error) {
+          throw StateError(
+            'incoming private media blob key compensation failed: $error',
+          );
+        }
+      }
+
+      try {
+        final stamped = attachment.copyWith(
+          ownerLane: MediaOwnerLane.direct,
+          directMediaBlobCustodyFingerprint:
+              computeDirectMediaBlobCommitmentFingerprint(
+                attachmentId: attachment.id,
+                commitment: attachment.blobCustody!,
+              ),
+        );
+        snapshot = await _captureEncryptionKeyWriteSnapshot(stamped);
+        final row = await _toStorageRow(stamped);
+        final result = await stage(
+          messageRow: message.toMap(),
+          attachmentRow: row,
+          custodyRow: custodyRow,
+        );
+        if (result.outcome != IncomingDirectMediaBlobDbStageOutcome.applied) {
+          await restore();
+        }
+        return result;
+      } catch (_) {
+        await restore();
+        rethrow;
+      }
+    });
+
+    switch (dbResult.outcome) {
+      case IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion:
+        return const IncomingDirectMediaBlobCustodyStageResult(
+          outcome:
+              IncomingDirectMediaBlobCustodyStageOutcome.supersededByDeletion,
+        );
+      case IncomingDirectMediaBlobDbStageOutcome.durablySuperseded:
+        return const IncomingDirectMediaBlobCustodyStageResult(
+          outcome: IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded,
+        );
+      case IncomingDirectMediaBlobDbStageOutcome.refused:
+        return const IncomingDirectMediaBlobCustodyStageResult.refused();
+      case IncomingDirectMediaBlobDbStageOutcome.applied:
+      case IncomingDirectMediaBlobDbStageOutcome.idempotent:
+        break;
+    }
+    if (dbResult.messageRow == null || dbResult.attachmentRows.length != 1) {
+      return const IncomingDirectMediaBlobCustodyStageResult.refused();
+    }
+    return IncomingDirectMediaBlobCustodyStageResult(
+      outcome:
+          dbResult.outcome == IncomingDirectMediaBlobDbStageOutcome.applied
+          ? IncomingDirectMediaBlobCustodyStageOutcome.applied
+          : IncomingDirectMediaBlobCustodyStageOutcome.idempotent,
       attachments: await _attachmentsFromRows(dbResult.attachmentRows),
     );
   }

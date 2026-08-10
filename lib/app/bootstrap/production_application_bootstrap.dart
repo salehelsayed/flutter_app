@@ -1949,6 +1949,17 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             attachmentRows: attachmentRows,
             custodyRows: custodyRows,
           ),
+      dbStageIncomingDirectPrivateMediaBlobCustody:
+          ({
+            required messageRow,
+            required attachmentRow,
+            required custodyRow,
+          }) => dbStageIncomingDirectPrivateMediaBlobCustody(
+            db,
+            messageRow: messageRow,
+            attachmentRow: attachmentRow,
+            custodyRow: custodyRow,
+          ),
       dbCommitIncomingDirectMediaBlobLocalPath:
           ({
             required expectedAttachmentRow,

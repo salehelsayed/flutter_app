@@ -38,6 +38,13 @@ enum ChatMessageProcessState {
   decryptionDeferred,
   unknownSender,
   duplicate,
+
+  /// Plan 354: a durable same-author private terminal parent already owned
+  /// this target. The event is durably settled and its initial receipt was
+  /// emitted, but nothing was published — and unlike [duplicate] this must
+  /// NEVER trigger the global message-display retry, which would re-stage a
+  /// notification for content the receiver has already consumed or removed.
+  durablySuperseded,
   ignoredEdit,
   editMissingOriginal,
   accountMigrationBlocked,
@@ -368,6 +375,7 @@ class ChatMessageListener {
       case ChatMessageProcessState.stored:
       case ChatMessageProcessState.blockedSender:
       case ChatMessageProcessState.duplicate:
+      case ChatMessageProcessState.durablySuperseded:
       case ChatMessageProcessState.ignoredEdit:
         return true;
       case ChatMessageProcessState.notChatMessage:
@@ -602,6 +610,17 @@ class ChatMessageListener {
             // content query) before returning — so this duplicate is safe to
             // treat as terminal in the disposition mapper.
             duplicatePriorPersisted: true,
+          ),
+        );
+      }
+
+      if (result == HandleChatMessageResult.durablySuperseded) {
+        // Deliberately NOT `retryNotificationDisplays`: this terminal replay
+        // must produce zero display effects.
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.durablySuperseded,
+            updatedContact: updatedContact,
           ),
         );
       }

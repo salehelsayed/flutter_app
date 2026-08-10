@@ -74,6 +74,14 @@ enum HandleChatMessageResult {
   /// A strict blob commitment was partial, crossed, or could not be staged by
   /// the required all-or-zero receiver authority.
   strictMediaCustodyRefused,
+
+  /// Plan 354: a durable same-author private terminal parent already owns this
+  /// target, or one won between the atomic stage and publication. The event is
+  /// durably settled and its single initial receipt was emitted, but NOTHING
+  /// was published: no attachment/key write, marker stage or promotion, stream
+  /// event, notification, or listener-level message-display retry. Callers
+  /// must not route this through the generic duplicate branch.
+  durablySuperseded,
 }
 
 typedef StageDirectMessageNotificationDisplayCustody =
@@ -771,10 +779,20 @@ handleIncomingChatMessage({
         mediaAttachmentRepo is IncomingDirectMediaBlobCustodyRepository
         ? mediaAttachmentRepo as IncomingDirectMediaBlobCustodyRepository
         : null;
+    final incomingPrivateMediaRepo =
+        mediaAttachmentRepo is IncomingDirectPrivateMediaBlobCustodyRepository
+        ? mediaAttachmentRepo as IncomingDirectPrivateMediaBlobCustodyRepository
+        : null;
     if (resultAfterSave != HandleChatMessageResult.chatMessage ||
         incomingMessageRepo == null ||
         incomingMediaRepo == null ||
-        !incomingMediaRepo.supportsIncomingDirectMediaBlobCustody) {
+        !incomingMediaRepo.supportsIncomingDirectMediaBlobCustody ||
+        (strictMediaProjection.isPrivate &&
+            incomingPrivateMediaRepo
+                    ?.supportsIncomingDirectPrivateMediaBlobCustody !=
+                true)) {
+      // A selected strict private attempt fails closed when its capability is
+      // absent; it must never fall back to the legacy split saves.
       return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
     }
     final now = DateTime.now().toUtc().toIso8601String();
@@ -814,11 +832,36 @@ handleIncomingChatMessage({
           );
         })
         .toList(growable: false);
-    final staged = await incomingMediaRepo.stageIncomingDirectMediaBlobCustody(
-      message: conversationMessage,
-      attachments: strictAttachments,
-      custodyRows: custodyRows,
-    );
+    final staged = strictMediaProjection.isPrivate
+        ? await incomingPrivateMediaRepo!
+              .stageIncomingDirectPrivateMediaBlobCustody(
+                message: conversationMessage,
+                attachment: strictAttachments.single,
+                custodyRow: custodyRows.single,
+              )
+        : await incomingMediaRepo.stageIncomingDirectMediaBlobCustody(
+            message: conversationMessage,
+            attachments: strictAttachments,
+            custodyRows: custodyRows,
+          );
+    if (staged.outcome ==
+        IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded) {
+      // 354: a durable same-author private terminal parent already won. This
+      // is a dedicated zero-effect disposition: no attachment/key write, no
+      // marker stage or promotion, no publication, stream or notification, and
+      // never the generic duplicate/display-retry branch. The initial receipt
+      // is still owed and is emitted only after that durable winner was
+      // re-read inside the staging transaction.
+      await maybeSendDeliveryReceipt(payload.id);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_STRICT_PRIVATE_DURABLY_SUPERSEDED',
+        details: {
+          'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
+        },
+      );
+      return (HandleChatMessageResult.durablySuperseded, null, null);
+    }
     if (staged.outcome ==
         IncomingDirectMediaBlobCustodyStageOutcome.supersededByDeletion) {
       // The author's deletion is durable precedence, not a refusal. Publish no
@@ -838,6 +881,33 @@ handleIncomingChatMessage({
       return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
     }
     parsedAttachments.addAll(strictAttachments);
+    // 354: re-read terminal authority after the atomic stage. If hide or an
+    // author deletion won in between, retire any display marker through the
+    // existing parent-conditional owner, suppress every stream/notification
+    // effect, and still emit the exact initial receipt.
+    if (strictMediaProjection.isPrivate) {
+      final durableParent = await messageRepo.getMessage(payload.id);
+      final terminalAfterStage =
+          durableParent == null ||
+          durableParent.hiddenAt != null ||
+          durableParent.deletedAt != null ||
+          durableParent.privateMediaState.isTerminal;
+      if (terminalAfterStage) {
+        // No display marker was staged yet on this path, so suppression is
+        // simply never staging one; nothing needs retiring.
+        await maybeSendDeliveryReceipt(payload.id);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_RECEIVE_STRICT_PRIVATE_TERMINAL_AFTER_STAGE',
+          details: {
+            'id': payload.id.length > 8
+                ? payload.id.substring(0, 8)
+                : payload.id,
+          },
+        );
+        return (HandleChatMessageResult.durablySuperseded, null, null);
+      }
+    }
     // The complete parent/attachment/v111 transaction is already durable.
     // Every observable side effect starts only after that boundary.
     await stageNotificationDisplayCustody?.call(conversationMessage);
@@ -1230,19 +1300,30 @@ final class _StrictIncomingMediaProjection {
   const _StrictIncomingMediaProjection.none()
     : selected = false,
       isValid = true,
+      isPrivate = false,
       attachments = const <MediaAttachment>[];
 
   const _StrictIncomingMediaProjection.invalid()
     : selected = true,
       isValid = false,
+      isPrivate = false,
       attachments = const <MediaAttachment>[];
 
   const _StrictIncomingMediaProjection.valid(this.attachments)
     : selected = true,
-      isValid = true;
+      isValid = true,
+      isPrivate = false;
+
+  /// Plan 354: exactly one v1 Protected image/video or View-Once image
+  /// initial. Every other redacted policy stays invalid.
+  const _StrictIncomingMediaProjection.validPrivate(this.attachments)
+    : selected = true,
+      isValid = true,
+      isPrivate = true;
 
   final bool selected;
   final bool isValid;
+  final bool isPrivate;
   final List<MediaAttachment> attachments;
 }
 
@@ -1257,9 +1338,14 @@ _StrictIncomingMediaProjection _parseStrictIncomingMediaProjection(
       .where((item) => item.containsKey('blobCustody'))
       .length;
   if (strictCount == 0) return const _StrictIncomingMediaProjection.none();
+  final policy = payload.privateMediaPolicy;
+  final isPrivateInitial =
+      policy.version == 1 &&
+      (policy.mode == PrivateMediaMode.protected ||
+          policy.mode == PrivateMediaMode.viewOnce);
   if (strictCount != media.length ||
       payload.isEdit ||
-      payload.privateMediaPolicy.requiresRedaction) {
+      (policy.requiresRedaction && !isPrivateInitial)) {
     return const _StrictIncomingMediaProjection.invalid();
   }
   try {
@@ -1278,8 +1364,26 @@ _StrictIncomingMediaProjection _parseStrictIncomingMediaProjection(
               attachment.contentHash == commitment.contentHash &&
               attachment.hasEncryptionMetadata;
         });
-    return valid
-        ? _StrictIncomingMediaProjection.valid(attachments)
+    if (!valid) return const _StrictIncomingMediaProjection.invalid();
+    if (!isPrivateInitial) {
+      return _StrictIncomingMediaProjection.valid(attachments);
+    }
+    // The receiver enforces the producer matrix independently of the wire:
+    // exactly one attachment, no caption, no forward, and Protected
+    // image/video or View-Once image only.
+    final privateEligible =
+        attachments.length == 1 &&
+        payload.text.trim().isEmpty &&
+        !payload.isForwarded &&
+        payload.quotedMessageId == null &&
+        privateMediaInitialProducerMatrixAllows(
+          policyVersion: policy.version,
+          mode: policy.mode,
+          mime: attachments.single.mime,
+          mediaType: attachments.single.mediaType,
+        );
+    return privateEligible
+        ? _StrictIncomingMediaProjection.validPrivate(attachments)
         : const _StrictIncomingMediaProjection.invalid();
   } on Object {
     return const _StrictIncomingMediaProjection.invalid();

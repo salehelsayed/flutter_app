@@ -174,6 +174,25 @@ abstract interface class FreshOutgoingDirectMediaBlobGenerationRepository {
   });
 }
 
+/// Plan 354 receiver entry into the same physical v111 blob custody.
+///
+/// One atomic transaction publishes the incoming private parent lifecycle, its
+/// single secure-key-backed pending attachment, and one `incoming_committed`
+/// obligation before any display marker, publication, notification, receipt or
+/// inbox ACK. A durable same-author terminal parent instead returns
+/// [IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded] with zero
+/// effects.
+abstract interface class IncomingDirectPrivateMediaBlobCustodyRepository {
+  bool get supportsIncomingDirectPrivateMediaBlobCustody;
+
+  Future<IncomingDirectMediaBlobCustodyStageResult>
+  stageIncomingDirectPrivateMediaBlobCustody({
+    required ConversationMessage message,
+    required MediaAttachment attachment,
+    required DirectMediaBlobCustodyRow custodyRow,
+  });
+}
+
 /// Plan 354 private entry into the same physical v111 blob custody.
 ///
 /// Protected and View Once keep their existing private pending/completion CAS

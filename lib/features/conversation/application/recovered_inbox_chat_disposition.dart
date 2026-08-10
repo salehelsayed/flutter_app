@@ -82,6 +82,15 @@ RecoveredInboxReplayOutcome mapChatReplayOutcomeToDisposition(
         reasonCode: 'decryption_failed',
         reasonDetail: outcome.reasonDetail,
       );
+    case ChatMessageProcessState.durablySuperseded:
+      // Plan 354: a durable same-author private terminal parent already owned
+      // this target and the initial receipt was emitted. Replaying it can only
+      // repeat that zero-effect decision, so it is terminal, never retryable.
+      return (
+        disposition: RecoveredInboxChatDisposition.committed,
+        reasonCode: 'durably_superseded',
+        reasonDetail: null,
+      );
     case ChatMessageProcessState.blockedSender:
       return (
         disposition: RecoveredInboxChatDisposition.rejected,

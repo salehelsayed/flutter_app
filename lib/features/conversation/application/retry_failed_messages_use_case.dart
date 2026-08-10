@@ -626,6 +626,9 @@ Future<bool> _retryFailedMessageCandidate({
           releaseUploadLease: releaseUploadLease,
           manualRetry: manualRetry,
           expectedSenderPeerId: identity.peerId,
+          directMediaBlobCustodyCoordinator:
+              directMediaBlobCustodyCoordinator,
+          directMediaBlobArtifactStore: directMediaBlobArtifactStore,
         );
     uploadLease = resolution.uploadLease;
     privateCustody = resolution.privateCustody;
@@ -1413,6 +1416,8 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
   DirectManualUploadRetryRearmRepository? uploadRetryRearmRepo,
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
   ReleaseMediaUploadLease? releaseUploadLease,
+  PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
+  DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
 }) async {
   final messageId = message.id;
   final isOutgoingPrivate = _isOutgoingOneMoreLookPrivate(message);
@@ -1649,24 +1654,54 @@ Future<_RetryAttachmentResolution> _resolveAttachmentsForRetry({
       }
     }
 
-    final reuploadedAttachments = await _reuploadAttachments(
-      attachments: unfinished,
-      resolvedPaths: resolvedPaths,
+    // 354: an already-published protected/View-Once generation is reopened
+    // byte-identically here too. It never reaches the legacy upload helper
+    // below, so no re-encryption, key rotation or envelope invalidation can
+    // occur; a crossed or partial strict projection fails closed instead.
+    final strictPrivate = await _reopenStrictPrivateFailedRetryAttachments(
+      message: message,
+      unfinished: unfinished,
       bridge: bridge,
+      expectedSenderPeerId: expectedSenderPeerId,
       targetPeerId: targetPeerId,
-      uploadFn: uploadFn,
-      messageId: messageId,
-      messageRepo: messageRepo,
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
-      uploadRetryProjectionRepo: uploadRetryProjectionRepo,
       privateMutationRepository: isOutgoingPrivate
           ? privateMutationRepository
           : null,
-      carryToDirectMediaCustody: tokenBearingPreparation,
-      mediaCustodyFailureParent: mediaCustodyFailureParent,
-      mediaCustodyFailureAttachments: mediaCustodyFailureAttachments,
+      directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
+      directMediaBlobArtifactStore: directMediaBlobArtifactStore,
+      tokenBearingPreparation: tokenBearingPreparation,
     );
+    if (strictPrivate.owned && strictPrivate.attachments == null) {
+      leaseHandedOff = true;
+      return _RetryAttachmentResolution(
+        attachments: null,
+        skipReason: _RetryFailedMessageSkipReason.uploadFailed,
+        uploadLease: lease,
+        privateCustody: privateCustody,
+      );
+    }
+    final reuploadedAttachments =
+        strictPrivate.attachments ??
+        await _reuploadAttachments(
+          attachments: unfinished,
+          resolvedPaths: resolvedPaths,
+          bridge: bridge,
+          targetPeerId: targetPeerId,
+          uploadFn: uploadFn,
+          messageId: messageId,
+          messageRepo: messageRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+          privateMutationRepository: isOutgoingPrivate
+              ? privateMutationRepository
+              : null,
+          carryToDirectMediaCustody: tokenBearingPreparation,
+          mediaCustodyFailureParent: mediaCustodyFailureParent,
+          mediaCustodyFailureAttachments: mediaCustodyFailureAttachments,
+        );
     if (reuploadedAttachments == null) {
       leaseHandedOff = true;
       return _RetryAttachmentResolution(
@@ -2054,3 +2089,122 @@ bool _isOutgoingOneMoreLookPrivate(ConversationMessage message) =>
         message.privateMediaMode == PrivateMediaMode.viewOnce);
 
 String _messageIdPreview(String id) => id.length > 8 ? id.substring(0, 8) : id;
+
+/// 354: outcome of the strict private failed-retry reopen.
+///
+/// [owned] is true only when a durable protected/View-Once v111 generation
+/// exists for this parent, which permanently excludes the legacy upload lane.
+/// A null [attachments] under [owned] therefore means "retain custody and fail
+/// closed", never "fall back and re-encrypt".
+typedef _StrictPrivateFailedRetry = ({
+  bool owned,
+  List<MediaAttachment>? attachments,
+});
+
+Future<_StrictPrivateFailedRetry> _reopenStrictPrivateFailedRetryAttachments({
+  required ConversationMessage message,
+  required List<MediaAttachment> unfinished,
+  required Bridge bridge,
+  required String expectedSenderPeerId,
+  required String targetPeerId,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+  required MediaFileManager? mediaFileManager,
+  required OutgoingDirectPrivateMutationRepository? privateMutationRepository,
+  required PreparedDirectMediaBlobCustodyCoordinator?
+  directMediaBlobCustodyCoordinator,
+  required DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
+  required bool tokenBearingPreparation,
+}) async {
+  const notOwned = (owned: false, attachments: null);
+  if (!kDirectMediaBlobCustodyClientEnabled ||
+      tokenBearingPreparation ||
+      privateMutationRepository == null ||
+      mediaAttachmentRepo == null ||
+      mediaFileManager == null ||
+      mediaAttachmentRepo is! DirectMediaBlobCustodyRepository) {
+    return notOwned;
+  }
+  final blobRepository = mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+  if (!blobRepository.supportsDirectMediaBlobCustody) return notOwned;
+  final rows = await blobRepository.loadDirectMediaBlobCustodyForMessage(
+    message.id,
+  );
+  if (rows.isEmpty) return notOwned;
+
+  const failClosed = (owned: true, attachments: null);
+  final pending = unfinished.length == 1 ? unfinished.single : null;
+  final pendingPath = pending?.localPath?.trim();
+  if (rows.length != 1 ||
+      pending == null ||
+      pendingPath == null ||
+      pendingPath.isEmpty ||
+      rows.single.attachmentId != pending.id ||
+      message.senderPeerId != expectedSenderPeerId ||
+      message.contactPeerId != targetPeerId) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_PRIVATE_STRICT_RETAINED',
+      details: {'id': _messageIdPreview(message.id)},
+    );
+    return failClosed;
+  }
+
+  final coordinator =
+      directMediaBlobCustodyCoordinator ??
+      PreparedDirectMediaBlobCustodyCoordinator(
+        repository: blobRepository,
+        artifactStore:
+            directMediaBlobArtifactStore ?? DirectMediaBlobArtifactStore(),
+      );
+  final strictResult = await coordinator.reopenAndUploadPrivate(
+    bridge: bridge,
+    identityPeerId: expectedSenderPeerId,
+    recipientPeerId: targetPeerId,
+    expectedParent: message,
+    expectedAttachment: pending,
+  );
+  if (!strictResult.isComplete || strictResult.attachments.length != 1) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_PRIVATE_STRICT_RETAINED',
+      details: {'id': _messageIdPreview(message.id)},
+    );
+    return failClosed;
+  }
+
+  final canonical = await canonicalizeStrictPrivateRetryCompletion(
+    mediaFileManager: mediaFileManager,
+    contactPeerId: targetPeerId,
+    messageId: message.id,
+    pendingLocalPath: pendingPath,
+    strict: strictResult.attachments.single,
+  );
+  if (canonical == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_PRIVATE_STRICT_CANONICALIZE_REFUSED',
+      details: {'id': _messageIdPreview(message.id)},
+    );
+    return failClosed;
+  }
+  final mutation = await privateMutationRepository
+      .outgoingDirectPrivateMutationCoordinator
+      .commitCompletion(
+        attachment: canonical,
+        expectedPendingLocalPath: pendingPath,
+      );
+  if (!mutation.authorizesTransportHandoff) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_PRIVATE_STRICT_COMPLETION_REFUSED',
+      details: {'id': _messageIdPreview(message.id)},
+    );
+    return failClosed;
+  }
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'RETRY_FAILED_PRIVATE_STRICT_REOPENED',
+    details: {'id': _messageIdPreview(message.id)},
+  );
+  return (owned: true, attachments: <MediaAttachment>[canonical]);
+}

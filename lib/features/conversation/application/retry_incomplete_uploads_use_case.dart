@@ -780,7 +780,7 @@ Future<int> retryIncompleteUploads({
             );
             continue;
           }
-          final canonical = await _canonicalizeStrictPrivateRetryCompletion(
+          final canonical = await canonicalizeStrictPrivateRetryCompletion(
             mediaFileManager: mediaFileManager,
             contactPeerId: msg.contactPeerId,
             messageId: messageId,
@@ -1469,7 +1469,7 @@ String? _lateSendAbortReason({
 ///
 /// Returns null when the pending source is missing or the strict projection
 /// drifted; the caller then retains its durable custody instead of writing.
-Future<MediaAttachment?> _canonicalizeStrictPrivateRetryCompletion({
+Future<MediaAttachment?> canonicalizeStrictPrivateRetryCompletion({
   required MediaFileManager mediaFileManager,
   required String contactPeerId,
   required String messageId,
