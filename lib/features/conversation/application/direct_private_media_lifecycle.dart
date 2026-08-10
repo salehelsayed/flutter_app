@@ -899,6 +899,21 @@ class DirectPrivateMediaLifecycle
       if (directPrivateMediaTransferRegistry.isActive(attachment.id)) {
         throw StateError('private recovery retained an active transfer claim');
       }
+      // A surviving incoming v111 obligation means this transfer is still
+      // retryable, so its verified legacy LAN ciphertext must outlive the
+      // crash that interrupted it. Every attempt-owned staging sibling is
+      // still removed by the exact expansion below.
+      final repository = mediaAttachmentRepository;
+      final custodyRepository = repository is DirectMediaBlobCustodyRepository
+          ? repository as DirectMediaBlobCustodyRepository
+          : null;
+      final incomingCustody =
+          custodyRepository != null &&
+              custodyRepository.supportsDirectMediaBlobCustody
+          ? await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
+              attachment.id,
+            )
+          : null;
       await _deleteExactAppOwnedArtifacts(
         messageId: current.messageId,
         contactPeerId: current.scopeId,
@@ -907,6 +922,11 @@ class DirectPrivateMediaLifecycle
           messageId: current.messageId,
           mime: attachment.mime,
         ),
+        preserveLegacyLanCiphertext:
+            incomingCustody != null &&
+            incomingCustody.messageId == current.messageId &&
+            incomingCustody.direction ==
+                DirectMediaBlobCustodyDirection.incoming,
       );
       final released = await _downloadStateRepository
           .recordDirectPrivateMediaDownloadFailureWithinLock(
@@ -1182,6 +1202,10 @@ class DirectPrivateMediaLifecycle
     required String messageId,
     required String contactPeerId,
     required DirectPrivateMediaCleanupAttachment attachment,
+    // 355: a recoverable strict INCOMING transfer keeps the verified legacy
+    // LAN ciphertext, which is the only retry source it has. Terminal cleanup
+    // never sets this, so a terminal winner still destroys that source.
+    bool preserveLegacyLanCiphertext = false,
   }) async {
     if (!DirectPrivateMediaPathGuard.identifiersAreSafe(
       contactPeerId: contactPeerId,
@@ -1227,10 +1251,12 @@ class DirectPrivateMediaLifecycle
       (path: canonicalPath, root: canonicalRoot),
       (path: pendingPath, root: pendingRoot),
     ]) {
+      final isCanonicalTarget = target.path == canonicalPath;
       expanded.addAll([
         target,
         (path: '${target.path}.part', root: target.root),
-        (path: '${target.path}.enc', root: target.root),
+        if (!(preserveLegacyLanCiphertext && isCanonicalTarget))
+          (path: '${target.path}.enc', root: target.root),
         (path: '${target.path}.enc.part', root: target.root),
         // 354: the exact deterministic private strict download staging pair.
         // Naming both explicitly keeps cleanup and restart recovery free of a

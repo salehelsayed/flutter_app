@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
 import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
+    show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -4752,10 +4755,11 @@ void main() {
       );
       expect(markerStage, lessThan(publication));
 
-      // 4. The post-stage terminal re-read runs before marker staging and
-      //    emits the receipt with no publication.
+      // 4. The post-stage terminal re-read runs before marker staging; a
+      //    terminal winner publishes nothing and still owes the exact initial
+      //    receipt. Plan 355 proves this behaviorally in TC-355-04a.
       final reread = source.indexOf(
-        'if (strictMediaProjection.isPrivate) {\n      final durableParent = await messageRepo.getMessage(payload.id);',
+        'final durableParent = await messageRepo.getMessage(strictMessageId);',
       );
       expect(
         reread,
@@ -4771,18 +4775,27 @@ void main() {
         isTrue,
       );
       expect(
-        rereadBody.contains('await maybeSendDeliveryReceipt(payload.id);'),
-        isTrue,
-        reason: 'the exact initial receipt is still owed',
-      );
-      expect(
-        rereadBody.contains('HandleChatMessageResult.durablySuperseded'),
+        rereadBody.contains('_StrictPrivateReceiveDecision.terminal'),
         isTrue,
       );
       expect(
         rereadBody.contains('publishIncomingDirectMediaMessage'),
         isFalse,
         reason: 'a post-stage terminal winner publishes nothing',
+      );
+      final terminalCase = source.indexOf(
+        'case _StrictPrivateReceiveDecision.terminal:',
+      );
+      expect(terminalCase, greaterThan(-1));
+      final terminalBody = source.substring(terminalCase, terminalCase + 800);
+      expect(
+        terminalBody.contains('await maybeSendDeliveryReceipt(payload.id);'),
+        isTrue,
+        reason: 'the exact initial receipt is still owed',
+      );
+      expect(
+        terminalBody.contains('HandleChatMessageResult.durablySuperseded'),
+        isTrue,
       );
 
       // 5. The terminal replay matrix itself is owned by the DB stage, and
@@ -4807,4 +4820,301 @@ void main() {
       );
     });
   });
+
+  group('Plan 355 private strict terminal replay', () {
+    const expiresAtMs = 1_900_000_500_000;
+    const contentHash =
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+
+    /// The private policy travels ONLY inside an encrypted envelope, so the
+    /// production path is the decrypted inner payload.
+    String privateInnerPayload({
+      required String messageId,
+      String mode = 'protected',
+    }) {
+      final attachmentId = '$messageId-a';
+      return jsonEncode(<String, Object?>{
+          'id': messageId,
+          'text': '',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-08-10T16:00:00.000Z',
+          'dedupKey': messageId,
+          'privateMedia': <String, Object?>{'version': 1, 'mode': mode},
+          'media': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': 13,
+              'mediaType': 'image',
+              'contentHash': contentHash,
+              'encryptionKeyBase64': 'key-$attachmentId',
+              'encryptionNonce': 'nonce-$attachmentId',
+              'encryptionScheme':
+                  kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+              'blobCustody': const DirectMediaBlobCustodyCommitment(
+                contentHash: contentHash,
+                ciphertextSize: 41,
+                expiresAtMs: expiresAtMs,
+              ).toJson(),
+            },
+          ],
+      });
+    }
+
+    test(
+      'TC-355-03b strict private terminal replay bypasses generic duplicate '
+      'and removed parent emits no receipt',
+      () async {
+        /// One production receive with counted observable effects.
+        Future<({HandleChatMessageResult result, List<String> effects})>
+        receive(
+          MediaRepositoryRealDbFixture fixture, {
+          required String messageId,
+          MessageRepository? messageRepoOverride,
+        }) async {
+          final effects = <String>[];
+          final (result, _, _) = await handleIncomingChatMessage(
+            message: buildP2PMessage(
+              buildV2EncryptedEnvelopeJson(id: messageId),
+            ),
+            predecryptedText: privateInnerPayload(messageId: messageId),
+            messageRepo: messageRepoOverride ?? fixture.messageRepo,
+            contactRepo: contactRepo,
+            mediaAttachmentRepo: fixture.repo,
+            transport: 'inbox',
+            stagedEntryId: '$messageId-entry',
+            sendDeliveryReceipt: (_) async => effects.add('receipt'),
+            stageNotificationDisplayCustody: (_) async =>
+                effects.add('marker-stage'),
+            promoteNotificationDisplayCustody: (_) async =>
+                effects.add('marker-promote'),
+          );
+          // The receipt is deliberately fire-and-forget; drain the microtask
+          // queue so its effect is observable without a sleep.
+          await Future<void>.delayed(Duration.zero);
+          return (result: result, effects: effects);
+        }
+
+        // Case 1: terminal parent WITH a surviving v111 obligation.
+        // Case 2: terminal parent with NO v111 (reduced parent equivalence).
+        // Case 3: consumed parent with neither attachment nor v111.
+        for (final scenario in const <String>[
+          'survivor',
+          'no-v111',
+          'no-attachment',
+        ]) {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          final messageId = 'tc355-03b-$scenario';
+
+          final first = await receive(fixture, messageId: messageId);
+          expect(
+            first.result,
+            HandleChatMessageResult.chatMessage,
+            reason: scenario,
+          );
+          expect(first.effects, <String>[
+            'marker-stage',
+            'marker-promote',
+            'receipt',
+          ], reason: scenario);
+
+          // A terminal owner wins between the two deliveries.
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'private_media_state': 'consumed',
+              'private_media_terminal_at_ms': 1_800_000_400_000,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          if (scenario != 'survivor') {
+            await fixture.db.delete(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            );
+          }
+          if (scenario == 'no-attachment') {
+            await fixture.db.delete(
+              'media_attachments',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            );
+          }
+
+          final replay = await receive(fixture, messageId: messageId);
+          expect(
+            replay.result,
+            HandleChatMessageResult.durablySuperseded,
+            reason: 'terminal replay must reach the dedicated owner '
+                '($scenario)',
+          );
+          expect(
+            replay.effects,
+            <String>['receipt'],
+            reason: 'exactly one receipt and zero display work ($scenario)',
+          );
+          // Zero attachment, key, marker or promotion effects were applied.
+          expect(
+            (await fixture.db.query(
+              'media_attachments',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            )).length,
+            scenario == 'no-attachment' ? 0 : 1,
+            reason: scenario,
+          );
+        }
+
+        // Case 4: a crossed replay against a terminal parent proves nothing
+        // and must refuse WITHOUT a receipt.
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          const messageId = 'tc355-03b-crossed';
+          expect(
+            (await receive(fixture, messageId: messageId)).result,
+            HandleChatMessageResult.chatMessage,
+          );
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'private_media_state': 'consumed',
+              'private_media_terminal_at_ms': 1_800_000_400_000,
+              // A crossed immutable wire field the replay cannot match.
+              'timestamp': '2026-08-10T18:45:00.000Z',
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          final crossed = await receive(fixture, messageId: messageId);
+          expect(
+            crossed.result,
+            HandleChatMessageResult.strictMediaCustodyRefused,
+          );
+          expect(crossed.effects, isEmpty);
+        }
+
+        // Case 5: the parent is removed by a non-lifecycle owner between the
+        // successful stage and the terminal re-read. Without durable author
+        // or policy authority nothing is published AND no receipt is owed.
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          const messageId = 'tc355-03b-removed';
+          final removing = _ParentRemovingMessageRepository(
+            delegate: fixture.messageRepo,
+            db: fixture.db,
+            messageId: messageId,
+            removeOnCall: 2,
+          );
+          final removed = await receive(
+            fixture,
+            messageId: messageId,
+            messageRepoOverride: removing,
+          );
+          expect(
+            removed.result,
+            HandleChatMessageResult.strictMediaCustodyRefused,
+          );
+          expect(removed.effects, isEmpty);
+          expect(
+            await fixture.db.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+        }
+
+        // Case 6: an ACTIVE exact replay keeps its historical generic
+        // duplicate path — only terminal parents are rerouted.
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          const messageId = 'tc355-03b-active';
+          expect(
+            (await receive(fixture, messageId: messageId)).result,
+            HandleChatMessageResult.chatMessage,
+          );
+          final active = await receive(fixture, messageId: messageId);
+          expect(active.result, HandleChatMessageResult.duplicate);
+          expect(active.effects, containsAll(<String>['receipt']));
+        }
+      },
+    );
+  });
+}
+
+/// Removes the durable parent on the Nth `getMessage`, simulating a
+/// non-lifecycle owner that deletes the row between the atomic stage and the
+/// handler's post-stage terminal re-read.
+class _ParentRemovingMessageRepository
+    implements MessageRepository, IncomingDirectMessagePublicationRepository {
+  _ParentRemovingMessageRepository({
+    required this.delegate,
+    required this.db,
+    required this.messageId,
+    required this.removeOnCall,
+  });
+
+  final MessageRepository delegate;
+  final Database db;
+  final String messageId;
+  final int removeOnCall;
+  var _getMessageCalls = 0;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async {
+    _getMessageCalls += 1;
+    if (_getMessageCalls == removeOnCall && id == messageId) {
+      await db.delete('messages', where: 'id = ?', whereArgs: <Object?>[id]);
+    }
+    return delegate.getMessage(id);
+  }
+
+  @override
+  Future<void> saveMessage(ConversationMessage message) =>
+      delegate.saveMessage(message);
+
+  @override
+  Future<bool> existsByContent(
+    String contactPeerId,
+    String senderPeerId,
+    String text,
+    String timestamp,
+  ) => delegate.existsByContent(
+    contactPeerId,
+    senderPeerId,
+    text,
+    timestamp,
+  );
+
+  @override
+  Future<bool> existsByDedupKey(
+    String contactPeerId,
+    String senderPeerId,
+    String dedupKey,
+  ) => delegate.existsByDedupKey(contactPeerId, senderPeerId, dedupKey);
+
+  @override
+  Future<StrictIncomingMediaPublicationDisposition>
+  publishIncomingDirectMediaMessage({
+    required ConversationMessage message,
+    required List<MediaAttachment> attachments,
+  }) =>
+      (delegate as IncomingDirectMessagePublicationRepository)
+          .publishIncomingDirectMediaMessage(
+            message: message,
+            attachments: attachments,
+          );
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'unexpected repository call: ${invocation.memberName}',
+  );
 }

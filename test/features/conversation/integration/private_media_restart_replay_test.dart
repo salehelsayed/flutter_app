@@ -968,6 +968,154 @@ void main() {
         isTrue,
       );
     });
+
+    test('TC-355-02b interrupted private strict download reopens without '
+        'residue or v111 loss', () async {
+      final temp = Directory.systemTemp.createTempSync(
+        'private-strict-interrupted-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      final databasePath = p.join(temp.path, 'identity.db');
+      const messageId = 'tc355-02b-message';
+      const attachmentId = 'tc355-02b-attachment';
+      const contactPeerId = 'tc355-02b-peer';
+      const contentHash =
+          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+      const ciphertext = <int>[4, 2, 4, 2];
+      final manager = FakeMediaFileManager();
+      final canonicalPath = await manager.localPathForAttachment(
+        contactPeerId: contactPeerId,
+        blobId: attachmentId,
+        mime: 'image/jpeg',
+      );
+      final lanSource = File('$canonicalPath.enc');
+      final stagedCiphertext = File('$canonicalPath.private.enc');
+      final stagedDecrypt = File('$canonicalPath.private.enc.dec');
+      final unrelatedSibling = File(
+        '${File(canonicalPath).parent.path}/tc355-02b-other.jpg',
+      );
+      for (final file in <File>[
+        lanSource,
+        stagedCiphertext,
+        stagedDecrypt,
+        unrelatedSibling,
+      ]) {
+        file.parent.createSync(recursive: true);
+        file.writeAsBytesSync(ciphertext);
+      }
+      addTearDown(() {
+        for (final file in <File>[
+          lanSource,
+          stagedCiphertext,
+          stagedDecrypt,
+          unrelatedSibling,
+          File(canonicalPath),
+        ]) {
+          if (file.existsSync()) file.deleteSync();
+        }
+      });
+
+      var fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: databasePath,
+      );
+      addTearDown(() async {
+        try {
+          await fixture.dispose();
+        } catch (_) {}
+      });
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': contactPeerId,
+        'sender_peer_id': contactPeerId,
+        'text': '',
+        'timestamp': '2026-08-10T15:00:00.000Z',
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': '2026-08-10T15:00:00.000Z',
+        'dedup_key': messageId,
+        'private_media_policy_version': 1,
+        'private_media_mode': 'protected',
+        'private_media_state': 'available',
+        'private_media_received_at_ms': 1000,
+        'private_media_clock_high_water_ms': 1000,
+      });
+      // The crash cut: the DB claim is durable but no commit ever ran.
+      await fixture.db.insert('media_attachments', <String, Object?>{
+        'id': attachmentId,
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 4,
+        'media_type': 'image',
+        'local_path': null,
+        'download_status': 'downloading',
+        'created_at': '2026-08-10T15:00:00.000Z',
+        'content_hash': contentHash,
+        'encryption_key_base64': secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        'encryption_nonce': 'tc355-02b-nonce',
+        'encryption_scheme': 'blob_aes_256_gcm_v1',
+      });
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        contentHash: contentHash,
+        ciphertextSize: ciphertext.length,
+        expiresAtMs: 2200000000000,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-10T15:00:00.000Z',
+        updatedAt: '2026-08-10T15:00:00.000Z',
+      );
+      await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+
+      fixture = await fixture.reopen();
+      final engine = PrivateMediaLifecycleEngine(
+        adapter: DirectPrivateMediaLifecycle(
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          mediaFileManager: manager,
+        ),
+        lifecycleLock: fixture.repo.lifecycleLock,
+        nowMs: () => 1200,
+      );
+      final result = await engine.reconcileLocalLifecycle();
+
+      expect(result.downloadClaimsRecovered, greaterThanOrEqualTo(1));
+      // Only this attempt's deterministic staging pair is removed.
+      expect(stagedCiphertext.existsSync(), isFalse);
+      expect(stagedDecrypt.existsSync(), isFalse);
+      expect(File(canonicalPath).existsSync(), isFalse);
+      // The verified legacy LAN ciphertext is the ONLY retry source this
+      // transfer has, so restart recovery must leave it byte-identical.
+      expect(lanSource.existsSync(), isTrue);
+      expect(lanSource.readAsBytesSync(), ciphertext);
+      // Unrelated siblings are never in the exact expansion.
+      expect(unrelatedSibling.existsSync(), isTrue);
+      // The claim is released to a retryable status with no stale path.
+      final row = await fixture.rawAttachmentRow(attachmentId);
+      expect(row!['download_status'], isNot('downloading'));
+      expect(row['download_status'], isNot('done'));
+      expect(row['local_path'], isNull);
+      // v111 survives the crash and the recovery untouched.
+      final retained = await (fixture.repo as DirectMediaBlobCustodyRepository)
+          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+      expect(retained, isNotNull);
+      expect(
+        retained!.state,
+        DirectMediaBlobCustodyState.incomingCommitted,
+      );
+      expect(retained.contentHash, contentHash);
+    });
   });
 }
 

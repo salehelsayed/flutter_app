@@ -525,15 +525,29 @@ handleIncomingChatMessage({
       existingMessage != null &&
       !payload.isEdit &&
       _isHiddenIncomingEditPlaceholder(existingMessage);
+  // 355: a selected strict-private replay whose durable parent is already
+  // terminal is routed AROUND generic duplicate handling. The dedicated
+  // private DB owner is the only authority that may compare the surviving
+  // custody and mint the one zero-effect receipt; the generic branch would
+  // instead promote display and return `duplicate`, telling the listener to
+  // retry global display work for media the user can no longer see.
+  final strictPrivateTerminalReplay =
+      existingMessage != null &&
+      !payload.isEdit &&
+      strictMediaProjection.selected &&
+      strictMediaProjection.isPrivate &&
+      _isDurableStrictPrivateTerminalParent(existingMessage);
   final shouldPreserveDeletedPlaceholder =
       existingMessage != null &&
       !payload.isEdit &&
+      !strictPrivateTerminalReplay &&
       _isIncomingDeletedPlaceholder(existingMessage);
   if (existingMessage != null &&
       !payload.isEdit &&
       !isOrdinaryDirectText &&
       !shouldMaterializeDeferredEdit &&
-      !shouldPreserveDeletedPlaceholder) {
+      !shouldPreserveDeletedPlaceholder &&
+      !strictPrivateTerminalReplay) {
     if (payload.text != existingMessage.text) {
       final idPrefix = payload.id.length > 8
           ? payload.id.substring(0, 8)
@@ -767,9 +781,17 @@ handleIncomingChatMessage({
         );
   var conversationMessage = _seedIncomingPrivateMediaLifecycle(
     candidateMessage,
-    existingMessage: existingMessage,
+    // A terminal replay must qualify against the DB with the FRESH wire
+    // candidate. Seeding the durable terminal checkpoint into it would make
+    // the staging shape invalid and the dedicated terminal branch
+    // unreachable, which is exactly how Plan 354 lost this route.
+    existingMessage: strictPrivateTerminalReplay ? null : existingMessage,
   );
   final parsedAttachments = <MediaAttachment>[];
+  // The strict-private lane promotes its own display marker inside the single
+  // exclusive lifecycle decision below, so the later generic site must not
+  // promote it a second time outside that authority.
+  var privateReadyPromoted = false;
   if (strictMediaProjection.selected) {
     final incomingMessageRepo =
         messageRepo is IncomingDirectMessagePublicationRepository
@@ -875,75 +897,128 @@ handleIncomingChatMessage({
           'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
         },
       );
-      return (HandleChatMessageResult.duplicate, null, null);
+      // A private supersession is never generic `duplicate`: that result asks
+      // the listener to retry global display work for media the durable owner
+      // already retired.
+      return (
+        strictMediaProjection.isPrivate
+            ? HandleChatMessageResult.durablySuperseded
+            : HandleChatMessageResult.duplicate,
+        null,
+        null,
+      );
     }
     if (!staged.outcome.isDurable) {
       return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
     }
     parsedAttachments.addAll(strictAttachments);
-    // 354: re-read terminal authority after the atomic stage. If hide or an
-    // author deletion won in between, retire any display marker through the
-    // existing parent-conditional owner, suppress every stream/notification
-    // effect, and still emit the exact initial receipt.
     if (strictMediaProjection.isPrivate) {
-      final durableParent = await messageRepo.getMessage(payload.id);
-      final terminalAfterStage =
-          durableParent == null ||
-          durableParent.hiddenAt != null ||
-          durableParent.deletedAt != null ||
-          durableParent.privateMediaState.isTerminal;
-      if (terminalAfterStage) {
-        // No display marker was staged yet on this path, so suppression is
-        // simply never staging one; nothing needs retiring.
+      // 355: ONE exclusive private-lifecycle decision covers the post-stage
+      // terminal re-read, the guarded thumbnail, the display-marker stage, the
+      // repository publication and the ready promotion. Hide, consume, expiry
+      // or contact deletion can no longer win between two of those effects.
+      // Network, contact metadata and receipt transport stay outside it.
+      // Dart cannot retain the nullable payload's promotion across a callback,
+      // so capture the exact identity this decision needs up front.
+      final strictRawMedia = payload.media;
+      final decision = await _underPrivateLifecycleAuthority(
+        mediaAttachmentRepo,
+        () async {
+          final durableParent = await messageRepo.getMessage(strictMessageId);
+          if (durableParent == null) {
+            // Without a durable parent there is no author or policy authority
+            // for this event, so nothing is published AND no receipt is owed.
+            return _StrictPrivateReceiveDecision.parentRemoved;
+          }
+          if (durableParent.hiddenAt != null ||
+              durableParent.deletedAt != null ||
+              durableParent.privateMediaState.isTerminal) {
+            // No display marker was staged yet on this path, so suppression is
+            // simply never staging one; the exact terminal owner retires any
+            // marker an earlier receive left behind.
+            return _StrictPrivateReceiveDecision.terminal;
+          }
+          // The Protected inline thumbnail is a best-effort guarded sibling.
+          // It never becomes authority, never blocks the receipt, and existing
+          // private cleanup still owns its removal.
+          if (mediaFileManager != null && (strictRawMedia?.length ?? 0) == 1) {
+            await _persistIncomingProtectedPhotoThumbnail(
+              rawMediaJson: strictRawMedia!.single,
+              attachment: strictAttachments.single,
+              parent: conversationMessage,
+              mediaFileManager: mediaFileManager,
+            );
+          }
+          await stageNotificationDisplayCustody?.call(conversationMessage);
+          final publication = await incomingMessageRepo
+              .publishIncomingDirectMediaMessage(
+                message: conversationMessage,
+                attachments: strictAttachments,
+              );
+          if (publication ==
+              StrictIncomingMediaPublicationDisposition.durablySuperseded) {
+            return _StrictPrivateReceiveDecision.terminal;
+          }
+          // Ready promotion belongs to the same decision: every attachment
+          // effect for this lane is already durable, and leaving it to the
+          // later generic site would let a terminal owner win in between.
+          await promoteNotificationDisplayCustody?.call(conversationMessage);
+          return _StrictPrivateReceiveDecision.published;
+        },
+      );
+      switch (decision) {
+        case _StrictPrivateReceiveDecision.parentRemoved:
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_STRICT_PRIVATE_PARENT_REMOVED',
+            details: {
+              'id': payload.id.length > 8
+                  ? payload.id.substring(0, 8)
+                  : payload.id,
+            },
+          );
+          return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+        case _StrictPrivateReceiveDecision.terminal:
+          await maybeSendDeliveryReceipt(payload.id);
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_RECEIVE_STRICT_PRIVATE_TERMINAL_AFTER_STAGE',
+            details: {
+              'id': payload.id.length > 8
+                  ? payload.id.substring(0, 8)
+                  : payload.id,
+            },
+          );
+          return (HandleChatMessageResult.durablySuperseded, null, null);
+        case _StrictPrivateReceiveDecision.published:
+          privateReadyPromoted = true;
+      }
+      await maybeSendDeliveryReceipt(payload.id);
+    } else {
+      // The complete parent/attachment/v111 transaction is already durable.
+      // Every observable side effect starts only after that boundary.
+      await stageNotificationDisplayCustody?.call(conversationMessage);
+      final published = await incomingMessageRepo
+          .publishIncomingDirectMediaMessage(
+            message: conversationMessage,
+            attachments: strictAttachments,
+          );
+      if (published ==
+          StrictIncomingMediaPublicationDisposition.durablySuperseded) {
         await maybeSendDeliveryReceipt(payload.id);
         emitFlowEvent(
           layer: 'FL',
-          event: 'CHAT_MSG_RECEIVE_STRICT_PRIVATE_TERMINAL_AFTER_STAGE',
+          event: 'CHAT_MSG_RECEIVE_STRICT_MEDIA_SUPERSEDED_BY_DELETION',
           details: {
             'id': payload.id.length > 8
                 ? payload.id.substring(0, 8)
                 : payload.id,
           },
         );
-        return (HandleChatMessageResult.durablySuperseded, null, null);
+        return (HandleChatMessageResult.duplicate, null, null);
       }
-    }
-    // 354: the Protected inline thumbnail is a best-effort guarded sibling
-    // written only AFTER the atomic custody transaction and only after the
-    // terminal re-read above proved no hide/delete won. It never becomes
-    // authority, never blocks the receipt, and existing private cleanup still
-    // owns its removal.
-    if (strictMediaProjection.isPrivate &&
-        mediaFileManager != null &&
-        (payload.media?.length ?? 0) == 1) {
-      await _persistIncomingProtectedPhotoThumbnail(
-        rawMediaJson: payload.media!.single,
-        attachment: strictAttachments.single,
-        parent: conversationMessage,
-        mediaFileManager: mediaFileManager,
-      );
-    }
-    // The complete parent/attachment/v111 transaction is already durable.
-    // Every observable side effect starts only after that boundary.
-    await stageNotificationDisplayCustody?.call(conversationMessage);
-    final published = await incomingMessageRepo
-        .publishIncomingDirectMediaMessage(
-          message: conversationMessage,
-          attachments: strictAttachments,
-        );
-    if (published ==
-        StrictIncomingMediaPublicationDisposition.durablySuperseded) {
       await maybeSendDeliveryReceipt(payload.id);
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'CHAT_MSG_RECEIVE_STRICT_MEDIA_SUPERSEDED_BY_DELETION',
-        details: {
-          'id': payload.id.length > 8 ? payload.id.substring(0, 8) : payload.id,
-        },
-      );
-      return (HandleChatMessageResult.duplicate, null, null);
     }
-    await maybeSendDeliveryReceipt(payload.id);
   } else {
     if (isOrdinaryDirectText) {
       IncomingOrdinaryTextApplyResult applied;
@@ -1108,7 +1183,8 @@ handleIncomingChatMessage({
       },
     );
   }
-  if (resultAfterSave == HandleChatMessageResult.chatMessage) {
+  if (resultAfterSave == HandleChatMessageResult.chatMessage &&
+      !privateReadyPromoted) {
     // Attachment metadata is part of the canonical notification snapshot.
     // Ready must not become visible until every attachment save/repair above
     // has committed, otherwise a crash can terminalize a generic card and lose
@@ -1766,6 +1842,50 @@ bool _isHiddenIncomingEditPlaceholder(ConversationMessage message) {
 bool _isIncomingDeletedPlaceholder(ConversationMessage message) {
   return message.isIncoming && message.isDeleted;
 }
+
+/// Outcome of the single exclusive strict-private receive decision.
+enum _StrictPrivateReceiveDecision {
+  /// The durable parent vanished after the atomic stage: nothing is published
+  /// and no receipt is owed.
+  parentRemoved,
+
+  /// A terminal owner won: durable zero-effect supersession plus one receipt.
+  terminal,
+
+  /// Presentation completed under the same lifecycle authority.
+  published,
+}
+
+/// Runs [action] under the incumbent repository-wide exclusive private
+/// lifecycle lease when the repository owns one.
+///
+/// Nested repository acquisitions inside [action] are reentrant, and the lease
+/// is never upgraded from an exact-ID section.
+Future<T> _underPrivateLifecycleAuthority<T>(
+  MediaAttachmentRepository? mediaAttachmentRepo,
+  Future<T> Function() action,
+) {
+  final runtime = mediaAttachmentRepo;
+  if (runtime is DirectPrivateMediaCleanupRuntime) {
+    return (runtime as DirectPrivateMediaCleanupRuntime)
+        .directPrivateMediaLifecycleLock
+        .synchronizedAll(action);
+  }
+  return action();
+}
+
+/// True for a durable incoming v1 Protected/View-Once parent that has already
+/// reached a terminal disposition.
+///
+/// Only these replays bypass generic duplicate handling; an active
+/// available/opening/viewing parent keeps its existing path.
+bool _isDurableStrictPrivateTerminalParent(ConversationMessage message) =>
+    message.isIncoming &&
+    message.privateMediaPolicy.requiresRedaction &&
+    (message.deletedAt != null ||
+        message.hiddenAt != null ||
+        message.privateMediaState == PrivateMediaLifecycleState.consumed ||
+        message.privateMediaState == PrivateMediaLifecycleState.expired);
 
 ConversationMessage _buildHiddenIncomingEditPlaceholder({
   required MessagePayload payload,

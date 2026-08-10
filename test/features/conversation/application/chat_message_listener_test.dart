@@ -28,6 +28,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 
@@ -2614,6 +2615,124 @@ void main() {
               .substring(duplicateBranch, duplicateBranch + 400)
               .contains('retryNotificationDisplays?.call('),
           isTrue,
+        );
+      },
+    );
+  });
+
+  group('Plan 355 production terminal outcomes', () {
+    test(
+      'TC-355-03c production terminal outcomes never retry display',
+      () async {
+        const senderPeerId = 'tc355-03c-sender';
+        const messageId = 'tc355-03c-message';
+        const attachmentId = '$messageId-a';
+        const contentHash =
+            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+        const expiresAtMs = 1_900_000_900_000;
+
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final contactRepo = _FakeContactRepository()
+          ..seedContact(_makeContact(senderPeerId, username: 'Alice'));
+        final notificationService = FakeNotificationService();
+        final displayRetries = <String>[];
+
+        final inner = jsonEncode(<String, Object?>{
+          'id': messageId,
+          'text': '',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-08-10T17:00:00.000Z',
+          'dedupKey': messageId,
+          'privateMedia': const <String, Object?>{
+            'version': 1,
+            'mode': 'protected',
+          },
+          'media': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': attachmentId,
+              'mime': 'image/jpeg',
+              'size': 13,
+              'mediaType': 'image',
+              'contentHash': contentHash,
+              'encryptionKeyBase64': 'key-$attachmentId',
+              'encryptionNonce': 'nonce-$attachmentId',
+              'encryptionScheme': 'blob_aes_256_gcm_v1',
+              'blobCustody': <String, Object?>{
+                'kind': 'direct_media_blob_v1',
+                'contract': 'ack_or_expiry_v1',
+                'contentHash': contentHash,
+                'ciphertextSize': 41,
+                'transportMime': 'application/octet-stream',
+                'expiresAtMs': expiresAtMs,
+              },
+            },
+          ],
+        });
+
+        ChatMessageListener buildListener() => ChatMessageListener(
+          chatMessageStream: const Stream<ChatMessage>.empty(),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: fixture.repo,
+          bridge: _FakeDecryptBridge(
+            decryptResponse: <String, dynamic>{'ok': true, 'plaintext': inner},
+          ),
+          getOwnMlKemSecretKey: () async => 'own-secret-key',
+          notificationService: notificationService,
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          retryNotificationDisplays: () async => displayRetries.add('retry'),
+          downloadProfilePictureFn: _noopDownloadProfilePicture,
+        );
+
+        final first = buildListener();
+        final emitted = <ConversationMessage>[];
+        first.incomingMessageStream.listen(emitted.add);
+        first.start();
+        final stored = await first.processIncomingMessage(
+          _makeV2EncryptedChatMessage(from: senderPeerId, id: messageId),
+        );
+        expect(stored.state, ChatMessageProcessState.stored);
+        first.dispose();
+
+        // A terminal owner wins before the replay reaches the listener.
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'private_media_state': 'consumed',
+            'private_media_terminal_at_ms': 1_800_000_900_000,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        emitted.clear();
+        notificationService.shown.clear();
+        displayRetries.clear();
+
+        final replayListener = buildListener();
+        final replayEmitted = <ConversationMessage>[];
+        replayListener.incomingMessageStream.listen(replayEmitted.add);
+        replayListener.start();
+        final replay = await replayListener.processIncomingMessage(
+          _makeV2EncryptedChatMessage(from: senderPeerId, id: messageId),
+        );
+        replayListener.dispose();
+
+        expect(replay.state, ChatMessageProcessState.durablySuperseded);
+        expect(
+          displayRetries,
+          isEmpty,
+          reason:
+              'a terminal private replay must never trigger the global '
+              'notification-display retry',
+        );
+        expect(notificationService.shown, isEmpty);
+        expect(replayEmitted, isEmpty);
+        // The terminal disposition is committed, never retryable.
+        expect(
+          mapChatReplayOutcomeToDisposition(replay).disposition,
+          RecoveredInboxChatDisposition.committed,
         );
       },
     );

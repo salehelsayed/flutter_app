@@ -531,10 +531,15 @@ class MessageRepositoryImpl
       throw StateError('strict incoming media parent is not durable');
     }
     final committed = _rememberMessage(ConversationMessage.fromMap(row));
-    if (committed.isDeleted || committed.hiddenAt != null) {
-      // The author's deletion won after the strict transaction committed.
-      // Throwing here would suppress the initial receipt the sender is still
-      // waiting for, so report durable supersession and publish nothing stale.
+    if (committed.isDeleted ||
+        committed.hiddenAt != null ||
+        // 355: consumption and expiry are terminal too. Publishing behind them
+        // would push stale private media into an open conversation stream.
+        (committed.privateMediaPolicy.requiresRedaction &&
+            committed.privateMediaState.isTerminal)) {
+      // A terminal owner won after the strict transaction committed. Throwing
+      // here would suppress the initial receipt the sender is still waiting
+      // for, so report durable supersession and publish nothing stale.
       return StrictIncomingMediaPublicationDisposition.durablySuperseded;
     }
     if (!committed.isIncoming ||
