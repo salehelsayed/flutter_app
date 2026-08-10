@@ -626,8 +626,7 @@ Future<bool> _retryFailedMessageCandidate({
           releaseUploadLease: releaseUploadLease,
           manualRetry: manualRetry,
           expectedSenderPeerId: identity.peerId,
-          directMediaBlobCustodyCoordinator:
-              directMediaBlobCustodyCoordinator,
+          directMediaBlobCustodyCoordinator: directMediaBlobCustodyCoordinator,
           directMediaBlobArtifactStore: directMediaBlobArtifactStore,
         );
     uploadLease = resolution.uploadLease;
@@ -2124,7 +2123,8 @@ Future<_StrictPrivateFailedRetry> _reopenStrictPrivateFailedRetryAttachments({
       mediaAttachmentRepo is! DirectMediaBlobCustodyRepository) {
     return notOwned;
   }
-  final blobRepository = mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+  final blobRepository =
+      mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
   if (!blobRepository.supportsDirectMediaBlobCustody) return notOwned;
   final rows = await blobRepository.loadDirectMediaBlobCustodyForMessage(
     message.id,

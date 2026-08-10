@@ -1816,8 +1816,7 @@ class MediaAttachmentRepositoryImpl
       return const IncomingDirectMediaBlobCustodyStageResult.refused();
     }
     return IncomingDirectMediaBlobCustodyStageResult(
-      outcome:
-          dbResult.outcome == IncomingDirectMediaBlobDbStageOutcome.applied
+      outcome: dbResult.outcome == IncomingDirectMediaBlobDbStageOutcome.applied
           ? IncomingDirectMediaBlobCustodyStageOutcome.applied
           : IncomingDirectMediaBlobCustodyStageOutcome.idempotent,
       attachments: await _attachmentsFromRows(dbResult.attachmentRows),

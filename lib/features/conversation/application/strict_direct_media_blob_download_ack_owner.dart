@@ -253,9 +253,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
         // A crashed earlier attempt may have left this exact deterministic
         // pair behind. Remove both before reusing them.
         await _deleteRegularFile(relayCandidate);
-        await _deleteRegularFile(
-          File(privateDecryptStagingPath(absolutePath)),
-        );
+        await _deleteRegularFile(File(privateDecryptStagingPath(absolutePath)));
       }
       final result = await callP2PMediaDownload(
         bridge,
@@ -339,9 +337,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
         await _deleteRegularFile(
           File(privateCiphertextStagingPath(absolutePath)),
         );
-        await _deleteRegularFile(
-          File(privateDecryptStagingPath(absolutePath)),
-        );
+        await _deleteRegularFile(File(privateDecryptStagingPath(absolutePath)));
       }
     }
 

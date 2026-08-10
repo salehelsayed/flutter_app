@@ -741,8 +741,7 @@ Future<MediaAttachment?> downloadMedia({
       mediaAttachmentRepo is IncomingDirectMediaBlobCustodyRepository) {
     final custodyRepository =
         mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
-    final custody = custodyRepository
-        .supportsDirectMediaBlobCustody
+    final custody = custodyRepository.supportsDirectMediaBlobCustody
         ? await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
             attachment.id,
           )

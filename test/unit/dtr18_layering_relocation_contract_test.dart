@@ -145,12 +145,14 @@ const _privacySha256 =
 // qualification, the atomic caption+v109 stage, and the incoming conditional
 // apply) and relocates nothing. Plan 354 adds exactly two more closures on
 // that same wired stage — the private v111 generation stage and the private
-// envelope+v108+v111 inbox-custody handoff — and relocates nothing. Posts
+// envelope+v108+v111 inbox-custody handoff — plus the incoming private stage
+// closure and the drain's private no-auto-download retention policy, and
+// relocates nothing. Posts
 // adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
     '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
 const _productionBootstrapNormalizedSha256 =
-    '859581a4cd8d4698633aff9d74c01c11ae6b807649f19bc75423a3e131debcdf';
+    'f85be65c9b8cc04fe6f030cd0ceebde2d39de36c2f5a51303bd39b23e3c87485';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

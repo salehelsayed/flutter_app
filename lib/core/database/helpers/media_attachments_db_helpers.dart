@@ -2074,11 +2074,10 @@ dbStageOutgoingDirectPrivateMediaBlobGeneration(
           requireAvailable: true,
         ) &&
         currentAttachments.length == 1 &&
-        _exactDirectMediaCustodyFailureProjection(currentAttachments, <
-          Map<String, Object?>
-        >[
-          expectedAttachmentRow,
-        ]);
+        _exactDirectMediaCustodyFailureProjection(
+          currentAttachments,
+          <Map<String, Object?>>[expectedAttachmentRow],
+        );
     if (!exactPredecessor) {
       return const DirectMediaBlobGenerationDbStageResult.refused();
     }
@@ -2093,8 +2092,7 @@ dbStageOutgoingDirectPrivateMediaBlobGeneration(
       'media_attachments',
       <String, Object?>{
         'content_hash': preparedAttachmentRow['content_hash'],
-        'encryption_key_base64':
-            preparedAttachmentRow['encryption_key_base64'],
+        'encryption_key_base64': preparedAttachmentRow['encryption_key_base64'],
         'encryption_nonce': preparedAttachmentRow['encryption_nonce'],
         'encryption_scheme': preparedAttachmentRow['encryption_scheme'],
       },
@@ -2135,11 +2133,10 @@ dbStageOutgoingDirectPrivateMediaBlobGeneration(
     final exactCommit =
         committedAttachments.length == 1 &&
         committedCustody.length == 1 &&
-        _exactDirectMediaCustodyFailureProjection(committedAttachments, <
-          Map<String, Object?>
-        >[
-          preparedAttachmentRow,
-        ]) &&
+        _exactDirectMediaCustodyFailureProjection(
+          committedAttachments,
+          <Map<String, Object?>>[preparedAttachmentRow],
+        ) &&
         DirectMediaBlobCustodyRow.fromMap(
           committedCustody.single,
         ).exactDatabaseProjectionMatches(custodyRow);
@@ -6860,11 +6857,10 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
           ) ||
           existingAttachments.length != 1 ||
           existingCustody.length != 1 ||
-          !_exactDirectMediaCustodyFailureProjection(existingAttachments, <
-            Map<String, Object?>
-          >[
-            attachmentRow,
-          ])) {
+          !_exactDirectMediaCustodyFailureProjection(
+            existingAttachments,
+            <Map<String, Object?>>[attachmentRow],
+          )) {
         return const IncomingDirectMediaBlobDbStageResult.refused();
       }
       final DirectMediaBlobCustodyRow current;
