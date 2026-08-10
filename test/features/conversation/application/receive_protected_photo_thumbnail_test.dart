@@ -139,69 +139,84 @@ void main() {
       .where((file) => file.path.endsWith('.thumb.jpg'))
       .toList();
 
-  test('incoming inline thumbnail persists once to the guarded sibling path', () async {
-    const messageId = 'thumb-receive-valid';
-    const attachmentId = 'thumb-receive-valid-att';
-    final inline = validThumbnailBase64();
+  test(
+    'incoming inline thumbnail persists once to the guarded sibling path',
+    () async {
+      const messageId = 'thumb-receive-valid';
+      const attachmentId = 'thumb-receive-valid-att';
+      final inline = validThumbnailBase64();
 
-    final (result, stored, _) = await receive(
-      incomingProtectedPhoto(
-        messageId: messageId,
-        attachmentId: attachmentId,
-        timestamp: '2026-07-29T09:59:00.000Z',
-        thumbnailInlineBase64: inline,
-      ),
-    );
+      final (result, stored, _) = await receive(
+        incomingProtectedPhoto(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          timestamp: '2026-07-29T09:59:00.000Z',
+          thumbnailInlineBase64: inline,
+        ),
+      );
 
-    expect(result, HandleChatMessageResult.chatMessage);
-    // The file lands at the path derived from the SAME row identifiers the
-    // attachment row persisted with.
-    final path = await expectedThumbnailPath(
-      contactPeerId: _senderPeerId,
-      blobId: attachmentId,
-    );
-    final thumbFile = File(path);
-    expect(thumbFile.existsSync(), isTrue,
-        reason: 'the guarded sibling thumbnail file must exist after receive');
-    expect(base64Encode(thumbFile.readAsBytesSync()), inline);
+      expect(result, HandleChatMessageResult.chatMessage);
+      // The file lands at the path derived from the SAME row identifiers the
+      // attachment row persisted with.
+      final path = await expectedThumbnailPath(
+        contactPeerId: _senderPeerId,
+        blobId: attachmentId,
+      );
+      final thumbFile = File(path);
+      expect(
+        thumbFile.existsSync(),
+        isTrue,
+        reason: 'the guarded sibling thumbnail file must exist after receive',
+      );
+      expect(base64Encode(thumbFile.readAsBytesSync()), inline);
 
-    // Nothing thumbnail-shaped lands in the DB: scan every column of the
-    // persisted message + attachment row maps for the exact inline value
-    // (encryption key/nonce are legitimately base64 — scan for this value).
-    final attachmentRow = await fixture.rawAttachmentRow(attachmentId);
-    expect(attachmentRow, isNotNull);
-    for (final entry in attachmentRow!.entries) {
-      expect('${entry.value}', isNot(contains(inline)),
-          reason: 'attachment column ${entry.key}');
-    }
-    final messageRows = await fixture.db.query(
-      'messages',
-      where: 'id = ?',
-      whereArgs: [messageId],
-    );
-    expect(messageRows, hasLength(1));
-    for (final entry in messageRows.single.entries) {
-      expect('${entry.value}', isNot(contains(inline)),
-          reason: 'message column ${entry.key}');
-    }
+      // Nothing thumbnail-shaped lands in the DB: scan every column of the
+      // persisted message + attachment row maps for the exact inline value
+      // (encryption key/nonce are legitimately base64 — scan for this value).
+      final attachmentRow = await fixture.rawAttachmentRow(attachmentId);
+      expect(attachmentRow, isNotNull);
+      for (final entry in attachmentRow!.entries) {
+        expect(
+          '${entry.value}',
+          isNot(contains(inline)),
+          reason: 'attachment column ${entry.key}',
+        );
+      }
+      final messageRows = await fixture.db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: [messageId],
+      );
+      expect(messageRows, hasLength(1));
+      for (final entry in messageRows.single.entries) {
+        expect(
+          '${entry.value}',
+          isNot(contains(inline)),
+          reason: 'message column ${entry.key}',
+        );
+      }
 
-    // Idempotent on replay: same payload again is a duplicate and the file is
-    // written exactly once.
-    final before = thumbFile.lastModifiedSync();
-    final (replayResult, _, _) = await receive(
-      incomingProtectedPhoto(
-        messageId: messageId,
-        attachmentId: attachmentId,
-        timestamp: '2026-07-29T09:59:00.000Z',
-        thumbnailInlineBase64: inline,
-      ),
-    );
-    expect(replayResult, HandleChatMessageResult.duplicate);
-    expect(thumbFile.existsSync(), isTrue);
-    expect(thumbFile.lastModifiedSync(), before,
-        reason: 'replay must not rewrite the thumbnail file');
-    expect(base64Encode(thumbFile.readAsBytesSync()), inline);
-  });
+      // Idempotent on replay: same payload again is a duplicate and the file is
+      // written exactly once.
+      final before = thumbFile.lastModifiedSync();
+      final (replayResult, _, _) = await receive(
+        incomingProtectedPhoto(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          timestamp: '2026-07-29T09:59:00.000Z',
+          thumbnailInlineBase64: inline,
+        ),
+      );
+      expect(replayResult, HandleChatMessageResult.duplicate);
+      expect(thumbFile.existsSync(), isTrue);
+      expect(
+        thumbFile.lastModifiedSync(),
+        before,
+        reason: 'replay must not rewrite the thumbnail file',
+      );
+      expect(base64Encode(thumbFile.readAsBytesSync()), inline);
+    },
+  );
 
   test(
     'malformed oversized or non-protected inline thumbnails are discarded and the message still lands',
@@ -215,9 +230,7 @@ void main() {
         'oversized raw payload': incomingProtectedPhoto(
           messageId: 'thumb-oversized',
           attachmentId: 'thumb-oversized-att',
-          thumbnailInlineBase64: base64Encode(
-            List<int>.filled(49153, 7),
-          ),
+          thumbnailInlineBase64: base64Encode(List<int>.filled(49153, 7)),
         ),
         'ordinary mode': incomingProtectedPhoto(
           messageId: 'thumb-ordinary-mode',
@@ -251,11 +264,17 @@ void main() {
 
       for (final entry in cases.entries) {
         final (result, _, _) = await receive(entry.value);
-        expect(result, HandleChatMessageResult.chatMessage,
-            reason: '${entry.key}: the message itself must still land');
+        expect(
+          result,
+          HandleChatMessageResult.chatMessage,
+          reason: '${entry.key}: the message itself must still land',
+        );
       }
-      expect(thumbnailFilesUnder(tempDocs), isEmpty,
-          reason: 'no discarded input may produce a thumbnail file');
+      expect(
+        thumbnailFilesUnder(tempDocs),
+        isEmpty,
+        reason: 'no discarded input may produce a thumbnail file',
+      );
     },
   );
 
@@ -289,9 +308,12 @@ void main() {
           .listSync(recursive: true, followLinks: false)
           .where((entity) => entity.path.contains('evil'));
       expect(evil, isEmpty);
-      expect(tempDocs.parent.listSync().whereType<File>().where(
-            (file) => file.path.endsWith('.thumb.jpg'),
-          ), isEmpty);
+      expect(
+        tempDocs.parent.listSync().whereType<File>().where(
+          (file) => file.path.endsWith('.thumb.jpg'),
+        ),
+        isEmpty,
+      );
     },
   );
 
@@ -336,9 +358,90 @@ void main() {
       ),
     );
     expect(replayResult, HandleChatMessageResult.duplicate);
-    expect(File(path).existsSync(), isFalse,
-        reason: 'a replay of a deleted message must not resurrect the thumbnail');
+    expect(
+      File(path).existsSync(),
+      isFalse,
+      reason: 'a replay of a deleted message must not resurrect the thumbnail',
+    );
     expect(thumbnailFilesUnder(tempDocs), isEmpty);
+  });
+
+  group('Plan 354 strict protected thumbnail', () {
+    test('TC-354-04d strict protected thumbnail follows custody and stays '
+        'cleanup-owned', () {
+      final receiver = File(
+        'lib/features/conversation/application/'
+        'handle_incoming_chat_message_use_case.dart',
+      ).readAsStringSync();
+      final lifecycle = File(
+        'lib/features/conversation/application/'
+        'direct_private_media_lifecycle.dart',
+      ).readAsStringSync();
+
+      // 1. On the strict lane the thumbnail write happens AFTER the atomic
+      //    custody transaction and AFTER the post-stage terminal re-read, so
+      //    terminal cleanup can never be followed by a stale sibling.
+      final stage = receiver.indexOf(
+        'stageIncomingDirectPrivateMediaBlobCustody(',
+      );
+      final terminalReread = receiver.indexOf(
+        'if (strictMediaProjection.isPrivate) {\n      final durableParent =',
+      );
+      final strictThumbnail = receiver.indexOf(
+        'if (strictMediaProjection.isPrivate &&\n        mediaFileManager != null &&',
+      );
+      final markerStage = receiver.indexOf(
+        'await stageNotificationDisplayCustody?.call(conversationMessage);',
+      );
+      expect(stage, greaterThan(-1));
+      expect(terminalReread, greaterThan(stage));
+      expect(
+        strictThumbnail,
+        greaterThan(terminalReread),
+        reason: 'a terminal winner must never be followed by a thumbnail write',
+      );
+      expect(strictThumbnail, lessThan(markerStage));
+
+      // 2. It is exactly one attachment and it is best-effort: the writer
+      //    swallows its own failures and never blocks the receipt.
+      final block = receiver.substring(strictThumbnail, markerStage);
+      expect(block.contains("(payload.media?.length ?? 0) == 1"), isTrue);
+      expect(
+        block.contains('_persistIncomingProtectedPhotoThumbnail('),
+        isTrue,
+      );
+      final writer = receiver.indexOf(
+        'Future<void> _persistIncomingProtectedPhotoThumbnail({',
+      );
+      final writerBody = receiver.substring(writer, writer + 3000);
+      expect(
+        writerBody.contains('// Best-effort: a failed thumbnail write never'),
+        isTrue,
+      );
+      // It is never authority: the hash is dropped rather than persisted.
+      expect(
+        writerBody.contains('saveAttachment('),
+        isFalse,
+        reason: 'the inline thumbnail never becomes database authority',
+      );
+      // It is path-authorized per call site.
+      expect(writerBody.contains('DirectPrivateMediaPathGuard'), isTrue);
+
+      // 3. Existing private cleanup still owns its removal, unchanged.
+      final wipe = lifecycle.indexOf(
+        'Future<void> _deleteExactAppOwnedArtifacts({',
+      );
+      final wipeBody = lifecycle.substring(wipe, wipe + 3000);
+      expect(
+        wipeBody.contains('relativeThumbnailPathForAttachment('),
+        isTrue,
+        reason: 'terminal cleanup, delete-for-me and recovery all wipe it',
+      );
+      expect(
+        wipeBody.contains('path: thumbnailPath, root: canonicalRoot'),
+        isTrue,
+      );
+    });
   });
 }
 

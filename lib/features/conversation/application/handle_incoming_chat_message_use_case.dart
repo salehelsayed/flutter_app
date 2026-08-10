@@ -908,6 +908,21 @@ handleIncomingChatMessage({
         return (HandleChatMessageResult.durablySuperseded, null, null);
       }
     }
+    // 354: the Protected inline thumbnail is a best-effort guarded sibling
+    // written only AFTER the atomic custody transaction and only after the
+    // terminal re-read above proved no hide/delete won. It never becomes
+    // authority, never blocks the receipt, and existing private cleanup still
+    // owns its removal.
+    if (strictMediaProjection.isPrivate &&
+        mediaFileManager != null &&
+        (payload.media?.length ?? 0) == 1) {
+      await _persistIncomingProtectedPhotoThumbnail(
+        rawMediaJson: payload.media!.single,
+        attachment: strictAttachments.single,
+        parent: conversationMessage,
+        mediaFileManager: mediaFileManager,
+      );
+    }
     // The complete parent/attachment/v111 transaction is already durable.
     // Every observable side effect starts only after that boundary.
     await stageNotificationDisplayCustody?.call(conversationMessage);

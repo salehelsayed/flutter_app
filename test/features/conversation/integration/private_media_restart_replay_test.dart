@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -769,6 +772,202 @@ void main() {
         isFalse,
       );
     }
+  });
+  group('Plan 354 private strict restart', () {
+    test('TC-354-03c private strict cutpoints and terminal retention survive '
+        'file SQLite reopen', () async {
+      final dir = Directory.systemTemp.createTempSync('tc354_03c_');
+      addTearDown(() {
+        if (dir.existsSync()) dir.deleteSync(recursive: true);
+      });
+      final databasePath = p.join(dir.path, 'restart.db');
+      const messageId = 'tc354-03c-private';
+      const attachmentId = 'tc354-03c-private-att';
+      const contentHash =
+          '9999999999999999999999999999999999999999999999999999999999999999';
+
+      DirectMediaBlobCustodyRow rowFor(DirectMediaBlobCustodyState state) =>
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: state,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: 'peer-bob',
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'8' * 64}/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: 4096,
+            expiresAtMs: state == DirectMediaBlobCustodyState.outgoingStored
+                ? 2200000000000
+                : null,
+            custodyRelayPeerId:
+                state == DirectMediaBlobCustodyState.outgoingStored
+                ? 'relay-354-03c'
+                : null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: '2026-08-10T14:00:00.000Z',
+            updatedAt: '2026-08-10T14:00:00.000Z',
+          );
+
+      for (final cut in <DirectMediaBlobCustodyState>[
+        DirectMediaBlobCustodyState.outgoingPrepared,
+        DirectMediaBlobCustodyState.outgoingStored,
+      ]) {
+        // Cut N: the durable generation exists and the parent has already
+        // become terminal (the sender consumed or hid it).
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: databasePath,
+        );
+        await fixture.db.insert('messages', <String, Object?>{
+          'id': messageId,
+          'contact_peer_id': 'peer-bob',
+          'sender_peer_id': 'peer-alice',
+          'text': '',
+          'timestamp': '2026-08-10T14:00:00.000Z',
+          'status': 'sending',
+          'is_incoming': 0,
+          'created_at': '2026-08-10T14:00:00.000Z',
+          'dedup_key': messageId,
+          'private_media_policy_version': 1,
+          'private_media_mode': 'protected',
+          'private_media_state': 'consumed',
+          'private_media_terminal_at_ms': 1200,
+        });
+        await fixture.db.insert('media_attachments', <String, Object?>{
+          'id': attachmentId,
+          'message_id': messageId,
+          'owner_lane': 'direct',
+          'mime': 'image/jpeg',
+          'size': 2048,
+          'media_type': 'image',
+          'local_path': 'pending_uploads/$messageId/$attachmentId.jpg',
+          'download_status': 'upload_pending',
+          'created_at': '2026-08-10T14:00:00.000Z',
+          'content_hash': contentHash,
+          'encryption_key_base64': secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'encryption_nonce': 'tc354-03c-nonce',
+          'encryption_scheme': 'blob_aes_256_gcm_v1',
+        });
+        await fixture.db.insert(
+          kDirectMediaBlobCustodyTable,
+          rowFor(cut).toMap(),
+        );
+        await fixture.dispose();
+
+        // Restart: reopen the SAME file database.
+        final reopened = await MediaRepositoryRealDbFixture.create(
+          databasePath: databasePath,
+        );
+        final custody =
+            await (reopened.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+        expect(
+          custody?.state,
+          cut,
+          reason: 'the exact cutpoint survives a real file reopen',
+        );
+        expect(custody?.contentHash, contentHash);
+        expect(
+          custody?.expiresAtMs,
+          cut == DirectMediaBlobCustodyState.outgoingStored
+              ? 2200000000000
+              : null,
+        );
+        // The complete private projection is still present for the retry
+        // owner: attachment row, key reference, and pending plaintext path.
+        final durable = await reopened.repo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(durable, hasLength(1));
+        expect(durable.single.contentHash, contentHash);
+        expect(durable.single.encryptionNonce, 'tc354-03c-nonce');
+        expect(
+          durable.single.localPath,
+          'pending_uploads/$messageId/$attachmentId.jpg',
+        );
+        // The v111 obligation has no FK: it legitimately outlives its
+        // terminal parent and is not cascaded away by the reopen.
+        expect(
+          (await reopened.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single['private_media_state'],
+          'consumed',
+        );
+        await reopened.dispose();
+        File(databasePath).deleteSync();
+      }
+    });
+
+    test('TC-354-05c private strict decrypt crash leaves no plaintext and no '
+        'resurrection', () {
+      final owner = File(
+        'lib/features/conversation/application/'
+        'strict_direct_media_blob_download_ack_owner.dart',
+      ).readAsStringSync();
+      final lifecycle = File(
+        'lib/features/conversation/application/'
+        'direct_private_media_lifecycle.dart',
+      ).readAsStringSync();
+
+      // A crashed earlier attempt may leave the deterministic pair behind.
+      // The next attempt removes BOTH before reusing them, so a decrypt-
+      // before-commit crash can never be adopted as durable bytes.
+      final reuse = owner.indexOf(
+        'if (privateDeterministicStaging) {\n        // A crashed earlier attempt',
+      );
+      expect(reuse, greaterThan(-1));
+      final reuseBody = owner.substring(reuse, reuse + 500);
+      expect(
+        reuseBody.contains('await _deleteRegularFile(relayCandidate);'),
+        isTrue,
+      );
+      expect(reuseBody.contains('privateDecryptStagingPath('), isTrue);
+      final firstNetwork = owner.indexOf('await callP2PMediaDownload(');
+      expect(
+        reuse,
+        lessThan(firstNetwork),
+        reason: 'stale staging is cleared before the network call',
+      );
+
+      // The canonical plaintext is only ever promoted INSIDE the custody
+      // lifecycle, after the durable DB commit; a refused commit removes it.
+      final decrypt = owner.indexOf('await callBlobDecrypt(');
+      final commit = owner.indexOf('commitIncomingDirectMediaBlobLocalPath(');
+      expect(decrypt, greaterThan(-1));
+      expect(commit, greaterThan(decrypt));
+      expect(
+        owner.contains('await _deleteRegularFile(decrypted);'),
+        isTrue,
+        reason: 'a wrong-size decrypt leaves no plaintext behind',
+      );
+
+      // Restart recovery removes the same two exact siblings, so a crash
+      // between decrypt and commit leaves nothing to resurrect.
+      final wipe = lifecycle.indexOf(
+        'Future<void> _deleteExactAppOwnedArtifacts({',
+      );
+      final wipeBody = lifecycle.substring(wipe, wipe + 3000);
+      expect(wipeBody.contains(".path}.private.enc'"), isTrue);
+      expect(wipeBody.contains(".path}.private.enc.dec'"), isTrue);
+      // Interrupted-download recovery reuses that same exact wipe.
+      final recovery = lifecycle.indexOf(
+        'Future<int> recoverInterruptedDownloadsWithinLock(',
+      );
+      expect(recovery, greaterThan(-1));
+      expect(
+        lifecycle
+            .substring(recovery, wipe > recovery ? wipe : recovery + 2500)
+            .contains('_deleteExactAppOwnedArtifacts('),
+        isTrue,
+      );
+    });
   });
 }
 

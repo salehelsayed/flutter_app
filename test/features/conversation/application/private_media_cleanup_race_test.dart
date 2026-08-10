@@ -1118,4 +1118,175 @@ void main() {
       expect(await fixture.rawAttachmentRow('corrupt-key-b'), isNull);
     },
   );
+
+  group('Plan 354 private strict retention and download convergence', () {
+    test(
+      'TC-354-03d private terminal retention drain and later cleanup converge',
+      () {
+        final lifecycle = File(
+          'lib/features/conversation/application/'
+          'direct_private_media_lifecycle.dart',
+        ).readAsStringSync();
+
+        // 1. Terminal cleanup consults live v111 FIRST and returns without
+        //    destroying anything while a prepared/stored generation exists.
+        final cleanup = lifecycle.indexOf(
+          'Future<void> cleanupTerminalWithinLock(',
+        );
+        expect(cleanup, greaterThan(-1));
+        final retentionCheck = lifecycle.indexOf(
+          'if (await _mustRetainLivePrivateBlobCustody(parent, attachments)) {',
+          cleanup,
+        );
+        final firstDelete = lifecycle.indexOf(
+          'await _deleteExactAppOwnedArtifacts(',
+          cleanup,
+        );
+        final keyDelete = lifecycle.indexOf(
+          'deleteDirectPrivateMediaEncryptionKeyWithinLock(',
+          cleanup,
+        );
+        final rowDelete = lifecycle.indexOf(
+          'deleteDirectPrivateMediaAttachmentWithinLock(',
+          cleanup,
+        );
+        expect(retentionCheck, greaterThan(cleanup));
+        expect(
+          retentionCheck,
+          lessThan(firstDelete),
+          reason: 'retention is decided before any artifact is removed',
+        );
+        expect(retentionCheck, lessThan(keyDelete));
+        expect(retentionCheck, lessThan(rowDelete));
+        expect(
+          lifecycle
+              .substring(retentionCheck, retentionCheck + 200)
+              .contains('return;'),
+          isTrue,
+          reason: 'a live generation retains the complete projection',
+        );
+
+        // 2. The predicate covers BOTH live outgoing states and every terminal
+        //    parent shape (hidden, deleted, consumed), and fails safe when
+        //    custody authority cannot be read.
+        final predicate = lifecycle.indexOf(
+          'Future<bool> _mustRetainLivePrivateBlobCustody(',
+        );
+        expect(predicate, greaterThan(-1));
+        final predicateEnd = lifecycle.indexOf(
+          'Future<bool> _mustRetainUnhandedOffOutgoingCustody(',
+          predicate,
+        );
+        final predicateBody = lifecycle.substring(predicate, predicateEnd);
+        expect(
+          predicateBody.contains(
+            'DirectMediaBlobCustodyState.outgoingPrepared',
+          ),
+          isTrue,
+        );
+        expect(
+          predicateBody.contains('DirectMediaBlobCustodyState.outgoingStored'),
+          isTrue,
+        );
+        expect(
+          predicateBody.contains('return true;'),
+          isTrue,
+          reason:
+              'unresolved custody authority retains rather than destroying '
+              'the only resumable bytes',
+        );
+        // It is retention-only: no message-wide transition from inside this
+        // per-attachment lock, and no new owner.
+        for (final forbidden in <String>[
+          'synchronizedAll',
+          'terminalizeOutgoingDirectMediaBlobGeneration',
+          'DirectMediaBlobCustodyDrain',
+        ]) {
+          expect(
+            predicateBody.contains(forbidden),
+            isFalse,
+            reason: 'retention must not $forbidden',
+          );
+        }
+        // Hidden/deleted parents are NOT excluded here — unlike the older
+        // unhanded-off predicate, which is consumed-only.
+        expect(predicateBody.contains("parent.hiddenAt != null"), isFalse);
+        expect(
+          lifecycle
+              .substring(predicateEnd, predicateEnd + 700)
+              .contains('parent.hiddenAt != null'),
+          isTrue,
+          reason:
+              'the pre-existing consumed-only predicate is unchanged and '
+              'still excludes hidden/deleted parents',
+        );
+      },
+    );
+
+    test('TC-354-05b private strict download and terminal cleanup converge', () {
+      final lifecycle = File(
+        'lib/features/conversation/application/'
+        'direct_private_media_lifecycle.dart',
+      ).readAsStringSync();
+      final owner = File(
+        'lib/features/conversation/application/'
+        'strict_direct_media_blob_download_ack_owner.dart',
+      ).readAsStringSync();
+
+      // Private cleanup enumerates the EXACT deterministic staging pair the
+      // strict private download uses — both orders converge without a
+      // wildcard directory scan.
+      final wipe = lifecycle.indexOf(
+        'Future<void> _deleteExactAppOwnedArtifacts({',
+      );
+      expect(wipe, greaterThan(-1));
+      final wipeBody = lifecycle.substring(wipe, wipe + 3000);
+      expect(wipeBody.contains(".path}.private.enc'"), isTrue);
+      expect(wipeBody.contains(".path}.private.enc.dec'"), isTrue);
+      // Every target is path-authorized before the first unlink.
+      final preflight = wipeBody.indexOf(
+        'DirectPrivateMediaPathGuard.authorizeTarget(',
+      );
+      final firstUnlink = wipeBody.indexOf('mediaFileManager.deleteFile(');
+      expect(preflight, greaterThan(-1));
+      expect(preflight, lessThan(firstUnlink));
+      expect(
+        wipeBody.contains('Directory(') || wipeBody.contains('.list('),
+        isFalse,
+        reason: 'cleanup must never wildcard-scan a directory',
+      );
+
+      // The download owner removes the same two exact siblings on EVERY
+      // exit, including a decrypt-before-commit failure, and a losing commit
+      // scrubs only its own canonical plaintext.
+      final finallyBlock = owner.indexOf(
+        'if (privateDeterministicStaging) {\n        // Both deterministic siblings',
+      );
+      expect(finallyBlock, greaterThan(-1));
+      final finallyBody = owner.substring(finallyBlock, finallyBlock + 700);
+      expect(finallyBody.contains('privateCiphertextStagingPath('), isTrue);
+      expect(finallyBody.contains('privateDecryptStagingPath('), isTrue);
+      expect(
+        owner.contains(
+          'if (!didCommit) {\n              // The DB refused this promotion',
+        ),
+        isTrue,
+      );
+      expect(
+        owner.contains('await _deleteRegularFile(canonical);'),
+        isTrue,
+        reason: 'a losing attempt scrubs only its own plaintext candidate',
+      );
+      // v111 is never deleted by the losing attempt: it converges by exact
+      // ACK or expiry alone.
+      final commitScope = owner.substring(
+        owner.indexOf('if (!didCommit) {'),
+        owner.indexOf('if (!didCommit) {') + 600,
+      );
+      expect(
+        commitScope.contains('deleteIncomingDirectMediaBlobAckIfExact'),
+        isFalse,
+      );
+    });
+  });
 }

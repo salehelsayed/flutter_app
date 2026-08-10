@@ -1944,4 +1944,119 @@ void main() {
       },
     );
   }
+
+  group('Plan 354 private canonical deferred and terminal handoff', () {
+    test('TC-354-02c private canonical deferred and terminal handoff preserve '
+        'incumbent transport', () {
+      final composer = File(
+        'lib/features/conversation/presentation/screens/'
+        'conversation_wired.dart',
+      ).readAsStringSync();
+      final sendSource = File(
+        'lib/features/conversation/application/'
+        'send_chat_message_use_case.dart',
+      ).readAsStringSync();
+
+      // 1. The strict private completion canonicalizes with NO network and
+      //    NO re-encryption, and preserves the strict identity exactly.
+      final canonical = composer.indexOf(
+        'Future<MediaAttachment> _canonicalizeStrictPrivateCompletion({',
+      );
+      expect(canonical, greaterThan(-1));
+      final canonicalEnd = composer.indexOf(
+        'Future<MediaAttachment> _finalizeUploadedAttachmentFromPlan({',
+        canonical,
+      );
+      final canonicalBody = composer.substring(canonical, canonicalEnd);
+      for (final forbidden in <String>[
+        'runUploadMedia',
+        'callP2PMediaUpload',
+        'prepareEncryptedMediaArtifactFn',
+        'sendLocalMedia',
+      ]) {
+        expect(
+          canonicalBody.contains(forbidden),
+          isFalse,
+          reason: 'canonicalization must not $forbidden',
+        );
+      }
+      // Only the canonical local path may differ from the strict projection.
+      expect(canonicalBody.contains('return strict.copyWith('), isTrue);
+      expect(canonicalBody.contains('localPath: canonicalPath,'), isTrue);
+      // Crypto drift is a hard refusal, never a silent overwrite.
+      expect(
+        canonicalBody.contains(
+          "throw StateError('private strict completion identity drifted')",
+        ),
+        isTrue,
+      );
+      for (final pinned in <String>[
+        'strict.blobCustody == null',
+        'strict.contentHash == null',
+        'strict.encryptionKeyBase64 == null',
+        'strict.encryptionNonce == null',
+        'strict.encryptionScheme == null',
+      ]) {
+        expect(canonicalBody.contains(pinned), isTrue, reason: pinned);
+      }
+
+      // 2. The strict private lane commits through the EXISTING private
+      //    completion coordinator, so its deferred/terminal authorizations
+      //    keep authorizing the incumbent transport instead of being
+      //    collapsed into `done`.
+      final strictBranch = composer.indexOf('if (strictPrivateBlobSelected) {');
+      expect(strictBranch, greaterThan(-1));
+      final strictBody = composer.substring(strictBranch, strictBranch + 5200);
+      expect(
+        strictBody.contains('_commitForegroundDirectPrivateCompletion('),
+        isTrue,
+        reason:
+            'the strict lane must reuse the existing private completion '
+            'coordinator, not a new authority',
+      );
+      final commitHelper = composer.indexOf(
+        'Future<MediaAttachment> _commitForegroundDirectPrivateCompletion({',
+      );
+      final commitBody = composer.substring(commitHelper, commitHelper + 1400);
+      expect(
+        commitBody.contains('completion.authorizesTransportHandoff'),
+        isTrue,
+        reason:
+            'deferredActiveLease and transportOnlyTerminalCustody both '
+            'authorize the incumbent transport',
+      );
+
+      // 3. Barrier B accepts exactly those authorizations, and returns the
+      //    immutable committed authority instead of re-reading after commit.
+      expect(
+        sendSource.contains(
+          'hasOwnedPendingCompletion: hasOwnedPendingCompletion',
+        ),
+        isTrue,
+      );
+      final handoff = sendSource.indexOf(
+        'if (handedOff && ownsDirectPrivateMediaInboxCustody) {',
+      );
+      expect(handoff, greaterThan(-1));
+      final handoffBody = sendSource.substring(handoff, handoff + 900);
+      expect(
+        handoffBody.contains('stagedDirectInboxCustody = handoff.custody;'),
+        isTrue,
+      );
+      expect(
+        handoffBody.contains(
+          'jsonString = stagedDirectInboxCustody.wireEnvelope;',
+        ),
+        isTrue,
+        reason: 'replay only the exact winner bytes after Barrier B',
+      );
+      expect(
+        handoffBody.contains('getDirectInboxCustody'),
+        isFalse,
+        reason:
+            'a racy post-commit lookup could misclassify a concurrently '
+            'completed row as unstaged',
+      );
+    });
+  });
 }
