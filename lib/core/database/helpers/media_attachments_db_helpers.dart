@@ -6663,8 +6663,9 @@ bool _isExactIncomingPrivateTerminalParent(
   required Object? mode,
 }) {
   final state = parent['private_media_state'];
+  final tombstoned = parent['deleted_at'] != null;
   final terminal =
-      parent['deleted_at'] != null ||
+      tombstoned ||
       parent['hidden_at'] != null ||
       state == 'consumed' ||
       state == 'expired';
@@ -6675,7 +6676,81 @@ bool _isExactIncomingPrivateTerminalParent(
       parent['contact_peer_id'] == senderPeerId &&
       (parent['private_media_policy_version'] as num?)?.toInt() == 1 &&
       parent['private_media_mode'] == mode &&
-      const <String>{'protected', 'view_once'}.contains(mode);
+      const <String>{'protected', 'view_once'}.contains(mode) &&
+      // A v1 Protected/View-Once INITIAL never carries a duration; a durable
+      // row that does is a different (disappearing) lane, not this replay's
+      // parent.
+      parent['private_media_duration_seconds'] == null &&
+      // A tombstone is durable precedence for THIS replay only when the
+      // message's author wrote it. Any other deletion author is crossed
+      // authority and must fail closed rather than mint a receipt.
+      (!tombstoned || parent['deleted_by_peer_id'] == senderPeerId);
+}
+
+/// The reduced immutable wire identity a durable private terminal parent must
+/// still prove for one replayed v1 Protected/View-Once initial.
+///
+/// View-Once consumption legitimately removes the attachment, its key, and —
+/// after ACK or expiry — the v111 obligation, so full descriptor equality is
+/// not provable against a terminal parent. These columns are exactly the ones
+/// such an initial can never legally change, which keeps the zero-effect
+/// receipt anchored to the same wire message instead of to any terminal row
+/// that happens to share an ID.
+bool _matchesReducedIncomingPrivateTerminalParent(
+  Map<String, Object?> parent,
+  Map<String, Object?> messageRow,
+) {
+  if (parent['id'] != messageRow['id'] ||
+      parent['contact_peer_id'] != messageRow['contact_peer_id'] ||
+      parent['sender_peer_id'] != messageRow['sender_peer_id'] ||
+      parent['timestamp'] != messageRow['timestamp'] ||
+      parent['dedup_key'] != messageRow['dedup_key'] ||
+      parent['quoted_message_id'] != messageRow['quoted_message_id'] ||
+      ((parent['is_forwarded'] as num?)?.toInt() ?? 0) !=
+          ((messageRow['is_forwarded'] as num?)?.toInt() ?? 0) ||
+      (parent['private_media_policy_version'] as num?)?.toInt() !=
+          (messageRow['private_media_policy_version'] as num?)?.toInt() ||
+      parent['private_media_mode'] != messageRow['private_media_mode'] ||
+      parent['private_media_duration_seconds'] != null ||
+      messageRow['private_media_duration_seconds'] != null) {
+    return false;
+  }
+  // The initial producer shape carries no caption on either side. A terminal
+  // owner only ever blanks this column, so an author's caption on the durable
+  // row proves a different message.
+  return (parent['text'] as String? ?? '').isEmpty &&
+      (messageRow['text'] as String? ?? '').isEmpty;
+}
+
+/// Immutable descriptor columns of one strict private attachment.
+///
+/// The mutable download projection (`local_path`, `download_status`,
+/// retry counters), the removable secure-key reference, and `created_at` are
+/// deliberately absent: a legitimate survivor may have been downloaded or had
+/// its key scrubbed by terminal cleanup.
+const List<String> _incomingPrivateAttachmentIdentityColumns = <String>[
+  'id',
+  'message_id',
+  'owner_lane',
+  'mime',
+  'size',
+  'media_type',
+  'width',
+  'height',
+  'duration_ms',
+  'content_hash',
+  'encryption_scheme',
+  'direct_media_blob_custody_fingerprint',
+];
+
+bool _matchesIncomingPrivateAttachmentIdentity(
+  Map<String, Object?> current,
+  Map<String, Object?> expected,
+) {
+  for (final column in _incomingPrivateAttachmentIdentityColumns) {
+    if (current[column] != expected[column]) return false;
+  }
+  return true;
 }
 
 /// Atomically publishes one strict incoming protected or View-Once initial:
@@ -6788,27 +6863,36 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
       <Object?>[attachmentId, messageId],
     );
 
-    if (existingParents.length == 1 &&
-        _isExactIncomingAuthorTombstone(
-          existingParents.single,
-          senderPeerId: senderPeerId,
-        )) {
-      return const IncomingDirectMediaBlobDbStageResult(
-        outcome: IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion,
-      );
-    }
-
-    // Monotonic terminal precedence. A durable same-author private terminal
-    // parent wins permanently: nothing is staged, restaged, or recreated.
+    // Monotonic terminal precedence, classified BEFORE the generic tombstone
+    // branch. A durable same-author private terminal parent — including one an
+    // author deletion produced — wins permanently through the dedicated
+    // private disposition: nothing is staged, restaged, or recreated, and the
+    // caller never enters generic duplicate/display-retry behavior.
     if (existingParents.length == 1 &&
         _isExactIncomingPrivateTerminalParent(
           existingParents.single,
           senderPeerId: senderPeerId,
           mode: mode,
         )) {
+      if (!_matchesReducedIncomingPrivateTerminalParent(
+        existingParents.single,
+        messageRow,
+      )) {
+        return const IncomingDirectMediaBlobDbStageResult.refused();
+      }
+      // A surviving attachment is still full authority for its own immutable
+      // descriptor, so prove it rather than trusting the reduced parent alone.
+      if (existingAttachments.length > 1 ||
+          (existingAttachments.length == 1 &&
+              !_matchesIncomingPrivateAttachmentIdentity(
+                existingAttachments.single,
+                attachmentRow,
+              ))) {
+        return const IncomingDirectMediaBlobDbStageResult.refused();
+      }
       if (existingCustody.isEmpty) {
-        // No surviving obligation: the reduced durable-parent equivalence is
-        // the whole proof and it already matched.
+        // No surviving obligation: the reduced durable-parent equivalence plus
+        // any surviving attachment identity is the whole proof.
         return const IncomingDirectMediaBlobDbStageResult(
           outcome: IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
         );
@@ -6822,8 +6906,9 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
       } on FormatException {
         return const IncomingDirectMediaBlobDbStageResult.refused();
       }
-      // Source/retry metadata on an ACK-pending survivor is not replay input
-      // and is deliberately excluded from this comparison.
+      // The survivor's COMPLETE immutable public commitment. Source/retry
+      // metadata on an ACK-pending survivor is not replay input and is
+      // deliberately excluded.
       final matchingSurvivor =
           survivor.attachmentId == attachmentId &&
           survivor.messageId == messageId &&
@@ -6831,14 +6916,28 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
           (survivor.state == DirectMediaBlobCustodyState.incomingCommitted ||
               survivor.state ==
                   DirectMediaBlobCustodyState.incomingAckPending) &&
+          survivor.custodyKind == custodyRow.custodyKind &&
+          survivor.custodyContract == custodyRow.custodyContract &&
           survivor.contentHash == custodyRow.contentHash &&
           survivor.ciphertextSize == custodyRow.ciphertextSize &&
+          survivor.transportMime == custodyRow.transportMime &&
           survivor.expiresAtMs == expiresAtMs;
       return matchingSurvivor
           ? const IncomingDirectMediaBlobDbStageResult(
               outcome: IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
             )
           : const IncomingDirectMediaBlobDbStageResult.refused();
+    }
+
+    // Non-private and legacy parents keep the generic author-deletion result.
+    if (existingParents.length == 1 &&
+        _isExactIncomingAuthorTombstone(
+          existingParents.single,
+          senderPeerId: senderPeerId,
+        )) {
+      return const IncomingDirectMediaBlobDbStageResult(
+        outcome: IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion,
+      );
     }
 
     // A parentless surviving v111 cannot prove original author or policy, so
@@ -6937,6 +7036,36 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
   });
 }
 
+/// The two durable parent lanes this final commit may serve.
+///
+/// Policy v0 `ordinary` keeps its historical Plan 347 behavior verbatim. A v1
+/// Protected/View-Once parent is additionally admitted, but only while it is
+/// still `available` and only for the exact `downloading` row the private
+/// transfer claim already owns — the claim, not a UI snapshot, is the
+/// transfer's authority. Disappearing and every other private shape stay out.
+bool _acceptsIncomingDirectMediaBlobLocalPathCommit(
+  Map<String, Object?> parent, {
+  required Map<String, Object?> expectedAttachmentRow,
+}) {
+  final policyVersion =
+      (parent['private_media_policy_version'] as num?)?.toInt() ?? 0;
+  final mode = parent['private_media_mode'];
+  if (policyVersion == 0 && mode == 'ordinary') return true;
+  if (policyVersion != 1 ||
+      parent['private_media_state'] != 'available' ||
+      expectedAttachmentRow['download_status'] !=
+          kMediaDownloadStatusDownloading) {
+    return false;
+  }
+  return privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
+    policyVersion: policyVersion,
+    mode: mode,
+    durationSeconds: parent['private_media_duration_seconds'],
+    mime: expectedAttachmentRow['mime'],
+    mediaType: expectedAttachmentRow['media_type'],
+  );
+}
+
 /// Atomically commits a durable strict plaintext path and, for a relay source,
 /// the exact source-pinned ACK obligation. A verified LAN adoption has no
 /// source and deliberately leaves the v111 row `incoming_committed`.
@@ -6981,6 +7110,8 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
         'is_incoming',
         'private_media_policy_version',
         'private_media_mode',
+        'private_media_duration_seconds',
+        'private_media_state',
         'deleted_at',
         'hidden_at',
       ],
@@ -6990,15 +7121,15 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
     );
     if (parentRows.length != 1 ||
         ((parentRows.single['is_incoming'] as num?)?.toInt() ?? 0) != 1 ||
-        ((parentRows.single['private_media_policy_version'] as num?)?.toInt() ??
-                0) !=
-            0 ||
-        parentRows.single['private_media_mode'] != 'ordinary' ||
         // A durable deletion or local hide already won this parent. Committing
         // plaintext behind it would resurrect the media the user removed; the
         // independent v111 obligation still converges by ACK or expiry.
         parentRows.single['deleted_at'] != null ||
-        parentRows.single['hidden_at'] != null) {
+        parentRows.single['hidden_at'] != null ||
+        !_acceptsIncomingDirectMediaBlobLocalPathCommit(
+          parentRows.single,
+          expectedAttachmentRow: expectedAttachmentRow,
+        )) {
       return false;
     }
     final expectedPath = MediaFilePathConvention.relativePathForAttachment(

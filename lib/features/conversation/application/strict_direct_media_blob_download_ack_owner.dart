@@ -126,6 +126,27 @@ final class StrictDirectMediaBlobDownloadAckOwner {
   static String privateDecryptStagingPath(String canonicalAbsolutePath) =>
       '${privateCiphertextStagingPath(canonicalAbsolutePath)}.dec';
 
+  /// Authorizes every path one private strict transfer may touch: the
+  /// canonical target, the legacy LAN ciphertext sibling it may adopt, and
+  /// both deterministic staging siblings. Read-only; nothing is created.
+  Future<bool> _authorizesPrivateTargets(String absolutePath) async {
+    final authorityRoot = await mediaFileManager.trustedMediaRootPath();
+    for (final target in <String>[
+      absolutePath,
+      '$absolutePath.enc',
+      privateCiphertextStagingPath(absolutePath),
+      privateDecryptStagingPath(absolutePath),
+    ]) {
+      if (!await DirectPrivateMediaPathGuard.authorizeTarget(
+        targetPath: target,
+        authorityRoot: authorityRoot,
+      )) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   DirectMediaBlobCustodyRepository? get _custodyRepository =>
       mediaAttachmentRepository is DirectMediaBlobCustodyRepository
       ? mediaAttachmentRepository as DirectMediaBlobCustodyRepository
@@ -216,32 +237,45 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       blobId: attachment.id,
       mime: attachment.mime,
     );
-    if (privateDeterministicStaging) {
-      // Path-authorize the canonical target and BOTH deterministic staging
-      // siblings before any bridge, network or decrypt work. An unsafe symlink
-      // refuses here with zero target mutation, network, DB write or ACK.
-      final authorityRoot = await mediaFileManager.trustedMediaRootPath();
-      for (final target in <String>[
-        absolutePath,
-        privateCiphertextStagingPath(absolutePath),
-        privateDecryptStagingPath(absolutePath),
-      ]) {
-        if (!await DirectPrivateMediaPathGuard.authorizeTarget(
-          targetPath: target,
-          authorityRoot: authorityRoot,
-        )) {
-          return null;
-        }
-      }
+    if (privateDeterministicStaging &&
+        !await _authorizesPrivateTargets(absolutePath)) {
+      // Path-authorize the canonical target, the legacy LAN sibling, and BOTH
+      // deterministic staging siblings before any bridge, network or decrypt
+      // work. An unsafe symlink refuses here with zero target mutation,
+      // network, DB write or ACK.
+      return null;
     }
     final lanCandidate = File('$absolutePath.enc');
     String? sourceRelayPeerId;
     late File ciphertext;
     var ownsCiphertextCandidate = false;
+    // In private mode the verified LAN ciphertext is the ONLY retry source
+    // this attempt has. It is copied — never consumed — into the deterministic
+    // pair and survives every retryable non-committed return and crash.
+    String? preservedLanSourcePath;
     if (await _matchesCiphertext(lanCandidate, custody)) {
       // A verified source-less local transfer cannot name a relay. Preserve the
       // incoming_committed row and converge by its persisted expiry.
-      ciphertext = lanCandidate;
+      if (privateDeterministicStaging) {
+        final staged = File(privateCiphertextStagingPath(absolutePath));
+        await staged.parent.create(recursive: true);
+        await _deleteRegularFile(staged);
+        await _deleteRegularFile(File(privateDecryptStagingPath(absolutePath)));
+        try {
+          await lanCandidate.copy(staged.path);
+        } on FileSystemException {
+          return null;
+        }
+        if (!await _matchesCiphertext(staged, custody)) {
+          await _deleteRegularFile(staged);
+          return null;
+        }
+        preservedLanSourcePath = lanCandidate.path;
+        ciphertext = staged;
+        ownsCiphertextCandidate = true;
+      } else {
+        ciphertext = lanCandidate;
+      }
     } else {
       final relayCandidate = File(
         privateDeterministicStaging
@@ -286,12 +320,26 @@ final class StrictDirectMediaBlobDownloadAckOwner {
                 !current.exactDatabaseProjectionMatches(custody!)) {
               return false;
             }
+            // Re-authorize immediately before decrypt work: post-claim path
+            // drift must cost zero file work and only the caller's bounded
+            // failure CAS.
+            if (privateDeterministicStaging &&
+                !await _authorizesPrivateTargets(absolutePath)) {
+              return false;
+            }
             final decryptedPath = await callBlobDecrypt(
               bridge,
               filePath: ciphertext.path,
               keyBase64: attachment.encryptionKeyBase64!,
               nonce: attachment.encryptionNonce!,
             );
+            // The bridge's returned path is untrusted input. Anything other
+            // than the exact authorized deterministic sibling is never
+            // stat-ed, deleted, renamed, or promoted.
+            if (privateDeterministicStaging &&
+                decryptedPath != privateDecryptStagingPath(absolutePath)) {
+              return false;
+            }
             final decrypted = File(decryptedPath);
             if (!await decrypted.exists() ||
                 await decrypted.length() != attachment.size) {
@@ -324,6 +372,13 @@ final class StrictDirectMediaBlobDownloadAckOwner {
             if (ownsCiphertextCandidate ||
                 identical(ciphertext, lanCandidate)) {
               await _deleteRegularFile(ciphertext);
+            }
+            final preservedLanSource = preservedLanSourcePath;
+            if (preservedLanSource != null) {
+              // The durable commit succeeded, so the legacy LAN retry source
+              // has no remaining purpose. Only success removes it here;
+              // terminal private cleanup owns every other removal.
+              await _deleteRegularFile(File(preservedLanSource));
             }
             return true;
           });

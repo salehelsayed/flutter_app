@@ -515,6 +515,102 @@ String _mediaDownloadLocalMissReason(
   return 'no_completed_local_candidate';
 }
 
+/// Read-only authorization of every path one strict-private explicit download
+/// may touch: the canonical target, the legacy LAN ciphertext sibling, and the
+/// deterministic staging pair. Nothing is created, so a refusal is free.
+Future<bool> _authorizesStrictPrivateDownloadPaths({
+  required MediaFileManager mediaFileManager,
+  required String contactPeerId,
+  required MediaAttachment attachment,
+}) async {
+  final authorityRoot = await mediaFileManager.trustedMediaRootPath();
+  final canonical = await mediaFileManager.resolveStoredPath(
+    mediaFileManager.relativePathForAttachment(
+      contactPeerId: contactPeerId,
+      blobId: attachment.id,
+      mime: attachment.mime,
+    ),
+  );
+  for (final target in <String>[
+    canonical,
+    '$canonical.enc',
+    StrictDirectMediaBlobDownloadAckOwner.privateCiphertextStagingPath(
+      canonical,
+    ),
+    StrictDirectMediaBlobDownloadAckOwner.privateDecryptStagingPath(canonical),
+  ]) {
+    if (!await DirectPrivateMediaPathGuard.authorizeTarget(
+      targetPath: target,
+      authorityRoot: authorityRoot,
+    )) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// The exact durable direct attachment whose canonical plaintext already
+/// exists on disk, or null.
+Future<MediaAttachment?> _durableLocalDirectAttachment({
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required MediaFileManager mediaFileManager,
+  required MediaAttachment attachment,
+}) async {
+  final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
+    attachment.messageId,
+    owner: MediaOwnerLane.direct,
+  );
+  for (final candidate in persisted) {
+    if (candidate.id != attachment.id ||
+        candidate.downloadStatus != kMediaDownloadStatusDone ||
+        candidate.localPath == null ||
+        candidate.localPath!.isEmpty) {
+      continue;
+    }
+    final absolute = await mediaFileManager.resolveStoredPath(
+      candidate.localPath!,
+    );
+    if (await File(absolute).exists()) {
+      return candidate.copyWith(ownerLane: MediaOwnerLane.direct);
+    }
+  }
+  return null;
+}
+
+/// Reloads the row the private claim just changed and proves it is still the
+/// same durable transfer subject in the exact `downloading` state.
+///
+/// The caller's snapshot came from the UI and may be arbitrarily stale; only
+/// this reloaded row may be handed to the strict owner.
+Future<MediaAttachment?> _requalifyClaimedPrivateAttachment({
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required MediaAttachment attachment,
+}) async {
+  final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
+    attachment.messageId,
+    owner: MediaOwnerLane.direct,
+  );
+  final exact = persisted.where((item) => item.id == attachment.id);
+  if (exact.length != 1) return null;
+  final current = exact.single;
+  if (current.messageId != attachment.messageId ||
+      current.ownerLane != MediaOwnerLane.direct ||
+      current.mime != attachment.mime ||
+      current.mediaType != attachment.mediaType ||
+      current.size != attachment.size ||
+      current.width != attachment.width ||
+      current.height != attachment.height ||
+      current.durationMs != attachment.durationMs ||
+      current.contentHash != attachment.contentHash ||
+      current.encryptionKeyBase64 != attachment.encryptionKeyBase64 ||
+      current.encryptionNonce != attachment.encryptionNonce ||
+      current.encryptionScheme != attachment.encryptionScheme ||
+      current.downloadStatus != kMediaDownloadStatusDownloading) {
+    return null;
+  }
+  return current;
+}
+
 Future<MediaAttachment?> downloadMedia({
   required Bridge bridge,
   required MediaAttachmentRepository mediaAttachmentRepo,
@@ -750,8 +846,62 @@ Future<MediaAttachment?> downloadMedia({
         custody.direction == DirectMediaBlobCustodyDirection.incoming &&
         (custody.state == DirectMediaBlobCustodyState.incomingCommitted ||
             custody.state == DirectMediaBlobCustodyState.incomingAckPending)) {
+      StrictDirectMediaBlobDownloadAckOwner strictOwner() =>
+          StrictDirectMediaBlobDownloadAckOwner(
+            bridge: bridge,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+            mediaFileManager: mediaFileManager,
+            privateDeterministicStaging: true,
+            now: () => DateTime.fromMillisecondsSinceEpoch(
+              currentNowMs(),
+              isUtc: true,
+            ),
+          );
+      // Read-only path preflight BEFORE the durable claim. Nothing is created
+      // here, so an unsafe canonical/LAN/staging target refuses with zero
+      // network and zero durable mutation.
+      if (!await _authorizesStrictPrivateDownloadPaths(
+        mediaFileManager: mediaFileManager,
+        contactPeerId: contactPeerId,
+        attachment: attachment,
+      )) {
+        return null;
+      }
+      final durableLocal = await _durableLocalDirectAttachment(
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        mediaFileManager: mediaFileManager,
+        attachment: attachment,
+      );
+      // Pinned strict state table. No row in these states may fall through to
+      // the proof-less legacy transport, and no branch may ACK away custody
+      // the receiver cannot prove it already holds locally.
+      if (custody.state == DirectMediaBlobCustodyState.incomingAckPending) {
+        if (durableLocal == null) {
+          // ACK-pending without exact durable local bytes: never claim,
+          // download, ACK, or delete v111. Expiry remains its only converger.
+          return null;
+        }
+        // Retry only the source-pinned ACK against the persisted relay.
+        return strictOwner().downloadAndAcknowledge(
+          attachment: durableLocal,
+          contactPeerId: contactPeerId,
+        );
+      }
+      final expiresAtMs = custody.expiresAtMs;
+      if (durableLocal != null ||
+          (expiresAtMs != null && expiresAtMs <= currentNowMs())) {
+        // Committed + already durable adopts without ACK; an exact expiry
+        // converges through the existing expiry transition. Neither claims the
+        // row, and neither performs network work.
+        return strictOwner().downloadAndAcknowledge(
+          attachment: durableLocal ?? attachment.copyWith(
+            ownerLane: MediaOwnerLane.direct,
+          ),
+          contactPeerId: contactPeerId,
+        );
+      }
       final lock = directPrivateRuntime.directPrivateMediaLifecycleLock;
-      final token = await lock.synchronized(attachment.id, () async {
+      final claim = await lock.synchronized(attachment.id, () async {
         final claimed = directPrivateMediaTransferRegistry.tryBegin(
           attachment.id,
           messageId: attachment.messageId,
@@ -767,26 +917,74 @@ Future<MediaAttachment?> downloadMedia({
           directPrivateMediaTransferRegistry.end(attachment.id, claimed);
           return null;
         }
-        return claimed;
+        // The claim, not the caller's UI snapshot, is the transfer's
+        // authority. Reload the row it just changed and requalify every
+        // immutable dimension plus the exact `downloading` state before any
+        // network work can consume it.
+        final reloaded = await _requalifyClaimedPrivateAttachment(
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          attachment: attachment,
+        );
+        if (reloaded == null) {
+          await directPrivateDownloadRepo
+              .recordDirectPrivateMediaDownloadFailureWithinLock(
+                attachment.id,
+                messageId: attachment.messageId,
+                nowMs: currentNowMs(),
+                incrementRetryCount: false,
+                failureStatus: kMediaDownloadStatusDownloadFailed,
+                expectedDownloadStatus: kMediaDownloadStatusDownloading,
+              );
+          directPrivateMediaTransferRegistry.end(attachment.id, claimed);
+          return null;
+        }
+        return (token: claimed, row: reloaded);
       });
-      if (token == null) return null;
+      if (claim == null) return null;
+      var committed = false;
       try {
-        return await StrictDirectMediaBlobDownloadAckOwner(
-          bridge: bridge,
-          mediaAttachmentRepository: mediaAttachmentRepo,
-          mediaFileManager: mediaFileManager,
-          privateDeterministicStaging: true,
-          now: () =>
-              DateTime.fromMillisecondsSinceEpoch(currentNowMs(), isUtc: true),
-        ).downloadAndAcknowledge(
-          attachment: attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        final downloaded = await strictOwner().downloadAndAcknowledge(
+          attachment: claim.row,
           contactPeerId: contactPeerId,
         );
+        committed = downloaded != null;
+        return downloaded;
       } finally {
         await lock.synchronized(attachment.id, () async {
-          directPrivateMediaTransferRegistry.end(attachment.id, token);
+          if (!committed) {
+            // Every non-committed outcome after a successful claim — pre-
+            // network path drift, transport/proof/decrypt/output refusal, or
+            // a lost final CAS — releases `downloading` back to a retryable
+            // status. v111 is deliberately untouched.
+            await directPrivateDownloadRepo!
+                .recordDirectPrivateMediaDownloadFailureWithinLock(
+                  attachment.id,
+                  messageId: attachment.messageId,
+                  nowMs: currentNowMs(),
+                  incrementRetryCount: false,
+                  failureStatus: kMediaDownloadStatusDownloadFailed,
+                  expectedDownloadStatus: kMediaDownloadStatusDownloading,
+                );
+          }
+          directPrivateMediaTransferRegistry.end(attachment.id, claim.token);
         });
       }
+    }
+    // A fingerprinted strict-private row with missing, crossed, expired or
+    // unsupported v111 state fails closed here. Only a pre-354 private parent
+    // with no strict fingerprint and no v111 keeps the legacy explicit path.
+    if (custody != null ||
+        attachment.blobCustody != null ||
+        attachment.directMediaBlobCustodyFingerprint != null ||
+        (await mediaAttachmentRepo.getAttachmentsForMessage(
+          attachment.messageId,
+          owner: MediaOwnerLane.direct,
+        )).any(
+          (candidate) =>
+              candidate.id == attachment.id &&
+              candidate.directMediaBlobCustodyFingerprint != null,
+        )) {
+      return null;
     }
   }
   if (owner == MediaOwnerLane.direct &&

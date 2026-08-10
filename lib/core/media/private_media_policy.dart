@@ -310,29 +310,54 @@ bool isPrivateMediaComposerPolicyEligible({
 /// Classifies one attachment's durable media identity for the private producer
 /// matrix. GIF is deliberately separated from image even though both persist
 /// `media_type = 'image'`.
+///
+/// The transport MIME and the persisted media type are two independent
+/// descriptions of the same bytes, so they must AGREE. Reading whichever side
+/// happened to match first would admit a crossed pair such as `video/mp4` plus
+/// `media_type = 'image'` as an image, letting a View-Once video through the
+/// image-only matrix. A disagreement is therefore unknown and fails closed.
 PrivateMediaAttachmentKind privateMediaAttachmentKindForMediaIdentity({
   required String mime,
   required String mediaType,
 }) {
-  final normalizedMime = mime.toLowerCase();
-  final normalizedType = mediaType.toLowerCase();
-  if (normalizedMime == 'image/gif' || normalizedType == 'gif') {
+  final fromMime = _privateMediaKindFromMime(mime.toLowerCase());
+  final fromMediaType = _privateMediaKindFromMediaType(mediaType.toLowerCase());
+  if (fromMime == fromMediaType) return fromMime;
+  // The single intentional divergence: this app's own convention persists
+  // `media_type = 'image'` for an animated GIF, and GIF must stay separable so
+  // the producer matrix keeps refusing it.
+  if (fromMime == PrivateMediaAttachmentKind.gif &&
+      fromMediaType == PrivateMediaAttachmentKind.image) {
     return PrivateMediaAttachmentKind.gif;
-  }
-  if (normalizedMime.startsWith('image/') || normalizedType == 'image') {
-    return PrivateMediaAttachmentKind.image;
-  }
-  if (normalizedMime.startsWith('video/') || normalizedType == 'video') {
-    return PrivateMediaAttachmentKind.video;
-  }
-  if (normalizedMime.startsWith('audio/') || normalizedType == 'audio') {
-    return PrivateMediaAttachmentKind.audio;
-  }
-  if (normalizedMime.isNotEmpty || normalizedType == 'file') {
-    return PrivateMediaAttachmentKind.file;
   }
   return PrivateMediaAttachmentKind.unknown;
 }
+
+PrivateMediaAttachmentKind _privateMediaKindFromMime(String normalizedMime) {
+  if (normalizedMime == 'image/gif') return PrivateMediaAttachmentKind.gif;
+  if (normalizedMime.startsWith('image/')) {
+    return PrivateMediaAttachmentKind.image;
+  }
+  if (normalizedMime.startsWith('video/')) {
+    return PrivateMediaAttachmentKind.video;
+  }
+  if (normalizedMime.startsWith('audio/')) {
+    return PrivateMediaAttachmentKind.audio;
+  }
+  if (normalizedMime.isNotEmpty) return PrivateMediaAttachmentKind.file;
+  return PrivateMediaAttachmentKind.unknown;
+}
+
+PrivateMediaAttachmentKind _privateMediaKindFromMediaType(
+  String normalizedMediaType,
+) => switch (normalizedMediaType) {
+  'gif' => PrivateMediaAttachmentKind.gif,
+  'image' => PrivateMediaAttachmentKind.image,
+  'video' => PrivateMediaAttachmentKind.video,
+  'audio' => PrivateMediaAttachmentKind.audio,
+  'file' => PrivateMediaAttachmentKind.file,
+  _ => PrivateMediaAttachmentKind.unknown,
+};
 
 /// Exact producer matrix for one newly authored v1 private-media INITIAL.
 ///

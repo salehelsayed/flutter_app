@@ -9,6 +9,8 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
         DirectMediaBlobCustodyDirection,
         DirectMediaBlobCustodyRow,
         DirectMediaBlobCustodyState;
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
+    show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -975,6 +977,11 @@ class _CanonicalPathFakeMediaFileManager extends _FakeMediaFileManager {
     final ext = _FakeMediaFileManager._extensionFromMime(mime);
     return '$basePath/media/$contactPeerId/$blobId$ext';
   }
+
+  /// The private path guard needs a real containment root; path_provider is
+  /// unavailable in host tests, so mirror the canonical convention root.
+  @override
+  Future<String> trustedMediaRootPath() async => '$basePath/media';
 }
 
 Future<List<Map<String, dynamic>>> captureFlowEvents(
@@ -5652,7 +5659,7 @@ void main() {
         greaterThan(-1),
         reason: 'automatic private download must stay refused',
       );
-      final entryBody = downloadSource.substring(entry, entry + 3200);
+      final entryBody = downloadSource.substring(entry, entry + 8200);
       expect(
         entryBody.contains('DirectMediaBlobCustodyState.incomingCommitted'),
         isTrue,
@@ -5664,19 +5671,22 @@ void main() {
 
       // 2. The exact attachment-scoped transfer token AND the DB
       //    `downloading` claim are both acquired, under the lifecycle lock,
-      //    strictly before the strict owner can make its first call.
+      //    and the row is requalified, strictly before the strict owner can
+      //    consume it. Plan 355 proves this behaviorally in TC-355-01b.
       final tokenIndex = entryBody.indexOf(
         'directPrivateMediaTransferRegistry.tryBegin',
       );
       final claimIndex = entryBody.indexOf(
         'beginDirectPrivateMediaDownloadWithinLock',
       );
-      final ownerIndex = entryBody.indexOf(
-        'StrictDirectMediaBlobDownloadAckOwner(',
+      final requalifyIndex = entryBody.indexOf(
+        '_requalifyClaimedPrivateAttachment(',
       );
+      final ownerIndex = entryBody.indexOf('attachment: claim.row,');
       expect(tokenIndex, greaterThan(-1));
       expect(claimIndex, greaterThan(tokenIndex));
-      expect(ownerIndex, greaterThan(claimIndex));
+      expect(requalifyIndex, greaterThan(claimIndex));
+      expect(ownerIndex, greaterThan(requalifyIndex));
       // A refused claim releases the token and performs zero network.
       expect(
         entryBody.contains(
@@ -5684,22 +5694,25 @@ void main() {
         ),
         isTrue,
       );
-      expect(entryBody.contains('if (token == null) return null;'), isTrue);
+      expect(entryBody.contains('if (claim == null) return null;'), isTrue);
       // The token is always released.
       expect(entryBody.contains('} finally {'), isTrue);
 
-      // 3. The owner path-authorizes the canonical target AND both
-      //    deterministic staging siblings BEFORE any bridge, network or
-      //    decrypt work.
+      // 3. The owner path-authorizes the canonical target, the legacy LAN
+      //    sibling AND both deterministic staging siblings BEFORE any bridge,
+      //    network or decrypt work.
       final guard = ownerSource.indexOf(
-        'if (privateDeterministicStaging) {\n      // Path-authorize',
+        '!await _authorizesPrivateTargets(absolutePath)',
       );
       expect(guard, greaterThan(-1));
       final firstNetwork = ownerSource.indexOf('await callP2PMediaDownload(');
       final firstDecrypt = ownerSource.indexOf('await callBlobDecrypt(');
       expect(guard, lessThan(firstNetwork));
       expect(guard, lessThan(firstDecrypt));
-      final guardBody = ownerSource.substring(guard, firstNetwork);
+      final guardBody = ownerSource.substring(
+        ownerSource.indexOf('Future<bool> _authorizesPrivateTargets('),
+        firstNetwork,
+      );
       expect(
         guardBody.contains('DirectPrivateMediaPathGuard.authorizeTarget('),
         isTrue,
@@ -5755,6 +5768,729 @@ void main() {
         isTrue,
       );
     });
+  });
+
+  group('Plan 355 private strict download closure', () {
+    const contactPeerId = 'tc355-private-sender';
+    const relayPeerId = 'tc355-relay-source';
+
+    /// Stages one durable v1 Protected/View-Once initial with its exact v111
+    /// obligation, exactly as the receive path would.
+    Future<
+      ({
+        MediaAttachment attachment,
+        DirectMediaBlobCustodyRow custody,
+        _CanonicalPathFakeMediaFileManager manager,
+        String canonicalAbsolutePath,
+        List<int> ciphertext,
+      })
+    >
+    stagePrivateIncoming({
+      required MediaRepositoryRealDbFixture fixture,
+      required String suffix,
+      String mode = 'protected',
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+      int expiresAtMs = 1_900_005_000_000,
+      List<int> plaintext = _jpegBytes,
+    }) async {
+      final messageId = 'tc355-msg-$suffix';
+      final attachmentId = 'tc355-blob-$suffix';
+      final encrypted = _encryptedBytes(plaintext);
+      final contentHash = _hashBytes(encrypted);
+      final commitment = DirectMediaBlobCustodyCommitment(
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: expiresAtMs,
+      );
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: mime,
+        size: plaintext.length,
+        mediaType: mediaType,
+        downloadStatus: kMediaDownloadStatusPending,
+        createdAt: '2026-08-10T11:00:00.000Z',
+        contentHash: contentHash,
+        encryptionKeyBase64: _mediaKey,
+        encryptionNonce: _mediaNonce,
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        blobCustody: commitment,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: expiresAtMs,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-10T11:00:00.000Z',
+        updatedAt: '2026-08-10T11:00:00.000Z',
+      );
+      final message = ConversationMessage(
+        id: messageId,
+        contactPeerId: contactPeerId,
+        senderPeerId: contactPeerId,
+        text: '',
+        timestamp: '2026-08-10T11:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-08-10T11:00:00.000Z',
+        privateMediaPolicy: PrivateMediaPolicy.fromJson(<String, Object?>{
+          'version': 1,
+          'mode': mode,
+        }),
+        privateMediaState: PrivateMediaLifecycleState.available,
+        privateMediaReceivedAtMs: 1_800_000_000_000,
+        privateMediaClockHighWaterMs: 1_800_000_000_000,
+      );
+      final stage =
+          await (fixture.repo
+                  as IncomingDirectPrivateMediaBlobCustodyRepository)
+              .stageIncomingDirectPrivateMediaBlobCustody(
+                message: message,
+                attachment: attachment,
+                custodyRow: custody,
+              );
+      expect(stage.outcome.name, 'applied', reason: suffix);
+      final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+      return (
+        attachment: attachment,
+        custody: custody,
+        manager: manager,
+        canonicalAbsolutePath: await manager.localPathForAttachment(
+          contactPeerId: contactPeerId,
+          blobId: attachmentId,
+          mime: mime,
+        ),
+        ciphertext: encrypted,
+      );
+    }
+
+    void wireRelay({
+      required MediaAttachment attachment,
+      required DirectMediaBlobCustodyRow custody,
+      required List<int> ciphertext,
+    }) {
+      bridge.downloadedBytes = ciphertext;
+      bridge.downloadResponse = <String, dynamic>{
+        'ok': true,
+        'id': attachment.id,
+        'custodyKind': kDirectMediaBlobCustodyKind,
+        'custodyContract': kDirectMediaBlobCustodyContract,
+        'contentHash': custody.contentHash,
+        'size': ciphertext.length,
+        'mime': kDirectMediaBlobTransportMime,
+        'expiresAtMs': custody.expiresAtMs,
+        'custodyRelayPeerId': relayPeerId,
+      };
+      bridge.deleteResponse = <String, dynamic>{
+        'ok': true,
+        'id': attachment.id,
+        'ackStatus': 'acked',
+        'custodyKind': kDirectMediaBlobCustodyKind,
+        'custodyContract': kDirectMediaBlobCustodyContract,
+        'contentHash': custody.contentHash,
+        'size': ciphertext.length,
+        'mime': kDirectMediaBlobTransportMime,
+        'expiresAtMs': custody.expiresAtMs,
+        'custodyRelayPeerId': relayPeerId,
+      };
+    }
+
+    test(
+      'TC-355-01b explicit private strict download commits before ACK and '
+      'never falls through',
+      () async {
+        // --- Relay lane: the reloaded `downloading` projection is what the
+        // final commit consumes, and the commit precedes the ACK. ---
+        for (final mode in const <String>['protected', 'view_once']) {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'relay-$mode',
+            mode: mode,
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          var sawClaimedRowDuringTransfer = false;
+          bridge.beforeDownloadResponse = (_) async {
+            final row = await fixture.rawAttachmentRow(staged.attachment.id);
+            sawClaimedRowDuringTransfer =
+                row!['download_status'] == kMediaDownloadStatusDownloading;
+          };
+          var ackSawDurableCommit = false;
+          bridge.onDeleteRequest = () async {
+            final row = await fixture.rawAttachmentRow(staged.attachment.id);
+            final pending =
+                await (fixture.repo as DirectMediaBlobCustodyRepository)
+                    .loadDirectMediaBlobCustodyForAttachment(
+                      staged.attachment.id,
+                    );
+            ackSawDurableCommit =
+                row!['download_status'] == kMediaDownloadStatusDone &&
+                row['local_path'] != null &&
+                pending!.state ==
+                    DirectMediaBlobCustodyState.incomingAckPending &&
+                pending.custodyRelayPeerId == relayPeerId;
+          };
+
+          final downloaded = await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: staged.manager,
+            // The caller's snapshot is the stale PRE-claim UI object.
+            attachment: staged.attachment,
+            contactPeerId: contactPeerId,
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => 1_800_000_100_000,
+          );
+
+          expect(downloaded, isNotNull, reason: mode);
+          expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+          expect(sawClaimedRowDuringTransfer, isTrue, reason: mode);
+          expect(
+            ackSawDurableCommit,
+            isTrue,
+            reason: 'the durable commit must precede the source-pinned ACK',
+          );
+          expect(bridge.commandLog, <String>[
+            'media:download',
+            'blob:decrypt',
+            'media:delete',
+          ]);
+          expect(
+            File(staged.canonicalAbsolutePath).readAsBytesSync(),
+            _jpegBytes,
+          );
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+            isNull,
+            reason: 'only the exact successful same-source ACK retires v111',
+          );
+        }
+
+        // --- LAN lane: a verified source-less adoption commits `done` and
+        // deliberately stays `incoming_committed` with no ACK. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'lan',
+          );
+          final lanSource = File('${staged.canonicalAbsolutePath}.enc');
+          await lanSource.parent.create(recursive: true);
+          await lanSource.writeAsBytes(staged.ciphertext, flush: true);
+
+          final downloaded = await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: staged.manager,
+            attachment: staged.attachment,
+            contactPeerId: contactPeerId,
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => 1_800_000_100_000,
+          );
+
+          expect(downloaded, isNotNull);
+          expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+          expect(bridge.commandLog, <String>['blob:decrypt']);
+          expect(bridge.deleteRequests, isEmpty);
+          final survivor =
+              await (fixture.repo as DirectMediaBlobCustodyRepository)
+                  .loadDirectMediaBlobCustodyForAttachment(
+                    staged.attachment.id,
+                  );
+          expect(
+            survivor!.state,
+            DirectMediaBlobCustodyState.incomingCommitted,
+          );
+          expect(survivor.custodyRelayPeerId, isNull);
+          expect(
+            File(staged.canonicalAbsolutePath).readAsBytesSync(),
+            _jpegBytes,
+          );
+          expect(
+            lanSource.existsSync(),
+            isFalse,
+            reason: 'the LAN source is consumed only after a durable commit',
+          );
+        }
+
+        // --- ACK-pending WITH exact durable local bytes retries only the
+        // source-pinned ACK. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'ack-retry',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          final relative = staged.manager.relativePathForAttachment(
+            contactPeerId: contactPeerId,
+            blobId: staged.attachment.id,
+            mime: staged.attachment.mime,
+          );
+          final canonical = File(staged.canonicalAbsolutePath);
+          await canonical.parent.create(recursive: true);
+          await canonical.writeAsBytes(_jpegBytes, flush: true);
+          await fixture.db.update(
+            'media_attachments',
+            <String, Object?>{
+              'local_path': relative,
+              'download_status': kMediaDownloadStatusDone,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[staged.attachment.id],
+          );
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .transitionDirectMediaBlobCustodyIfExact(
+                  expected: staged.custody,
+                  next: staged.custody.copyWith(
+                    state: DirectMediaBlobCustodyState.incomingAckPending,
+                    custodyRelayPeerId: relayPeerId,
+                  ),
+                ),
+            isTrue,
+          );
+
+          final adopted = await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: staged.manager,
+            attachment: staged.attachment.copyWith(
+              localPath: relative,
+              downloadStatus: kMediaDownloadStatusDone,
+            ),
+            contactPeerId: contactPeerId,
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => 1_800_000_100_000,
+          );
+
+          expect(adopted, isNotNull);
+          expect(bridge.commandLog, <String>['media:delete']);
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+            isNull,
+          );
+        }
+
+        // --- ACK-pending WITHOUT durable local bytes never ACKs, claims,
+        // downloads, or deletes v111. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'ack-no-local',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .transitionDirectMediaBlobCustodyIfExact(
+                  expected: staged.custody,
+                  next: staged.custody.copyWith(
+                    state: DirectMediaBlobCustodyState.incomingAckPending,
+                    custodyRelayPeerId: relayPeerId,
+                  ),
+                ),
+            isTrue,
+          );
+
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => 1_800_000_100_000,
+            ),
+            isNull,
+          );
+          expect(bridge.commandLog, isEmpty);
+          expect(
+            (await fixture.rawAttachmentRow(
+              staged.attachment.id,
+            ))!['download_status'],
+            kMediaDownloadStatusPending,
+          );
+          final retained =
+              await (fixture.repo as DirectMediaBlobCustodyRepository)
+                  .loadDirectMediaBlobCustodyForAttachment(
+                    staged.attachment.id,
+                  );
+          expect(
+            retained!.state,
+            DirectMediaBlobCustodyState.incomingAckPending,
+          );
+        }
+
+        // --- A fingerprinted strict-private row with NO v111 never reaches
+        // the proof-less legacy transport in any state. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'no-v111',
+          );
+          await fixture.db.delete(
+            kDirectMediaBlobCustodyTable,
+            where: 'attachment_id = ?',
+            whereArgs: <Object?>[staged.attachment.id],
+          );
+
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => 1_800_000_100_000,
+            ),
+            isNull,
+          );
+          expect(bridge.commandLog, isEmpty);
+          expect(
+            (await fixture.rawAttachmentRow(
+              staged.attachment.id,
+            ))!['download_status'],
+            kMediaDownloadStatusPending,
+          );
+        }
+
+        // --- A pre-354 private parent with no fingerprint and no v111 keeps
+        // the historical legacy explicit-download behavior. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          const messageId = 'tc355-legacy-private';
+          const attachmentId = 'tc355-legacy-private-blob';
+          await fixture.seedDirectParent(
+            messageId,
+            contactPeerId: contactPeerId,
+          );
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'private_media_policy_version': 1,
+              'private_media_mode': 'protected',
+              'private_media_state': 'available',
+              'private_media_received_at_ms': 1_800_000_000_000,
+              'private_media_clock_high_water_ms': 1_800_000_000_000,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+          final encrypted = _encryptedBytes(_jpegBytes);
+          final legacy = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: _jpegBytes.length,
+            mediaType: 'image',
+            downloadStatus: kMediaDownloadStatusPending,
+            createdAt: '2026-08-10T11:00:00.000Z',
+            encryptionKeyBase64: _mediaKey,
+            encryptionNonce: _mediaNonce,
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          await fixture.repo.saveAttachment(
+            legacy,
+            owner: MediaOwnerLane.direct,
+          );
+          bridge.downloadedBytes = encrypted;
+          final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+
+          final legacyResult = await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: manager,
+            attachment: legacy,
+            contactPeerId: contactPeerId,
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => 1_800_000_100_000,
+          );
+
+          expect(legacyResult, isNotNull);
+          expect(bridge.commandLog, contains('media:download'));
+        }
+      },
+    );
+
+    test(
+      'TC-355-02a private strict path guard and deterministic staging '
+      'preserve retry authority',
+      () async {
+        // --- An unsafe symlink at ANY authorized target refuses before the
+        // claim and before any network work. ---
+        for (final unsafe in const <String>[
+          '',
+          '.enc',
+          '.private.enc',
+          '.private.enc.dec',
+        ]) {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'unsafe${unsafe.replaceAll('.', '-')}',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          final outside = File('${tempDir.path}/outside-$unsafe.bin')
+            ..writeAsBytesSync(const <int>[7, 7, 7]);
+          final link = '${staged.canonicalAbsolutePath}$unsafe';
+          await Directory(File(link).parent.path).create(recursive: true);
+          Link(link).createSync(outside.path);
+
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => 1_800_000_100_000,
+            ),
+            isNull,
+            reason: 'unsafe target "$unsafe"',
+          );
+          expect(bridge.commandLog, isEmpty, reason: unsafe);
+          expect(
+            (await fixture.rawAttachmentRow(
+              staged.attachment.id,
+            ))!['download_status'],
+            kMediaDownloadStatusPending,
+            reason: 'no durable claim may survive a refused preflight',
+          );
+          expect(outside.readAsBytesSync(), const <int>[7, 7, 7]);
+        }
+
+        // --- An arbitrary bridge-returned decrypt path is never stat-ed,
+        // deleted, renamed or promoted; the claim is released to retryable
+        // and v111 survives. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'arbitrary-decrypt',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          final foreign = File('${tempDir.path}/foreign-plaintext.bin')
+            ..writeAsBytesSync(_jpegBytes);
+          bridge.decryptResponse = <String, dynamic>{
+            'ok': true,
+            'decryptedPath': foreign.path,
+          };
+
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => 1_800_000_100_000,
+            ),
+            isNull,
+          );
+          expect(
+            foreign.existsSync(),
+            isTrue,
+            reason: 'a foreign decrypt target is never deleted or renamed',
+          );
+          expect(foreign.readAsBytesSync(), _jpegBytes);
+          expect(File(staged.canonicalAbsolutePath).existsSync(), isFalse);
+          expect(bridge.deleteRequests, isEmpty);
+          final row = await fixture.rawAttachmentRow(staged.attachment.id);
+          expect(row!['download_status'], kMediaDownloadStatusDownloadFailed);
+          expect(row['local_path'], isNull);
+          expect(
+            (await (fixture.repo as DirectMediaBlobCustodyRepository)
+                    .loadDirectMediaBlobCustodyForAttachment(
+                      staged.attachment.id,
+                    ))!
+                .state,
+            DirectMediaBlobCustodyState.incomingCommitted,
+          );
+        }
+
+        // --- A LAN transfer that loses its final CAS keeps the byte-identical
+        // LAN source, removes only attempt-owned candidates, releases the row
+        // to retryable, retains v111 and makes zero relay calls. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'lan-cas-loss',
+          );
+          final lanSource = File('${staged.canonicalAbsolutePath}.enc');
+          await lanSource.parent.create(recursive: true);
+          await lanSource.writeAsBytes(staged.ciphertext, flush: true);
+          // Hiding the parent makes the final local-path CAS refuse while the
+          // ciphertext is already normalized into the deterministic pair.
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{'hidden_at': '2026-08-10T11:05:00.000Z'},
+            where: 'id = ?',
+            whereArgs: <Object?>[staged.attachment.messageId],
+          );
+
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => 1_800_000_100_000,
+            ),
+            isNull,
+          );
+          expect(
+            lanSource.existsSync(),
+            isTrue,
+            reason: 'the only retry source must survive a lost commit',
+          );
+          expect(lanSource.readAsBytesSync(), staged.ciphertext);
+          expect(
+            File(
+              '${staged.canonicalAbsolutePath}.private.enc',
+            ).existsSync(),
+            isFalse,
+          );
+          expect(
+            File(
+              '${staged.canonicalAbsolutePath}.private.enc.dec',
+            ).existsSync(),
+            isFalse,
+          );
+          expect(File(staged.canonicalAbsolutePath).existsSync(), isFalse);
+          expect(bridge.commandLog, isNot(contains('media:download')));
+          expect(bridge.deleteRequests, isEmpty);
+          expect(
+            (await (fixture.repo as DirectMediaBlobCustodyRepository)
+                    .loadDirectMediaBlobCustodyForAttachment(
+                      staged.attachment.id,
+                    ))!
+                .state,
+            DirectMediaBlobCustodyState.incomingCommitted,
+          );
+        }
+
+        // --- Exact terminal private cleanup still removes the legacy LAN
+        // source it deliberately preserved for retry. ---
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          final staged = await stagePrivateIncoming(
+            fixture: fixture,
+            suffix: 'terminal-cleanup',
+          );
+          final lanSource = File('${staged.canonicalAbsolutePath}.enc');
+          await lanSource.parent.create(recursive: true);
+          await lanSource.writeAsBytes(staged.ciphertext, flush: true);
+          final lifecycle = DirectPrivateMediaLifecycle(
+            messageRepository: fixture.messageRepo,
+            mediaAttachmentRepository: fixture.repo,
+            mediaFileManager: staged.manager,
+          );
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'private_media_state': 'consumed',
+              'private_media_terminal_at_ms': 1_800_000_200_000,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[staged.attachment.messageId],
+          );
+          final engine = PrivateMediaLifecycleEngine(
+            adapter: lifecycle,
+            lifecycleLock: fixture.repo.lifecycleLock,
+            nowMs: () => 1_800_000_300_000,
+          );
+          expect(
+            (await engine.reconcileLocalLifecycle()).cleanupCompleted,
+            greaterThanOrEqualTo(1),
+          );
+          expect(
+            lanSource.existsSync(),
+            isFalse,
+            reason: 'terminal cleanup remains destructive for the LAN source',
+          );
+        }
+      },
+    );
   });
 }
 

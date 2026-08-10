@@ -241,5 +241,172 @@ void main() {
         PrivateMediaLifecycleState.unsupported,
       );
     });
+
+    test(
+      'TC-355-04f private media identity requires coherent MIME and mediaType',
+      () {
+        // Coherent producer identities keep their exact kind.
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          ),
+          PrivateMediaAttachmentKind.image,
+        );
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'video/mp4',
+            mediaType: 'video',
+          ),
+          PrivateMediaAttachmentKind.video,
+        );
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'audio/aac',
+            mediaType: 'audio',
+          ),
+          PrivateMediaAttachmentKind.audio,
+        );
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'application/pdf',
+            mediaType: 'file',
+          ),
+          PrivateMediaAttachmentKind.file,
+        );
+
+        // The one intentional divergence: the app's own convention persists
+        // media_type 'image' for an animated GIF, and GIF must stay separable
+        // so the producer matrix keeps refusing it.
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'image/gif',
+            mediaType: 'image',
+          ),
+          PrivateMediaAttachmentKind.gif,
+        );
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'image/gif',
+            mediaType: 'gif',
+          ),
+          PrivateMediaAttachmentKind.gif,
+        );
+
+        // Crossed identities must fail closed instead of being admitted by
+        // whichever side the OR happened to read first.
+        for (final crossed in const <(String, String)>[
+          ('video/mp4', 'image'),
+          ('image/png', 'video'),
+          ('image/png', 'gif'),
+          ('image/gif', 'video'),
+          ('audio/aac', 'image'),
+          ('application/pdf', 'image'),
+          ('image/jpeg', 'file'),
+          ('video/quicktime', 'audio'),
+          ('', 'image'),
+          ('image/png', ''),
+          ('image/png', 'document'),
+        ]) {
+          expect(
+            privateMediaAttachmentKindForMediaIdentity(
+              mime: crossed.$1,
+              mediaType: crossed.$2,
+            ),
+            PrivateMediaAttachmentKind.unknown,
+            reason: 'crossed identity ${crossed.$1} + ${crossed.$2}',
+          );
+        }
+
+        // Case normalization stays intact.
+        expect(
+          privateMediaAttachmentKindForMediaIdentity(
+            mime: 'IMAGE/PNG',
+            mediaType: 'Image',
+          ),
+          PrivateMediaAttachmentKind.image,
+        );
+
+        // The producer matrix inherits the tightened identity: a crossed pair
+        // can no longer be admitted as a valid Protected or View-Once initial.
+        expect(
+          privateMediaInitialProducerMatrixAllows(
+            policyVersion: 1,
+            mode: PrivateMediaMode.protected,
+            mime: 'video/mp4',
+            mediaType: 'image',
+          ),
+          isFalse,
+        );
+        expect(
+          privateMediaInitialProducerMatrixAllows(
+            policyVersion: 1,
+            mode: PrivateMediaMode.viewOnce,
+            mime: 'video/mp4',
+            mediaType: 'image',
+          ),
+          isFalse,
+        );
+        // Valid producer shapes remain admitted.
+        expect(
+          privateMediaInitialProducerMatrixAllows(
+            policyVersion: 1,
+            mode: PrivateMediaMode.protected,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+          ),
+          isTrue,
+        );
+        expect(
+          privateMediaInitialProducerMatrixAllows(
+            policyVersion: 1,
+            mode: PrivateMediaMode.protected,
+            mime: 'video/mp4',
+            mediaType: 'video',
+          ),
+          isTrue,
+        );
+        expect(
+          privateMediaInitialProducerMatrixAllows(
+            policyVersion: 1,
+            mode: PrivateMediaMode.viewOnce,
+            mime: 'image/png',
+            mediaType: 'image',
+          ),
+          isTrue,
+        );
+        // GIF stays refused through the preserved exception.
+        expect(
+          privateMediaInitialProducerMatrixAllows(
+            policyVersion: 1,
+            mode: PrivateMediaMode.protected,
+            mime: 'image/gif',
+            mediaType: 'image',
+          ),
+          isFalse,
+        );
+        // The database-identity form refuses the same crossed pair.
+        expect(
+          privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
+            policyVersion: 1,
+            mode: 'protected',
+            durationSeconds: null,
+            mime: 'video/mp4',
+            mediaType: 'image',
+          ),
+          isFalse,
+        );
+        expect(
+          privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
+            policyVersion: 1,
+            mode: 'protected',
+            durationSeconds: null,
+            mime: 'video/mp4',
+            mediaType: 'video',
+          ),
+          isTrue,
+        );
+      },
+    );
   });
 }
