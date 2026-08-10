@@ -1,11 +1,11 @@
 # 354 - GAP-N01 Protected + View-Once Direct-Media Initial Inbox/Blob Custody Adoption
 
-Status: **COMPLETE / IMPLEMENTED / TEST-CONTRACT-CLOSED (21/21) / DEFAULT-OFF CODE-CLOSED / PLAN-GREEN / HOST GATES GREEN / NOT STANDALONE RELEASE-ELIGIBLE** (2026-08-10)
-Completion: all ten implementation steps are implemented; all twenty-one named tests exist and pass; all four planned mutation re-reds were executed and reverted; every required gate receipt is recorded below. Nothing in this plan's scope remains open. Activation stays a WP-07 decision — this plan makes no release claim.
+Status: **IMPLEMENTED BUT POST-EXECUTION REVIEW INCOMPLETE / SUPERSEDED BY PLAN 355 FOR CLOSURE / DEFAULT-OFF / NOT RELEASE-ELIGIBLE** (2026-08-10)
+Completion: all ten planned implementation steps and all twenty-one named Plan-354 tests were recorded green, but a later behavioral source audit disproved the code-closure claim. The historical receipts below remain valid as execution history; they are not sufficient closure evidence. Plan 355 owns the bounded repair and behavioral proof before this Protected/View-Once adopter may be called host-code-closed. Activation stays a WP-07 decision — neither plan makes a release claim.
 Type: Modification
 Baseline observed while planning: 7fa8d1a9c3d2cd37db6c41acda71254c81fc216c (`feat: adopt exact v109 custody for ordinary direct-media caption edits`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` requirements 1, 3, and 6 plus A-01/A-02/A-03/A-24/A-26; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
-Classification: executed and closed; bounded adopter of existing private lifecycle, v108 inbox custody, and v111 blob custody; core bet confirmed by `$tdd-review`
+Classification: implemented bounded adopter of existing private lifecycle, v108 inbox custody, and v111 blob custody; post-execution defects require Plan 355 before closure
 Closure tier: host real-file/SQLite plus affected curated/core/feature families; no schema, relay, native, mobile, or iOS claim
 
 ## Planning Progress
@@ -373,3 +373,15 @@ Test Contract closure: **all twenty-one named tests exist and pass** (TC-354-01a
 Two placement corrections were recorded. TC-354-01c moved from the widget tier to the coordinator tier over real SQLite: the widget shell's fake-async clock could not drive a real-file/SQLite private send to completion, while the coordinator entry is the exact production seam the composer calls, so the Barrier A ordering it proves is identical. TC-354-03a likewise drives the reopen owner directly and then asserts the whole incomplete-upload lane never reaches the legacy helper. Several contract tests are source-ordering assertions over the production files (claim-before-network, retention-before-deletion, terminal-decision-before-marker); they are the same census style this repository already uses for boundaries a behavioural fake cannot observe, and each was mutation-verified where a mutation applies.
 
 Wiring the private staging seam into the shared repository fixture made one preservation sentinel take the strict lane instead of the legacy one it was written for; it now opts out through the same fixture flag the fresh generation already offered, so its meaning is unchanged.
+
+## Post-Execution Audit Addendum (2026-08-10)
+
+The later audit at `6f66a8098` found that several Plan-354 source-order/census tests passed without executing their claimed production behavior. This addendum does not erase or rewrite the receipts above; it corrects the closure conclusion they originally supported.
+
+- Explicit private strict download persists `downloading` but passes the stale pre-claim attachment to a final local-path transaction that still accepts only ordinary-v0 parents. Protected/View-Once relay or LAN download therefore cannot durably commit its canonical local path and source-pinned ACK state.
+- Fingerprinted strict-private rows can reach the proof-less legacy download fallback for missing/crossed custody states, and an ACK-pending row can lose v111 before exact durable local bytes are proved.
+- Terminal private replay can be intercepted by generic duplicate logic, mapped back to `duplicate`, and trigger global display retry. Terminal state can also win after strict staging but before thumbnail, marker, publication, or ready promotion because those effects are not held under one final lifecycle decision.
+- Private consume/hide/expiry does not reliably retire exact message display markers, production notification keep/replacement/projection checks omit some terminal states, and crossed MIME/media-type identities can be admitted.
+- Deterministic private path assertions do not fully protect the legacy LAN source or bridge-returned decrypt target across failure/restart.
+
+Plan 355 is the sole bounded closure repair. It reuses the existing v111 row, strict owner, private transfer claim, repository-wide lifecycle lease, terminal state, and direct display outbox; it adds no migration, durable owner, network caller, protocol, scheduler, scanner, or device campaign. Until Plan 355 executes and passes its behavioral contract, Plan 354 remains implemented but post-execution-review incomplete.

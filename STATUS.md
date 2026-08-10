@@ -22,3 +22,4 @@ Before starting work, read the latest line for the assigned plan.
 - Plan 354 — EXECUTION_COMPLETED (all ten steps; five of twenty-one named tests authored, no mutation re-reds)
 - Plan 354 — TEST_CONTRACT_CLOSED (21/21 named tests, 4/4 mutation re-reds)
 - Plan 354 — POST_EXECUTION_REVIEW_INCOMPLETE (strict private download commit, terminal replay routing, and post-stage terminal/display races remain; do not start Plan 355)
+- Plan 355 — EXECUTION_READY
