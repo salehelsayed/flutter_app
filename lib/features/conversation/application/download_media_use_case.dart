@@ -725,6 +725,71 @@ Future<MediaAttachment?> downloadMedia({
       }
     }
   }
+  // 354: an explicit-user private strict download enters the SAME sole strict
+  // owner. The exact attachment-scoped private transfer token and the DB
+  // `downloading` claim are acquired BEFORE its first network callback, and it
+  // uses deterministic convention-owned staging siblings so private cleanup
+  // and restart recovery can enumerate them. Automatic private download stays
+  // refused: this branch requires explicit user intent.
+  if (owner == MediaOwnerLane.direct &&
+      !enforceGroupMediaPolicy &&
+      requiresDirectPrivateCommit &&
+      effectiveIntent == MediaDownloadIntent.explicitUser &&
+      directPrivateDownloadRepo != null &&
+      directPrivateRuntime != null &&
+      mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
+      mediaAttachmentRepo is IncomingDirectMediaBlobCustodyRepository) {
+    final custodyRepository =
+        mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+    final custody = custodyRepository
+        .supportsDirectMediaBlobCustody
+        ? await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
+            attachment.id,
+          )
+        : null;
+    if (custody != null &&
+        custody.direction == DirectMediaBlobCustodyDirection.incoming &&
+        (custody.state == DirectMediaBlobCustodyState.incomingCommitted ||
+            custody.state == DirectMediaBlobCustodyState.incomingAckPending)) {
+      final lock = directPrivateRuntime.directPrivateMediaLifecycleLock;
+      final token = await lock.synchronized(attachment.id, () async {
+        final claimed = directPrivateMediaTransferRegistry.tryBegin(
+          attachment.id,
+          messageId: attachment.messageId,
+        );
+        if (claimed == null) return null;
+        final began = await directPrivateDownloadRepo!
+            .beginDirectPrivateMediaDownloadWithinLock(
+              attachment.id,
+              messageId: attachment.messageId,
+              nowMs: currentNowMs(),
+            );
+        if (!began) {
+          directPrivateMediaTransferRegistry.end(attachment.id, claimed);
+          return null;
+        }
+        return claimed;
+      });
+      if (token == null) return null;
+      try {
+        return await StrictDirectMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          privateDeterministicStaging: true,
+          now: () =>
+              DateTime.fromMillisecondsSinceEpoch(currentNowMs(), isUtc: true),
+        ).downloadAndAcknowledge(
+          attachment: attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+          contactPeerId: contactPeerId,
+        );
+      } finally {
+        await lock.synchronized(attachment.id, () async {
+          directPrivateMediaTransferRegistry.end(attachment.id, token);
+        });
+      }
+    }
+  }
   if (owner == MediaOwnerLane.direct &&
       !enforceGroupMediaPolicy &&
       !requiresDirectPrivateCommit &&

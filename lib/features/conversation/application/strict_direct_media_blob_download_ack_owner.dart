@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart'
     show kMediaDownloadStatusDone;
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -92,6 +93,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
     required this.mediaFileManager,
     StrictDirectMediaBlobDownloadCoordinator? downloadCoordinator,
     this.beforeSourcePinnedAck,
+    this.privateDeterministicStaging = false,
     DateTime Function()? now,
   }) : downloadCoordinator =
            downloadCoordinator ??
@@ -103,7 +105,26 @@ final class StrictDirectMediaBlobDownloadAckOwner {
   final MediaFileManager mediaFileManager;
   final StrictDirectMediaBlobDownloadCoordinator downloadCoordinator;
   final StrictDirectMediaBlobBeforeSourcePinnedAck? beforeSourcePinnedAck;
+
+  /// Plan 354: use one deterministic convention-owned ciphertext/decrypt
+  /// staging pair instead of the ordinary timestamped relay candidate, and
+  /// path-authorize every target before bridge, network or decrypt work.
+  ///
+  /// The ordinary `.strict-<micros>.enc` candidate decrypts to a dynamic
+  /// `.dec` path that private cleanup cannot enumerate; these deterministic
+  /// siblings are removable by the existing private cleanup and restart
+  /// recovery without a wildcard directory scan.
+  final bool privateDeterministicStaging;
   final DateTime Function() now;
+
+  /// The exact ciphertext staging sibling for one private strict download.
+  static String privateCiphertextStagingPath(String canonicalAbsolutePath) =>
+      '$canonicalAbsolutePath.private.enc';
+
+  /// The exact decrypt staging sibling the bridge derives from the ciphertext
+  /// sibling above.
+  static String privateDecryptStagingPath(String canonicalAbsolutePath) =>
+      '${privateCiphertextStagingPath(canonicalAbsolutePath)}.dec';
 
   DirectMediaBlobCustodyRepository? get _custodyRepository =>
       mediaAttachmentRepository is DirectMediaBlobCustodyRepository
@@ -195,6 +216,24 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       blobId: attachment.id,
       mime: attachment.mime,
     );
+    if (privateDeterministicStaging) {
+      // Path-authorize the canonical target and BOTH deterministic staging
+      // siblings before any bridge, network or decrypt work. An unsafe symlink
+      // refuses here with zero target mutation, network, DB write or ACK.
+      final authorityRoot = await mediaFileManager.trustedMediaRootPath();
+      for (final target in <String>[
+        absolutePath,
+        privateCiphertextStagingPath(absolutePath),
+        privateDecryptStagingPath(absolutePath),
+      ]) {
+        if (!await DirectPrivateMediaPathGuard.authorizeTarget(
+          targetPath: target,
+          authorityRoot: authorityRoot,
+        )) {
+          return null;
+        }
+      }
+    }
     final lanCandidate = File('$absolutePath.enc');
     String? sourceRelayPeerId;
     late File ciphertext;
@@ -205,9 +244,19 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       ciphertext = lanCandidate;
     } else {
       final relayCandidate = File(
-        '$absolutePath.strict-${now().toUtc().microsecondsSinceEpoch}.enc',
+        privateDeterministicStaging
+            ? privateCiphertextStagingPath(absolutePath)
+            : '$absolutePath.strict-${now().toUtc().microsecondsSinceEpoch}.enc',
       );
       await relayCandidate.parent.create(recursive: true);
+      if (privateDeterministicStaging) {
+        // A crashed earlier attempt may have left this exact deterministic
+        // pair behind. Remove both before reusing them.
+        await _deleteRegularFile(relayCandidate);
+        await _deleteRegularFile(
+          File(privateDecryptStagingPath(absolutePath)),
+        );
+      }
       final result = await callP2PMediaDownload(
         bridge,
         id: attachment.id,
@@ -283,6 +332,17 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       if (!committed) return null;
     } finally {
       if (ownsCiphertextCandidate) await _deleteRegularFile(ciphertext);
+      if (privateDeterministicStaging) {
+        // Both deterministic siblings are removed on every exit, including a
+        // decrypt-before-commit failure. Restart recovery removes the same two
+        // exact paths; no wildcard scan is introduced.
+        await _deleteRegularFile(
+          File(privateCiphertextStagingPath(absolutePath)),
+        );
+        await _deleteRegularFile(
+          File(privateDecryptStagingPath(absolutePath)),
+        );
+      }
     }
 
     if (sourceRelayPeerId != null) {

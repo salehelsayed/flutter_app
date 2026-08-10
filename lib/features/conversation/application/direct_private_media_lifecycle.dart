@@ -1232,6 +1232,12 @@ class DirectPrivateMediaLifecycle
         (path: '${target.path}.part', root: target.root),
         (path: '${target.path}.enc', root: target.root),
         (path: '${target.path}.enc.part', root: target.root),
+        // 354: the exact deterministic private strict download staging pair.
+        // Naming both explicitly keeps cleanup and restart recovery free of a
+        // wildcard directory scan while still removing a decrypt-before-commit
+        // crash residue.
+        (path: '${target.path}.private.enc', root: target.root),
+        (path: '${target.path}.private.enc.dec', root: target.root),
       ]);
     }
     // Preflight every target before the first unlink so a later unsafe symlink

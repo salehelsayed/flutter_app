@@ -4089,6 +4089,23 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             parent.hiddenAt != null) {
           return false;
         }
+        // 354: a protected/View-Once parent is RETAINED without network here.
+        // Its plaintext requires explicit user intent through downloadMedia,
+        // which this callback deliberately bypasses. The independent v111
+        // obligation still converges on its own: an already ACK-pending row
+        // keeps retrying its source ACK, and expiry still applies.
+        if (parent.privateMediaPolicy.requiresRedaction) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'DIRECT_MEDIA_BLOB_DRAIN_PRIVATE_RETAINED',
+            details: {
+              'id': row.messageId.length > 8
+                  ? row.messageId.substring(0, 8)
+                  : row.messageId,
+            },
+          );
+          return false;
+        }
         final attachments = await mediaAttachmentRepository
             .getAttachmentsForMessage(
               row.messageId,
