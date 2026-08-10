@@ -2,6 +2,10 @@ import 'dart:async';
 import 'dart:convert';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
@@ -2063,6 +2067,122 @@ void main() {
               as Map<String, dynamic>;
       expect(envelope['type'], 'message_deletion');
       expect(envelope['eventId'], custody.single['event_id']);
+    });
+  });
+
+  group('Plan 354 private local hide and strict handoff', () {
+    test('TC-354-02d private local hide and strict handoff have no post-terminal '
+        'egress', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'tc354-02d-hide';
+      const attachmentId = 'tc354-02d-hide-attachment';
+      final original = await seedPrivateDeleteForEveryoneParent(
+        fixture,
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+      // A live prepared v111 generation exists for this parent.
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.outgoing,
+        state: DirectMediaBlobCustodyState.outgoingPrepared,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: 'peer-bob',
+        ciphertextRelativePath:
+            'direct_media_blob_custody_v1/'
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/'
+            '$attachmentId.blob',
+        contentHash:
+            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+        ciphertextSize: 4096,
+        expiresAtMs: null,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-10T12:00:00.000Z',
+        updatedAt: '2026-08-10T12:00:00.000Z',
+      );
+      await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+
+      final count = await deleteMessageForMe(
+        message: original,
+        messageRepo: fixture.messageRepo,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+      );
+      expect(count, 1);
+
+      // The hide is durable and terminal.
+      final hidden = await fixture.messageRepo.getMessage(messageId);
+      expect(hidden?.hiddenAt, isNotNull);
+
+      // A hide that wins before the strict handoff produces ZERO later
+      // egress: the strict envelope+v108+v111 transaction refuses because
+      // its parent is no longer a live private owner.
+      final blocked =
+          await dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
+            fixture.db,
+            <String, Object?>{
+              'id': attachmentId,
+              'message_id': messageId,
+              'owner_lane': 'direct',
+              'mime': 'image/jpeg',
+              'size': 1024,
+              'media_type': 'image',
+              'local_path': MediaFilePathConvention.relativePathForAttachment(
+                contactPeerId: 'peer-bob',
+                blobId: attachmentId,
+                mime: 'image/jpeg',
+              ),
+              'download_status': 'done',
+              'created_at': '2026-08-10T12:00:00.000Z',
+              'content_hash': custody.contentHash,
+              'encryption_key_base64': 'ref',
+              'encryption_nonce': 'nonce',
+              'encryption_scheme': 'blob_aes_256_gcm_v1',
+            },
+            expectedPendingLocalPath:
+                'pending_uploads/$messageId/$attachmentId.jpg',
+            envelope: '{"type":"chat_message"}',
+            hasOwnedPendingCompletion: false,
+            wireMediaBlobManifestHash: 'f' * 64,
+            wireMediaBlobExpiresAtMs: 2100000000000,
+          );
+      expect(
+        blocked.authorizesTransport,
+        isFalse,
+        reason: 'a hidden parent can never authorize chat egress',
+      );
+      expect(
+        await fixture.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        isEmpty,
+        reason: 'no v108 obligation may be created behind a hide',
+      );
+
+      // Retention-first cleanup: the live prepared generation keeps its
+      // complete projection so the global drain can still terminalize it.
+      expect(
+        await fixture.rawAttachmentRow(attachmentId),
+        isNotNull,
+        reason:
+            'a live outgoing_prepared v111 retains its attachment until the '
+            'global blob drain terminalizes that independent authority',
+      );
+      expect(
+        await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        hasLength(1),
+      );
     });
   });
 }

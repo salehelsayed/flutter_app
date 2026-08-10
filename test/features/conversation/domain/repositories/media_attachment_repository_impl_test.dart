@@ -19,6 +19,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
@@ -7906,6 +7907,221 @@ END
         );
       },
     );
+
+    test('TC-354-01c protected and view-once publish blob custody before first '
+        'network', () async {
+      // Coordinator tier over real SQLite: this is the exact production
+      // seam the composer calls, so the ordering it proves — complete v111
+      // durable BEFORE the LAN callback and BEFORE the sole strict relay
+      // upload — is the same Barrier A the composer depends on.
+      final tempDir = Directory.systemTemp.createTempSync('tc354_barrier_a_');
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+
+      for (final shape
+          in <({String suffix, String mode, String mime, String mediaType})>[
+            (
+              suffix: 'protected-image',
+              mode: 'protected',
+              mime: 'image/jpeg',
+              mediaType: 'image',
+            ),
+            (
+              suffix: 'protected-video',
+              mode: 'protected',
+              mime: 'video/mp4',
+              mediaType: 'video',
+            ),
+            (
+              suffix: 'viewonce-image',
+              mode: 'view_once',
+              mime: 'image/jpeg',
+              mediaType: 'image',
+            ),
+          ]) {
+        final candidate = privateCandidate(
+          suffix: 'barrier-a-${shape.suffix}',
+          mode: shape.mode,
+          mime: shape.mime,
+          mediaType: shape.mediaType,
+        );
+        await seedPrivatePending(candidate);
+        final plaintext = File('${tempDir.path}/${shape.suffix}.bin')
+          ..writeAsBytesSync(<int>[1, 2, 3, 4, 5]);
+
+        final networkOrder = <String>[];
+        var lanSawCompleteGeneration = false;
+        var uploadSawCompleteGeneration = false;
+        final blobRepository = fixture.repo as DirectMediaBlobCustodyRepository;
+
+        Future<bool> generationIsDurablyComplete(String attachmentId) async {
+          final rows = await blobRepository
+              .loadDirectMediaBlobCustodyForMessage(candidate.parent.id);
+          final durable = await fixture.repo.getAttachmentsForMessage(
+            candidate.parent.id,
+            owner: MediaOwnerLane.direct,
+          );
+          return rows.length == 1 &&
+              rows.single.attachmentId == attachmentId &&
+              rows.single.direction ==
+                  DirectMediaBlobCustodyDirection.outgoing &&
+              durable.length == 1 &&
+              // The convention-owned pending row survives publication.
+              durable.single.downloadStatus == 'upload_pending' &&
+              durable.single.localPath == candidate.pending.localPath &&
+              durable.single.contentHash != null &&
+              durable.single.encryptionKeyBase64 != null &&
+              durable.single.encryptionNonce != null;
+        }
+
+        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: blobRepository,
+          artifactStore: DirectMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async => tempDir,
+          ),
+          prepareArtifact:
+              ({required Bridge bridge, required String localFilePath}) async {
+                final ciphertextPath = '$localFilePath.enc';
+                final bytes = File(localFilePath).readAsBytesSync();
+                File(ciphertextPath).writeAsBytesSync(bytes, flush: true);
+                return EncryptedMediaArtifact(
+                  encryptedPath: ciphertextPath,
+                  keyBase64: 'tc354-barrier-a-key-${shape.suffix}',
+                  nonce: 'tc354-barrier-a-nonce-${shape.suffix}',
+                  scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                  contentHash: sha256.convert(bytes).toString(),
+                  plaintextSize: bytes.length,
+                );
+              },
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                uploadSawCompleteGeneration = await generationIsDurablyComplete(
+                  attachmentId,
+                );
+                networkOrder.add('strict-upload');
+                expect(
+                  sha256
+                      .convert(File(ciphertextPath).readAsBytesSync())
+                      .toString(),
+                  contentHash,
+                );
+                return <String, dynamic>{
+                  'ok': true,
+                  'id': attachmentId,
+                  'storeStatus': 'stored',
+                  'custodyKind': 'direct_media_blob_v1',
+                  'custodyContract': 'ack_or_expiry_v1',
+                  'contentHash': contentHash,
+                  'size': ciphertextSize,
+                  'mime': 'application/octet-stream',
+                  'expiresAtMs': 2000000000000,
+                  'custodyRelayPeerId': 'relay-354-barrier-a',
+                };
+              },
+        );
+
+        final result = await coordinator.prepareAndUploadPrivate(
+          bridge: RecordingFakeBridge(),
+          identityPeerId: candidate.parent.senderPeerId,
+          recipientPeerId: candidate.parent.contactPeerId,
+          expectedParent: candidate.parent,
+          source: PreparedDirectMediaBlobSource(
+            attachment: candidate.pending,
+            plaintextPath: plaintext.path,
+          ),
+          onGenerationReady: (artifacts) async {
+            lanSawCompleteGeneration = await generationIsDurablyComplete(
+              artifacts.single.attachment.id,
+            );
+            networkOrder.add('lan');
+          },
+        );
+
+        expect(result.isComplete, isTrue, reason: shape.suffix);
+        expect(result.attachments, hasLength(1));
+        expect(result.attachments.single.blobCustody?.isValid, isTrue);
+        expect(
+          lanSawCompleteGeneration,
+          isTrue,
+          reason: 'the LAN acceleration callback must see complete v111',
+        );
+        expect(
+          uploadSawCompleteGeneration,
+          isTrue,
+          reason: 'the strict relay upload must see complete v111',
+        );
+        expect(
+          networkOrder,
+          <String>['lan', 'strict-upload'],
+          reason: 'LAN is acceleration only and never cancels strict custody',
+        );
+        final rows = await blobRepository.loadDirectMediaBlobCustodyForMessage(
+          candidate.parent.id,
+        );
+        expect(rows.single.state, DirectMediaBlobCustodyState.outgoingStored);
+      }
+
+      // View-Once video is outside the producer matrix: it refuses before
+      // encryption, before any durable publication, and before any network.
+      final refusedCandidate = privateCandidate(
+        suffix: 'barrier-a-viewonce-video',
+        mode: 'view_once',
+        mime: 'video/mp4',
+        mediaType: 'video',
+      );
+      await seedPrivatePending(refusedCandidate);
+      var prepareCalls = 0;
+      var uploadCalls = 0;
+      final refusingCoordinator = PreparedDirectMediaBlobCustodyCoordinator(
+        repository: fixture.repo as DirectMediaBlobCustodyRepository,
+        artifactStore: DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => tempDir,
+        ),
+        prepareArtifact:
+            ({required Bridge bridge, required String localFilePath}) async {
+              prepareCalls++;
+              throw StateError('encryption must not run');
+            },
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              uploadCalls++;
+              return <String, dynamic>{'ok': false};
+            },
+      );
+      final refused = await refusingCoordinator.prepareAndUploadPrivate(
+        bridge: RecordingFakeBridge(),
+        identityPeerId: refusedCandidate.parent.senderPeerId,
+        recipientPeerId: refusedCandidate.parent.contactPeerId,
+        expectedParent: refusedCandidate.parent,
+        source: PreparedDirectMediaBlobSource(
+          attachment: refusedCandidate.pending,
+          plaintextPath: '${tempDir.path}/never.bin',
+        ),
+      );
+      expect(refused.isComplete, isFalse);
+      expect(prepareCalls, 0, reason: 'no encryption before the matrix gate');
+      expect(uploadCalls, 0, reason: 'no network before the matrix gate');
+      expect(
+        await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForMessage(refusedCandidate.parent.id),
+        isEmpty,
+      );
+    });
 
     test('TC-354-04b private strict receive key CAS is exact', () async {
       const senderPeerId = 'tc354-repo-incoming-peer';

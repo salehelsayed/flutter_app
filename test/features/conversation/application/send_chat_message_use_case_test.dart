@@ -4044,6 +4044,235 @@ void main() {
       },
     );
 
+    test('TC-354-02b private initial keeps ACK-or-expiry custody across node live '
+        'and completion races', () async {
+      const timestamp = '2026-08-10T11:00:00.000Z';
+      const manifestExpiry = 2100000000000;
+
+      ({
+        MediaAttachment attachment,
+        _PrivateStrictCustodyMessageRepository repository,
+        _PrivateMutationMediaRepository media,
+        String messageId,
+      })
+      seedStrictPrivate(String suffix) {
+        final messageId = 'tc354-02b-$suffix';
+        final attachmentId = '$messageId-att';
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 1024,
+          mediaType: 'image',
+          localPath: MediaFilePathConvention.relativePathForAttachment(
+            contactPeerId: 'target-peer',
+            blobId: attachmentId,
+            mime: 'image/jpeg',
+          ),
+          downloadStatus: 'done',
+          createdAt: timestamp,
+          contentHash:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          encryptionKeyBase64: 'tc354-02b-key',
+          encryptionNonce: 'tc354-02b-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+          blobCustody: const DirectMediaBlobCustodyCommitment(
+            contentHash:
+                'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+            ciphertextSize: 2048,
+            expiresAtMs: manifestExpiry,
+          ),
+        );
+        return (
+          attachment: attachment,
+          repository: _PrivateStrictCustodyMessageRepository(
+            ConversationMessage(
+              id: messageId,
+              contactPeerId: 'target-peer',
+              senderPeerId: 'my-peer',
+              text: '',
+              timestamp: timestamp,
+              status: 'sending',
+              isIncoming: false,
+              createdAt: timestamp,
+              privateMediaPolicy: const PrivateMediaPolicy.protected(),
+              privateMediaState: PrivateMediaLifecycleState.available,
+            ),
+          ),
+          media: _PrivateMutationMediaRepository()
+            ..seed(<MediaAttachment>[attachment]),
+          messageId: messageId,
+        );
+      }
+
+      // 1. Node off: the strict private initial STAGES its exact custody
+      //    instead of returning the historical nodeNotRunning refusal.
+      final nodeOff = seedStrictPrivate('node-off');
+      final stoppedService = FakeP2PService(
+        currentState: const NodeState(isStarted: false),
+      );
+      var mediaStoreCalls = 0;
+      final (nodeOffResult, _) = await chat_use_case.sendChatMessage(
+        p2pService: stoppedService,
+        messageRepo: nodeOff.repository,
+        targetPeerId: 'target-peer',
+        text: '',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: nodeOff.messageId,
+        preassignedMessageIdIsFresh: false,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+        mediaAttachments: <MediaAttachment>[nodeOff.attachment],
+        privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        mediaAttachmentRepo: nodeOff.media,
+        storeInAckCustodyInboxDetailed:
+            (peer, message, {required custodyKind, timeoutMs}) async =>
+                const InboxStoreOutcome(status: InboxStoreStatus.failed),
+        storeInMediaExpiryBoundedInboxDetailed:
+            (
+              peer,
+              message, {
+              required custodyExpiresAtOrBeforeMs,
+              timeoutMs,
+            }) async {
+              mediaStoreCalls++;
+              return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+            },
+      );
+      expect(nodeOffResult, SendChatMessageResult.nodeNotRunning);
+      expect(
+        nodeOff.repository.strictHandoffCalls,
+        1,
+        reason: 'node-off must still commit the exact envelope+v108+v111',
+      );
+      expect(
+        nodeOff.repository.legacyEnvelopeHandoffCalls,
+        0,
+        reason: 'a strict private initial never uses the envelope-only path',
+      );
+      expect(nodeOff.repository.lastManifestExpiry, manifestExpiry);
+
+      // 2. Live delivery: the exact v108 hedge is NOT cancelled, the
+      //    media-expiry-bounded store is used, and only exact
+      //    stored + ack_or_expiry_v1 acceptance completes it.
+      final live = seedStrictPrivate('live-ack');
+      final liveService = FakeP2PService(sendMessageResult: false);
+      var genericStoreCalls = 0;
+      var expiryBoundedCalls = 0;
+      int? observedCustodyBound;
+      final (liveResult, _) = await chat_use_case.sendChatMessage(
+        p2pService: liveService,
+        messageRepo: live.repository,
+        targetPeerId: 'target-peer',
+        text: '',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: live.messageId,
+        preassignedMessageIdIsFresh: false,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+        mediaAttachments: <MediaAttachment>[live.attachment],
+        privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        mediaAttachmentRepo: live.media,
+        storeInAckCustodyInboxDetailed:
+            (peer, message, {required custodyKind, timeoutMs}) async {
+              genericStoreCalls++;
+              return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+            },
+        storeInMediaExpiryBoundedInboxDetailed:
+            (
+              peer,
+              message, {
+              required custodyExpiresAtOrBeforeMs,
+              timeoutMs,
+            }) async {
+              expiryBoundedCalls++;
+              observedCustodyBound = custodyExpiresAtOrBeforeMs;
+              return InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+                expiresAtMs: manifestExpiry - 1000,
+              );
+            },
+      );
+      expect(liveResult, SendChatMessageResult.success);
+      expect(live.repository.strictHandoffCalls, 1);
+      expect(
+        expiryBoundedCalls,
+        1,
+        reason: 'a strict private initial rides the media-expiry-bounded store',
+      );
+      expect(
+        observedCustodyBound,
+        manifestExpiry,
+        reason: 'the bound is the exact bound v111 earliest expiry',
+      );
+      expect(
+        genericStoreCalls,
+        0,
+        reason: 'the generic ACK store never owns a bound generation',
+      );
+      expect(
+        live.repository.acceptedRelayExpiries,
+        <int?>[manifestExpiry - 1000],
+        reason:
+            'only exact stored + ack_or_expiry_v1 acceptance completes the '
+            'v108 owner',
+      );
+      expect(
+        live.repository.directCustodyRows,
+        isEmpty,
+        reason: 'exact acceptance retires the incarnation',
+      );
+
+      // 3. A generic "stored" WITHOUT the ack-or-expiry contract must NOT
+      //    complete v108: the exact obligation is retained for the drain.
+      final nonProof = seedStrictPrivate('non-proof');
+      final nonProofService = FakeP2PService(sendMessageResult: false);
+      await chat_use_case.sendChatMessage(
+        p2pService: nonProofService,
+        messageRepo: nonProof.repository,
+        targetPeerId: 'target-peer',
+        text: '',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: nonProof.messageId,
+        preassignedMessageIdIsFresh: false,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: testRecipientMlKemPublicKey,
+        mediaAttachments: <MediaAttachment>[nonProof.attachment],
+        privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        mediaAttachmentRepo: nonProof.media,
+        storeInAckCustodyInboxDetailed:
+            (peer, message, {required custodyKind, timeoutMs}) async =>
+                const InboxStoreOutcome(status: InboxStoreStatus.failed),
+        storeInMediaExpiryBoundedInboxDetailed:
+            (
+              peer,
+              message, {
+              required custodyExpiresAtOrBeforeMs,
+              timeoutMs,
+            }) async => const InboxStoreOutcome(
+              status: InboxStoreStatus.stored,
+              storeStatus: 'stored',
+            ),
+      );
+      expect(nonProof.repository.strictHandoffCalls, 1);
+      expect(
+        nonProof.repository.acceptedRelayExpiries,
+        isEmpty,
+        reason: 'a proof-less stored result cannot retire strict custody',
+      );
+      expect(
+        nonProof.repository.directCustodyRows,
+        hasLength(1),
+        reason: 'the exact v108 obligation is retained for the drain',
+      );
+    });
+
     test(
       'TC-342-04i pre-stage repository read error returns definitive non-staged failure',
       () async {
@@ -11853,4 +12082,133 @@ class _SlowLocalFastDirectP2PService implements P2PService {
 
   @override
   void dispose() {}
+}
+
+/// Plan 354 private strict Barrier B fake.
+///
+/// Records the exact envelope/v108/v111 handoff the send boundary requests and
+/// returns the immutable committed authority, exactly like the real one-
+/// transaction owner.
+class _PrivateStrictCustodyMessageRepository extends FakeMessageRepository
+    implements
+        OutgoingDirectPrivateEnvelopeCustodyRepository,
+        OutgoingDirectPrivateMediaInboxCustodyRepository {
+  _PrivateStrictCustodyMessageRepository(this.current);
+
+  ConversationMessage current;
+  int strictHandoffCalls = 0;
+  int legacyEnvelopeHandoffCalls = 0;
+  int settlementCalls = 0;
+  String? lastManifestHash;
+  int? lastManifestExpiry;
+  final List<int?> acceptedRelayExpiries = <int?>[];
+
+  @override
+  bool get supportsOutgoingDirectPrivateMediaInboxCustody => true;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) async =>
+      id == current.id ? current : null;
+
+  @override
+  Future<OutgoingDirectPrivateInboxCustodyResult>
+  commitOutgoingDirectPrivateWireEnvelopeWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+    required String wireMediaBlobManifestHash,
+    required int wireMediaBlobExpiresAtMs,
+  }) async {
+    strictHandoffCalls++;
+    lastManifestHash = wireMediaBlobManifestHash;
+    lastManifestExpiry = wireMediaBlobExpiresAtMs;
+    current = current.copyWith(wireEnvelope: envelope);
+    final custody = DirectInboxCustodyOutboxEntry(
+      recipientPeerId: current.contactPeerId,
+      messageId: messageId,
+      incarnationId: 'd' * 32,
+      wireEnvelope: envelope,
+      retryCount: 0,
+      lastAttemptAt: null,
+      lastErrorCode: null,
+      mediaBlobManifestHash: wireMediaBlobManifestHash,
+      mediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+      createdAt: current.createdAt,
+      updatedAt: current.createdAt,
+    );
+    directCustodyRows[_custodyKey(current.contactPeerId, messageId)] = custody;
+    return OutgoingDirectPrivateInboxCustodyResult(
+      outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+      custody: custody,
+    );
+  }
+
+  @override
+  Future<bool> invalidateWireEnvelopeBeforePrivateUpload({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  }) async => true;
+
+  @override
+  Future<bool> markOutgoingDirectPrivateUploadHandoffFailed({
+    required String messageId,
+    required String attachmentId,
+    required String expectedPendingLocalPath,
+  }) async => true;
+
+  @override
+  Future<OutgoingDirectPrivateEnvelopeHandoffOutcome>
+  commitOutgoingDirectPrivateWireEnvelope({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required String envelope,
+    required bool hasOwnedPendingCompletion,
+  }) async {
+    legacyEnvelopeHandoffCalls++;
+    return OutgoingDirectPrivateEnvelopeHandoffOutcome.committed;
+  }
+
+  @override
+  Future<OutgoingDirectPrivateTransportSettlementOutcome>
+  settleOutgoingDirectPrivateTransport({
+    required String messageId,
+    required String? attachmentId,
+    required String expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+  }) async {
+    settlementCalls++;
+    current = current.copyWith(
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+    );
+    return OutgoingDirectPrivateTransportSettlementOutcome.committed;
+  }
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    acceptedRelayExpiries.add(relayExpiresAt);
+    directCustodyRows.remove(
+      _custodyKey(expected.recipientPeerId, expected.messageId),
+    );
+    current = current.copyWith(
+      status: 'inboxed',
+      transport: 'inbox',
+      relayExpiresAt: relayExpiresAt,
+    );
+    return DirectInboxCustodyCompletionResult(
+      outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
+      message: current,
+    );
+  }
 }
