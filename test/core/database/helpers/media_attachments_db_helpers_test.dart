@@ -6130,5 +6130,372 @@ void main() {
         DirectMediaBlobCustodyState.outgoingCleanupPending.dbValue,
       );
     });
+
+    test('TC-354-04a private strict receive is all-or-none', () async {
+      const nowMs = 1900000000000;
+      Map<String, Object?> incomingParent({
+        required String messageId,
+        required String senderPeerId,
+        String mode = 'protected',
+        String state = 'available',
+        Object? terminalAtMs,
+        Object? hiddenAt,
+        Object? deletedAt,
+      }) => <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': senderPeerId,
+        'sender_peer_id': senderPeerId,
+        'text': '',
+        'timestamp': '2026-08-10T10:00:00.000Z',
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': '2026-08-10T10:00:00.000Z',
+        'dedup_key': messageId,
+        'hidden_at': hiddenAt,
+        'deleted_at': deletedAt,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_state': state,
+        'private_media_received_at_ms': nowMs,
+        'private_media_clock_high_water_ms': nowMs,
+        'private_media_terminal_at_ms': terminalAtMs,
+      };
+
+      ({Map<String, Object?> attachment, DirectMediaBlobCustodyRow custody})
+      incomingMedia({
+        required String messageId,
+        required String attachmentId,
+        String mime = 'image/jpeg',
+        String mediaType = 'image',
+        int expiresAtMs = nowMs + 600000,
+        DirectMediaBlobCustodyState state =
+            DirectMediaBlobCustodyState.incomingCommitted,
+      }) {
+        final custody = DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: state,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          ciphertextRelativePath: null,
+          contentHash: _tc354ContentHash,
+          ciphertextSize: 7000,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: '2026-08-10T10:00:01.000Z',
+          updatedAt: '2026-08-10T10:00:01.000Z',
+        );
+        final attachment = <String, Object?>{
+          ...makeAttachmentRow(
+            id: attachmentId,
+            messageId: messageId,
+            mime: mime,
+            size: 6000,
+            mediaType: mediaType,
+            width: 100,
+            height: 200,
+            downloadStatus: 'pending',
+            contentHash: _tc354ContentHash,
+            encryptionKeyBase64: secureStoreReferenceForKey(
+              mediaAttachmentEncryptionKeyStoreName(attachmentId),
+            ),
+            encryptionNonce: 'nonce-incoming-$attachmentId',
+            encryptionScheme: 'blob_aes_256_gcm_v1',
+          ),
+          'direct_media_blob_custody_fingerprint':
+              computeDirectMediaBlobCommitmentFingerprint(
+                attachmentId: attachmentId,
+                commitment: DirectMediaBlobCustodyCommitment(
+                  kind: custody.custodyKind,
+                  contract: custody.custodyContract,
+                  contentHash: custody.contentHash,
+                  ciphertextSize: custody.ciphertextSize,
+                  transportMime: custody.transportMime,
+                  expiresAtMs: expiresAtMs,
+                ),
+              ),
+        };
+        return (attachment: attachment, custody: custody);
+      }
+
+      // Positive: Protected image and View-Once image stage atomically.
+      for (final mode in <String>['protected', 'view_once']) {
+        final messageId = 'tc354-04a-$mode';
+        final senderPeerId = 'tc354-04a-peer-$mode';
+        final media = incomingMedia(
+          messageId: messageId,
+          attachmentId: '$messageId-a',
+        );
+        final applied = await dbStageIncomingDirectPrivateMediaBlobCustody(
+          db,
+          messageRow: incomingParent(
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            mode: mode,
+          ),
+          attachmentRow: media.attachment,
+          custodyRow: media.custody,
+        );
+        expect(
+          applied.outcome,
+          IncomingDirectMediaBlobDbStageOutcome.applied,
+          reason: mode,
+        );
+        final parent = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+        expect(parent['private_media_state'], 'available');
+        expect(parent['private_media_received_at_ms'], nowMs);
+        expect(parent['private_media_clock_high_water_ms'], nowMs);
+        expect(parent['private_media_revealed_at_ms'], isNull);
+        expect(parent['private_media_terminal_at_ms'], isNull);
+        expect(parent['private_media_expires_at_ms'], isNull);
+        expect(
+          await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(1),
+        );
+        expect(
+          (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single['state'],
+          DirectMediaBlobCustodyState.incomingCommitted.dbValue,
+        );
+
+        // Exact replay is idempotent and creates no second row.
+        expect(
+          (await dbStageIncomingDirectPrivateMediaBlobCustody(
+            db,
+            messageRow: incomingParent(
+              messageId: messageId,
+              senderPeerId: senderPeerId,
+              mode: mode,
+            ),
+            attachmentRow: media.attachment,
+            custodyRow: media.custody,
+          )).outcome,
+          IncomingDirectMediaBlobDbStageOutcome.idempotent,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(1),
+        );
+      }
+
+      // Negative producer matrix: View-Once video and GIF refuse with zero
+      // parent, attachment, key or custody effects.
+      for (final negative
+          in <({String suffix, String mode, String mime, String mediaType})>[
+            (
+              suffix: 'viewonce-video',
+              mode: 'view_once',
+              mime: 'video/mp4',
+              mediaType: 'video',
+            ),
+            (
+              suffix: 'gif',
+              mode: 'protected',
+              mime: 'image/gif',
+              mediaType: 'image',
+            ),
+          ]) {
+        final messageId = 'tc354-04a-neg-${negative.suffix}';
+        final media = incomingMedia(
+          messageId: messageId,
+          attachmentId: '$messageId-a',
+          mime: negative.mime,
+          mediaType: negative.mediaType,
+        );
+        expect(
+          (await dbStageIncomingDirectPrivateMediaBlobCustody(
+            db,
+            messageRow: incomingParent(
+              messageId: messageId,
+              senderPeerId: 'tc354-04a-neg-peer-${negative.suffix}',
+              mode: negative.mode,
+            ),
+            attachmentRow: media.attachment,
+            custodyRow: media.custody,
+          )).outcome,
+          IncomingDirectMediaBlobDbStageOutcome.refused,
+          reason: negative.suffix,
+        );
+        expect(
+          await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+      }
+
+      // Terminal replay matrix.
+      Future<IncomingDirectMediaBlobDbStageOutcome> replayAgainstTerminal({
+        required String suffix,
+        required String state,
+        Object? terminalAtMs,
+        Object? hiddenAt,
+        bool keepSurvivor = true,
+        DirectMediaBlobCustodyState survivorState =
+            DirectMediaBlobCustodyState.incomingCommitted,
+        int survivorExpiresAtMs = nowMs + 600000,
+        bool removeParent = false,
+      }) async {
+        final messageId = 'tc354-04a-term-$suffix';
+        final senderPeerId = 'tc354-04a-term-peer-$suffix';
+        final attachmentId = '$messageId-a';
+        final media = incomingMedia(
+          messageId: messageId,
+          attachmentId: attachmentId,
+        );
+        await db.insert(
+          'messages',
+          incomingParent(
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            state: state,
+            terminalAtMs: terminalAtMs,
+            hiddenAt: hiddenAt,
+          ),
+        );
+        if (keepSurvivor) {
+          await db.insert(
+            kDirectMediaBlobCustodyTable,
+            media.custody
+                .copyWith(
+                  state: survivorState,
+                  expiresAtMs: survivorExpiresAtMs,
+                  // Source/retry metadata exists only on an ACK-pending
+                  // survivor and is deliberately NOT replay input.
+                  custodyRelayPeerId:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? 'relay-$suffix'
+                      : null,
+                  retryCount:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? 2
+                      : 0,
+                  lastAttemptAt:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? '2026-08-10T10:05:00.000Z'
+                      : null,
+                  nextAttemptAt:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? '2026-08-10T10:06:00.000Z'
+                      : null,
+                )
+                .toMap(),
+          );
+        }
+        if (removeParent) {
+          await db.delete(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          );
+        }
+        final outcome = (await dbStageIncomingDirectPrivateMediaBlobCustody(
+          db,
+          messageRow: incomingParent(
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+          ),
+          attachmentRow: media.attachment,
+          custodyRow: media.custody,
+        )).outcome;
+        // Zero effects in every terminal branch: no attachment is ever written.
+        expect(
+          await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+          reason: suffix,
+        );
+        return outcome;
+      }
+
+      // Consumed parent + matching incoming_committed survivor -> receipt.
+      expect(
+        await replayAgainstTerminal(
+          suffix: 'consumed-committed',
+          state: 'consumed',
+          terminalAtMs: nowMs + 1000,
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+      // Consumed parent + matching ACK-pending survivor with independent
+      // source/retry metadata -> still exactly one receipt.
+      expect(
+        await replayAgainstTerminal(
+          suffix: 'consumed-ackpending',
+          state: 'consumed',
+          terminalAtMs: nowMs + 1000,
+          survivorState: DirectMediaBlobCustodyState.incomingAckPending,
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+      // Hidden parent with NO surviving v111 uses the reduced durable parent
+      // equivalence.
+      expect(
+        await replayAgainstTerminal(
+          suffix: 'hidden-no-v111',
+          state: 'consumed',
+          terminalAtMs: nowMs + 1000,
+          hiddenAt: '2026-08-10T10:04:00.000Z',
+          keepSurvivor: false,
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+      // A crossed survivor refuses with no receipt.
+      expect(
+        await replayAgainstTerminal(
+          suffix: 'crossed-survivor',
+          state: 'consumed',
+          terminalAtMs: nowMs + 1000,
+          survivorExpiresAtMs: nowMs + 999999,
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.refused,
+      );
+      // A physically absent parent with only a surviving v111 cannot prove
+      // author or policy: it refuses and is never restaged.
+      expect(
+        await replayAgainstTerminal(
+          suffix: 'absent-parent',
+          state: 'consumed',
+          terminalAtMs: nowMs + 1000,
+          removeParent: true,
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.refused,
+      );
+    });
   });
 }

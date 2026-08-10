@@ -902,4 +902,89 @@ void main() {
       );
     },
   );
+
+  test(
+    'TC-354-05e production wires private retention before strict download',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+
+      // The drain's incoming-download policy callback is the only place the
+      // startup path can reach the strict owner. Plan 354 requires it to
+      // retain a protected/View-Once parent WITHOUT network, so its explicit
+      // user-intent boundary in downloadMedia stays the sole entry.
+      final callback = production.indexOf(
+        'retryIncomingDownload: (row) async {',
+      );
+      expect(
+        callback,
+        greaterThan(-1),
+        reason: 'the drain must own one explicit incoming-download policy',
+      );
+      final callbackEnd = production.indexOf(
+        'strictDownloadAckOwner',
+        callback,
+      );
+      final scanEnd = callbackEnd > callback ? callbackEnd : production.length;
+      final body = production.substring(
+        callback,
+        (callback + 4000) < scanEnd ? callback + 4000 : scanEnd,
+      );
+      expect(
+        body.contains('parent.privateMediaPolicy.requiresRedaction'),
+        isTrue,
+        reason:
+            'a redacted parent must be retained without network here; '
+            'automatic private download is refused by design',
+      );
+      final redactionGuard = body.indexOf(
+        'parent.privateMediaPolicy.requiresRedaction',
+      );
+      // The guard must return false (retain) rather than fall through.
+      expect(body.substring(redactionGuard).contains('return false;'), isTrue);
+
+      // The private strict entry lives behind explicit user intent in the
+      // download use case, and it claims the transfer token plus the DB
+      // downloading claim before the strict owner is constructed.
+      final downloadSource = File(
+        'lib/features/conversation/application/download_media_use_case.dart',
+      ).readAsStringSync();
+      final privateEntry = downloadSource.indexOf(
+        'requiresDirectPrivateCommit &&\n      effectiveIntent == MediaDownloadIntent.explicitUser',
+      );
+      expect(
+        privateEntry,
+        greaterThan(-1),
+        reason: 'the private strict entry must require explicit user intent',
+      );
+      final entryBody = downloadSource.substring(
+        privateEntry,
+        privateEntry + 3000,
+      );
+      final claimIndex = entryBody.indexOf(
+        'beginDirectPrivateMediaDownloadWithinLock',
+      );
+      final tokenIndex = entryBody.indexOf(
+        'directPrivateMediaTransferRegistry.tryBegin',
+      );
+      final ownerIndex = entryBody.indexOf(
+        'StrictDirectMediaBlobDownloadAckOwner(',
+      );
+      expect(tokenIndex, greaterThan(-1));
+      expect(claimIndex, greaterThan(tokenIndex));
+      expect(
+        ownerIndex,
+        greaterThan(claimIndex),
+        reason:
+            'the transfer token and the DB downloading claim must both be '
+            'acquired BEFORE the strict owner can make its first network call',
+      );
+      expect(
+        entryBody.contains('privateDeterministicStaging: true'),
+        isTrue,
+        reason:
+            'the private entry must use the deterministic convention-owned '
+            'staging pair private cleanup can enumerate',
+      );
+    },
+  );
 }

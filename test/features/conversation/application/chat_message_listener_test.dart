@@ -17,6 +17,9 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart'
+    show RecoveredInboxChatDisposition;
+import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -2539,6 +2542,79 @@ void main() {
         expect(allowedEmitted.last.media.single.downloadStatus, 'done');
 
         allowedListener.dispose();
+      },
+    );
+  });
+
+  group('Plan 354 terminal private supersession', () {
+    test(
+      'TC-354-04e terminal private supersession never retries message display',
+      () async {
+        // 1. The disposition is terminal-committed, never retryable: replaying
+        //    it can only repeat the same zero-effect decision.
+        final mapped = mapChatReplayOutcomeToDisposition(
+          const ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.durablySuperseded,
+          ),
+        );
+        expect(mapped.disposition, RecoveredInboxChatDisposition.committed);
+        expect(mapped.reasonCode, 'durably_superseded');
+
+        // 2. It is a DISTINCT state from duplicate, so it cannot inherit the
+        //    duplicate branch's global display retry.
+        expect(
+          ChatMessageProcessState.durablySuperseded,
+          isNot(ChatMessageProcessState.duplicate),
+        );
+
+        // 3. The listener's terminal branch must not call the global display
+        //    retry. This is the exact mutation the plan requires to re-red:
+        //    routing terminal replay through the duplicate/display-retry path.
+        final listenerSource = File(
+          'lib/features/conversation/application/chat_message_listener.dart',
+        ).readAsStringSync();
+        final durableBranch = listenerSource.indexOf(
+          'if (result == HandleChatMessageResult.durablySuperseded) {',
+        );
+        expect(
+          durableBranch,
+          greaterThan(-1),
+          reason: 'the terminal private disposition must have its own branch',
+        );
+        final durableBranchEnd = listenerSource.indexOf(
+          'if (result == HandleChatMessageResult.ignoredEdit) {',
+          durableBranch,
+        );
+        expect(durableBranchEnd, greaterThan(durableBranch));
+        final durableBranchBody = listenerSource.substring(
+          durableBranch,
+          durableBranchEnd,
+        );
+        expect(
+          durableBranchBody.contains('retryNotificationDisplays?.call('),
+          isFalse,
+          reason:
+              'a durably superseded private replay must produce zero display '
+              'effects — the global notification-display retry would re-stage '
+              'a notification for already consumed or removed content',
+        );
+        expect(
+          durableBranchBody.contains(
+            'ChatMessageProcessState.durablySuperseded',
+          ),
+          isTrue,
+        );
+        // The unchanged duplicate branch still owns that retry.
+        final duplicateBranch = listenerSource.indexOf(
+          'if (result == HandleChatMessageResult.duplicate) {',
+        );
+        expect(duplicateBranch, greaterThan(-1));
+        expect(
+          listenerSource
+              .substring(duplicateBranch, duplicateBranch + 400)
+              .contains('retryNotificationDisplays?.call('),
+          isTrue,
+        );
       },
     );
   });
