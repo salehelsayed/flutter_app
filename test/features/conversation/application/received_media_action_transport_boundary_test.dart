@@ -167,12 +167,17 @@ void main() {
     // a local-peer check and the ciphertext-only LAN acceleration callback that
     // runs after the complete generation is published and revalidated. Its one
     // added bridge reference and one artifact-preparation seam supply that same
-    // strict coordinator. It does not add a received-media action route.
+    // strict coordinator. Plan 354 re-pins the same three counters by exactly
+    // one each: the protected/View-Once initial reuses that identical strict
+    // route — one local-peer check, one ciphertext-only LAN callback after the
+    // complete v111 generation is published, one bridge reference and one
+    // artifact-preparation seam into the SAME coordinator. It adds no new
+    // upload/download owner and no received-media action route.
     // Save/Share/Info remain local-only Plan 231 actions. These exact counts
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
-      'widget.p2pService': 21,
-      'widget.bridge': 32,
+      'widget.p2pService': 23,
+      'widget.bridge': 33,
       'widget.sendChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
       'widget.deleteMessageForMeFn(': 1,
@@ -180,7 +185,7 @@ void main() {
       'widget.sendVoiceMessageFn(': 1,
       'widget.uploadMediaFn(': 0,
       'widget.downloadMediaFn(': 2,
-      'prepareEncryptedMediaArtifactFn': 5,
+      'prepareEncryptedMediaArtifactFn': 6,
       '.sendMessageWithReply(': 0,
       '.storeInInbox(': 0,
       'ShareTargetPicker': 1,
