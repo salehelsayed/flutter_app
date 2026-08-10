@@ -1110,10 +1110,7 @@ void main() {
       final retained = await (fixture.repo as DirectMediaBlobCustodyRepository)
           .loadDirectMediaBlobCustodyForAttachment(attachmentId);
       expect(retained, isNotNull);
-      expect(
-        retained!.state,
-        DirectMediaBlobCustodyState.incomingCommitted,
-      );
+      expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
       expect(retained.contentHash, contentHash);
     });
   });

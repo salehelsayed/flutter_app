@@ -985,78 +985,77 @@ void main() {
       );
     },
   );
-  test(
-    'TC-355-04e production notification policies exclude terminal private '
-    'media',
-    () {
-      final production = File(_productionPath).readAsStringSync();
+  test('TC-355-04e production notification policies exclude terminal private '
+      'media', () {
+    final production = File(_productionPath).readAsStringSync();
 
-      // 1. Canonical KEEP: a consumed/expired private parent must be retired
-      //    from canonical notification history like a deleted one.
-      final keep = production.indexOf(
-        'DirectNotificationCanonicalContentDecision.keep',
-      );
-      expect(keep, greaterThan(-1));
-      final keepStart = production.lastIndexOf('return message.contactPeerId', keep);
-      expect(keepStart, greaterThan(-1));
-      final keepBody = production.substring(keepStart, keep);
-      for (final guard in const <String>[
-        'message.isIncoming',
-        'message.readAt == null',
-        '!message.isDeleted',
-        'message.hiddenAt == null',
-        '!message.privateMediaState.isTerminal',
-      ]) {
-        expect(
-          keepBody.contains(guard),
-          isTrue,
-          reason: 'canonical keep must require: \$guard',
-        );
-      }
-
-      // 2. Display PROJECTION: the same terminal states suppress the card.
-      final projection = production.indexOf('projectDisplay: (entry) async {');
-      expect(projection, greaterThan(-1));
-      final projectionBody = production.substring(
-        projection,
-        production.indexOf('return maybeShowNotification(', projection),
-      );
-      for (final guard in const <String>[
-        'message.isDeleted',
-        'message.hiddenAt != null',
-        'message.privateMediaState.isTerminal',
-      ]) {
-        expect(
-          projectionBody.contains(guard),
-          isTrue,
-          reason: 'display projection must suppress: \$guard',
-        );
-      }
-
-      // 3. REPLACEMENT: the shared canonical snapshot builder filters the
-      //    same terminal states before any replacement is produced.
-      final snapshot = File(
-        'lib/features/conversation/application/'
-        'direct_conversation_notification_snapshot.dart',
-      ).readAsStringSync();
-      for (final guard in const <String>[
-        '!message.isDeleted',
-        '!message.isHidden',
-        '!message.privateMediaState.isTerminal',
-      ]) {
-        expect(
-          snapshot.contains(guard),
-          isTrue,
-          reason: 'canonical replacement must exclude: \$guard',
-        );
-      }
-
-      // 4. The drain wires the ONE shared predicate rather than a copy.
+    // 1. Canonical KEEP: a consumed/expired private parent must be retired
+    //    from canonical notification history like a deleted one.
+    final keep = production.indexOf(
+      'DirectNotificationCanonicalContentDecision.keep',
+    );
+    expect(keep, greaterThan(-1));
+    final keepStart = production.lastIndexOf(
+      'return message.contactPeerId',
+      keep,
+    );
+    expect(keepStart, greaterThan(-1));
+    final keepBody = production.substring(keepStart, keep);
+    for (final guard in const <String>[
+      'message.isIncoming',
+      'message.readAt == null',
+      '!message.isDeleted',
+      'message.hiddenAt == null',
+      '!message.privateMediaState.isTerminal',
+    ]) {
       expect(
-        'directMediaBlobDrainMayDownloadIncomingParent('
-            .allMatches(production),
-        hasLength(1),
+        keepBody.contains(guard),
+        isTrue,
+        reason: 'canonical keep must require: \$guard',
       );
-    },
-  );
+    }
+
+    // 2. Display PROJECTION: the same terminal states suppress the card.
+    final projection = production.indexOf('projectDisplay: (entry) async {');
+    expect(projection, greaterThan(-1));
+    final projectionBody = production.substring(
+      projection,
+      production.indexOf('return maybeShowNotification(', projection),
+    );
+    for (final guard in const <String>[
+      'message.isDeleted',
+      'message.hiddenAt != null',
+      'message.privateMediaState.isTerminal',
+    ]) {
+      expect(
+        projectionBody.contains(guard),
+        isTrue,
+        reason: 'display projection must suppress: \$guard',
+      );
+    }
+
+    // 3. REPLACEMENT: the shared canonical snapshot builder filters the
+    //    same terminal states before any replacement is produced.
+    final snapshot = File(
+      'lib/features/conversation/application/'
+      'direct_conversation_notification_snapshot.dart',
+    ).readAsStringSync();
+    for (final guard in const <String>[
+      '!message.isDeleted',
+      '!message.isHidden',
+      '!message.privateMediaState.isTerminal',
+    ]) {
+      expect(
+        snapshot.contains(guard),
+        isTrue,
+        reason: 'canonical replacement must exclude: \$guard',
+      );
+    }
+
+    // 4. The drain wires the ONE shared predicate rather than a copy.
+    expect(
+      'directMediaBlobDrainMayDownloadIncomingParent('.allMatches(production),
+      hasLength(1),
+    );
+  });
 }

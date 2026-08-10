@@ -508,182 +508,176 @@ void main() {
       );
     }
 
-    test(
-      'TC-355-04a private terminal and strict presentation converge under '
-      'one lifecycle authority',
-      () async {
-        // --- Lock order A: RECEIVE first. Every presentation effect runs
-        // inside one exclusive lease, so a competing terminal owner cannot
-        // interleave between the re-read, the thumbnail, the marker, the
-        // publication and the ready promotion. ---
-        const messageId = 'tc355-04a-receive-first';
-        const attachmentId = '$messageId-a';
-        final effects = <String>[];
-        var terminalWonDuringLease = false;
-        final startCompeting = Completer<void>();
-        // Started OUTSIDE the receive's zone: an exclusive section requested
-        // from inside the lease's own zone would be reentrant, not competing.
-        final competingTerminal = Future<void>(() async {
-          await startCompeting.future;
-          await fixture.repo.lifecycleLock.synchronizedAll(() async {
-            await fixture.db.update(
-              'messages',
-              <String, Object?>{
-                'private_media_state': 'consumed',
-                'private_media_terminal_at_ms': 1_800_000_800_000,
-              },
-              where: 'id = ?',
-              whereArgs: <Object?>[messageId],
-            );
-            terminalWonDuringLease = true;
-          });
-        });
-
-        Future<void> assertLeaseStillHeld() async {
-          // Drain the event loop: a competing exclusive section must still be
-          // queued behind our lease, not applied.
-          for (var i = 0; i < 5; i += 1) {
-            await Future<void>.delayed(Duration.zero);
-          }
-          expect(
-            terminalWonDuringLease,
-            isFalse,
-            reason: 'no terminal owner may interleave inside the lease',
+    test('TC-355-04a private terminal and strict presentation converge under '
+        'one lifecycle authority', () async {
+      // --- Lock order A: RECEIVE first. Every presentation effect runs
+      // inside one exclusive lease, so a competing terminal owner cannot
+      // interleave between the re-read, the thumbnail, the marker, the
+      // publication and the ready promotion. ---
+      const messageId = 'tc355-04a-receive-first';
+      const attachmentId = '$messageId-a';
+      final effects = <String>[];
+      var terminalWonDuringLease = false;
+      final startCompeting = Completer<void>();
+      // Started OUTSIDE the receive's zone: an exclusive section requested
+      // from inside the lease's own zone would be reentrant, not competing.
+      final competingTerminal = Future<void>(() async {
+        await startCompeting.future;
+        await fixture.repo.lifecycleLock.synchronizedAll(() async {
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'private_media_state': 'consumed',
+              'private_media_terminal_at_ms': 1_800_000_800_000,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
           );
-        }
+          terminalWonDuringLease = true;
+        });
+      });
 
-        final receiveFirst = strictProtectedPhoto(
-          messageId: messageId,
-          attachmentId: attachmentId,
-          thumbnail: validThumbnailBase64(),
-        );
-        final (result, _, _) = await handleIncomingChatMessage(
-          message: receiveFirst,
-          messageRepo: fixture.messageRepo,
-          contactRepo: contactRepo,
-          predecryptedText: receiveFirst.predecryptedText,
-          mediaAttachmentRepo: fixture.repo,
-          mediaFileManager: mediaFileManager,
-          transport: 'direct',
-          stageNotificationDisplayCustody: (_) async {
-            effects.add('marker-stage');
-            if (!startCompeting.isCompleted) startCompeting.complete();
-            await assertLeaseStillHeld();
-          },
-          promoteNotificationDisplayCustody: (_) async {
-            effects.add('marker-promote');
-            // The later generic ready-promotion site must be inside the same
-            // authority, not after it.
-            await assertLeaseStillHeld();
-          },
-          sendDeliveryReceipt: (_) async => effects.add('receipt'),
-        );
-
-        expect(result, HandleChatMessageResult.chatMessage);
-        expect(effects, <String>[
-          'marker-stage',
-          'marker-promote',
-          'receipt',
-        ]);
-        // Exactly ONE promotion: the private lane owns it and the generic
-        // site must not repeat it.
-        expect(
-          effects.where((effect) => effect == 'marker-promote'),
-          hasLength(1),
-        );
-        // No async work started under the lease was detached.
-        await competingTerminal;
-        expect(terminalWonDuringLease, isTrue);
-        expect(
-          File(
-            await expectedThumbnailPath(
-              contactPeerId: _senderPeerId,
-              blobId: attachmentId,
-            ),
-          ).existsSync(),
-          isTrue,
-          reason: 'a receive-first winner still writes its guarded sibling',
-        );
-
-        // --- Lock order B: TERMINAL first. The terminal owner holds the
-        // exclusive lease while the receive is already in flight; the receive
-        // must wait for it and then produce durable zero-effect supersession.
-        const secondId = 'tc355-04a-terminal-first';
-        const secondAttachmentId = '$secondId-a';
-        final firstDelivery = strictProtectedPhoto(
-          messageId: secondId,
-          attachmentId: secondAttachmentId,
-          thumbnail: validThumbnailBase64(),
-        );
-        expect(
-          (await handleIncomingChatMessage(
-            message: firstDelivery,
-            messageRepo: fixture.messageRepo,
-            contactRepo: contactRepo,
-            predecryptedText: firstDelivery.predecryptedText,
-            mediaAttachmentRepo: fixture.repo,
-            mediaFileManager: mediaFileManager,
-            transport: 'direct',
-          )).$1,
-          HandleChatMessageResult.chatMessage,
-        );
-
-        final release = Completer<void>();
-        final terminalFirst = fixture.repo.lifecycleLock.synchronizedAll(
-          () async {
-            await fixture.db.update(
-              'messages',
-              <String, Object?>{
-                'private_media_state': 'consumed',
-                'private_media_terminal_at_ms': 1_800_000_800_000,
-              },
-              where: 'id = ?',
-              whereArgs: <Object?>[secondId],
-            );
-            await release.future;
-          },
-        );
-        final replayEffects = <String>[];
-        // The exact same wire event: an immutable-field crossing would refuse
-        // instead of settling, which TC-355-03a proves separately.
-        final replay = strictProtectedPhoto(
-          messageId: secondId,
-          attachmentId: secondAttachmentId,
-          thumbnail: validThumbnailBase64(),
-          timestamp: firstDelivery.timestamp,
-        );
-        final pending = handleIncomingChatMessage(
-          message: replay,
-          messageRepo: fixture.messageRepo,
-          contactRepo: contactRepo,
-          predecryptedText: replay.predecryptedText,
-          mediaAttachmentRepo: fixture.repo,
-          mediaFileManager: mediaFileManager,
-          transport: 'direct',
-          stageNotificationDisplayCustody: (_) async =>
-              replayEffects.add('marker-stage'),
-          promoteNotificationDisplayCustody: (_) async =>
-              replayEffects.add('marker-promote'),
-          sendDeliveryReceipt: (_) async => replayEffects.add('receipt'),
-        );
+      Future<void> assertLeaseStillHeld() async {
+        // Drain the event loop: a competing exclusive section must still be
+        // queued behind our lease, not applied.
         for (var i = 0; i < 5; i += 1) {
           await Future<void>.delayed(Duration.zero);
         }
         expect(
-          replayEffects,
-          isEmpty,
-          reason: 'the receive cannot publish while the terminal owner holds '
-              'the exclusive lease',
+          terminalWonDuringLease,
+          isFalse,
+          reason: 'no terminal owner may interleave inside the lease',
         );
-        release.complete();
-        await terminalFirst;
-        final (terminalResult, _, _) = await pending;
-        await Future<void>.delayed(Duration.zero);
+      }
 
-        expect(terminalResult, HandleChatMessageResult.durablySuperseded);
-        expect(replayEffects, <String>['receipt']);
-      },
-    );
+      final receiveFirst = strictProtectedPhoto(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        thumbnail: validThumbnailBase64(),
+      );
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: receiveFirst,
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: receiveFirst.predecryptedText,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        transport: 'direct',
+        stageNotificationDisplayCustody: (_) async {
+          effects.add('marker-stage');
+          if (!startCompeting.isCompleted) startCompeting.complete();
+          await assertLeaseStillHeld();
+        },
+        promoteNotificationDisplayCustody: (_) async {
+          effects.add('marker-promote');
+          // The later generic ready-promotion site must be inside the same
+          // authority, not after it.
+          await assertLeaseStillHeld();
+        },
+        sendDeliveryReceipt: (_) async => effects.add('receipt'),
+      );
+
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(effects, <String>['marker-stage', 'marker-promote', 'receipt']);
+      // Exactly ONE promotion: the private lane owns it and the generic
+      // site must not repeat it.
+      expect(
+        effects.where((effect) => effect == 'marker-promote'),
+        hasLength(1),
+      );
+      // No async work started under the lease was detached.
+      await competingTerminal;
+      expect(terminalWonDuringLease, isTrue);
+      expect(
+        File(
+          await expectedThumbnailPath(
+            contactPeerId: _senderPeerId,
+            blobId: attachmentId,
+          ),
+        ).existsSync(),
+        isTrue,
+        reason: 'a receive-first winner still writes its guarded sibling',
+      );
+
+      // --- Lock order B: TERMINAL first. The terminal owner holds the
+      // exclusive lease while the receive is already in flight; the receive
+      // must wait for it and then produce durable zero-effect supersession.
+      const secondId = 'tc355-04a-terminal-first';
+      const secondAttachmentId = '$secondId-a';
+      final firstDelivery = strictProtectedPhoto(
+        messageId: secondId,
+        attachmentId: secondAttachmentId,
+        thumbnail: validThumbnailBase64(),
+      );
+      expect(
+        (await handleIncomingChatMessage(
+          message: firstDelivery,
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: firstDelivery.predecryptedText,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: mediaFileManager,
+          transport: 'direct',
+        )).$1,
+        HandleChatMessageResult.chatMessage,
+      );
+
+      final release = Completer<void>();
+      final terminalFirst = fixture.repo.lifecycleLock.synchronizedAll(
+        () async {
+          await fixture.db.update(
+            'messages',
+            <String, Object?>{
+              'private_media_state': 'consumed',
+              'private_media_terminal_at_ms': 1_800_000_800_000,
+            },
+            where: 'id = ?',
+            whereArgs: <Object?>[secondId],
+          );
+          await release.future;
+        },
+      );
+      final replayEffects = <String>[];
+      // The exact same wire event: an immutable-field crossing would refuse
+      // instead of settling, which TC-355-03a proves separately.
+      final replay = strictProtectedPhoto(
+        messageId: secondId,
+        attachmentId: secondAttachmentId,
+        thumbnail: validThumbnailBase64(),
+        timestamp: firstDelivery.timestamp,
+      );
+      final pending = handleIncomingChatMessage(
+        message: replay,
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: replay.predecryptedText,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        transport: 'direct',
+        stageNotificationDisplayCustody: (_) async =>
+            replayEffects.add('marker-stage'),
+        promoteNotificationDisplayCustody: (_) async =>
+            replayEffects.add('marker-promote'),
+        sendDeliveryReceipt: (_) async => replayEffects.add('receipt'),
+      );
+      for (var i = 0; i < 5; i += 1) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      expect(
+        replayEffects,
+        isEmpty,
+        reason:
+            'the receive cannot publish while the terminal owner holds '
+            'the exclusive lease',
+      );
+      release.complete();
+      await terminalFirst;
+      final (terminalResult, _, _) = await pending;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(terminalResult, HandleChatMessageResult.durablySuperseded);
+      expect(replayEffects, <String>['receipt']);
+    });
   });
 }
 

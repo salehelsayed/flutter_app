@@ -1155,9 +1155,7 @@ void main() {
         expect(
           await repo.publishIncomingDirectMediaMessage(
             message: suppressed.value,
-            attachments: <MediaAttachment>[
-              attachmentFor(suppressed.value.id),
-            ],
+            attachments: <MediaAttachment>[attachmentFor(suppressed.value.id)],
           ),
           StrictIncomingMediaPublicationDisposition.durablySuperseded,
           reason: suppressed.key,

@@ -23,3 +23,5 @@ Before starting work, read the latest line for the assigned plan.
 - Plan 354 — TEST_CONTRACT_CLOSED (21/21 named tests, 4/4 mutation re-reds)
 - Plan 354 — POST_EXECUTION_REVIEW_INCOMPLETE (strict private download commit, terminal replay routing, and post-stage terminal/display races remain; do not start Plan 355)
 - Plan 355 — EXECUTION_READY
+- Plan 355 — TEST_CONTRACT_CLOSED (13/13 named tests, 4/4 mutation re-reds; Plan 354's private route is now behaviorally proved)
+- Plan 355 — EXECUTION_COMPLETED (13/13 named tests, 4/4 mutation re-reds, host 1to1 + dart-only core/feature families, analyzer/format/diff/Graphify all green; two DTR-18 digests re-pinned, never weakened)

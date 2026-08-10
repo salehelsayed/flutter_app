@@ -1240,7 +1240,7 @@ void main() {
         'Future<void> _deleteExactAppOwnedArtifacts({',
       );
       expect(wipe, greaterThan(-1));
-      final wipeBody = lifecycle.substring(wipe, wipe + 3000);
+      final wipeBody = lifecycle.substring(wipe, wipe + 3600);
       expect(wipeBody.contains(".path}.private.enc'"), isTrue);
       expect(wipeBody.contains(".path}.private.enc.dec'"), isTrue);
       // Every target is path-authorized before the first unlink.

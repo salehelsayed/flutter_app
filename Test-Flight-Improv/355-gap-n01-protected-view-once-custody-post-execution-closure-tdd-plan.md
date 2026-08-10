@@ -1,6 +1,6 @@
 # 355 - GAP-N01 Protected + View-Once Custody Post-Execution Closure
 
-Status: **REVIEWED / EXECUTION-READY / DEFAULT-OFF REPAIR PLAN / DO NOT CLAIM PLAN-354 OR GAP-N01 CLOSURE UNTIL GREEN** (2026-08-10)
+Status: **IMPLEMENTED / TEST-CONTRACT-CLOSED (13/13) / 4 MUTATION RE-REDS / DEFAULT-OFF CODE-CLOSED / NOT RELEASE-ELIGIBLE / NO GAP-N01 CLOSURE CLAIM** (2026-08-10)
 Type: Bug / modification
 Baseline observed while planning: `6f66a80984be582a25f2d48650674847798a2088` (`docs: mark Plan 354 complete`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` rule 3 (durable ACK-or-expiry custody), rule 9 (lifecycle recheck before presentation), A-03 and A-28; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
@@ -225,23 +225,24 @@ Explicitly NOT RUN per plan:
 
 ## Done Criteria
 
-- [ ] Real private explicit relay/LAN download commits canonical `done` and the correct v111 state atomically before ACK; ACK-pending without durable local bytes retains custody, fingerprinted strict rows never use legacy transport, and expiry/terminal outcomes remain owned by their existing transitions. -> TC-355-01.
-- [ ] Private path authorization, reversible deterministic staging, arbitrary decrypt-path refusal, failure CAS, and crash recovery preserve the only LAN retry source and leave no unowned attempt bytes or stuck `downloading` row. -> TC-355-02.
-- [ ] Every exact terminal replay reaches the dedicated private owner, compares complete surviving authority and reduced no-v111 parent identity, emits only the authorized receipt, and never triggers generic display retry; removed/crossed parent remains unacknowledged. -> TC-355-03.
-- [ ] Stage/presentation and private terminal lifecycle converge under the incumbent repository-wide exclusive lease with no stale message marker/thumbnail/stream/canonical notification candidate; reaction/other-message markers survive, media identity is coherent, and the production no-auto policy is behaviorally proved. -> TC-355-04.
-- [ ] Four representative mutation re-reds are recorded and reverted; focused/preservation/curated/core/feature/analyzer/format/diff/Graphify receipts are current.
-- [ ] Plan 354 and its index/coverage claims are reconciled as post-review-incomplete until this plan executes; after execution they may say superseded/closed by Plan 355, never erase the historical receipts.
-- [ ] No schema, new durable owner, modality expansion, activation, device/iOS, per-plan full host-all, GAP-N01 closure, or release claim is made.
+- [x] Real private explicit relay/LAN download commits canonical `done` and the correct v111 state atomically before ACK; ACK-pending without durable local bytes retains custody, fingerprinted strict rows never use legacy transport, and expiry/terminal outcomes remain owned by their existing transitions. -> TC-355-01.
+- [x] Private path authorization, reversible deterministic staging, arbitrary decrypt-path refusal, failure CAS, and crash recovery preserve the only LAN retry source and leave no unowned attempt bytes or stuck `downloading` row. -> TC-355-02.
+- [x] Every exact terminal replay reaches the dedicated private owner, compares complete surviving authority and reduced no-v111 parent identity, emits only the authorized receipt, and never triggers generic display retry; removed/crossed parent remains unacknowledged. -> TC-355-03.
+- [x] Stage/presentation and private terminal lifecycle converge under the incumbent repository-wide exclusive lease with no stale message marker/thumbnail/stream/canonical notification candidate; reaction/other-message markers survive, media identity is coherent, and the production no-auto policy is behaviorally proved. -> TC-355-04.
+- [x] Four representative mutation re-reds are recorded and reverted; focused/preservation/curated/core/feature/analyzer/format/diff/Graphify receipts are current.
+- [x] Plan 354 and its index/coverage claims are reconciled; the historical receipts are retained verbatim and this plan now carries the behavioral proof.
+- [x] No schema, new durable owner, modality expansion, activation, device/iOS, per-plan full host-all, GAP-N01 closure, or release claim is made.
 
 ## Handoff
 
-- First causal REDs: the four exact commands above on baseline `6f66a8098`.
+- First causal REDs: recorded per bundle from baseline `6f66a8098`; each failed on demonstrated behavior, never on a missing symbol or source string.
 - Manual registration: none; every test extends an existing AUTO/curated path. Run completeness only if that assumption changes.
 - Migration: none; DB remains v111 and physical v108/v111 layouts remain byte-compatible.
 - Rollout: all existing client/relay admissions remain default-off.
 - Boundary closure: host Dart + real SQLite/filesystem only.
 - Deferred next N01 work: after Plan 355 executes and a post-execution audit passes, reassess disappearing direct media versus private mutation custody. Do not plan those while this owner is incorrect.
-- Implementation session must update this plan, `Test-Flight-Improv/00-INDEX.md`, the GAP-N01 coverage document, and append `- Plan 355 — EXECUTION_COMPLETED` only after every required receipt passes.
+- Implementation session updated this plan, `Test-Flight-Improv/00-INDEX.md`, the GAP-N01 coverage document and `STATUS.md` after every required receipt passed.
+- Deferred next N01 work is now unblocked: reassess disappearing direct media versus private mutation custody, and note that mixed-version rollout, activation and release eligibility remain untouched here.
 
 ## Reviewer Findings
 
@@ -263,3 +264,63 @@ Disposition: execute in a separate session from clean baseline `6f66a8098`. Stop
 |---|---|---|---|---|---|---|
 | 2026-08-10 | planning | Plan 355 draft | `$tdd-plan` source/Graphify/test/gate reconnaissance | Four behavior bundles over existing owners; no schema/new infrastructure | independent review pending | run `$tdd-review`; do not implement |
 | 2026-08-10 | review | Plan 355, current source, literal test/gate paths | three independent `$tdd-review` passes plus targeted re-reviews: READY | All required download, terminal, lifecycle, notification, identity, recovery, and gate deltas incorporated; no overengineering blocker | none | execute separately; append completion only after all receipts pass |
+| 2026-08-10 | implementation | `private_media_policy.dart`, `media_attachments_db_helpers.dart`, `messages_db_helpers.dart`, `direct_notification_display_outbox_db_helpers.dart`, `download_media_use_case.dart`, `strict_direct_media_blob_download_ack_owner.dart`, `direct_private_media_lifecycle.dart`, `drain_direct_media_blob_custody_use_case.dart`, `handle_incoming_chat_message_use_case.dart`, `message_repository_impl.dart`, `production_application_bootstrap.dart` | All four bundles implemented on a per-bundle RED -> GREEN cadence from baseline `6f66a8098`. Every causal RED failed on demonstrated behavior, never on a missing symbol. | none | run mutation re-reds, preservation sentinels and affected gates |
+
+### Implementation Receipts
+
+Causal first REDs (each observed before its fix, on the demonstrated behavior):
+
+- `TC-355-04f` — crossed `video/mp4` + `media_type=image` classified as image.
+- `TC-355-03a` — a private author tombstone returned the generic `supersededByDeletion`.
+- `TC-355-01a` — the private strict local-path commit returned `false` (ordinary-only parent predicate).
+- `TC-355-01b` — the whole explicit private strict download returned null.
+
+Four mutation re-reds, each executed and reverted:
+
+1. Ordinary-only final commit predicate restored -> `TC-355-01a` and `TC-355-01b` RED.
+   Stale pre-claim row handed to the strict owner -> `TC-355-01b` RED.
+2. Terminal replay mapped back to the generic deletion result -> `TC-355-03a` RED;
+   the strict-private terminal bypass removed -> `TC-355-03b` and `TC-355-03c` RED.
+3. Exact message-marker retirement unhooked from the consume/hide transactions ->
+   `TC-355-04b` RED.
+4. Exclusive lifecycle serialization removed -> `TC-355-04a` RED.
+
+Focused GREEN: 13/13 named `TC-355-` rows across the eleven plan-listed paths.
+
+Plan-354 source-order sentinels whose literal anchors this repair moved were
+re-pointed at the new structure, never weakened: `TC-354-05a`, `TC-354-05e`,
+`TC-354-04c`, `TC-354-04d`, `TC-354-05b`. Their invariants (claim before the
+owner, guard before network/decrypt, terminal decided before any marker, commit
+before ACK, no wildcard cleanup scan) are unchanged, and Plan 355's behavioral
+rows are now the causal proof.
+
+Gate receipts:
+
+| Gate | Result |
+|---|---|
+| Focused `--plain-name 'TC-355-'` over the eleven plan paths | 13/13 GREEN |
+| Exact preservation sentinels (12) | GREEN |
+| `scripts/test/relay_media_custody_contract_test.sh` | PASS |
+| `./scripts/run_host_test_gates.sh 1to1` | PASS, 120 paths |
+| `core-host-all --batch-flutter --concurrency 2 --dart-only` | PASS, 404 paths / 3,229 tests |
+| `feature-host-all --batch-flutter --concurrency 1 --dart-only` | PASS, 841 paths / 9,038 tests / 8 declared skips |
+| `flutter analyze` | No issues found |
+| `dart format` over changed Dart, `git diff --check` | clean |
+| `./graphify-arch/refresh_arch_graph.sh --incremental` | 26 changed code files; 70,798 nodes / 104,026 edges |
+
+Two DTR-18 frozen content digests were **re-pinned, never weakened**, because
+this repair legitimately changed the frozen files: the body digest of
+`message_repository_impl.dart` (publication now suppresses consumed/expired
+private parents) and the normalized consumer digest of
+`production_application_bootstrap.dart` (canonical keep and display projection
+retire terminal private media; the drain consults one shared predicate). Both
+are path-string content freezes that the affected-tests graph cannot see, so
+only the full `core-host-all` lane surfaced them. Two pre-existing
+`duplicate_import` analyzer warnings in a Plan-354 test file were also removed
+so the full analyzer is clean.
+
+Not run, per the plan's explicit exclusions: `./scripts/run_test_gates.sh 1to1`,
+full `host-all`, completeness (no test path was created or moved), Go/relay/node
+/bridge suites, gomobile bindings, migration/SQLCipher/device campaigns,
+Android/iOS harnesses, deployment, admission activation, and mixed-version
+rollout.

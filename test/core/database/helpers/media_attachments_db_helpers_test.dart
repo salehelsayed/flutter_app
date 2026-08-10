@@ -6612,539 +6612,521 @@ void main() {
       return (attachment: attachment, custody: custody);
     }
 
-    test(
-      'TC-355-01a private strict local path and v111 ACK state commit '
-      'atomically',
-      () async {
-        var seq = 0;
+    test('TC-355-01a private strict local path and v111 ACK state commit '
+        'atomically', () async {
+      var seq = 0;
 
-        /// Seeds one durable incoming parent + attachment + v111 row and runs
-        /// the real local-path commit against it.
-        Future<
-          ({
-            bool committed,
-            Map<String, Object?> attachment,
-            Map<String, Object?>? custody,
-          })
-        >
-        commit({
-          required String suffix,
-          int policyVersion = 1,
-          String mode = 'protected',
-          String? state = 'available',
-          String downloadStatus = kMediaDownloadStatusDownloading,
-          String? sourceRelayPeerId = 'relay-peer',
-          String mime = 'image/jpeg',
-          String mediaType = 'image',
-          Object? durationSeconds,
-          Object? deletedAt,
-          Object? hiddenAt,
-          bool abortCustodyUpdate = false,
-        }) async {
-          final messageId = 'tc355-01a-${seq++}-$suffix';
-          final senderPeerId = '$messageId-peer';
-          final attachmentId = '$messageId-a';
-          final media = privateMedia(
-            messageId: messageId,
-            attachmentId: attachmentId,
-            mime: mime,
-            mediaType: mediaType,
-          );
-          await db.insert(
-            'messages',
-            privateParent(
-              messageId: messageId,
-              senderPeerId: senderPeerId,
-              mode: mode,
-              state: state ?? 'none',
-              policyVersion: policyVersion,
-              durationSeconds: durationSeconds,
-              deletedAt: deletedAt,
-              hiddenAt: hiddenAt,
-            ),
-          );
-          final attachmentRow = <String, Object?>{
-            ...media.attachment,
-            'download_status': downloadStatus,
-          };
-          await db.insert('media_attachments', attachmentRow);
-          await db.insert(
-            kDirectMediaBlobCustodyTable,
-            media.custody.toMap(),
-          );
-          if (abortCustodyUpdate) {
-            await db.execute(
-              'CREATE TRIGGER abort_${seq}_v111 '
-              'AFTER UPDATE ON $kDirectMediaBlobCustodyTable '
-              "BEGIN SELECT RAISE(ABORT, 'v111 update refused'); END;",
-            );
-          }
-          final localPath = MediaFilePathConvention.relativePathForAttachment(
-            contactPeerId: senderPeerId,
-            blobId: attachmentId,
-            mime: mime,
-          );
-          var committed = false;
-          try {
-            committed = await dbCommitIncomingDirectMediaBlobLocalPath(
-              db,
-              expectedAttachmentRow: attachmentRow,
-              expectedCustody: media.custody,
-              localPath: localPath,
-              sourceRelayPeerId: sourceRelayPeerId,
-              updatedAt: '2026-08-10T10:09:00.000Z',
-            );
-          } on Object {
-            committed = false;
-          }
-          if (abortCustodyUpdate) {
-            await db.execute('DROP TRIGGER abort_${seq}_v111');
-          }
-          final custody = await db.query(
-            kDirectMediaBlobCustodyTable,
-            where: 'attachment_id = ?',
-            whereArgs: <Object?>[attachmentId],
-          );
-          return (
-            committed: committed,
-            attachment: (await db.query(
-              'media_attachments',
-              where: 'id = ?',
-              whereArgs: <Object?>[attachmentId],
-            )).single,
-            custody: custody.isEmpty ? null : custody.single,
-          );
-        }
-
-        // Relay source: canonical done + source-pinned ACK obligation commit
-        // together, for BOTH admitted private modes.
-        for (final mode in <String>['protected', 'view_once']) {
-          final relay = await commit(suffix: 'relay-$mode', mode: mode);
-          expect(relay.committed, isTrue, reason: mode);
-          expect(relay.attachment['download_status'], kMediaDownloadStatusDone);
-          expect(relay.attachment['local_path'], isNotNull);
-          expect(
-            relay.custody!['state'],
-            DirectMediaBlobCustodyState.incomingAckPending.dbValue,
-            reason: mode,
-          );
-          expect(relay.custody!['custody_relay_peer_id'], 'relay-peer');
-        }
-        // Protected video is an admitted producer shape too.
-        final video = await commit(
-          suffix: 'relay-video',
-          mime: 'video/mp4',
-          mediaType: 'video',
-        );
-        expect(video.committed, isTrue);
-        expect(video.attachment['download_status'], kMediaDownloadStatusDone);
-
-        // Source-less LAN adoption commits the path but keeps custody
-        // committed: there is no relay to acknowledge.
-        final lan = await commit(suffix: 'lan', sourceRelayPeerId: null);
-        expect(lan.committed, isTrue);
-        expect(lan.attachment['download_status'], kMediaDownloadStatusDone);
-        expect(
-          lan.custody!['state'],
-          DirectMediaBlobCustodyState.incomingCommitted.dbValue,
-        );
-        expect(lan.custody!['custody_relay_peer_id'], isNull);
-
-        // Exact idempotent replay of the same commit.
-        final idempotent = await commit(suffix: 'idempotent');
-        expect(idempotent.committed, isTrue);
-
-        // Ordinary v0 behavior is preserved byte for byte, from its own
-        // pending claim.
-        final ordinary = await commit(
-          suffix: 'ordinary',
-          policyVersion: 0,
-          mode: 'ordinary',
-          state: 'none',
-          downloadStatus: kMediaDownloadStatusPending,
-        );
-        expect(ordinary.committed, isTrue);
-        expect(ordinary.attachment['download_status'], kMediaDownloadStatusDone);
-        expect(
-          ordinary.custody!['state'],
-          DirectMediaBlobCustodyState.incomingAckPending.dbValue,
-        );
-
-        // Refusals leave the attachment and v111 row untouched.
-        for (final refusal
-            in <
-              String,
-              Future<
-                ({
-                  bool committed,
-                  Map<String, Object?> attachment,
-                  Map<String, Object?>? custody,
-                })
-              >
-              Function()
-            >{
-              // A private row that was never claimed cannot be committed: the
-              // exact claimed `downloading` row is the transfer's authority.
-              'unclaimed': () => commit(
-                suffix: 'unclaimed',
-                downloadStatus: kMediaDownloadStatusPending,
-              ),
-              // Disappearing stays out of this adopter entirely.
-              'disappearing': () => commit(
-                suffix: 'disappearing',
-                mode: 'disappearing',
-                durationSeconds: 86400,
-              ),
-              // Terminal private parents can never gain plaintext.
-              'consumed': () => commit(suffix: 'consumed', state: 'consumed'),
-              'expired': () => commit(suffix: 'expired', state: 'expired'),
-              'hidden': () => commit(
-                suffix: 'hidden',
-                hiddenAt: '2026-08-10T10:08:00.000Z',
-              ),
-              'deleted': () => commit(
-                suffix: 'deleted',
-                deletedAt: '2026-08-10T10:08:00.000Z',
-              ),
-              // Crossed media identity is not an admitted producer shape.
-              'crossed-identity': () =>
-                  commit(suffix: 'crossed-identity', mime: 'video/mp4'),
-            }.entries) {
-          final refused = await refusal.value();
-          expect(refused.committed, isFalse, reason: refusal.key);
-          expect(
-            refused.attachment['local_path'],
-            isNull,
-            reason: refusal.key,
-          );
-          expect(
-            refused.attachment['download_status'],
-            isNot(kMediaDownloadStatusDone),
-            reason: refusal.key,
-          );
-          expect(
-            refused.custody!['state'],
-            DirectMediaBlobCustodyState.incomingCommitted.dbValue,
-            reason: refusal.key,
-          );
-        }
-
-        // Atomicity: a v111 write that fails AFTER the attachment update rolls
-        // both halves back.
-        final aborted = await commit(
-          suffix: 'aborted-v111',
-          abortCustodyUpdate: true,
-        );
-        expect(aborted.committed, isFalse);
-        expect(
-          aborted.attachment['download_status'],
-          kMediaDownloadStatusDownloading,
-        );
-        expect(aborted.attachment['local_path'], isNull);
-        expect(
-          aborted.custody!['state'],
-          DirectMediaBlobCustodyState.incomingCommitted.dbValue,
-        );
-        expect(aborted.custody!['custody_relay_peer_id'], isNull);
-      },
-    );
-
-    test(
-      'TC-355-03a private terminal replay compares complete surviving '
-      'authority',
-      () async {
-        var seq = 0;
-
-        /// Seeds one durable terminal parent (plus optional survivor rows) and
-        /// replays the exact wire initial against it.
-        Future<IncomingDirectMediaBlobDbStageOutcome> replay({
-          required String suffix,
-          Map<String, Object?> Function(Map<String, Object?> base)?
-          mutateDurableParent,
-          Map<String, Object?> Function(Map<String, Object?> base)?
-          mutateReplayParent,
-          Map<String, Object?> Function(Map<String, Object?> base)?
-          survivingAttachment,
-          bool keepSurvivor = true,
-          DirectMediaBlobCustodyState survivorState =
-              DirectMediaBlobCustodyState.incomingCommitted,
-          String durableState = 'consumed',
-          Object? durableDeletedAt,
-          Object? durableDeletedByPeerId,
-        }) async {
-          final messageId = 'tc355-03a-${seq++}-$suffix';
-          final senderPeerId = '$messageId-peer';
-          final attachmentId = '$messageId-a';
-          final media = privateMedia(
-            messageId: messageId,
-            attachmentId: attachmentId,
-          );
-          final durableBase = privateParent(
-            messageId: messageId,
-            senderPeerId: senderPeerId,
-            state: durableState,
-            terminalAtMs: nowMs + 1000,
-            deletedAt: durableDeletedAt,
-            deletedByPeerId: durableDeletedByPeerId,
-          );
-          await db.insert(
-            'messages',
-            mutateDurableParent?.call(durableBase) ?? durableBase,
-          );
-          if (keepSurvivor) {
-            await db.insert(
-              kDirectMediaBlobCustodyTable,
-              media.custody
-                  .copyWith(
-                    state: survivorState,
-                    // ACK-source and retry metadata are deliberately NOT
-                    // replay input.
-                    custodyRelayPeerId:
-                        survivorState ==
-                            DirectMediaBlobCustodyState.incomingAckPending
-                        ? 'relay-$suffix'
-                        : null,
-                    retryCount:
-                        survivorState ==
-                            DirectMediaBlobCustodyState.incomingAckPending
-                        ? 3
-                        : 0,
-                    lastAttemptAt:
-                        survivorState ==
-                            DirectMediaBlobCustodyState.incomingAckPending
-                        ? '2026-08-10T10:05:00.000Z'
-                        : null,
-                    nextAttemptAt:
-                        survivorState ==
-                            DirectMediaBlobCustodyState.incomingAckPending
-                        ? '2026-08-10T10:06:00.000Z'
-                        : null,
-                  )
-                  .toMap(),
-            );
-          }
-          if (survivingAttachment != null) {
-            await db.insert(
-              'media_attachments',
-              survivingAttachment(
-                Map<String, Object?>.from(media.attachment),
-              ),
-            );
-          }
-          final replayBase = privateParent(
-            messageId: messageId,
-            senderPeerId: senderPeerId,
-          );
-          final outcome = (await dbStageIncomingDirectPrivateMediaBlobCustody(
-            db,
-            messageRow: mutateReplayParent?.call(replayBase) ?? replayBase,
-            attachmentRow: media.attachment,
-            custodyRow: media.custody,
-          )).outcome;
-          // Terminal replay is always zero-effect: nothing is ever staged or
-          // restaged on top of a durable terminal parent.
-          expect(
-            (await db.query(
-              'media_attachments',
-              where: 'message_id = ?',
-              whereArgs: <Object?>[messageId],
-            )).length,
-            survivingAttachment == null ? 0 : 1,
-            reason: suffix,
-          );
-          return outcome;
-        }
-
-        // 1. Committed and ACK-pending survivors carry an identical public
-        // commitment and differ only in ACK/retry metadata: both settle.
-        for (final survivorState in <DirectMediaBlobCustodyState>[
-          DirectMediaBlobCustodyState.incomingCommitted,
-          DirectMediaBlobCustodyState.incomingAckPending,
-        ]) {
-          expect(
-            await replay(
-              suffix: 'survivor-${survivorState.dbValue}',
-              survivorState: survivorState,
-            ),
-            IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
-            reason: survivorState.dbValue,
-          );
-        }
-
-        // 2. A private author tombstone is a private terminal winner, not the
-        // generic deletion result: it must reach the dedicated disposition.
-        expect(
-          await replay(
-            suffix: 'author-tombstone',
-            durableState: 'available',
-            durableDeletedAt: '2026-08-10T10:07:00.000Z',
-            durableDeletedByPeerId: null,
-            mutateDurableParent: (base) => <String, Object?>{
-              ...base,
-              'deleted_by_peer_id': base['sender_peer_id'],
-              'hidden_at': '2026-08-10T10:07:00.000Z',
-            },
-          ),
-          IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
-        );
-
-        // 3. A tombstone whose deletion author is NOT the sender cannot prove
-        // durable author precedence: refuse with zero receipt.
-        expect(
-          await replay(
-            suffix: 'crossed-deletion-author',
-            durableState: 'available',
-            durableDeletedAt: '2026-08-10T10:07:00.000Z',
-            durableDeletedByPeerId: 'someone-else',
-          ),
-          IncomingDirectMediaBlobDbStageOutcome.refused,
-        );
-
-        // 4. The reduced no-v111 case must prove every surviving immutable
-        // wire parent field.
-        expect(
-          await replay(suffix: 'no-v111-exact', keepSurvivor: false),
-          IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
-        );
-        final crossedParents =
-            <String, Map<String, Object?> Function(Map<String, Object?>)>{
-              'timestamp': (base) => <String, Object?>{
-                ...base,
-                'timestamp': '2026-08-10T11:30:00.000Z',
-              },
-              'dedup-key': (base) => <String, Object?>{
-                ...base,
-                'dedup_key': 'crossed-dedup-key',
-              },
-              'forwarded': (base) => <String, Object?>{
-                ...base,
-                'is_forwarded': 1,
-              },
-              'quote': (base) => <String, Object?>{
-                ...base,
-                'quoted_message_id': 'some-other-message',
-              },
-              'caption': (base) => <String, Object?>{
-                ...base,
-                'text': 'a caption the initial producer cannot carry',
-              },
-              'mode': (base) => <String, Object?>{
-                ...base,
-                'private_media_mode': 'view_once',
-              },
-              'duration': (base) => <String, Object?>{
-                ...base,
-                'private_media_duration_seconds': 86400,
-              },
-            };
-        for (final entry in crossedParents.entries) {
-          expect(
-            await replay(
-              suffix: 'no-v111-crossed-${entry.key}',
-              keepSurvivor: false,
-              mutateDurableParent: entry.value,
-            ),
-            IncomingDirectMediaBlobDbStageOutcome.refused,
-            reason: 'durable parent crossed on ${entry.key}',
-          );
-          expect(
-            await replay(
-              suffix: 'survivor-crossed-${entry.key}',
-              mutateDurableParent: entry.value,
-            ),
-            IncomingDirectMediaBlobDbStageOutcome.refused,
-            reason: 'surviving-v111 parent crossed on ${entry.key}',
-          );
-        }
-
-        // 5. A surviving attachment must still match its exact immutable
-        // descriptor and custody fingerprint.
-        expect(
-          await replay(
-            suffix: 'attachment-exact',
-            survivingAttachment: (base) => base,
-          ),
-          IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
-        );
-        // A downloaded survivor keeps its mutable download projection and is
-        // still the same immutable descriptor.
-        expect(
-          await replay(
-            suffix: 'attachment-downloaded',
-            survivingAttachment: (base) => <String, Object?>{
-              ...base,
-              'local_path': 'media/peer/blob.jpg',
-              'download_status': 'done',
-            },
-          ),
-          IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
-        );
-        for (final crossed
-            in <String, Map<String, Object?>>{
-              'mime': <String, Object?>{
-                'mime': 'video/mp4',
-                'media_type': 'video',
-              },
-              'size': <String, Object?>{'size': 6001},
-              'content-hash': <String, Object?>{
-                'content_hash':
-                    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-                    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
-              },
-              'width': <String, Object?>{'width': 999},
-              'fingerprint': <String, Object?>{
-                'direct_media_blob_custody_fingerprint':
-                    '0123456789abcdef0123456789abcdef'
-                    '0123456789abcdef0123456789abcdef',
-              },
-            }.entries) {
-          expect(
-            await replay(
-              suffix: 'attachment-crossed-${crossed.key}',
-              survivingAttachment: (base) => <String, Object?>{
-                ...base,
-                ...crossed.value,
-              },
-            ),
-            IncomingDirectMediaBlobDbStageOutcome.refused,
-            reason: 'surviving attachment crossed on ${crossed.key}',
-          );
-        }
-
-        // 6. A non-private legacy tombstone keeps the generic deletion result.
-        const legacyId = 'tc355-03a-legacy-tombstone';
-        const legacyPeer = '$legacyId-peer';
-        final legacyMedia = privateMedia(
-          messageId: legacyId,
-          attachmentId: '$legacyId-a',
+      /// Seeds one durable incoming parent + attachment + v111 row and runs
+      /// the real local-path commit against it.
+      Future<
+        ({
+          bool committed,
+          Map<String, Object?> attachment,
+          Map<String, Object?>? custody,
+        })
+      >
+      commit({
+        required String suffix,
+        int policyVersion = 1,
+        String mode = 'protected',
+        String? state = 'available',
+        String downloadStatus = kMediaDownloadStatusDownloading,
+        String? sourceRelayPeerId = 'relay-peer',
+        String mime = 'image/jpeg',
+        String mediaType = 'image',
+        Object? durationSeconds,
+        Object? deletedAt,
+        Object? hiddenAt,
+        bool abortCustodyUpdate = false,
+      }) async {
+        final messageId = 'tc355-01a-${seq++}-$suffix';
+        final senderPeerId = '$messageId-peer';
+        final attachmentId = '$messageId-a';
+        final media = privateMedia(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          mime: mime,
+          mediaType: mediaType,
         );
         await db.insert(
           'messages',
           privateParent(
-            messageId: legacyId,
-            senderPeerId: legacyPeer,
-            policyVersion: 0,
-            mode: 'ordinary',
-            state: 'none',
-            deletedAt: '2026-08-10T10:07:00.000Z',
-            deletedByPeerId: legacyPeer,
-            hiddenAt: '2026-08-10T10:07:00.000Z',
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            mode: mode,
+            state: state ?? 'none',
+            policyVersion: policyVersion,
+            durationSeconds: durationSeconds,
+            deletedAt: deletedAt,
+            hiddenAt: hiddenAt,
           ),
         );
-        expect(
-          (await dbStageIncomingDirectPrivateMediaBlobCustody(
-            db,
-            messageRow: privateParent(
-              messageId: legacyId,
-              senderPeerId: legacyPeer,
-            ),
-            attachmentRow: legacyMedia.attachment,
-            custodyRow: legacyMedia.custody,
-          )).outcome,
-          IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion,
+        final attachmentRow = <String, Object?>{
+          ...media.attachment,
+          'download_status': downloadStatus,
+        };
+        await db.insert('media_attachments', attachmentRow);
+        await db.insert(kDirectMediaBlobCustodyTable, media.custody.toMap());
+        if (abortCustodyUpdate) {
+          await db.execute(
+            'CREATE TRIGGER abort_${seq}_v111 '
+            'AFTER UPDATE ON $kDirectMediaBlobCustodyTable '
+            "BEGIN SELECT RAISE(ABORT, 'v111 update refused'); END;",
+          );
+        }
+        final localPath = MediaFilePathConvention.relativePathForAttachment(
+          contactPeerId: senderPeerId,
+          blobId: attachmentId,
+          mime: mime,
         );
-      },
-    );
+        var committed = false;
+        try {
+          committed = await dbCommitIncomingDirectMediaBlobLocalPath(
+            db,
+            expectedAttachmentRow: attachmentRow,
+            expectedCustody: media.custody,
+            localPath: localPath,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: '2026-08-10T10:09:00.000Z',
+          );
+        } on Object {
+          committed = false;
+        }
+        if (abortCustodyUpdate) {
+          await db.execute('DROP TRIGGER abort_${seq}_v111');
+        }
+        final custody = await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'attachment_id = ?',
+          whereArgs: <Object?>[attachmentId],
+        );
+        return (
+          committed: committed,
+          attachment: (await db.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[attachmentId],
+          )).single,
+          custody: custody.isEmpty ? null : custody.single,
+        );
+      }
+
+      // Relay source: canonical done + source-pinned ACK obligation commit
+      // together, for BOTH admitted private modes.
+      for (final mode in <String>['protected', 'view_once']) {
+        final relay = await commit(suffix: 'relay-$mode', mode: mode);
+        expect(relay.committed, isTrue, reason: mode);
+        expect(relay.attachment['download_status'], kMediaDownloadStatusDone);
+        expect(relay.attachment['local_path'], isNotNull);
+        expect(
+          relay.custody!['state'],
+          DirectMediaBlobCustodyState.incomingAckPending.dbValue,
+          reason: mode,
+        );
+        expect(relay.custody!['custody_relay_peer_id'], 'relay-peer');
+      }
+      // Protected video is an admitted producer shape too.
+      final video = await commit(
+        suffix: 'relay-video',
+        mime: 'video/mp4',
+        mediaType: 'video',
+      );
+      expect(video.committed, isTrue);
+      expect(video.attachment['download_status'], kMediaDownloadStatusDone);
+
+      // Source-less LAN adoption commits the path but keeps custody
+      // committed: there is no relay to acknowledge.
+      final lan = await commit(suffix: 'lan', sourceRelayPeerId: null);
+      expect(lan.committed, isTrue);
+      expect(lan.attachment['download_status'], kMediaDownloadStatusDone);
+      expect(
+        lan.custody!['state'],
+        DirectMediaBlobCustodyState.incomingCommitted.dbValue,
+      );
+      expect(lan.custody!['custody_relay_peer_id'], isNull);
+
+      // Exact idempotent replay of the same commit.
+      final idempotent = await commit(suffix: 'idempotent');
+      expect(idempotent.committed, isTrue);
+
+      // Ordinary v0 behavior is preserved byte for byte, from its own
+      // pending claim.
+      final ordinary = await commit(
+        suffix: 'ordinary',
+        policyVersion: 0,
+        mode: 'ordinary',
+        state: 'none',
+        downloadStatus: kMediaDownloadStatusPending,
+      );
+      expect(ordinary.committed, isTrue);
+      expect(ordinary.attachment['download_status'], kMediaDownloadStatusDone);
+      expect(
+        ordinary.custody!['state'],
+        DirectMediaBlobCustodyState.incomingAckPending.dbValue,
+      );
+
+      // Refusals leave the attachment and v111 row untouched.
+      for (final refusal
+          in <
+                String,
+                Future<
+                  ({
+                    bool committed,
+                    Map<String, Object?> attachment,
+                    Map<String, Object?>? custody,
+                  })
+                >
+                Function()
+              >{
+                // A private row that was never claimed cannot be committed: the
+                // exact claimed `downloading` row is the transfer's authority.
+                'unclaimed': () => commit(
+                  suffix: 'unclaimed',
+                  downloadStatus: kMediaDownloadStatusPending,
+                ),
+                // Disappearing stays out of this adopter entirely.
+                'disappearing': () => commit(
+                  suffix: 'disappearing',
+                  mode: 'disappearing',
+                  durationSeconds: 86400,
+                ),
+                // Terminal private parents can never gain plaintext.
+                'consumed': () => commit(suffix: 'consumed', state: 'consumed'),
+                'expired': () => commit(suffix: 'expired', state: 'expired'),
+                'hidden': () => commit(
+                  suffix: 'hidden',
+                  hiddenAt: '2026-08-10T10:08:00.000Z',
+                ),
+                'deleted': () => commit(
+                  suffix: 'deleted',
+                  deletedAt: '2026-08-10T10:08:00.000Z',
+                ),
+                // Crossed media identity is not an admitted producer shape.
+                'crossed-identity': () =>
+                    commit(suffix: 'crossed-identity', mime: 'video/mp4'),
+              }
+              .entries) {
+        final refused = await refusal.value();
+        expect(refused.committed, isFalse, reason: refusal.key);
+        expect(refused.attachment['local_path'], isNull, reason: refusal.key);
+        expect(
+          refused.attachment['download_status'],
+          isNot(kMediaDownloadStatusDone),
+          reason: refusal.key,
+        );
+        expect(
+          refused.custody!['state'],
+          DirectMediaBlobCustodyState.incomingCommitted.dbValue,
+          reason: refusal.key,
+        );
+      }
+
+      // Atomicity: a v111 write that fails AFTER the attachment update rolls
+      // both halves back.
+      final aborted = await commit(
+        suffix: 'aborted-v111',
+        abortCustodyUpdate: true,
+      );
+      expect(aborted.committed, isFalse);
+      expect(
+        aborted.attachment['download_status'],
+        kMediaDownloadStatusDownloading,
+      );
+      expect(aborted.attachment['local_path'], isNull);
+      expect(
+        aborted.custody!['state'],
+        DirectMediaBlobCustodyState.incomingCommitted.dbValue,
+      );
+      expect(aborted.custody!['custody_relay_peer_id'], isNull);
+    });
+
+    test('TC-355-03a private terminal replay compares complete surviving '
+        'authority', () async {
+      var seq = 0;
+
+      /// Seeds one durable terminal parent (plus optional survivor rows) and
+      /// replays the exact wire initial against it.
+      Future<IncomingDirectMediaBlobDbStageOutcome> replay({
+        required String suffix,
+        Map<String, Object?> Function(Map<String, Object?> base)?
+        mutateDurableParent,
+        Map<String, Object?> Function(Map<String, Object?> base)?
+        mutateReplayParent,
+        Map<String, Object?> Function(Map<String, Object?> base)?
+        survivingAttachment,
+        bool keepSurvivor = true,
+        DirectMediaBlobCustodyState survivorState =
+            DirectMediaBlobCustodyState.incomingCommitted,
+        String durableState = 'consumed',
+        Object? durableDeletedAt,
+        Object? durableDeletedByPeerId,
+      }) async {
+        final messageId = 'tc355-03a-${seq++}-$suffix';
+        final senderPeerId = '$messageId-peer';
+        final attachmentId = '$messageId-a';
+        final media = privateMedia(
+          messageId: messageId,
+          attachmentId: attachmentId,
+        );
+        final durableBase = privateParent(
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+          state: durableState,
+          terminalAtMs: nowMs + 1000,
+          deletedAt: durableDeletedAt,
+          deletedByPeerId: durableDeletedByPeerId,
+        );
+        await db.insert(
+          'messages',
+          mutateDurableParent?.call(durableBase) ?? durableBase,
+        );
+        if (keepSurvivor) {
+          await db.insert(
+            kDirectMediaBlobCustodyTable,
+            media.custody
+                .copyWith(
+                  state: survivorState,
+                  // ACK-source and retry metadata are deliberately NOT
+                  // replay input.
+                  custodyRelayPeerId:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? 'relay-$suffix'
+                      : null,
+                  retryCount:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? 3
+                      : 0,
+                  lastAttemptAt:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? '2026-08-10T10:05:00.000Z'
+                      : null,
+                  nextAttemptAt:
+                      survivorState ==
+                          DirectMediaBlobCustodyState.incomingAckPending
+                      ? '2026-08-10T10:06:00.000Z'
+                      : null,
+                )
+                .toMap(),
+          );
+        }
+        if (survivingAttachment != null) {
+          await db.insert(
+            'media_attachments',
+            survivingAttachment(Map<String, Object?>.from(media.attachment)),
+          );
+        }
+        final replayBase = privateParent(
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+        );
+        final outcome = (await dbStageIncomingDirectPrivateMediaBlobCustody(
+          db,
+          messageRow: mutateReplayParent?.call(replayBase) ?? replayBase,
+          attachmentRow: media.attachment,
+          custodyRow: media.custody,
+        )).outcome;
+        // Terminal replay is always zero-effect: nothing is ever staged or
+        // restaged on top of a durable terminal parent.
+        expect(
+          (await db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          )).length,
+          survivingAttachment == null ? 0 : 1,
+          reason: suffix,
+        );
+        return outcome;
+      }
+
+      // 1. Committed and ACK-pending survivors carry an identical public
+      // commitment and differ only in ACK/retry metadata: both settle.
+      for (final survivorState in <DirectMediaBlobCustodyState>[
+        DirectMediaBlobCustodyState.incomingCommitted,
+        DirectMediaBlobCustodyState.incomingAckPending,
+      ]) {
+        expect(
+          await replay(
+            suffix: 'survivor-${survivorState.dbValue}',
+            survivorState: survivorState,
+          ),
+          IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+          reason: survivorState.dbValue,
+        );
+      }
+
+      // 2. A private author tombstone is a private terminal winner, not the
+      // generic deletion result: it must reach the dedicated disposition.
+      expect(
+        await replay(
+          suffix: 'author-tombstone',
+          durableState: 'available',
+          durableDeletedAt: '2026-08-10T10:07:00.000Z',
+          durableDeletedByPeerId: null,
+          mutateDurableParent: (base) => <String, Object?>{
+            ...base,
+            'deleted_by_peer_id': base['sender_peer_id'],
+            'hidden_at': '2026-08-10T10:07:00.000Z',
+          },
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+
+      // 3. A tombstone whose deletion author is NOT the sender cannot prove
+      // durable author precedence: refuse with zero receipt.
+      expect(
+        await replay(
+          suffix: 'crossed-deletion-author',
+          durableState: 'available',
+          durableDeletedAt: '2026-08-10T10:07:00.000Z',
+          durableDeletedByPeerId: 'someone-else',
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.refused,
+      );
+
+      // 4. The reduced no-v111 case must prove every surviving immutable
+      // wire parent field.
+      expect(
+        await replay(suffix: 'no-v111-exact', keepSurvivor: false),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+      final crossedParents =
+          <String, Map<String, Object?> Function(Map<String, Object?>)>{
+            'timestamp': (base) => <String, Object?>{
+              ...base,
+              'timestamp': '2026-08-10T11:30:00.000Z',
+            },
+            'dedup-key': (base) => <String, Object?>{
+              ...base,
+              'dedup_key': 'crossed-dedup-key',
+            },
+            'forwarded': (base) => <String, Object?>{
+              ...base,
+              'is_forwarded': 1,
+            },
+            'quote': (base) => <String, Object?>{
+              ...base,
+              'quoted_message_id': 'some-other-message',
+            },
+            'caption': (base) => <String, Object?>{
+              ...base,
+              'text': 'a caption the initial producer cannot carry',
+            },
+            'mode': (base) => <String, Object?>{
+              ...base,
+              'private_media_mode': 'view_once',
+            },
+            'duration': (base) => <String, Object?>{
+              ...base,
+              'private_media_duration_seconds': 86400,
+            },
+          };
+      for (final entry in crossedParents.entries) {
+        expect(
+          await replay(
+            suffix: 'no-v111-crossed-${entry.key}',
+            keepSurvivor: false,
+            mutateDurableParent: entry.value,
+          ),
+          IncomingDirectMediaBlobDbStageOutcome.refused,
+          reason: 'durable parent crossed on ${entry.key}',
+        );
+        expect(
+          await replay(
+            suffix: 'survivor-crossed-${entry.key}',
+            mutateDurableParent: entry.value,
+          ),
+          IncomingDirectMediaBlobDbStageOutcome.refused,
+          reason: 'surviving-v111 parent crossed on ${entry.key}',
+        );
+      }
+
+      // 5. A surviving attachment must still match its exact immutable
+      // descriptor and custody fingerprint.
+      expect(
+        await replay(
+          suffix: 'attachment-exact',
+          survivingAttachment: (base) => base,
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+      // A downloaded survivor keeps its mutable download projection and is
+      // still the same immutable descriptor.
+      expect(
+        await replay(
+          suffix: 'attachment-downloaded',
+          survivingAttachment: (base) => <String, Object?>{
+            ...base,
+            'local_path': 'media/peer/blob.jpg',
+            'download_status': 'done',
+          },
+        ),
+        IncomingDirectMediaBlobDbStageOutcome.durablySuperseded,
+      );
+      for (final crossed in <String, Map<String, Object?>>{
+        'mime': <String, Object?>{'mime': 'video/mp4', 'media_type': 'video'},
+        'size': <String, Object?>{'size': 6001},
+        'content-hash': <String, Object?>{
+          'content_hash':
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        },
+        'width': <String, Object?>{'width': 999},
+        'fingerprint': <String, Object?>{
+          'direct_media_blob_custody_fingerprint':
+              '0123456789abcdef0123456789abcdef'
+              '0123456789abcdef0123456789abcdef',
+        },
+      }.entries) {
+        expect(
+          await replay(
+            suffix: 'attachment-crossed-${crossed.key}',
+            survivingAttachment: (base) => <String, Object?>{
+              ...base,
+              ...crossed.value,
+            },
+          ),
+          IncomingDirectMediaBlobDbStageOutcome.refused,
+          reason: 'surviving attachment crossed on ${crossed.key}',
+        );
+      }
+
+      // 6. A non-private legacy tombstone keeps the generic deletion result.
+      const legacyId = 'tc355-03a-legacy-tombstone';
+      const legacyPeer = '$legacyId-peer';
+      final legacyMedia = privateMedia(
+        messageId: legacyId,
+        attachmentId: '$legacyId-a',
+      );
+      await db.insert(
+        'messages',
+        privateParent(
+          messageId: legacyId,
+          senderPeerId: legacyPeer,
+          policyVersion: 0,
+          mode: 'ordinary',
+          state: 'none',
+          deletedAt: '2026-08-10T10:07:00.000Z',
+          deletedByPeerId: legacyPeer,
+          hiddenAt: '2026-08-10T10:07:00.000Z',
+        ),
+      );
+      expect(
+        (await dbStageIncomingDirectPrivateMediaBlobCustody(
+          db,
+          messageRow: privateParent(
+            messageId: legacyId,
+            senderPeerId: legacyPeer,
+          ),
+          attachmentRow: legacyMedia.attachment,
+          custodyRow: legacyMedia.custody,
+        )).outcome,
+        IncomingDirectMediaBlobDbStageOutcome.supersededByDeletion,
+      );
+    });
   });
 }
 

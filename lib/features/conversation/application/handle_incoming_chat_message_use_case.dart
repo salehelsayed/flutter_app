@@ -977,7 +977,11 @@ handleIncomingChatMessage({
                   : payload.id,
             },
           );
-          return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+          return (
+            HandleChatMessageResult.strictMediaCustodyRefused,
+            null,
+            null,
+          );
         case _StrictPrivateReceiveDecision.terminal:
           await maybeSendDeliveryReceipt(payload.id);
           emitFlowEvent(

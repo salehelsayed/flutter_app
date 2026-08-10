@@ -769,157 +769,151 @@ void main() {
     },
   );
 
-  test(
-    'TC-355-04b private terminal owners retire only the exact message '
-    'display marker',
-    () async {
-      // Both readiness values, reached only through the REAL terminal owners:
-      // the private-stage terminal-first branch is proved separately in
-      // TC-355-03b/04a; here the receive-first View-Once consume and the
-      // private hide transitions must each retire their own marker.
-      for (final scenario in const <({
-        String suffix,
-        String readiness,
-        bool consume,
-      })>[
-        (suffix: 'consume-not-ready', readiness: 'not_ready', consume: true),
-        (suffix: 'consume-ready', readiness: 'ready', consume: true),
-        (suffix: 'hide-not-ready', readiness: 'not_ready', consume: false),
-        (suffix: 'hide-ready', readiness: 'ready', consume: false),
-      ]) {
-        final path = p.join(
-          Directory.systemTemp.createTempSync('tc355-04b-').path,
-          'identity.db',
-        );
-        final db = await _openCurrent(path);
-        addTearDown(() async {
-          await db.close();
-          final file = File(path);
-          if (file.existsSync()) file.deleteSync();
-        });
+  test('TC-355-04b private terminal owners retire only the exact message '
+      'display marker', () async {
+    // Both readiness values, reached only through the REAL terminal owners:
+    // the private-stage terminal-first branch is proved separately in
+    // TC-355-03b/04a; here the receive-first View-Once consume and the
+    // private hide transitions must each retire their own marker.
+    for (final scenario
+        in const <({String suffix, String readiness, bool consume})>[
+          (suffix: 'consume-not-ready', readiness: 'not_ready', consume: true),
+          (suffix: 'consume-ready', readiness: 'ready', consume: true),
+          (suffix: 'hide-not-ready', readiness: 'not_ready', consume: false),
+          (suffix: 'hide-ready', readiness: 'ready', consume: false),
+        ]) {
+      final path = p.join(
+        Directory.systemTemp.createTempSync('tc355-04b-').path,
+        'identity.db',
+      );
+      final db = await _openCurrent(path);
+      addTearDown(() async {
+        await db.close();
+        final file = File(path);
+        if (file.existsSync()) file.deleteSync();
+      });
 
-        const peerId = 'tc355-04b-peer';
-        final messageId = 'tc355-04b-${scenario.suffix}';
-        const otherMessageId = 'tc355-04b-other';
-        await _insertContact(db, peerId);
-        await db.insert('messages', <String, Object?>{
-          'id': messageId,
-          'contact_peer_id': peerId,
-          'sender_peer_id': peerId,
-          'text': '',
-          'timestamp': _t0,
-          'status': 'delivered',
-          'is_incoming': 1,
-          'created_at': _t0,
-          'private_media_policy_version': 1,
-          'private_media_mode': scenario.consume ? 'view_once' : 'protected',
-          'private_media_state': scenario.consume ? 'opening' : 'available',
-          'private_media_received_at_ms': 1000,
-          'private_media_clock_high_water_ms': 1000,
-        });
-        await _insertMessage(db, peerId: peerId, messageId: otherMessageId);
+      const peerId = 'tc355-04b-peer';
+      final messageId = 'tc355-04b-${scenario.suffix}';
+      const otherMessageId = 'tc355-04b-other';
+      await _insertContact(db, peerId);
+      await db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': peerId,
+        'sender_peer_id': peerId,
+        'text': '',
+        'timestamp': _t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': _t0,
+        'private_media_policy_version': 1,
+        'private_media_mode': scenario.consume ? 'view_once' : 'protected',
+        'private_media_state': scenario.consume ? 'opening' : 'available',
+        'private_media_received_at_ms': 1000,
+        'private_media_clock_high_water_ms': 1000,
+      });
+      await _insertMessage(db, peerId: peerId, messageId: otherMessageId);
 
-        Future<void> stageMessageMarker(String id) =>
-            dbStageDirectNotificationDisplayOutboxEntry(
-              db,
-              DirectNotificationDisplayOutboxEntry.message(
-                eventId: id,
-                peerId: peerId,
-                messageId: id,
-                actorPeerId: peerId,
-                eventTimestamp: _t0,
-                createdAt: _t0,
-                updatedAt: _t0,
-              ).toMap(),
-            );
-        await stageMessageMarker(messageId);
-        await stageMessageMarker(otherMessageId);
-        // A same-message REACTION marker must survive the message retirement.
-        await dbStageDirectNotificationDisplayOutboxEntry(
-          db,
-          DirectNotificationDisplayOutboxEntry.reaction(
-            eventId: '$messageId-reaction',
-            peerId: peerId,
-            messageId: messageId,
-            actorPeerId: peerId,
-            eventTimestamp: _t0,
-            reactionId: '$messageId-reaction',
-            reactionAction: 'add',
-            reactionTombstone: false,
-            createdAt: _t0,
-            updatedAt: _t0,
-          ).toMap(),
-        );
-        if (scenario.readiness == 'ready') {
-          expect(
-            await dbPromoteDirectNotificationDisplayOutboxReadyIfExact(
-              db,
+      Future<void> stageMessageMarker(String id) =>
+          dbStageDirectNotificationDisplayOutboxEntry(
+            db,
+            DirectNotificationDisplayOutboxEntry.message(
+              eventId: id,
               peerId: peerId,
-              eventKind: DirectNotificationDisplayOutboxKind.message,
-              eventId: messageId,
-              expectedRevision: 1,
-              updatedAt: _t1,
-            ),
-            isTrue,
+              messageId: id,
+              actorPeerId: peerId,
+              eventTimestamp: _t0,
+              createdAt: _t0,
+              updatedAt: _t0,
+            ).toMap(),
           );
-        }
-
-        // The REAL production terminal transition — never a direct call to
-        // the marker-delete helper.
-        if (scenario.consume) {
-          expect(
-            await dbConsumeDirectPrivateMedia(db, messageId, nowMs: 2000),
-            1,
-            reason: scenario.suffix,
-          );
-        } else {
-          expect(
-            await dbHideDirectPrivateMediaForMe(
-              db,
-              messageId,
-              hiddenAt: _t2,
-              nowMs: 2000,
-            ),
-            1,
-            reason: scenario.suffix,
-          );
-        }
-
+      await stageMessageMarker(messageId);
+      await stageMessageMarker(otherMessageId);
+      // A same-message REACTION marker must survive the message retirement.
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        db,
+        DirectNotificationDisplayOutboxEntry.reaction(
+          eventId: '$messageId-reaction',
+          peerId: peerId,
+          messageId: messageId,
+          actorPeerId: peerId,
+          eventTimestamp: _t0,
+          reactionId: '$messageId-reaction',
+          reactionAction: 'add',
+          reactionTombstone: false,
+          createdAt: _t0,
+          updatedAt: _t0,
+        ).toMap(),
+      );
+      if (scenario.readiness == 'ready') {
         expect(
-          await dbLoadDirectNotificationDisplayOutboxEntry(
+          await dbPromoteDirectNotificationDisplayOutboxReadyIfExact(
             db,
             peerId: peerId,
             eventKind: DirectNotificationDisplayOutboxKind.message,
             eventId: messageId,
+            expectedRevision: 1,
+            updatedAt: _t1,
           ),
-          isNull,
-          reason:
-              'a ${scenario.readiness} message marker must not outlive its '
-              'terminal private parent (${scenario.suffix})',
-        );
-        expect(
-          await dbLoadDirectNotificationDisplayOutboxEntry(
-            db,
-            peerId: peerId,
-            eventKind: DirectNotificationDisplayOutboxKind.reaction,
-            eventId: '$messageId-reaction',
-          ),
-          isNotNull,
-          reason: 'same-message reaction rows survive (${scenario.suffix})',
-        );
-        expect(
-          await dbLoadDirectNotificationDisplayOutboxEntry(
-            db,
-            peerId: peerId,
-            eventKind: DirectNotificationDisplayOutboxKind.message,
-            eventId: otherMessageId,
-          ),
-          isNotNull,
-          reason: 'other messages survive (${scenario.suffix})',
+          isTrue,
         );
       }
-    },
-  );
+
+      // The REAL production terminal transition — never a direct call to
+      // the marker-delete helper.
+      if (scenario.consume) {
+        expect(
+          await dbConsumeDirectPrivateMedia(db, messageId, nowMs: 2000),
+          1,
+          reason: scenario.suffix,
+        );
+      } else {
+        expect(
+          await dbHideDirectPrivateMediaForMe(
+            db,
+            messageId,
+            hiddenAt: _t2,
+            nowMs: 2000,
+          ),
+          1,
+          reason: scenario.suffix,
+        );
+      }
+
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          db,
+          peerId: peerId,
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: messageId,
+        ),
+        isNull,
+        reason:
+            'a ${scenario.readiness} message marker must not outlive its '
+            'terminal private parent (${scenario.suffix})',
+      );
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          db,
+          peerId: peerId,
+          eventKind: DirectNotificationDisplayOutboxKind.reaction,
+          eventId: '$messageId-reaction',
+        ),
+        isNotNull,
+        reason: 'same-message reaction rows survive (${scenario.suffix})',
+      );
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          db,
+          peerId: peerId,
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: otherMessageId,
+        ),
+        isNotNull,
+        reason: 'other messages survive (${scenario.suffix})',
+      );
+    }
+  });
 }
 
 Future<Database> _openCurrent(String path) => databaseFactoryFfi.openDatabase(

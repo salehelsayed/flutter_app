@@ -894,9 +894,9 @@ Future<MediaAttachment?> downloadMedia({
         // converges through the existing expiry transition. Neither claims the
         // row, and neither performs network work.
         return strictOwner().downloadAndAcknowledge(
-          attachment: durableLocal ?? attachment.copyWith(
-            ownerLane: MediaOwnerLane.direct,
-          ),
+          attachment:
+              durableLocal ??
+              attachment.copyWith(ownerLane: MediaOwnerLane.direct),
           contactPeerId: contactPeerId,
         );
       }

@@ -3217,8 +3217,7 @@ dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody(
           committedCustody.length == 1 &&
           committedCustody.single['incarnation_id'] == incarnationId &&
           committedCustody.single['wire_envelope'] == envelope &&
-          committedCustody.single['media_blob_manifest_hash'] ==
-              manifestHash &&
+          committedCustody.single['media_blob_manifest_hash'] == manifestHash &&
           (committedCustody.single['media_blob_expires_at_ms'] as num?)
                   ?.toInt() ==
               earliestExpiry &&
@@ -3435,9 +3434,9 @@ _commitOutgoingDirectPrivateWireEnvelopeWithinTxn(
         useCanonicalPredicate = false;
       } else {
         return (
-        outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
-        parent: null,
-      );
+          outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+          parent: null,
+        );
       }
     } else {
       return (

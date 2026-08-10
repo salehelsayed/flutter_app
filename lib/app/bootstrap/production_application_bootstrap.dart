@@ -4086,8 +4086,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         // obligation converges on its own either way: an already ACK-pending
         // row keeps retrying its source ACK, and expiry still applies.
         if (!directMediaBlobDrainMayDownloadIncomingParent(parent)) {
-          if (parent != null &&
-              parent.privateMediaPolicy.requiresRedaction) {
+          if (parent != null && parent.privateMediaPolicy.requiresRedaction) {
             emitFlowEvent(
               layer: 'FL',
               event: 'DIRECT_MEDIA_BLOB_DRAIN_PRIVATE_RETAINED',

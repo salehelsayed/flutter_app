@@ -45,9 +45,11 @@ const _relocations = <String, List<String>>{
     // Plans 347 and 349 publish the strict incoming parent/attachment and
     // ordinary-text mutation projections; Plan 351 adds the transactional
     // incoming-deletion owner and the typed strict publication disposition.
-    // Plan 354 adds the private envelope+v108+v111 inbox-custody handoff.
-    // The adapter remains in data.
-    'b43a06ec8065dc6f299bf920b815d382e4c2b34c64a81d5fcbb3d7e503568b02',
+    // Plan 354 adds the private envelope+v108+v111 inbox-custody handoff, and
+    // Plan 355 makes strict incoming publication suppress every exact private
+    // terminal state rather than only deleted/hidden. The adapter remains in
+    // data.
+    'f1268996fb909329783215d0610ece028a62a41b8c213050d3dd79eb0abf18a7',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
