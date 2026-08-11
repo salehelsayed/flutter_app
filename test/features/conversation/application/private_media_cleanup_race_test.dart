@@ -1522,16 +1522,12 @@ void main() {
       expect(handoffResultA.authorizesTransport, isFalse);
       expect(await v108Rows(first, messageIdA), isEmpty);
       expect(networkA.deliverCallCount, 0);
-      expect(
-        orderA,
-        <String>[
-          'deletion-entered',
-          'handoff-attempted',
-          'deletion-released',
-          'handoff-entered',
-        ],
-        reason: 'the contender entered only after the lease was released',
-      );
+      expect(orderA, <String>[
+        'deletion-entered',
+        'handoff-attempted',
+        'deletion-released',
+        'handoff-entered',
+      ], reason: 'the contender entered only after the lease was released');
 
       // ORDER B — the incumbent initial handoff owns the lease first.
       final secondLock = _SignallingLifecycleLock();

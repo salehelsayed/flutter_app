@@ -247,16 +247,34 @@ handleIncomingMessageDeletion({
     // 356: current-event selection, apply and every marker/presentation-
     // sensitive cleanup run under the SAME repository-wide exclusive private
     // lifecycle lease that strict private receive uses, so the live listener
-    // and recovered replay share one seam. Receipt/contact work begins only
-    // after the lease is released.
+    // and recovered replay share one seam.
+    // 357: local contact reauthorization is INSIDE that lease, because contact
+    // deletion holds the very same lease while it removes messages and then the
+    // contact. Receipt and network work still begin only after release.
     final leased = await _underPrivateLifecycleAuthority(
       mediaAttachmentRepo,
       () async {
+        // The first read above may already be stale: `deleteContactAndMessages`
+        // can have won this lease behind it. Re-reading here is what stops the
+        // absent-target branch from inserting an orphan tombstone for a contact
+        // that no longer exists.
+        if (await contactRepo.getContact(payload!.senderPeerId) == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_DELETE_RECEIVE_CONTACT_REVOKED',
+            details: {
+              'messageId': payload.messageId.length > 8
+                  ? payload.messageId.substring(0, 8)
+                  : payload.messageId,
+            },
+          );
+          return null;
+        }
         IncomingDirectDeletionApplyResult applied;
         try {
           applied = await directDeletionRepository
               .applyIncomingDirectMessageDeletion(
-                messageId: payload!.messageId,
+                messageId: payload.messageId,
                 senderPeerId: payload.senderPeerId,
                 deletedAt: payload.timestamp,
                 transport: message.transport,

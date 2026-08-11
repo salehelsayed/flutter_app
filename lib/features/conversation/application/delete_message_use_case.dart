@@ -611,10 +611,16 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
                 wireEnvelope: jsonString,
               );
           final committedCustody = staged.custody;
-          if (!staged.authorizesTransport || committedCustody == null) {
+          // 357: only the transaction's own committed row may authorize
+          // cleanup or transport. An in-memory candidate proves nothing about
+          // what is durable, so a NULL committed row refuses here rather than
+          // substituting one; the retained event stays with its own drain.
+          final committed = staged.message;
+          if (!staged.authorizesTransport ||
+              committedCustody == null ||
+              committed == null) {
             return null;
           }
-          final committed = staged.message ?? pendingTombstoneCandidate;
           await _privateTerminalCleanupBestEffort(
             tombstone: committed,
             reactionRepo: reactionRepo,
@@ -1228,7 +1234,19 @@ Future<void> _privateTerminalCleanupBestEffort({
   required MediaFileManager mediaFileManager,
   required DirectPrivateMediaCleanupRuntime privateCleanupRuntime,
 }) async {
-  await reactionRepo?.deleteReactionsForMessage(tombstone.id);
+  // 357: reaction retirement is never deletion authority. It runs after the
+  // atomic tombstone+event commit, so its failure may not escape past the
+  // durable settlement, node/live transport selection or the incumbent
+  // file/key/attachment cleanup below.
+  try {
+    await reactionRepo?.deleteReactionsForMessage(tombstone.id);
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_REACTION_RETAINED',
+      details: {'error': error.runtimeType.toString()},
+    );
+  }
   final engine = PrivateMediaLifecycleEngine(
     adapter: DirectPrivateMediaLifecycle(
       messageRepository: privateLifecycleRepository,

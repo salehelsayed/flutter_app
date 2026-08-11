@@ -221,17 +221,32 @@ dbStageOutgoingDirectPrivateDeletionInboxCustody(
       if (row['wire_envelope'] != wireEnvelope) {
         return const DbDirectPrivateDeletionCustodyStageResult.refused();
       }
-      final currentParents = await txn.query(
+      // 357: a retained event proves only that SOME attempt owned this
+      // envelope. The deletion outer envelope hides its target message id, so a
+      // pre-existing row can never prove which live parent its encrypted inner
+      // payload names. Replay therefore authorizes only an ALREADY-persisted
+      // exact tombstone: project the completion-style outgoing envelope owner,
+      // require it to be unique and to be this message, then require the exact
+      // persisted row. Missing, live, crossed, ambiguous, wrong-policy and
+      // drifted parents refuse with the retained event left untouched, and the
+      // mutating live-parent tombstone body is deliberately never invoked here.
+      final projected = await txn.query(
         'messages',
-        where: 'id = ?',
-        whereArgs: <Object?>[messageId],
-        limit: 1,
+        where: 'contact_peer_id = ? AND is_incoming = 0 AND wire_envelope = ?',
+        whereArgs: <Object?>[recipientPeerId, wireEnvelope],
+        limit: 2,
       );
+      if (projected.length != 1 ||
+          projected.single['id'] != messageId ||
+          !isPersistedExactOutgoingDirectPrivateDeleteTombstoneRow(
+            persistedRow: projected.single,
+            tombstoneRow: tombstoneRow,
+          )) {
+        return const DbDirectPrivateDeletionCustodyStageResult.refused();
+      }
       return DbDirectPrivateDeletionCustodyStageResult(
         outcome: OutgoingOrdinaryMutationOutcome.idempotent,
-        messageRow: currentParents.isEmpty
-            ? null
-            : Map<String, Object?>.from(currentParents.single),
+        messageRow: Map<String, Object?>.from(projected.single),
         custodyRow: Map<String, Object?>.from(row),
       );
     }

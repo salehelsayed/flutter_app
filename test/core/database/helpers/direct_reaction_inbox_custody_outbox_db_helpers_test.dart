@@ -1452,8 +1452,8 @@ END
 
     /// Deposits the exact physical v109 row a prior attempt would have left,
     /// using the same shape every other mutation owner writes.
-    Future<void> seedExistingEvent(String eventId, String envelope) =>
-        current.insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+    Future<void> seedExistingEvent(String eventId, String envelope) => current
+        .insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
           'recipient_peer_id': _recipient,
           'event_id': eventId,
           'wire_envelope': envelope,

@@ -7,7 +7,6 @@ import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_h
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
-import 'package:flutter_app/core/database/direct_reaction_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
@@ -2653,7 +2652,10 @@ void main() {
       );
 
       final network = FakeP2PNetwork();
-      final stopped = _StoppedDeleteP2PService(peerId: sender, network: network);
+      final stopped = _StoppedDeleteP2PService(
+        peerId: sender,
+        network: network,
+      );
       addTearDown(stopped.dispose);
       final throwingReactions = _ThrowingReactionRepository();
       final fileManager = FakeMediaFileManager();

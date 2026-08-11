@@ -2607,6 +2607,61 @@ bool isExactOutgoingDirectPrivateDeleteTombstoneShape({
       (expectedStatus == 'delivered' || expectedStatus == 'inboxed');
 }
 
+/// The columns a persisted private delete-for-everyone tombstone must still
+/// match exactly before a pre-existing v109 event may authorize anything again.
+///
+/// `read_at`, `hidden_at` and every private lifecycle state/clock column are
+/// deliberately absent: a local read or hide and the incumbent lifecycle clocks
+/// are independent terminal claims, never deletion identity.
+const _persistedPrivateDeleteTombstoneColumns = <String>[
+  'id',
+  'contact_peer_id',
+  'sender_peer_id',
+  'text',
+  'timestamp',
+  'status',
+  'is_incoming',
+  'created_at',
+  'edited_at',
+  'quoted_message_id',
+  'deleted_at',
+  'deleted_by_peer_id',
+  'transport',
+  'wire_envelope',
+  'relay_expires_at',
+  'custody_checked_at',
+  'direct_media_custody_intent_id',
+  'dedup_key',
+  'is_forwarded',
+  'private_media_policy_version',
+  'private_media_mode',
+  'private_media_duration_seconds',
+];
+
+/// The complete exact-persisted-tombstone predicate.
+///
+/// 357: a pre-existing private deletion event proves only that some attempt
+/// retained that envelope. Its encrypted inner payload names no target, so
+/// replay may authorize cleanup or transport only when the local parent has
+/// ALREADY converged to the exact supplied tombstone: identity, the immutable
+/// payload projection, deletion time/author, the exact envelope and every
+/// attempt-owned transport/relay/custody field must match.
+///
+/// Callers MUST have validated [isExactOutgoingDirectPrivateDeleteTombstoneShape]
+/// first; this predicate is pure and never mutates or resurrects a parent.
+bool isPersistedExactOutgoingDirectPrivateDeleteTombstoneRow({
+  required Map<String, Object?> persistedRow,
+  required Map<String, Object?> tombstoneRow,
+}) =>
+    persistedRow['transport'] == null &&
+    persistedRow['relay_expires_at'] == null &&
+    persistedRow['custody_checked_at'] == null &&
+    _sameOrdinaryColumns(
+      persistedRow,
+      tombstoneRow,
+      _persistedPrivateDeleteTombstoneColumns,
+    );
+
 /// The update-only private tombstone body, callable from an owning transaction.
 ///
 /// Callers MUST have validated [isExactOutgoingDirectPrivateDeleteTombstoneShape]

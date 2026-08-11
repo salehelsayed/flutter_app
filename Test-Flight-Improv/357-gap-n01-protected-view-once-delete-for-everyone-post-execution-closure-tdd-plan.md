@@ -1,6 +1,6 @@
 # 357 - GAP-N01 Protected/View-Once Delete-for-Everyone Post-Execution Closure
 
-Status: execution-ready / reviewed / not implemented
+Status: IMPLEMENTED / EXECUTION_COMPLETED (2026-08-11) / default-off / not release-eligible
 Type: Bug / modification
 Baseline observed while planning: `ca5f2174c9bd4cbdbc54d02a92a70610a111f150` (`feat(356): adopt physical v109 custody for private delete-for-everyone`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
@@ -15,6 +15,7 @@ Closure tier: behavioral host tests with real current-schema SQLite and the actu
 | 2026-08-10 | Planner | Graphify review/TDD context plus exact source, tests and gate registrations | One bounded production repair is coherent: require an already-persisted exact tombstone on v109 replay, reauthorize contact under the existing lease, and isolate reaction cleanup failure. Retry/lock corrections are evidence-only. | Write four causal rows and one bounded evidence-repair set, then invoke `$tdd-review`. |
 | 2026-08-10 | Independent `$tdd-review` | Full plan, exact storage/sender, receiver/concurrency, gate registrations and literal commands | Initial `plan-fixes-required`: reject ambiguous envelope projection, fully define exact tombstone shape, make NULL-row/contact/receipt/lock proofs causal, count four mutations, and remove the redundant 404-path core family. All deltas were applied. | Run targeted re-review. |
 | 2026-08-10 | Targeted re-review / arbiter | Amended plan and all review counterexamples | Three independent reviewers returned READY. Core bet confirmed; no schema/new owner and no core/feature/full/device/Go family is justified. | Mark execution-ready; implementation remains a separate session. |
+| 2026-08-11 | Executor | The four authorized production files, the three causal test files and the four PRES-357-A evidence files | Executed as planned. First RED was behavioral on all four rows (`+0 -4`, no missing symbol). All four production edits landed in exactly the authorized files; no retry, contact-delete, repository/interface or bootstrap edit was needed. One test-shape correction was required beyond the committed authoring (see Execution Receipts). | Record receipts and reconcile 356/357, `STATUS.md`, index and coverage. |
 
 ## Problem And Evidence
 
@@ -181,15 +182,73 @@ Explicitly NOT RUN per plan:
 
 ## Done Criteria
 
-- [ ] Exact existing-v109 replay returns only one uniquely envelope-projecting, already-persisted exact private tombstone or refuses while preserving the owner; it never rewrites a live/cross-message/ambiguous parent from an opaque envelope, and no uncommitted in-memory fallback may clean or transmit.
-- [ ] Contact deletion winning the actual shared lease cannot be followed by an orphan tombstone, cleanup, marker or receipt; handler-first still converges and final contact purge leaves no row.
-- [ ] Reaction retirement failure after durable private stage is contained without suppressing lifecycle cleanup, node settlement, retained v109, or the already-selected transport path.
-- [ ] TC-356-03a/03b use physical v109 and honestly distinguish private deletion's first-lookup fail-closed rule from compatible EDIT's later owner check.
-- [ ] TC-356-04c uses the same target, and TC-356-02 contains no clock sleep; both prove the actual incumbent lifecycle order.
-- [ ] Four representative mutations independently red their causal rows and are reverted.
-- [ ] One combined focused/preservation invocation, host `1to1`, analyzer/format/diff and one Graphify refresh pass on the same final tree; live `1to1` count is recorded rather than copied.
-- [ ] Plans 356/357, `STATUS.md`, index and coverage retain historical receipts but are changed to repaired/executed only after all evidence passes.
-- [ ] No schema, new durable owner, retry/contact-delete production expansion, modality adoption, activation, device/iOS, per-plan full host-all, GAP-N01 closure, or release claim is made.
+- [x] Exact existing-v109 replay returns only one uniquely envelope-projecting, already-persisted exact private tombstone or refuses while preserving the owner; it never rewrites a live/cross-message/ambiguous parent from an opaque envelope, and no uncommitted in-memory fallback may clean or transmit.
+- [x] Contact deletion winning the actual shared lease cannot be followed by an orphan tombstone, cleanup, marker or receipt; handler-first still converges and final contact purge leaves no row.
+- [x] Reaction retirement failure after durable private stage is contained without suppressing lifecycle cleanup, node settlement, retained v109, or the already-selected transport path.
+- [x] TC-356-03a/03b use physical v109 and honestly distinguish private deletion's first-lookup fail-closed rule from compatible EDIT's later owner check.
+- [x] TC-356-04c uses the same target, and TC-356-02 contains no clock sleep; both prove the actual incumbent lifecycle order.
+- [x] Four representative mutations independently red their causal rows and are reverted.
+- [x] One combined focused/preservation invocation, host `1to1`, analyzer/format/diff and one Graphify refresh pass on the same final tree; live `1to1` count is recorded rather than copied.
+- [x] Plans 356/357, `STATUS.md`, index and coverage retain historical receipts but are changed to repaired/executed only after all evidence passes.
+- [x] No schema, new durable owner, retry/contact-delete production expansion, modality adoption, activation, device/iOS, per-plan full host-all, GAP-N01 closure, or release claim is made.
+
+## Execution Receipts (2026-08-11)
+
+Production delta is exactly the four authorized files; `delete_contact_use_case.dart`, retry production,
+repositories/interfaces, bootstrap and private lifecycle code were not touched.
+
+- `lib/core/database/helpers/messages_db_helpers.dart` — added the pure
+  `isPersistedExactOutgoingDirectPrivateDeleteTombstoneRow` predicate over a named immutable column set
+  (identity, payload projection, deletion time/author, exact envelope, `sending`, v1 P/VO with NULL duration,
+  and NULL transport/relay/custody), reusing the incumbent `_sameOrdinaryColumns` comparator.
+  `read_at`, `hidden_at` and every private lifecycle state/clock column are deliberately excluded.
+  The legacy update-only commit body and its within-transaction twin are unchanged.
+- `lib/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart` — the existing-v109 branch
+  now projects the completion-style outgoing `(contact_peer_id, is_incoming = 0, wire_envelope)` owner with
+  `limit: 2`, requires exactly one row whose id is the supplied message id, then requires the exact persisted
+  predicate. Replay still wins before shared capacity, and the mutating live-parent tombstone body is never
+  invoked on this path.
+- `lib/features/conversation/application/delete_message_use_case.dart` — the private stage guard now requires a
+  non-null committed transaction row (the `?? pendingTombstoneCandidate` fallback is gone), and reaction
+  retirement runs in its own best-effort catch emitting
+  `CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_REACTION_RETAINED` before the incumbent lifecycle cleanup continues.
+- `lib/features/conversation/application/handle_incoming_message_deletion_use_case.dart` — the local contact is
+  re-read inside the incumbent lifecycle lease immediately before apply; an in-lease miss emits
+  `CHAT_MSG_DELETE_RECEIVE_CONTACT_REVOKED` and returns terminal `unauthorized` (recovered: rejected /
+  non-retryable) with zero apply, cleanup, marker or receipt. The first-read `unknownSender` result and the
+  outside-the-lease receipt/network boundary are unchanged; the stale 356 comment was corrected.
+
+Receipts, all on the same final tree:
+
+| Gate | Result |
+|---|---|
+| First behavioral RED (3 files, concurrency 4) | `+0 -4` — every failure behavioral; no missing symbol or compile error |
+| Final filtered proof (8 files, concurrency 4) | `+11` All tests passed (4 TC-357 rows + 7 Plan-356 sentinels) |
+| Mutation A — blind existing-v109 winner restored | TC-357-01a RED (`refused` -> `idempotent`), reverted |
+| Mutation B — application in-memory fallback restored | TC-357-01b RED (`invalidMessage` -> `success`), reverted |
+| Mutation C — in-lease contact reauthorization dropped | TC-357-02 RED (`unauthorized` -> `success`), reverted |
+| Mutation D — reaction retirement escapes its catch | TC-357-03 RED (injected `StateError` escapes), reverted |
+| Curated host `1to1` | exit 0, **120/120 paths** — measured live; the historical `121 paths` claim stays superseded |
+| `flutter analyze` | No issues found |
+| changed-Dart `dart format --set-exit-if-changed` | clean over all 11 changed Dart paths |
+| `git diff --check` (range, cached, worktree) | clean, before and after the Graphify refresh |
+| `./graphify-arch/refresh_arch_graph.sh --incremental` | 12 changed code files, 70,973 nodes / 104,292 edges; TDD overlay refreshed |
+
+Omitted exactly as planned: `core-host-all`, `feature-host-all`, full `host-all`, completeness, DTR hash
+preflights, `./scripts/run_test_gates.sh 1to1`, ad-hoc whole-file reruns, and every Go/relay/native/device/iOS
+and activation campaign. `1to1` rejects `--batch-flutter`/`--concurrency` (`Batch mode is not supported for
+host scope: 1to1`), confirming the plan's note; the lane ran sequentially.
+
+Recorded corrections, neither of which widened production:
+
+- TC-357-02's order-B assertion `expect(secondLock.exclusiveActive, 0)` was not deterministic: by the time the
+  handler's future resolves, the queued contact purge can already hold the same lock, so the live active count
+  cannot distinguish "handler released" from "nobody holds it". The lock fixture now tracks per-section
+  identity and the receipt callback samples whether the handler's own outermost section has finished. This is a
+  strictly stronger statement of the same reviewed property (receipt only after lease release) and still reds
+  under mutation C.
+- The committed test authoring left three `unnecessary_import` analyzer infos and three unformatted files; both
+  were fixed in place. No production import changed.
 
 ## Handoff
 

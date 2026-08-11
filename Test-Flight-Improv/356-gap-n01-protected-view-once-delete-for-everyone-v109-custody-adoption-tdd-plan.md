@@ -1,6 +1,6 @@
 # 356 - GAP-N01 Protected/View-Once Delete-for-Everyone v109 Custody Adoption
 
-Status: implemented / post-execution-review-incomplete / superseded by Plan 357 repair; historical execution receipts retained
+Status: implemented / post-execution defects REPAIRED BY IMPLEMENTED PLAN 357 (2026-08-11); historical execution receipts retained verbatim; default-off, not release-eligible
 Type: Modification
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
 Classification: implemented default-off adopter with a bounded post-execution correctness/evidence repair required
@@ -370,3 +370,44 @@ outbox, drain, protocol, modality, activation, device, or release work. The
 dead tombstone-only repository method remains deferred hygiene: removing its
 interface/bootstrap/fixture surface would expand this correctness repair and
 touch frozen owners without improving the demonstrated invariants.
+
+## Post-Execution Repair Closed by Plan 357 (2026-08-11)
+
+Plan 357 executed against this baseline and closed every item above at its
+incumbent owner. The historical receipts in this document remain unchanged; the
+statements below record what is now demonstrated rather than restating them.
+
+- Exact existing-v109 replay now projects the completion-style outgoing
+  `(contact, is_incoming = 0, wire_envelope)` owner with `limit: 2`, requires
+  exactly one row whose id is the supplied message id, and requires that row to
+  be the exact persisted tombstone. Live, absent, crossed, duplicate-envelope,
+  wrong-duration/status and immutable-drift parents refuse with the retained
+  event and every `messages`/v109/v108/v111/attachment row byte-identical, and
+  the mutating live-parent tombstone body is never invoked on that path.
+- The application additionally requires the transaction's own committed row: an
+  authorized custody result with a NULL message performs zero cleanup, zero
+  store and zero network instead of substituting its in-memory candidate.
+- `handleIncomingMessageDeletion` re-reads the local contact INSIDE the
+  incumbent private lifecycle lease immediately before apply. A stale-positive
+  first read followed by a real `deleteContactAndMessages` winning that lease
+  yields terminal `unauthorized` (recovered: rejected / non-retryable) with no
+  orphan tombstone, cleanup, marker or receipt. The initial `unknownSender`
+  result and the outside-the-lease receipt/network boundary are unchanged, and
+  handler-first deletion-before-initial still converges and receipts exactly
+  once after release.
+- Outgoing reaction retirement is now independently best-effort: its failure is
+  recorded and the incumbent lifecycle cleanup, node settlement, retained v109
+  and the already-selected transport path all continue. Atomic stage, private
+  lifecycle authorization and transport failures are still not caught.
+- TC-356-03a/03b now execute through real SQLite/physical v109 and honestly
+  separate private deletion's first-lookup fail-closed rule from the compatible
+  EDIT route's pre-egress owner barrier; TC-356-04c competes on the same target
+  and asserts `durablySuperseded` with receipt-only; TC-356-02 uses the actual
+  lock's attempt/entry/release signals and contains no sleep.
+- The live `1to1` inventory was re-measured at **120 unique paths** and the lane
+  passed 120/120. The historical `121 paths` receipt stays superseded.
+
+What remains open is unchanged by this repair: GAP-N01 closure, production
+activation/cohort selection, disappearing initial/deletion, private EDIT,
+group/announcement lanes, historical promotion, linked-device fanout,
+mixed-version rollout, consolidated iOS, and release eligibility.

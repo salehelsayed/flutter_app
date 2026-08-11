@@ -1363,15 +1363,23 @@ void main() {
       addTearDown(() {
         if (!releaseApply.isCompleted) releaseApply.complete();
       });
+      // Apply really runs under the handler's exclusive lease, so the section
+      // open at that instant IS the lease the receipt must wait for.
+      int? handlerSection;
       final gatedRepo = _GatedIncomingDeletionApplyRepository(
         second.messageRepo,
         onApply: () async {
+          handlerSection ??= secondLock.outermostOpenSection;
           if (!applyEntered.isCompleted) applyEntered.complete();
           await releaseApply.future;
         },
       );
 
       final handlerReceipts = <String>[];
+      // Sampled inside the receipt callback: the handler's own lease must
+      // already have finished when the receipt is emitted. The competing purge
+      // may hold the lock by then, so a live active count cannot carry this.
+      final leaseReleasedAtReceipt = <bool>[];
       final handlerFirst = handleIncomingMessageDeletion(
         message: deletionEvent(handlerFirstId, handlerFirstEvent),
         messageRepo: gatedRepo,
@@ -1382,8 +1390,12 @@ void main() {
         bridge: PassthroughCryptoBridge(),
         ownMlKemSecretKey: 'secret',
         stagedEntryId: 'relay-uuid-tc357-02b',
-        sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
-            handlerReceipts.add('$id/$mutationEventId'),
+        sendMutationDeliveryReceipt: (id, {required mutationEventId}) async {
+          leaseReleasedAtReceipt.add(
+            secondLock.finishedSections.contains(handlerSection),
+          );
+          handlerReceipts.add('$id/$mutationEventId');
+        },
       );
       await applyEntered.future.timeout(const Duration(seconds: 10));
 
@@ -1412,7 +1424,11 @@ void main() {
       expect(handlerResult, HandleMessageDeletionResult.success);
       expect(handlerStored?.isDeleted, isTrue);
       expect(handlerReceipts, <String>['$handlerFirstId/$handlerFirstEvent']);
-      expect(secondLock.exclusiveActive, 0);
+      expect(
+        leaseReleasedAtReceipt,
+        const <bool>[true],
+        reason: 'the receipt is emitted only after the lease is released',
+      );
 
       await purge.timeout(const Duration(seconds: 10));
       expect(
@@ -1436,6 +1452,15 @@ class _SignallingLifecycleLock extends MediaAttachmentLifecycleLock {
   final List<Completer<void>> _attemptWaiters = <Completer<void>>[];
   int exclusiveAttempts = 0;
   int exclusiveActive = 0;
+  int _nextSectionId = 0;
+  final List<int> _openSections = <int>[];
+  final Set<int> finishedSections = <int>{};
+
+  /// The OUTERMOST exclusive section currently open. The engine's per-attachment
+  /// sections are reentrant inside it, so only this identity marks the lease a
+  /// caller actually owns.
+  int? get outermostOpenSection =>
+      _openSections.isEmpty ? null : _openSections.first;
 
   Future<void> nextExclusiveAttempt() {
     final waiter = Completer<void>();
@@ -1451,11 +1476,15 @@ class _SignallingLifecycleLock extends MediaAttachmentLifecycleLock {
     }
     _attemptWaiters.clear();
     return super.synchronizedAll(() async {
+      final sectionId = ++_nextSectionId;
+      _openSections.add(sectionId);
       exclusiveActive++;
       try {
         return await action();
       } finally {
         exclusiveActive--;
+        _openSections.remove(sectionId);
+        finishedSections.add(sectionId);
       }
     });
   }
