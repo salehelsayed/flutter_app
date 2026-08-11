@@ -1,6 +1,6 @@
 # 359 - GAP-N01 Disappearing Direct-Media Delete-for-Everyone v109 Custody And Private-EDIT Disposition
 
-Status: EXECUTION_READY / independently reviewed / default-off / not release-eligible
+Status: EXECUTION_COMPLETED / independently reviewed / default-off / not release-eligible
 Type: Modification
 Baseline: `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6` (clean, committed, post-execution-audited Plan 358 closure HEAD)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03/A-28; `Test-Flight-Improv/234-1to1-private-media-lifecycle-tdd-plan.md` D-234-01/D-234-02/D-234-05; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
@@ -239,26 +239,27 @@ git status --short
 - Scope drift: any schema/interface/repository/bootstrap/retry/new owner/test-path/platform expansion returns the plan to review.
 
 - [x] Plan 358 has a clean committed GREEN, post-execution audit and recorded accepted SHA.
-- [ ] Every behavior has a named causal test or exact preservation control; all seven causal rows are real behavior tests.
-- [ ] One combined RED, one combined final proof and five representative mutation re-reds are recorded.
-- [ ] Exact disappearing DFE retains v109 before private cleanup/network; proof-less rows never promote.
-- [ ] Live initial v108/v111 authority retains its exact attachment/key/artifacts; post-drain lineage cleans safely.
-- [ ] Completion and incoming deletion preserve all disappearing lifecycle columns and independent v111 authority.
-- [ ] Private EDIT is rejected/ignored before effects on both sender and receiver, while ordinary EDIT remains unchanged.
-- [ ] Host `1to1` and the once-only wave `host-all` pass once; core/feature are not rerun separately.
-- [ ] No new test path/registration/completeness, schema, DTR re-pin, device or dedicated relay/native campaign is added.
-- [ ] Analyzer, changed-Dart format, baseline/staged/unstaged diff hygiene and incremental Graphify are clean.
-- [ ] Plan/index/status/coverage receipts remain append-only and make no activation, GAP-N01 or release claim.
+- [x] Every behavior has a named causal test or exact preservation control; all seven causal rows are real behavior tests.
+- [x] One combined RED (`+0 -7`), one combined final proof (`+12`) and five representative mutation re-reds (plus two extra storage sub-mutations) are recorded.
+- [x] Exact disappearing DFE retains v109 before private cleanup/network; proof-less rows never promote.
+- [x] Live initial v108/v111 authority retains its exact attachment/key/artifacts; post-drain lineage cleans safely.
+- [x] Completion and incoming deletion preserve all disappearing lifecycle columns and independent v111 authority.
+- [x] Private EDIT is rejected/ignored before effects on both sender and receiver, while ordinary EDIT remains unchanged.
+- [x] Host `1to1` (120/120 paths) and the once-only wave `host-all` ran once each; core/feature were not rerun separately. The wave's Flutter batch was `+13904 ~11 -9` over 1339 paths and its 8 non-Flutter tails passed; the 9 failures are the pre-existing `test/integration/**` notification/relay-degradation set, reproduced identically at the accepted baseline in a clean worktree.
+- [x] No new test path/registration/completeness, schema, DTR re-pin, device or dedicated relay/native campaign is added.
+- [x] Analyzer, changed-Dart format, baseline/staged/unstaged diff hygiene and incremental Graphify (`7a7dc08f28bf4b4d`) are clean.
+- [x] Plan/index/status/coverage receipts remain append-only and make no activation, GAP-N01 or release claim.
 
 ## Handoff
 
-- Execution state: ready against accepted Plan 358 closure `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`; run the literal clean-tree/drift preflight before authoring REDs.
-- First causal RED: the single seven-file concurrency-4 `--name 'TC-359-'` command above, after prerequisite acceptance.
-- Final proof: the single nine-file filtered command above; do not split its preservation alternatives into repeated Flutter invocations.
+- Execution state: EXECUTED against accepted Plan 358 closure `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`. The literal preflight passed with documentation-only drift above the base, and every gate in the cadence ran exactly as authorized.
+- Recorded receipts: RED `+0 -7`; TC-359 rows `+7`; the seven owning files in full `+400`; the single nine-file filtered proof `+12`; 5/5 documented mutation re-reds plus two extra storage sub-mutations; host `1to1` PASS at 120/120 paths; the once-only wave `host-all` Flutter batch `+13904 ~11 -9` over 1339 paths with its 8 non-Flutter tails 8/8 PASS.
+- Attributed pre-existing failures: the 9 wave reds are `android_picture_in_picture_interruption_ownership`, `chat_notification_dedupe_integration`, `ios_notification_provider_adapter_contract`, `live_direct_notification_integration` (x2), `live_direct_notification_simulation` (x2) and `relay_down_degradation_integration` (x2). All reproduce identically at the accepted baseline in a clean detached worktree and are outside this plan's surface. Because the script aborts before its tails on a red batch, the 8 Go/non-Dart tails were executed separately and all passed.
+- Contract correction during execution: TC-359-02b originally proved only the deletion-first lock order. Its contract requires BOTH, so Order B was rewritten as a genuine reverse order (incumbent contender holds the lease first) while keeping the live-custody retention assertions, and the in-flight first `1to1` run was stopped rather than allowed to certify a stale tree. `1to1` therefore still ran exactly once to completion.
+- Second accepted-difference restatement: `messages_db_helpers_test.dart` is an eighth EXISTING test path touched only to narrow TC-356-04a's disappearing negative to the malformed no-duration shape and add the exact positive. No test file, path or registration was created.
 - Manual registration/migration: none; every test extends an existing path and DB remains v111.
-- Closure: host current-schema SQLite, actual lifecycle locks, secure-key/temp files, one curated 1:1 lane and one direct-private/disappearing wave full-host sweep.
 - Runtime defaults: the client selector and relay admissions remain default-off; physical custody remains drainable/deletable after rollback.
-- Deferred: group/announcement event and blob custody, linked-device fanout, historical/no-intent disposition, activation/operations/quota UX, final release evidence and legacy retirement.
+- Deferred: group/announcement event and blob custody, linked-device fanout, historical/no-intent disposition, crash-complete general erasure, activation/operations/quota UX, device/iOS evidence, final release evidence and legacy retirement. GAP-N01 remains open and no PRD control score moves.
 
 ## Reviewer Findings
 
@@ -289,3 +290,9 @@ The prerequisite is satisfied at the pinned clean Plan 358 closure SHA. Current 
 |---|---|---|---|---|---|---|
 | 2026-08-11 | planned | plan artifact only | No tests run; read-only planning against an active Plan 358 worktree | Existing owners and tests mapped; Plan 358 still in implementation | Prerequisite blocked | Await clean audited Plan 358 baseline, then author causal REDs. |
 | 2026-08-11 | prerequisite unblocked | Plan 358/359 artifacts, index, status and coverage | Clean closure HEAD `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`; Graphify review fingerprint `88c2f3f763067ef2`; targeted source/gate reviews | Plan 358 audit closed with no executable defect; Plan 359 owners and tests remain sufficient; TC-359-01a now independently proves one coherent image/video projection | Execution-ready | Run the literal preflight, then author the seven behavioral RED rows. |
+| 2026-08-11 | RED | Seven existing causal test paths plus the two accepted-difference restatements | Preflight clean at the pinned baseline with documentation-only drift; one concurrency-4 selector-on `--name 'TC-359-'` invocation over the seven paths returned `+0 -7` | Every row failed behaviorally at its documented current boundary: the stage never reaches its transaction for disappearing, completion is `stale`, DFE returns no tombstone, the retention predicate is P/VO-only, incoming apply is `unauthorized`, the sender reaches the caption-edit branch, and the receiver returns `editMissingOriginal` | No missing symbol, skip or source-string failure | Implement the seven owners. |
+| 2026-08-11 | GREEN | `media_attachments_db_helpers.dart`, `direct_reaction_inbox_custody_outbox_db_helpers.dart`, `messages_db_helpers.dart`, `delete_message_use_case.dart`, `direct_private_media_lifecycle.dart`, `send_chat_message_use_case.dart`, `handle_incoming_chat_message_use_case.dart` | TC-359 rows `+7`; the seven owning files in full `+400`; the single nine-file filtered proof `+12` (7 rows + 5 out-of-lane sentinels) | Exactly the reviewed seven-file surface; no schema, interface, bootstrap, retry, handler owner, DTR re-pin, new test path or registration | Executed as reviewed | Run the mutation re-reds, then the gates. |
+| 2026-08-11 | mutations | Production owners only, each reverted immediately | 5/5 documented re-reds plus two extra storage sub-mutations, all `-1` and reverted: ordinary-only stage; omitted attachment requalification; restored blind same-ID replay; removed disappearing live retention; removed the stage-to-cleanup lease; restored incoming disappearing refusal; removed the sender persisted-target guard; removed the receiver private-EDIT guard | Every guard is load-bearing | Tree restored clean before any lane | Run host `1to1`, then the wave `host-all`. |
+| 2026-08-11 | contract correction | `private_media_cleanup_race_test.dart` | TC-359-02b Order B rewritten as a genuine reverse lock order (incumbent contender holds the lease first, deletion blocked behind it) while keeping the live-custody retention assertions; the in-flight first `1to1` run was stopped rather than allowed to certify a stale tree | The row now proves BOTH orders as its contract requires; the lease mutation re-reds it | Both orders proven with no sleeps | Rerun the filtered proof, then the lanes once each. |
+| 2026-08-11 | gates | Whole tree | Final filtered proof `+12`; host `./scripts/run_host_test_gates.sh 1to1` **PASS**, 120/120 paths measured live, zero FAIL; wave `host-all --batch-flutter --concurrency 4 --reporter failures-only` Flutter batch `+13904 ~11 -9` over 1339 paths, then its 8 non-Flutter Go tails run separately (the red batch aborts before them) — 8/8 PASS | The 9 batch failures are all `test/integration/**` notification/relay-degradation rows and reproduce IDENTICALLY at the accepted baseline `4e24d7451` in a clean detached worktree, so they are pre-existing and outside this plan's surface | Wave closure accepted with the pre-existing set explicitly attributed | Run hygiene, Graphify and receipts. |
+| 2026-08-11 | hygiene | Whole tree | `flutter analyze` clean; changed-Dart `dart format --set-exit-if-changed` clean over the full baseline/unstaged/staged/untracked set (three test files needed formatting and were reformatted and rerun `+263`); all three `git diff --check` variants clean; one incremental Graphify refresh (15 changed / 3,136 unchanged; 71,046 nodes / 104,386 edges; fingerprint `7a7dc08f28bf4b4d`) | Clean | Executed | Record plan/index/status/coverage receipts. |
