@@ -1,6 +1,6 @@
 # 358 - GAP-N01 Disappearing Direct-Media Initial Inbox/Blob Custody Adoption
 
-Status: IMPLEMENTED / EXECUTION_COMPLETED / default-off / not release-eligible
+Status: IMPLEMENTED / EXECUTION_COMPLETED / POST_EXECUTION_AUDIT_CLOSED / default-off / not release-eligible
 Type: Modification
 Baseline observed while planning: `66a5940de0d1a0d00f743c97ecca03c22527ca54` (`fix(357): close Plan 356 private delete-for-everyone post-execution defects`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03/A-28; `Test-Flight-Improv/234-1to1-private-media-lifecycle-tdd-plan.md` D-234-01/D-234-02/D-234-05; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
@@ -77,7 +77,7 @@ Hard `Do not`:
 
 Deferred / accepted difference:
 
-- Disappearing Delete-for-Everyone stays a separate Plan 359 candidate because it adds mutation/tombstone authority. Plan 358 preserves the exact post-drain lineage it will need but does not select, stage, transmit, receive, or complete a disappearing deletion.
+- Disappearing Delete-for-Everyone stays in the separately reviewed Plan 359 scope because it adds mutation/tombstone authority. Plan 358 preserves the exact post-drain lineage it needs but does not select, stage, transmit, receive, or complete a disappearing deletion.
 - Private EDIT remains a separate product/authority decision.
 - A receiver-local 7-day disappearing deadline may outlive the remaining fixed relay blob lease after delayed delivery. The UI/lifecycle deadline is not a promise that the relay can serve bytes for that entire period; no renewal or server change is added under D-234-05.
 - Pre-358/no-v111, selector-off, proof-less GIF and already-drained historical rows are not scanned or promoted.
@@ -258,7 +258,7 @@ git status --short
 - Migration: none; DB remains v111 and physical v108/v110/v111 stay byte-compatible.
 - Boundary closure: host-only current-schema SQLite, secure-key compensation, real temp files and file-backed reopen.
 - Runtime defaults: existing client selector and relay admissions remain default-off.
-- Deferred: disappearing DFE (Plan 359 candidate), private EDIT disposition, direct-private/disappearing wave full `host-all`, activation/cohort/device/iOS/release closure.
+- Deferred: disappearing DFE and private EDIT disposition (reviewed Plan 359 handoff), direct-private/disappearing wave full `host-all`, activation/cohort/device/iOS/release closure.
 - Unresolved evidence: none for Plan 358's bounded code adopter; relay availability for the full receiver-relative duration is explicitly not promised.
 
 ## Reviewer Findings
@@ -287,7 +287,7 @@ The test disposition is intentionally lean: ten named causal tests in four bundl
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-11 | Causal RED | The ten plan test paths | One selector-on concurrency-4 `--name 'TC-358-'` invocation | `+1 -10`: every named row failed behaviorally (HEAD mints no disappearing v110, DB predicates refuse the prepared parent, completion skips nonordinary lineage, the receiver refuses the strict disappearing initial and its local commit, retry validators refuse the token-bearing parent, and expiry retires no display marker). The single pass is the added TC-358-03b Protected/View-Once control, which asserts unchanged incumbent behavior. | No missing-symbol or source-substring failure was accepted. | production edits |
-| 2026-08-11 | Implementation | The 14 expected production files plus the shared real-DB fixture and the TC-347-07b wiring contract | Per-bundle GREEN after each step | Policy predicate, token-bearing v110/v111/v108 admission, exact-lineage stamp, composer/sender/retry adoption, strict disappearing receive under one lease, expiry marker retirement, download requalification and the explicit `nowMs` thread | No file outside the expected surface was touched. No schema, wire, relay, native, new owner/scheduler/lock/repository method. | combined proof |
+| 2026-08-11 | Implementation | 13 of the 14 expected production files plus the shared real-DB fixture and the TC-347-07b wiring contract; `retry_failed_messages_use_case.dart` inherited the widened shared validator and required no production edit | Per-bundle GREEN after each step | Policy predicate, token-bearing v110/v111/v108 admission, exact-lineage stamp, composer/sender/retry adoption, strict disappearing receive under one lease, expiry marker retirement, download requalification and the explicit `nowMs` thread | No file outside the expected surface was touched. No schema, wire, relay, native, new owner/scheduler/lock/repository method. | combined proof |
 | 2026-08-11 | Combined GREEN | The eleven-file filtered proof | One selector-on concurrency-4 invocation | `+14` and zero failures: ten named TC-358 rows, the TC-358-03b P/VO control, and the three out-of-lane sentinels `TC-347-08c`, `TC-347-03b`, `TC-355-04d` | Every selected name ran. | curated closure |
 | 2026-08-11 | Curated closure | `1to1` and dart-only `core-host-all` | `./scripts/run_host_test_gates.sh 1to1`; `./scripts/run_host_test_gates.sh core-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only` | `1to1` PASS at **120/120 paths** (live count measured, final path `#120`); `core-host-all` PASS at **404 test paths / 3,237 tests**. Both ran concurrently. | One recorded correction was required first (below). | mutations + hygiene |
 | 2026-08-11 | Recorded correction | `handle_incoming_chat_message_use_case_test.dart` | Default-define `1to1` surfaced `TC-354-04c` | That incumbent Plan-354 contract pinned the exact pre-358 spelling of the strict-private capability gate and the textual position of the durable-supersession branch relative to marker staging. Plan 358 adds the lifecycle-owner and cleanup-runtime requirements to that same fail-closed gate and moves the atomic stage INSIDE the exclusive lease that already owned the marker/publication/promotion. Both original properties are retained and restated against the real structure, and the assertion now additionally requires the two new capabilities. | Property preserved and strengthened; only the literal spelling and textual order moved. | mutations |
@@ -313,6 +313,10 @@ Every Done Criteria item is satisfied:
 - The bootstrap delegate and the shared real-DB fixture forward the exact `nowMs`; only the two reviewed DTR-18 digests were re-pinned.
 - No activation, GAP-N01 closure or release claim is made.
 
-Accepted differences carried forward unchanged: disappearing Delete-for-Everyone remains a separate Plan 359 candidate; private EDIT remains a separate product/authority decision; a receiver-local 7-day deadline may outlive the remaining fixed relay blob lease after delayed delivery, and no renewal or server change is added under D-234-05; pre-358, no-v111, selector-off, proof-less GIF and already-drained historical rows are neither scanned nor promoted.
+Accepted differences carried forward unchanged: disappearing Delete-for-Everyone and private EDIT remain outside Plan 358 and are handed to the separately reviewed Plan 359 scope; a receiver-local 7-day deadline may outlive the remaining fixed relay blob lease after delayed delivery, and no renewal or server change is added under D-234-05; pre-358, no-v111, selector-off, proof-less GIF and already-drained historical rows are neither scanned nor promoted.
 
 One further accepted difference is new: an ACTIVE strict-private replay whose durable attachment has already left the fresh `pending` projection (the user downloaded it) adopts that durable projection instead of re-running the insert-shaped stage, and a durable v111 survivor in any state other than `incoming_committed`, or with a disagreeing public commitment, fails closed with no receipt. This is strictly narrower than the pre-358 generic duplicate shortcut it replaces for this modality, and it exists only for disappearing media, which has no shipped production behavior to regress.
+
+## Post-Execution Audit
+
+**POST_EXECUTION_AUDIT_CLOSED at `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`.** A clean-tree source, test, receipt and change-surface review found no executable defect and did not repeat the already-current expensive gates. The final architecture graph is current at fingerprint `88c2f3f763067ef2`; the exact disappearing post-v108 fingerprint remains durable after v111 drain, while proof-less/no-v111 rows remain distinguishable. The Plan 357 baseline-to-closure change set contains the reviewed 13 production files and 15 test/fixture paths, all within the authorized surface, and all recorded diff hygiene remains clean. Plan 359 may use this exact commit as its accepted baseline; this audit makes no activation, GAP-N01 or release claim.

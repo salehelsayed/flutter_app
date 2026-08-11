@@ -1,10 +1,10 @@
 # 359 - GAP-N01 Disappearing Direct-Media Delete-for-Everyone v109 Custody And Private-EDIT Disposition
 
-Status: prerequisite-blocked / independently reviewed / default-off / not release-eligible
+Status: EXECUTION_READY / independently reviewed / default-off / not release-eligible
 Type: Modification
-Baseline: set to the clean, committed, post-execution-audited Plan 358 implementation HEAD before execution; the transient Plan 358 RED/implementation worktree is not an accepted baseline
+Baseline: `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6` (clean, committed, post-execution-audited Plan 358 closure HEAD)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03/A-28; `Test-Flight-Improv/234-1to1-private-media-lifecycle-tdd-plan.md` D-234-01/D-234-02/D-234-05; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
-Classification: bounded mutation adopter plus explicit unsupported-product disposition; execution is gated on Plan 358's final durable disappearing lineage contract
+Classification: bounded mutation adopter plus explicit unsupported-product disposition; Plan 358's final durable disappearing lineage prerequisite is satisfied and revalidated
 Closure tier: behavioral host tests with current-schema SQLite, physical v108/v109/v111 rows, secure-key/temp-file cleanup and actual lifecycle locks; no schema, relay/native, device, activation, or release boundary
 
 ## Planning Progress
@@ -14,6 +14,7 @@ Closure tier: behavioral host tests with current-schema SQLite, physical v108/v1
 | 2026-08-11 | Evidence Collector / Planner | Graphify TDD context; Plans 234/351/352/356/357/358; deletion lane/stage/completion; sender cleanup/settlement; current deletion receive; private EDIT send/receive; tests and gates | The existing physical owners are sufficient. Exact disappearing lineage may adopt the strict-media DFE transaction; proof-less rows stay legacy. Private EDIT is unsupported rather than a new adopter. Plan 358 is actively being implemented, so Plan 359 may be reviewed now but not executed against its transient tree. | Write a prerequisite-gated contract with existing tests only. |
 | 2026-08-11 | Test/gate inventory | Host `1to1`, full `host-all`, exact Plan 351/353/356/358 sentinels and existing fixtures | Seven named causal rows in existing files are sufficient. Use concurrency 4 for the filtered proof, one curated `1to1`, then the once-only direct-private/disappearing wave `host-all`; do not repeat core/feature families. | Run `$tdd-review`, then keep execution blocked until Plan 358 closes. |
 | 2026-08-11 | Independent `$tdd-review` | Review-profile Graphify context; sender/storage/cleanup; receiver/private-EDIT; literal commands, registrations and gate cadence | Initial verdict was `plan-fixes-required`, core bet confirmed. Bounded amendments closed mutable hidden/expired lifecycle admission, authenticated private-EDIT ordering and unsupported-policy handling, exact baseline verification, TC-359-03/04 economy, and index handoff. Three targeted re-reviews returned READY for the declared prerequisite-blocked state. | Await Plan 358's audited closure SHA, amend the literal baseline, then rerun the required targeted revalidation before execution. |
+| 2026-08-11 | Plan 358 prerequisite audit and targeted unblock review | Clean closure HEAD `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`; current Graphify review context; final Plan 358 lineage/policy, cleanup, deletion, EDIT and test anchors | Plan 358 is post-execution-audit closed with no executable defect. Its post-drain fingerprint and proof-less/no-v111 distinction match this plan. Revalidation found one bounded guard: the fingerprint does not encode attachment cardinality, so the deletion stage and TC-359-01a must independently require exactly one MIME/mediaType-coherent image or video. No new test row, file, owner or gate is needed. | Prerequisite satisfied; Plan 359 is execution-ready against the pinned baseline. |
 
 ## Problem And Evidence
 
@@ -28,19 +29,19 @@ Closure tier: behavioral host tests with current-schema SQLite, physical v108/v1
 
 ## Graph Grounding Snapshot
 
-- Graph fingerprint / freshness: architecture fingerprint `99939b31e3258f0c`; anchored at planning time, with expected staleness while Plan 358 changes the shared worktree.
-- Query / profile: `python3 graphify-arch/tdd_context.py query "Plan 359 disappearing direct-media Delete-for-Everyone v109 custody after Plan 358 strict lineage, and fail-closed proof-less v1 private media EDIT; anchors dbClassifyOutgoingDirectDeletionLane dbStageOutgoingDirectPrivateDeletionInboxCustody deleteMessageForEveryone handleIncomingChatMessage" --profile tdd --budget 700`.
+- Graph fingerprint / freshness: architecture fingerprint `88c2f3f763067ef2`; current at the audited Plan 358 closure HEAD.
+- Query / profile: `python3 graphify-arch/tdd_context.py query "Plan 359 disappearing direct-media Delete-for-Everyone v109 custody after Plan 358 strict lineage and fail-closed private media EDIT; anchors dbClassifyOutgoingDirectDeletionLane dbStageOutgoingDirectMediaDeletionInboxCustody dbStageOutgoingDirectPrivateDeletionInboxCustody deleteMessageForEveryone handleIncomingChatMessage" --profile review --budget 900`.
 - Anchors: `dbClassifyOutgoingDirectDeletionLane` and `dbStageOutgoingDirectMediaDeletionInboxCustody` -> `media_attachments_db_helpers.dart`; v109 completion -> `direct_reaction_inbox_custody_outbox_db_helpers.dart`; public authoring -> `delete_message_use_case.dart`; private edit receive -> `handle_incoming_chat_message_use_case.dart`.
 - Surfaced proof/gate files: media/direct-reaction DB helpers, delete sender, private cleanup race, incoming deletion, send chat, incoming chat, strict presentation and host `1to1`.
 - Revalidation rule: after Plan 358's audited closure commit, rerun the focused Graphify query and source anchors. If its post-drain fingerprint, exact disappearing policy predicate, cleanup topology, or named TC-358 lineage proof differs from this contract, stop and amend/re-review Plan 359 before authoring REDs.
 
 ## Scope Contract And Guard
 
-Prerequisite before execution:
+Satisfied prerequisite and execution guard:
 
-- Plan 358 must be cleanly committed, all reviewed gates green, and its post-execution audit closed. Amend this plan's `Baseline` line to that literal SHA, record the same exact commit as `PLAN359_ACCEPTED_BASE`, and rerun targeted review before execution; never use the transient Plan 358 RED commit or a dirty implementation snapshot.
-- Confirm that an exact completed disappearing initial retains the Plan 358 fingerprint after v108/v111 drain, while proof-less/no-v111 historical disappearing rows remain distinguishable as legacy. Plan 359 has no authority to compensate for a missing or defective Plan 358 lineage.
-- Confirm the seven expected production files and existing test paths below. Any additional production boundary, schema/API change, or missing Plan 358 invariant returns this plan to review.
+- Plan 358 is cleanly committed and post-execution-audit closed at `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`; all reviewed receipts are current and no executable defect was found. The acceptance preflight pins this exact SHA and permits only this plan's documentation handoff above it before RED.
+- Revalidation confirms that an exact completed disappearing initial retains the Plan 358 fingerprint after v108/v111 drain, while proof-less/no-v111 historical disappearing rows remain distinguishable as legacy. Because that fingerprint alone does not encode attachment cardinality or MIME/mediaType coherence, Plan 359 must re-prove the exact one-image/video projection when creating a new deletion v109. Existing-v109 replay remains attachment-independent after cleanup and is authorized only by the unique envelope owner plus exact persisted tombstone.
+- The seven expected production files and existing test paths below remain sufficient. Any additional production boundary, schema/API change, or missing Plan 358 invariant returns this plan to review.
 
 In scope:
 
@@ -48,7 +49,7 @@ In scope:
   1. P/VO deletion keeps the Plan 356 private v109 stage and private settlement.
   2. An exact persisted disappearing parent always uses private lifecycle cleanup, but its transport owner is selected from DB lineage.
   3. Only a disappearing parent classified `strictMedia` by physical fingerprint/v108/v111 authority owns the Plan 351 media v109 stage; `legacyMedia` stays on ordinary legacy transport and `contradiction` refuses before encryption, cleanup or network.
-- Reuse Plan 358's exact durable disappearing policy: outgoing v1 `disappearing`, duration in `{3600, 86400, 604800}`, state `available`, no sender-side received/expires/reveal/terminal/high-water clock, no edit/deletion predecessor, consumed v110 intent, and only lineage that Plan 358 could have authored for one eligible image/video generation. Never select on the caller's media list, selector state, or private policy snapshot.
+- Reuse Plan 358's exact durable disappearing policy: outgoing v1 `disappearing`, duration in `{3600, 86400, 604800}`, state `available`, no sender-side received/expires/reveal/terminal/high-water clock, no edit/deletion predecessor, consumed v110 intent, and only lineage that Plan 358 could have authored. Before a new deletion v109 is inserted, independently require exactly one persisted direct-owned attachment whose MIME and `mediaType` coherently identify an image or video; a fingerprinted multi-attachment or crossed-media projection refuses. Do not impose that attachment check on an exact existing-v109 replay after cleanup. Never select on the caller's media list, selector state, or private policy snapshot.
 - Capability-qualify the selected strict disappearing media stage, generic v109 lifecycle, private lifecycle/cleanup and ordinary settlement owners before encryption. A default-off/rollback build must still safely drain/delete a physical strict generation; the client selector is not deletion authority.
 - For strict disappearing, mint one deletion event ID and encrypted inner/outer identity only after the DB lane selects `strictMedia`. Under the existing repository-wide private lifecycle lease, atomically transition only the exact eligible v111 rows, commit the tombstone and insert the exact raw-event v109 row, then run incumbent private terminal cleanup. Release the lease before node/live/inbox network work.
 - Preserve live initial custody during terminal cleanup. Extend only the outgoing live-blob retention predicate from P/VO to exact disappearing, so a live v108/bound `outgoingPrepared|outgoingStored` generation retains its attachment/key/artifacts. Once v108/v111 have converged and only the Plan 358 fingerprint remains, the deletion may clean the exact private artifacts. Incoming deletion remains destructive while no-FK v111 converges independently, matching Plans 354/355.
@@ -92,7 +93,7 @@ Deferred / accepted difference:
 
 | Case | Behavior | Named test/proof | Tier / fixture | HEAD -> GREEN | Mutation | Gate / registration |
 |---|---|---|---|---|---|---|
-| TC-359-01a | Exact Plan-358 disappearing lineage selects strict media and atomically commits exact v111 transition+tombstone+v109; insert failure is all-zero. Exact persisted tombstone replay wins before capacity, while live/absent/crossed/ambiguous/malformed replay and proof-less/partial lineage refuse byte-identically. Include an ordinary strict control. | `TC-359-01a disappearing media deletion stages only exact lineage and revalidates an existing v109 tombstone` | Core, real current-schema SQLite; direct SQL seeds physical lineage and capacity | Current stage is ordinary-only and its existing-event branch trusts a same-ID parent without exact tombstone/unique-envelope proof. | Restore ordinary-only admission or blind same-ID replay; the exact matrix reds. | Existing `media_attachments_db_helpers_test.dart`; core AUTO, exact filtered run and wave host-all. |
+| TC-359-01a | For a new stage, exact Plan-358 disappearing lineage plus exactly one persisted MIME/mediaType-coherent image or video atomically commits the exact v111 transition+tombstone+v109; insert failure is all-zero, while fingerprinted multi-attachment, crossed-media and proof-less/partial projections refuse. Separately, attachment-independent exact persisted-tombstone replay wins before capacity after cleanup, while live/absent/crossed/ambiguous/malformed replay refuses byte-identically. Include an ordinary strict control. | `TC-359-01a disappearing media deletion stages only exact lineage and revalidates an existing v109 tombstone` | Core, real current-schema SQLite; direct SQL seeds physical lineage and capacity | Current stage is ordinary-only and its existing-event branch trusts a same-ID parent without exact tombstone/unique-envelope proof. | Restore ordinary-only admission, omit new-stage attachment-shape requalification, or restore blind same-ID replay; the compact matrix reds. | Existing `media_attachments_db_helpers_test.dart`; core AUTO, exact filtered run and wave host-all. |
 | TC-359-01b | Exact disappearing deletion completion settles status/transport, preserves duration/state/all clocks, and retires only v109 even after artifacts/parent disappear. Crossed/malformed disappearing and every private EDIT remain stale; exact P/VO control stays green. | `TC-359-01b disappearing deletion completion is exact and private EDIT remains refused` | Core, real SQLite physical v109 | Current completion explicitly excludes disappearing. | Broad `policyVersion==1` admission makes P/VO/disappearing EDIT or bad duration pass and reds. | Existing `direct_reaction_inbox_custody_outbox_db_helpers_test.dart`; already in `1to1`. |
 | TC-359-02a | Public DFE ignores caller media, selects exact persisted disappearing lineage, stages v109 before cleanup/network, and on node-off retains one event with zero network plus ordinary failed settlement. Proof-less historical disappearing keeps legacy/no-v109 transport but uses private cleanup; capability absence or contradiction is all-zero. | `TC-359-02a disappearing DFE uses physical lineage and ordinary settlement without promoting legacy rows` | Feature/application fakes backed by the real lane/stage or delegated real-DB repository | Current application never selects disappearing and uses generic cleanup/no v109. | Bypass the DB lane or mint identity before strict selection; the order/inventory assertions red. | Existing `delete_message_use_case_test.dart`; already in `1to1`. |
 | TC-359-02b | Actual lifecycle contenders prove both orders. A live v108/bound v111 generation retains exact key/attachment/files through deletion; post-drain fingerprint-only lineage cleans them. No contender/network enters between selected stage and private cleanup. | `TC-359-02b disappearing DFE serializes stage to cleanup and retains live initial custody` | Feature host, real lifecycle lock, temp files/secure-key fake, external-Zone completers; no sleeps | Current retention predicate is P/VO-only and media stage+generic cleanup do not share the private lease. | Remove disappearing retention or the outer lease; the blocked-start/inventory assertions red. | Existing `private_media_cleanup_race_test.dart`; already in `1to1`. |
@@ -103,7 +104,7 @@ Deferred / accepted difference:
 ## Test Notes
 
 - Author every `TC-359-*` row only after the Plan 358 prerequisite is accepted. The first RED must compile against existing APIs and fail behaviorally; seed physical Plan 358 lineage directly instead of calling a new Plan 359 symbol.
-- TC-359-01a uses the exact post-drain fingerprint case as the primary seed, then representative live v108/bound v111 and malformed rows. Test all three allowed durations compactly but do not cross-product duration, media type and lifecycle state.
+- TC-359-01a uses the exact post-drain fingerprint case as the primary new-stage seed, then representative live v108/bound v111 and malformed rows. Its compact new-stage attachment matrix includes one valid image/video representative plus fingerprinted multi-attachment and MIME/mediaType-crossed negatives. The existing-v109 replay subcase deliberately has no surviving attachment. Test all three allowed durations compactly but do not cross-product duration, media type and lifecycle state.
 - TC-359-01a's existing-v109 matrix must include an ordinary strict control, one exact disappearing tombstone at capacity zero, and live/absent/duplicate-envelope/crossed-policy negatives. Final-state-only or same-ID-only assertions are insufficient.
 - TC-359-02b competitors are created outside the current lock owner's Zone and expose attempted/entered/release completers. Sleeps or two sequential end states do not prove exclusion.
 - TC-359-03a reuses the real current-deletion handler owner rather than adding a duplicate DB-only disappearing suite. Its one named row creates all three promised projections through their real owners: visible active, hide-generated `available + terminal/high-water`, and expiry-generated `expired`. Do not add another contact-race, reaction-failure or lock-order matrix already proved by Plans 356/357.
@@ -113,9 +114,9 @@ Deferred / accepted difference:
 
 ## Implementation Steps
 
-1. Wait for Plan 358's clean committed GREEN and post-execution audit. Replace the generic `Baseline` line with its literal SHA, set the same SHA as `PLAN359_ACCEPTED_BASE`, refresh the Graphify query/source anchors, confirm expected production/test surfaces, and run a targeted re-review before authoring tests.
+1. Preserve the accepted Plan 358 closure SHA, current Graphify fingerprint and targeted unblock review recorded above. The preflight must fail on any intervening production/test/platform/gate drift before authoring tests.
 2. Snapshot `git status --short`. Add the seven causal tests in existing files and run the single `TC-359-` concurrency-4 RED. Record every semantic failure; missing-symbol or skipped tests do not count.
-3. In `media_attachments_db_helpers.dart`, admit only the exact Plan 358 disappearing policy to the existing media deletion stage and harden its existing-v109 replay to one unique outgoing envelope owner plus exact persisted tombstone. Keep capacity order, transaction and ordinary behavior.
+3. In `media_attachments_db_helpers.dart`, admit only the exact Plan 358 disappearing policy plus exactly one persisted MIME/mediaType-coherent image/video attachment when creating a new media deletion v109. Harden existing-v109 replay separately to one unique outgoing envelope owner plus exact persisted tombstone without requiring an attachment that cleanup may already have removed. Keep capacity order, transaction and ordinary behavior.
 4. In `direct_reaction_inbox_custody_outbox_db_helpers.dart`, admit exact disappearing deletion completion only. Preserve attachment-independent settlement, removed-parent convergence and private-EDIT refusal.
 5. In `delete_message_use_case.dart`, separate cleanup policy from transport owner. Classify persisted disappearing lineage before encryption; run strict media stage or legacy ordinary stage plus private cleanup under the incumbent lifecycle lease; retain ordinary settlement and release before network.
 6. In `direct_private_media_lifecycle.dart`, extend only outgoing live-v111 retention to exact disappearing. Keep incoming deletion destructive and cleanup-pending/post-drain convergence unchanged.
@@ -153,9 +154,9 @@ Stop/re-review if Plan 358 is not post-audit clean, its lineage/policy contract 
 Run only after the prerequisite is satisfied and `PLAN359_ACCEPTED_BASE` is the exact audited Plan 358 closure SHA.
 
 ```bash
-# Snapshot and fail fast unless execution starts at the exact clean, audited
-# Plan-358 closure SHA recorded into this plan during prerequisite unblocking.
-: "${PLAN359_ACCEPTED_BASE:?set to the audited Plan 358 closure SHA}"
+# Snapshot and fail fast unless execution descends from the exact clean,
+# audited Plan-358 closure SHA recorded during prerequisite unblocking.
+PLAN359_ACCEPTED_BASE=4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6
 test -z "$(git status --porcelain)"
 git rev-parse --verify "${PLAN359_ACCEPTED_BASE}^{commit}"
 grep -F "Baseline: \`$PLAN359_ACCEPTED_BASE\`" \
@@ -234,10 +235,10 @@ git status --short
 - Expected RED: seven named rows fail behaviorally because disappearing DFE is not admitted/retained/completed/received and proof-less private EDIT still reaches generic behavior; no missing symbol, skip or source-string failure counts.
 - Green preservation: ordinary strict DFE, P/VO DFE, Plan 358 lineage/expiry, ordinary caption EDIT, default-off legacy disappearing and generic v109 drain remain unchanged.
 - Representative mutation re-reds: five independent mutations are required and reverted—restore ordinary-only disappearing stage or bypass its exact lineage; remove the stage-to-cleanup lease/retention; restore incoming disappearing refusal; remove the persisted-target sender EDIT guard; remove the early receiver private-EDIT guard.
-- Pre-existing dirty tree: Plan 358's current worktree is explicitly not an execution checkpoint. Execution begins only after its accepted clean audited SHA is recorded.
+- Accepted baseline: Plan 358's transient worktree is not an execution checkpoint. Execution begins from a clean descendant of the exact audited SHA, with only the reviewed Plan-359 documentation handoff above it before RED.
 - Scope drift: any schema/interface/repository/bootstrap/retry/new owner/test-path/platform expansion returns the plan to review.
 
-- [ ] Plan 358 has a clean committed GREEN, post-execution audit and recorded accepted SHA.
+- [x] Plan 358 has a clean committed GREEN, post-execution audit and recorded accepted SHA.
 - [ ] Every behavior has a named causal test or exact preservation control; all seven causal rows are real behavior tests.
 - [ ] One combined RED, one combined final proof and five representative mutation re-reds are recorded.
 - [ ] Exact disappearing DFE retains v109 before private cleanup/network; proof-less rows never promote.
@@ -251,7 +252,7 @@ git status --short
 
 ## Handoff
 
-- Execution state: prerequisite-blocked until Plan 358's audited closure SHA is recorded; this plan is not an instruction to edit the active Plan 358 worktree.
+- Execution state: ready against accepted Plan 358 closure `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`; run the literal clean-tree/drift preflight before authoring REDs.
 - First causal RED: the single seven-file concurrency-4 `--name 'TC-359-'` command above, after prerequisite acceptance.
 - Final proof: the single nine-file filtered command above; do not split its preservation alternatives into repeated Flutter invocations.
 - Manual registration/migration: none; every test extends an existing path and DB remains v111.
@@ -269,20 +270,22 @@ Required fixes were applied:
 - Private EDIT ordering is explicit: non-EDIT strict-invalid refusal stays in place; EDIT proceeds through authenticated sender/contact and one durable target read; crossed author is unauthorized; wire or target `requiresRedaction` yields terminal `ignoredEdit` before strict/caption/missing/generic routing. This includes unknown-version unsupported targets while preserving transport confirmation and suppressing only the application mutation receipt.
 - TC-359-04b is limited to three causal authenticated shapes plus one crossed-author control. Existing listener/recovered mapping and Plan 353 ordinary caption behavior remain preservation evidence rather than duplicated matrices.
 - The execution preflight now requires a clean tree, a valid accepted commit matching the literal Baseline recorded in this plan, ancestry, and no intervening production/test/platform/gate drift. It permits only the reviewed Plan-359 documentation handoff above the eventual Plan-358 base.
-- The index records the prerequisite-blocked handoff. No false `EXECUTION_READY` status marker is appended while Plan 358 is active.
+- The index and append-only status ledger now record the execution-ready handoff after Plan 358's audit closed.
+- Final-source revalidation additionally requires one persisted coherent image/video attachment before a new deletion v109 is created because the post-drain fingerprint alone does not encode cardinality. Exact existing-v109 replay stays attachment-independent after cleanup. Both are covered inside TC-359-01a without a new row or gate.
 
-Targeted storage/sender, receiver/private-EDIT and gate/economy re-reviews all returned **READY for the declared prerequisite-blocked state**. No tests were run during the read-only review.
+Targeted storage/sender, receiver/private-EDIT and gate/economy re-reviews returned **READY**, and the final Plan 358 source/baseline audit confirmed the same owners after the bounded attachment-shape tightening. No tests were rerun during this read-only unblock review.
 
 ## Arbiter Decision
 
-**READY AS A REVIEWED PLAN / PREREQUISITE-BLOCKED FOR EXECUTION. Core bet confirmed.** Plan 359 is one bounded mutation slice: strict disappearing DFE reuses the existing media v109 transaction and private cleanup authority, legacy disappearing never promotes, and private EDIT is explicitly discarded through existing outcomes rather than gaining custody.
+**EXECUTION_READY. Core bet confirmed.** Plan 359 is one bounded mutation slice: strict disappearing DFE reuses the existing media v109 transaction and private cleanup authority, legacy disappearing never promotes, and private EDIT is explicitly discarded through existing outcomes rather than gaining custody.
 
 The proof is intentionally lean: seven causal rows in existing files, one concurrency-4 RED, one concurrency-4 final filtered proof, host `1to1` once, and the once-only direct-private/disappearing wave `host-all` at concurrency 4. That wave gate subsumes core/feature; no separate family, device, relay/native, completeness or registration campaign is authorized.
 
-Execution is not ready today. It becomes eligible only after Plan 358 has a clean committed GREEN plus post-execution audit, this plan records that literal SHA, Graphify/source anchors are revalidated, and a targeted review confirms no contract drift.
+The prerequisite is satisfied at the pinned clean Plan 358 closure SHA. Current Graphify/source anchors and the exact lineage/legacy distinction were revalidated; execution may begin after the literal clean-tree/no-code-drift preflight passes.
 
 ## Execution Progress
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-11 | planned | plan artifact only | No tests run; read-only planning against an active Plan 358 worktree | Existing owners and tests mapped; Plan 358 still in implementation | Prerequisite blocked | Await clean audited Plan 358 baseline, then author causal REDs. |
+| 2026-08-11 | prerequisite unblocked | Plan 358/359 artifacts, index, status and coverage | Clean closure HEAD `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6`; Graphify review fingerprint `88c2f3f763067ef2`; targeted source/gate reviews | Plan 358 audit closed with no executable defect; Plan 359 owners and tests remain sufficient; TC-359-01a now independently proves one coherent image/video projection | Execution-ready | Run the literal preflight, then author the seven behavioral RED rows. |
