@@ -1033,7 +1033,8 @@ END
     expect(await parentOf(privateEdit.messageId), editBefore);
     expect(await eventRows(privateEdit.eventId), hasLength(1));
 
-    // 6. Disappearing deletion stays outside this slice.
+    // 6. A crossed sender-clock disappearing projection is not the Plan 359
+    //    owner either; its exact positive lives in TC-359-01b.
     final disappearing = await seedStagedPrivateDeletion(
       'disappearing',
       mode: 'disappearing',
@@ -1629,6 +1630,275 @@ END
       reason: 'local hide and lifecycle clocks are not deletion identity',
     );
     expect(toleratedReplay.messageRow!['hidden_at'], _t2);
+  });
+
+  test('TC-359-01b disappearing deletion completion is exact and private EDIT '
+      'remains refused', () async {
+    const relayExpiresAt = 1900000060000;
+    final current = await databaseFactoryFfi.openDatabase(
+      '${tempDirectory.path}/tc359-01b.db',
+      options: OpenDatabaseOptions(
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      ),
+    );
+    addTearDown(current.close);
+
+    var eventSeq = 0;
+    String nextEventId() =>
+        '35900000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+
+    String deletionEnvelope(String eventId) => jsonEncode(<String, Object?>{
+      'type': 'message_deletion',
+      'version': '2',
+      'eventId': eventId,
+      'senderPeerId': _sender,
+      'encrypted': <String, Object?>{
+        'kem': 'kem-359',
+        'ciphertext': 'cipher-$eventId',
+        'nonce': 'nonce-359',
+      },
+    });
+
+    String editEnvelope(String messageId, String eventId) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'eventId': eventId,
+          'senderPeerId': _sender,
+          'encrypted': <String, Object?>{
+            'kem': 'kem-359',
+            'ciphertext': 'cipher-$eventId',
+            'nonce': 'nonce-359',
+          },
+        });
+
+    /// Seeds one already-staged direct mutation: the parent projects the exact
+    /// event envelope and the raw event is retained in the shared v109 outbox.
+    Future<({String messageId, String eventId, String envelope})> seedStaged(
+      String suffix, {
+      String mode = 'disappearing',
+      int policyVersion = 1,
+      int? durationSeconds = 3600,
+      String state = 'available',
+      String status = 'sending',
+      bool asEdit = false,
+      Object? receivedAtMs,
+      Object? terminalAtMs,
+      Object? clockHighWaterMs,
+      Object? deletedByPeerId = _sender,
+      Object? hiddenAt,
+    }) async {
+      final messageId = 'tc359-01b-$suffix';
+      final eventId = nextEventId();
+      final envelope = asEdit
+          ? editEnvelope(messageId, eventId)
+          : deletionEnvelope(eventId);
+      await current.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _recipient,
+        'sender_peer_id': _sender,
+        'text': asEdit ? 'edited private caption' : '',
+        'timestamp': _t0,
+        'status': status,
+        'is_incoming': 0,
+        'created_at': _t0,
+        'deleted_at': asEdit ? null : _t1,
+        'deleted_by_peer_id': asEdit ? null : deletedByPeerId,
+        'edited_at': asEdit ? _t1 : null,
+        'hidden_at': hiddenAt,
+        'wire_envelope': envelope,
+        'private_media_policy_version': policyVersion,
+        'private_media_mode': mode,
+        'private_media_duration_seconds': durationSeconds,
+        'private_media_state': state,
+        'private_media_received_at_ms': receivedAtMs,
+        'private_media_terminal_at_ms': terminalAtMs,
+        'private_media_clock_high_water_ms': clockHighWaterMs,
+      });
+      await current
+          .insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+            'recipient_peer_id': _recipient,
+            'event_id': eventId,
+            'wire_envelope': envelope,
+            'retry_count': 0,
+            'last_attempt_at': null,
+            'last_error_code': null,
+            'created_at': _t0,
+            'updated_at': _t0,
+          });
+      return (messageId: messageId, eventId: eventId, envelope: envelope);
+    }
+
+    Future<DirectMutationInboxCustodyCompletionOutcome> complete(
+      ({String messageId, String eventId, String envelope}) staged,
+    ) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+      current,
+      recipientPeerId: _recipient,
+      eventId: staged.eventId,
+      expectedWireEnvelope: staged.envelope,
+      relayExpiresAt: relayExpiresAt,
+    );
+
+    Future<Map<String, Object?>?> parentOf(String messageId) async {
+      final rows = await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      return rows.isEmpty ? null : rows.single;
+    }
+
+    Future<List<Map<String, Object?>>> eventRows(String eventId) =>
+        current.query(
+          'direct_reaction_inbox_custody_outbox',
+          where: 'event_id = ?',
+          whereArgs: <Object?>[eventId],
+        );
+
+    const lifecycleColumns = <String>[
+      'private_media_policy_version',
+      'private_media_mode',
+      'private_media_duration_seconds',
+      'private_media_state',
+      'private_media_received_at_ms',
+      'private_media_expires_at_ms',
+      'private_media_revealed_at_ms',
+      'private_media_terminal_at_ms',
+      'private_media_clock_high_water_ms',
+    ];
+
+    // 1. Every allowed duration and every admitted settlement status settles
+    //    while each disappearing lifecycle column survives byte-identically.
+    for (final positive in <({int duration, String status})>[
+      (duration: 3600, status: 'sending'),
+      (duration: 86400, status: 'failed'),
+      (duration: 604800, status: 'sent'),
+    ]) {
+      final staged = await seedStaged(
+        'ok-${positive.duration}',
+        durationSeconds: positive.duration,
+        status: positive.status,
+      );
+      final before = (await parentOf(staged.messageId))!;
+      expect(
+        await complete(staged),
+        DirectMutationInboxCustodyCompletionOutcome.completed,
+        reason: 'duration ${positive.duration}',
+      );
+      final settled = (await parentOf(staged.messageId))!;
+      expect(settled['status'], 'inboxed');
+      expect(settled['transport'], 'inbox');
+      expect(settled['relay_expires_at'], relayExpiresAt);
+      expect(settled['custody_checked_at'], isNull);
+      expect(settled['deleted_at'], before['deleted_at']);
+      expect(settled['deleted_by_peer_id'], before['deleted_by_peer_id']);
+      for (final column in lifecycleColumns) {
+        expect(
+          settled[column],
+          before[column],
+          reason: 'completion must never rewrite $column',
+        );
+      }
+      expect(await eventRows(staged.eventId), isEmpty);
+    }
+
+    // 2. A locally hidden disappearing tombstone still settles; the hide is an
+    //    independent terminal claim, never a settlement conflict.
+    final hidden = await seedStaged('hidden', hiddenAt: _t2);
+    expect(
+      await complete(hidden),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect((await parentOf(hidden.messageId))!['hidden_at'], _t2);
+
+    // 3. Completion stays attachment/parent-independent after cleanup or a
+    //    contact deletion physically removed the row.
+    final removed = await seedStaged('removed-parent');
+    await current.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[removed.messageId],
+    );
+    expect(
+      await complete(removed),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect(await eventRows(removed.eventId), isEmpty);
+
+    // 4. Every crossed or malformed disappearing projection stays stale, and
+    //    private EDIT is never admitted by the widened deletion branch.
+    Future<void> expectStale(
+      String label,
+      ({String messageId, String eventId, String envelope}) staged,
+    ) async {
+      final before = await parentOf(staged.messageId);
+      expect(
+        await complete(staged),
+        DirectMutationInboxCustodyCompletionOutcome.stale,
+        reason: label,
+      );
+      expect(await parentOf(staged.messageId), before, reason: label);
+      expect(await eventRows(staged.eventId), hasLength(1), reason: label);
+    }
+
+    await expectStale(
+      'a sender-side receiver clock is never this owner',
+      await seedStaged('sender-clock', receivedAtMs: 1000),
+    );
+    await expectStale(
+      'a high-water clock on the sender is crossed state',
+      await seedStaged('high-water', clockHighWaterMs: 2000),
+    );
+    await expectStale(
+      'a terminal disappearing state refuses',
+      await seedStaged('terminal-state', state: 'expired'),
+    );
+    await expectStale(
+      'a missing duration refuses',
+      await seedStaged('missing-duration', durationSeconds: null),
+    );
+    await expectStale(
+      'a crossed deletion author refuses',
+      await seedStaged('crossed-author', deletedByPeerId: 'peer-impostor'),
+    );
+    await expectStale(
+      'a disappearing EDIT never gains v109 completion',
+      await seedStaged('disappearing-edit', asEdit: true),
+    );
+    await expectStale(
+      'a protected EDIT never gains v109 completion',
+      await seedStaged(
+        'protected-edit',
+        mode: 'protected',
+        durationSeconds: null,
+        asEdit: true,
+      ),
+    );
+    await expectStale(
+      'a delivered disappearing tombstone is stronger than inbox custody',
+      await seedStaged('delivered-status', status: 'delivered'),
+    );
+
+    // 5. The exact Protected control still completes unchanged.
+    final protectedControl = await seedStaged(
+      'protected-control',
+      mode: 'protected',
+      durationSeconds: null,
+      receivedAtMs: 1000,
+      clockHighWaterMs: 1000,
+    );
+    expect(
+      await complete(protectedControl),
+      DirectMutationInboxCustodyCompletionOutcome.completed,
+    );
+    expect(
+      (await parentOf(protectedControl.messageId))!['private_media_mode'],
+      'protected',
+    );
   });
 }
 

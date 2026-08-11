@@ -1443,6 +1443,373 @@ void main() {
       expect(await liveContacts.getContact(author), isNull);
     });
   });
+
+  group('Plan 359 incoming disappearing deletion authority', () {
+    const author = 'peer-alice';
+    const t0 = '2026-08-11T09:00:00.000Z';
+    const t1 = '2026-08-11T09:00:01.000Z';
+    const receivedAtMs = 1900000000000;
+    const durationSeconds = 3600;
+    const expiresAtMs = receivedAtMs + durationSeconds * 1000;
+
+    ChatMessage deletionEvent(String messageId, String eventId) {
+      final inner = MessageDeletionPayload(
+        messageId: messageId,
+        senderPeerId: author,
+        timestamp: t1,
+        eventId: eventId,
+      );
+      return ChatMessage(
+        from: author,
+        to: 'peer-bob',
+        content: MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: author,
+          eventId: eventId,
+          kem: 'kem',
+          ciphertext: inner.toInnerJson(),
+          nonce: 'nonce',
+        ),
+        timestamp: t1,
+        isIncoming: true,
+        transport: 'inbox',
+      );
+    }
+
+    /// Seeds one INCOMING v1 disappearing parent with a live receiver clock,
+    /// one private attachment, one independent no-FK v111 obligation and one
+    /// reaction row.
+    Future<String> seedIncomingDisappearing(
+      MediaRepositoryRealDbFixture fixture,
+      FakeReactionRepository reactions,
+      String messageId, {
+      String mode = 'disappearing',
+      int? duration = durationSeconds,
+      Object? intentId,
+    }) async {
+      final attachmentId = '$messageId-blob';
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': author,
+        'sender_peer_id': author,
+        'text': '',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': t0,
+        'direct_media_custody_intent_id': intentId,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_duration_seconds': duration,
+        'private_media_state': 'available',
+        'private_media_received_at_ms': receivedAtMs,
+        'private_media_expires_at_ms': expiresAtMs,
+        'private_media_clock_high_water_ms': receivedAtMs,
+      });
+      await fixture.repo.saveAttachment(
+        MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 4,
+          mediaType: 'image',
+          localPath: MediaFilePathConvention.relativePathForAttachment(
+            contactPeerId: author,
+            blobId: attachmentId,
+            mime: 'image/jpeg',
+          ),
+          downloadStatus: 'done',
+          createdAt: t0,
+          encryptionKeyBase64: 'cHJpdmF0ZS1rZXk=',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: 'blob_aes_256_gcm_v1',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      await fixture.db.insert(
+        kDirectMediaBlobCustodyTable,
+        DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          ciphertextRelativePath: null,
+          contentHash: 'c' * 64,
+          ciphertextSize: 64,
+          expiresAtMs: 1900003000000,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      await reactions.saveReaction(
+        MessageReaction(
+          id: '$messageId-r',
+          messageId: messageId,
+          emoji: '👍',
+          senderPeerId: author,
+          timestamp: t0,
+          createdAt: t0,
+        ),
+      );
+      return attachmentId;
+    }
+
+    Future<Map<String, Object?>> parentRow(
+      MediaRepositoryRealDbFixture fixture,
+      String messageId,
+    ) async => (await fixture.db.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+    )).single;
+
+    test('TC-359-03a incoming disappearing deletion preserves lifecycle and '
+        'v111 before exact receipt', () async {
+      // 1. Three receiver-local projections built by their REAL owners:
+      //    visible-active, hide-generated (`available` + terminal/high-water),
+      //    and expiry-generated (`expired`).
+      var eventSeq = 0;
+      Future<void> proveOneProjection({
+        required String suffix,
+        required Future<void> Function(
+          MediaRepositoryRealDbFixture fixture,
+          String messageId,
+        )
+        project,
+      }) async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final localReactions = FakeReactionRepository();
+        final messageId = 'tc359-03a-$suffix';
+        final eventId =
+            '35900000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+        final attachmentId = await seedIncomingDisappearing(
+          fixture,
+          localReactions,
+          messageId,
+        );
+        await project(fixture, messageId);
+        final before = await parentRow(fixture, messageId);
+        contactRepo.seed([makeContact(author)]);
+        final receipts = <String>[];
+        final manager = FakeMediaFileManager();
+
+        final (result, stored) = await handleIncomingMessageDeletion(
+          message: deletionEvent(messageId, eventId),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: localReactions,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'secret',
+          stagedEntryId: 'relay-uuid-tc359-$suffix',
+          sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+              receipts.add('$id/$mutationEventId'),
+        );
+
+        expect(result, HandleMessageDeletionResult.success, reason: suffix);
+        expect(stored, isNotNull, reason: suffix);
+        expect(stored!.isDeleted, isTrue, reason: suffix);
+        expect(stored.deletedAt, t1, reason: suffix);
+
+        // Every receiver clock, lifecycle state and hide byte is preserved:
+        // authenticated author deletion is not a lifecycle transition.
+        final after = await parentRow(fixture, messageId);
+        for (final column in const <String>[
+          'private_media_policy_version',
+          'private_media_mode',
+          'private_media_duration_seconds',
+          'private_media_state',
+          'private_media_received_at_ms',
+          'private_media_expires_at_ms',
+          'private_media_revealed_at_ms',
+          'private_media_terminal_at_ms',
+          'private_media_clock_high_water_ms',
+          'hidden_at',
+        ]) {
+          expect(
+            after[column],
+            before[column],
+            reason: '$suffix must preserve $column',
+          );
+        }
+        expect(after['deleted_by_peer_id'], author, reason: suffix);
+        expect(after['text'], '', reason: suffix);
+
+        // Exact private cleanup, never generic attachment deletion.
+        expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          isFalse,
+          reason: 'generic attachment deletion never retires a secure key',
+        );
+        // The independent no-FK v111 obligation converges on its own.
+        expect(
+          await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          hasLength(1),
+          reason: suffix,
+        );
+        expect(
+          await localReactions.getReactionsForMessage(messageId),
+          isEmpty,
+          reason: suffix,
+        );
+        expect(
+          await fixture.db.query(
+            'direct_notification_display_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+          reason: suffix,
+        );
+        expect(receipts, <String>['$messageId/$eventId'], reason: suffix);
+      }
+
+      await proveOneProjection(
+        suffix: 'visible-active',
+        project: (_, _) async {},
+      );
+      await proveOneProjection(
+        suffix: 'hide-generated',
+        project: (fixture, messageId) async {
+          // The REAL hide owner leaves state `available` while stamping the
+          // terminal and high-water clocks.
+          expect(
+            await fixture.messageRepo.hidePrivateMediaForMe(
+              messageId,
+              hiddenAt: t0,
+              nowMs: receivedAtMs + 10,
+            ),
+            isTrue,
+          );
+          final hidden = await parentRow(fixture, messageId);
+          expect(hidden['private_media_state'], 'available');
+          expect(hidden['private_media_terminal_at_ms'], isNotNull);
+          expect(hidden['hidden_at'], t0);
+        },
+      );
+      await proveOneProjection(
+        suffix: 'expiry-generated',
+        project: (fixture, messageId) async {
+          // The REAL expiry owner terminalizes the visible active card.
+          expect(
+            await fixture.messageRepo.advancePrivateMediaClock(
+              messageId,
+              nowMs: expiresAtMs + 1,
+            ),
+            isTrue,
+          );
+          expect(
+            (await parentRow(fixture, messageId))['private_media_state'],
+            'expired',
+          );
+        },
+      );
+
+      // 2. Immutable-authority refusals: zero receipt, zero effect.
+      Future<void> expectRefusedWithNoEffect(
+        String suffix, {
+        String mode = 'disappearing',
+        int? duration = durationSeconds,
+        Object? intentId,
+        String from = author,
+      }) async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final localReactions = FakeReactionRepository();
+        final messageId = 'tc359-03a-refused-$suffix';
+        final eventId =
+            '35900000-0000-4000-8000-${(++eventSeq + 500).toString().padLeft(12, '0')}';
+        final attachmentId = await seedIncomingDisappearing(
+          fixture,
+          localReactions,
+          messageId,
+          mode: mode,
+          duration: duration,
+          intentId: intentId,
+        );
+        final before = await parentRow(fixture, messageId);
+        contactRepo.seed([makeContact(author), makeContact(from)]);
+        final receipts = <String>[];
+        final manager = FakeMediaFileManager();
+
+        final inner = MessageDeletionPayload(
+          messageId: messageId,
+          senderPeerId: from,
+          timestamp: t1,
+          eventId: eventId,
+        );
+        final (result, tombstone) = await handleIncomingMessageDeletion(
+          message: ChatMessage(
+            from: from,
+            to: 'peer-bob',
+            content: MessageDeletionPayload.buildEncryptedEnvelope(
+              senderPeerId: from,
+              eventId: eventId,
+              kem: 'kem',
+              ciphertext: inner.toInnerJson(),
+              nonce: 'nonce',
+            ),
+            timestamp: t1,
+            isIncoming: true,
+            transport: 'inbox',
+          ),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          reactionRepo: localReactions,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          bridge: PassthroughCryptoBridge(),
+          ownMlKemSecretKey: 'secret',
+          stagedEntryId: 'relay-uuid-tc359-refused-$suffix',
+          sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+              receipts.add('$id/$mutationEventId'),
+        );
+
+        expect(
+          result,
+          isNot(HandleMessageDeletionResult.success),
+          reason: suffix,
+        );
+        expect(tombstone, isNull, reason: suffix);
+        expect(receipts, isEmpty, reason: suffix);
+        expect(await parentRow(fixture, messageId), before, reason: suffix);
+        expect(
+          await fixture.rawAttachmentRow(attachmentId),
+          isNotNull,
+          reason: suffix,
+        );
+        expect(manager.deletedFilePaths, isEmpty, reason: suffix);
+        expect(
+          await localReactions.getReactionsForMessage(messageId),
+          hasLength(1),
+          reason: suffix,
+        );
+      }
+
+      // An out-of-set duration is already impossible: the frozen v100 CHECK
+      // constraint rejects the write itself, which is strictly stronger.
+      await expectRefusedWithNoEffect('missing-duration', duration: null);
+      await expectRefusedWithNoEffect('unsupported-mode', mode: 'unsupported');
+      await expectRefusedWithNoEffect(
+        'unconsumed-v110-intent',
+        intentId: 'tc359-03a-intent',
+      );
+      await expectRefusedWithNoEffect('crossed-author', from: 'peer-mallory');
+    });
+  });
 }
 
 /// Signals every exclusive acquisition ATTEMPT on the real repository-wide

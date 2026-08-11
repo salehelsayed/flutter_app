@@ -1070,9 +1070,13 @@ void main() {
             mediaAttachmentRepo: FakeMediaAttachmentRepository(),
           );
 
-          expect(result, HandleChatMessageResult.chatMessage);
+          // 359: a private EDIT is an unsupported product action. It is
+          // terminally ignored with zero effects instead of being accepted.
+          expect(result, HandleChatMessageResult.ignoredEdit);
+          expect(editRepo.saved, isEmpty, reason: testCase.id);
           final after = await editRepo.getMessage(testCase.id);
           expect(after!.text, isEmpty, reason: testCase.id);
+          expect(after.editedAt, isNull, reason: testCase.id);
           expect(
             after.privateMediaPolicy,
             testCase.policy,
@@ -1158,10 +1162,12 @@ void main() {
           expect(
             result,
             isEdit
-                ? HandleChatMessageResult.chatMessage
+                // 359: the private EDIT is terminally ignored, not accepted.
+                ? HandleChatMessageResult.ignoredEdit
                 : HandleChatMessageResult.duplicate,
           );
           expect(mediaRepo.saved, isEmpty, reason: id);
+          expect(replayRepo.saved, isEmpty, reason: id);
           final after = await replayRepo.getMessage(id);
           expect(after!.hiddenAt, hidden.hiddenAt, reason: id);
           expect(
@@ -5464,6 +5470,305 @@ void main() {
           isEmpty,
           reason: entry.key,
         );
+      }
+    });
+  });
+
+  group('Plan 359 unsupported private EDIT receive disposition', () {
+    const t0 = '2026-08-11T09:00:00.000Z';
+    const t1 = '2026-08-11T09:00:01.000Z';
+
+    ChatMessage p2pMessage(String content) => ChatMessage(
+      from: senderPeerId,
+      to: 'my-peer',
+      content: content,
+      timestamp: t0,
+      isIncoming: true,
+    );
+
+    String v2Envelope({required String id, String? eventId}) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': id,
+          'eventId': ?eventId,
+          'senderPeerId': senderPeerId,
+          'encrypted': const <String, Object?>{
+            'kem': 'kem-359',
+            'ciphertext': 'cipher-359',
+            'nonce': 'nonce-359',
+          },
+        });
+
+    String editPlaintext({
+      required String id,
+      String? eventId,
+      Map<String, Object?>? privateMedia,
+      List<Map<String, Object?>>? media,
+      String text = 'forged caption',
+      String action = 'edit',
+    }) => jsonEncode(<String, Object?>{
+      'id': id,
+      'text': text,
+      'senderPeerId': senderPeerId,
+      'senderUsername': 'Alice',
+      'timestamp': t0,
+      'action': action,
+      'editedAt': t1,
+      'media': ?media,
+      'privateMedia': ?privateMedia,
+    });
+
+    Map<String, Object?> proofBearingMedia(String id) => <String, Object?>{
+      'id': '$id-blob',
+      'mime': 'image/jpeg',
+      'size': 1024,
+      'mediaType': 'image',
+      'contentHash': 'c' * 64,
+      'encryptionKeyBase64': 'must-not-be-written',
+      'encryptionNonce': 'nonce',
+      'encryptionScheme': 'blob_aes_256_gcm_v1',
+      'blobCustody': <String, Object?>{
+        'contentHash': 'c' * 64,
+        'ciphertextSize': 2048,
+        'expiresAtMs': 1900003000000,
+      },
+    };
+
+    ConversationMessage durableTarget({
+      required String id,
+      required PrivateMediaPolicy policy,
+      required PrivateMediaLifecycleState state,
+      String contactPeerId = senderPeerId,
+      String authorPeerId = senderPeerId,
+    }) => ConversationMessage(
+      id: id,
+      contactPeerId: contactPeerId,
+      senderPeerId: authorPeerId,
+      text: '',
+      timestamp: t0,
+      status: 'delivered',
+      isIncoming: true,
+      createdAt: t0,
+      privateMediaPolicy: policy,
+      privateMediaState: state,
+      privateMediaReceivedAtMs: 1000,
+      privateMediaClockHighWaterMs: 1500,
+    );
+
+    test('TC-359-04b private EDIT is terminally ignored before strict caption '
+        'missing or generic edit branches', () async {
+      // --- The three causal authenticated shapes are terminally ignored. ---
+      // 1. Proof-less redacted EDIT whose durable target is ABSENT: today this
+      //    writes a hidden placeholder and returns editMissingOriginal.
+      {
+        const id = 'tc359-04b-proof-less-absent';
+        final repo = FakeMessageRepository();
+        final media = FakeMediaAttachmentRepository();
+        final receipts = <String>[];
+        final mutationReceipts = <String>[];
+        final (result, message, _) = await handleIncomingChatMessage(
+          message: p2pMessage(v2Envelope(id: id)),
+          messageRepo: repo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: media,
+          predecryptedText: editPlaintext(
+            id: id,
+            privateMedia: const <String, Object?>{
+              'version': 1,
+              'mode': 'protected',
+            },
+          ),
+          transport: 'inbox',
+          stagedEntryId: 'staged-$id',
+          sendDeliveryReceipt: (value) async => receipts.add(value),
+          sendMutationDeliveryReceipt:
+              (value, {required mutationEventId}) async =>
+                  mutationReceipts.add('$value/$mutationEventId'),
+        );
+        expect(result, HandleChatMessageResult.ignoredEdit);
+        expect(message, isNull);
+        expect(repo.saved, isEmpty, reason: 'no hidden placeholder is written');
+        expect(await repo.getMessage(id), isNull);
+        expect(media.saved, isEmpty);
+        expect(receipts, isEmpty);
+        expect(mutationReceipts, isEmpty);
+      }
+
+      // 2. Proof-BEARING redacted EDIT: today this is retryably refused as a
+      //    strict-custody failure and its envelope keeps redriving.
+      {
+        const id = 'tc359-04b-proof-bearing';
+        const eventId = '35900000-0000-4000-8000-000000000041';
+        final repo = FakeMessageRepository(
+          existingMessages: <String, ConversationMessage>{
+            id: durableTarget(
+              id: id,
+              policy: const PrivateMediaPolicy.viewOnce(),
+              state: PrivateMediaLifecycleState.available,
+            ),
+          },
+        );
+        final media = FakeMediaAttachmentRepository();
+        final mutationReceipts = <String>[];
+        final before = await repo.getMessage(id);
+        final (result, message, _) = await handleIncomingChatMessage(
+          message: p2pMessage(v2Envelope(id: id, eventId: eventId)),
+          messageRepo: repo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: media,
+          predecryptedText: editPlaintext(
+            id: id,
+            eventId: eventId,
+            privateMedia: const <String, Object?>{
+              'version': 1,
+              'mode': 'view_once',
+            },
+            media: <Map<String, Object?>>[proofBearingMedia(id)],
+          ),
+          transport: 'inbox',
+          stagedEntryId: 'staged-$id',
+          sendMutationDeliveryReceipt:
+              (value, {required mutationEventId}) async =>
+                  mutationReceipts.add('$value/$mutationEventId'),
+        );
+        expect(result, HandleChatMessageResult.ignoredEdit);
+        expect(message, isNull);
+        expect(repo.saved, isEmpty);
+        expect(media.saved, isEmpty);
+        expect(await repo.getMessage(id), before);
+        expect(mutationReceipts, isEmpty);
+      }
+
+      // 3. Forged-ORDINARY wire policy over a same-author durable
+      //    `unsupported(sourceVersion: 9)` target: today this reaches the
+      //    generic edit save and grants edit semantics to private content.
+      {
+        const id = 'tc359-04b-forged-ordinary';
+        final durable = durableTarget(
+          id: id,
+          policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
+          state: PrivateMediaLifecycleState.unsupported,
+        );
+        final repo = FakeMessageRepository(
+          existingMessages: <String, ConversationMessage>{id: durable},
+        );
+        final media = FakeMediaAttachmentRepository();
+        final receipts = <String>[];
+        final (result, message, _) = await handleIncomingChatMessage(
+          message: p2pMessage(v2Envelope(id: id)),
+          messageRepo: repo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: media,
+          predecryptedText: editPlaintext(id: id, text: 'forged text'),
+          transport: 'inbox',
+          stagedEntryId: 'staged-$id',
+          sendDeliveryReceipt: (value) async => receipts.add(value),
+        );
+        expect(result, HandleChatMessageResult.ignoredEdit);
+        expect(message, isNull);
+        expect(repo.saved, isEmpty);
+        expect(media.saved, isEmpty);
+        final after = await repo.getMessage(id);
+        expect(after!.text, isEmpty);
+        expect(after.editedAt, isNull);
+        expect(after.privateMediaPolicy, durable.privateMediaPolicy);
+        expect(after.privateMediaState, durable.privateMediaState);
+        expect(receipts, isEmpty);
+      }
+
+      // --- Controls: crossed author stays unauthorized, and every ordinary
+      // and malformed-strict disposition keeps its existing outcome. ---
+      {
+        const id = 'tc359-04b-crossed-author';
+        final repo = FakeMessageRepository(
+          existingMessages: <String, ConversationMessage>{
+            id: durableTarget(
+              id: id,
+              policy: const PrivateMediaPolicy.protected(),
+              state: PrivateMediaLifecycleState.available,
+              authorPeerId: 'peer-someone-else',
+            ),
+          },
+        );
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: p2pMessage(v2Envelope(id: id)),
+          messageRepo: repo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+          predecryptedText: editPlaintext(
+            id: id,
+            privateMedia: const <String, Object?>{
+              'version': 1,
+              'mode': 'protected',
+            },
+          ),
+        );
+        expect(result, HandleChatMessageResult.unauthorized);
+        expect(repo.saved, isEmpty);
+      }
+
+      {
+        // A malformed strict NON-edit keeps its immediate refusal exactly
+        // where it is today.
+        const id = 'tc359-04b-malformed-initial';
+        final repo = FakeMessageRepository();
+        final (result, _, _) = await handleIncomingChatMessage(
+          message: p2pMessage(v2Envelope(id: id)),
+          messageRepo: repo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+          predecryptedText: jsonEncode(<String, Object?>{
+            'id': id,
+            'text': 'caption that a strict initial may not carry',
+            'senderPeerId': senderPeerId,
+            'senderUsername': 'Alice',
+            'timestamp': t0,
+            'media': <Map<String, Object?>>[
+              proofBearingMedia(id),
+              <String, Object?>{
+                'id': '$id-plain',
+                'mime': 'image/png',
+                'size': 10,
+                'mediaType': 'image',
+              },
+            ],
+            'privateMedia': const <String, Object?>{
+              'version': 1,
+              'mode': 'protected',
+            },
+          }),
+        );
+        expect(result, HandleChatMessageResult.strictMediaCustodyRefused);
+        expect(repo.saved, isEmpty);
+      }
+
+      {
+        // An ordinary same-id text EDIT still applies.
+        const id = 'tc359-04b-ordinary-edit';
+        final repo = FakeMessageRepository(
+          existingMessages: <String, ConversationMessage>{
+            id: ConversationMessage(
+              id: id,
+              contactPeerId: senderPeerId,
+              senderPeerId: senderPeerId,
+              text: 'original',
+              timestamp: t0,
+              status: 'delivered',
+              isIncoming: true,
+              createdAt: t0,
+            ),
+          },
+        );
+        final (result, message, _) = await handleIncomingChatMessage(
+          message: p2pMessage(v2Envelope(id: id)),
+          messageRepo: repo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: FakeMediaAttachmentRepository(),
+          predecryptedText: editPlaintext(id: id, text: 'edited text'),
+        );
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(message?.text, 'edited text');
       }
     });
   });

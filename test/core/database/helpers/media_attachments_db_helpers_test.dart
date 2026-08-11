@@ -7661,6 +7661,645 @@ void main() {
       }
     });
   });
+
+  group('Plan 359 disappearing direct-media delete-for-everyone custody', () {
+    const sender = 'peer-local';
+    const t0 = '2026-08-11T09:00:00.000Z';
+    const t1 = '2026-08-11T09:00:01.000Z';
+
+    var eventSeq = 0;
+    String nextEventId() =>
+        '35900000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+
+    String deletionEnvelope(String eventId) => jsonEncode(<String, Object?>{
+      'type': 'message_deletion',
+      'version': '2',
+      'eventId': eventId,
+      'senderPeerId': sender,
+      'encrypted': <String, Object?>{
+        'kem': 'kem-359',
+        'ciphertext': 'cipher-$eventId',
+        'nonce': 'nonce-359',
+      },
+    });
+
+    String initialEnvelope(String messageId) => jsonEncode(<String, Object?>{
+      'type': 'chat_message',
+      'version': '2',
+      'id': messageId,
+      'senderPeerId': sender,
+      'encrypted': const <String, Object?>{
+        'kem': 'kem-initial',
+        'ciphertext': 'cipher-initial',
+        'nonce': 'nonce-initial',
+      },
+    });
+
+    /// One outgoing parent row. Disappearing rows carry the exact Plan 358
+    /// sender shape: allowed duration, `available`, and no receiver clock.
+    Map<String, Object?> parentRow({
+      required String messageId,
+      required String recipientPeerId,
+      String mode = 'disappearing',
+      int policyVersion = 1,
+      int? durationSeconds = 3600,
+      String state = 'available',
+      String status = 'delivered',
+      Object? receivedAtMs,
+      Object? terminalAtMs,
+      Object? clockHighWaterMs,
+      Object? intentId,
+    }) => <String, Object?>{
+      'id': messageId,
+      'contact_peer_id': recipientPeerId,
+      'sender_peer_id': sender,
+      'text': 'disappearing media',
+      'timestamp': t0,
+      'status': status,
+      'is_incoming': 0,
+      'created_at': t0,
+      'wire_envelope': initialEnvelope(messageId),
+      'direct_media_custody_intent_id': intentId,
+      'private_media_policy_version': policyVersion,
+      'private_media_mode': mode,
+      'private_media_duration_seconds': durationSeconds,
+      'private_media_state': state,
+      'private_media_received_at_ms': receivedAtMs,
+      'private_media_terminal_at_ms': terminalAtMs,
+      'private_media_clock_high_water_ms': clockHighWaterMs,
+    };
+
+    Map<String, Object?> tombstoneOf(
+      Map<String, Object?> current, {
+      required String wireEnvelope,
+    }) => <String, Object?>{
+      ...current,
+      'text': '',
+      'status': 'sending',
+      'deleted_at': t1,
+      'deleted_by_peer_id': sender,
+      'hidden_at': null,
+      'transport': null,
+      'relay_expires_at': null,
+      'custody_checked_at': null,
+      'wire_envelope': wireEnvelope,
+    };
+
+    /// Seeds one exact post-drain Plan 358 lineage: the per-attachment
+    /// fingerprint is the only surviving strict proof (v108/v111 both drained).
+    Future<Map<String, Object?>> seedPostDrainDisappearingParent(
+      String suffix, {
+      int? durationSeconds = 3600,
+      List<({String mime, String mediaType})> attachments = const [
+        (mime: 'image/jpeg', mediaType: 'image'),
+      ],
+      String mode = 'disappearing',
+      int policyVersion = 1,
+      String state = 'available',
+      Object? receivedAtMs,
+      bool fingerprinted = true,
+    }) async {
+      final messageId = 'tc359-01a-$suffix';
+      final recipientPeerId = 'tc359-peer-$suffix';
+      await db.insert(
+        'messages',
+        parentRow(
+          messageId: messageId,
+          recipientPeerId: recipientPeerId,
+          mode: mode,
+          policyVersion: policyVersion,
+          durationSeconds: durationSeconds,
+          state: state,
+          receivedAtMs: receivedAtMs,
+        ),
+      );
+      for (var index = 0; index < attachments.length; index++) {
+        final attachment = attachments[index];
+        await dbInsertMediaAttachment(db, <String, Object?>{
+          ...makeAttachmentRow(
+            id: '$messageId-${String.fromCharCode(97 + index)}',
+            messageId: messageId,
+            mime: attachment.mime,
+            mediaType: attachment.mediaType,
+            size: 4096,
+            width: null,
+            height: null,
+            downloadStatus: 'done',
+            createdAt: t0,
+            contentHash: '${index + 1}' * 64,
+          ),
+          'direct_media_blob_custody_fingerprint': fingerprinted
+              ? String.fromCharCode(97 + index) * 64
+              : null,
+        });
+      }
+      return (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
+    }
+
+    /// The complete ordered inventory every refusal must leave byte-identical.
+    Future<Map<String, List<Map<String, Object?>>>> inventory() async => {
+      'messages': await db.query('messages', orderBy: 'id ASC'),
+      'v109': await db.query(
+        kDirectReactionInboxCustodyOutboxTable,
+        orderBy: 'recipient_peer_id ASC, event_id ASC',
+      ),
+      'v108': await db.query(
+        'direct_inbox_custody_outbox',
+        orderBy: 'recipient_peer_id ASC, message_id ASC',
+      ),
+      'v111': await db.query(
+        kDirectMediaBlobCustodyTable,
+        orderBy: 'attachment_id ASC',
+      ),
+      'attachments': await db.query('media_attachments', orderBy: 'id ASC'),
+    };
+
+    Future<DirectMediaDeletionCustodyDbStageResult> stage(
+      Map<String, Object?> current, {
+      required String eventId,
+      String? wireEnvelope,
+      Map<String, Object?>? stagedRow,
+      int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+      Future<void> Function()? beforeCustodyInsertForTest,
+    }) {
+      final envelope = wireEnvelope ?? deletionEnvelope(eventId);
+      return dbStageOutgoingDirectMediaDeletionInboxCustody(
+        db,
+        expectedRow: current,
+        stagedRow: stagedRow ?? tombstoneOf(current, wireEnvelope: envelope),
+        kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        recipientPeerId: current['contact_peer_id']! as String,
+        eventId: eventId,
+        wireEnvelope: envelope,
+        updatedAt: t1,
+        capacity: capacity,
+        beforeCustodyInsertForTest: beforeCustodyInsertForTest,
+      );
+    }
+
+    test('TC-359-01a disappearing media deletion stages only exact lineage '
+        'and revalidates an existing v109 tombstone', () async {
+      // --- 1. Every allowed duration and both coherent media kinds commit the
+      // exact tombstone plus one v109 from post-drain Plan 358 lineage. ---
+      for (final positive
+          in <({int duration, String mime, String mediaType})>[
+            (duration: 3600, mime: 'image/jpeg', mediaType: 'image'),
+            (duration: 86400, mime: 'video/mp4', mediaType: 'video'),
+            (duration: 604800, mime: 'image/png', mediaType: 'image'),
+          ]) {
+        final suffix = 'ok-${positive.duration}';
+        final current = await seedPostDrainDisappearingParent(
+          suffix,
+          durationSeconds: positive.duration,
+          attachments: <({String mime, String mediaType})>[
+            (mime: positive.mime, mediaType: positive.mediaType),
+          ],
+        );
+        final messageId = current['id']! as String;
+        expect(
+          await dbClassifyOutgoingDirectDeletionLane(db, messageId: messageId),
+          OutgoingDirectDeletionLane.strictMedia,
+          reason: suffix,
+        );
+
+        // An injected fault immediately before the v109 insert is all-zero.
+        final beforeFault = await inventory();
+        final faultEventId = nextEventId();
+        await expectLater(
+          stage(
+            current,
+            eventId: faultEventId,
+            beforeCustodyInsertForTest: () async =>
+                throw StateError('injected v109 insert fault'),
+          ),
+          throwsA(isA<StateError>()),
+        );
+        expect(await inventory(), beforeFault, reason: suffix);
+
+        final eventId = nextEventId();
+        final applied = await stage(current, eventId: eventId);
+        expect(
+          applied.outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+          reason: suffix,
+        );
+        expect(applied.ownsMutationEvent, isTrue, reason: suffix);
+        expect(applied.messageRow!['deleted_at'], t1, reason: suffix);
+        expect(applied.messageRow!['text'], '', reason: suffix);
+        expect(
+          applied.messageRow!['private_media_duration_seconds'],
+          positive.duration,
+          reason: 'the deletion never rewrites the disappearing policy',
+        );
+        expect(
+          applied.messageRow!['private_media_state'],
+          'available',
+          reason: suffix,
+        );
+        expect(
+          (await db.query(
+            kDirectReactionInboxCustodyOutboxTable,
+            where: 'event_id = ?',
+            whereArgs: <Object?>[eventId],
+          )).single['wire_envelope'],
+          deletionEnvelope(eventId),
+          reason: suffix,
+        );
+      }
+
+      // --- 2. An ordinary strict control keeps its incumbent admission. ---
+      {
+        const messageId = 'tc359-01a-ordinary-control';
+        const recipientPeerId = 'tc359-peer-ordinary';
+        await db.insert('messages', <String, Object?>{
+          ...parentRow(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            mode: 'ordinary',
+            policyVersion: 0,
+            durationSeconds: null,
+            state: 'none',
+          ),
+          'private_media_state': 'none',
+        });
+        await dbInsertMediaAttachment(db, <String, Object?>{
+          ...makeAttachmentRow(
+            id: '$messageId-a',
+            messageId: messageId,
+            downloadStatus: 'done',
+            createdAt: t0,
+            contentHash: '9' * 64,
+          ),
+          'direct_media_blob_custody_fingerprint': 'f' * 64,
+        });
+        final current = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+        final ordinaryEvent = nextEventId();
+        expect(
+          (await stage(current, eventId: ordinaryEvent)).outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+          reason: 'ordinary strict media deletion is unchanged',
+        );
+      }
+
+      // --- 3. Every crossed new-stage projection refuses all-zero. ---
+      Future<void> expectRefusedWithNoEffect(
+        String label,
+        Future<DirectMediaDeletionCustodyDbStageResult> Function() action,
+      ) async {
+        final before = await inventory();
+        final result = await action();
+        expect(
+          result.outcome,
+          OutgoingOrdinaryMutationOutcome.refused,
+          reason: label,
+        );
+        expect(result.messageRow, isNull, reason: label);
+        expect(result.custodyRow, isNull, reason: label);
+        expect(await inventory(), before, reason: label);
+      }
+
+      final multi = await seedPostDrainDisappearingParent(
+        'multi-attachment',
+        attachments: const <({String mime, String mediaType})>[
+          (mime: 'image/jpeg', mediaType: 'image'),
+          (mime: 'image/png', mediaType: 'image'),
+        ],
+      );
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: multi['id']! as String,
+        ),
+        OutgoingDirectDeletionLane.strictMedia,
+        reason: 'the fingerprint alone does not encode cardinality',
+      );
+      await expectRefusedWithNoEffect(
+        'a fingerprinted multi-attachment disappearing projection refuses',
+        () => stage(multi, eventId: nextEventId()),
+      );
+
+      final crossedMedia = await seedPostDrainDisappearingParent(
+        'crossed-media',
+        attachments: const <({String mime, String mediaType})>[
+          (mime: 'video/mp4', mediaType: 'image'),
+        ],
+      );
+      await expectRefusedWithNoEffect(
+        'a crossed mime/mediaType projection refuses',
+        () => stage(crossedMedia, eventId: nextEventId()),
+      );
+
+      final gif = await seedPostDrainDisappearingParent(
+        'gif',
+        attachments: const <({String mime, String mediaType})>[
+          (mime: 'image/gif', mediaType: 'image'),
+        ],
+      );
+      await expectRefusedWithNoEffect(
+        'a disappearing gif is never an admitted projection',
+        () => stage(gif, eventId: nextEventId()),
+      );
+
+      final proofLess = await seedPostDrainDisappearingParent(
+        'proof-less',
+        fingerprinted: false,
+      );
+      expect(
+        await dbClassifyOutgoingDirectDeletionLane(
+          db,
+          messageId: proofLess['id']! as String,
+        ),
+        OutgoingDirectDeletionLane.legacyMedia,
+      );
+      await expectRefusedWithNoEffect(
+        'a proof-less historical disappearing row never promotes',
+        () => stage(proofLess, eventId: nextEventId()),
+      );
+
+      final terminalState = await seedPostDrainDisappearingParent(
+        'terminal-state',
+        state: 'expired',
+      );
+      await expectRefusedWithNoEffect(
+        'a terminal disappearing state is not this owner',
+        () => stage(terminalState, eventId: nextEventId()),
+      );
+
+      final senderClock = await seedPostDrainDisappearingParent(
+        'sender-clock',
+        receivedAtMs: 1000,
+      );
+      await expectRefusedWithNoEffect(
+        'a sender-side receiver clock is a crossed projection',
+        () => stage(senderClock, eventId: nextEventId()),
+      );
+
+      final crossedModality = await seedPostDrainDisappearingParent(
+        'crossed-modality',
+      );
+      await expectRefusedWithNoEffect(
+        'an expected/staged modality disagreement refuses',
+        () => stage(
+          crossedModality,
+          eventId: nextEventId(),
+          stagedRow: <String, Object?>{
+            ...tombstoneOf(
+              crossedModality,
+              wireEnvelope: deletionEnvelope('placeholder'),
+            ),
+            'private_media_mode': 'protected',
+            'private_media_duration_seconds': null,
+            'wire_envelope': deletionEnvelope('placeholder'),
+          },
+          wireEnvelope: deletionEnvelope('placeholder'),
+        ),
+      );
+
+      final protectedParent = await seedPostDrainDisappearingParent(
+        'protected-refused',
+        mode: 'protected',
+        durationSeconds: null,
+      );
+      await expectRefusedWithNoEffect(
+        'Protected keeps the Plan 356 private owner, never this stage',
+        () => stage(protectedParent, eventId: nextEventId()),
+      );
+
+      // --- 4. Existing-v109 replay is attachment-independent but demands the
+      // exact persisted tombstone and a unique envelope owner. ---
+      final replaySeed = await seedPostDrainDisappearingParent('replay');
+      final replayMessageId = replaySeed['id']! as String;
+      final replayEventId = nextEventId();
+      final replayEnvelope = deletionEnvelope(replayEventId);
+      final replayTombstone = tombstoneOf(
+        replaySeed,
+        wireEnvelope: replayEnvelope,
+      );
+      expect(
+        (await stage(replaySeed, eventId: replayEventId)).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      // Terminal cleanup removes the attachment the stage no longer needs.
+      await db.delete(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[replayMessageId],
+      );
+      final replayed = await stage(
+        replaySeed,
+        eventId: replayEventId,
+        stagedRow: replayTombstone,
+        wireEnvelope: replayEnvelope,
+        capacity: 0,
+      );
+      expect(
+        replayed.outcome,
+        OutgoingOrdinaryMutationOutcome.idempotent,
+        reason: 'exact replay wins before capacity and needs no attachment',
+      );
+      expect(replayed.custodyRow!['event_id'], replayEventId);
+      expect(replayed.messageRow!['id'], replayMessageId);
+
+      // A live parent that merely shares the retained event id refuses: the
+      // deletion outer envelope never names its encrypted inner target.
+      final liveSeed = await seedPostDrainDisappearingParent('replay-live');
+      final liveEventId = nextEventId();
+      final liveEnvelope = deletionEnvelope(liveEventId);
+      await db.insert(kDirectReactionInboxCustodyOutboxTable, <String, Object?>{
+        'recipient_peer_id': liveSeed['contact_peer_id'],
+        'event_id': liveEventId,
+        'wire_envelope': liveEnvelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': t0,
+        'updated_at': t0,
+      });
+      await expectRefusedWithNoEffect(
+        'a live parent is never resurrected from retained event bytes',
+        () => stage(
+          liveSeed,
+          eventId: liveEventId,
+          wireEnvelope: liveEnvelope,
+          capacity: 0,
+        ),
+      );
+
+      // An absent parent leaves the retained event untouched.
+      final absentSeed = await seedPostDrainDisappearingParent('replay-absent');
+      final absentEventId = nextEventId();
+      final absentEnvelope = deletionEnvelope(absentEventId);
+      final absentTombstone = tombstoneOf(
+        absentSeed,
+        wireEnvelope: absentEnvelope,
+      );
+      await db.insert(kDirectReactionInboxCustodyOutboxTable, <String, Object?>{
+        'recipient_peer_id': absentSeed['contact_peer_id'],
+        'event_id': absentEventId,
+        'wire_envelope': absentEnvelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'created_at': t0,
+        'updated_at': t0,
+      });
+      await db.delete(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[absentSeed['id']],
+      );
+      await expectRefusedWithNoEffect(
+        'an absent parent cannot be recreated by replay',
+        () => stage(
+          absentSeed,
+          eventId: absentEventId,
+          stagedRow: absentTombstone,
+          wireEnvelope: absentEnvelope,
+          capacity: 0,
+        ),
+      );
+
+      // Two outgoing rows projecting the same envelope are ambiguous.
+      final ambiguousSeed = await seedPostDrainDisappearingParent(
+        'replay-ambiguous',
+      );
+      final ambiguousEventId = nextEventId();
+      final ambiguousEnvelope = deletionEnvelope(ambiguousEventId);
+      final ambiguousTombstone = tombstoneOf(
+        ambiguousSeed,
+        wireEnvelope: ambiguousEnvelope,
+      );
+      expect(
+        (await stage(
+          ambiguousSeed,
+          eventId: ambiguousEventId,
+          stagedRow: ambiguousTombstone,
+          wireEnvelope: ambiguousEnvelope,
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      await db.insert('messages', <String, Object?>{
+        ...ambiguousTombstone,
+        'id': '${ambiguousSeed['id']}-twin',
+      });
+      await expectRefusedWithNoEffect(
+        'an ambiguous envelope projection refuses',
+        () => stage(
+          ambiguousSeed,
+          eventId: ambiguousEventId,
+          stagedRow: ambiguousTombstone,
+          wireEnvelope: ambiguousEnvelope,
+          capacity: 0,
+        ),
+      );
+
+      // A persisted parent whose policy has drifted away from the staged
+      // modality is not this event's tombstone.
+      final driftSeed = await seedPostDrainDisappearingParent('replay-drift');
+      final driftEventId = nextEventId();
+      final driftEnvelope = deletionEnvelope(driftEventId);
+      final driftTombstone = tombstoneOf(
+        driftSeed,
+        wireEnvelope: driftEnvelope,
+      );
+      expect(
+        (await stage(
+          driftSeed,
+          eventId: driftEventId,
+          stagedRow: driftTombstone,
+          wireEnvelope: driftEnvelope,
+        )).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      await db.update(
+        'messages',
+        const <String, Object?>{'private_media_duration_seconds': 86400},
+        where: 'id = ?',
+        whereArgs: <Object?>[driftSeed['id']],
+      );
+      await expectRefusedWithNoEffect(
+        'a drifted persisted policy refuses the replay',
+        () => stage(
+          driftSeed,
+          eventId: driftEventId,
+          stagedRow: driftTombstone,
+          wireEnvelope: driftEnvelope,
+          capacity: 0,
+        ),
+      );
+
+      // The ordinary strict control replays identically.
+      {
+        const messageId = 'tc359-01a-ordinary-replay';
+        const recipientPeerId = 'tc359-peer-ordinary-replay';
+        await db.insert('messages', <String, Object?>{
+          ...parentRow(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            mode: 'ordinary',
+            policyVersion: 0,
+            durationSeconds: null,
+            state: 'none',
+          ),
+          'private_media_state': 'none',
+        });
+        await dbInsertMediaAttachment(db, <String, Object?>{
+          ...makeAttachmentRow(
+            id: '$messageId-a',
+            messageId: messageId,
+            downloadStatus: 'done',
+            createdAt: t0,
+            contentHash: '8' * 64,
+          ),
+          'direct_media_blob_custody_fingerprint': 'e' * 64,
+        });
+        final current = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+        final ordinaryEvent = nextEventId();
+        final ordinaryEnvelope = deletionEnvelope(ordinaryEvent);
+        final ordinaryTombstone = tombstoneOf(
+          current,
+          wireEnvelope: ordinaryEnvelope,
+        );
+        expect(
+          (await stage(
+            current,
+            eventId: ordinaryEvent,
+            stagedRow: ordinaryTombstone,
+            wireEnvelope: ordinaryEnvelope,
+          )).outcome,
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        await db.delete(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        expect(
+          (await stage(
+            current,
+            eventId: ordinaryEvent,
+            stagedRow: ordinaryTombstone,
+            wireEnvelope: ordinaryEnvelope,
+            capacity: 0,
+          )).outcome,
+          OutgoingOrdinaryMutationOutcome.idempotent,
+          reason: 'ordinary replay stays attachment-independent',
+        );
+      }
+    });
+  });
 }
 
 /// Sentinel for fixture parameters whose null value is meaningful.

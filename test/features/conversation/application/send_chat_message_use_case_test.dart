@@ -11752,6 +11752,188 @@ void main() {
       expect(incapable.directMutationCustodyRows, isEmpty);
     });
   });
+
+  group('Plan 359 unsupported private EDIT disposition', () {
+    const target = 'target-peer';
+    const selfPeer = 'my-peer';
+    const t0 = '2026-08-11T09:00:00.000Z';
+    const t1 = '2026-08-11T09:00:01.000Z';
+
+    ConversationMessage persistedTarget({
+      required String id,
+      required PrivateMediaPolicy policy,
+      PrivateMediaLifecycleState state = PrivateMediaLifecycleState.available,
+      List<MediaAttachment> media = const <MediaAttachment>[],
+    }) => ConversationMessage(
+      id: id,
+      contactPeerId: target,
+      senderPeerId: selfPeer,
+      text: '',
+      timestamp: t0,
+      status: 'delivered',
+      isIncoming: false,
+      createdAt: t0,
+      transport: 'direct',
+      dedupKey: id,
+      privateMediaPolicy: policy,
+      privateMediaState: state,
+      media: media,
+    );
+
+    test('TC-359-04a persisted private target defeats caller policy drift '
+        'before EDIT effects', () async {
+      // 1. Every persisted redaction-requiring target refuses the EDIT before
+      //    crypto, staging or network — even when the caller forges an
+      //    ordinary policy and supplies stale media.
+      for (final refused
+          in <({String suffix, PrivateMediaPolicy policy})>[
+            (suffix: 'protected', policy: const PrivateMediaPolicy.protected()),
+            (suffix: 'view-once', policy: const PrivateMediaPolicy.viewOnce()),
+            (
+              suffix: 'disappearing',
+              policy: PrivateMediaPolicy.disappearing(3600),
+            ),
+            (
+              suffix: 'unsupported',
+              policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
+            ),
+          ]) {
+        final messageId = 'tc359-04a-${refused.suffix}';
+        final durable = persistedTarget(
+          id: messageId,
+          policy: refused.policy,
+          media: <MediaAttachment>[
+            MediaAttachment(
+              id: '$messageId-a',
+              messageId: messageId,
+              mime: 'image/jpeg',
+              size: 800,
+              mediaType: 'image',
+              localPath: 'media/direct/$messageId-a.jpg',
+              downloadStatus: 'done',
+              createdAt: t0,
+              ownerLane: MediaOwnerLane.direct,
+            ),
+          ],
+        );
+        final messages = FakeMessageRepository()..forceCurrent(durable);
+        final media = FakeMediaAttachmentRepository();
+        final bridge = _CountingCryptoBridge();
+        final service = FakeP2PService();
+
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          mediaAttachmentRepo: media,
+          targetPeerId: target,
+          text: 'forged caption edit',
+          senderPeerId: selfPeer,
+          senderUsername: 'Me',
+          action: MessagePayload.actionEdit,
+          messageId: messageId,
+          timestamp: t0,
+          createdAt: t0,
+          editedAt: t1,
+          // The caller forges an ordinary policy: the persisted target is the
+          // only authority that may decide this.
+          privateMediaPolicy: const PrivateMediaPolicy.ordinary(),
+          mediaAttachments: durable.media,
+          bridge: bridge,
+        );
+
+        expect(
+          result,
+          SendChatMessageResult.invalidPrivateMedia,
+          reason: refused.suffix,
+        );
+        expect(message, isNull, reason: refused.suffix);
+        expect(bridge.encryptCalls, 0, reason: refused.suffix);
+        expect(service.sendCallCount, 0, reason: refused.suffix);
+        expect(service.storeInInboxCallCount, 0, reason: refused.suffix);
+        expect(messages.saved, hasLength(1), reason: refused.suffix);
+        expect(
+          messages.saved.single.editedAt,
+          isNull,
+          reason: '${refused.suffix} must not mutate the durable target',
+        );
+        expect(
+          messages.wireEnvelopeUpdates,
+          isEmpty,
+          reason: refused.suffix,
+        );
+        expect(
+          messages.directMutationCustodyRows,
+          isEmpty,
+          reason: refused.suffix,
+        );
+        expect(media.allSavedAttachments, isEmpty, reason: refused.suffix);
+      }
+
+      // 2. The declared private policy on an EDIT keeps its incumbent refusal.
+      {
+        const messageId = 'tc359-04a-declared-private';
+        final messages = FakeMessageRepository()
+          ..forceCurrent(
+            persistedTarget(
+              id: messageId,
+              policy: const PrivateMediaPolicy.protected(),
+            ),
+          );
+        final bridge = _CountingCryptoBridge();
+        final service = FakeP2PService();
+        final (result, _) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          targetPeerId: target,
+          text: 'declared private edit',
+          senderPeerId: selfPeer,
+          senderUsername: 'Me',
+          action: MessagePayload.actionEdit,
+          messageId: messageId,
+          timestamp: t0,
+          createdAt: t0,
+          editedAt: t1,
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+          bridge: bridge,
+        );
+        expect(result, SendChatMessageResult.invalidPrivateMedia);
+        expect(bridge.encryptCalls, 0);
+        expect(service.sendCallCount, 0);
+      }
+
+      // 3. An ordinary control target remains fully eligible for EDIT.
+      {
+        const messageId = 'tc359-04a-ordinary-control';
+        final messages = FakeMessageRepository()
+          ..forceCurrent(
+            persistedTarget(
+              id: messageId,
+              policy: const PrivateMediaPolicy.ordinary(),
+              state: PrivateMediaLifecycleState.none,
+            ).copyWith(text: 'original text'),
+          );
+        final bridge = _CountingCryptoBridge();
+        final service = FakeP2PService();
+        final (result, message) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          targetPeerId: target,
+          text: 'edited text',
+          senderPeerId: selfPeer,
+          senderUsername: 'Me',
+          action: MessagePayload.actionEdit,
+          messageId: messageId,
+          timestamp: t0,
+          createdAt: t0,
+          editedAt: t1,
+          bridge: bridge,
+        );
+        expect(result, isNot(SendChatMessageResult.invalidPrivateMedia));
+        expect(message, isNotNull);
+        expect(bridge.encryptCalls, greaterThan(0));
+      }
+    });
+  });
 }
 
 /// Fake caption-edit custody owner: returns the persisted classification and

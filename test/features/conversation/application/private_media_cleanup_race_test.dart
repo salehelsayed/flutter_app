@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -1615,6 +1617,338 @@ void main() {
           'deletion-entered',
         ],
         reason: 'the deletion entered only after the incumbent lease released',
+      );
+    });
+  });
+
+  group('Plan 359 disappearing deletion custody and live initial retention', () {
+    const sender = 'peer-alice';
+    const recipient = 'contact-1';
+    const recipientMlKemPublicKey = 'recipient-mlkem-public-key';
+    const t0 = '2026-08-11T09:00:00.000Z';
+    const nowMs = 1900000000000;
+    const contentHash =
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+
+    /// Seeds one delivered outgoing v1 disappearing parent with the exact Plan
+    /// 358 sender shape and one coherent image attachment. [live] additionally
+    /// binds a stored v111 generation to a live v108 incarnation; otherwise the
+    /// per-attachment fingerprint is the only surviving proof (post-drain).
+    Future<
+      ({ConversationMessage parent, String attachmentId, String localPath})
+    >
+    seedDisappearingParent(
+      MediaRepositoryRealDbFixture target,
+      String messageId, {
+      required bool live,
+    }) async {
+      final attachmentId = '$messageId-att';
+      final localPath = MediaFilePathConvention.relativePathForAttachment(
+        contactPeerId: recipient,
+        blobId: attachmentId,
+        mime: 'image/jpeg',
+      );
+      final initialEnvelope =
+          '{"type":"chat_message","version":"2","id":"$messageId",'
+          '"senderPeerId":"$sender","encrypted":{"kem":"k","ciphertext":"c",'
+          '"nonce":"n"}}';
+      await target.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': recipient,
+        'sender_peer_id': sender,
+        'text': '',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 0,
+        'created_at': t0,
+        'wire_envelope': initialEnvelope,
+        'private_media_policy_version': 1,
+        'private_media_mode': 'disappearing',
+        'private_media_duration_seconds': 3600,
+        'private_media_state': 'available',
+      });
+      await target.repo.saveAttachment(
+        MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: localPath,
+          downloadStatus: 'done',
+          createdAt: t0,
+          contentHash: contentHash,
+          encryptionKeyBase64: 'cHJpdmF0ZS1rZXk=',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: 'blob_aes_256_gcm_v1',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      const ciphertextSize = 4096;
+      const expiresAtMs = nowMs + 600000;
+      final commitment = DirectMediaBlobCustodyCommitment(
+        contentHash: contentHash,
+        ciphertextSize: ciphertextSize,
+        expiresAtMs: expiresAtMs,
+      );
+      await target.db.update(
+        'media_attachments',
+        <String, Object?>{
+          'direct_media_blob_custody_fingerprint':
+              computeDirectMediaBlobCommitmentFingerprint(
+                attachmentId: attachmentId,
+                commitment: commitment,
+              ),
+        },
+        where: 'id = ?',
+        whereArgs: <Object?>[attachmentId],
+      );
+      if (live) {
+        const incarnationId = 'd0d0d0d0d0d0d0d0d0d0d0d0d0d0d0d0';
+        await target.db.insert(
+          kDirectMediaBlobCustodyTable,
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            inboxCustodyIncarnationId: incarnationId,
+            recipientPeerId: recipient,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'d' * 64}/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: 'relay-359',
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: t0,
+            updatedAt: t0,
+          ).toMap(),
+        );
+        await target.db.insert(
+          'direct_inbox_custody_outbox',
+          <String, Object?>{
+            'recipient_peer_id': recipient,
+            'message_id': messageId,
+            'incarnation_id': incarnationId,
+            'wire_envelope': initialEnvelope,
+            'retry_count': 0,
+            'created_at': t0,
+            'updated_at': t0,
+            'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
+              <DirectMediaBlobManifestProjection>[
+                DirectMediaBlobManifestProjection(
+                  attachmentId: attachmentId,
+                  commitment: commitment,
+                ),
+              ],
+            ),
+            'media_blob_expires_at_ms': expiresAtMs,
+          },
+        );
+      }
+      return (
+        parent: (await target.messageRepo.getMessage(messageId))!,
+        attachmentId: attachmentId,
+        localPath: localPath,
+      );
+    }
+
+    Future<List<Map<String, Object?>>> v109RowsFor(
+      MediaRepositoryRealDbFixture target,
+      String messageId,
+    ) async => (await target.db.query('direct_reaction_inbox_custody_outbox'))
+        .where((row) => (row['wire_envelope']! as String).contains(messageId))
+        .toList(growable: false);
+
+    test('TC-359-02b disappearing DFE serializes stage to cleanup and retains '
+        'live initial custody', () async {
+      // --- ORDER A: the deletion owns the exclusive lease first; no contender
+      // and no network may enter between the selected stage and cleanup. ---
+      final firstLock = _SignallingLifecycleLock();
+      final first = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: firstLock,
+      );
+      addTearDown(first.dispose);
+      final orderA = <String>[];
+      const messageIdA = 'tc359-02b-post-drain';
+      final seededA = await seedDisappearingParent(
+        first,
+        messageIdA,
+        live: false,
+      );
+
+      final deletionHoldsLease = Completer<void>();
+      final releaseDeletion = Completer<void>();
+      final gatedManager = _GatedCleanupMediaFileManager(
+        onFirstDelete: () async {
+          orderA.add('deletion-entered');
+          if (!deletionHoldsLease.isCompleted) deletionHoldsLease.complete();
+          await releaseDeletion.future;
+        },
+      );
+      final networkA = FakeP2PNetwork();
+      final stoppedA = _StoppedPrivateDeleteP2PService(
+        peerId: sender,
+        network: networkA,
+      );
+      addTearDown(stoppedA.dispose);
+
+      final deletionA = deleteMessageForEveryone(
+        p2pService: stoppedA,
+        messageRepo: first.messageRepo,
+        originalMessage: seededA.parent,
+        mediaAttachmentRepo: first.repo,
+        mediaFileManager: gatedManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+      addTearDown(() {
+        if (!releaseDeletion.isCompleted) releaseDeletion.complete();
+      });
+      await Future.any(<Future<Object?>>[
+        deletionHoldsLease.future,
+        deletionA,
+      ]).timeout(const Duration(seconds: 10));
+      expect(
+        deletionHoldsLease.isCompleted,
+        isTrue,
+        reason:
+            'a node-off disappearing deletion must stage its exact v109 event '
+            'and run private cleanup under the same lifecycle lease',
+      );
+      // The stage already committed before the first artifact removal.
+      expect(await v109RowsFor(first, messageIdA), hasLength(1));
+      expect(
+        (await first.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageIdA],
+        )).single['deleted_at'],
+        isNotNull,
+      );
+
+      var contenderStarted = false;
+      final contenderAttempted = firstLock.nextSharedAttempt();
+      final contenderA = first.repo.lifecycleLock.synchronized(
+        seededA.attachmentId,
+        () async {
+          orderA.add('contender-entered');
+          contenderStarted = true;
+        },
+      );
+      await contenderAttempted.timeout(const Duration(seconds: 10));
+      orderA.add('contender-attempted');
+      expect(
+        contenderStarted,
+        isFalse,
+        reason:
+            'no competing lifecycle section may interleave between the '
+            'selected stage and its private cleanup',
+      );
+      expect(networkA.deliverCallCount, 0);
+      expect(networkA.storeInInboxCallCount, 0);
+
+      orderA.add('deletion-released');
+      releaseDeletion.complete();
+      final (resultA, tombstoneA) = await deletionA.timeout(
+        const Duration(seconds: 10),
+      );
+      await contenderA.timeout(const Duration(seconds: 10));
+      expect(resultA, SendChatMessageResult.nodeNotRunning);
+      expect(tombstoneA?.isDeleted, isTrue);
+      expect(orderA, <String>[
+        'deletion-entered',
+        'contender-attempted',
+        'deletion-released',
+        'contender-entered',
+      ]);
+      // Post-drain lineage owns nothing live, so its artifacts are cleaned.
+      expect(
+        await first.repo.getAttachmentsForMessage(
+          messageIdA,
+          owner: MediaOwnerLane.direct,
+        ),
+        isEmpty,
+      );
+      expect(
+        await first.secureKeyStore.containsKey(
+          mediaAttachmentEncryptionKeyStoreName(seededA.attachmentId),
+        ),
+        isFalse,
+      );
+      expect(gatedManager.deletedFilePaths, isNotEmpty);
+
+      // --- ORDER B: a LIVE v108/bound v111 generation retains its exact
+      // attachment, key and artifacts through the same deletion. ---
+      final second = await MediaRepositoryRealDbFixture.create();
+      addTearDown(second.dispose);
+      const messageIdB = 'tc359-02b-live-custody';
+      final seededB = await seedDisappearingParent(
+        second,
+        messageIdB,
+        live: true,
+      );
+      final networkB = FakeP2PNetwork();
+      final stoppedB = _StoppedPrivateDeleteP2PService(
+        peerId: sender,
+        network: networkB,
+      );
+      addTearDown(stoppedB.dispose);
+      final managerB = FakeMediaFileManager();
+
+      final (resultB, tombstoneB) = await deleteMessageForEveryone(
+        p2pService: stoppedB,
+        messageRepo: second.messageRepo,
+        originalMessage: seededB.parent,
+        mediaAttachmentRepo: second.repo,
+        mediaFileManager: managerB,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(resultB, SendChatMessageResult.nodeNotRunning);
+      expect(tombstoneB?.isDeleted, isTrue);
+      expect(await v109RowsFor(second, messageIdB), hasLength(1));
+      expect(networkB.deliverCallCount, 0);
+      expect(networkB.storeInInboxCallCount, 0);
+      // The independent initial owner keeps everything it can still need.
+      expect(
+        await second.repo.getAttachmentsForMessage(
+          messageIdB,
+          owner: MediaOwnerLane.direct,
+        ),
+        hasLength(1),
+        reason: 'a live v108/bound v111 generation retains its attachment',
+      );
+      expect(
+        await second.secureKeyStore.containsKey(
+          mediaAttachmentEncryptionKeyStoreName(seededB.attachmentId),
+        ),
+        isTrue,
+        reason: 'the live generation still needs its exact media key',
+      );
+      expect(
+        managerB.deletedFilePaths,
+        isEmpty,
+        reason: 'no artifact of a live initial generation may be destroyed',
+      );
+      expect(
+        await second.db.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageIdB],
+        ),
+        hasLength(1),
+      );
+      expect(
+        (await second.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageIdB],
+        )).single['state'],
+        'outgoing_stored',
       );
     });
   });
