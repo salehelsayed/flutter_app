@@ -242,6 +242,101 @@ class _AbsentDirectMediaBlobRepository extends FakeMediaAttachmentRepository
   ) async => false;
 }
 
+/// Plan 358 token-bearing strict reopen fake.
+///
+/// Publishes one durable `outgoing_prepared` v111 row for the seeded parent's
+/// attachment and records every ORDINARY-strict stage/private-stage call, so a
+/// disappearing retry can be proved to reopen the exact existing generation
+/// through the ordinary coordinator and never through the private one.
+class _ExistingDirectMediaBlobRepository extends FakeMediaAttachmentRepository
+    implements
+        DirectMediaBlobCustodyRepository,
+        OutgoingDirectPrivateMediaBlobGenerationRepository {
+  _ExistingDirectMediaBlobRepository(this.row);
+
+  DirectMediaBlobCustodyRow row;
+  int blobLoads = 0;
+  int ordinaryStageCalls = 0;
+  int privateStageCalls = 0;
+  int transitionCalls = 0;
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  bool get supportsOutgoingDirectPrivateMediaBlobGeneration => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    ordinaryStageCalls++;
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.idempotent,
+      attachments: preparedAttachments,
+      custodyRows: <DirectMediaBlobCustodyRow>[row],
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectPrivateMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment preparedAttachment,
+    required DirectMediaBlobCustodyRow custodyRow,
+  }) async {
+    privateStageCalls++;
+    return const DirectMediaBlobGenerationStageResult.refused();
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
+    String attachmentId,
+  ) async => attachmentId == row.attachmentId ? row : null;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async {
+    blobLoads++;
+    return messageId == row.messageId
+        ? <DirectMediaBlobCustodyRow>[row]
+        : const <DirectMediaBlobCustodyRow>[];
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    transitionCalls++;
+    if (!expected.exactDatabaseProjectionMatches(row)) return false;
+    row = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+}
+
 /// Plan 354 private strict reopen fake.
 ///
 /// Publishes one durable `outgoing_prepared` v111 row for the seeded parent and
@@ -2281,6 +2376,149 @@ void main() {
           isEmpty,
           reason: 'absent v111 must not enter the strict upload owner',
         );
+      },
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    test(
+      'TC-358-02b disappearing strict restart reopens exact v111 without '
+      'legacy upload',
+      () async {
+        const messageId = 'msg-358-02b-disappearing';
+        const attachmentId = 'att-358-02b-disappearing';
+        const contentHash =
+            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+        final intent = computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: const <String>[attachmentId],
+        );
+        final pendingPath =
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            );
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: 'peer-bob',
+          senderPeerId: 'my-peer-id',
+          text: '',
+          timestamp: '2026-08-11T09:00:00.000Z',
+          status: 'failed',
+          isIncoming: false,
+          createdAt: '2026-08-11T09:00:00.000Z',
+          directMediaCustodyIntentId: intent,
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+          privateMediaState: PrivateMediaLifecycleState.available,
+        );
+        // The already-published generation: an exact convention-pending row
+        // carrying the SAME ciphertext identity as the durable v111 row.
+        final published = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: pendingPath,
+          downloadStatus: 'upload_pending',
+          createdAt: '2026-08-11T09:00:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+          contentHash: contentHash,
+          encryptionKeyBase64: 'tc358-02b-raw-key',
+          encryptionNonce: 'tc358-02b-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        );
+        final repo = _ExistingDirectMediaBlobRepository(
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingPrepared,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: 'peer-bob',
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/${'6' * 64}/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: 4096,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: '2026-08-11T09:00:01.000Z',
+            updatedAt: '2026-08-11T09:00:01.000Z',
+          ),
+        )..seed(<MediaAttachment>[published]);
+        messageRepo.seed(<ConversationMessage>[message]);
+        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+
+        var prepareArtifactCalls = 0;
+        var strictUploadCalls = 0;
+        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+          repository: repo,
+          artifactStore: DirectMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async =>
+                Directory.systemTemp.createTempSync('tc358_02b_'),
+          ),
+          prepareArtifact:
+              ({required Bridge bridge, required String localFilePath}) async {
+                prepareArtifactCalls++;
+                throw StateError('reopen must never re-encrypt');
+              },
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                strictUploadCalls++;
+                return <String, dynamic>{'ok': false};
+              },
+        );
+
+        await retryIncompleteUploads(
+          mediaAttachmentRepo: repo,
+          messageRepo: messageRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          uploadMediaFn: fakeUploadFn.call,
+          directMediaBlobCustodyCoordinator: coordinator,
+        );
+
+        expect(
+          repo.ordinaryStageCalls,
+          1,
+          reason:
+              'a complete disappearing v111 generation reopens through the '
+              'ORDINARY strict coordinator',
+        );
+        expect(
+          repo.privateStageCalls,
+          0,
+          reason: 'disappearing never enters the P/VO private coordinator',
+        );
+        expect(
+          prepareArtifactCalls,
+          0,
+          reason: 'an exact reopen must never re-encrypt the blob',
+        );
+        expect(
+          fakeUploadFn.callCount,
+          0,
+          reason: 'a proven strict generation never falls back to legacy '
+              'upload',
+        );
+        // Byte-identical ciphertext identity survives the reopen.
+        final retained = (await repo.getAttachmentById(attachmentId))!;
+        expect(retained.contentHash, contentHash);
+        expect(retained.encryptionKeyBase64, 'tc358-02b-raw-key');
+        expect(retained.encryptionNonce, 'tc358-02b-nonce');
+        expect(repo.row.contentHash, contentHash);
+        expect(strictUploadCalls, lessThanOrEqualTo(1));
       },
       skip: !kDirectMediaBlobCustodyClientEnabled,
     );

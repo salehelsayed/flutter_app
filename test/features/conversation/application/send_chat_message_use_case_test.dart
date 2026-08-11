@@ -3409,6 +3409,295 @@ void main() {
     );
 
     test(
+      'TC-358-02a disappearing strict initial keeps ACK-or-expiry custody '
+      'across node live and inbox',
+      () async {
+        const createdAt = '2026-08-11T09:00:00.000Z';
+        const hash =
+            '5555555555555555555555555555555555555555555555555555555555555555';
+        const manifestExpiry = 2100000000000;
+
+        ({
+          MediaAttachment completed,
+          _DirectMediaCustodyFakeRepository media,
+          FakeMessageRepository messages,
+          String messageId,
+        })
+        seedPreparedDisappearing(String suffix, {int durationSeconds = 3600}) {
+          final messageId = 'tc358-02a-$suffix';
+          final attachmentId = '$messageId-att';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          final pendingPath =
+              MediaFilePathConvention.relativePathForPendingUpload(
+                messageId: messageId,
+                attachmentId: attachmentId,
+                mime: 'image/jpeg',
+              );
+          final published = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 1024,
+            mediaType: 'image',
+            localPath: pendingPath,
+            downloadStatus: 'upload_pending',
+            createdAt: createdAt,
+            contentHash: hash,
+            encryptionKeyBase64: 'tc358-02a-key',
+            encryptionNonce: 'tc358-02a-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final messages = FakeMessageRepository()
+            ..forceCurrent(
+              ConversationMessage(
+                id: messageId,
+                contactPeerId: 'target-peer',
+                senderPeerId: 'my-peer',
+                text: '',
+                timestamp: createdAt,
+                status: 'sending',
+                isIncoming: false,
+                createdAt: createdAt,
+                directMediaCustodyIntentId: intent,
+                privateMediaPolicy: PrivateMediaPolicy.disappearing(
+                  durationSeconds,
+                ),
+                privateMediaState: PrivateMediaLifecycleState.available,
+              ),
+            );
+          return (
+            completed: published.copyWith(
+              downloadStatus: 'done',
+              blobCustody: const DirectMediaBlobCustodyCommitment(
+                contentHash: hash,
+                ciphertextSize: 2048,
+                expiresAtMs: manifestExpiry,
+              ),
+            ),
+            media: _DirectMediaCustodyFakeRepository(messages)
+              ..seed(<MediaAttachment>[published]),
+            messages: messages,
+            messageId: messageId,
+          );
+        }
+
+        // 1. Node off: the exact v108 binding is committed before the
+        //    historical nodeNotRunning return, exactly like ordinary strict.
+        final nodeOff = seedPreparedDisappearing('node-off');
+        final (nodeOffResult, _) = await sendChatMessage(
+          p2pService: FakeP2PService(
+            currentState: const NodeState(isStarted: false),
+          ),
+          messageRepo: nodeOff.messages,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: nodeOff.messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: createdAt,
+          createdAt: createdAt,
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+          mediaAttachments: <MediaAttachment>[nodeOff.completed],
+          mediaAttachmentRepo: nodeOff.media,
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                wire, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async =>
+                  const InboxStoreOutcome(status: InboxStoreStatus.failed),
+        );
+        expect(nodeOffResult, SendChatMessageResult.nodeNotRunning);
+        expect(
+          nodeOff.media.stageCalls,
+          1,
+          reason: 'node-off still commits the exact v108 binding',
+        );
+        expect(
+          nodeOff.media.stagedWireMediaBlobExpiresAtMs,
+          manifestExpiry,
+          reason: 'the v108 row binds the earliest blob expiry',
+        );
+        expect(nodeOff.messages.directCustodyRows, hasLength(1));
+
+        // 2. Live delivery: the media-expiry-bounded store owns the send, the
+        //    generic ACK store is never used, and exact acceptance retires the
+        //    incarnation.
+        final live = seedPreparedDisappearing('live', durationSeconds: 604800);
+        var genericStoreCalls = 0;
+        var expiryBoundedCalls = 0;
+        int? observedCustodyBound;
+        final (liveResult, liveMessage) = await sendChatMessage(
+          p2pService: FakeP2PService(
+            sendMessageResult: false,
+            sendMessageAcked: false,
+            useNullDiscover: true,
+            dialPeerResult: false,
+          ),
+          messageRepo: live.messages,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: live.messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: createdAt,
+          createdAt: createdAt,
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(604800),
+          mediaAttachments: <MediaAttachment>[live.completed],
+          mediaAttachmentRepo: live.media,
+          storeInAckCustodyInboxDetailed:
+              (peerId, wire, {required custodyKind, timeoutMs}) async {
+                genericStoreCalls++;
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                wire, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async {
+                expiryBoundedCalls++;
+                observedCustodyBound = custodyExpiresAtOrBeforeMs;
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                  expiresAtMs: manifestExpiry - 1000,
+                );
+              },
+        );
+        expect(liveResult, SendChatMessageResult.success);
+        expect(liveMessage?.status, 'inboxed');
+        expect(live.media.stageCalls, 1);
+        expect(expiryBoundedCalls, 1);
+        expect(genericStoreCalls, 0);
+        expect(observedCustodyBound, manifestExpiry);
+        expect(
+          live.messages.directCustodyRows,
+          isEmpty,
+          reason: 'exact acceptance retires the incarnation',
+        );
+        // The sender gained no receiver-local clock from the transport lease.
+        final settled = await live.messages.getMessage(live.messageId);
+        expect(settled?.privateMediaMode, PrivateMediaMode.disappearing);
+        expect(settled?.privateMediaDurationSeconds, 604800);
+        expect(settled?.privateMediaExpiresAtMs, isNull);
+        expect(settled?.privateMediaClockHighWaterMs, isNull);
+
+        // 3. A generic "stored" WITHOUT the ack-or-expiry contract retains the
+        //    exact v108 obligation for the drain.
+        final inbox = seedPreparedDisappearing('inbox-unacked');
+        await sendChatMessage(
+          p2pService: FakeP2PService(
+            sendMessageResult: false,
+            sendMessageAcked: false,
+            useNullDiscover: true,
+            dialPeerResult: false,
+          ),
+          messageRepo: inbox.messages,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: inbox.messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: createdAt,
+          createdAt: createdAt,
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+          mediaAttachments: <MediaAttachment>[inbox.completed],
+          mediaAttachmentRepo: inbox.media,
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peerId,
+                wire, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async => const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+              ),
+        );
+        expect(inbox.media.stageCalls, 1);
+        expect(
+          inbox.messages.directCustodyRows,
+          hasLength(1),
+          reason: 'a proof-less stored result cannot retire strict custody',
+        );
+
+        // 4. Selector-on proof-less compatibility: a persisted disappearing
+        //    parent with NO v110 token and no strict commitment keeps its
+        //    unchanged generic route and authors zero strict/v108 custody.
+        const prooflessId = 'tc358-02a-proofless';
+        final prooflessMessages = FakeMessageRepository()
+          ..forceCurrent(
+            ConversationMessage(
+              id: prooflessId,
+              contactPeerId: 'target-peer',
+              senderPeerId: 'my-peer',
+              text: '',
+              timestamp: createdAt,
+              status: 'failed',
+              isIncoming: false,
+              createdAt: createdAt,
+              privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+              privateMediaState: PrivateMediaLifecycleState.available,
+            ),
+          );
+        final prooflessMedia = _DirectMediaCustodyFakeRepository(
+          prooflessMessages,
+        );
+        final (prooflessResult, _) = await sendChatMessage(
+          p2pService: FakeP2PService(),
+          messageRepo: prooflessMessages,
+          targetPeerId: 'target-peer',
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: prooflessId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: createdAt,
+          createdAt: createdAt,
+          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+          mediaAttachments: const <MediaAttachment>[
+            MediaAttachment(
+              id: 'tc358-02a-proofless-att',
+              messageId: prooflessId,
+              mime: 'image/jpeg',
+              size: 12,
+              mediaType: 'image',
+              localPath: 'media/target-peer/tc358-02a-proofless-att.jpg',
+              downloadStatus: 'done',
+              createdAt: createdAt,
+              contentHash: 'proofless-hash',
+              encryptionKeyBase64: 'proofless-key',
+              encryptionNonce: 'proofless-nonce',
+              encryptionScheme:
+                  kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ),
+          ],
+          mediaAttachmentRepo: prooflessMedia,
+        );
+        expect(prooflessResult, SendChatMessageResult.success);
+        expect(
+          prooflessMedia.stageCalls,
+          0,
+          reason:
+              'a proof-less disappearing parent never enters strict custody',
+        );
+        expect(prooflessMessages.directCustodyRows, isEmpty);
+        expect(prooflessMessages.directCustodyStageCalls, isEmpty);
+      },
+    );
+
+    test(
       'attempt staging is authoritative before transport and late terminal work cannot replace delivery',
       () async {
         const attachment = MediaAttachment(

@@ -1,6 +1,8 @@
+import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -765,4 +767,187 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(emitted, ['expired']);
   });
+
+  test(
+    'TC-358-03b disappearing expiry retires only the exact message marker '
+    'atomically',
+    () async {
+      const messageId = 'tc358-03b-due';
+      const siblingMessageId = 'tc358-03b-sibling';
+      const peerId = 'contact-1';
+      const t0 = '2026-08-11T00:00:00.000Z';
+
+      Future<void> stageMessageMarker(String id) =>
+          dbStageDirectNotificationDisplayOutboxEntry(
+            fixture.db,
+            DirectNotificationDisplayOutboxEntry.message(
+              eventId: id,
+              peerId: peerId,
+              messageId: id,
+              actorPeerId: peerId,
+              eventTimestamp: t0,
+              createdAt: t0,
+              updatedAt: t0,
+            ).toMap(),
+          );
+
+      Future<Map<String, Object?>?> messageMarker(String id) =>
+          dbLoadDirectNotificationDisplayOutboxEntry(
+            fixture.db,
+            peerId: peerId,
+            eventKind: DirectNotificationDisplayOutboxKind.message,
+            eventId: id,
+          );
+
+      await seedPrivateParent(
+        id: messageId,
+        mode: 'disappearing',
+        receivedAtMs: 1000,
+        expiresAtMs: 5000,
+        highWaterMs: 1000,
+      );
+      // An unrelated disappearing parent whose deadline has NOT passed.
+      await seedPrivateParent(
+        id: siblingMessageId,
+        mode: 'disappearing',
+        receivedAtMs: 1000,
+        expiresAtMs: 900000,
+        highWaterMs: 1000,
+      );
+      await stageMessageMarker(messageId);
+      await stageMessageMarker(siblingMessageId);
+      // Same-message reaction custody must survive the message retirement.
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        fixture.db,
+        DirectNotificationDisplayOutboxEntry.reaction(
+          eventId: '$messageId-reaction',
+          peerId: peerId,
+          messageId: messageId,
+          actorPeerId: peerId,
+          eventTimestamp: t0,
+          reactionId: '$messageId-reaction',
+          reactionAction: 'add',
+          reactionTombstone: false,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+
+      // Pre-deadline: the clock advances, nothing terminalizes, every marker
+      // survives.
+      expect(
+        await dbAdvanceDirectPrivateMediaClock(
+          fixture.db,
+          messageId,
+          nowMs: 4000,
+        ),
+        1,
+      );
+      expect((await parent(messageId))['private_media_state'], 'available');
+      expect((await parent(messageId))['private_media_clock_high_water_ms'], 4000);
+      expect(await messageMarker(messageId), isNotNull);
+
+      // Due: the same transaction expires the parent and retires ONLY this
+      // message's message-kind marker.
+      expect(
+        await dbAdvanceDirectPrivateMediaClock(
+          fixture.db,
+          messageId,
+          nowMs: 6000,
+        ),
+        1,
+      );
+      final expired = await parent(messageId);
+      expect(expired['private_media_state'], 'expired');
+      expect(expired['private_media_terminal_at_ms'], 6000);
+      expect(expired['private_media_expires_at_ms'], 5000);
+      expect(
+        await messageMarker(messageId),
+        isNull,
+        reason: 'an expired disappearing card must leave no display marker',
+      );
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          fixture.db,
+          peerId: peerId,
+          eventKind: DirectNotificationDisplayOutboxKind.reaction,
+          eventId: '$messageId-reaction',
+        ),
+        isNotNull,
+        reason: 'same-message reaction custody is a different owner',
+      );
+      expect(
+        await messageMarker(siblingMessageId),
+        isNotNull,
+        reason: 'an unrelated disappearing parent keeps its marker',
+      );
+      expect(
+        (await parent(siblingMessageId))['private_media_state'],
+        'available',
+      );
+
+      // A replay of the same due advance is inert: the terminal row is no
+      // longer addressable and no other marker is touched.
+      expect(
+        await dbAdvanceDirectPrivateMediaClock(
+          fixture.db,
+          messageId,
+          nowMs: 9000,
+        ),
+        0,
+      );
+      expect((await parent(messageId))['private_media_terminal_at_ms'], 6000);
+      expect(await messageMarker(siblingMessageId), isNotNull);
+    },
+  );
+
+  test(
+    'TC-358-03b protected and view-once terminal transitions keep their '
+    'incumbent marker authority',
+    () async {
+      const peerId = 'contact-1';
+      const t0 = '2026-08-11T00:00:00.000Z';
+      // A non-disappearing private parent is never addressed by the
+      // disappearing clock, so its marker cannot be retired by this owner.
+      await seedPrivateParent(
+        id: 'tc358-03b-protected',
+        mode: 'protected',
+        receivedAtMs: 1000,
+        highWaterMs: 1000,
+      );
+      await dbStageDirectNotificationDisplayOutboxEntry(
+        fixture.db,
+        DirectNotificationDisplayOutboxEntry.message(
+          eventId: 'tc358-03b-protected',
+          peerId: peerId,
+          messageId: 'tc358-03b-protected',
+          actorPeerId: peerId,
+          eventTimestamp: t0,
+          createdAt: t0,
+          updatedAt: t0,
+        ).toMap(),
+      );
+      expect(
+        await dbAdvanceDirectPrivateMediaClock(
+          fixture.db,
+          'tc358-03b-protected',
+          nowMs: 999999,
+        ),
+        0,
+      );
+      expect(
+        (await parent('tc358-03b-protected'))['private_media_state'],
+        'available',
+      );
+      expect(
+        await dbLoadDirectNotificationDisplayOutboxEntry(
+          fixture.db,
+          peerId: peerId,
+          eventKind: DirectNotificationDisplayOutboxKind.message,
+          eventId: 'tc358-03b-protected',
+        ),
+        isNotNull,
+      );
+    },
+  );
 }

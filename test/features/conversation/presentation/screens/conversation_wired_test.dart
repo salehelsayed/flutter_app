@@ -12,6 +12,8 @@ import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.da
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
+    show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/device/upload_wake_lock.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
@@ -2208,6 +2210,214 @@ void main() {
     testWidgets(
       'TC-347-08 prepared ordinary composer selects strict blob coordinator',
       runStrictComposerScenario,
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    testWidgets(
+      'TC-358-01a disappearing initial publishes v110 and v111 before first '
+      'network',
+      (tester) async {
+        installPrivateMediaProtectionEventChannelStub(tester);
+        UploadWakeLockController.debugReset(
+          driver: _SynchronousUploadWakeLockDriver(),
+        );
+        final tempDir = Directory.systemTemp.createTempSync(
+          'conv_358_disappearing_composer_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final image = File('${tempDir.path}/disappearing.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final fixture = (await tester.runAsync(
+          MediaRepositoryRealDbFixture.create,
+        ))!;
+        addTearDown(fixture.dispose);
+        final messageRepo = fixture.messageRepo;
+        final manager = TrackingDurableConversationMediaFileManager(tempDir);
+        final networkOrder = <String>[];
+        var legacyUploadCalls = 0;
+        var sendCalls = 0;
+        String? intentAtFirstNetwork;
+        List<String>? v111StatesAtFirstNetwork;
+        List<MediaAttachment>? sentAttachments;
+        PrivateMediaPolicy? sentPolicy;
+
+        final strictCoordinator = strictComposerCoordinator(
+          repository: fixture.repo as DirectMediaBlobCustodyRepository,
+          artifactRoot: tempDir,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                if (networkOrder.isEmpty) {
+                  // The complete v111 generation and its v110 predecessor must
+                  // already be durable before the FIRST blob callback.
+                  final rows = await fixture.db.query(
+                    kDirectMediaBlobCustodyTable,
+                  );
+                  v111StatesAtFirstNetwork = rows
+                      .map((row) => row['state']! as String)
+                      .toList(growable: false);
+                  final parents = await fixture.db.query('messages');
+                  intentAtFirstNetwork =
+                      parents.single['direct_media_custody_intent_id']
+                          as String?;
+                }
+                networkOrder.add('strict:$attachmentId');
+                return <String, dynamic>{
+                  'ok': true,
+                  'id': attachmentId,
+                  'storeStatus': 'stored',
+                  'custodyKind': 'direct_media_blob_v1',
+                  'custodyContract': 'ack_or_expiry_v1',
+                  'contentHash': contentHash,
+                  'size': ciphertextSize,
+                  'mime': 'application/octet-stream',
+                  'expiresAtMs': 2000000000000,
+                  'custodyRelayPeerId': 'relay-358',
+                };
+              },
+        );
+        debugConversationWiredInitialPrivateMediaPolicy =
+            PrivateMediaPolicy.disappearing(3600);
+        addTearDown(
+          () => debugConversationWiredInitialPrivateMediaPolicy = null,
+        );
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          contactRepo: FakeContactRepository(),
+          sendFn:
+              ({
+                required p2pService,
+                required messageRepo,
+                required targetPeerId,
+                required text,
+                required senderPeerId,
+                required senderUsername,
+                messageId,
+                required bool preassignedMessageIdIsFresh,
+                timestamp,
+                bridge,
+                recipientMlKemPublicKey,
+                quotedMessageId,
+                mediaAttachments,
+                privateMediaPolicy,
+                mediaAttachmentRepo,
+                transportMetrics,
+              }) async {
+                sendCalls++;
+                networkOrder.add('envelope');
+                sentPolicy = privateMediaPolicy;
+                sentAttachments = List<MediaAttachment>.from(
+                  mediaAttachments ?? const <MediaAttachment>[],
+                );
+                return (
+                  SendChatMessageResult.success,
+                  await messageRepo.getMessage(messageId!),
+                );
+              },
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          preparedDirectMediaBlobCustodyCoordinator: strictCoordinator,
+          initialPendingMedia: <PendingComposerMedia>[
+            PendingComposerMedia(
+              file: image,
+              budgetBytes: image.lengthSync(),
+            ),
+          ],
+          typedUploadMediaFn:
+              ({
+                required bridge,
+                required localFilePath,
+                required mime,
+                required recipientPeerId,
+                mediaFileManager,
+                width,
+                height,
+                durationMs,
+                waveform,
+                allowedPeers,
+                blobId,
+                deleteSourceWhenDone = false,
+                preparedArtifact,
+              }) async {
+                legacyUploadCalls++;
+                return const UploadMediaFailed(
+                  stage: UploadMediaStage.transport,
+                  disposition: UploadMediaDisposition.terminal,
+                  errorCode: 'LEGACY_UPLOAD_MUST_NOT_RUN',
+                );
+              },
+        );
+
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.runAsync(() async {
+          await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+          final deadline = Stopwatch()..start();
+          while (sendCalls == 0 &&
+              legacyUploadCalls == 0 &&
+              deadline.elapsed < const Duration(seconds: 8)) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        });
+
+        expect(
+          legacyUploadCalls,
+          0,
+          reason: 'a selected disappearing initial never takes legacy upload',
+        );
+        expect(sendCalls, 1, reason: 'networkOrder=$networkOrder');
+        expect(
+          intentAtFirstNetwork,
+          isNotNull,
+          reason: 'the v110 token is durable before the first blob callback',
+        );
+        expect(
+          v111StatesAtFirstNetwork,
+          <String>['outgoing_prepared'],
+          reason: 'v111 commits before the first LAN/relay blob call',
+        );
+        expect(networkOrder, <String>[
+          'strict:${sentAttachments!.single.id}',
+          'envelope',
+        ]);
+        expect(sentPolicy?.mode, PrivateMediaMode.disappearing);
+        expect(sentPolicy?.durationSeconds, 3600);
+        expect(sentAttachments, hasLength(1));
+        expect(sentAttachments!.single.blobCustody?.isValid, isTrue);
+        expect(sentAttachments!.single.downloadStatus, 'done');
+        final finalRows = await tester.runAsync(
+          () => fixture.db.query(kDirectMediaBlobCustodyTable),
+        );
+        expect(finalRows, hasLength(1));
+        expect(finalRows!.single['state'], 'outgoing_stored');
+        final parent = (await tester.runAsync(
+          () => messageRepo.getMessage(sentAttachments!.single.messageId),
+        ))!;
+        expect(parent.privateMediaMode, PrivateMediaMode.disappearing);
+        expect(parent.privateMediaDurationSeconds, 3600);
+        // The sender is not a receiver: no local disappearance clock exists.
+        expect(parent.privateMediaReceivedAtMs, isNull);
+        expect(parent.privateMediaExpiresAtMs, isNull);
+        expect(parent.privateMediaClockHighWaterMs, isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
       skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 

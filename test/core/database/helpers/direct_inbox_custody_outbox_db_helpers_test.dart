@@ -1414,6 +1414,196 @@ void main() {
         );
       }
     });
+
+    /// Rewrites a seeded ordinary strict parent into the exact newly authored
+    /// v1 private shape Plan 358 (disappearing) or Plan 354 (P/VO) authors.
+    Future<void> applyPrivatePolicy(
+      String messageId, {
+      required String mode,
+      int? durationSeconds,
+      String state = 'available',
+    }) async {
+      expect(
+        await db.update(
+          'messages',
+          <String, Object?>{
+            'text': '',
+            'private_media_policy_version': 1,
+            'private_media_mode': mode,
+            'private_media_duration_seconds': durationSeconds,
+            'private_media_state': state,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        ),
+        1,
+      );
+    }
+
+    test(
+      'TC-358-01c accepted disappearing custody preserves strict lineage '
+      'through v111 drain',
+      () async {
+        // 1. Every allowed duration stamps the exact per-attachment lineage
+        //    before v108 retirement and the v111 cleanup transition.
+        for (final durationSeconds in <int>[3600, 86400, 604800]) {
+          final bound = await seedBoundStrictInitial(
+            'disappearing-$durationSeconds',
+          );
+          await applyPrivatePolicy(
+            bound.messageId,
+            mode: 'disappearing',
+            durationSeconds: durationSeconds,
+          );
+          final expectedLineage = await expectedLineageOf(bound.messageId);
+          expect(expectedLineage, hasLength(2));
+          expect(expectedLineage.values.toSet(), hasLength(2));
+
+          expect(
+            await completeBound(bound),
+            DirectInboxCustodyCompletionOutcome.messageAdvanced,
+            reason: 'duration $durationSeconds',
+          );
+          expect(
+            await lineageOf(bound.messageId),
+            expectedLineage,
+            reason:
+                'an accepted disappearing generation owns exactly this '
+                'lineage ($durationSeconds)',
+          );
+          expect(
+            await db.query(
+              'direct_inbox_custody_outbox',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[bound.messageId],
+            ),
+            isEmpty,
+          );
+          final advanced = (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[bound.messageId],
+          )).single;
+          expect(advanced['status'], 'inboxed');
+          expect(advanced['transport'], 'inbox');
+          // The transport lease never becomes the receiver-local deadline.
+          expect(advanced['private_media_expires_at_ms'], isNull);
+          expect(advanced['private_media_received_at_ms'], isNull);
+          expect(advanced['private_media_clock_high_water_ms'], isNull);
+          expect(advanced['private_media_duration_seconds'], durationSeconds);
+
+          final cleanup = (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[bound.messageId],
+            orderBy: 'attachment_id ASC',
+          )).map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
+          expect(
+            cleanup.map((row) => row.state).toSet(),
+            <DirectMediaBlobCustodyState>{
+              DirectMediaBlobCustodyState.outgoingCleanupPending,
+            },
+          );
+          for (final row in cleanup) {
+            expect(
+              await dbDeleteDirectMediaBlobCleanupPendingIfExact(
+                db,
+                expected: row,
+              ),
+              isTrue,
+            );
+          }
+          expect(
+            await lineageOf(bound.messageId),
+            expectedLineage,
+            reason: 'disappearing lineage must survive the physical v111 drain',
+          );
+        }
+
+        // 2. Exact Protected and View-Once controls still converge, but a
+        //    broad `policyVersion == 1` patch must not stamp them.
+        for (final mode in <String>['protected', 'view_once']) {
+          final control = await seedBoundStrictInitial('control-$mode');
+          await applyPrivatePolicy(control.messageId, mode: mode);
+          expect(
+            await completeBound(control),
+            DirectInboxCustodyCompletionOutcome.messageAdvanced,
+            reason: mode,
+          );
+          expect(
+            await lineageOf(control.messageId),
+            <String, Object?>{for (final id in control.attachmentIds) id: null},
+            reason: '$mode keeps its no-v110 owner and gains no fingerprint',
+          );
+          expect(
+            await db.query(
+              'direct_inbox_custody_outbox',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[control.messageId],
+            ),
+            isEmpty,
+            reason: '$mode still retires its exact v108 incarnation',
+          );
+          expect(
+            (await db.query(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[control.messageId],
+            )).map(DirectMediaBlobCustodyRow.fromMap).map((row) => row.state).toSet(),
+            <DirectMediaBlobCustodyState>{
+              DirectMediaBlobCustodyState.outgoingCleanupPending,
+            },
+            reason: '$mode still converges its v111 generation',
+          );
+        }
+
+        // 3. Crossed or malformed disappearing state is not this lineage.
+        final crossed = <String, Future<void> Function(String messageId)>{
+          'invalid duration': (messageId) => applyPrivatePolicy(
+            messageId,
+            mode: 'disappearing',
+            durationSeconds: 7200,
+          ),
+          'missing duration': (messageId) =>
+              applyPrivatePolicy(messageId, mode: 'disappearing'),
+          'terminal state': (messageId) => applyPrivatePolicy(
+            messageId,
+            mode: 'disappearing',
+            durationSeconds: 3600,
+            state: 'expired',
+          ),
+          'receiver clock on an outgoing row': (messageId) async {
+            await applyPrivatePolicy(
+              messageId,
+              mode: 'disappearing',
+              durationSeconds: 3600,
+            );
+            await db.update(
+              'messages',
+              const <String, Object?>{
+                'private_media_received_at_ms': 1,
+                'private_media_expires_at_ms': 3600001,
+                'private_media_clock_high_water_ms': 1,
+              },
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            );
+          },
+        };
+        for (final entry in crossed.entries) {
+          final seeded = await seedBoundStrictInitial(
+            'crossed-${entry.key.replaceAll(' ', '-')}',
+          );
+          await entry.value(seeded.messageId);
+          await completeBound(seeded);
+          expect(
+            await lineageOf(seeded.messageId),
+            <String, Object?>{for (final id in seeded.attachmentIds) id: null},
+            reason: '${entry.key} must never receive lineage authorship',
+          );
+        }
+      },
+    );
   });
 }
 

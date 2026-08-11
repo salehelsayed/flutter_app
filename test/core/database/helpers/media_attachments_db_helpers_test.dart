@@ -7128,6 +7128,547 @@ void main() {
       );
     });
   });
+
+  group('Plan 358 disappearing token-bearing direct-media custody', () {
+    const nowMs = 1900000000000;
+    const contentHash =
+        'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+
+    String envelope(String messageId) => jsonEncode(<String, Object?>{
+      'type': 'chat_message',
+      'version': '2',
+      'id': messageId,
+      'senderPeerId': 'peer-local',
+      'encrypted': const <String, String>{
+        'kem': 'kem-358',
+        'ciphertext': 'cipher-358',
+        'nonce': 'nonce-358',
+      },
+    });
+
+    /// The exact newly authored outgoing disappearing parent the composer
+    /// persists before encryption: one v110 token, no receiver clock at all.
+    Map<String, Object?> disappearingParent({
+      required String messageId,
+      required String recipientPeerId,
+      required String intentId,
+      int? durationSeconds = 3600,
+      String mode = 'disappearing',
+      int policyVersion = 1,
+      String state = 'available',
+      String status = 'sending',
+      String text = '',
+      Object? wireEnvelope,
+      Object? receivedAtMs,
+      Object? expiresAtMs,
+      Object? clockHighWaterMs,
+    }) => <String, Object?>{
+      'id': messageId,
+      'contact_peer_id': recipientPeerId,
+      'sender_peer_id': 'peer-local',
+      'text': text,
+      'timestamp': '2026-08-11T09:00:00.000Z',
+      'status': status,
+      'is_incoming': 0,
+      'created_at': '2026-08-11T09:00:00.000Z',
+      'dedup_key': messageId,
+      'wire_envelope': wireEnvelope,
+      'direct_media_custody_intent_id': intentId,
+      'private_media_policy_version': policyVersion,
+      'private_media_mode': mode,
+      'private_media_duration_seconds': durationSeconds,
+      'private_media_state': state,
+      'private_media_received_at_ms': receivedAtMs,
+      'private_media_expires_at_ms': expiresAtMs,
+      'private_media_clock_high_water_ms': clockHighWaterMs,
+    };
+
+    Map<String, Object?> pendingAttachment({
+      required String messageId,
+      required String attachmentId,
+      String mime = 'image/jpeg',
+      String mediaType = 'image',
+    }) => makeAttachmentRow(
+      id: attachmentId,
+      messageId: messageId,
+      mime: mime,
+      size: 4096,
+      mediaType: mediaType,
+      width: 100,
+      height: 200,
+      localPath: MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mime: mime,
+      ),
+      downloadStatus: 'upload_pending',
+    );
+
+    Map<String, Object?> preparedFrom(Map<String, Object?> pending) =>
+        <String, Object?>{
+          ...pending,
+          'content_hash': contentHash,
+          'encryption_key_base64': secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(pending['id']! as String),
+          ),
+          'encryption_nonce': 'nonce-358-${pending['id']}',
+          'encryption_scheme': 'blob_aes_256_gcm_v1',
+        };
+
+    DirectMediaBlobCustodyRow preparedCustody({
+      required String messageId,
+      required String recipientPeerId,
+      required String attachmentId,
+    }) => DirectMediaBlobCustodyRow(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      state: DirectMediaBlobCustodyState.outgoingPrepared,
+      inboxCustodyIncarnationId: null,
+      recipientPeerId: recipientPeerId,
+      ciphertextRelativePath:
+          'direct_media_blob_custody_v1/${'d' * 64}/$attachmentId.blob',
+      contentHash: contentHash,
+      ciphertextSize: 5120,
+      expiresAtMs: null,
+      custodyRelayPeerId: null,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: '2026-08-11T09:00:01.000Z',
+      updatedAt: '2026-08-11T09:00:01.000Z',
+    );
+
+    test(
+      'TC-358-01b token-bearing disappearing generation and v108 binding '
+      'are exact',
+      () async {
+        // 1. Every allowed duration and both coherent media kinds publish the
+        //    complete v111 generation from the token-bearing composer parent.
+        final positives =
+            <({String suffix, int duration, String mime, String mediaType})>[
+              (
+                suffix: '1h-image',
+                duration: 3600,
+                mime: 'image/jpeg',
+                mediaType: 'image',
+              ),
+              (
+                suffix: '1d-video',
+                duration: 86400,
+                mime: 'video/mp4',
+                mediaType: 'video',
+              ),
+              (
+                suffix: '7d-image',
+                duration: 604800,
+                mime: 'image/png',
+                mediaType: 'image',
+              ),
+            ];
+        for (final positive in positives) {
+          final messageId = 'tc358-01b-${positive.suffix}';
+          final recipientPeerId = 'tc358-peer-${positive.suffix}';
+          final attachmentId = '$messageId-a';
+          final intentId = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          final parent = disappearingParent(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            intentId: intentId,
+            durationSeconds: positive.duration,
+          );
+          await db.insert('messages', parent);
+          final pending = pendingAttachment(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: positive.mime,
+            mediaType: positive.mediaType,
+          );
+          await dbInsertMediaAttachment(db, pending);
+          final durableParent = (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single;
+          final durablePending = (await db.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[attachmentId],
+          )).single;
+          final prepared = preparedFrom(durablePending);
+          final custody = preparedCustody(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            attachmentId: attachmentId,
+          );
+
+          final generated = await dbStageOutgoingDirectMediaBlobGeneration(
+            db,
+            expectedParentRow: durableParent,
+            expectedAttachmentRows: <Map<String, Object?>>[durablePending],
+            preparedAttachmentRows: <Map<String, Object?>>[prepared],
+            custodyRows: <DirectMediaBlobCustodyRow>[custody],
+          );
+          expect(
+            generated.outcome,
+            DirectMediaBlobGenerationDbStageOutcome.applied,
+            reason: positive.suffix,
+          );
+          final storedCustody = (await db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single;
+          expect(
+            storedCustody['state'],
+            DirectMediaBlobCustodyState.outgoingPrepared.dbValue,
+          );
+          expect(storedCustody['inbox_custody_incarnation_id'], isNull);
+          // The v110 token is still unconsumed: no v108 exists yet.
+          expect(
+            await db.query(
+              'direct_inbox_custody_outbox',
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+
+          // 2. Upload result -> stored generation, then the exact v108 binding
+          //    carries the canonical manifest hash and earliest blob expiry.
+          final expiresAtMs = nowMs + 600000;
+          final stored = DirectMediaBlobCustodyRow.fromMap(
+            storedCustody,
+          ).copyWith(
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: 'relay-${positive.suffix}',
+            updatedAt: '2026-08-11T09:00:02.000Z',
+          );
+          expect(
+            await dbTransitionDirectMediaBlobCustodyIfExact(
+              db,
+              expected: DirectMediaBlobCustodyRow.fromMap(storedCustody),
+              next: stored,
+            ),
+            isTrue,
+          );
+          final manifest = <DirectMediaBlobManifestProjection>[
+            DirectMediaBlobManifestProjection(
+              attachmentId: attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: contentHash,
+                ciphertextSize: stored.ciphertextSize,
+                expiresAtMs: expiresAtMs,
+              ),
+            ),
+          ];
+          final completedAttachmentRow = <String, Object?>{
+            ...prepared,
+            'download_status': 'done',
+          };
+          final wireEnvelope = envelope(messageId);
+          final stagedParent = <String, Object?>{
+            ...durableParent,
+            'wire_envelope': wireEnvelope,
+            'direct_media_custody_intent_id': null,
+          };
+          final bound = await dbStageOutgoingDirectMediaInboxCustody(
+            db,
+            expectedRow: durableParent,
+            stagedRow: stagedParent,
+            attachmentRows: <Map<String, Object?>>[completedAttachmentRow],
+            kind: OutgoingOrdinaryAttemptKind.existing,
+            recipientPeerId: recipientPeerId,
+            wireEnvelope: wireEnvelope,
+            wireMediaBlobManifestHash: computeDirectMediaBlobManifestHash(
+              manifest,
+            ),
+            wireMediaBlobExpiresAtMs: earliestDirectMediaBlobExpiryMs(manifest),
+            nowMs: nowMs,
+          );
+          expect(
+            bound.outcome,
+            OutgoingOrdinaryMutationOutcome.applied,
+            reason: positive.suffix,
+          );
+          final v108 = (await db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single;
+          expect(v108['incarnation_id'], intentId);
+          expect(
+            v108['media_blob_manifest_hash'],
+            computeDirectMediaBlobManifestHash(manifest),
+          );
+          expect(v108['media_blob_expires_at_ms'], expiresAtMs);
+          final committedParent = (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single;
+          expect(committedParent['direct_media_custody_intent_id'], isNull);
+          expect(committedParent['private_media_mode'], 'disappearing');
+          expect(
+            committedParent['private_media_duration_seconds'],
+            positive.duration,
+          );
+          // The sender never gains a receiver-local deadline.
+          expect(committedParent['private_media_received_at_ms'], isNull);
+          expect(committedParent['private_media_expires_at_ms'], isNull);
+          expect(committedParent['private_media_clock_high_water_ms'], isNull);
+        }
+
+        // 3. The SAME exact disappearing row without its v110 predecessor is
+        //    marker-free fresh authority and must still refuse: external share
+        //    and internal forward stay ordinary-only.
+        {
+          const messageId = 'tc358-01b-fresh-refused';
+          const recipientPeerId = 'tc358-peer-fresh';
+          const attachmentId = '$messageId-a';
+          final intentId = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: const <String>[attachmentId],
+          );
+          final parent = disappearingParent(
+            messageId: messageId,
+            recipientPeerId: recipientPeerId,
+            intentId: intentId,
+          );
+          final pending = pendingAttachment(
+            messageId: messageId,
+            attachmentId: attachmentId,
+          );
+          final prepared = preparedFrom(pending);
+          final fresh = await dbStageFreshOutgoingDirectMediaBlobGeneration(
+            db,
+            parentRow: parent,
+            expectedAttachmentRows: <Map<String, Object?>>[pending],
+            preparedAttachmentRows: <Map<String, Object?>>[prepared],
+            custodyRows: <DirectMediaBlobCustodyRow>[
+              preparedCustody(
+                messageId: messageId,
+                recipientPeerId: recipientPeerId,
+                attachmentId: attachmentId,
+              ),
+            ],
+          );
+          expect(
+            fresh.outcome,
+            DirectMediaBlobGenerationDbStageOutcome.refused,
+            reason: 'marker-free fresh authority must stay ordinary-only',
+          );
+          expect(
+            await db.query(
+              'messages',
+              where: 'id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+          expect(
+            await db.query(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+          );
+        }
+
+        // 4. Every crossed shape refuses without touching either table.
+        final negatives =
+            <
+              String,
+              ({
+                Map<String, Object?> Function(String, String, String) parent,
+                String mime,
+                String mediaType,
+              })
+            >{
+              'gif is never a new private producer':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                        ),
+                    mime: 'image/gif',
+                    mediaType: 'image',
+                  ),
+              'audio is ineligible':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                        ),
+                    mime: 'audio/mp4',
+                    mediaType: 'audio',
+                  ),
+              'crossed mime and media type':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                        ),
+                    mime: 'video/mp4',
+                    mediaType: 'image',
+                  ),
+              'invalid duration':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                          durationSeconds: 7200,
+                        ),
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                  ),
+              'missing duration':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                          durationSeconds: null,
+                        ),
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                  ),
+              'caption text':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                          text: 'caption',
+                        ),
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                  ),
+              'crossed lifecycle state':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                          state: 'expired',
+                        ),
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                  ),
+              'sender-side receiver clock':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                          receivedAtMs: nowMs,
+                          expiresAtMs: nowMs + 3600000,
+                          clockHighWaterMs: nowMs,
+                        ),
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                  ),
+              'unsupported policy version':
+                  (
+                    parent: (messageId, peerId, intentId) =>
+                        disappearingParent(
+                          messageId: messageId,
+                          recipientPeerId: peerId,
+                          intentId: intentId,
+                          policyVersion: 2,
+                        ),
+                    mime: 'image/jpeg',
+                    mediaType: 'image',
+                  ),
+            };
+        var negativeIndex = 0;
+        for (final entry in negatives.entries) {
+          final messageId = 'tc358-01b-neg-${negativeIndex++}';
+          final recipientPeerId = '$messageId-peer';
+          final attachmentId = '$messageId-a';
+          final intentId = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          await db.insert(
+            'messages',
+            entry.value.parent(messageId, recipientPeerId, intentId),
+          );
+          final pending = pendingAttachment(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            mime: entry.value.mime,
+            mediaType: entry.value.mediaType,
+          );
+          await dbInsertMediaAttachment(db, pending);
+          final durableParent = (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          )).single;
+          final durablePending = (await db.query(
+            'media_attachments',
+            where: 'id = ?',
+            whereArgs: <Object?>[attachmentId],
+          )).single;
+          final result = await dbStageOutgoingDirectMediaBlobGeneration(
+            db,
+            expectedParentRow: durableParent,
+            expectedAttachmentRows: <Map<String, Object?>>[durablePending],
+            preparedAttachmentRows: <Map<String, Object?>>[
+              preparedFrom(durablePending),
+            ],
+            custodyRows: <DirectMediaBlobCustodyRow>[
+              preparedCustody(
+                messageId: messageId,
+                recipientPeerId: recipientPeerId,
+                attachmentId: attachmentId,
+              ),
+            ],
+          );
+          expect(
+            result.outcome,
+            DirectMediaBlobGenerationDbStageOutcome.refused,
+            reason: entry.key,
+          );
+          expect(
+            await db.query(
+              kDirectMediaBlobCustodyTable,
+              where: 'message_id = ?',
+              whereArgs: <Object?>[messageId],
+            ),
+            isEmpty,
+            reason: entry.key,
+          );
+          expect(
+            (await db.query(
+              'media_attachments',
+              where: 'id = ?',
+              whereArgs: <Object?>[attachmentId],
+            )).single['content_hash'],
+            isNull,
+            reason: entry.key,
+          );
+        }
+      },
+    );
+  });
 }
 
 /// Sentinel for fixture parameters whose null value is meaningful.

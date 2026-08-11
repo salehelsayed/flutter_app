@@ -11,6 +11,7 @@ import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
@@ -867,6 +868,150 @@ void main() {
           strictRepository.row.state,
           DirectMediaBlobCustodyState.outgoingPrepared,
         );
+      },
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    test(
+      'TC-358-02c failed disappearing strict retry reopens exact generation',
+      () async {
+        for (final durationSeconds in <int>[3600, 604800]) {
+          messageRepo = FakeMessageRepository();
+          mediaAttachmentRepo = FakeMediaAttachmentRepository();
+          fakeUploadFn = FakeUploadMediaFn();
+          final messageId = 'msg-358-02c-$durationSeconds';
+          final attachmentId = 'att-358-02c-$durationSeconds';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          // Exactly the token-bearing disappearing shape Plan 358 authors:
+          // no caption, one v110 token, and no sender-side receiver clock.
+          final parent = _makeFailedMsg(id: messageId, text: '').copyWith(
+            directMediaCustodyIntentId: intent,
+            privateMediaPolicy: PrivateMediaPolicy.disappearing(
+              durationSeconds,
+            ),
+            privateMediaState: PrivateMediaLifecycleState.available,
+          );
+          final root = Directory.systemTemp.createTempSync(
+            'retry_failed_358_strict_${durationSeconds}_',
+          );
+          addTearDown(() {
+            if (root.existsSync()) root.deleteSync(recursive: true);
+          });
+          final ciphertextSource = File('${root.path}/accepted.enc')
+            ..writeAsBytesSync(const <int>[3, 5, 8, 9, 1, 4, 1, 5]);
+          final store = DirectMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async => root,
+          );
+          final expectedCiphertextHash = sha256
+              .convert(ciphertextSource.readAsBytesSync())
+              .toString();
+          final durable = await store.persistCandidate(
+            identityPeerId: 'my-peer-id',
+            attachmentId: attachmentId,
+            encryptedSourcePath: ciphertextSource.path,
+            expectedContentHash: expectedCiphertextHash,
+          );
+          final attachment = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 1024,
+            mediaType: 'image',
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            ),
+            downloadStatus: 'upload_pending',
+            createdAt: parent.createdAt,
+            contentHash: durable.contentHash,
+            encryptionKeyBase64: 'disappearing-durable-key',
+            encryptionNonce: 'disappearing-durable-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+            ownerLane: MediaOwnerLane.direct,
+          );
+          final row = DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingPrepared,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: parent.contactPeerId,
+            ciphertextRelativePath: durable.relativePath,
+            contentHash: durable.contentHash,
+            ciphertextSize: durable.ciphertextSize,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: '2026-08-11T09:00:00.000Z',
+            updatedAt: '2026-08-11T09:00:00.000Z',
+          );
+          final strictRepository = _ExistingDirectMediaBlobRetryRepository(row)
+            ..seed(<MediaAttachment>[attachment]);
+          final strictBridge = FakeBridge(
+            initialResponses: const <String, Map<String, dynamic>>{
+              'media:upload': <String, dynamic>{
+                'ok': false,
+                'errorCode': 'MEDIA_ERROR',
+                'errorMessage': 'connection reset after request body',
+              },
+            },
+          );
+          messageRepo.seed(<ConversationMessage>[parent]);
+
+          final count = await retryFailedMessages(
+            messageRepo: messageRepo,
+            mediaAttachmentRepo: strictRepository,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: strictBridge,
+            uploadMediaFn: fakeUploadFn.call,
+            directMediaBlobArtifactStore: store,
+            retryDirectInboxCustody: false,
+          );
+
+          expect(count, 0, reason: '$durationSeconds');
+          expect(
+            strictRepository.stageCalls,
+            1,
+            reason:
+                'a disappearing retry revalidates, never mints, the existing '
+                'generation ($durationSeconds)',
+          );
+          expect(strictRepository.transitionCalls, 0);
+          // Zero legacy upload and zero re-encryption: the byte-identical
+          // ciphertext is reopened through the ordinary strict coordinator.
+          expect(fakeUploadFn.callCount, 0, reason: '$durationSeconds');
+          expect(strictBridge.commandLog, <String>['media:upload']);
+          final request =
+              jsonDecode(strictBridge.sentMessages.single)
+                  as Map<String, dynamic>;
+          final payload = request['payload'] as Map<String, dynamic>;
+          expect(payload['id'], attachmentId);
+          expect(payload['to'], parent.contactPeerId);
+          expect(payload['custodyKind'], 'direct_media_blob_v1');
+          expect(payload['custodyContract'], 'ack_or_expiry_v1');
+          expect(payload['contentHash'], durable.contentHash);
+          expect(
+            File(payload['filePath'] as String).readAsBytesSync(),
+            const <int>[3, 5, 8, 9, 1, 4, 1, 5],
+          );
+          expect(await File(durable.absolutePath).exists(), isTrue);
+          expect(
+            strictRepository.row.state,
+            DirectMediaBlobCustodyState.outgoingPrepared,
+          );
+          final retained = (await messageRepo.getMessage(messageId))!;
+          expect(retained.privateMediaMode, PrivateMediaMode.disappearing);
+          expect(retained.privateMediaDurationSeconds, durationSeconds);
+          expect(retained.privateMediaExpiresAtMs, isNull);
+          expect(retained.privateMediaClockHighWaterMs, isNull);
+        }
       },
       skip: !kDirectMediaBlobCustodyClientEnabled,
     );

@@ -6465,6 +6465,331 @@ void main() {
         );
       }
     });
+
+    /// Stages one durable v1 disappearing initial with an explicit
+    /// receiver-local clock and its independent v111 transport lease.
+    Future<
+      ({
+        MediaAttachment attachment,
+        DirectMediaBlobCustodyRow custody,
+        _CanonicalPathFakeMediaFileManager manager,
+        String canonicalAbsolutePath,
+        List<int> ciphertext,
+        String messageId,
+      })
+    >
+    stageDisappearingIncoming({
+      required MediaRepositoryRealDbFixture fixture,
+      required String suffix,
+      int durationSeconds = 3600,
+      int receivedAtMs = 1_800_000_000_000,
+      int blobExpiresAtMs = 1_900_005_000_000,
+    }) async {
+      final messageId = 'tc358-msg-$suffix';
+      final attachmentId = 'tc358-blob-$suffix';
+      final encrypted = _encryptedBytes(_jpegBytes);
+      final contentHash = _hashBytes(encrypted);
+      final commitment = DirectMediaBlobCustodyCommitment(
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: blobExpiresAtMs,
+      );
+      final attachment = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: _jpegBytes.length,
+        mediaType: 'image',
+        downloadStatus: kMediaDownloadStatusPending,
+        createdAt: '2026-08-11T11:00:00.000Z',
+        contentHash: contentHash,
+        encryptionKeyBase64: _mediaKey,
+        encryptionNonce: _mediaNonce,
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        blobCustody: commitment,
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final custody = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        contentHash: contentHash,
+        ciphertextSize: encrypted.length,
+        expiresAtMs: blobExpiresAtMs,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-11T11:00:00.000Z',
+        updatedAt: '2026-08-11T11:00:00.000Z',
+      );
+      final message = ConversationMessage(
+        id: messageId,
+        contactPeerId: contactPeerId,
+        senderPeerId: contactPeerId,
+        text: '',
+        timestamp: '2026-08-11T11:00:00.000Z',
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: '2026-08-11T11:00:00.000Z',
+        privateMediaPolicy: PrivateMediaPolicy.disappearing(durationSeconds),
+        privateMediaState: PrivateMediaLifecycleState.available,
+        privateMediaReceivedAtMs: receivedAtMs,
+        privateMediaExpiresAtMs: receivedAtMs + durationSeconds * 1000,
+        privateMediaClockHighWaterMs: receivedAtMs,
+      );
+      final stage =
+          await (fixture.repo
+                  as IncomingDirectPrivateMediaBlobCustodyRepository)
+              .stageIncomingDirectPrivateMediaBlobCustody(
+                message: message,
+                attachment: attachment,
+                custodyRow: custody,
+              );
+      expect(stage.outcome.name, 'applied', reason: suffix);
+      final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+      return (
+        attachment: attachment,
+        custody: custody,
+        manager: manager,
+        canonicalAbsolutePath: await manager.localPathForAttachment(
+          contactPeerId: contactPeerId,
+          blobId: attachmentId,
+          mime: 'image/jpeg',
+        ),
+        ciphertext: encrypted,
+        messageId: messageId,
+      );
+    }
+
+    test(
+      'TC-358-04a disappearing strict download requalifies deadline before '
+      'shortcuts and final commit',
+      () async {
+        const deadlineMs = 1_800_000_000_000 + 3600 * 1000;
+
+        // 1. Before the deadline the relay lane commits `done` +
+        //    `incoming_ack_pending` BEFORE the source-pinned ACK.
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stageDisappearingIncoming(
+            fixture: fixture,
+            suffix: 'relay',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          var ackSawDurableCommit = false;
+          bridge.onDeleteRequest = () async {
+            final row = await fixture.rawAttachmentRow(staged.attachment.id);
+            final pending =
+                await (fixture.repo as DirectMediaBlobCustodyRepository)
+                    .loadDirectMediaBlobCustodyForAttachment(
+                      staged.attachment.id,
+                    );
+            ackSawDurableCommit =
+                row!['download_status'] == kMediaDownloadStatusDone &&
+                row['local_path'] != null &&
+                pending!.state ==
+                    DirectMediaBlobCustodyState.incomingAckPending;
+          };
+          final downloaded = await downloadMedia(
+            bridge: bridge,
+            mediaAttachmentRepo: fixture.repo,
+            mediaFileManager: staged.manager,
+            attachment: staged.attachment,
+            contactPeerId: contactPeerId,
+            owner: MediaOwnerLane.direct,
+            messageRepo: fixture.messageRepo,
+            intent: MediaDownloadIntent.explicitUser,
+            nowMs: () => deadlineMs - 1000,
+          );
+          expect(downloaded, isNotNull);
+          expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+          expect(ackSawDurableCommit, isTrue);
+          expect(
+            File(staged.canonicalAbsolutePath).readAsBytesSync(),
+            _jpegBytes,
+          );
+          final parent = (await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[staged.messageId],
+          )).single;
+          expect(parent['private_media_state'], 'available');
+          expect(parent['private_media_expires_at_ms'], deadlineMs);
+        }
+
+        // 2. A passed deadline refuses BEFORE any network, ACK or plaintext,
+        //    for the committed/no-local shortcut.
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stageDisappearingIncoming(
+            fixture: fixture,
+            suffix: 'deadline-first',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => deadlineMs + 1000,
+            ),
+            isNull,
+          );
+          expect(
+            bridge.commandLog,
+            isEmpty,
+            reason: 'a passed deadline performs zero network work',
+          );
+          expect(File(staged.canonicalAbsolutePath).existsSync(), isFalse);
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+            isNotNull,
+            reason: 'the independent v111 lease is never ACKed or deleted',
+          );
+        }
+
+        // 3. Every already-local shortcut requalifies the deadline too.
+        for (final shortcut in const <String>[
+          'ack-pending-local',
+          'committed-local',
+          'blob-expired',
+        ]) {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stageDisappearingIncoming(
+            fixture: fixture,
+            suffix: shortcut,
+            blobExpiresAtMs: shortcut == 'blob-expired'
+                ? deadlineMs - 100_000
+                : 1_900_005_000_000,
+          );
+          if (shortcut != 'blob-expired') {
+            // A durable local plaintext copy already exists.
+            final canonical = File(staged.canonicalAbsolutePath);
+            await canonical.parent.create(recursive: true);
+            canonical.writeAsBytesSync(_jpegBytes, flush: true);
+            await fixture.db.update(
+              'media_attachments',
+              <String, Object?>{
+                'download_status': kMediaDownloadStatusDone,
+                'local_path': staged.manager.relativePathForAttachment(
+                  contactPeerId: contactPeerId,
+                  blobId: staged.attachment.id,
+                  mime: 'image/jpeg',
+                ),
+              },
+              where: 'id = ?',
+              whereArgs: <Object?>[staged.attachment.id],
+            );
+          }
+          if (shortcut == 'ack-pending-local') {
+            expect(
+              await (fixture.repo as DirectMediaBlobCustodyRepository)
+                  .transitionDirectMediaBlobCustodyIfExact(
+                    expected: staged.custody,
+                    next: staged.custody.copyWith(
+                      state: DirectMediaBlobCustodyState.incomingAckPending,
+                      custodyRelayPeerId: relayPeerId,
+                      updatedAt: '2026-08-11T11:00:01.000Z',
+                    ),
+                  ),
+              isTrue,
+            );
+          }
+          final refreshed = (await fixture.repo.getAttachmentsForMessage(
+            staged.messageId,
+            owner: MediaOwnerLane.direct,
+          )).single;
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: refreshed,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              intent: MediaDownloadIntent.explicitUser,
+              nowMs: () => deadlineMs + 1000,
+            ),
+            isNull,
+            reason: shortcut,
+          );
+          expect(bridge.commandLog, isEmpty, reason: shortcut);
+          final parent = (await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[staged.messageId],
+          )).single;
+          expect(
+            parent['private_media_state'],
+            'expired',
+            reason: 'the shortcut advanced the receiver clock ($shortcut)',
+          );
+          expect(
+            await (fixture.repo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+            isNotNull,
+            reason:
+                'content expiry never converges the transport lease '
+                '($shortcut)',
+          );
+        }
+
+        // 4. Automatic intent stays refused for disappearing media.
+        {
+          final fixture = await MediaRepositoryRealDbFixture.create();
+          addTearDown(fixture.dispose);
+          bridge = _FakeBridge();
+          final staged = await stageDisappearingIncoming(
+            fixture: fixture,
+            suffix: 'automatic',
+          );
+          wireRelay(
+            attachment: staged.attachment,
+            custody: staged.custody,
+            ciphertext: staged.ciphertext,
+          );
+          expect(
+            await downloadMedia(
+              bridge: bridge,
+              mediaAttachmentRepo: fixture.repo,
+              mediaFileManager: staged.manager,
+              attachment: staged.attachment,
+              contactPeerId: contactPeerId,
+              owner: MediaOwnerLane.direct,
+              messageRepo: fixture.messageRepo,
+              nowMs: () => deadlineMs - 1000,
+            ),
+            isNull,
+          );
+          expect(bridge.commandLog, isEmpty);
+        }
+      },
+    );
   });
 }
 
