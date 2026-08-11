@@ -684,6 +684,29 @@ class DirectPrivateMediaLifecycle
   bool _isOutgoingOneMoreLookMode(PrivateMediaMode mode) =>
       mode == PrivateMediaMode.protected || mode == PrivateMediaMode.viewOnce;
 
+  /// 359: which outgoing modalities may hold a LIVE v108/bound v111 generation
+  /// that terminal cleanup must not destroy.
+  ///
+  /// Protected/View-Once keep their incumbent retention. An exact disappearing
+  /// parent joins them, because Plan 358 gave it the same token-bearing
+  /// initial owner: a deletion tombstone may not take the attachment, key or
+  /// artifacts a still-live generation is the only resumable source for. Once
+  /// v108/v111 have converged and only the fingerprint remains, this returns
+  /// false and the exact private artifacts are cleaned.
+  bool _retainsLiveOutgoingBlobCustody(ConversationMessage parent) {
+    if (_isOutgoingOneMoreLookMode(parent.privateMediaMode)) return true;
+    final durationSeconds = parent.privateMediaPolicy.durationSeconds;
+    return parent.privateMediaMode == PrivateMediaMode.disappearing &&
+        durationSeconds != null &&
+        PrivateMediaPolicy.allowedDurationsSeconds.contains(durationSeconds) &&
+        parent.privateMediaState == PrivateMediaLifecycleState.available &&
+        parent.privateMediaReceivedAtMs == null &&
+        parent.privateMediaExpiresAtMs == null &&
+        parent.privateMediaRevealedAtMs == null &&
+        parent.privateMediaTerminalAtMs == null &&
+        parent.privateMediaClockHighWaterMs == null;
+  }
+
   @override
   Future<bool> claimOpening(
     PrivateMediaOpeningLeaseIdentity identity, {
@@ -1047,7 +1070,7 @@ class DirectPrivateMediaLifecycle
   ) async {
     if (parent.isIncoming ||
         parent.privateMediaPolicy.version != 1 ||
-        !_isOutgoingOneMoreLookMode(parent.privateMediaMode) ||
+        !_retainsLiveOutgoingBlobCustody(parent) ||
         attachments.isEmpty) {
       return false;
     }

@@ -2630,20 +2630,18 @@ void main() {
         IncomingDirectDeletionOutcome.superseded,
       );
 
-      // 4. Disappearing and a crossed sender refuse with zero mutation.
+      // 4. A crossed disappearing policy and a crossed sender refuse with zero
+      //    mutation. 359 moved the EXACT disappearing shape to a positive
+      //    (TC-359-03a), so only the malformed one is a negative here: a
+      //    disappearing row with no duration is not an admitted policy.
       const disappearing = 'tc356-04a-disappearing';
       await seedStrictPrivateParent(disappearing, mode: 'disappearing');
-      await current.update(
-        'messages',
-        <String, Object?>{'private_media_duration_seconds': 3600},
-        where: 'id = ?',
-        whereArgs: const <Object?>[disappearing],
-      );
       final disappearingBefore = (await current.query(
         'messages',
         where: 'id = ?',
         whereArgs: const <Object?>[disappearing],
       )).single;
+      expect(disappearingBefore['private_media_duration_seconds'], isNull);
       expect(
         (await dbApplyIncomingDirectMessageDeletion(
           current,
@@ -2663,6 +2661,50 @@ void main() {
         )).single,
         disappearingBefore,
       );
+
+      // The exact disappearing policy is now admitted, and the transaction
+      // preserves every receiver clock, lifecycle state and hide byte.
+      const exactDisappearing = 'tc356-04a-disappearing-exact';
+      await seedStrictPrivateParent(exactDisappearing, mode: 'disappearing');
+      await current.update(
+        'messages',
+        <String, Object?>{'private_media_duration_seconds': 3600},
+        where: 'id = ?',
+        whereArgs: const <Object?>[exactDisappearing],
+      );
+      final exactBefore = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[exactDisappearing],
+      )).single;
+      final exactApplied = await dbApplyIncomingDirectMessageDeletion(
+        current,
+        messageId: exactDisappearing,
+        senderPeerId: sender,
+        deletedAt: t1,
+        transport: 'relay',
+        createdAt: t1,
+      );
+      expect(exactApplied.outcome, IncomingDirectDeletionOutcome.tombstoned);
+      expect(exactApplied.row!['deleted_by_peer_id'], sender);
+      for (final column in const <String>[
+        'private_media_policy_version',
+        'private_media_mode',
+        'private_media_duration_seconds',
+        'private_media_state',
+        'private_media_received_at_ms',
+        'private_media_expires_at_ms',
+        'private_media_revealed_at_ms',
+        'private_media_terminal_at_ms',
+        'private_media_clock_high_water_ms',
+        'hidden_at',
+      ]) {
+        expect(
+          exactApplied.row![column],
+          exactBefore[column],
+          reason: 'authenticated deletion must preserve $column',
+        );
+      }
 
       const impostorTarget = 'tc356-04a-impostor';
       await seedStrictPrivateParent(impostorTarget);

@@ -7504,8 +7504,12 @@ dbStageOutgoingDirectMediaDeletionInboxCustody(
       expectedRow['id'] == messageId &&
       stagedRow['contact_peer_id'] == recipientPeerId &&
       stagedRow['wire_envelope'] == wireEnvelope &&
-      isStrictOrdinaryOutgoingDirectPolicy(expectedRow) &&
-      isStrictOrdinaryOutgoingDirectPolicy(stagedRow) &&
+      // 359: exact strict ORDINARY or exact strict DISAPPEARING media. Both
+      // sides must describe the same modality, so a tombstone built from
+      // another parent's policy can never downgrade into this owner.
+      _isAdmittedOutgoingDirectMediaDeletionPolicy(expectedRow) &&
+      _isAdmittedOutgoingDirectMediaDeletionPolicy(stagedRow) &&
+      sameOutgoingDirectMediaDeletionModality(expectedRow, stagedRow) &&
       isExactOutgoingDirectDeletionProjection(stagedRow);
   if (!valid) {
     return Future<DirectMediaDeletionCustodyDbStageResult>.value(
@@ -7527,17 +7531,33 @@ dbStageOutgoingDirectMediaDeletionInboxCustody(
       if (row['wire_envelope'] != wireEnvelope) {
         return const DirectMediaDeletionCustodyDbStageResult.refused();
       }
-      final currentParents = await txn.query(
+      // 359: a retained event proves only that SOME attempt owned these bytes.
+      // The deletion outer envelope hides its encrypted inner target, so the
+      // same-ID parent is not evidence. Project the completion-style unique
+      // outgoing envelope owner and require the exact persisted tombstone
+      // instead; live, absent, crossed, drifted and ambiguous parents refuse
+      // with the retained event and every other row byte-identical. This
+      // deliberately inspects NO attachment: cleanup may already have removed
+      // the generation this deletion authorized.
+      final projected = await txn.query(
         'messages',
-        where: 'id = ?',
-        whereArgs: <Object?>[messageId],
-        limit: 1,
+        where: 'contact_peer_id = ? AND is_incoming = 0 AND wire_envelope = ?',
+        whereArgs: <Object?>[recipientPeerId, wireEnvelope],
+        limit: 2,
       );
+      if (projected.length != 1 ||
+          projected.single['id'] != messageId ||
+          !_isPersistedExactOutgoingDirectMediaDeletionTombstone(
+            persistedRow: projected.single,
+            stagedRow: stagedRow,
+            recipientPeerId: recipientPeerId,
+            senderPeerId: senderPeerId,
+          )) {
+        return const DirectMediaDeletionCustodyDbStageResult.refused();
+      }
       return DirectMediaDeletionCustodyDbStageResult(
         outcome: OutgoingOrdinaryMutationOutcome.idempotent,
-        messageRow: currentParents.isEmpty
-            ? null
-            : Map<String, Object?>.from(currentParents.single),
+        messageRow: Map<String, Object?>.from(projected.single),
         custodyRow: Map<String, Object?>.from(row),
       );
     }
@@ -7556,6 +7576,20 @@ dbStageOutgoingDirectMediaDeletionInboxCustody(
       messageId: messageId! as String,
     );
     if (authority.lane != OutgoingDirectDeletionLane.strictMedia) {
+      return const DirectMediaDeletionCustodyDbStageResult.refused();
+    }
+
+    // 359: the Plan 358 fingerprint proves lineage, not CARDINALITY or media
+    // identity. A NEW disappearing deletion v109 therefore independently
+    // requalifies the exact one-image/video projection this modality is the
+    // only producer of. Ordinary strict media keeps its incumbent admission,
+    // and the replay branch above never reaches here.
+    if (isStrictDisappearingOutgoingDirectPolicy(stagedRow) &&
+        !await _hasExactDisappearingDeletionMediaProjection(
+          txn,
+          messageId: messageId as String,
+          stagedRow: stagedRow,
+        )) {
       return const DirectMediaDeletionCustodyDbStageResult.refused();
     }
 
@@ -7623,6 +7657,58 @@ dbStageOutgoingDirectMediaDeletionInboxCustody(
       custodyRow: custodyRow,
     );
   });
+}
+
+/// The two modalities the shared media deletion v109 owner admits.
+bool _isAdmittedOutgoingDirectMediaDeletionPolicy(Map<String, Object?> row) =>
+    isStrictOrdinaryOutgoingDirectPolicy(row) ||
+    isStrictDisappearingOutgoingDirectPolicy(row);
+
+/// The persisted tombstone an already-retained media deletion event must still
+/// own before it may authorize anything again.
+///
+/// Transport columns are deliberately absent: settlement legitimately advances
+/// status/transport/relay expiry behind an accepted event, and a retry re-uses
+/// the same identity. Everything that names WHICH parent and WHICH deletion
+/// this event authored is required exactly.
+bool _isPersistedExactOutgoingDirectMediaDeletionTombstone({
+  required Map<String, Object?> persistedRow,
+  required Map<String, Object?> stagedRow,
+  required Object? recipientPeerId,
+  required Object? senderPeerId,
+}) =>
+    persistedRow['id'] == stagedRow['id'] &&
+    persistedRow['contact_peer_id'] == recipientPeerId &&
+    persistedRow['sender_peer_id'] == senderPeerId &&
+    persistedRow['deleted_at'] == stagedRow['deleted_at'] &&
+    persistedRow['deleted_by_peer_id'] == stagedRow['deleted_by_peer_id'] &&
+    _isAdmittedOutgoingDirectMediaDeletionPolicy(persistedRow) &&
+    sameOutgoingDirectMediaDeletionModality(persistedRow, stagedRow) &&
+    isExactOutgoingDirectDeletionProjection(persistedRow);
+
+/// True only while [messageId] persists exactly ONE direct-owned attachment
+/// whose MIME and `mediaType` coherently identify an image or video allowed by
+/// the staged disappearing policy.
+Future<bool> _hasExactDisappearingDeletionMediaProjection(
+  DatabaseExecutor txn, {
+  required String messageId,
+  required Map<String, Object?> stagedRow,
+}) async {
+  final attachments = await txn.query(
+    'media_attachments',
+    columns: const <String>['mime', 'media_type'],
+    where: 'message_id = ? AND owner_lane = ?',
+    whereArgs: <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+    limit: 2,
+  );
+  if (attachments.length != 1) return false;
+  return disappearingMediaInitialProducerMatrixAllowsDatabaseIdentity(
+    policyVersion: stagedRow['private_media_policy_version'],
+    mode: stagedRow['private_media_mode'],
+    durationSeconds: stagedRow['private_media_duration_seconds'],
+    mime: attachments.single['mime'],
+    mediaType: attachments.single['media_type'],
+  );
 }
 
 /// The lane plus the exact v111 rows that must move to cleanup with the

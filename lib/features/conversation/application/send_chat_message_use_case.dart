@@ -823,6 +823,26 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
                 ? existingOutgoing.privateMediaPolicy
                 : const PrivateMediaPolicy.ordinary());
 
+  // 359 (D-234-01): private caption/text EDIT is an unsupported product
+  // action, so the DURABLE target — not the caller's snapshot — decides. A
+  // forged ordinary policy or stale media list would otherwise reinterpret a
+  // persisted redacted parent as an ordinary edit. This runs before the
+  // recipient crypto/envelope construction, any staging seam and any network
+  // work; the recipient key is already an argument here, so no separately
+  // observable key lookup is claimed.
+  if (action == MessagePayload.actionEdit &&
+      existingOutgoing != null &&
+      !existingOutgoing.isIncoming &&
+      existingOutgoing.privateMediaPolicy.requiresRedaction) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_INVALID_PRIVATE_MEDIA',
+      details: const {'reason': 'private_target_edit_unsupported'},
+    );
+    emitSendTiming(outcome: 'invalid_private_media');
+    return (SendChatMessageResult.invalidPrivateMedia, null);
+  }
+
   // 358: the exact newly authored v1 disappearing image/video initial is the
   // ONLY non-ordinary shape a v110 token may carry. Everything else about the
   // token's exclusivity is unchanged.

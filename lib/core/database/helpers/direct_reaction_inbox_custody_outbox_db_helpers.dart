@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../../media/private_media_policy.dart';
 import '../db_write_transaction.dart';
 import '../direct_inbox_event_envelope.dart';
 import '../direct_reaction_inbox_custody_outbox_contract.dart';
@@ -768,6 +769,46 @@ bool _isExactV2DirectReactionEnvelope(
 bool isStrictOrdinaryOutgoingDirectPolicy(Map<String, Object?> row) =>
     _isStrictOrdinaryTextPolicy(row);
 
+/// 359: the exact outgoing v1 `disappearing` policy a Plan 358 lineage owner
+/// may carry into delete-for-everyone.
+///
+/// Deliberately as narrow as the Plan 358 stamping predicate it mirrors: a v1
+/// disappearing row with one allowed duration, lifecycle `available`, NO
+/// receiver-local clock (this is the SENDER) and its v110 token already
+/// consumed. Protected/View-Once keep the Plan 356 private owner, and a
+/// crossed duration, terminal state or sender-side clock is never this owner.
+bool isStrictDisappearingOutgoingDirectPolicy(Map<String, Object?> row) {
+  final durationSeconds = row['private_media_duration_seconds'];
+  return ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+      (row['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      row['private_media_mode'] == PrivateMediaMode.disappearing.wireValue &&
+      durationSeconds is num &&
+      PrivateMediaPolicy.allowedDurationsSeconds.contains(
+        durationSeconds.toInt(),
+      ) &&
+      row['private_media_state'] ==
+          PrivateMediaLifecycleState.available.wireValue &&
+      row['private_media_received_at_ms'] == null &&
+      row['private_media_expires_at_ms'] == null &&
+      row['private_media_revealed_at_ms'] == null &&
+      row['private_media_terminal_at_ms'] == null &&
+      row['private_media_clock_high_water_ms'] == null &&
+      row['direct_media_custody_intent_id'] == null;
+}
+
+/// The modality columns an expected/staged pair must agree on before the
+/// shared media deletion stage may act. A tombstone derived from another
+/// parent's policy is a crossed projection, never a downgrade opportunity.
+bool sameOutgoingDirectMediaDeletionModality(
+  Map<String, Object?> expectedRow,
+  Map<String, Object?> stagedRow,
+) =>
+    expectedRow['private_media_policy_version'] ==
+        stagedRow['private_media_policy_version'] &&
+    expectedRow['private_media_mode'] == stagedRow['private_media_mode'] &&
+    expectedRow['private_media_duration_seconds'] ==
+        stagedRow['private_media_duration_seconds'];
+
 /// The exact visible projection every outgoing delete-for-everyone tombstone
 /// must carry before it can own a v109 event.
 bool isExactOutgoingDirectDeletionProjection(Map<String, Object?> row) =>
@@ -786,21 +827,30 @@ bool _isStrictOrdinaryTextPolicy(Map<String, Object?> row) =>
     row['private_media_clock_high_water_ms'] == null &&
     row['direct_media_custody_intent_id'] == null;
 
-/// The exact outgoing v1 Protected/View-Once deletion tombstone admitted by
-/// v109 completion. Hidden state is deliberately allowed: a local hide is an
-/// independent terminal claim, not a conflicting deletion projection.
+/// The exact outgoing v1 private deletion tombstone admitted by v109
+/// completion: Protected/View-Once (Plan 356) or, since Plan 359, the exact
+/// disappearing policy. Hidden state is deliberately allowed for both: a local
+/// hide is an independent terminal claim, not a conflicting deletion
+/// projection.
 bool _isExactOutgoingPrivateDeletionParent(Map<String, Object?> row) =>
+    _isExactOutgoingPrivateDeletionProjection(row) &&
+    (_isExactOutgoingOneMoreLookDeletionPolicy(row) ||
+        isStrictDisappearingOutgoingDirectPolicy(row));
+
+bool _isExactOutgoingPrivateDeletionProjection(Map<String, Object?> row) =>
     ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+    row['text'] == '' &&
+    _isNonBlank(row['deleted_at']) &&
+    _isNonBlank(row['deleted_by_peer_id']) &&
+    row['deleted_by_peer_id'] == row['sender_peer_id'];
+
+bool _isExactOutgoingOneMoreLookDeletionPolicy(Map<String, Object?> row) =>
     (row['private_media_policy_version'] as num?)?.toInt() == 1 &&
     const <String>{
       'protected',
       'view_once',
     }.contains(row['private_media_mode'] as String?) &&
-    row['private_media_duration_seconds'] == null &&
-    row['text'] == '' &&
-    _isNonBlank(row['deleted_at']) &&
-    _isNonBlank(row['deleted_by_peer_id']) &&
-    row['deleted_by_peer_id'] == row['sender_peer_id'];
+    row['private_media_duration_seconds'] == null;
 
 bool _isExactOutgoingDeletionProjection(Map<String, Object?> row) =>
     row['text'] == '' &&

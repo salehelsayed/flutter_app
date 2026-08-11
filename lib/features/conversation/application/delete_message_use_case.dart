@@ -292,11 +292,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.invalidMessage, null);
   }
 
-  final requiresPrivateTerminalCleanup =
+  // 356: Protected/View-Once own the private v109 stage AND private
+  // settlement. 359 separates those two concepts: an exact disappearing parent
+  // always uses private lifecycle cleanup, but its transport owner is selected
+  // from DB lineage and it settles through the incumbent ordinary owner.
+  final isOutgoingPrivateOneMoreLook =
       !currentMessage.isIncoming &&
       currentMessage.privateMediaPolicy.version == 1 &&
       (currentMessage.privateMediaMode == PrivateMediaMode.protected ||
           currentMessage.privateMediaMode == PrivateMediaMode.viewOnce);
+  final isExactDisappearingParent = _isExactOutgoingDisappearingLineage(
+    currentMessage,
+  );
+  final requiresPrivateTerminalCleanup =
+      isOutgoingPrivateOneMoreLook || isExactDisappearingParent;
+  final settlesThroughPrivateOwner = isOutgoingPrivateOneMoreLook;
   final ordinaryTransportRepository =
       messageRepo is OutgoingTransportMutationRepository
       ? messageRepo as OutgoingTransportMutationRepository
@@ -364,7 +374,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       currentMessage.privateMediaMode == PrivateMediaMode.ordinary &&
       currentMessage.directMediaCustodyIntentId == null;
   OutgoingDirectDeletionLane? selectedLane;
-  if (ordinaryPolicyParent && laneRepository != null) {
+  if ((ordinaryPolicyParent || isExactDisappearingParent) &&
+      laneRepository != null) {
     try {
       selectedLane = await laneRepository.selectOutgoingDirectDeletionLane(
         currentMessage.id,
@@ -440,7 +451,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           true
       ? privateDeletionCustodyCapability
       : null;
-  final ownsDirectPrivateDeletionInboxCustody = requiresPrivateTerminalCleanup;
+  // Only Protected/View-Once take the Plan 356 private v109 owner. An exact
+  // disappearing parent's event, if any, belongs to the Plan 351 media stage.
+  final ownsDirectPrivateDeletionInboxCustody = isOutgoingPrivateOneMoreLook;
   if (ownsDirectPrivateDeletionInboxCustody &&
       (privateDeletionCustodyRepository == null ||
           mutationLifecycleRepository == null)) {
@@ -516,7 +529,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       (privateLifecycleRepository == null ||
           privateCleanupRuntime == null ||
           privateCleanupRepository == null ||
-          privateDeleteRepository == null ||
+          // The private settlement owner is required only by the modality that
+          // actually settles through it; disappearing keeps ordinary transport.
+          (settlesThroughPrivateOwner && privateDeleteRepository == null) ||
           mediaFileManager == null)) {
     emitFlowEvent(
       layer: 'FL',
@@ -594,7 +609,73 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   );
   late final ConversationMessage pendingTombstone;
   DirectReactionInboxCustodyOutboxEntry? stagedMutationCustody;
-  if (requiresPrivateTerminalCleanup) {
+  if (isExactDisappearingParent) {
+    // 359: the cleanup policy is always private, but the transport owner comes
+    // from DB lineage. One exclusive private lifecycle lease spans the SELECTED
+    // stage and the incumbent terminal cleanup, so a competing initial handoff
+    // can neither interleave between them nor publish behind the tombstone.
+    final authorized = await privateCleanupRuntime!
+        .directPrivateMediaLifecycleLock
+        .synchronizedAll(() async {
+          ConversationMessage? committed;
+          DirectReactionInboxCustodyOutboxEntry? committedCustody;
+          if (ownsDirectMediaDeletionInboxCustody) {
+            final staged = await mediaDeletionRepository!
+                .stageOutgoingDirectMediaDeletionInboxCustody(
+                  expected: currentMessage!,
+                  staged: pendingTombstoneCandidate,
+                  kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+                  recipientPeerId: currentMessage.contactPeerId,
+                  eventId: mutationEventId!,
+                  wireEnvelope: jsonString,
+                );
+            // Only the transaction's own committed rows may authorize cleanup
+            // or transport; an in-memory candidate proves nothing durable.
+            if (!staged.authorizesTransport ||
+                staged.custody == null ||
+                staged.message == null) {
+              return null;
+            }
+            committed = staged.message;
+            committedCustody = staged.custody;
+          } else {
+            // Proof-less/no-v111 historical lineage never promotes: it keeps
+            // legacy ordinary transport with no event id and no v109.
+            final staged = await ordinaryTransportRepository!
+                .stageOutgoingOrdinaryAttempt(
+                  expected: currentMessage!,
+                  staged: pendingTombstoneCandidate,
+                  kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+                );
+            if (!staged.authorizesTransport || staged.message == null) {
+              return null;
+            }
+            committed = staged.message;
+          }
+          await _privateTerminalCleanupBestEffort(
+            tombstone: committed!,
+            reactionRepo: reactionRepo,
+            privateLifecycleRepository: privateLifecycleRepository!,
+            mediaAttachmentRepo: mediaAttachmentRepo!,
+            mediaFileManager: mediaFileManager!,
+            privateCleanupRuntime: privateCleanupRuntime,
+          );
+          return (message: committed, custody: committedCustody);
+        });
+    if (authorized == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_PRIVATE_DELETE_FOR_EVERYONE_COMMIT_PRESERVED',
+        details: {'id': _messageIdPreview(currentMessage.id)},
+      );
+      emitDeleteTiming(outcome: 'private_commit_preserved');
+      return (SendChatMessageResult.invalidMessage, null);
+    }
+    pendingTombstone = authorized.message;
+    stagedMutationCustody = authorized.custody;
+    final committedCustody = authorized.custody;
+    if (committedCustody != null) jsonString = committedCustody.wireEnvelope;
+  } else if (requiresPrivateTerminalCleanup) {
     // One exclusive private lifecycle lease spans the atomic tombstone + v109
     // stage AND the incumbent terminal cleanup, so a competing initial handoff
     // can neither interleave between them nor publish behind the tombstone.
@@ -739,7 +820,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           ),
         ),
         expectedEnvelope: jsonString,
-        isOutgoingPrivate: requiresPrivateTerminalCleanup,
+        isOutgoingPrivate: settlesThroughPrivateOwner,
       );
       authoritative = settled ?? authoritative;
     } catch (_) {
@@ -804,7 +885,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
               sendResult,
               preserveLocalPeerLabel: true,
             ),
-            isOutgoingPrivate: requiresPrivateTerminalCleanup,
+            isOutgoingPrivate: settlesThroughPrivateOwner,
             ownsDirectMutationInboxCustody: ownsDirectMutationInboxCustody,
             emitTimingEvent: emitTimingEvent,
             deleteStopwatch: deleteStopwatch,
@@ -917,7 +998,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       jsonString: jsonString,
       provesDeviceDelivery: true,
       via: raceResult.via!,
-      isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      isOutgoingPrivate: settlesThroughPrivateOwner,
       ownsDirectMutationInboxCustody: ownsDirectMutationInboxCustody,
       emitTimingEvent: emitTimingEvent,
       deleteStopwatch: deleteStopwatch,
@@ -943,7 +1024,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
         jsonString: jsonString,
         provesDeviceDelivery: true,
         via: relayProbeResult.via!,
-        isOutgoingPrivate: requiresPrivateTerminalCleanup,
+        isOutgoingPrivate: settlesThroughPrivateOwner,
         ownsDirectMutationInboxCustody: ownsDirectMutationInboxCustody,
         emitTimingEvent: emitTimingEvent,
         deleteStopwatch: deleteStopwatch,
@@ -962,7 +1043,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       jsonString: jsonString,
       provesDeviceDelivery: false,
       via: writtenResult.via!,
-      isOutgoingPrivate: requiresPrivateTerminalCleanup,
+      isOutgoingPrivate: settlesThroughPrivateOwner,
       ownsDirectMutationInboxCustody: ownsDirectMutationInboxCustody,
       emitTimingEvent: emitTimingEvent,
       deleteStopwatch: deleteStopwatch,
@@ -1024,7 +1105,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           messageRepo: messageRepo,
           tombstone: inboxedTombstone,
           expectedEnvelope: jsonString,
-          isOutgoingPrivate: requiresPrivateTerminalCleanup,
+          isOutgoingPrivate: settlesThroughPrivateOwner,
         );
         emitFlowEvent(
           layer: 'FL',
@@ -1052,9 +1133,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   final failedTombstone = normalizeOutgoingDeleteTombstoneVisibility(
     pendingTombstone.copyWith(
       status: 'failed',
-      transport: requiresPrivateTerminalCleanup
-          ? null
-          : pendingTombstone.transport,
+      transport: settlesThroughPrivateOwner ? null : pendingTombstone.transport,
       wireEnvelope: jsonString,
     ),
   );
@@ -1062,7 +1141,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     messageRepo: messageRepo,
     tombstone: failedTombstone,
     expectedEnvelope: jsonString,
-    isOutgoingPrivate: requiresPrivateTerminalCleanup,
+    isOutgoingPrivate: settlesThroughPrivateOwner,
   );
   emitFlowEvent(
     layer: 'FL',
@@ -1169,6 +1248,29 @@ Future<void> cleanupDeletedMessageArtifacts({
     );
     await mediaFileManager.deleteFile(thumbnailPath);
   }
+}
+
+/// 359: the exact outgoing v1 `disappearing` shape whose cleanup policy is
+/// private even when its transport owner is legacy.
+///
+/// Mirrors the DB predicate the storage owners re-derive: one allowed
+/// duration, lifecycle `available`, NO sender-side receiver clock, and a
+/// consumed v110 intent. Selection authority still belongs to the DB lane;
+/// this only decides which cleanup and settlement owners may act.
+bool _isExactOutgoingDisappearingLineage(ConversationMessage message) {
+  final durationSeconds = message.privateMediaPolicy.durationSeconds;
+  return !message.isIncoming &&
+      message.privateMediaPolicy.version == 1 &&
+      message.privateMediaMode == PrivateMediaMode.disappearing &&
+      durationSeconds != null &&
+      PrivateMediaPolicy.allowedDurationsSeconds.contains(durationSeconds) &&
+      message.privateMediaState == PrivateMediaLifecycleState.available &&
+      message.privateMediaReceivedAtMs == null &&
+      message.privateMediaExpiresAtMs == null &&
+      message.privateMediaRevealedAtMs == null &&
+      message.privateMediaTerminalAtMs == null &&
+      message.privateMediaClockHighWaterMs == null &&
+      message.directMediaCustodyIntentId == null;
 }
 
 Future<bool> _authorizeOutgoingDirectMediaBlobParentDeletion({

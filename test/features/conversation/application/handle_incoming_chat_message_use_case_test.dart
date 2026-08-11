@@ -5514,6 +5514,7 @@ void main() {
       'senderUsername': 'Alice',
       'timestamp': t0,
       'action': action,
+      'eventId': ?eventId,
       'editedAt': t1,
       'media': ?media,
       'privateMedia': ?privateMedia,

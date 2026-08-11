@@ -352,7 +352,13 @@ handleIncomingChatMessage({
     privateMediaPolicy: incomingPrivateMediaPolicy,
   );
   final strictMediaProjection = _parseStrictIncomingMediaProjection(payload);
-  if (strictMediaProjection.selected && !strictMediaProjection.isValid) {
+  // 359: a malformed strict NON-edit keeps its immediate refusal exactly where
+  // it is. Only an invalid EDIT defers that decision, so the authenticated
+  // private-EDIT disposition below can discard it terminally instead of
+  // leaving a retryable strict-custody refusal redriving forever.
+  if (strictMediaProjection.selected &&
+      !strictMediaProjection.isValid &&
+      !payload.isEdit) {
     return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
   }
 
@@ -394,6 +400,50 @@ handleIncomingChatMessage({
       },
     );
     return (HandleChatMessageResult.unknownSender, null, null);
+  }
+
+  // 359 (D-234-01): private caption/text EDIT is an unsupported product
+  // action, so it is discarded through the EXISTING terminal `ignoredEdit`
+  // outcome instead of gaining custody. Sender and contact are already
+  // authenticated above; one durable target read then decides.
+  //
+  // Ordering is deliberate: a crossed parent author stays `unauthorized`, an
+  // EDIT whose normalized wire policy OR same-author durable target requires
+  // redaction (including a persisted unknown-version `unsupported`
+  // checkpoint) is terminally ignored BEFORE the Plan 353 caption, duplicate,
+  // missing-original and generic edit branches, and any remaining
+  // non-redacted invalid EDIT then keeps the strict refusal it has today.
+  // D-234-07's unsupported PERSISTENCE applies to received media items, not to
+  // an unsupported mutation that would grant edit semantics.
+  //
+  // The ignored mutation writes no placeholder, parent, attachment, key or
+  // marker, publishes nothing and emits no application mutation receipt. Live
+  // transport confirmation and the recovered-inbox `ignoredEdit -> rejected`
+  // disposition terminally drain it without a new enum or outcome.
+  if (payload.isEdit) {
+    final durableEditTarget = await messageRepo.getMessage(payload.id);
+    if (durableEditTarget != null &&
+        (durableEditTarget.senderPeerId != payload.senderPeerId ||
+            durableEditTarget.contactPeerId != payload.senderPeerId)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_EDIT_UNAUTHORIZED',
+        details: {'id': shortenMessageId(payload.id)},
+      );
+      return (HandleChatMessageResult.unauthorized, null, null);
+    }
+    if (payload.privateMediaPolicy.requiresRedaction ||
+        (durableEditTarget?.privateMediaPolicy.requiresRedaction ?? false)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_RECEIVE_PRIVATE_EDIT_UNSUPPORTED',
+        details: {'id': shortenMessageId(payload.id)},
+      );
+      return (HandleChatMessageResult.ignoredEdit, null, null);
+    }
+    if (strictMediaProjection.selected && !strictMediaProjection.isValid) {
+      return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
+    }
   }
 
   final isOrdinaryDirectText =

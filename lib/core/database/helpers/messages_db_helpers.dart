@@ -11,6 +11,7 @@ import '../../media/direct_private_media_path_guard.dart';
 import '../../media/media_file_path_convention.dart';
 import '../../media/media_owner_lane.dart';
 import '../../media/outgoing_direct_private_mutation_coordinator.dart';
+import '../../media/private_media_policy.dart';
 import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
 import 'direct_inbox_custody_outbox_db_helpers.dart';
@@ -341,16 +342,33 @@ Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
       );
     }
     // 356: deletion is the ONLY private transition admitted here. A v1
-    // Protected/View-Once parent may be tombstoned; disappearing, unsupported
-    // and every private EDIT keep their existing refusal.
+    // Protected/View-Once parent may be tombstoned; unsupported and every
+    // private EDIT keep their existing refusal.
+    //
+    // 359: an exact v1 `disappearing` parent joins them. Authority is
+    // IMMUTABLE only — policy, duration, direction, the already-proven
+    // sender/contact identity and a consumed v110 intent. The receiver-local
+    // clock, lifecycle state and hide claim are deliberately NOT preconditions:
+    // an authenticated author deletion must reach a visible, expired or
+    // locally hidden card alike, and every one of those bytes is preserved
+    // rather than re-judged below.
     final policyVersion =
         (current['private_media_policy_version'] as num?)?.toInt() ?? 0;
     final privateMode = current['private_media_mode'] as String? ?? 'ordinary';
+    final durationSeconds = current['private_media_duration_seconds'];
     final isOrdinaryPolicy = policyVersion == 0 && privateMode == 'ordinary';
-    final isStrictPrivatePolicy =
+    final isOneMoreLookPolicy =
         policyVersion == 1 &&
         const <String>{'protected', 'view_once'}.contains(privateMode) &&
-        current['private_media_duration_seconds'] == null;
+        durationSeconds == null;
+    final isDisappearingPolicy =
+        policyVersion == 1 &&
+        privateMode == PrivateMediaMode.disappearing.wireValue &&
+        durationSeconds is num &&
+        PrivateMediaPolicy.allowedDurationsSeconds.contains(
+          durationSeconds.toInt(),
+        );
+    final isStrictPrivatePolicy = isOneMoreLookPolicy || isDisappearingPolicy;
     if ((!isOrdinaryPolicy && !isStrictPrivatePolicy) ||
         current['direct_media_custody_intent_id'] != null) {
       return DbIncomingDirectDeletionResult(

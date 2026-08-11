@@ -1805,7 +1805,7 @@ void main() {
       await expectRefusedWithNoEffect('unsupported-mode', mode: 'unsupported');
       await expectRefusedWithNoEffect(
         'unconsumed-v110-intent',
-        intentId: 'tc359-03a-intent',
+        intentId: 'c359c359c359c359c359c359c359c359',
       );
       await expectRefusedWithNoEffect('crossed-author', from: 'peer-mallory');
     });
