@@ -1841,8 +1841,10 @@ flutter:
           'class DiagnosingDeleteSelfRemovedGroupShellAction',
       'lib/core/bridge/bridge_group_helpers.dart':
           'Future<void> callGroupLeave(',
+      // 360: DB v112 adds the remote-contact linked-device roster. The anchor
+      // tracks the CURRENT floor, so it advances with the schema.
       'lib/core/database/app_database_version.dart':
-          'const int currentIdentityDatabaseVersion = 111;',
+          'const int currentIdentityDatabaseVersion = 112;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

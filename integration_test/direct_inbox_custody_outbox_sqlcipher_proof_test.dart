@@ -230,7 +230,7 @@ void main() {
         isTrue,
         reason: 'TC-342-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 111);
+      expect(currentIdentityDatabaseVersion, 112);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_inbox_custody_sqlcipher_',
@@ -276,7 +276,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 111);
+        expect(await _userVersion(db), 112);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
         expect(
@@ -490,7 +490,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 111);
+        expect(await _userVersion(db), 112);
         expect(await _authoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-342-11 failed at $proofStage: $error\n$stackTrace');
@@ -509,7 +509,7 @@ END
         isTrue,
         reason: 'TC-345-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 111);
+      expect(currentIdentityDatabaseVersion, 112);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_custody_sqlcipher_',
@@ -573,7 +573,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 111);
+        expect(await _userVersion(db), 112);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(
           (await db.query(
@@ -777,7 +777,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 111);
+        expect(await _userVersion(db), 112);
         expect(await _tc345AuthoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-345-11 failed at $proofStage: $error\n$stackTrace');
@@ -796,7 +796,7 @@ END
         isTrue,
         reason: 'TC-347-01 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 111);
+      expect(currentIdentityDatabaseVersion, 112);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_blob_custody_sqlcipher_',
@@ -849,7 +849,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 111);
+        expect(await _userVersion(db), 112);
         final historical = (await db.query(
           'direct_inbox_custody_outbox',
           where: 'message_id = ?',
@@ -921,7 +921,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 111);
+        expect(await _userVersion(db), 112);
         expect(
           DirectMediaBlobCustodyRow.fromMap(
             (await db.query('direct_media_blob_custody')).single,

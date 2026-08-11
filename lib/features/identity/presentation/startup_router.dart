@@ -59,6 +59,7 @@ import 'package:flutter_app/features/home/presentation/screens/first_time_experi
 import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/push/application/handle_initial_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
@@ -927,6 +928,15 @@ class _StartupRouterState extends State<StartupRouter> {
                     secureKeyStore: widget.secureKeyStore,
                   ),
             ).allowsAccountNetworkSideEffects,
+            // 360: an ordinary primary resolves to
+            // `LinkedInstallationDisposition.primary`, so this reads the two
+            // secure keys and then takes the byte-for-byte incumbent path. A
+            // linked secondary starts its own transport; a half-written or
+            // crossed credential refuses instead of falling back to the
+            // account transport.
+            linkedAuthority: await LinkedInstallationAuthority(
+              secureKeyStore: widget.secureKeyStore,
+            ).load(),
           );
 
     emitFlowEvent(

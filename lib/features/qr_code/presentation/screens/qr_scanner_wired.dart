@@ -46,6 +46,7 @@ import 'package:flutter_app/features/share/presentation/navigation/share_target_
 import 'package:flutter_app/features/home/presentation/widgets/user_avatar.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/qr_code/application/parse_qr_payload_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/qr_code/application/scanned_qr_classifier.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 import 'qr_scanner_screen.dart';
@@ -98,6 +99,16 @@ class QRScannerWired extends StatelessWidget {
   final FeedClearedRepository? feedClearedRepository;
   final TransportMetrics? transportMetrics;
   final MigrationQrScannedHandler? onMigrationQrScanned;
+
+  /// 360: handler for the dedicated dual-signed linked-device document.
+  ///
+  /// Supplied ONLY by the trust/profile route for an existing contact. When
+  /// null — every ordinary "scan a friend's code" entry point — a linked-device
+  /// document is refused as invalid below rather than being handed to the
+  /// legacy contact parser. That refusal is the point: the legacy parser would
+  /// otherwise be the thing deciding what to do with a document it was never
+  /// designed to authenticate.
+  final DirectLinkedDeviceQrScannedHandler? onDirectLinkedDeviceQrScanned;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
@@ -140,6 +151,7 @@ class QRScannerWired extends StatelessWidget {
     this.postsPrivacySettingsRepository,
     this.transportMetrics,
     this.onMigrationQrScanned,
+    this.onDirectLinkedDeviceQrScanned,
     this.accountMigrationRunTransfer,
     this.accountMigrationSizeGate,
   });
@@ -175,6 +187,38 @@ class QRScannerWired extends StatelessWidget {
         emitFlowEvent(
           layer: 'FL',
           event: 'QR_SCAN_MIGRATION_DISPATCHED',
+          details: {},
+        );
+      } catch (e) {
+        if (!context.mounted) return;
+        _showError(
+          context,
+          AppLocalizations.of(context)!.qr_invalid_title,
+          AppLocalizations.of(context)!.qr_invalid_body,
+        );
+      }
+      return;
+    }
+
+    // 360: a linked-device document is a different protocol with different
+    // authority. Route it to the trust flow, or refuse — never to the contact
+    // parser, whose success path mutates contact and ML-KEM state.
+    if (isDirectLinkedDeviceQrDocument(qrData)) {
+      final linkedDeviceHandler = onDirectLinkedDeviceQrScanned;
+      if (linkedDeviceHandler == null) {
+        if (!context.mounted) return;
+        _showError(
+          context,
+          AppLocalizations.of(context)!.qr_invalid_title,
+          AppLocalizations.of(context)!.qr_invalid_body,
+        );
+        return;
+      }
+      try {
+        await linkedDeviceHandler(qrData);
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'QR_SCAN_DIRECT_LINKED_DEVICE_DISPATCHED',
           details: {},
         );
       } catch (e) {

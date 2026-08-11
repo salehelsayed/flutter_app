@@ -18,6 +18,17 @@ class ContactSafetyNumber {
     // and the version bumps to `v2`, so adding/swapping a device changes the
     // displayed number (a deliberate security-string change).
     List<String> deviceFingerprints = const [],
+    // 360: EXPLICIT roster initialization, independent of whether any device
+    // fingerprint survives.
+    //
+    // Deriving "has a roster" from `deviceFingerprints.isNotEmpty` is wrong at
+    // exactly the moment it matters: a contact whose only linked device was
+    // revoked, or whose legacy target was revoked, has made a real security
+    // decision — and silently falling back to the `v1` account-level number
+    // would show the SAME digits as before that decision. Once initialized the
+    // number stays `v2`, so revoking a device visibly changes the string the
+    // two people compare.
+    bool rosterInitialized = false,
   }) {
     final normalizedPeerId = peerId.trim();
     final normalizedPublicKey = publicKey?.trim();
@@ -35,7 +46,7 @@ class ContactSafetyNumber {
             .toList()
           ..sort();
     final String material;
-    if (normalizedDevices.isEmpty) {
+    if (normalizedDevices.isEmpty && !rosterInitialized) {
       material =
           'mknoon-safety-v1\n'
           'peer:$normalizedPeerId\n'

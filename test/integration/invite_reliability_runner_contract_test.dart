@@ -1262,6 +1262,192 @@ void main() {
       );
     },
   );
+
+  test('TC-360-04a registered Android linked-device addressing scenario cannot '
+      'fall through', () {
+    const defaults = <String>['ios-primary', 'ios-sibling'];
+
+    // ── The scenario is REGISTERED on the host side. ──
+    expect(
+      inviteReliabilityRunnerScenarios,
+      containsAll(<String>[
+        inviteReliabilityScenario,
+        inviteSendLatencyScenario,
+        directLinkedDeviceAddressingScenario,
+      ]),
+    );
+    expect(
+      directLinkedDeviceAddressingScenario,
+      'direct_linked_device_addressing',
+    );
+
+    final linked = InviteReliabilityRunnerArguments.parse(const <String>[
+      '--scenario',
+      'direct_linked_device_addressing',
+      '-d',
+      'physical-1,emulator-5554',
+    ], defaultDeviceIds: defaults);
+    expect(linked.scenario, directLinkedDeviceAddressingScenario);
+    expect(linked.mode, isNull, reason: 'the scenario is mode-free');
+    expect(linked.deviceIds, <String>['physical-1', 'emulator-5554']);
+    expect(linked.isLatencyScenario, isFalse);
+
+    // ── It requires an EXPLICIT two-target pair. Inheriting the default
+    // device list would let it run against whatever happened to be attached,
+    // which is not a proof of anything. ──
+    expect(
+      () => InviteReliabilityRunnerArguments.parse(const <String>[
+        '--scenario',
+        'direct_linked_device_addressing',
+      ], defaultDeviceIds: defaults),
+      throwsArgumentError,
+    );
+    expect(
+      () => InviteReliabilityRunnerArguments.parse(const <String>[
+        '--scenario',
+        'direct_linked_device_addressing',
+        '-d',
+        'only-one',
+      ], defaultDeviceIds: defaults),
+      throwsArgumentError,
+    );
+    expect(
+      () => InviteReliabilityRunnerArguments.parse(const <String>[
+        '--scenario',
+        'direct_linked_device_addressing',
+        '--mode',
+        'closure',
+        '-d',
+        'physical-1,emulator-5554',
+      ], defaultDeviceIds: defaults),
+      throwsArgumentError,
+      reason: 'a mode-free scenario must refuse a mode rather than ignore it',
+    );
+
+    // ── An UNREGISTERED scenario is terminal on the host side. ──
+    expect(
+      () => InviteReliabilityRunnerArguments.parse(const <String>[
+        '--scenario',
+        'definitely_not_registered',
+        '-d',
+        'physical-1,emulator-5554',
+      ], defaultDeviceIds: defaults),
+      throwsArgumentError,
+    );
+
+    // ── ...and terminal on the DEVICE side too. Before Plan 360 an
+    // unrecognized `MD004_SCENARIO` fell through to the legacy `same_user`
+    // branch, so a typo — or a scenario registered on one side only — would
+    // run a completely different proof and report PASS for the scenario the
+    // caller actually named. Both ends must refuse. ──
+    final harness = File(
+      'integration_test/group_multi_device_real_harness.dart',
+    ).readAsStringSync();
+    expect(harness, contains('Unregistered MD004_SCENARIO'));
+    expect(
+      harness,
+      contains('configuredScenario == directLinkedDeviceAddressingScenario'),
+    );
+    expect(harness, contains('_runDirectLinkedDeviceAddressingLinkedSide'));
+    expect(harness, contains('_runDirectLinkedDeviceAddressingAccountBSide'));
+
+    // The runner launches the PRIMARY first and only starts the sibling once
+    // the primary has written its readiness fixture. The LINKED SECONDARY must
+    // therefore be the primary role: it is the publisher. Putting account B on
+    // primary deadlocks by construction — it would wait for a fixture only the
+    // never-launched sibling writes, which is exactly how the first device run
+    // of this scenario failed.
+    final linkedDispatch = harness.indexOf(
+      'await _runDirectLinkedDeviceAddressingLinkedSide();',
+    );
+    final accountBDispatch = harness.indexOf(
+      'await _runDirectLinkedDeviceAddressingAccountBSide();',
+    );
+    expect(linkedDispatch, isNonNegative);
+    expect(accountBDispatch, greaterThan(linkedDispatch));
+    expect(
+      harness.substring(
+        harness.indexOf(
+          'configuredScenario == directLinkedDeviceAddressingScenario',
+        ),
+        accountBDispatch,
+      ),
+      contains('if (_isPrimaryRole)'),
+      reason: 'the linked side must sit on the primary branch',
+    );
+    // ...and that primary side must publish the EXACT readiness fixture the
+    // runner polls for, or the sibling is never launched at all.
+    expect(
+      harness.substring(
+        harness.indexOf(
+          'Future<void> _runDirectLinkedDeviceAddressingLinkedSide() async {',
+        ),
+      ),
+      contains("_signalName('alice_identity.json')"),
+    );
+    // The terminal guard must sit BEFORE the legacy dispatch, otherwise an
+    // unregistered scenario still reaches `_runPrimaryScenario`.
+    expect(
+      harness.indexOf('Unregistered MD004_SCENARIO'),
+      lessThan(harness.indexOf('await _runPrimaryScenario();')),
+    );
+
+    // ── The direct selector is passed to THIS scenario only, and the group
+    // multi-device flag is never enabled by it. ──
+    final runner = File(
+      'integration_test/scripts/run_invite_reliability_multi_device.dart',
+    ).readAsStringSync();
+    expect(
+      runner,
+      contains(
+        "if (options.scenario == directLinkedDeviceAddressingScenario)\n"
+        "      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true',",
+      ),
+    );
+    expect(
+      runner,
+      isNot(contains('--dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC')),
+      reason:
+          'the group same-user convergence flag must never be enabled by '
+          'this scenario; it activates sibling-device admission and group '
+          'key continuity that Plan 360 neither implements nor proves',
+    );
+
+    // ── The scenario-specific ready artifact is named and versioned. ──
+    expect(
+      directLinkedDeviceAddressingReadyFileName('run-1', 'primary'),
+      'md004_run-1_direct_linked_device_addressing_primary.json',
+    );
+    expect(
+      directLinkedDeviceAddressingReadyFileName('run-1', 'sibling'),
+      'md004_run-1_direct_linked_device_addressing_sibling.json',
+    );
+    expect(
+      directLinkedDeviceAddressingReadySchema,
+      'mknoon.tc360.direct-linked-device-addressing-ready',
+    );
+    expect(directLinkedDeviceAddressingReadySchemaVersion, 1);
+
+    // ── The gate script exposes it as an independently selectable row that
+    // requires the explicit device pair. ──
+    final gateScript = File(
+      'scripts/run_reliability_simulations.sh',
+    ).readAsStringSync();
+    expect(
+      gateScript,
+      contains(
+        "printf '%s\\t%s\\tdirect_linked_device_addressing\\n' "
+        '"\$kind" "\$path"',
+      ),
+    );
+    expect(
+      gateScript,
+      contains(
+        'run_invite_reliability_multi_device.dart:'
+        'direct_linked_device_addressing',
+      ),
+    );
+  });
 }
 
 const String _primaryLatencyArtifactPath = '/tmp/tc341-primary.json';

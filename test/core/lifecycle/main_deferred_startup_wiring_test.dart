@@ -73,10 +73,22 @@ void main() {
             'the existing void starter needs an outcome wrapper so a gated '
             'no-start can be retried',
       );
+      // 360: the callback is still unconditional and the outcome wrapper still
+      // owns PRIMARY startup; it is now reached through the role-aware owner,
+      // which is what keeps a linked secondary out of generic runtime startup.
       expect(
         productionSource,
-        contains('deferredRuntimeStartup: startLiveServicesIfAllowed,'),
-        reason: 'MyApp must receive the outcome-returning startup wrapper',
+        contains(
+          'deferredRuntimeStartup: roleAwareDeferredRuntimeStart.start,',
+        ),
+        reason: 'MyApp must receive the role-aware outcome-returning starter',
+      );
+      expect(
+        productionSource,
+        contains('startPrimaryRuntimeServices: startLiveServicesIfAllowed,'),
+        reason:
+            'the primary branch must still be the exact outcome wrapper, so a '
+            'gated no-start is still retryable',
       );
       expect(
         applicationRootSource,
@@ -247,12 +259,21 @@ void main() {
     ).readAsString();
 
     // (i) deferredRuntimeStartup is unconditional, not isShareLaunch-gated.
+    //
+    // 360 delegates it to the role-aware owner. The property under test is
+    // unchanged: ONE unconditional callback, with the outcome wrapper owning
+    // the primary branch.
     expect(
       productionSource,
-      contains('deferredRuntimeStartup: startLiveServicesIfAllowed,'),
+      contains('deferredRuntimeStartup: roleAwareDeferredRuntimeStart.start,'),
       reason:
           'normal launch must take the same deferred startup path share '
           'launch already used',
+    );
+    expect(
+      productionSource,
+      contains('startPrimaryRuntimeServices: startLiveServicesIfAllowed,'),
+      reason: 'the primary branch is still exactly the outcome wrapper',
     );
     expect(
       productionSource,
@@ -263,6 +284,11 @@ void main() {
         ),
       ),
       reason: 'the isShareLaunch ternary on deferredRuntimeStartup is removed',
+    );
+    expect(
+      productionSource,
+      isNot(contains('deferredRuntimeStartup: isShareLaunch')),
+      reason: 'no share-launch ternary may return on the role-aware callback',
     );
 
     // (ii) the eager normal-launch startLiveServices await is gone.

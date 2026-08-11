@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
+import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 
 void main() {
@@ -22,6 +23,10 @@ void main() {
     await runArchiveColumnsMigration(db);
     await runBlockColumnsMigration(db);
     await runAvatarVersionMigration(db);
+    // 360: `dbDeleteContact` is now the exact contact-deletion owner and also
+    // clears that contact's linked-device roster in the same transaction, so
+    // this fixture must carry the v112 tables the production schema has.
+    await runDirectLinkedDeviceAddressingMigration(db);
   });
 
   tearDown(() async {
@@ -67,18 +72,27 @@ void main() {
     });
 
     test('returns all contacts ordered by scanned_at DESC', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-oldest',
-        scannedAt: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-newest',
-        scannedAt: '2026-03-01T00:00:00.000Z',
-      ));
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-middle',
-        scannedAt: '2026-02-01T00:00:00.000Z',
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-oldest',
+          scannedAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-newest',
+          scannedAt: '2026-03-01T00:00:00.000Z',
+        ),
+      );
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-middle',
+          scannedAt: '2026-02-01T00:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadAllContacts(db);
       expect(results.length, 3);
@@ -95,10 +109,10 @@ void main() {
     });
 
     test('returns contact when exists', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-alice',
-        username: 'Alice',
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(peerId: 'peer-alice', username: 'Alice'),
+      );
 
       final result = await dbLoadContact(db, 'peer-alice');
       expect(result, isNotNull);
@@ -110,24 +124,30 @@ void main() {
     test('inserts new contact', () async {
       await dbUpsertContact(db, makeContactRow(peerId: 'peer-new'));
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-new']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-new'],
+      );
       expect(rows.length, 1);
       expect(rows[0]['peer_id'], 'peer-new');
     });
 
     test('upserts on conflict', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-upsert',
-        username: 'OriginalName',
-      ));
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-upsert',
-        username: 'UpdatedName',
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(peerId: 'peer-upsert', username: 'OriginalName'),
+      );
+      await dbUpsertContact(
+        db,
+        makeContactRow(peerId: 'peer-upsert', username: 'UpdatedName'),
+      );
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-upsert']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-upsert'],
+      );
       expect(rows.length, 1);
       expect(rows[0]['username'], 'UpdatedName');
     });
@@ -139,8 +159,11 @@ void main() {
 
       await dbDeleteContact(db, 'peer-delete');
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-delete']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-delete'],
+      );
       expect(rows, isEmpty);
     });
 
@@ -190,8 +213,11 @@ void main() {
 
       await dbArchiveContact(db, 'peer-archive');
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-archive']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-archive'],
+      );
       expect(rows[0]['is_archived'], 1);
       expect(rows[0]['archived_at'], isNotNull);
     });
@@ -204,8 +230,11 @@ void main() {
 
       await dbUnarchiveContact(db, 'peer-unarchive');
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-unarchive']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-unarchive'],
+      );
       expect(rows[0]['is_archived'], 0);
       expect(rows[0]['archived_at'], isNull);
     });
@@ -223,14 +252,20 @@ void main() {
     });
 
     test('ordered by scanned_at DESC', () async {
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-older',
-        scannedAt: '2026-01-01T00:00:00.000Z',
-      ));
-      await dbUpsertContact(db, makeContactRow(
-        peerId: 'peer-newer',
-        scannedAt: '2026-02-01T00:00:00.000Z',
-      ));
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-older',
+          scannedAt: '2026-01-01T00:00:00.000Z',
+        ),
+      );
+      await dbUpsertContact(
+        db,
+        makeContactRow(
+          peerId: 'peer-newer',
+          scannedAt: '2026-02-01T00:00:00.000Z',
+        ),
+      );
 
       final results = await dbLoadActiveContacts(db);
       expect(results.length, 2);
@@ -271,8 +306,11 @@ void main() {
 
       await dbBlockContact(db, 'peer-block');
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-block']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-block'],
+      );
       expect(rows[0]['is_blocked'], 1);
       expect(rows[0]['blocked_at'], isNotNull);
     });
@@ -285,8 +323,11 @@ void main() {
 
       await dbUnblockContact(db, 'peer-unblock');
 
-      final rows = await db.query('contacts',
-          where: 'peer_id = ?', whereArgs: ['peer-unblock']);
+      final rows = await db.query(
+        'contacts',
+        where: 'peer_id = ?',
+        whereArgs: ['peer-unblock'],
+      );
       expect(rows[0]['is_blocked'], 0);
       expect(rows[0]['blocked_at'], isNull);
     });

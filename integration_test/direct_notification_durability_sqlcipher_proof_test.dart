@@ -86,7 +86,7 @@ Future<Set<String>> _schemaObjectNames(
 )).map((row) => row['name'] as String).toSet();
 
 Future<void> _expectV107Artifacts(sqlcipher.Database db) async {
-  expect(await _userVersion(db), 111);
+  expect(await _userVersion(db), 112);
   expect(await _cipherVersion(db), isNotEmpty);
   expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
     'event_id',
@@ -372,7 +372,7 @@ void main() {
   testWidgets(
     'TC-331-22 real SQLCipher v106 to current preserves typed direct and group authority across refusal and reopen',
     (_) async {
-      expect(currentIdentityDatabaseVersion, 111);
+      expect(currentIdentityDatabaseVersion, 112);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_notification_durability_sqlcipher_',

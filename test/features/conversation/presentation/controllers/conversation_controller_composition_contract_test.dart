@@ -49,12 +49,19 @@ const _controllerTestPaths = <String>[
 // non-DTR-15 parts of their pure-screen handoffs. The six sanctioned owner
 // expressions are canonicalized separately, so TC-294-09 is GREEN on HEAD and
 // remains GREEN when TC-294-01 transfers those expressions to controllers.
-const _expectedDirectApiFingerprint = 'be8e4510';
+// 360: repinned for exactly one added optional widget field on
+// `ConversationWired` — `directDeviceTrust`, the linked-device trust capability
+// handed to the contact profile this screen opens from its header avatar. No
+// handoff expression, controller, or pure-screen boundary changed.
+const _expectedDirectApiFingerprint = '27829d11';
 const _expectedGroupApiFingerprint = '2d8f881b';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).
-const _expectedDirectHandoffFingerprint = '81a18170';
+// 360: the `onAvatarTap` closure now forwards the linked-device trust
+// capability to `ContactProfileScreen.open`, which requires a non-null
+// capability. Nothing else in the handoff changed and no owner moved.
+const _expectedDirectHandoffFingerprint = '2d3651bf';
 const _expectedGroupHandoffFingerprint = '74b2fe80';
 
 String _compact(String source) => source.replaceAll(RegExp(r'\s+'), ' ').trim();

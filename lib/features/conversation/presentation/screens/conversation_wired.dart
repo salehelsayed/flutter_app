@@ -49,6 +49,7 @@ import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/core/utils/text_sanitizer.dart';
+import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/application/block_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
@@ -480,6 +481,16 @@ class ConversationWired extends StatefulWidget {
   /// list's stable `msg-<id>` keys.
   final Future<void> Function(String messageId)? revealConversationMessageFn;
 
+  /// 360: the exact linked-device trust authority handed to the contact
+  /// profile this screen opens from the header avatar.
+  ///
+  /// Optional here (the production composition root supplies the real
+  /// database-backed capability) but REQUIRED and non-null on
+  /// [ContactProfileScreen]. Left null — bare pumps and tests — the profile
+  /// receives the inert [UnavailableDirectContactDeviceTrust], which reports an
+  /// empty uninitialized roster and refuses every decision.
+  final DirectContactDeviceTrustCapability? directDeviceTrust;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -534,6 +545,7 @@ class ConversationWired extends StatefulWidget {
     this.sharedMediaLibraryRouteBuilder,
     this.directMediaBatchForwardPickerLauncher,
     this.revealConversationMessageFn,
+    this.directDeviceTrust,
   });
 
   @override
@@ -7330,8 +7342,13 @@ class _ConversationWiredState extends State<ConversationWired>
           isBlocked: _contact.isBlocked,
           onUnblock: _onUnblock,
           onOverflow: widget.contactRepo != null ? _onOverflow : null,
-          onAvatarTap: () =>
-              ContactProfileScreen.open(context, contact: _contact),
+          onAvatarTap: () => ContactProfileScreen.open(
+            context,
+            contact: _contact,
+            directDeviceTrust:
+                widget.directDeviceTrust ??
+                const UnavailableDirectContactDeviceTrust(),
+          ),
           isLoadingMore: _isLoadingMore,
           hasMoreOlderMessages: _hasMoreOlderMessages,
           initialLoadDone: _initialLoadDone,

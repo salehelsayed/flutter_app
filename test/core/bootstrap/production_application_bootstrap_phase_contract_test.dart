@@ -6,6 +6,8 @@ import 'package:analyzer/dart/ast/visitor.dart';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
+import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _productionPath =
@@ -1118,6 +1120,145 @@ void main() {
       'directMediaBlobDrainMayDownloadIncomingParent('.allMatches(production),
       hasLength(1),
     );
+  });
+
+  group('TC-360-01a role-aware deferred runtime start', () {
+    LinkedInstallationAuthoritySnapshot snapshot(
+      LinkedInstallationDisposition disposition,
+    ) {
+      return LinkedInstallationAuthoritySnapshot(
+        disposition: disposition,
+        credential: disposition == LinkedInstallationDisposition.active
+            ? const LinkedTransportCredential(
+                state: LinkedTransportCredentialState.active,
+                accountPeerId: 'account-peer',
+                accountPublicKey: 'account-public-key',
+                deviceId: 'installation-1',
+                transportPeerId: 'transport-peer',
+                transportPublicKey: 'transport-public-key',
+                transportPrivateKey: 'transport-private-key',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                activatedAt: '2026-01-01T00:00:00.000Z',
+              )
+            : null,
+        failClosedReason:
+            disposition == LinkedInstallationDisposition.failClosed
+            ? 'corrupt_credential'
+            : null,
+      );
+    }
+
+    test('TC-360-01a linked-secondary transport identity is distinct stable '
+        'and fail-closed', () async {
+      var primaryStarts = 0;
+      var linkedFoundationStarts = 0;
+
+      RoleAwareDeferredRuntimeStart build(
+        LinkedInstallationDisposition disposition,
+      ) {
+        return RoleAwareDeferredRuntimeStart(
+          loadLinkedAuthority: () async => snapshot(disposition),
+          startPrimaryRuntimeServices: () async {
+            primaryStarts += 1;
+            return true;
+          },
+          startLinkedFoundationPrerequisites: () async {
+            linkedFoundationStarts += 1;
+            return true;
+          },
+        );
+      }
+
+      // ── Ordinary primary keeps the incumbent full runtime startup. ──
+      final primary = build(LinkedInstallationDisposition.primary);
+      expect(await primary.start(), isTrue);
+      expect(primaryStarts, 1);
+      expect(linkedFoundationStarts, 0);
+      expect(
+        primary.lastOutcome,
+        RoleAwareRuntimeStartOutcome.primaryRuntimeStarted,
+      );
+
+      // ── Active linked secondary starts ONLY the foundation prerequisites
+      // and calls generic runtime startup ZERO times.
+      //
+      // Firebase/push registration, the listener fleet, contact and
+      // key-exchange retry, group recovery, message retry and inbox drain all
+      // assume a single primary installation on one account mailbox. Plan 361
+      // makes them device-aware; until then they must not run here. ──
+      primaryStarts = 0;
+      linkedFoundationStarts = 0;
+      final linked = build(LinkedInstallationDisposition.active);
+      expect(await linked.start(), isTrue);
+      expect(
+        primaryStarts,
+        0,
+        reason: 'generic runtime startup must run zero times in linked mode',
+      );
+      expect(linkedFoundationStarts, 1);
+      expect(
+        linked.lastOutcome,
+        RoleAwareRuntimeStartOutcome.linkedFoundationStarted,
+      );
+
+      // ── Partial or fail-closed authority starts NEITHER path. ──
+      for (final disposition in const <LinkedInstallationDisposition>[
+        LinkedInstallationDisposition.awaitingCredential,
+        LinkedInstallationDisposition.preparing,
+        LinkedInstallationDisposition.failClosed,
+      ]) {
+        primaryStarts = 0;
+        linkedFoundationStarts = 0;
+        final refused = build(disposition);
+        expect(await refused.start(), isFalse, reason: disposition.name);
+        expect(primaryStarts, 0, reason: disposition.name);
+        expect(linkedFoundationStarts, 0, reason: disposition.name);
+        expect(
+          refused.lastOutcome,
+          RoleAwareRuntimeStartOutcome.refused,
+          reason: disposition.name,
+        );
+      }
+
+      // ── An unreadable authority is fail-closed, never "assume primary".
+      primaryStarts = 0;
+      linkedFoundationStarts = 0;
+      final throwing = RoleAwareDeferredRuntimeStart(
+        loadLinkedAuthority: () async => throw StateError('keystore down'),
+        startPrimaryRuntimeServices: () async {
+          primaryStarts += 1;
+          return true;
+        },
+        startLinkedFoundationPrerequisites: () async {
+          linkedFoundationStarts += 1;
+          return true;
+        },
+      );
+      expect(await throwing.start(), isFalse);
+      expect(primaryStarts, 0);
+      expect(linkedFoundationStarts, 0);
+
+      // ── The decision is wired PRE-ROUTER: production bootstrap hands the
+      // role-aware owner to the one unconditional `deferredRuntimeStartup`
+      // callback `MyApp.initState` invokes. Deciding later, at navigation
+      // time, would be a race — the deferred start has already fired. ──
+      final productionSource = File(_productionPath).readAsStringSync();
+      expect(
+        productionSource,
+        contains('deferredRuntimeStartup: roleAwareDeferredRuntimeStart.start'),
+      );
+      expect(
+        productionSource,
+        isNot(contains('deferredRuntimeStartup: startLiveServicesIfAllowed')),
+      );
+      expect(
+        File(_applicationRootPath).readAsStringSync(),
+        contains('startRuntime: widget.deferredRuntimeStartup'),
+        reason:
+            'ApplicationRoot keeps its incumbent unconditional callback; only '
+            'what it delegates to changed',
+      );
+    });
   });
 }
 

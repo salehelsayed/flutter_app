@@ -38,4 +38,11 @@
 // 347: DB v111 adds independent exact-blob custody plus nullable manifest hash
 // and earliest-expiry bindings on v108. Historical rows are not promoted, and
 // v111 remains a one-way schema floor.
-const int currentIdentityDatabaseVersion = 111;
+// 360: DB v112 adds the authenticated remote-contact linked-device roster
+// (`direct_contact_device_bindings` + per-contact roster metadata). Legacy
+// canonical contact targets are deliberately NOT materialized as bindings, so
+// the historical backfill is empty and pre-initialization resolution is the
+// unchanged ContactModel peer/ML-KEM. v112 remains a one-way schema floor; the
+// installation's own linked role/transport credential are device-local secure
+// records and are absent from this schema and from every migration bundle.
+const int currentIdentityDatabaseVersion = 112;

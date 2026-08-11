@@ -72,8 +72,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 111);
-      expect(await _userVersion(db), 111);
+      expect(currentIdentityDatabaseVersion, 112);
+      expect(await _userVersion(db), 112);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -82,9 +82,10 @@ void main() {
         expect(entries, hasLength(1));
         expect(entries.single.name, '111_direct_media_blob_custody');
         expect(entries.single.run, same(runDirectMediaBlobCustodyMigration));
-        expect(registry.last, same(entries.single));
         final index110 = registry.indexWhere((entry) => entry.version == 110);
         expect(registry.indexOf(entries.single), index110 + 1);
+        // 360: v112 now follows v111, so v111 is no longer the last entry.
+        expect(registry[registry.indexOf(entries.single) + 1].version, 112);
       }
 
       await _expectExactSchema(db);
@@ -123,7 +124,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 111);
+      expect(await _userVersion(db), 112);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,
@@ -153,7 +154,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 111);
+      expect(await _userVersion(db), 112);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,

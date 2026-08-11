@@ -14,6 +14,7 @@
 //        [-d <primary>,<sibling>]
 //        [--scenario invite_reliability]
 //        [--scenario invite_send_latency --mode baseline|closure]
+//        [--scenario direct_linked_device_addressing -d <accountB,linkedA>]
 // Relay: defaults to the prod relay unless MKNOON_RELAY_ADDRESSES is set.
 
 import 'dart:async';
@@ -87,6 +88,13 @@ Future<Process> _startRole({
     '--dart-define=MD004_RUN_ID=$runId',
     '--dart-define=MD004_SCENARIO=${options.scenario}',
     if (options.mode != null) '--dart-define=MD004_MODE=${options.mode}',
+    // 360: the direct linked-device selector is passed to THIS scenario only.
+    // `MKNOON_ENABLE_MULTI_DEVICE_SYNC` stays false — that flag gates the group
+    // same-user convergence build, which Plan 360 neither implements nor
+    // proves, and enabling it here would activate sibling-device admission and
+    // group key continuity behind an unrelated proof.
+    if (options.scenario == directLinkedDeviceAddressingScenario)
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true',
     '--dart-define=E2E_DB_NAME=${options.scenario}_${runId}_$role.db',
     '--dart-define=MKNOON_RELAY_ADDRESSES=$relayAddresses',
     '-d',

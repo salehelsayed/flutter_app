@@ -1,20 +1,15 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
+import '../db_write_transaction.dart';
+import 'direct_contact_device_bindings_db_helpers.dart';
 
 /// Loads all contacts from the database.
 Future<List<Map<String, Object?>>> dbLoadAllContacts(Database db) async {
-  emitFlowEvent(
-    layer: 'DB',
-    event: 'CONTACTS_DB_LOAD_ALL_START',
-    details: {},
-  );
+  emitFlowEvent(layer: 'DB', event: 'CONTACTS_DB_LOAD_ALL_START', details: {});
 
   try {
-    final results = await db.query(
-      'contacts',
-      orderBy: 'scanned_at DESC',
-    );
+    final results = await db.query('contacts', orderBy: 'scanned_at DESC');
 
     emitFlowEvent(
       layer: 'DB',
@@ -94,7 +89,9 @@ Future<void> dbUpsertContact(Database db, Map<String, Object?> row) async {
     emitFlowEvent(
       layer: 'DB',
       event: 'CONTACTS_DB_UPSERT_SUCCESS',
-      details: {'peerId': peerId.length > 10 ? peerId.substring(0, 10) : peerId},
+      details: {
+        'peerId': peerId.length > 10 ? peerId.substring(0, 10) : peerId,
+      },
     );
   } catch (e) {
     emitFlowEvent(
@@ -107,6 +104,17 @@ Future<void> dbUpsertContact(Database db, Map<String, Object?> row) async {
 }
 
 /// Deletes a contact by peer ID.
+///
+/// 360: this is the EXACT contact-deletion owner, so it also removes that
+/// contact's linked-device roster metadata and bindings — in ONE transaction,
+/// roster first, contact last.
+///
+/// The v112 roster deliberately declares no FOREIGN KEY to `contacts`, because
+/// ordinary contact upsert (`dbUpsertContact`) uses SQLite REPLACE semantics: a
+/// cascade would silently destroy explicitly-verified device authority every
+/// time the same contact re-announced their ML-KEM key. Deleting here — and
+/// only here — is what keeps routine reannounce lossless while a real deletion
+/// leaves nothing behind.
 Future<void> dbDeleteContact(Database db, String peerId) async {
   emitFlowEvent(
     layer: 'DB',
@@ -115,11 +123,10 @@ Future<void> dbDeleteContact(Database db, String peerId) async {
   );
 
   try {
-    await db.delete(
-      'contacts',
-      where: 'peer_id = ?',
-      whereArgs: [peerId],
-    );
+    await dbWriteTransaction<void>(db, (txn) async {
+      await dbDeleteDirectContactDeviceRoster(txn, peerId);
+      await txn.delete('contacts', where: 'peer_id = ?', whereArgs: [peerId]);
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -425,7 +432,11 @@ Future<void> dbDismissIntroBanner(Database db, String peerId) async {
 }
 
 /// Sets the intros_sent_at timestamp and auto-dismisses the banner.
-Future<void> dbSetIntrosSentAt(Database db, String peerId, String timestamp) async {
+Future<void> dbSetIntrosSentAt(
+  Database db,
+  String peerId,
+  String timestamp,
+) async {
   emitFlowEvent(
     layer: 'DB',
     event: 'CONTACTS_DB_SET_INTROS_SENT_AT_START',

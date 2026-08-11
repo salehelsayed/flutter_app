@@ -6,6 +6,7 @@ import '../../../../core/utils/flow_event_emitter.dart';
 import '../../../identity/domain/repositories/identity_repository.dart';
 import '../../../settings/domain/models/background_preference.dart';
 import '../../application/build_qr_payload_use_case.dart';
+import '../../application/direct_linked_device_qr.dart';
 import 'qr_display_screen.dart';
 
 /// Internal state enum for QRDisplayWired
@@ -32,6 +33,16 @@ class QRDisplayWired extends StatefulWidget {
   final VoidCallback? onScanPressed;
   final BackgroundPreference backgroundPreference;
 
+  /// 360: when non-null this screen renders the DEDICATED dual-signed
+  /// linked-device binding document instead of the legacy contact QR.
+  ///
+  /// Supplied only by the explicit linked setup/status route. Every ordinary
+  /// caller leaves it null and gets the incumbent contact QR byte-for-byte —
+  /// the two documents are never mixed, and no optional field was added to the
+  /// legacy payload, so an old parser still rejects the device document
+  /// outright rather than half-reading it.
+  final DirectLinkedDeviceQrSource? linkedDeviceQrSource;
+
   const QRDisplayWired({
     super.key,
     required this.repo,
@@ -39,6 +50,7 @@ class QRDisplayWired extends StatefulWidget {
     required this.onClose,
     this.onScanPressed,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.linkedDeviceQrSource,
   });
 
   @override
@@ -97,6 +109,46 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           dataToSign: dataToSign,
           privateKey: privateKey,
         );
+      }
+
+      final linkedDeviceQrSource = widget.linkedDeviceQrSource;
+      if (linkedDeviceQrSource != null) {
+        final (linkedResult, linkedQrString) = await buildDirectLinkedDeviceQr(
+          linkedAuthority: await linkedDeviceQrSource.loadAuthority(),
+          accountPeerId: identity.peerId,
+          accountPublicKey: identity.publicKey,
+          accountPrivateKey: identity.privateKey,
+          deviceMlKemPublicKey: identity.mlKemPublicKey,
+          callSign: jsSign,
+          selector: linkedDeviceQrSource.selector,
+        );
+        if (!mounted) return;
+        final linkedQrData = linkedQrString?.trim();
+        if (linkedResult == BuildDirectLinkedDeviceQrResult.success &&
+            linkedQrData != null &&
+            linkedQrData.isNotEmpty) {
+          setState(() {
+            _state = _QRDisplayState.success;
+            _qrData = linkedQrData;
+          });
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'QR_FL_SCREEN_DISPLAY',
+            details: {'document': 'direct_linked_device_binding'},
+          );
+        } else {
+          setState(() {
+            _state = _QRDisplayState.error;
+            _qrData = null;
+            _errorMessage = _unexpectedError();
+          });
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'QR_FL_SCREEN_ERROR',
+            details: {'reason': linkedResult.name},
+          );
+        }
+        return;
       }
 
       final (result, qrString) = await buildQRPayload(

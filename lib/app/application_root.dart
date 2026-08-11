@@ -12,6 +12,7 @@ import 'package:flutter_app/features/introduction/application/resolve_introducti
 import 'package:flutter_app/features/push/application/intro_accept_notification_open_flow.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
+import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
 import 'package:flutter_app/features/contact_request/data/repositories/contact_request_repository_impl.dart';
@@ -364,6 +365,14 @@ class MyApp extends StatefulWidget {
   final MediaAttachmentRepositoryImpl mediaAttachmentRepository;
 
   /// 235: production Delete-for-me coordinator (journal prepare + cleanup).
+  /// 360: the exact linked-device trust authority handed down to the contact
+  /// profile through the Orbit and Conversation hosts.
+  ///
+  /// Production supplies the real database-backed capability. Null in bare
+  /// pumps, where the profile falls back to the inert
+  /// `UnavailableDirectContactDeviceTrust`.
+  final DirectContactDeviceTrustCapability? directDeviceTrust;
+
   final GroupMediaDeleteForMeCoordinator groupMediaDeleteForMeCoordinator;
 
   /// 235: one bounded deletion-journal reconciliation pass; runs on resume
@@ -497,6 +506,7 @@ class MyApp extends StatefulWidget {
     required this.nearbyLocationService,
     required this.mediaAttachmentRepository,
     required this.groupMediaDeleteForMeCoordinator,
+    this.directDeviceTrust,
     required this.groupMediaDeletionCleanup,
     this.privateMediaLifecycleRecovery,
     this.directMediaBlobLocalCleanup,
@@ -1766,6 +1776,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       appShellController: widget.appShellController,
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
+        directDeviceTrust: widget.directDeviceTrust,
         groupMediaDeleteForMeCoordinator:
             widget.groupMediaDeleteForMeCoordinator,
         identityRepo: widget.repository,
@@ -1828,6 +1839,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       buildConversationRoute(
         builder: (_) => ConversationWired(
           contact: contact,
+          directDeviceTrust: widget.directDeviceTrust,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
           uploadRetryProjectionRepo: widget.messageRepository,

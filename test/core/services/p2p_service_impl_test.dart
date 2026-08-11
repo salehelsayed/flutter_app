@@ -7535,4 +7535,142 @@ void main() {
       },
     );
   });
+
+  group('TC-360-01a linked transport peer qualification', () {
+    late _FakeBridge bridge;
+    late InMemoryInboxStagingRepository inboxStagingRepository;
+
+    setUp(() {
+      bridge = _FakeBridge();
+      inboxStagingRepository = InMemoryInboxStagingRepository();
+    });
+
+    P2PServiceImpl buildService(String? Function() requiredTransportPeerId) {
+      return P2PServiceImpl(
+        bridge: bridge,
+        inboxStagingRepository: inboxStagingRepository,
+        requiredTransportPeerId: requiredTransportPeerId,
+      );
+    }
+
+    void stubStart({required String peerId}) {
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': peerId,
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+      bridge.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      bridge.whenCommand('node:stop', (_) => jsonEncode({'ok': true}));
+    }
+
+    test('TC-360-01a linked-secondary transport identity is distinct stable '
+        'and fail-closed', () async {
+      // ── Ordinary primary: no required peer, no qualification. ──
+      stubStart(peerId: 'primary-peer');
+      final primaryService = buildService(() => null);
+      addTearDown(primaryService.dispose);
+      expect(
+        await primaryService.startNode('cHJpdmF0ZWtleXRlc3Q=', 'primary-peer'),
+        isTrue,
+      );
+      expect(bridge.calledCommands, isNot(contains('node:stop')));
+
+      // ── Linked, matching peer: qualification passes and warm work runs. ──
+      bridge = _FakeBridge();
+      inboxStagingRepository = InMemoryInboxStagingRepository();
+      stubStart(peerId: 'transport-peer');
+      final matchingService = buildService(() => 'transport-peer');
+      addTearDown(matchingService.dispose);
+      expect(
+        await matchingService.startNode(
+          'cHJpdmF0ZWtleXRlc3Q=',
+          'transport-peer',
+        ),
+        isTrue,
+      );
+      expect(bridge.calledCommands, isNot(contains('node:stop')));
+
+      // ── Linked, MISMATCHED returned peer: the node is STOPPED and start
+      // reports failure, before any Dart warm/inbox/QR work can proceed.
+      //
+      // Continuing here would put this installation back on the account's
+      // shared relay mailbox while its contacts address a device peer nobody
+      // is listening on — the exact failure the linked role exists to
+      // prevent. ──
+      bridge = _FakeBridge();
+      inboxStagingRepository = InMemoryInboxStagingRepository();
+      stubStart(peerId: 'some-other-peer');
+      final mismatchedService = buildService(() => 'transport-peer');
+      addTearDown(mismatchedService.dispose);
+      expect(
+        await mismatchedService.startNode(
+          'cHJpdmF0ZWtleXRlc3Q=',
+          'transport-peer',
+        ),
+        isFalse,
+      );
+      expect(
+        bridge.calledCommands,
+        contains('node:stop'),
+        reason: 'a mismatched node must be stopped, not warmed',
+      );
+      expect(
+        bridge.calledCommands,
+        isNot(contains('inbox:retrieve')),
+        reason: 'no inbox work may run on an unqualified transport',
+      );
+
+      // ── Hot-restart resync path is qualified too: `node:start` reports
+      // "already started" and the peer comes from `node:status`. ──
+      bridge = _FakeBridge();
+      inboxStagingRepository = InMemoryInboxStagingRepository();
+      bridge.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': false,
+          'errorCode': 'ALREADY_STARTED',
+          'errorMessage': 'node already started',
+        }),
+      );
+      bridge.whenCommand(
+        'node:status',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': 'stale-hot-restart-peer',
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+      bridge.whenCommand('node:stop', (_) => jsonEncode({'ok': true}));
+      final hotRestartService = buildService(() => 'transport-peer');
+      addTearDown(hotRestartService.dispose);
+      expect(
+        await hotRestartService.startNode(
+          'cHJpdmF0ZWtleXRlc3Q=',
+          'transport-peer',
+        ),
+        isFalse,
+        reason:
+            'a node left running by a previous role must not be adopted by '
+            'a linked secondary just because it answered node:status',
+      );
+      expect(bridge.calledCommands, contains('node:status'));
+      expect(bridge.calledCommands, contains('node:stop'));
+    });
+  });
 }

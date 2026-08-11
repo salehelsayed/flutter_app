@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/identity/presentation/navigation/startup_route_transition.dart';
@@ -432,6 +433,91 @@ void main() {
         expect(restoreCalls, 0);
         expect(mlKemCalls, 0);
         expect(repo.savedIdentity, isNull);
+      },
+    );
+  });
+
+  group('TC-360-01a restricted linked setup route', () {
+    testWidgets(
+      'TC-360-01a linked-secondary transport identity is distinct stable '
+      'and fail-closed',
+      (tester) async {
+        const linkedEntry = Key('onboarding-link-this-device');
+
+        // ── Selector OFF (the default build): the restricted linked setup
+        // route does not exist at all, so no linked authority can be created
+        // from onboarding. ──
+        await tester.pumpWidget(
+          wrap(
+            IdentityChoiceWired(
+              repository: _FakeIdentityRepo(),
+              callIdentityGenerate: () async => <String, dynamic>{
+                'ok': true,
+                'identity': _fakeIdentityJson,
+              },
+              callIdentityRestore: (_) async => <String, dynamic>{'ok': true},
+              callMlKemKeygen: () async =>
+                  Map<String, dynamic>.from(_fakeMlKemResponse),
+              onNavigateToMain: (_) async {},
+              linkedDeviceSetupBuilder: (_) => const SizedBox.shrink(),
+              directLinkedDeviceSelector:
+                  const DirectLinkedDeviceSelector.disabled(),
+            ),
+          ),
+        );
+        await pumpPastAnimations(tester);
+        expect(find.byKey(linkedEntry), findsNothing);
+
+        // ── Selector ON but no builder wired: still nothing. Both conditions
+        // are required, so a partially-wired host cannot expose the route. ──
+        await tester.pumpWidget(
+          wrap(
+            IdentityChoiceWired(
+              repository: _FakeIdentityRepo(),
+              callIdentityGenerate: () async => <String, dynamic>{
+                'ok': true,
+                'identity': _fakeIdentityJson,
+              },
+              callIdentityRestore: (_) async => <String, dynamic>{'ok': true},
+              callMlKemKeygen: () async =>
+                  Map<String, dynamic>.from(_fakeMlKemResponse),
+              onNavigateToMain: (_) async {},
+              directLinkedDeviceSelector:
+                  const DirectLinkedDeviceSelector.enabled(),
+            ),
+          ),
+        );
+        await pumpPastAnimations(tester);
+        expect(find.byKey(linkedEntry), findsNothing);
+
+        // ── Selector ON and builder wired: the restricted route is reachable
+        // and navigates to exactly that setup surface. ──
+        await tester.pumpWidget(
+          wrap(
+            IdentityChoiceWired(
+              repository: _FakeIdentityRepo(),
+              callIdentityGenerate: () async => <String, dynamic>{
+                'ok': true,
+                'identity': _fakeIdentityJson,
+              },
+              callIdentityRestore: (_) async => <String, dynamic>{'ok': true},
+              callMlKemKeygen: () async =>
+                  Map<String, dynamic>.from(_fakeMlKemResponse),
+              onNavigateToMain: (_) async {},
+              linkedDeviceSetupBuilder: (_) =>
+                  const Scaffold(body: Text('linked-device-setup-route')),
+              directLinkedDeviceSelector:
+                  const DirectLinkedDeviceSelector.enabled(),
+            ),
+          ),
+        );
+        await pumpPastAnimations(tester);
+        expect(find.byKey(linkedEntry), findsOneWidget);
+
+        await tester.tap(find.byKey(linkedEntry));
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 700));
+        expect(find.text('linked-device-setup-route'), findsOneWidget);
       },
     );
   });

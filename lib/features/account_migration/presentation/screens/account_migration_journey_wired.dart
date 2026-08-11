@@ -469,6 +469,11 @@ class _AccountMigrationJourneyWiredState
         return 'This Move Account QR was already used.';
       case MigrationExportAuthorizationResult.expired:
         return 'This Move Account QR has expired. Show a new code on the new phone.';
+      // 360: a linked secondary is a restricted role, not a second primary. It
+      // does not own the account, so it can never be a Move source.
+      case MigrationExportAuthorizationResult.linkedSecondaryInstallation:
+        return 'This device is set up as a linked device, so it cannot move '
+            'the account. Use the primary phone instead.';
     }
   }
 

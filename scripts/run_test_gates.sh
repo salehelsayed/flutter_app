@@ -235,6 +235,11 @@ readonly ONE_TO_ONE_TESTS=(
   # 347: app-layer Android custody action proof lives outside the core auto-glob.
   "test/debug/android_direct_media_blob_custody_e2e_test.dart"
   "test/core/database/migrations/111_direct_media_blob_custody_test.dart"
+  # 360 (GAP-N01): the two headline paths for the direct linked-device
+  # addressing foundation — the v112 remote-contact roster migration and the
+  # real-SQLite QR -> stage -> trust -> resolve foundation proof.
+  "test/core/database/migrations/112_direct_linked_device_addressing_test.dart"
+  "test/features/contacts/integration/direct_linked_device_addressing_foundation_test.dart"
   "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart"
   "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"
   "test/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case_test.dart"

@@ -122,6 +122,7 @@ void main() {
   Widget buildScanner({
     ShareIntentService? shareIntentService,
     Future<void> Function(String qrData)? onMigrationQrScanned,
+    Future<void> Function(String qrData)? onDirectLinkedDeviceQrScanned,
     AccountMigrationTransferRunFn? accountMigrationRunTransfer,
     DownloadProfilePictureFn? downloadProfilePictureFn,
     ThemeData? themeOverride,
@@ -148,6 +149,7 @@ void main() {
         feedClearedRepository: InMemoryFeedClearedRepository(),
         ownPeerId: ownPeerId,
         onMigrationQrScanned: onMigrationQrScanned,
+        onDirectLinkedDeviceQrScanned: onDirectLinkedDeviceQrScanned,
         accountMigrationRunTransfer: accountMigrationRunTransfer,
         downloadProfilePictureFn:
             downloadProfilePictureFn ??
@@ -472,6 +474,71 @@ void main() {
     final feedWired = tester.widget<FeedWired>(find.byType(FeedWired));
     expect(feedWired.accountMigrationRunTransfer, same(runner));
   });
+
+  testWidgets(
+    'TC-360-02a dual-signed linked-device QR stages only exact known-contact '
+    'pending authority',
+    (tester) async {
+      // A linked-device document is a different protocol with different
+      // authority. Routing it to the legacy contact parser would let a
+      // document that parser was never designed to authenticate reach a
+      // success path that mutates contact and ML-KEM state.
+      final linkedDocument = jsonEncode(<String, Object?>{
+        'mknoon': <String, Object?>{
+          'accountSignature': 'account-signature',
+          'body': <String, Object?>{
+            'accountPeerId':
+                '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj',
+            'accountPublicKey': 'xXheGGW3CJOK/4Fh1XMAZJZmOxqhCDTjltxWaGmixmo=',
+            'deviceId': 'installation-1',
+            'deviceMlKemPublicKey': 'device-mlkem',
+            'issuedAt': '2026-08-11T12:00:00.000Z',
+            'transportPeerId':
+                '12D3KooWPCyWnZCXR3VGdrQjLr5d8TBaAHD956XZvo6xoCXYB5AR',
+            'transportPublicKey':
+                'xvKsVZiXDHljNxTT61w017/D6S2ljHNUs3mW2aSvOrI=',
+          },
+          'purpose': 'direct_linked_device_binding',
+          'transportSignature': 'transport-signature',
+          'version': 1,
+        },
+      });
+
+      // ── Routed to the trust flow when that route supplied a handler. ──
+      final dispatched = <String>[];
+      await tester.pumpWidget(
+        buildScanner(
+          onDirectLinkedDeviceQrScanned: (raw) async => dispatched.add(raw),
+        ),
+      );
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(linkedDocument);
+      await pumpFrames(tester);
+
+      expect(dispatched, <String>[linkedDocument]);
+      expect(await contactRepository.getContactCount(), 0);
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
+      expect(find.text('Added to your circle!'), findsNothing);
+
+      // ── Refused outright from an ordinary "scan a friend's code" entry
+      // point, which supplies no handler. It must NOT fall through to the
+      // contact parser. ──
+      await tester.pumpWidget(buildScanner());
+      await pumpFrames(tester);
+      tester
+          .widget<QRScannerScreen>(find.byType(QRScannerScreen))
+          .onScanned(linkedDocument);
+      await pumpFrames(tester);
+
+      expect(await contactRepository.getContactCount(), 0);
+      expect(bridge.commandLog, isNot(contains('payload.verify')));
+      expect(bridge.commandLog, isNot(contains('contactrequest.encrypt')));
+      expect(find.text('Added to your circle!'), findsNothing);
+    },
+  );
 }
 
 String _buildMigrationQrData({

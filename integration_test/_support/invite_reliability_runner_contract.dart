@@ -16,6 +16,36 @@ const int inviteSendLatencyObservationWindowMs = 30000;
 const String inviteReliabilityScenario = 'invite_reliability';
 const String inviteSendLatencyScenario = 'invite_send_latency';
 
+/// 360 / TC-360-04a: the registered Android linked-device addressing scenario.
+///
+/// Availability-bounded two-target pair. Target B is account A's linked
+/// SECONDARY; target A is a different account that already stores A's logical
+/// account as a legacy contact fixture. The real primary account-A device does
+/// not need to run.
+const String directLinkedDeviceAddressingScenario =
+    'direct_linked_device_addressing';
+
+/// The complete set of scenarios this runner may execute.
+///
+/// Exhaustive on purpose. An unregistered scenario must be a TERMINAL error in
+/// both the host parser and the device harness: silently falling through to the
+/// legacy `same_user` branch would run a completely different proof and report
+/// it as a PASS for the scenario the caller actually asked for.
+const Set<String> inviteReliabilityRunnerScenarios = <String>{
+  inviteReliabilityScenario,
+  inviteSendLatencyScenario,
+  directLinkedDeviceAddressingScenario,
+};
+
+/// Name of the scenario-specific ready artifact both roles converge on.
+String directLinkedDeviceAddressingReadyFileName(String runId, String role) =>
+    'md004_${runId}_direct_linked_device_addressing_$role.json';
+
+/// Schema of the [directLinkedDeviceAddressingReadyFileName] artifact.
+const String directLinkedDeviceAddressingReadySchema =
+    'mknoon.tc360.direct-linked-device-addressing-ready';
+const int directLinkedDeviceAddressingReadySchemaVersion = 1;
+
 const Set<String> inviteSendLatencyModes = <String>{'baseline', 'closure'};
 const int inviteSendLatencyClosurePreFanoutMedianCeilingMs = 950;
 const int inviteSendLatencyClosureCallerMedianCeilingMs = 1300;
@@ -401,9 +431,35 @@ final class InviteReliabilityRunnerArguments {
     }
 
     final scenario = scenarioValue ?? inviteReliabilityScenario;
-    if (scenario != inviteReliabilityScenario &&
-        scenario != inviteSendLatencyScenario) {
+    if (!inviteReliabilityRunnerScenarios.contains(scenario)) {
       throw ArgumentError('Unsupported scenario: $scenario');
+    }
+
+    // 360: the linked-device scenario is mode-free and needs an explicit
+    // two-target pair. Inheriting a default device list would let it silently
+    // run against whatever happened to be attached, which is not a proof.
+    if (scenario == directLinkedDeviceAddressingScenario) {
+      if (modeValue != null) {
+        throw ArgumentError(
+          '--mode is not supported for $directLinkedDeviceAddressingScenario',
+        );
+      }
+      if (parsedDeviceIds == null) {
+        throw ArgumentError(
+          'Missing explicit two-device IDs for '
+          '$directLinkedDeviceAddressingScenario',
+        );
+      }
+      if (parsedDeviceIds.length != 2) {
+        throw ArgumentError(
+          'Device list must contain exactly two non-empty IDs',
+        );
+      }
+      return InviteReliabilityRunnerArguments(
+        scenario: scenario,
+        mode: null,
+        deviceIds: parsedDeviceIds,
+      );
     }
 
     if (scenario == inviteSendLatencyScenario) {

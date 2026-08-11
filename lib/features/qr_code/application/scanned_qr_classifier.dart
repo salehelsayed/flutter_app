@@ -13,3 +13,7 @@ bool isAccountMigrationPairingQr(String qrData) {
     return false;
   }
 }
+
+/// 360: handler for a scanned dual-signed linked-device binding document.
+typedef DirectLinkedDeviceQrScannedHandler =
+    Future<void> Function(String qrData);

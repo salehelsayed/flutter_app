@@ -1,11 +1,15 @@
+import 'dart:async';
 import 'dart:math';
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/ring_avatar_generator.dart';
 import 'package:flutter_app/core/widgets/quiet_confirm.dart';
+import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
@@ -30,9 +34,19 @@ class ContactProfileScreen extends StatefulWidget {
   /// null (e.g. opened from inside the conversation already) no button shows.
   final VoidCallback? onMessage;
 
+  /// 360: the exact linked-device trust authority for this contact.
+  ///
+  /// REQUIRED and non-null on purpose. This screen is the only surface that
+  /// admits or withdraws a linked device, so a construction site that forgot
+  /// to wire it would silently ship a profile where devices can be staged but
+  /// never reviewed. Making it required moves that failure from runtime to the
+  /// analyzer, which is why no source-substring wiring test is needed.
+  final DirectContactDeviceTrustCapability directDeviceTrust;
+
   const ContactProfileScreen({
     super.key,
     required this.contact,
+    required this.directDeviceTrust,
     this.onMessage,
   });
 
@@ -41,12 +55,16 @@ class ContactProfileScreen extends StatefulWidget {
   static Future<void> open(
     BuildContext context, {
     required ContactModel contact,
+    required DirectContactDeviceTrustCapability directDeviceTrust,
     VoidCallback? onMessage,
   }) {
     return Navigator.of(context).push<void>(
       buildConversationRoute(
-        builder: (_) =>
-            ContactProfileScreen(contact: contact, onMessage: onMessage),
+        builder: (_) => ContactProfileScreen(
+          contact: contact,
+          directDeviceTrust: directDeviceTrust,
+          onMessage: onMessage,
+        ),
       ),
     );
   }
@@ -60,17 +78,16 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
   late final AnimationController _entrance;
   late final AnimationController _orbit;
   late final Color _accent;
-  late final String? _safetyNumber;
+  String? _safetyNumber;
+  DirectContactDeviceRoster? _roster;
+  bool _decisionInFlight = false;
 
   @override
   void initState() {
     super.initState();
     _accent = RingAvatarGenerator.glowColorForPeerId(widget.contact.peerId);
-    _safetyNumber = ContactSafetyNumber.build(
-      peerId: widget.contact.peerId,
-      publicKey: widget.contact.publicKey,
-      mlKemPublicKey: widget.contact.mlKemPublicKey,
-    );
+    _safetyNumber = _buildSafetyNumber(null);
+    unawaited(_refreshRoster());
     _entrance = AnimationController(
       vsync: this,
       duration: const Duration(milliseconds: 950),
@@ -92,6 +109,83 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
     await Clipboard.setData(ClipboardData(text: value));
     if (!mounted) return;
     showQuietConfirm(context, confirmation);
+  }
+
+  /// Recomputes the displayed safety number from the current roster.
+  ///
+  /// Before the roster is initialized this is byte-identical to the incumbent
+  /// `v1` account-level number, so an unreviewed contact's displayed security
+  /// string does not move just because Plan 360 shipped. After initialization
+  /// it is `v2` — including when zero devices remain active, so a revocation
+  /// is visible rather than silently reverting to the pre-decision digits.
+  String? _buildSafetyNumber(DirectContactDeviceRoster? roster) {
+    final contact = widget.contact;
+    if (roster == null || !roster.metadata.rosterInitialized) {
+      return ContactSafetyNumber.build(
+        peerId: contact.peerId,
+        publicKey: contact.publicKey,
+        mlKemPublicKey: contact.mlKemPublicKey,
+      );
+    }
+    final legacyMlKem = contact.mlKemPublicKey?.trim() ?? '';
+    return ContactSafetyNumber.build(
+      peerId: contact.peerId,
+      publicKey: contact.publicKey,
+      mlKemPublicKey: contact.mlKemPublicKey,
+      rosterInitialized: true,
+      deviceFingerprints: <String>[
+        if (!roster.metadata.legacyTargetRevoked && legacyMlKem.isNotEmpty)
+          computeDirectContactLegacyTargetFingerprint(
+            contactAccountPeerId: contact.peerId,
+            accountSigningPublicKey: contact.publicKey,
+            legacyMlKemPublicKey: legacyMlKem,
+          ),
+        for (final binding in roster.activeBindings) binding.bindingFingerprint,
+      ],
+    );
+  }
+
+  Future<void> _refreshRoster() async {
+    try {
+      final roster = await widget.directDeviceTrust.loadRoster(
+        widget.contact.peerId,
+      );
+      if (!mounted) return;
+      setState(() {
+        _roster = roster;
+        _safetyNumber = _buildSafetyNumber(roster);
+      });
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_LINKED_DEVICE_PROFILE_ROSTER_LOAD_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+  }
+
+  /// Runs one trust decision and re-reads the roster.
+  ///
+  /// The re-read is unconditional — including on refusal — because a refusal
+  /// means the screen's view was stale, and continuing to render the stale row
+  /// would invite the user to retry a decision that can never succeed.
+  Future<void> _runDecision(Future<bool> Function() decide) async {
+    if (_decisionInFlight) return;
+    setState(() => _decisionInFlight = true);
+    try {
+      await decide();
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_LINKED_DEVICE_PROFILE_DECISION_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    } finally {
+      await _refreshRoster();
+      if (mounted) {
+        setState(() => _decisionInFlight = false);
+      }
+    }
   }
 
   /// Staggered fade + slide-up reveal driven by [_entrance].
@@ -169,9 +263,13 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
                         _reveal(
                           start: 0.40,
                           end: 0.80,
-                          child: _buildPeerIdCard(readable, l10n, contact.peerId),
+                          child: _buildPeerIdCard(
+                            readable,
+                            l10n,
+                            contact.peerId,
+                          ),
                         ),
-                        if (_safetyNumber != null) ...[
+                        if (_safetyNumber case final safetyNumber?) ...[
                           const SizedBox(height: 14),
                           _reveal(
                             start: 0.50,
@@ -179,9 +277,14 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
                             child: _buildSafetyCard(
                               readable,
                               l10n,
-                              _safetyNumber,
+                              safetyNumber,
                             ),
                           ),
+                        ],
+                        if (_buildLinkedDevicesCard(readable)
+                            case final card?) ...[
+                          const SizedBox(height: 14),
+                          _reveal(start: 0.54, end: 0.92, child: card),
                         ],
                         const SizedBox(height: 14),
                         _reveal(
@@ -401,6 +504,114 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
               color: readable.textMuted,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  /// The linked-device authority card, or null when this contact has no
+  /// roster at all (no bindings and no recorded decision).
+  ///
+  /// Rendering nothing in that case is deliberate: a contact nobody has ever
+  /// linked a device for should look exactly as it did before Plan 360.
+  Widget? _buildLinkedDevicesCard(BackgroundReadableColors readable) {
+    final roster = _roster;
+    if (roster == null ||
+        (roster.bindings.isEmpty && !roster.metadata.rosterInitialized)) {
+      return null;
+    }
+    final contact = widget.contact;
+    final legacyMlKem = contact.mlKemPublicKey?.trim() ?? '';
+
+    return _GlassCard(
+      readable: readable,
+      accent: _accent,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _CardLabel(
+            icon: Icons.devices_rounded,
+            label: 'Linked devices',
+            accent: _accent,
+          ),
+          const SizedBox(height: 10),
+          _LinkedDeviceFingerprintRow(
+            readable: readable,
+            title: 'Account',
+            fingerprint: contact.peerId,
+          ),
+          if (roster.metadata.rosterInitialized && legacyMlKem.isNotEmpty)
+            _LinkedDeviceFingerprintRow(
+              readable: readable,
+              title: roster.metadata.legacyTargetRevoked
+                  ? 'Primary device (revoked)'
+                  : 'Primary device',
+              fingerprint: computeDirectContactLegacyTargetFingerprint(
+                contactAccountPeerId: contact.peerId,
+                accountSigningPublicKey: contact.publicKey,
+                legacyMlKemPublicKey: legacyMlKem,
+              ),
+              action: roster.metadata.legacyTargetRevoked
+                  ? null
+                  : _LinkedDeviceAction(
+                      label: 'Revoke',
+                      enabled: !_decisionInFlight,
+                      onPressed: () => _runDecision(
+                        () => widget.directDeviceTrust.revokeLegacyTarget(
+                          contactAccountPeerId: contact.peerId,
+                          expectedAccountSigningPublicKey: contact.publicKey,
+                          expectedLegacyPeerId: contact.peerId,
+                          expectedLegacyMlKemPublicKey: legacyMlKem,
+                        ),
+                      ),
+                    ),
+            ),
+          for (final binding in roster.bindings)
+            _LinkedDeviceFingerprintRow(
+              readable: readable,
+              title: 'Device ${binding.deviceId} · ${binding.state.name}',
+              fingerprint: binding.bindingFingerprint,
+              secondary: binding.transportPeerId,
+              action: switch (binding.state) {
+                DirectContactDeviceBindingState.pending => _LinkedDeviceAction(
+                  label: 'Verify',
+                  enabled: !_decisionInFlight,
+                  onPressed: () => _runDecision(
+                    () => widget.directDeviceTrust.verifyDevice(
+                      contactAccountPeerId: contact.peerId,
+                      deviceId: binding.deviceId,
+                      expectedFingerprint: binding.bindingFingerprint,
+                      expectedAccountSigningPublicKey: contact.publicKey,
+                    ),
+                  ),
+                  secondaryLabel: 'Reject',
+                  onSecondaryPressed: () => _runDecision(
+                    () => widget.directDeviceTrust.rejectDevice(
+                      contactAccountPeerId: contact.peerId,
+                      deviceId: binding.deviceId,
+                      expectedFingerprint: binding.bindingFingerprint,
+                      expectedAccountSigningPublicKey: contact.publicKey,
+                    ),
+                  ),
+                ),
+                DirectContactDeviceBindingState.active => _LinkedDeviceAction(
+                  label: 'Revoke',
+                  enabled: !_decisionInFlight,
+                  onPressed: () => _runDecision(
+                    () => widget.directDeviceTrust.revokeDevice(
+                      contactAccountPeerId: contact.peerId,
+                      deviceId: binding.deviceId,
+                      expectedFingerprint: binding.bindingFingerprint,
+                      expectedAccountSigningPublicKey: contact.publicKey,
+                    ),
+                  ),
+                ),
+                // Rejected and revoked are terminal: no decision reactivates a
+                // device. Re-admission requires a fresh dual-signed QR.
+                DirectContactDeviceBindingState.rejected ||
+                DirectContactDeviceBindingState.revoked => null,
+              },
+            ),
         ],
       ),
     );
@@ -723,9 +934,7 @@ class _OrbitRingsPainter extends CustomPainter {
       final ring = Paint()
         ..style = PaintingStyle.stroke
         ..strokeWidth = 1.1
-        ..color = accent.withValues(
-          alpha: (isLight ? 0.22 : 0.16) - i * 0.03,
-        );
+        ..color = accent.withValues(alpha: (isLight ? 0.22 : 0.16) - i * 0.03);
       canvas.drawCircle(center, radii[i], ring);
     }
 
@@ -802,4 +1011,101 @@ class _BackdropPainter extends CustomPainter {
   @override
   bool shouldRepaint(covariant _BackdropPainter old) =>
       old.accent != accent || old.isLight != isLight || old.seed != seed;
+}
+
+/// One action pair offered for a linked-device row.
+class _LinkedDeviceAction {
+  const _LinkedDeviceAction({
+    required this.label,
+    required this.enabled,
+    required this.onPressed,
+    this.secondaryLabel,
+    this.onSecondaryPressed,
+  });
+
+  final String label;
+  final bool enabled;
+  final VoidCallback onPressed;
+  final String? secondaryLabel;
+  final VoidCallback? onSecondaryPressed;
+}
+
+/// One fingerprint row inside the linked-devices card.
+///
+/// The exact fingerprint is shown in full rather than truncated: it is the
+/// string two people read to each other out loud, and a truncated prefix is
+/// not what the binding was authenticated against.
+class _LinkedDeviceFingerprintRow extends StatelessWidget {
+  const _LinkedDeviceFingerprintRow({
+    required this.readable,
+    required this.title,
+    required this.fingerprint,
+    this.secondary,
+    this.action,
+  });
+
+  final BackgroundReadableColors readable;
+  final String title;
+  final String fingerprint;
+  final String? secondary;
+  final _LinkedDeviceAction? action;
+
+  @override
+  Widget build(BuildContext context) {
+    final action = this.action;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+              color: readable.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            fingerprint,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 11,
+              height: 1.4,
+              color: readable.textMuted,
+            ),
+          ),
+          if (secondary case final secondary?) ...[
+            const SizedBox(height: 2),
+            Text(
+              secondary,
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 11,
+                height: 1.4,
+                color: readable.textMuted,
+              ),
+            ),
+          ],
+          if (action != null)
+            Row(
+              children: [
+                TextButton(
+                  onPressed: action.enabled ? action.onPressed : null,
+                  child: Text(action.label),
+                ),
+                if (action.secondaryLabel case final secondaryLabel?)
+                  TextButton(
+                    onPressed: action.enabled
+                        ? action.onSecondaryPressed
+                        : null,
+                    child: Text(secondaryLabel),
+                  ),
+              ],
+            ),
+        ],
+      ),
+    );
+  }
 }

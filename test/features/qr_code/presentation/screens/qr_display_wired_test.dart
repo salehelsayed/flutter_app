@@ -1,4 +1,9 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
@@ -40,16 +45,26 @@ void main() {
     VoidCallback? onClose,
     BackgroundPreference backgroundPreference =
         BackgroundPreference.defaultBackground,
+    DirectLinkedDeviceQrSource? linkedDeviceQrSource,
   }) {
     final widget = MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: QRDisplayWired(
+        // A distinct key per (bridge, source) forces a fresh State so the
+        // payload is rebuilt instead of reusing the previous pump's result.
+        key: ValueKey<int>(
+          Object.hash(
+            identityHashCode(bridgeOverride ?? bridge),
+            identityHashCode(linkedDeviceQrSource),
+          ),
+        ),
         repo: repoOverride ?? repo,
         bridgeClient: bridgeOverride ?? bridge,
         onClose: onClose ?? () {},
         backgroundPreference: backgroundPreference,
+        linkedDeviceQrSource: linkedDeviceQrSource,
       ),
     );
     return widget;
@@ -228,6 +243,160 @@ void main() {
 
       expect(find.text('No Identity'), findsOneWidget);
       expect(find.text('Try Again'), findsNothing);
+    });
+
+    testWidgets('TC-360-02a dual-signed linked-device QR stages only exact '
+        'known-contact pending authority', (tester) async {
+      const accountPublicKey = 'xXheGGW3CJOK/4Fh1XMAZJZmOxqhCDTjltxWaGmixmo=';
+      const accountPeerId =
+          '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
+      const transportPublicKey = 'xvKsVZiXDHljNxTT61w017/D6S2ljHNUs3mW2aSvOrI=';
+      const transportPeerId =
+          '12D3KooWPCyWnZCXR3VGdrQjLr5d8TBaAHD956XZvo6xoCXYB5AR';
+
+      final linkedIdentity = IdentityModel(
+        peerId: accountPeerId,
+        publicKey: accountPublicKey,
+        privateKey: 'account-private-key',
+        mnemonic12: testIdentity.mnemonic12,
+        mlKemPublicKey: 'device-mlkem',
+        mlKemSecretKey: 'device-mlkem-secret',
+        username: 'Linked',
+        createdAt: testIdentity.createdAt,
+        updatedAt: testIdentity.updatedAt,
+      );
+
+      // ── Default (no source): the LEGACY contact QR, byte-for-byte. No
+      // optional field was added to it, so an old parser still reads it and
+      // still rejects the device document. ──
+      repo.seed(linkedIdentity);
+      bridge.responses['payload.sign'] = {
+        'ok': true,
+        'signature': 'legacy-sig',
+      };
+      await tester.pumpWidget(pumpQRDisplay(tester));
+      await tester.pump(const Duration(seconds: 1));
+      final legacyData = tester
+          .widget<QRDisplayScreen>(find.byType(QRDisplayScreen))
+          .qrData!;
+      final legacyPayload = jsonDecode(legacyData) as Map<String, dynamic>;
+      expect(legacyPayload.keys.toSet(), <String>{
+        'ns',
+        'pk',
+        'rv',
+        'sig',
+        'ts',
+        'un',
+      });
+      expect(legacyPayload.containsKey('mknoon'), isFalse);
+      expect(isDirectLinkedDeviceQrDocument(legacyData), isFalse);
+
+      // ── The explicit linked setup/status route renders the DEDICATED
+      // dual-signed device document instead. ──
+      // FakeBridge answers `payload.sign` with one canned signature, so the
+      // DISTINCTNESS of the two signatures is proven in the foundation test
+      // (real key-derived signer). What this layer proves is the wiring: two
+      // sign calls, two DIFFERENT private keys, one identical signed body.
+      final linkedBridge = FakeBridge();
+      await tester.pumpWidget(
+        pumpQRDisplay(
+          tester,
+          bridgeOverride: linkedBridge,
+          linkedDeviceQrSource: DirectLinkedDeviceQrSource(
+            selector: const DirectLinkedDeviceSelector.enabled(),
+            loadAuthority: () async =>
+                const LinkedInstallationAuthoritySnapshot(
+                  disposition: LinkedInstallationDisposition.active,
+                  credential: LinkedTransportCredential(
+                    state: LinkedTransportCredentialState.active,
+                    accountPeerId: accountPeerId,
+                    accountPublicKey: accountPublicKey,
+                    deviceId: 'installation-1',
+                    transportPeerId: transportPeerId,
+                    transportPublicKey: transportPublicKey,
+                    transportPrivateKey: 'transport-private-key',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    activatedAt: '2026-01-01T00:00:00.000Z',
+                  ),
+                  failClosedReason: null,
+                ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 1));
+
+      final linkedData = tester
+          .widget<QRDisplayScreen>(find.byType(QRDisplayScreen))
+          .qrData!;
+      expect(isDirectLinkedDeviceQrDocument(linkedData), isTrue);
+      final envelope =
+          (jsonDecode(linkedData) as Map<String, dynamic>)['mknoon']
+              as Map<String, dynamic>;
+      expect(envelope['purpose'], directLinkedDeviceQrPurpose);
+      expect(envelope['version'], directLinkedDeviceQrVersion);
+      // TWO independent signatures over the SAME domain-separated body,
+      // produced by two DIFFERENT private keys.
+      final signRequests = linkedBridge.sentMessages
+          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+          .where((request) => request['cmd'] == 'payload.sign')
+          .map((request) => request['payload'] as Map<String, dynamic>)
+          .toList();
+      expect(signRequests, hasLength(2));
+      expect(signRequests[0]['privateKey'], 'account-private-key');
+      expect(signRequests[1]['privateKey'], 'transport-private-key');
+      expect(
+        signRequests[0]['data'],
+        signRequests[1]['data'],
+        reason: 'both keys sign the SAME canonical body',
+      );
+      expect(
+        signRequests[0]['data'] as String,
+        startsWith(directLinkedDeviceQrSigningDomain),
+        reason:
+            'the domain separator is what stops either signature being '
+            'replayed against the legacy contact QR',
+      );
+      expect(envelope['accountSignature'], isA<String>());
+      expect(envelope['transportSignature'], isA<String>());
+      // The legacy contact QR's required flat fields are absent, so an old
+      // parser rejects this document rather than half-reading it.
+      for (final legacyField in const <String>['pk', 'ns', 'rv', 'ts', 'sig']) {
+        expect(
+          (jsonDecode(linkedData) as Map<String, dynamic>).containsKey(
+            legacyField,
+          ),
+          isFalse,
+        );
+      }
+
+      // ── Selector OFF authors nothing, even on the linked route. ──
+      await tester.pumpWidget(
+        pumpQRDisplay(
+          tester,
+          bridgeOverride: FakeBridge(),
+          linkedDeviceQrSource: DirectLinkedDeviceQrSource(
+            selector: const DirectLinkedDeviceSelector.disabled(),
+            loadAuthority: () async =>
+                const LinkedInstallationAuthoritySnapshot(
+                  disposition: LinkedInstallationDisposition.active,
+                  credential: LinkedTransportCredential(
+                    state: LinkedTransportCredentialState.active,
+                    accountPeerId: accountPeerId,
+                    accountPublicKey: accountPublicKey,
+                    deviceId: 'installation-1',
+                    transportPeerId: transportPeerId,
+                    transportPublicKey: transportPublicKey,
+                    transportPrivateKey: 'transport-private-key',
+                    createdAt: '2026-01-01T00:00:00.000Z',
+                    activatedAt: '2026-01-01T00:00:00.000Z',
+                  ),
+                  failClosedReason: null,
+                ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(seconds: 1));
+      expect(find.byType(QrImageView), findsNothing);
     });
   });
 }

@@ -4,8 +4,24 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_app/features/account_migration/domain/repositories/migration_pairing_session_repository.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 
-enum MigrationExportAuthorizationResult { authorized, alreadyConsumed, expired }
+enum MigrationExportAuthorizationResult {
+  authorized,
+  alreadyConsumed,
+  expired,
+
+  /// 360: this installation holds linked-secondary authority and therefore
+  /// cannot be a Move SOURCE.
+  ///
+  /// A linked secondary does not own the account: its identity is a restricted
+  /// transport credential bound to a logical account whose primary lives
+  /// elsewhere. Exporting from here would hand a destination an account the
+  /// source was never the authority for, while leaving the real primary
+  /// running. Refused BEFORE the pairing session is consumed so a refused
+  /// attempt does not burn the session.
+  linkedSecondaryInstallation,
+}
 
 class MigrationExportAuthorization {
   final String sessionId;
@@ -32,8 +48,21 @@ authorizeMigrationExport({
   required MigrationPairingSessionRepository repository,
   required MigrationQrPayload payload,
   required DateTime authorizedAt,
+  LinkedInstallationAuthority? linkedInstallationAuthority,
 }) async {
   final currentTime = authorizedAt.toUtc();
+
+  // 360: refuse a linked-secondary source before consuming the session.
+  if (linkedInstallationAuthority != null) {
+    final snapshot = await linkedInstallationAuthority.load();
+    if (snapshot.disposition != LinkedInstallationDisposition.primary) {
+      return (
+        MigrationExportAuthorizationResult.linkedSecondaryInstallation,
+        null,
+      );
+    }
+  }
+
   if (!payload.expiresAt.isAfter(currentTime)) {
     return (MigrationExportAuthorizationResult.expired, null);
   }

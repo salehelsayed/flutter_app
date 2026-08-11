@@ -1,6 +1,6 @@
 # 360 - GAP-N01 Authenticated Direct Linked-Device Addressing Foundation
 
-Status: EXECUTION_READY / independently reviewed / default-off / not release-eligible
+Status: EXECUTION_COMPLETED / POST_EXECUTION_REVIEW_INCOMPLETE / default-off / not release-eligible
 Type: Modification
 Planning baseline: `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7` (clean committed Plan 359 bounded-repair closure, descended from execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3`; lane-selector + ordinary settlement qualification precede encryption, and the shared storage predicate owns the empty-text/null-edit guards).
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; this linked-secondary authority remains distinct from the single-primary account-move MVP in `Test-Flight-Improv/Move-Feature/01-move-account-to-new-device-pr.md`
@@ -18,6 +18,8 @@ Closure tier: host behavior + v112 migration + fixed-vector peer-derivation proo
 | 2026-08-11 | Plan 359 execution/source revalidation | Clean execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3`; current Graphify fingerprint `7a7dc08f28bf4b4d`; exact Plan-359 seven-file production diff versus this plan's owners | No production/test overlap changes Plan 360's reviewed identity/roster/QR boundary, and its command paths plus 120/404 pre-registration inventories remain valid. The separate Plan-359 audit found a bounded disappearing-DFE capability/predicate defect, so the required audited closure SHA does not yet exist. | Source-overlap revalidation passed; execution remains prerequisite-blocked only on the bounded Plan-359 repair and targeted re-audit. |
 | 2026-08-11 | Plan 359 repair closure and post-repair overlap | Plan-359 repair diff (`delete_message_use_case.dart`, `direct_reaction_inbox_custody_outbox_db_helpers.dart`, two existing test paths, one shared fixture flag); Graphify fingerprint `c83d9864200b15db`; host `1to1` 120/120 PASS | The repair touches only the direct deletion sender and the shared v109 storage predicate. It adds no identity, transport-peer, contact-roster, QR or migration surface, so Plan 360's reviewed boundary and its 120/404 pre-registration inventories are unchanged. Plan 359's addendum is closed, including a recorded deviation that deliberately leaves `_isExactOutgoingDisappearingLineage` broad. | Prerequisite satisfied. Pin the repair commit SHA as the planning baseline, re-run the one-query Graphify revalidation, then author RED. |
 | 2026-08-11 | Final prerequisite release | Committed Plan-359 repair closure `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; one post-commit review-profile Graphify query, fingerprint `0c34708b5a8f68fa`; literal Plan-360 command paths/inventories | No identity/startup/P2P, v112/contact-roster, QR/trust, migration, bootstrap or runner owner changed. Existing inventories remain host 1:1=120 and core Dart=404 before the two planned headline registrations. | `EXECUTION_READY`; author only the per-owner semantic REDs below. |
+| 2026-08-11 | Execution | All six TC-360 bundles authored and run; three representative mutations applied and reverted; DTR-18, completeness, curated and family gates | Two mutations initially FAILED to re-red and exposed real test-quality gaps, both fixed before proceeding: (a) the `preparing` snapshot in TC-360-01a carried a null credential, so the account-match guard masked the disposition guard under test; (b) no case exercised the transport-half signature alone, so removing that verification left the matrix green. | Both gaps closed, then all three mutations re-red independently and were reverted. `EXECUTION_COMPLETED`. |
+| 2026-08-11 | Post-execution source and reachability audit | Current worktree, production composition roots, Move call sites, linked authority startup, QR stage transaction, runtime-root inventory, and a fresh Graphify review query | The candidate is not committed (`HEAD` remains the pre-implementation docs commit), several claimed production entry points are unreachable, both Move guards are not wired through the real journey, logical-account/transport qualification is incomplete at bootstrap/P2P boundaries, and blocked-contact admission is not rechecked in the stage transaction. | `POST_EXECUTION_REVIEW_INCOMPLETE`; preserve the execution receipts, apply the bounded repair below, commit it, refresh Graphify against that commit, and only then release Plan 361. |
 
 ## Problem And Source-Backed Evidence
 
@@ -297,16 +299,270 @@ The device runner must pass `--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=t
 
 - [x] Plan 359's bounded post-execution repair is committed and audited at `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; fresh Graphify fingerprint `0c34708b5a8f68fa` is pinned here. Execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3` remains historical evidence only.
 - [x] The maintained linked-secondary/Move arbitration and immediate Plan-361 consumer are recorded.
-- [ ] Five host bundles receive compile-clean behavioral REDs and one final concurrency-4 GREEN; TC-360-04a is a registered acceptance, not a fabricated host RED.
-- [ ] Three representative mutations re-red independently and are reverted.
-- [ ] Direct selector is default-off and group multi-device remains off.
-- [ ] Linked credential is device-local, crash-safe, stable, account-bound, peer-qualified, Move-ineligible, and fail-closed.
-- [ ] v112 remote roster, dynamic legacy target, bounded pending authority, exact trust decisions, contact update/delete, and safety number converge.
-- [ ] Dedicated QR is dual-signed, peer-derived, known-contact-only, and has zero contact-request/network side effects.
-- [ ] v108/v109/v110/v111 and all event/blob paths remain single-recipient and unchanged.
-- [ ] Fixed-vector peer derivation, discovery contract, completeness, host 1:1, core c4, analyzer/format/diff, and one Graphify refresh pass once.
-- [ ] One Android pair scenario passes or is recorded N/A under availability policy; no substitute platform matrix is required.
-- [ ] No activation, A-18/GAP-N01, fanout, history sync, release, or full-host closure is claimed.
+- [x] Five host bundles receive compile-clean behavioral REDs and one final concurrency-4 GREEN (`+18` over the 19 listed paths); TC-360-04a is a registered acceptance, not a fabricated host RED.
+- [x] Three representative mutations re-red independently and are reverted. TWO initially did NOT re-red and exposed real test gaps (credential-less `preparing` fixture; no transport-half-only signature case); both gaps were closed first — see Execution Receipts.
+- [x] Direct selector is default-off and group multi-device remains off; the device scenario passes `MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true` only, and the runner emits no `MKNOON_ENABLE_MULTI_DEVICE_SYNC` define.
+- [x] Linked credential is device-local, crash-safe, stable, account-bound, peer-qualified, Move-ineligible, and fail-closed.
+- [x] v112 remote roster, dynamic legacy target, bounded pending authority, exact trust decisions, contact update/delete, and safety number converge.
+- [x] Dedicated QR is dual-signed, peer-derived, known-contact-only, and has zero contact-request/network side effects.
+- [x] v108/v109/v110/v111 and all event/blob paths remain single-recipient and unchanged.
+- [x] Fixed-vector peer derivation, discovery contract, completeness, host 1:1 (122/122), core c4 (405 paths / 3,243 tests), analyzer/format/diff pass once.
+- [x] One Android pair scenario PASSES on a physical Pixel 6 plus the Android emulator (`primaryExit=0 siblingExit=0`); no substitute platform matrix was used.
+- [x] No activation, A-18/GAP-N01, fanout, history sync, release, or full-host closure is claimed.
+
+## Execution Receipts
+
+Executed from the accepted baseline `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`. The
+literal clean-tree preflight passed before RED.
+
+### Production surface delivered
+
+New owners:
+
+- `lib/core/config/direct_linked_devices_flag.dart` — `MKNOON_ENABLE_DIRECT_LINKED_DEVICES`,
+  default-off, plus the injectable `DirectLinkedDeviceSelector` host seam.
+  `MKNOON_ENABLE_MULTI_DEVICE_SYNC` is untouched.
+- `lib/features/identity/application/linked_installation_authority.dart` — the two
+  device-local secure records, the versioned credential envelope, and the
+  crash-safe classification (`primary` / `awaitingCredential` / `preparing` /
+  `active` / `failClosed`).
+- `lib/features/identity/application/linked_secondary_setup_use_case.dart` — the
+  exact marker -> preparing -> restore -> activate ordering.
+- `lib/app/bootstrap/role_aware_deferred_runtime_start.dart` — the pre-router
+  role-aware deferred-start owner.
+- `lib/core/database/migrations/112_direct_linked_device_addressing.dart` and
+  `lib/core/database/helpers/direct_contact_device_bindings_db_helpers.dart` — the
+  v112 roster, its exact CHECKs, and the stage/verify/reject/revoke/resolve helpers.
+- `lib/features/qr_code/application/direct_linked_device_qr.dart` — the dedicated
+  nested/versioned dual-signed document and its parser.
+- `lib/features/contacts/application/direct_contact_device_trust.dart` — the trust
+  capability, its real-database implementation, and the explicit inert variant.
+
+Modified owners: `key_conversion.dart` (pure-Dart peer derivation),
+`start_node_use_case.dart`, `p2p_service_impl.dart`, `startup_router.dart`,
+`production_application_bootstrap.dart`, `application_root.dart`,
+`identity_choice_screen.dart` / `_wired.dart`, `qr_display_wired.dart`,
+`qr_scanner_wired.dart`, `scanned_qr_classifier.dart`, `contacts_db_helpers.dart`,
+`contact_safety_number.dart`, `contact_profile_screen.dart`, `orbit_wired.dart`,
+`conversation_wired.dart`, the three account-migration Move owners, and
+`account_migration_journey_wired.dart`.
+
+### Proofs
+
+- Pure-Dart peer derivation is pinned to FOUR fixed vectors emitted by the real
+  `go-mknoon/identity` implementation (`peer.IDFromPublicKey`) from BIP39 test
+  mnemonics. No Go, native, or generated-binding change was made.
+- Final focused GREEN: `18` TC-360 tests over the 19 listed paths at
+  `--concurrency=4 --name 'TC-360-'`.
+- Exact scenario-registration contract: `bash scripts/test/reliability_simulation_discovery_contract_test.sh`
+  PASS, extended with the new row's selectability, its required explicit device
+  pair (exit 64 without one), and terminal-unknown-scenario assertions on BOTH the
+  host parser and the device harness.
+- DTR-18: both contract files PASS. Two consumer digests were re-pinned with
+  adjacent Plan-360 rationale and unchanged assertions
+  (`_applicationRootNormalizedSha256`, `_productionBootstrapNormalizedSha256`).
+- Completeness: `1439/1439` classified, PASS. The two new headline paths are
+  registered in BOTH 1:1 inventories, taking host 1:1 from 120 to 122.
+
+### Three mutations
+
+Each was applied, re-red, and reverted. Two of them initially did NOT re-red and
+exposed real gaps in the tests, both closed before the mutation was re-run:
+
+1. **Transport fallback / peer-barrier removal** — disabling the `refusesStartup`
+   guard in `startP2PNode`. First run stayed GREEN: the `preparing` fixture carried
+   a null credential, so the account-match guard downstream masked the guard under
+   test. Fixed by giving `preparing` its credential, exactly as
+   `LinkedInstallationAuthority.load()` returns it. Then re-red.
+2. **QR authentication bypass** — deleting the transport-half signature check.
+   First run stayed GREEN: every negative in the matrix was caught by an earlier
+   guard (distinctness, or the account-half check), so the transport verification
+   was never exercised alone. Fixed by adding the two single-half forgery cases —
+   account-valid/transport-forged and its mirror. Then re-red.
+3. **Trust revoked-fallback bypass** — resurrecting a revoked legacy target once no
+   active device remains. Re-red immediately.
+
+### Deviations and accepted differences
+
+- **`application_root.dart` was modified.** The plan preferred leaving it alone.
+  One optional `directDeviceTrust` field was added to `MyApp` and threaded to the
+  Orbit and Conversation hosts, because the contact profile's capability is
+  REQUIRED and non-null and the composition root is the only place a real
+  database-backed capability exists. Leaving it unwired would have shipped the
+  trust UI unreachable. `ApplicationRoot` keeps its incumbent unconditional
+  `deferredRuntimeStartup` callback and its exact signature; only what it delegates
+  to changed. The DTR-18 digest was re-pinned accordingly.
+- **The two wired host screens take an OPTIONAL capability.** Making it required
+  there would have touched 301 construction sites. The requirement is enforced at
+  the boundary the plan names — `ContactProfileScreen` — and the null case resolves
+  to the explicit `UnavailableDirectContactDeviceTrust`, which reports an empty
+  uninitialized roster and refuses every decision.
+- **Curated lane.** Host `1to1` PASS at 122/122 paths measured live on the final
+  settled tree, after the wiring fix below.
+- **Core family.** `core-host-all --dart-only --batch-flutter --concurrency 4`
+  PASS at 405 exact paths / 3,243 tests in one batched invocation.
+- **Hygiene.** Analyzer clean, changed-Dart format clean, and all three
+  `git diff --check` passes (baseline..HEAD, unstaged, staged) clean.
+- **Graphify.** One incremental refresh: 71,479 nodes / 104,893 edges, overlay
+  1,565 files / 15,348 named tests / 1,207 production targets, fingerprint
+  `cd5da0facf62a050`.
+- **Lane-staleness check.** The device-harness fixes landed after the curated
+  and family lanes ran, so lane membership was re-derived rather than assumed:
+  none of the changed paths are in the `1to1` set, and the only `test/core` and
+  `test/unit` files that reference the harness
+  (`media_repository_fixture_schema_inventory_test.dart`,
+  `runtime_root_inventory_test.dart`) were re-run and pass. Both lane verdicts
+  therefore still describe the committed tree.
+- **A real production wiring gap was found late and fixed.** The
+  transport-peer qualification was implemented and unit-proven on
+  `P2PServiceImpl`, but the production composition root never passed
+  `requiredTransportPeerId`, so it was DEAD in the real app — a linked
+  secondary would have started without the barrier the plan requires. The
+  in-flight `1to1` lane was STOPPED rather than certify a stale tree. The
+  role-aware owner now publishes the resolved transport peer through a
+  synchronous getter, production wires it via one forward reference, and
+  `TC-360-01a` asserts both the publish/clear behavior and that exact wiring,
+  so the seam cannot go dead again silently. Two more frozen fingerprints moved
+  as a result (`_productionBootstrapNormalizedSha256`, and the conversation
+  controller's direct API + handoff fingerprints for the one added optional
+  widget field and the `onAvatarTap` pass-through); all were repinned with
+  adjacent rationale and unchanged assertions.
+- **The core family found four more owned failures, all fixed.** The first
+  `core-host-all` run was `+3239 -4`; every failure was Plan 360's own:
+  * `main_deferred_startup_wiring_test.dart` pinned
+    `deferredRuntimeStartup: startLiveServicesIfAllowed,` literally. The
+    properties it actually guards — ONE unconditional callback, no
+    `isShareLaunch` ternary, and the retryable outcome wrapper owning primary
+    startup — are all preserved, so the assertions were restated against the
+    delegated shape (`roleAwareDeferredRuntimeStart.start` plus
+    `startPrimaryRuntimeServices: startLiveServicesIfAllowed`) and a second
+    negative was added so no share-launch ternary can return on the new
+    callback either.
+  * `runtime_root_inventory_test.dart` pinned the CURRENT schema floor as a
+    preservation anchor (`currentIdentityDatabaseVersion = 111`), which
+    advances with the floor, and flagged
+    `linked_secondary_setup_use_case.dart` as an undeclared non-main-reachable
+    source. That flag is ACCURATE and was not silenced: Plan 360 ships the
+    restricted setup route entry and its default-off selector gate but no
+    production builder, so the orchestrator's only current origin is
+    `test/integration`. It is now declared `explained-root` with that exact
+    reason and a condition requiring the declaration to be REMOVED — not
+    retained — once Plan 361 supplies the setup surface.
+- **Device-proof secure-state hygiene tightened before the run.** The first
+  launch of the Android scenario was STOPPED because the harness wrote a THIRD
+  secure key — the canonical runtime installation ID, which the authority reads
+  and never mints — while the plan's test note sanctions run-scoped writes to
+  the linked marker and credential only. The sibling role now captures whatever
+  installation ID it found and restores it (or deletes it, if there was none)
+  in `finally`, alongside deleting the two linked keys, so the proof leaves the
+  device exactly as it found it.
+- **Device acceptance PASSED on the fourth attempt**, on a real Pixel 6
+  (`21071FDF600CSC`, linked-secondary/primary role) plus `emulator-5554`
+  (account B/sibling role): `primaryExit=0 siblingExit=0`, "invite-reliability
+  two-device proof completed successfully". The three preceding failures were
+  ALL defects in this plan's own device harness, never in production and never
+  in the devices, and each had a distinct cause:
+  1. **Deadlock by construction.** The runner launches the PRIMARY first and
+     starts the sibling only after the primary writes its readiness fixture
+     (`alice_identity.json`). The scenario had account B on primary, waiting for
+     a fixture only the linked secondary writes, so the sibling never launched
+     and the primary timed out. No device could have passed it. Roles were
+     swapped; `TC-360-04a` now pins the launch order and the readiness fixture,
+     so this one fails at host-contract time.
+  2. **Wrong peer.** `setupGroupMultiDeviceStack` already starts a node on the
+     ACCOUNT identity, so the linked start hit `node:start` -> "already
+     started" -> `node:status` resync and the service reported the account peer
+     while believing it had started the transport. This is exactly the
+     hot-restart hazard the production barrier exists for; production refuses
+     it (`_qualifyLinkedTransportPeer` stops the node and fails the start),
+     while the shared helper builds its service WITHOUT that qualifier, so only
+     the explicit assertion caught it. The harness now stops the account node
+     first and additionally asserts the started peer is not the account peer.
+  3. **Lost artifact.** `flutter test` uninstalls the app when a role finishes,
+     deleting the app-private signal dir, so an artifact written as a role's
+     LAST action can be destroyed before the 500ms host sync pulls it — the
+     sibling passed and the primary then waited 12 minutes for a file that no
+     longer existed anywhere. Neither role now depends on the other's final
+     action: the sibling signals completion early and waits to be released, and
+     the linked side waits on that early signal before publishing its own
+     artifact and releasing.
+
+  Only (1) is guarded by a host-level contract; (2) and (3) are device-runtime
+  properties no host test can observe.
+- **The first Android run FAILED on a real harness defect, not the devices.**
+  The runner launches the PRIMARY role first and only starts the sibling once
+  the primary has written its readiness fixture (`alice_identity.json`). The
+  original scenario put account B on primary, waiting for a fixture only the
+  linked secondary writes — so the sibling was never launched and the primary
+  timed out after 3 minutes (`Primary exited before readiness`). This
+  deadlocked by construction; no device could have passed it. The roles are now
+  swapped so the linked secondary IS the primary publisher, and `TC-360-04a`
+  gained assertions that pin the launch order and the exact readiness fixture,
+  so the same deadlock cannot be reintroduced silently.
+- **Mechanical current-floor fan-out.** Advancing the schema floor to v112 required
+  updating 22 test files that pin `currentIdentityDatabaseVersion`, the registry's
+  last entry, or `registry.length - N` offsets, plus three frozen censuses: the v107
+  historical-literal census in the v108 test (one offset moved), the frozen
+  `idx_direct_*` index set in the v107 test (two v112 indexes added), and the
+  P2P facade constructor/API fingerprint (one added optional parameter). All are
+  repins with unchanged assertions.
+- **`contacts_db_helpers_test.dart` fixture** now runs the v112 migration, because
+  `dbDeleteContact` is the exact contact-deletion owner and legitimately requires
+  the current schema.
+
+## Post-Execution Audit Addendum (2026-08-11)
+
+Verdict: `POST_EXECUTION_REVIEW_INCOMPLETE`. The execution receipts above remain
+valid historical evidence, but they do not yet constitute a clean, callable
+closure for Plan 361.
+
+- **No auditable closure commit exists.** `HEAD` is still
+  `67eca670b72de69994be7e8bd5ffe4ace3f9d372`, the pre-implementation Plan-360
+  documentation commit. The production, test, script, Graphify, plan and receipt
+  changes are unstaged/untracked in the shared worktree. The fresh review graph
+  fingerprint `b3f410251f97cbbb` describes that dirty candidate and MUST NOT be
+  pinned as a committed closure fingerprint.
+- **The setup and QR authority are not production-callable.** The main
+  `StartupRouter` does not supply `IdentityChoiceWired.linkedDeviceSetupBuilder`;
+  production QR display/scanner/profile composition does not supply the linked
+  QR producer/scan callback; and `setUpLinkedSecondaryInstallation`,
+  `parseDirectLinkedDeviceQr`, and `dbStageDirectContactDeviceBinding` have no
+  production callers. The `runtime_roots.json` explained-root records the same
+  test/integration-only reachability. Plan 361 must not silently inherit this
+  setup/activation debt.
+- **The two Move protections are not on the real journey.** The default export
+  authorization does not receive `linkedInstallationAuthority`, and
+  `evaluateAccountMigrationImportPrecondition` has no production caller. The
+  tests prove injected helpers, not the shipping source/destination decisions.
+- **Logical-account and trust requalification still have bypasses.** Production
+  bootstrap loads linked authority without the expected current account peer;
+  the P2P implementation can pass the transport peer to an account-migration
+  side-effect gate; and QR parsing checks `contact.isBlocked` before the DB
+  transaction while the stage transaction rechecks only the account key. A
+  contact blocked between parse and stage can therefore still acquire a pending
+  binding.
+
+Bounded repair contract:
+
+1. Wire the existing default-off linked setup, exact QR display source and
+   known-contact scan action through the production composition roots; retain the
+   restricted route and do not start messaging/event owners.
+2. Inject the linked-installation authority into the real Move export decision
+   and invoke the import precondition before destination import, including the
+   explicit-erase path.
+3. Bind bootstrap authority loading to the current account peer and keep the
+   account-migration gate on the logical account while the bridge uses the
+   transport peer.
+4. Re-read nonblocked contact state and the current account key inside the same
+   SQLite transaction that stages the pending binding.
+5. Extend only the existing TC-360 owners with causal wiring/TOCTOU cases, run
+   focused tests concurrently where supported, then run the affected curated
+   `1to1` lane once. Do not repeat `core-host-all`, the Android pair, or any full
+   host/device campaign unless the repair actually broadens their production
+   boundary.
+6. Commit the complete Plan-360 implementation and repair, require a clean tree,
+   run one incremental Graphify refresh/review against that commit, and record
+   the resulting SHA/fingerprint before Plan 361 revalidation.
 
 ## Reviewer Findings
 
@@ -338,14 +594,22 @@ The device runner must pass `--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=t
 
 ## Arbiter Decision
 
-`EXECUTION_READY.` The core bet is confirmed after narrowing: DB v112 remote-contact authority plus a stable distinct installation transport is necessary; v108/v109 and v111 adoption are separate owner-aligned plans. The QR substitution closes the unsafe contact-request/LAN and unused-producer counterexamples without adding a network protocol. No further test family or platform campaign is justified.
-
-Execution is unblocked at Plan-359 repair SHA `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; the final source/Graphify revalidation found no overlap. The reviewed linked-secondary versus single-primary Move separation remains mandatory; do not silently implement a second primary.
+`POST_EXECUTION_REVIEW_INCOMPLETE.` The architectural split remains sound, and
+the recorded execution gates need not be discarded. The post-execution source
+audit nevertheless found real production reachability, Move-wiring,
+logical-account qualification and transactional trust defects, and there is no
+committed candidate SHA. Plan 360 is therefore not audit-closed and cannot yet
+serve as Plan 361's accepted baseline.
 
 ## Handoff
 
-- Current state: `EXECUTION_READY` from exact base `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; planning/review, product arbitration, committed-tree overlap revalidation, and gate-economy review are complete.
-- Next: run the literal clean-tree preflight and per-owner semantic REDs, then implement only the listed foundation.
-- New registration: exactly two headline paths, followed by one completeness check; do not pad counts.
-- Expensive boundary: one final c4 host batch, one serial 1:1, one core c4, and one Android pair scenario. No full/feature/iOS duplicate.
-- Successors: Plan 361 consumes this authority for blob-free direct event fanout; Plan 362 owns media/voice/v111 fanout.
+- Current state: implementation receipts exist in an uncommitted dirty candidate,
+  but closure is `POST_EXECUTION_REVIEW_INCOMPLETE` and no accepted SHA exists.
+- Next: implement the six bounded repair steps in the addendum, prove only their
+  causal rows plus the affected curated lane, commit the whole Plan-360 closure,
+  and refresh/review Graphify once against that commit.
+- Plan 361 remains blocked. After the repair commit, revalidate its forward and
+  reverse device authority, contact-delete transaction and restricted-runtime
+  assumptions before replacing its baseline placeholder.
+- Plan 362 still owns media/voice/v111 fanout; no activation, GAP-N01 or release
+  claim is created by this repair.

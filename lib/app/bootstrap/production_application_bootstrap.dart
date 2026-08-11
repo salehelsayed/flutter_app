@@ -5,6 +5,9 @@ import 'package:flutter/services.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
+import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
@@ -4582,8 +4585,18 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     final acceptedWakeTokenHashObserver = debugE2EComposition
         ?.initializeWakeTokenObserver();
 
+    // 360: forward reference to the role-aware deferred-start owner, which is
+    // constructed far below (it needs `startLiveServicesIfAllowed`). The
+    // closure below defers the read until node start, by which time the
+    // deferred start has already resolved persisted authority. Null — an
+    // ordinary primary, or any moment before the deferred start ran — makes
+    // the qualification a no-op, which is exactly the incumbent behavior.
+    RoleAwareDeferredRuntimeStart? roleAwareDeferredRuntimeStartRef;
+
     // Create P2P service (uses the same bridge + local P2P)
     p2pService = P2PServiceImpl(
+      requiredTransportPeerId: () =>
+          roleAwareDeferredRuntimeStartRef?.activeLinkedTransportPeerId,
       bridge: bridge,
       localP2PService: localP2PService,
       pushTokenStore: pushTokenStore,
@@ -6823,6 +6836,28 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       return liveServicesStarted;
     }
 
+    // 360: the deferred runtime start is decided by persisted installation
+    // ROLE, before the router. An ordinary primary keeps calling
+    // `startLiveServicesIfAllowed` unchanged; an active linked secondary
+    // starts only the bridge, which is the sole prerequisite its
+    // node/status/QR owners need. Generic runtime startup — Firebase, push
+    // registration, the listener fleet, contact/key-exchange retry, group
+    // recovery, message retry and inbox drain — runs ZERO times in linked
+    // mode, because every one of those owners assumes a single primary
+    // installation on one account mailbox. Plan 361 makes them device-aware.
+    final roleAwareDeferredRuntimeStart = RoleAwareDeferredRuntimeStart(
+      loadLinkedAuthority: () =>
+          LinkedInstallationAuthority(secureKeyStore: secureKeyStore).load(),
+      startPrimaryRuntimeServices: startLiveServicesIfAllowed,
+      startLinkedFoundationPrerequisites: () async {
+        await bridge.initialize();
+        StartupTiming.instance.mark('bridge_initialized');
+        return true;
+      },
+    );
+    // Publish it to the P2P service's transport-peer qualifier.
+    roleAwareDeferredRuntimeStartRef = roleAwareDeferredRuntimeStart;
+
     // 164 (cold-start-1): startLiveServices (Firebase init + bridge + ~25 listener
     // .start() calls) is no longer awaited here on a normal launch. It is wired as
     // the unconditional deferredRuntimeStartup below and kicked off OFF the
@@ -6899,6 +6934,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
       return MyApp(
         repository: repository,
+        // 360: the real database-backed linked-device trust authority. The
+        // contact profile is the only surface that admits or withdraws a
+        // device, and it requires a non-null capability.
+        directDeviceTrust: DatabaseDirectContactDeviceTrust(database: db),
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
         contactRequestListener: contactRequestListener,
@@ -7025,7 +7064,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           return accountMigrationCutoverCoordinator
               .restoreActiveAfterExportInterrupted();
         },
-        deferredRuntimeStartup: startLiveServicesIfAllowed,
+        deferredRuntimeStartup: roleAwareDeferredRuntimeStart.start,
         ingestStagedPushEnvelopes: ({required String source}) async {
           final result = await ingestStagedPushEnvelopesUseCase(source: source);
           return result.isCanonicalStateComplete;

@@ -5,8 +5,17 @@
 /// (avoiding Firebase/platform dependencies).
 library;
 
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/identity/application/startup_decision.dart';
+import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
+
+import '../../../../core/secure_storage/fake_secure_key_store.dart';
+import '../../../../core/services/fake_p2p_service.dart';
+import '../../domain/repositories/fake_identity_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
@@ -62,7 +71,6 @@ class _FakeContactRepo implements ContactRepository {
   @override
   Future<void> setIntrosSentAt(String peerId, String timestamp) async {}
 }
-
 
 void main() {
   group('Phase 1 — startup routing', () {
@@ -155,5 +163,120 @@ void main() {
         // history is visible before network is warm
       },
     );
+  });
+
+  group('TC-360-01a startup honours persisted linked authority', () {
+    const accountPublicKey = 'xXheGGW3CJOK/4Fh1XMAZJZmOxqhCDTjltxWaGmixmo=';
+    const accountPeerId =
+        '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
+    const transportPublicKey = 'xvKsVZiXDHljNxTT61w017/D6S2ljHNUs3mW2aSvOrI=';
+    const transportPeerId =
+        '12D3KooWPCyWnZCXR3VGdrQjLr5d8TBaAHD956XZvo6xoCXYB5AR';
+
+    final linkedIdentity = IdentityModel(
+      peerId: accountPeerId,
+      publicKey: accountPublicKey,
+      privateKey: 'account-private-key',
+      mnemonic12:
+          'abandon abandon abandon abandon abandon abandon abandon abandon '
+          'abandon abandon abandon about',
+      mlKemPublicKey: 'mlkem-pub',
+      mlKemSecretKey: 'mlkem-sec',
+      username: 'Linked',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    );
+
+    Future<FakeSecureKeyStore> activeLinkedStore() async {
+      final store = FakeSecureKeyStore();
+      await store.write(
+        canonicalRuntimeInstallationIdStorageKey,
+        'installation-1',
+      );
+      await store.write(
+        linkedInstallationRoleStorageKey,
+        linkedInstallationRoleMarkerValue,
+      );
+      await store.write(
+        linkedInstallationTransportCredentialStorageKey,
+        jsonEncode(
+          const LinkedTransportCredential(
+            state: LinkedTransportCredentialState.active,
+            accountPeerId: accountPeerId,
+            accountPublicKey: accountPublicKey,
+            deviceId: 'installation-1',
+            transportPeerId: transportPeerId,
+            transportPublicKey: transportPublicKey,
+            transportPrivateKey: 'transport-private-key',
+            createdAt: '2026-01-01T00:00:00.000Z',
+            activatedAt: '2026-01-01T00:00:00.000Z',
+          ).toJson(),
+        ),
+      );
+      return store;
+    }
+
+    test('TC-360-01a linked-secondary transport identity is distinct stable '
+        'and fail-closed', () async {
+      // The router resolves persisted authority WITHOUT consulting the
+      // authoring selector, which is the whole flag-off contract: rolling the
+      // define back stops new setup and QR activity, but an installation that
+      // already claimed a transport keeps starting exactly that transport.
+      // Anything else would silently return it to the account mailbox its
+      // contacts have already stopped addressing.
+      final store = await activeLinkedStore();
+      final authority = await LinkedInstallationAuthority(
+        secureKeyStore: store,
+      ).load();
+      expect(authority.isActiveLinkedSecondary, isTrue);
+
+      final identityRepo = FakeIdentityRepository()..seed(linkedIdentity);
+      final p2pService = FakeP2PService()..startNodeResult = true;
+      expect(
+        await startP2PNode(
+          identityRepo: identityRepo,
+          p2pService: p2pService,
+          linkedAuthority: authority,
+        ),
+        StartNodeResult.success,
+      );
+      expect(p2pService.lastStartNodePeerId, transportPeerId);
+      expect(p2pService.lastStartNodePrivateKey, 'transport-private-key');
+
+      // An ordinary primary installation resolves to `primary` and takes the
+      // incumbent path byte-for-byte.
+      final primaryAuthority = await LinkedInstallationAuthority(
+        secureKeyStore: FakeSecureKeyStore(),
+      ).load();
+      expect(primaryAuthority.isOrdinaryPrimary, isTrue);
+      final primaryP2p = FakeP2PService()..startNodeResult = true;
+      expect(
+        await startP2PNode(
+          identityRepo: identityRepo,
+          p2pService: primaryP2p,
+          linkedAuthority: primaryAuthority,
+        ),
+        StartNodeResult.success,
+      );
+      expect(primaryP2p.lastStartNodePeerId, accountPeerId);
+      expect(primaryP2p.lastStartNodePrivateKey, 'account-private-key');
+
+      // A half-written credential refuses startup outright and never falls
+      // back to the account transport.
+      await store.delete(linkedInstallationRoleStorageKey);
+      final orphanAuthority = await LinkedInstallationAuthority(
+        secureKeyStore: store,
+      ).load();
+      final refusingP2p = FakeP2PService()..startNodeResult = true;
+      expect(
+        await startP2PNode(
+          identityRepo: identityRepo,
+          p2pService: refusingP2p,
+          linkedAuthority: orphanAuthority,
+        ),
+        StartNodeResult.linkedAuthorityRefused,
+      );
+      expect(refusingP2p.startNodeCallCount, 0);
+    });
   });
 }

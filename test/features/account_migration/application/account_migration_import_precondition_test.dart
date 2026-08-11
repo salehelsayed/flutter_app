@@ -1,5 +1,7 @@
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_import_precondition.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/account_migration/domain/models/account_migration_authority_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -126,5 +128,60 @@ void main() {
         );
       },
     );
+
+    test('TC-360-01b v112 remote roster migrates while linked installation '
+        'authority cannot move', () async {
+      // A linked secondary is a RESTRICTED role, not a second primary, so it
+      // can never be a Move DESTINATION. Importing an account here would
+      // leave one installation holding both a promoted primary identity and
+      // a transport credential contacts have already bound device rows to.
+      final secureKeyStore = FakeSecureKeyStore();
+      await secureKeyStore.write(
+        canonicalRuntimeInstallationIdStorageKey,
+        'installation-1',
+      );
+      final linkedAuthority = LinkedInstallationAuthority(
+        secureKeyStore: secureKeyStore,
+      );
+
+      // An ordinary primary destination is unaffected.
+      expect(
+        (await evaluateAccountMigrationImportPrecondition(
+          identityRepository: identityRepository,
+          authorityRepository: authorityRepository,
+          linkedInstallationAuthority: linkedAuthority,
+        )).status,
+        AccountMigrationImportPreconditionStatus.allowed,
+      );
+
+      // Even a HALF-WRITTEN linked role refuses: an installation that began
+      // linked setup must finish or reset it, never absorb an account.
+      await linkedAuthority.markExpectedLinkedRole();
+      var result = await evaluateAccountMigrationImportPrecondition(
+        identityRepository: identityRepository,
+        authorityRepository: authorityRepository,
+        linkedInstallationAuthority: linkedAuthority,
+      );
+      expect(result.canStartImport, false);
+      expect(
+        result.status,
+        AccountMigrationImportPreconditionStatus.linkedSecondaryInstallation,
+      );
+
+      // The explicit-erase escape hatch does NOT bypass it. Erasing a
+      // migrated-out account does not retire linked authority; only an
+      // explicit linked reset does.
+      result = await evaluateAccountMigrationImportPrecondition(
+        identityRepository: identityRepository,
+        authorityRepository: authorityRepository,
+        explicitErasePreconditionSatisfied: true,
+        linkedInstallationAuthority: linkedAuthority,
+      );
+      expect(result.canStartImport, false);
+      expect(
+        result.status,
+        AccountMigrationImportPreconditionStatus.linkedSecondaryInstallation,
+      );
+    });
   });
 }

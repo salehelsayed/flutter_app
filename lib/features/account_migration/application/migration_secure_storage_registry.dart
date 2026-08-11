@@ -3,6 +3,7 @@ import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/push/infrastructure/push_token_store_impl.dart';
 import 'package:flutter_app/features/push/infrastructure/push_registration_health_store.dart';
@@ -148,6 +149,35 @@ class MigrationSecureStorageRegistry {
       activeKey: SecureKeyStoreMigrationPairingSessionRepository.storageKey,
       category:
           MigrationSecureStorageKeyCategory.accountMigrationPairingSession,
+      policy: MigrationSecureStorageKeyPolicy.deviceLocal,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    // 360: the linked-secondary installation role and its transport
+    // credential are DEVICE-LOCAL authority, never account data.
+    //
+    // `deviceLocal` + `includeInExportPayload: false` is load-bearing twice
+    // over. It keeps raw transport key material out of every exported and
+    // staged bundle, and it makes the incumbent explicit local reset
+    // (`eraseAccount(explicitLocalReset: true)`) delete the marker, the
+    // credential, and the canonical runtime installation ID together — the
+    // only sanctioned way to retire linked authority. Marking them `migrate`
+    // would let an account Move clone one installation's transport identity
+    // onto a second device, which is exactly the shared-mailbox failure this
+    // plan exists to prevent.
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: linkedInstallationRoleStorageKey,
+      category: MigrationSecureStorageKeyCategory.linkedInstallationRole,
+      policy: MigrationSecureStorageKeyPolicy.deviceLocal,
+      criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
+      includeInExportPayload: false,
+    ),
+    MigrationSecureStorageKey(
+      scope: MigrationSecureStoreScope.primary,
+      activeKey: linkedInstallationTransportCredentialStorageKey,
+      category: MigrationSecureStorageKeyCategory
+          .linkedInstallationTransportCredential,
       policy: MigrationSecureStorageKeyPolicy.deviceLocal,
       criticality: MigrationSecureStorageKeyCriticality.cleanupOnly,
       includeInExportPayload: false,

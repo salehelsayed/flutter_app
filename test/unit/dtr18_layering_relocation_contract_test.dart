@@ -138,6 +138,12 @@ const _contactSha256 =
     'd177b34246373d54d3ff3541603c465ae82b89550ea02f1dcdb30f6e30deee5b';
 const _privacySha256 =
     '302be89b18d29b3997e171a2859084eb44a8a5360c7e24e6b3d85c3b6883f718';
+// Plan 360 adds exactly ONE optional field to MyApp — the linked-device trust
+// capability — and threads it to the Orbit and Conversation hosts so the
+// contact profile can receive a non-null capability. It relocates nothing and
+// keeps ApplicationRoot's incumbent unconditional `deferredRuntimeStartup`
+// callback and its signature.
+//
 // Plans 347/348 wire the reviewed cleanup/drain and absent-parent v111 stage
 // through MyApp and production bootstrap; Plan 350 adds only the optional
 // forward-authorization pass-through on that same wired stage. Plan 353 adds
@@ -154,11 +160,17 @@ const _privacySha256 =
 // tombstone + physical-v109 stage — and relocates nothing. Posts
 // adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
-    '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
+    'ed7550d02c5afb70bc2d4c92b5f239f4660d9718491541a968a2d535e8598f6c';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
-// same already-wired delegate and relocates nothing.
+// same already-wired delegate and relocates nothing. Plan 360 additionally
+// constructs the role-aware deferred-runtime-start owner over the SAME
+// `startLiveServicesIfAllowed` closure and passes the database-backed
+// linked-device trust capability to MyApp; it also publishes that owner's
+// resolved transport peer to the already-present P2P service's synchronous
+// qualifier through one forward reference. All three are wiring on
+// already-present owners, and nothing moved.
 const _productionBootstrapNormalizedSha256 =
-    '1d7df44e861fabbcda440328136a66d6e005e53ae80cb0fc40435b525bc0af11';
+    '4dde742d9ad855fab52dd18dd4b575b57d0849c5162154608a6e1ccb01222569';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

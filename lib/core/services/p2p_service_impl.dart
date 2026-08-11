@@ -118,6 +118,18 @@ class P2PServiceImpl
   final Stream<void>? _networkChangeSignal;
   StreamSubscription<void>? _networkChangeSub;
 
+  /// 360: the exact transport peer an ACTIVE linked-secondary credential
+  /// names, or null on an ordinary primary installation.
+  ///
+  /// A linked secondary exists precisely so two installations of one account
+  /// stop sharing a relay mailbox. If the Go node ever came up as a different
+  /// peer than the credential names — a stale hot-restart node from a previous
+  /// role, a bridge that ignored the supplied key — then continuing would put
+  /// this installation back on the account's shared inbox while its contacts
+  /// address a device peer nobody is listening on. So the qualification below
+  /// STOPS the node rather than warming it.
+  final String? Function()? _requiredTransportPeerId;
+
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
   final _incomingLocalMediaController =
@@ -268,12 +280,17 @@ class P2PServiceImpl
     // FDC-04: optional, default null keeps every existing call site unchanged.
     Stream<void>? networkChangeSignal,
     String? Function()? activePeerId,
+    // 360: when this resolves a non-null peer, the node this service started
+    // MUST be exactly that transport. Null (every existing call site) keeps the
+    // incumbent primary contract byte-for-byte.
+    String? Function()? requiredTransportPeerId,
   }) : _bridge = bridge,
        _pushTokenStore = pushTokenStore,
        _liveFcmTokenReader = liveFcmTokenReader,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
-       _networkChangeSignal = networkChangeSignal {
+       _networkChangeSignal = networkChangeSignal,
+       _requiredTransportPeerId = requiredTransportPeerId {
     _inboxCoordinator = _P2PInboxCoordinator(
       port: _P2PInboxPort(
         readNodeState: () => _currentState,
@@ -573,6 +590,13 @@ class P2PServiceImpl
 
     final success = await startNodeCore(privateKeyBase64, peerId);
     if (success) {
+      // 360: qualify the peer the node actually came up as BEFORE any Dart
+      // warm/inbox/discovery work. This covers both `startNodeCore` branches —
+      // the fresh `node:start` response and the hot-restart `node:status`
+      // resync — because both publish through `_emitState`.
+      if (!await _qualifyLinkedTransportPeer()) {
+        return false;
+      }
       // FDC-07: kick off LAN mDNS discovery EARLY — before the warmBackground
       // inbox-drain body — so a same-WiFi peer can populate the LAN map ahead of
       // the first send window. Fire-and-forget + opportunistic: never blocks
@@ -582,6 +606,41 @@ class P2PServiceImpl
       unawaited(_warmBackgroundSafely());
     }
     return success;
+  }
+
+  /// Returns true when this installation may proceed past node start.
+  ///
+  /// No-op (always true) on an ordinary primary, where
+  /// [_requiredTransportPeerId] is null or resolves to null.
+  Future<bool> _qualifyLinkedTransportPeer() async {
+    final required = _requiredTransportPeerId?.call()?.trim();
+    if (required == null || required.isEmpty) {
+      return true;
+    }
+    final actual = _currentState.peerId?.trim() ?? '';
+    if (actual == required) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_LINKED_TRANSPORT_PEER_QUALIFIED',
+        details: {'peerId': actual},
+      );
+      return true;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_LINKED_TRANSPORT_PEER_MISMATCH',
+      details: {'expected': required, 'actual': actual},
+    );
+    try {
+      await stopNode();
+    } catch (e) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'P2P_SERVICE_LINKED_TRANSPORT_STOP_EXCEPTION',
+        details: {'error': e.toString()},
+      );
+    }
+    return false;
   }
 
   Future<void> _warmBackgroundSafely() async {

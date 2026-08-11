@@ -28,6 +28,7 @@ import 'package:flutter_app/features/contact_request/application/contact_request
 import 'package:flutter_app/features/contact_request/application/decline_contact_request_use_case.dart';
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
+import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -209,6 +210,17 @@ class OrbitWired extends StatefulWidget {
   /// false so every other caller / bare pump keeps the toggle.
   final bool hideShellNav;
 
+  /// 360: the exact linked-device trust authority handed to the contact
+  /// profile this screen opens.
+  ///
+  /// Optional here (the production composition root supplies the real
+  /// database-backed capability) but REQUIRED and non-null on
+  /// [ContactProfileScreen]. Left null — bare pumps and tests — the profile
+  /// receives the inert [UnavailableDirectContactDeviceTrust], which reports an
+  /// empty uninitialized roster and refuses every decision, so the screen
+  /// renders exactly as it did before Plan 360.
+  final DirectContactDeviceTrustCapability? directDeviceTrust;
+
   const OrbitWired({
     super.key,
     required this.identityRepo,
@@ -266,6 +278,7 @@ class OrbitWired extends StatefulWidget {
     this.accountMigrationSizeGate,
     this.nearbyLocationService,
     this.hideShellNav = false,
+    this.directDeviceTrust,
   });
 
   @override
@@ -2591,6 +2604,9 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     ContactProfileScreen.open(
       context,
       contact: friend.contact,
+      directDeviceTrust:
+          widget.directDeviceTrust ??
+          const UnavailableDirectContactDeviceTrust(),
       onMessage: () {
         Navigator.of(context).pop();
         _onFriendTap(friend);

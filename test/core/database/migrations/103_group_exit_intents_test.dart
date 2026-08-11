@@ -104,18 +104,18 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 111);
-      expect(productionCreateMigrations.last.version, 111);
-      expect(productionUpgradeMigrations.last.version, 111);
+      expect(currentIdentityDatabaseVersion, 112);
+      expect(productionCreateMigrations.last.version, 112);
+      expect(productionUpgradeMigrations.last.version, 112);
       expect(
         productionCreateMigrations[productionCreateMigrations.length - 2]
             .version,
-        110,
+        111,
       );
       expect(
         productionUpgradeMigrations[productionUpgradeMigrations.length - 2]
             .version,
-        110,
+        111,
       );
       expect(
         productionUpgradeMigrations
@@ -131,7 +131,7 @@ void main() {
       );
       expect(
         productionUpgradeMigrations.last.name,
-        '111_direct_media_blob_custody',
+        '112_direct_linked_device_addressing',
       );
       expect(await db.query('group_exit_intents'), isEmpty);
       expect(await db.query('groups'), legacyGroupsBefore);

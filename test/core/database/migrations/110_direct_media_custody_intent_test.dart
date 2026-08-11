@@ -64,8 +64,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 111);
-      expect(await _userVersion(upgraded), 111);
+      expect(currentIdentityDatabaseVersion, 112);
+      expect(await _userVersion(upgraded), 112);
       expect(
         (await upgraded.query(
           'messages',
@@ -156,7 +156,7 @@ void main() {
       );
       await _expectExactColumn(fresh);
       await _expectNoIntentIndex(fresh);
-      expect(await _userVersion(fresh), 111);
+      expect(await _userVersion(fresh), 112);
       expect(await fresh.query('messages'), isEmpty);
       await fresh.close();
 
@@ -186,7 +186,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 111);
+      expect(await _userVersion(upgraded), 112);
       expect(await upgraded.query('messages'), snapshotBeforeDowngrade);
     },
   );

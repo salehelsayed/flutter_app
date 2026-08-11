@@ -452,8 +452,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 111);
-        expect(manifest.databaseVersion, 111);
+        expect(currentIdentityDatabaseVersion, 112);
+        expect(manifest.databaseVersion, 112);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -547,8 +547,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 111);
-        expect(await _userVersion(productionStaged), 111);
+        expect(await _userVersion(productionActive), 112);
+        expect(await _userVersion(productionStaged), 112);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -588,7 +588,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 111);
+        expect(manifest.databaseVersion, 112);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -673,8 +673,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 111);
-        expect(await _userVersion(productionStaged), 111);
+        expect(await _userVersion(productionActive), 112);
+        expect(await _userVersion(productionStaged), 112);
 
         const pendingMessageId = 'tc345-transfer-pending';
         const pendingAttachmentId = 'tc345-transfer-pending-media';
@@ -789,7 +789,7 @@ CREATE TABLE identity (
           orderBy: 'message_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 111);
+        expect(manifest.databaseVersion, 112);
 
         final result =
             await MigrationDatabaseActiveImporter(
@@ -903,8 +903,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 111);
-        expect(await _userVersion(productionStaged), 111);
+        expect(await _userVersion(productionActive), 112);
+        expect(await _userVersion(productionStaged), 112);
 
         const incarnation = '34734734734734734734734734734734';
         const manifestHash =
@@ -948,7 +948,7 @@ CREATE TABLE identity (
           orderBy: 'attachment_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 111);
+        expect(manifest.databaseVersion, 112);
         expect(
           manifest.schemaInventory.tables['direct_media_blob_custody'],
           isNotEmpty,
@@ -1021,6 +1021,148 @@ CREATE TABLE identity (
         );
       },
     );
+
+    test('TC-360-01b v112 remote roster migrates while linked installation '
+        'authority cannot move', () async {
+      final productionActive = await openDatabase(
+        p.join(tempDir.path, 'tc360-production-active.db'),
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      );
+      final productionStaged = await openDatabase(
+        p.join(tempDir.path, 'tc360-production-staged.db'),
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      );
+      addTearDown(() async {
+        if (productionActive.isOpen) await productionActive.close();
+        if (productionStaged.isOpen) await productionStaged.close();
+      });
+
+      expect(await _userVersion(productionActive), 112);
+      expect(await _userVersion(productionStaged), 112);
+
+      const contactPeerId =
+          '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
+      const contactPublicKey = 'xXheGGW3CJOK/4Fh1XMAZJZmOxqhCDTjltxWaGmixmo=';
+      const transportPeerId =
+          '12D3KooWPCyWnZCXR3VGdrQjLr5d8TBaAHD956XZvo6xoCXYB5AR';
+      const transportPublicKey = 'xvKsVZiXDHljNxTT61w017/D6S2ljHNUs3mW2aSvOrI=';
+      const timestamp = '2026-08-11T12:00:00.000Z';
+
+      // A REMOTE-CONTACT roster: this is account data, and it must move with
+      // the account. Losing it on a Move would silently drop every device a
+      // user explicitly verified, quietly reverting them to legacy-only
+      // addressing without any decision being recorded.
+      await productionStaged.insert('contacts', <String, Object?>{
+        'peer_id': contactPeerId,
+        'public_key': contactPublicKey,
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'Alice',
+        'signature': 'sig-alice',
+        'scanned_at': timestamp,
+        'ml_kem_public_key': 'legacy-mlkem',
+      });
+      await productionStaged
+          .insert('direct_contact_device_bindings', <String, Object?>{
+            'contact_account_peer_id': contactPeerId,
+            'device_id': 'device-alpha',
+            'verified_account_signing_public_key': contactPublicKey,
+            'transport_peer_id': transportPeerId,
+            'transport_public_key': transportPublicKey,
+            'device_ml_kem_public_key': 'device-mlkem',
+            'binding_fingerprint': 'a' * 64,
+            'state': 'active',
+            'staged_at': timestamp,
+            'decided_at': timestamp,
+          });
+      await productionStaged
+          .insert('direct_contact_device_roster_metadata', <String, Object?>{
+            'contact_account_peer_id': contactPeerId,
+            'roster_initialized': 1,
+            'legacy_target_state': 'active',
+            'initialized_at': timestamp,
+            'legacy_revoked_at': null,
+            'updated_at': timestamp,
+          });
+
+      final expectedBindings = await productionStaged.query(
+        'direct_contact_device_bindings',
+        orderBy: 'device_id',
+      );
+      final expectedMetadata = await productionStaged.query(
+        'direct_contact_device_roster_metadata',
+        orderBy: 'contact_account_peer_id',
+      );
+
+      final manifest = await _manifestFor(productionStaged);
+      expect(manifest.databaseVersion, 112);
+      expect(
+        manifest.schemaInventory.tables['direct_contact_device_bindings'],
+        isNotEmpty,
+      );
+      expect(
+        manifest
+            .schemaInventory
+            .tables['direct_contact_device_roster_metadata'],
+        isNotEmpty,
+      );
+
+      final result =
+          await MigrationDatabaseActiveImporter(
+            activeDatabase: productionActive,
+          ).importVerifiedStagedDatabase(
+            MigrationDatabaseImportStagingResult(
+              database: productionStaged,
+              manifest: manifest,
+              stagedDatabasePath: p.join(
+                tempDir.path,
+                'tc360-production-staged.db',
+              ),
+            ),
+          );
+
+      expect(
+        result.importedTables,
+        containsAll(<String>[
+          'direct_contact_device_bindings',
+          'direct_contact_device_roster_metadata',
+        ]),
+      );
+      expect(
+        await productionActive.query(
+          'direct_contact_device_bindings',
+          orderBy: 'device_id',
+        ),
+        expectedBindings,
+      );
+      expect(
+        await productionActive.query(
+          'direct_contact_device_roster_metadata',
+          orderBy: 'contact_account_peer_id',
+        ),
+        expectedMetadata,
+      );
+
+      // The installation's OWN linked role and transport credential are
+      // secure-storage records, so they have no schema presence at all:
+      // imported DB data can never create or promote a local linked role.
+      expect(
+        manifest.schemaInventory.tableNames,
+        isNot(
+          anyElement(
+            anyOf(
+              contains('linked_installation'),
+              contains('transport_credential'),
+            ),
+          ),
+        ),
+      );
+    });
   });
 }
 

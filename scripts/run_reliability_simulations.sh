@@ -354,6 +354,9 @@ while IFS=$'\t' read -r kind path scenario; do
     # selector. A generic path-only row would make --only path:scenario fail.
     printf '%s\t%s\tinvite_reliability\n' "$kind" "$path"
     printf '%s\t%s\tinvite_send_latency\n' "$kind" "$path"
+    # 360 (TC-360-04a): the registered linked-device addressing pair is a third
+    # independently selectable row on the same runner.
+    printf '%s\t%s\tdirect_linked_device_addressing\n' "$kind" "$path"
     continue
   fi
   if [ "$path" = "integration_test/scripts/run_group_media_send_reliability.dart" ]; then
@@ -573,6 +576,8 @@ requires_explicit_multi_device_ids() {
 
   [ "$path:$scenario" = \
     "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency" ] ||
+    [ "$path:$scenario" = \
+      "integration_test/scripts/run_invite_reliability_multi_device.dart:direct_linked_device_addressing" ] ||
     [ "$path" = \
       "integration_test/scripts/run_group_media_send_reliability.dart" ]
 }

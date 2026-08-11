@@ -1,4 +1,6 @@
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_qr_payload.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -130,5 +132,58 @@ void main() {
         expect(second, isNot(first));
       },
     );
+
+    test('TC-360-01b v112 remote roster migrates while linked installation '
+        'authority cannot move', () async {
+      // A linked secondary does not own the account: its identity is a
+      // restricted transport credential bound to a logical account whose
+      // primary lives elsewhere. Exporting from here would hand a
+      // destination an account this device was never the authority for,
+      // while the real primary keeps running.
+      final linkedStore = FakeSecureKeyStore();
+      await linkedStore.write(
+        canonicalRuntimeInstallationIdStorageKey,
+        'installation-1',
+      );
+      final linkedAuthority = LinkedInstallationAuthority(
+        secureKeyStore: linkedStore,
+      );
+      await linkedAuthority.markExpectedLinkedRole();
+
+      final (result, authorization) = await authorizeMigrationExport(
+        repository: repository,
+        payload: payload(sessionId: 'linked-source-session'),
+        authorizedAt: now,
+        linkedInstallationAuthority: linkedAuthority,
+      );
+      expect(
+        result,
+        MigrationExportAuthorizationResult.linkedSecondaryInstallation,
+      );
+      expect(authorization, isNull);
+      expect(
+        await repository.isSessionConsumed('linked-source-session'),
+        false,
+        reason:
+            'a refused source must not burn the pairing session; the user '
+            'has to be able to retry from the real primary',
+      );
+
+      // An ordinary primary source is unaffected.
+      final primaryAuthority = LinkedInstallationAuthority(
+        secureKeyStore: FakeSecureKeyStore(),
+      );
+      final (
+        primaryResult,
+        primaryAuthorization,
+      ) = await authorizeMigrationExport(
+        repository: repository,
+        payload: payload(sessionId: 'primary-source-session'),
+        authorizedAt: now,
+        linkedInstallationAuthority: primaryAuthority,
+      );
+      expect(primaryResult, MigrationExportAuthorizationResult.authorized);
+      expect(primaryAuthorization, isNotNull);
+    });
   });
 }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -22,6 +23,14 @@ class IdentityChoiceWired extends StatefulWidget {
   final Future<Map<String, dynamic>> Function() callMlKemKeygen;
   final Future<void> Function(BuildContext navigationContext) onNavigateToMain;
   final WidgetBuilder? moveFromOldPhoneBuilder;
+
+  /// 360: builder for the restricted linked-device setup route.
+  ///
+  /// Null (every default build) hides the entry.
+  final WidgetBuilder? linkedDeviceSetupBuilder;
+
+  /// 360: injectable host seam over the build-time direct selector.
+  final DirectLinkedDeviceSelector directLinkedDeviceSelector;
   final VoidCallback? onProgressRouteFirstFrame;
   final BackgroundPreference backgroundPreference;
   final SecureKeyStore? secureKeyStore;
@@ -39,6 +48,8 @@ class IdentityChoiceWired extends StatefulWidget {
     required this.callMlKemKeygen,
     required this.onNavigateToMain,
     this.moveFromOldPhoneBuilder,
+    this.linkedDeviceSetupBuilder,
+    this.directLinkedDeviceSelector = const DirectLinkedDeviceSelector(),
     this.onProgressRouteFirstFrame,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.secureKeyStore,
@@ -206,6 +217,24 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
     );
   }
 
+  void _handleSetUpLinkedDevice() {
+    final builder = widget.linkedDeviceSetupBuilder;
+    if (builder == null) return;
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'ID_BTN_LINK_THIS_DEVICE_NAVIGATE',
+      details: {},
+    );
+
+    Navigator.of(context).push(
+      buildStartupReplacementRoute<void>(
+        builder: builder,
+        settings: const RouteSettings(name: 'direct-linked-device-setup'),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return IdentityChoiceScreen(
@@ -215,6 +244,15 @@ class _IdentityChoiceWiredState extends State<IdentityChoiceWired> {
           _isGeneratingIdentity || widget.moveFromOldPhoneBuilder == null
           ? null
           : _handleMoveFromOldPhone,
+      // 360: the restricted linked setup route is offered only when the
+      // direct selector allows authoring AND a builder is wired. A default
+      // build has the selector off, so the entry does not exist.
+      onSetUpLinkedDevice:
+          _isGeneratingIdentity ||
+              widget.linkedDeviceSetupBuilder == null ||
+              !widget.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring
+          ? null
+          : _handleSetUpLinkedDevice,
       backgroundPreference: widget.backgroundPreference,
     );
   }

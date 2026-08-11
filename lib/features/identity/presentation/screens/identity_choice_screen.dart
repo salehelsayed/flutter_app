@@ -26,6 +26,19 @@ class IdentityChoiceScreen extends StatefulWidget {
   /// Callback invoked when user chooses to move an existing account.
   final VoidCallback? onMoveFromOldPhone;
 
+  /// 360: callback invoked when the user chooses to set this installation up
+  /// as a LINKED SECONDARY of an account whose primary lives elsewhere.
+  ///
+  /// Null hides the entry entirely — the same convention
+  /// [onMoveFromOldPhone] already uses. It is null whenever the direct
+  /// selector is off, which is what keeps the restricted linked setup route
+  /// unreachable in a default build.
+  ///
+  /// A linked secondary is NOT a second primary and NOT a Move endpoint: it
+  /// stays in the restricted setup/status/QR route until Plan 361 makes event
+  /// fanout device-aware.
+  final VoidCallback? onSetUpLinkedDevice;
+
   final BackgroundPreference backgroundPreference;
 
   const IdentityChoiceScreen({
@@ -33,6 +46,7 @@ class IdentityChoiceScreen extends StatefulWidget {
     required this.onNewHere,
     required this.onLoadMyKey,
     this.onMoveFromOldPhone,
+    this.onSetUpLinkedDevice,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
   });
 
@@ -186,6 +200,28 @@ class _IdentityChoiceScreenState extends State<IdentityChoiceScreen>
                                         ),
                                       ),
                                     ),
+                                    if (widget.onSetUpLinkedDevice != null) ...[
+                                      const SizedBox(height: 16),
+                                      FadeTransition(
+                                        opacity: _card2FadeAnimation,
+                                        child: SlideTransition(
+                                          position: _card2SlideAnimation,
+                                          child: ChoiceCard(
+                                            key: const Key(
+                                              'onboarding-link-this-device',
+                                            ),
+                                            secondary: true,
+                                            icon: Icons.devices_other_outlined,
+                                            title: 'Link this device',
+                                            description:
+                                                'Set this phone up as an '
+                                                'additional device for an '
+                                                'account you already have.',
+                                            onTap: widget.onSetUpLinkedDevice,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
                                   ],
                                 );
                               },

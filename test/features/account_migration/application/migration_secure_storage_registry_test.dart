@@ -3,6 +3,7 @@ import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_authority_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_secure_storage_key.dart';
 import 'package:flutter_app/features/orbit/domain/models/orbit_geometry_prefs.dart';
 import 'package:flutter_app/features/push/application/pending_conversation_notification_overlay.dart';
@@ -199,6 +200,69 @@ void main() {
       );
       expect(resolvedIds, contains('primary:group_key_material:group%2F1:3'));
       expect(resolvedIds, equals(resolvedIds.toList()..sort()));
+    });
+
+    test('TC-360-01b v112 remote roster migrates while linked installation '
+        'authority cannot move', () {
+      // The linked role marker and the transport credential are DEVICE-LOCAL
+      // authority, never account data. Marking them `migrate` would let a
+      // Move clone one installation's transport identity onto a second
+      // device — exactly the shared-mailbox failure Plan 360 exists to
+      // prevent — and would put raw Ed25519 private key material into an
+      // exported bundle.
+      for (final activeKey in const <String>[
+        linkedInstallationRoleStorageKey,
+        linkedInstallationTransportCredentialStorageKey,
+      ]) {
+        final key = MigrationSecureStorageRegistry.fixedKey(
+          scope: MigrationSecureStoreScope.primary,
+          activeKey: activeKey,
+        );
+        expect(key, isNotNull, reason: activeKey);
+        expect(
+          key!.policy,
+          MigrationSecureStorageKeyPolicy.deviceLocal,
+          reason: activeKey,
+        );
+        expect(
+          key.includeInExportPayload,
+          isFalse,
+          reason: '$activeKey must never enter an exported/staged bundle',
+        );
+        expect(
+          key.criticality,
+          MigrationSecureStorageKeyCriticality.cleanupOnly,
+          reason: activeKey,
+        );
+        expect(
+          key.requiresStagedValueForPromotion,
+          isFalse,
+          reason: '$activeKey is never promoted on the destination',
+        );
+      }
+
+      // Registered exactly once each, and absent from the export payload set.
+      final exported = MigrationSecureStorageRegistry.fixedKeys
+          .where((key) => key.includeInExportPayload)
+          .map((key) => key.activeKey)
+          .toSet();
+      expect(exported, isNot(contains(linkedInstallationRoleStorageKey)));
+      expect(
+        exported,
+        isNot(contains(linkedInstallationTransportCredentialStorageKey)),
+      );
+      for (final activeKey in const <String>[
+        linkedInstallationRoleStorageKey,
+        linkedInstallationTransportCredentialStorageKey,
+      ]) {
+        expect(
+          MigrationSecureStorageRegistry.fixedKeys.where(
+            (key) => key.activeKey == activeKey,
+          ),
+          hasLength(1),
+          reason: activeKey,
+        );
+      }
     });
   });
 }

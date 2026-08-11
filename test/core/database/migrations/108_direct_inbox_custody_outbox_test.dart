@@ -70,8 +70,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 111);
-      expect(await _userVersion(upgraded), 111);
+      expect(currentIdentityDatabaseVersion, 112);
+      expect(await _userVersion(upgraded), 112);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
         await upgraded.query('direct_inbox_custody_outbox'),
@@ -142,7 +142,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 111);
+      expect(await _userVersion(upgraded), 112);
       await _expectExactSchema(upgraded);
       expect(
         await upgraded.query(
@@ -220,9 +220,12 @@ void main() {
           'test/core/database/migrations/102_groups_self_removed_at_test.dart',
           'final index107 = registry.indexWhere((entry) => entry.version == $historicalVersion);',
         ): 1,
+        // 360: DB v112 appended one registry entry, so the v107 offset in the
+        // v104 test shifted from `length - 5` to `length - 6`. The assertion
+        // itself is unchanged; only its position in the registry moved.
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 5].version, $historicalVersion);',
+          'expect(registry[registry.length - 6].version, $historicalVersion);',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',

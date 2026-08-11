@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 111);
+        expect(currentIdentityDatabaseVersion, 112);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -166,7 +166,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 111);
+        expect(currentIdentityDatabaseVersion, 112);
         expect(inventory.tables['direct_media_blob_custody'], <String>[
           'attachment_id',
           'ciphertext_relative_path',

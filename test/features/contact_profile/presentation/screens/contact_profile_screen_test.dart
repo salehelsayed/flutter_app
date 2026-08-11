@@ -5,7 +5,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/theme/app_theme.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
+import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -32,12 +34,24 @@ void main() {
     );
   }
 
-  Widget wrap(ContactModel contact, {VoidCallback? onMessage}) {
+  Widget wrap(
+    ContactModel contact, {
+    VoidCallback? onMessage,
+    DirectContactDeviceTrustCapability? directDeviceTrust,
+  }) {
     return MaterialApp(
       locale: const Locale('en'),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
-      home: ContactProfileScreen(contact: contact, onMessage: onMessage),
+      home: ContactProfileScreen(
+        // A distinct key per capability forces a fresh State, so the roster is
+        // re-read instead of reusing the previous pump's snapshot.
+        key: ValueKey<int>(identityHashCode(directDeviceTrust)),
+        contact: contact,
+        onMessage: onMessage,
+        directDeviceTrust:
+            directDeviceTrust ?? const UnavailableDirectContactDeviceTrust(),
+      ),
     );
   }
 
@@ -75,7 +89,10 @@ void main() {
               size: Size(400, 800),
               disableAnimations: true,
             ),
-            child: ContactProfileScreen(contact: buildContact()),
+            child: ContactProfileScreen(
+              contact: buildContact(),
+              directDeviceTrust: const UnavailableDirectContactDeviceTrust(),
+            ),
           ),
         ),
       );
@@ -91,7 +108,8 @@ void main() {
       expect(
         controllers.any((c) => c.isAnimating),
         isTrue,
-        reason: 'the friend-profile orbit must keep animating under '
+        reason:
+            'the friend-profile orbit must keep animating under '
             'reduce-motion',
       );
     },
@@ -131,9 +149,9 @@ void main() {
     expect(find.text('Peer ID copied'), findsOneWidget);
     expect(find.byKey(const ValueKey('quiet-confirm')), findsOneWidget);
     expect(
-      tester.widgetList<SnackBar>(find.byType(SnackBar)).every(
-        (bar) => bar.key == const ValueKey('quiet-confirm'),
-      ),
+      tester
+          .widgetList<SnackBar>(find.byType(SnackBar))
+          .every((bar) => bar.key == const ValueKey('quiet-confirm')),
       isTrue,
     );
 
@@ -166,7 +184,9 @@ void main() {
     expect(find.text('Message'), findsNothing);
 
     var tapped = false;
-    await tester.pumpWidget(wrap(buildContact(), onMessage: () => tapped = true));
+    await tester.pumpWidget(
+      wrap(buildContact(), onMessage: () => tapped = true),
+    );
     await tester.pump(const Duration(milliseconds: 1000));
 
     expect(find.text('Message'), findsOneWidget);
@@ -199,8 +219,11 @@ void main() {
         body: Builder(
           builder: (context) => Center(
             child: TextButton(
-              onPressed: () =>
-                  ContactProfileScreen.open(context, contact: buildContact()),
+              onPressed: () => ContactProfileScreen.open(
+                context,
+                contact: buildContact(),
+                directDeviceTrust: const UnavailableDirectContactDeviceTrust(),
+              ),
               child: const Text('open-profile'),
             ),
           ),
@@ -242,8 +265,12 @@ void main() {
           home: Builder(
             builder: (context) => Center(
               child: TextButton(
-                onPressed: () =>
-                    ContactProfileScreen.open(context, contact: buildContact()),
+                onPressed: () => ContactProfileScreen.open(
+                  context,
+                  contact: buildContact(),
+                  directDeviceTrust:
+                      const UnavailableDirectContactDeviceTrust(),
+                ),
                 child: const Text('open-profile'),
               ),
             ),
@@ -315,4 +342,335 @@ void main() {
       debugDefaultTargetPlatformOverride = null;
     }
   });
+
+  testWidgets(
+    'TC-360-03b direct-device trust UI changes only the reviewed contact '
+    'safety authority',
+    (tester) async {
+      final contact = buildContact();
+      const deviceFingerprint =
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const secondFingerprint =
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+
+      final v1 = ContactSafetyNumber.build(
+        peerId: contact.peerId,
+        publicKey: contact.publicKey,
+        mlKemPublicKey: contact.mlKemPublicKey,
+      )!;
+
+      // ── Before ANY roster decision the number is byte-identical `v1`. A
+      // contact nobody has reviewed must not see their security string move
+      // just because Plan 360 shipped. ──
+      final uninitialized = _FakeDirectContactDeviceTrust();
+      await tester.pumpWidget(wrap(contact, directDeviceTrust: uninitialized));
+      await tester.pump(const Duration(milliseconds: 1000));
+      expect(find.text(v1), findsOneWidget);
+      expect(find.text('LINKED DEVICES'), findsNothing);
+
+      // ── One pending device: the card appears with the exact account,
+      // device, and transport fingerprints, and owns Verify/Reject. ──
+      final pending = _FakeDirectContactDeviceTrust(
+        roster: DirectContactDeviceRoster(
+          metadata: DirectContactDeviceRosterMetadata.uninitialized(
+            contact.peerId,
+          ),
+          bindings: <DirectContactDeviceBinding>[
+            _binding(
+              contact,
+              deviceId: 'device-alpha',
+              fingerprint: deviceFingerprint,
+              state: DirectContactDeviceBindingState.pending,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(wrap(contact, directDeviceTrust: pending));
+      await tester.pump(const Duration(milliseconds: 1000));
+      expect(find.text('LINKED DEVICES'), findsOneWidget);
+      expect(find.text(contact.peerId), findsWidgets);
+      expect(find.text(deviceFingerprint), findsOneWidget);
+      expect(find.text('transport-peer-device-alpha'), findsOneWidget);
+      expect(find.text('Verify'), findsOneWidget);
+      expect(find.text('Reject'), findsOneWidget);
+      // Still v1: staging is not a decision.
+      expect(find.text(v1), findsOneWidget);
+
+      // Verify carries the EXACT believed authority the screen rendered.
+      await tester.ensureVisible(find.text('Verify'));
+      await tester.pump();
+      await tester.tap(find.text('Verify'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(pending.verifyCalls, hasLength(1));
+      expect(pending.verifyCalls.single, <String>[
+        contact.peerId,
+        'device-alpha',
+        deviceFingerprint,
+        contact.publicKey,
+      ]);
+
+      // ── Initialized with one active device: `v2`, order-independent. ──
+      final activeOne = _FakeDirectContactDeviceTrust(
+        roster: _initializedRoster(contact, <DirectContactDeviceBinding>[
+          _binding(
+            contact,
+            deviceId: 'device-alpha',
+            fingerprint: deviceFingerprint,
+            state: DirectContactDeviceBindingState.active,
+          ),
+        ]),
+      );
+      await tester.pumpWidget(wrap(contact, directDeviceTrust: activeOne));
+      await tester.pump(const Duration(milliseconds: 1000));
+      final v2Single = ContactSafetyNumber.build(
+        peerId: contact.peerId,
+        publicKey: contact.publicKey,
+        mlKemPublicKey: contact.mlKemPublicKey,
+        rosterInitialized: true,
+        deviceFingerprints: <String>[
+          computeDirectContactLegacyTargetFingerprint(
+            contactAccountPeerId: contact.peerId,
+            accountSigningPublicKey: contact.publicKey,
+            legacyMlKemPublicKey: contact.mlKemPublicKey!,
+          ),
+          deviceFingerprint,
+        ],
+      )!;
+      expect(v2Single, isNot(v1));
+      expect(find.text(v2Single), findsOneWidget);
+      expect(find.text('Revoke'), findsWidgets);
+
+      // Two active devices in either declaration order produce the SAME
+      // number: the fold is sorted, so the string two people compare does not
+      // depend on which device was verified first.
+      final ascending = _FakeDirectContactDeviceTrust(
+        roster: _initializedRoster(contact, <DirectContactDeviceBinding>[
+          _binding(
+            contact,
+            deviceId: 'device-alpha',
+            fingerprint: deviceFingerprint,
+            state: DirectContactDeviceBindingState.active,
+          ),
+          _binding(
+            contact,
+            deviceId: 'device-beta',
+            fingerprint: secondFingerprint,
+            state: DirectContactDeviceBindingState.active,
+          ),
+        ]),
+      );
+      await tester.pumpWidget(wrap(contact, directDeviceTrust: ascending));
+      await tester.pump(const Duration(milliseconds: 1000));
+      final ascendingNumber = _renderedSafetyNumber(tester, v1);
+
+      final descending = _FakeDirectContactDeviceTrust(
+        roster: _initializedRoster(contact, <DirectContactDeviceBinding>[
+          _binding(
+            contact,
+            deviceId: 'device-beta',
+            fingerprint: secondFingerprint,
+            state: DirectContactDeviceBindingState.active,
+          ),
+          _binding(
+            contact,
+            deviceId: 'device-alpha',
+            fingerprint: deviceFingerprint,
+            state: DirectContactDeviceBindingState.active,
+          ),
+        ]),
+      );
+      await tester.pumpWidget(wrap(contact, directDeviceTrust: descending));
+      await tester.pump(const Duration(milliseconds: 1000));
+      expect(_renderedSafetyNumber(tester, v1), ascendingNumber);
+      expect(ascendingNumber, isNot(v1));
+
+      // ── Initialized with ZERO active devices stays `v2`. Falling back to
+      // `v1` here would show the SAME digits as before the user revoked
+      // everything — silently hiding a real security decision. ──
+      final initializedEmpty = _FakeDirectContactDeviceTrust(
+        roster: DirectContactDeviceRoster(
+          metadata: const DirectContactDeviceRosterMetadata(
+            contactAccountPeerId: peerId,
+            rosterInitialized: true,
+            legacyTargetRevoked: true,
+            initializedAt: '2026-01-15T10:30:00.000Z',
+            legacyRevokedAt: '2026-01-15T10:30:00.000Z',
+          ),
+          bindings: <DirectContactDeviceBinding>[
+            _binding(
+              contact,
+              deviceId: 'device-alpha',
+              fingerprint: deviceFingerprint,
+              state: DirectContactDeviceBindingState.revoked,
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        wrap(contact, directDeviceTrust: initializedEmpty),
+      );
+      await tester.pump(const Duration(milliseconds: 1000));
+      final emptyNumber = _renderedSafetyNumber(tester, v1);
+      expect(
+        emptyNumber,
+        isNot(v1),
+        reason:
+            'initialized-with-zero-active must remain v2, never fall back to '
+            'the pre-decision v1 digits',
+      );
+      expect(
+        emptyNumber,
+        ContactSafetyNumber.build(
+          peerId: contact.peerId,
+          publicKey: contact.publicKey,
+          mlKemPublicKey: contact.mlKemPublicKey,
+          rosterInitialized: true,
+        ),
+      );
+      // Terminal states offer no action: re-admission needs a fresh QR.
+      expect(find.text('Verify'), findsNothing);
+      expect(find.text('Revoke'), findsNothing);
+    },
+  );
+}
+
+DirectContactDeviceRoster _initializedRoster(
+  ContactModel contact,
+  List<DirectContactDeviceBinding> bindings,
+) {
+  return DirectContactDeviceRoster(
+    metadata: DirectContactDeviceRosterMetadata(
+      contactAccountPeerId: contact.peerId,
+      rosterInitialized: true,
+      legacyTargetRevoked: false,
+      initializedAt: '2026-01-15T10:30:00.000Z',
+      legacyRevokedAt: null,
+    ),
+    bindings: bindings,
+  );
+}
+
+DirectContactDeviceBinding _binding(
+  ContactModel contact, {
+  required String deviceId,
+  required String fingerprint,
+  required DirectContactDeviceBindingState state,
+}) {
+  return DirectContactDeviceBinding(
+    contactAccountPeerId: contact.peerId,
+    deviceId: deviceId,
+    verifiedAccountSigningPublicKey: contact.publicKey,
+    transportPeerId: 'transport-peer-$deviceId',
+    transportPublicKey: 'transport-public-$deviceId',
+    deviceMlKemPublicKey: 'device-mlkem-$deviceId',
+    bindingFingerprint: fingerprint,
+    state: state,
+    stagedAt: '2026-01-15T10:30:00.000Z',
+    decidedAt: state == DirectContactDeviceBindingState.pending
+        ? null
+        : '2026-01-15T10:31:00.000Z',
+  );
+}
+
+/// Reads the currently rendered safety number (the large monospace string).
+String _renderedSafetyNumber(WidgetTester tester, String v1Sample) {
+  final pattern = RegExp(r'^\d{4} \d{4} \d{4}$');
+  final matches = tester
+      .widgetList<Text>(find.byType(Text))
+      .map((text) => text.data)
+      .whereType<String>()
+      .where(pattern.hasMatch)
+      .toSet();
+  expect(matches, hasLength(1));
+  return matches.single;
+}
+
+/// Records the exact authority each decision was authored against.
+class _FakeDirectContactDeviceTrust
+    implements DirectContactDeviceTrustCapability {
+  _FakeDirectContactDeviceTrust({this.roster});
+
+  final DirectContactDeviceRoster? roster;
+  final List<List<String>> verifyCalls = <List<String>>[];
+  final List<List<String>> rejectCalls = <List<String>>[];
+  final List<List<String>> revokeCalls = <List<String>>[];
+  final List<List<String>> revokeLegacyCalls = <List<String>>[];
+
+  @override
+  Future<DirectContactDeviceRoster> loadRoster(String contactAccountPeerId) {
+    return Future.value(
+      roster ??
+          DirectContactDeviceRoster(
+            metadata: DirectContactDeviceRosterMetadata.uninitialized(
+              contactAccountPeerId,
+            ),
+            bindings: const <DirectContactDeviceBinding>[],
+          ),
+    );
+  }
+
+  @override
+  Future<bool> verifyDevice({
+    required String contactAccountPeerId,
+    required String deviceId,
+    required String expectedFingerprint,
+    required String expectedAccountSigningPublicKey,
+  }) async {
+    verifyCalls.add(<String>[
+      contactAccountPeerId,
+      deviceId,
+      expectedFingerprint,
+      expectedAccountSigningPublicKey,
+    ]);
+    return true;
+  }
+
+  @override
+  Future<bool> rejectDevice({
+    required String contactAccountPeerId,
+    required String deviceId,
+    required String expectedFingerprint,
+    required String expectedAccountSigningPublicKey,
+  }) async {
+    rejectCalls.add(<String>[
+      contactAccountPeerId,
+      deviceId,
+      expectedFingerprint,
+      expectedAccountSigningPublicKey,
+    ]);
+    return true;
+  }
+
+  @override
+  Future<bool> revokeDevice({
+    required String contactAccountPeerId,
+    required String deviceId,
+    required String expectedFingerprint,
+    required String expectedAccountSigningPublicKey,
+  }) async {
+    revokeCalls.add(<String>[
+      contactAccountPeerId,
+      deviceId,
+      expectedFingerprint,
+      expectedAccountSigningPublicKey,
+    ]);
+    return true;
+  }
+
+  @override
+  Future<bool> revokeLegacyTarget({
+    required String contactAccountPeerId,
+    required String expectedAccountSigningPublicKey,
+    required String expectedLegacyPeerId,
+    required String expectedLegacyMlKemPublicKey,
+  }) async {
+    revokeLegacyCalls.add(<String>[
+      contactAccountPeerId,
+      expectedAccountSigningPublicKey,
+      expectedLegacyPeerId,
+      expectedLegacyMlKemPublicKey,
+    ]);
+    return true;
+  }
 }

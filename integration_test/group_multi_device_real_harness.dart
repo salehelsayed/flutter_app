@@ -14,6 +14,13 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
+import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
@@ -115,9 +122,14 @@ const configuredDbName = String.fromEnvironment(
   'E2E_DB_NAME',
   defaultValue: '',
 );
+
+/// The legacy default branch name. Named so the terminal-unknown guard below
+/// can compare against it explicitly rather than falling through to it.
+const String _legacySameUserScenario = 'same_user';
+
 const configuredScenario = String.fromEnvironment(
   'MD004_SCENARIO',
-  defaultValue: 'same_user',
+  defaultValue: _legacySameUserScenario,
 );
 const configuredMode = String.fromEnvironment(
   'MD004_MODE',
@@ -3383,6 +3395,32 @@ void main() {
           return;
         }
 
+        // 360 / TC-360-04a: the registered linked-device addressing pair.
+        if (configuredScenario == directLinkedDeviceAddressingScenario) {
+          // The runner launches the PRIMARY first and only starts the sibling
+          // once the primary has written its readiness fixture. The linked
+          // secondary is therefore the primary role here: it is the publisher
+          // (identity, then QR). Putting account B on primary would deadlock —
+          // it would wait for a fixture only the never-launched sibling writes.
+          if (_isPrimaryRole) {
+            await _runDirectLinkedDeviceAddressingLinkedSide();
+          } else {
+            await _runDirectLinkedDeviceAddressingAccountBSide();
+          }
+          return;
+        }
+
+        // 360: an unregistered scenario is TERMINAL.
+        //
+        // Before this guard, anything unrecognized fell through to the legacy
+        // `same_user` branch below — so a typo, or a scenario registered on the
+        // host side but not here, would run a completely different proof and
+        // report PASS for the scenario the caller actually named. That is a
+        // false green, not a missing feature.
+        if (configuredScenario != _legacySameUserScenario) {
+          fail('Unregistered MD004_SCENARIO: $configuredScenario');
+        }
+
         if (_isPrimaryRole) {
           await _runPrimaryScenario();
         } else {
@@ -3402,4 +3440,394 @@ void main() {
       }
     },
   );
+}
+
+// ── 360 / TC-360-04a: registered Android linked-device addressing pair ──────
+//
+// Topology is TWO targets, not three phones:
+//   * `sibling` role = account A's LINKED SECONDARY. It uses real
+//     `FlutterSecureKeyStore` for exactly the run-scoped linked marker and
+//     credential keys, real bridge identity generation, starts with a stable
+//     transport peer distinct from its logical account, and emits the
+//     dual-signed QR.
+//   * `primary` role = a DIFFERENT account B that already stores A's logical
+//     account as a legacy contact fixture. It stages then explicitly verifies
+//     the scanned document, and refuses one tampered copy.
+//
+// The real primary account-A device need not run: this scenario proves
+// identity and trust, not delivery. Stop/start only — no chat, event, or blob
+// traffic is exercised.
+
+/// Runs the ACCOUNT-B side: stage, verify, and refuse a tampered document.
+Future<void> _runDirectLinkedDeviceAddressingAccountBSide() async {
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Bob',
+    cliPeerFixture: null,
+  );
+  try {
+    // B publishes nothing; it only needs A's logical account as a contact.
+    final aliceFixture = await waitForSharedJson(
+      _signalName('alice_identity.json'),
+    );
+    final aliceContact = _contactFromFixture(aliceFixture, 'Alice');
+    await stack.contactRepo.addContact(aliceContact);
+
+    final qrFixture = await waitForSharedJson(
+      _signalName('linked_device_qr.json'),
+    );
+    final qrDocument = qrFixture['document'] as String;
+    final tamperedDocument = qrFixture['tamperedDocument'] as String;
+
+    Future<bool> verifySignature({
+      required String publicKey,
+      required String data,
+      required String signature,
+    }) => callVerifyPayload(
+      bridge: stack.bridge,
+      publicKey: publicKey,
+      data: data,
+      signature: signature,
+    );
+
+    // The tampered copy must be refused BEFORE the good one is accepted, so a
+    // pass cannot come from "the first document we happened to try".
+    final (tamperedResult, _) = await parseDirectLinkedDeviceQr(
+      qrString: tamperedDocument,
+      ownAccountPeerId: stack.identity.peerId,
+      lookupContact: stack.contactRepo.getContact,
+      callVerify: verifySignature,
+      selector: const DirectLinkedDeviceSelector.enabled(),
+    );
+    expect(
+      tamperedResult,
+      isNot(ParseDirectLinkedDeviceQrResult.success),
+      reason: 'a tampered linked-device document must never authenticate',
+    );
+
+    final (parseResult, document) = await parseDirectLinkedDeviceQr(
+      qrString: qrDocument,
+      ownAccountPeerId: stack.identity.peerId,
+      lookupContact: stack.contactRepo.getContact,
+      callVerify: verifySignature,
+      selector: const DirectLinkedDeviceSelector.enabled(),
+    );
+    expect(parseResult, ParseDirectLinkedDeviceQrResult.success);
+    expect(document, isNotNull);
+
+    final stagedAt = DateTime.now().toUtc().toIso8601String();
+    final stageOutcome = await dbStageDirectContactDeviceBinding(
+      stack.db,
+      contactAccountPeerId: document!.accountPeerId,
+      accountSigningPublicKey: document.accountPublicKey,
+      deviceId: document.deviceId,
+      transportPeerId: document.transportPeerId,
+      transportPublicKey: document.transportPublicKey,
+      deviceMlKemPublicKey: document.deviceMlKemPublicKey,
+      stagedAt: stagedAt,
+    );
+    expect(stageOutcome, DirectContactDeviceBindingStageOutcome.staged);
+
+    final fingerprint = computeDirectContactDeviceBindingFingerprint(
+      contactAccountPeerId: document.accountPeerId,
+      accountSigningPublicKey: document.accountPublicKey,
+      deviceId: document.deviceId,
+      transportPeerId: document.transportPeerId,
+      transportPublicKey: document.transportPublicKey,
+      deviceMlKemPublicKey: document.deviceMlKemPublicKey,
+    );
+    final verified = await dbVerifyDirectContactDeviceBinding(
+      stack.db,
+      contactAccountPeerId: document.accountPeerId,
+      deviceId: document.deviceId,
+      expectedFingerprint: fingerprint,
+      expectedAccountSigningPublicKey: document.accountPublicKey,
+      decidedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    expect(verified, isTrue);
+
+    final roster = await dbLoadDirectContactDeviceRoster(
+      stack.db,
+      document.accountPeerId,
+    );
+    expect(roster.metadata.rosterInitialized, isTrue);
+    expect(roster.activeBindings, hasLength(1));
+    expect(
+      roster.activeBindings.single.transportPeerId,
+      document.transportPeerId,
+    );
+
+    // The verified transport must be a DIFFERENT peer than the logical
+    // account. Equal peers would mean the shared-mailbox topology never
+    // actually changed.
+    expect(
+      roster.activeBindings.single.transportPeerId,
+      isNot(document.accountPeerId),
+    );
+
+    writeSharedJson(
+      directLinkedDeviceAddressingReadyFileName(configuredRunId, 'sibling'),
+      <String, dynamic>{
+        'schema': directLinkedDeviceAddressingReadySchema,
+        'schemaVersion': directLinkedDeviceAddressingReadySchemaVersion,
+        'role': 'sibling',
+        'runId': configuredRunId,
+        'stagedThenVerified': true,
+        'tamperedRefused': true,
+        'tamperedResult': tamperedResult.name,
+        'activeDeviceCount': roster.activeBindings.length,
+      },
+    );
+    // Signal completion, then STAY ALIVE until the peer acknowledges.
+    //
+    // `flutter test` uninstalls the app when a role finishes, which deletes the
+    // app-private signal dir. An artifact written as a role's LAST action can
+    // therefore be destroyed before the 500ms host sync pulls it — which is
+    // exactly how the previous run failed, with this side passing and the peer
+    // timing out on an artifact that no longer existed anywhere.
+    writeSharedText(_signalName('accountb_verified'), 'ok');
+    await waitForSharedSignal(
+      _signalName('linked_side_done'),
+      timeout: const Duration(minutes: 5),
+    );
+  } finally {
+    await stack.teardown();
+  }
+}
+
+/// Runs the LINKED-SECONDARY side for account A.
+Future<void> _runDirectLinkedDeviceAddressingLinkedSide() async {
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Alice',
+    cliPeerFixture: null,
+  );
+  // Real platform secure storage for EXACTLY the two run-scoped linked keys.
+  // Every other harness store stays fake, and these are deleted before and
+  // after so raw key material never survives the run or reaches an artifact.
+  final deviceSecureStore = FlutterSecureKeyStore();
+
+  // The authority READS the canonical runtime installation ID (it never mints
+  // one), so this run must supply a value. Capture whatever was there first and
+  // put it back afterwards, so the proof writes nothing durable it did not
+  // already own — the same discipline the two linked keys follow.
+  String? priorInstallationId;
+
+  Future<void> restoreRunScopedSecureState() async {
+    await deviceSecureStore.delete(linkedInstallationRoleStorageKey);
+    await deviceSecureStore.delete(
+      linkedInstallationTransportCredentialStorageKey,
+    );
+    final prior = priorInstallationId;
+    if (prior == null) {
+      await deviceSecureStore.delete(canonicalRuntimeInstallationIdStorageKey);
+    } else {
+      await deviceSecureStore.write(
+        canonicalRuntimeInstallationIdStorageKey,
+        prior,
+      );
+    }
+  }
+
+  try {
+    priorInstallationId = await deviceSecureStore.read(
+      canonicalRuntimeInstallationIdStorageKey,
+    );
+    await deviceSecureStore.delete(linkedInstallationRoleStorageKey);
+    await deviceSecureStore.delete(
+      linkedInstallationTransportCredentialStorageKey,
+    );
+    await deviceSecureStore.write(
+      canonicalRuntimeInstallationIdStorageKey,
+      'tc360-$configuredRunId-linked',
+    );
+
+    final authority = LinkedInstallationAuthority(
+      secureKeyStore: deviceSecureStore,
+    );
+
+    // Crash-safe order: marker, then ONE preparing credential, then activate.
+    await authority.markExpectedLinkedRole();
+    final (setupResult, credential) = await authority
+        .createOrResumeTransportCredential(
+          accountPeerId: stack.identity.peerId,
+          accountPublicKey: stack.identity.publicKey,
+          callIdentityGenerate: () => callIdentityGenerate(stack.bridge),
+          callSign: (data, privateKey) => callSignPayload(
+            bridge: stack.bridge,
+            dataToSign: data,
+            privateKey: privateKey,
+          ),
+          callVerify:
+              ({
+                required String publicKey,
+                required String data,
+                required String signature,
+              }) => callVerifyPayload(
+                bridge: stack.bridge,
+                publicKey: publicKey,
+                data: data,
+                signature: signature,
+              ),
+        );
+    expect(setupResult, LinkedInstallationSetupResult.success);
+    expect(credential, isNotNull);
+    expect(credential!.transportPeerId, isNot(stack.identity.peerId));
+
+    // Resume must re-adopt the SAME bytes rather than mint a second identity.
+    final (resumeResult, resumed) = await authority
+        .createOrResumeTransportCredential(
+          accountPeerId: stack.identity.peerId,
+          accountPublicKey: stack.identity.publicKey,
+          callIdentityGenerate: () => callIdentityGenerate(stack.bridge),
+          callSign: (data, privateKey) => callSignPayload(
+            bridge: stack.bridge,
+            dataToSign: data,
+            privateKey: privateKey,
+          ),
+          callVerify:
+              ({
+                required String publicKey,
+                required String data,
+                required String signature,
+              }) => callVerifyPayload(
+                bridge: stack.bridge,
+                publicKey: publicKey,
+                data: data,
+                signature: signature,
+              ),
+        );
+    expect(resumeResult, LinkedInstallationSetupResult.success);
+    expect(resumed!.transportPeerId, credential.transportPeerId);
+
+    expect(
+      await authority.activateTransportCredential(
+        accountPeerId: stack.identity.peerId,
+        expectedTransportPeerId: credential.transportPeerId,
+      ),
+      LinkedInstallationSetupResult.success,
+    );
+
+    final activeAuthority = await authority.load(
+      expectedAccountPeerId: stack.identity.peerId,
+    );
+    expect(activeAuthority.isActiveLinkedSecondary, isTrue);
+
+    // The shared stack helper starts a node on the ACCOUNT identity for its own
+    // purposes. A real linked installation starts on a fresh process where no
+    // node is running, so stop that one first.
+    //
+    // This is not incidental cleanup — it is the exact hot-restart hazard the
+    // production peer barrier exists for. Without the stop, `node:start` answers
+    // "already started", `startNodeCore` resyncs from `node:status`, and the
+    // service reports the ACCOUNT peer while believing it started the transport.
+    // Production refuses that outcome (`_qualifyLinkedTransportPeer` stops the
+    // node and fails the start); this harness's service is constructed by the
+    // shared helper without that qualifier, so the assertion below is what
+    // catches it here.
+    await stack.p2pService.stopNode();
+
+    // Start the node on the TRANSPORT identity, then stop. Stop/start only.
+    final startResult = await startP2PNode(
+      identityRepo: stack.identityRepo,
+      p2pService: stack.p2pService,
+      linkedAuthority: activeAuthority,
+    );
+    expect(startResult, StartNodeResult.success);
+    final startedPeerId = stack.p2pService.currentState.peerId;
+    expect(
+      startedPeerId,
+      credential.transportPeerId,
+      reason:
+          'the node must come up as the TRANSPORT peer, not the account peer',
+    );
+    expect(
+      startedPeerId,
+      isNot(stack.identity.peerId),
+      reason: 'a linked secondary must not share the account mailbox',
+    );
+    await stack.p2pService.stopNode();
+
+    // Restart proves the transport peer is STABLE across a stop/start, which
+    // is what makes a contact's stored binding durable.
+    final restartAuthority = await authority.load(
+      expectedAccountPeerId: stack.identity.peerId,
+    );
+    expect(
+      restartAuthority.credential!.transportPeerId,
+      credential.transportPeerId,
+    );
+
+    // `alice_identity.json` is the EXACT readiness fixture the runner polls for
+    // before it launches the sibling. Publishing account A's logical identity
+    // here is both the release signal and the legacy-contact fixture the other
+    // account needs.
+    writeSharedJson(
+      _signalName('alice_identity.json'),
+      _peerIdentityFixture(stack.identity),
+    );
+
+    final (buildResult, document) = await buildDirectLinkedDeviceQr(
+      linkedAuthority: activeAuthority,
+      accountPeerId: stack.identity.peerId,
+      accountPublicKey: stack.identity.publicKey,
+      accountPrivateKey: stack.identity.privateKey,
+      deviceMlKemPublicKey: stack.identity.mlKemPublicKey,
+      callSign: (data, privateKey) => callSignPayload(
+        bridge: stack.bridge,
+        dataToSign: data,
+        privateKey: privateKey,
+      ),
+      selector: const DirectLinkedDeviceSelector.enabled(),
+    );
+    expect(buildResult, BuildDirectLinkedDeviceQrResult.success);
+    expect(document, isNotNull);
+
+    // Tamper with the SIGNED body (the device ID) while leaving both
+    // signatures intact — the exact forgery dual signing must catch.
+    final decoded = jsonDecode(document!) as Map<String, dynamic>;
+    final envelope = Map<String, dynamic>.from(
+      decoded['mknoon'] as Map<String, dynamic>,
+    );
+    final body = Map<String, dynamic>.from(
+      envelope['body'] as Map<String, dynamic>,
+    );
+    body['deviceId'] = '${body['deviceId']}-tampered';
+    envelope['body'] = body;
+    final tampered = jsonEncode(<String, dynamic>{'mknoon': envelope});
+
+    writeSharedJson(_signalName('linked_device_qr.json'), <String, dynamic>{
+      'document': document,
+      'tamperedDocument': tampered,
+    });
+
+    // Account B still has to BUILD and install after this role signalled
+    // readiness, so this barrier is deliberately generous. It waits on B's
+    // EARLY signal — written while B is still running — never on an artifact B
+    // writes as its final action, which its own uninstall can destroy.
+    await waitForSharedSignal(
+      _signalName('accountb_verified'),
+      timeout: const Duration(minutes: 12),
+    );
+
+    writeSharedJson(
+      directLinkedDeviceAddressingReadyFileName(configuredRunId, 'primary'),
+      <String, dynamic>{
+        'schema': directLinkedDeviceAddressingReadySchema,
+        'schemaVersion': directLinkedDeviceAddressingReadySchemaVersion,
+        'role': 'primary',
+        'runId': configuredRunId,
+        'transportDistinctFromAccount': true,
+        'transportStableAcrossRestart': true,
+        'qrEmitted': true,
+      },
+    );
+    // Release B only after this side's own artifact is published.
+    writeSharedText(_signalName('linked_side_done'), 'ok');
+  } finally {
+    // Raw key material never outlives the run, and the canonical installation
+    // ID is restored to exactly what this proof found.
+    await restoreRunScopedSecureState();
+    await stack.teardown();
+  }
 }

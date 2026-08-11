@@ -20,6 +20,8 @@ enum MigrationSecureStorageKeyCategory {
   canonicalRuntimeAccountBinding,
   accountMigrationAuthority,
   accountMigrationPairingSession,
+  linkedInstallationRole,
+  linkedInstallationTransportCredential,
   groupKeyMaterial,
   mediaAttachmentEncryptionKey,
 }

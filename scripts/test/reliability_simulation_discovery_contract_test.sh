@@ -348,6 +348,56 @@ assert_invite_scenario_selectable \
   closure \
   android-physical,android-emulator
 
+# Plan 360 (TC-360-04a) registers a THIRD explicit row on the same runner. It
+# is mode-free and requires an explicit two-target pair.
+assert_invite_scenario_selectable \
+  direct_linked_device_addressing \
+  "" \
+  android-physical,android-emulator
+
+# The registration must be exhaustive on BOTH sides: an unregistered scenario
+# is a terminal error, never a silent fall-through to the legacy `same_user`
+# harness branch (which would run a different proof and report it as a pass).
+set +e
+unknown_scenario_run="$(dart "$invite_runner" --scenario definitely_not_registered \
+  -d android-physical,android-emulator 2>&1)"
+unknown_scenario_status=$?
+set -e
+[ "$unknown_scenario_status" -ne 0 ] ||
+  fail 'an unregistered runner scenario exited zero instead of failing terminally'
+printf '%s' "$unknown_scenario_run" |
+  grep -Fq 'Unsupported scenario: definitely_not_registered' ||
+  fail 'an unregistered runner scenario lost its explicit diagnostic'
+grep -Fq 'Unregistered MD004_SCENARIO' \
+  integration_test/group_multi_device_real_harness.dart ||
+  fail 'the device harness can still fall through to the legacy same_user branch'
+
+unset RELIABILITY_MULTI_DEVICE_IDS FLUTTER_MULTI_DEVICE_IDS FLUTTER_DEVICE_ID
+missing_linked_devices_list="$tmp_dir/direct-linked-device-missing-devices.list"
+./scripts/run_test_gates.sh reliability-sim group --list \
+  --only "$invite_runner:direct_linked_device_addressing" \
+  >"$missing_linked_devices_list" ||
+  fail "$invite_runner:direct_linked_device_addressing list must remain available without device env"
+grep -Fq -- \
+  "--scenario 'direct_linked_device_addressing' -d '<required:RELIABILITY_MULTI_DEVICE_IDS>'" \
+  "$missing_linked_devices_list" ||
+  fail 'direct_linked_device_addressing list did not expose its required explicit device pair'
+
+missing_linked_devices_run="$tmp_dir/direct-linked-device-missing-devices.run"
+set +e
+./scripts/run_test_gates.sh reliability-sim group \
+  --only "$invite_runner:direct_linked_device_addressing" \
+  >"$missing_linked_devices_run" 2>&1
+missing_linked_devices_status=$?
+set -e
+[ "$missing_linked_devices_status" -eq 64 ] ||
+  fail "direct_linked_device_addressing without device env exited $missing_linked_devices_status instead of 64"
+grep -Fq 'Missing explicit two-device IDs' "$missing_linked_devices_run" ||
+  fail 'direct_linked_device_addressing without device env did not fail with the explicit-pair diagnostic'
+if grep -Fq '==>' "$missing_linked_devices_run"; then
+  fail 'direct_linked_device_addressing without device env reached Dart/device execution'
+fi
+
 unset RELIABILITY_MULTI_DEVICE_IDS FLUTTER_MULTI_DEVICE_IDS FLUTTER_DEVICE_ID
 missing_invite_devices_list="$tmp_dir/invite-send-latency-missing-devices.list"
 ./scripts/run_test_gates.sh reliability-sim group --list \

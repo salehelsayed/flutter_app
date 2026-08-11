@@ -57,6 +57,10 @@ const _constructorParameters = <String>[
   'Duration? keyRotationGracePeriodOverride',
   'Stream<void>? networkChangeSignal',
   'String? Function()? activePeerId',
+  // 360: the exact transport peer an ACTIVE linked-secondary credential names,
+  // or null on an ordinary primary. When non-null, `startNode` qualifies the
+  // peer the node actually came up as before ANY Dart warm/inbox work.
+  'String? Function()? requiredTransportPeerId',
 ];
 
 const _publicFields = <String>{
@@ -591,7 +595,12 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 
 // Token/AST fingerprint of the complete public/static facade declaration. It
 // excludes bodies, so moving decisions behind coordinators does not change it.
-const _expectedFacadeApiFingerprint = '5e986c98';
+//
+// 360: repinned for exactly one added optional constructor parameter,
+// `requiredTransportPeerId`. No public field or method was added, removed, or
+// re-signed; the linked-transport qualification lives entirely in a private
+// method on the existing `startNode` path.
+const _expectedFacadeApiFingerprint = '27f7107d';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -835,7 +844,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(20));
+      expect(constructor.parameters.parameters, hasLength(21));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,
