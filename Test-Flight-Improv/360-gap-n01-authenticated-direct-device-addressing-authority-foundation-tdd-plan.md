@@ -1,6 +1,6 @@
 # 360 - GAP-N01 Authenticated Direct Linked-Device Addressing Foundation
 
-Status: EXECUTION_COMPLETED / POST_EXECUTION_REVIEW_INCOMPLETE / default-off / not release-eligible
+Status: EXECUTION_COMPLETED / POST_EXECUTION_AUDIT_CLOSED / RESIDUAL_CLOSED / default-off / not release-eligible
 Type: Modification
 Planning baseline: `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7` (clean committed Plan 359 bounded-repair closure, descended from execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3`; lane-selector + ordinary settlement qualification precede encryption, and the shared storage predicate owns the empty-text/null-edit guards).
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; this linked-secondary authority remains distinct from the single-primary account-move MVP in `Test-Flight-Improv/Move-Feature/01-move-account-to-new-device-pr.md`
@@ -715,22 +715,24 @@ linked device.
 
 ## Arbiter Decision
 
-`POST_EXECUTION_REVIEW_INCOMPLETE.` The architectural split remains sound and
-four bounded repair findings are closed, but central post-start P2P network
-gating still uses the linked transport instead of the logical account. HEAD
-`481a23d4e350ac5447819bf32279c9ba0418a445` and fingerprint
-`55f4851041c517b5` are the audited repair candidate, not the final Plan-360
-closure. Plan 361 cannot use them as an accepted baseline yet.
+`POST_EXECUTION_AUDIT_CLOSED / RESIDUAL_CLOSED.` The architectural split and all
+five bounded repair findings are closed. The final residual moved logical-account
+normalization into the single `_allowsAccountNetworkSideEffects` choke point, so
+both explicit and running-state peers are qualified before every account-authority
+decision while the bridge continues to use the physical transport. The residual
+source repair is `c3d2e434bd1dd7340c3dfd5a0e6ae40aaad7b55b`; closure HEAD
+`97af7e1fe4e68d77dfe1d6e684425f83e30927f0` carries the committed Graphify
+refresh at fingerprint `6e0d3e61531b9292`. Plan 361 may use the final Plan-360
+audit-hygiene commit as its accepted baseline.
 
 ## Handoff
 
-- Current state: `POST_EXECUTION_REVIEW_INCOMPLETE` at audited repair candidate
-  `481a23d4e350ac5447819bf32279c9ba0418a445`.
-- Next: centralize logical-account translation in the shared P2P network gate,
-  add the one post-start causal row, run its focused/curated proof, commit the
-  runtime-root hygiene with the repair, and refresh Graphify once.
-- Plan 361 remains blocked; after that commit it may pin the new SHA/fingerprint
-  and retain its already-reviewed forward/reverse authority, contact-delete and
-  restricted-runtime implementation contract.
+- Current state: `POST_EXECUTION_AUDIT_CLOSED / RESIDUAL_CLOSED`; production
+  repair `c3d2e434bd1dd7340c3dfd5a0e6ae40aaad7b55b`, closure HEAD
+  `97af7e1fe4e68d77dfe1d6e684425f83e30927f0`, Graphify
+  `6e0d3e61531b9292`.
+- Plan 361 is released to pin the subsequent Plan-360 audit-hygiene commit and
+  retain its reviewed forward/reverse authority, contact-delete and restricted-
+  runtime implementation contract.
 - Plan 362 still owns media/voice/v111 fanout; no activation, GAP-N01 or release
   claim is created by this repair.
