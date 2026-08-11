@@ -12,6 +12,7 @@ import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
@@ -7545,11 +7546,18 @@ void main() {
       inboxStagingRepository = InMemoryInboxStagingRepository();
     });
 
-    P2PServiceImpl buildService(String? Function() requiredTransportPeerId) {
+    P2PServiceImpl buildService(
+      String? Function() requiredTransportPeerId, {
+      String? Function()? logicalAccountPeerId,
+      AccountMigrationNetworkGate? gate,
+    }) {
       return P2PServiceImpl(
         bridge: bridge,
         inboxStagingRepository: inboxStagingRepository,
         requiredTransportPeerId: requiredTransportPeerId,
+        logicalAccountPeerId: logicalAccountPeerId,
+        accountMigrationNetworkGate:
+            gate ?? allowAccountMigrationNetworkSideEffects,
       );
     }
 
@@ -7672,5 +7680,101 @@ void main() {
       expect(bridge.calledCommands, contains('node:status'));
       expect(bridge.calledCommands, contains('node:stop'));
     });
+
+    test(
+      'TC-360-01a linked-secondary post-start operations ask account authority '
+      'about the account peer while the bridge uses the transport',
+      () async {
+        // The defect this pins: node start is only the FIRST gated operation.
+        // Warm/background, send, inbox store/retrieve/ack, health and recovery
+        // also consult the account-migration gate, and most pass no peer at
+        // all — falling through to `_currentState.peerId`, which on a linked
+        // secondary IS the transport peer. Normalizing only at the start call
+        // sites left every one of those asking about an identity that account
+        // authority does not cover.
+        const accountPeer =
+            '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
+        const transportPeer =
+            '12D3KooWPCyWnZCXR3VGdrQjLr5d8TBaAHD956XZvo6xoCXYB5AR';
+
+        stubStart(peerId: transportPeer);
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+
+        final gatePeerIds = <String?>[];
+        final gateOperations = <String>[];
+        final service = buildService(
+          () => transportPeer,
+          logicalAccountPeerId: () => accountPeer,
+          gate: ({String? peerId, required String operation}) async {
+            gatePeerIds.add(peerId);
+            gateOperations.add(operation);
+            return true;
+          },
+        );
+        addTearDown(service.dispose);
+
+        expect(
+          await service.startNode('cHJpdmF0ZWtleXRlc3Q=', transportPeer),
+          isTrue,
+        );
+
+        // Drive POST-START gated operations that pass no peer of their own.
+        await service.retrieveInbox();
+        await service.warmBackground();
+
+        expect(
+          gateOperations.length,
+          greaterThan(2),
+          reason: 'post-start operations must actually consult the gate',
+        );
+        expect(
+          gatePeerIds.toSet(),
+          <String>{accountPeer},
+          reason:
+              'EVERY gated operation — not just node start — must ask account '
+              'authority about the LOGICAL account peer',
+        );
+        expect(
+          gatePeerIds,
+          isNot(contains(transportPeer)),
+          reason:
+              'account authority must never be asked about the per-device '
+              'transport peer it does not cover',
+        );
+
+        // ...while the BRIDGE still ran on the transport identity.
+        final startPayload = bridge.payloadsFor('node:start').single!;
+        expect(startPayload['namespace'], contains(transportPeer));
+        expect(service.currentState.peerId, transportPeer);
+
+        // An ordinary primary is unchanged: no logical override, so the gate
+        // sees exactly the peer it always saw.
+        bridge = _FakeBridge();
+        inboxStagingRepository = InMemoryInboxStagingRepository();
+        stubStart(peerId: 'primary-peer');
+        bridge.whenCommand(
+          'inbox:retrieve',
+          (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+        );
+        final primaryGatePeerIds = <String?>[];
+        final primary = buildService(
+          () => null,
+          gate: ({String? peerId, required String operation}) async {
+            primaryGatePeerIds.add(peerId);
+            return true;
+          },
+        );
+        addTearDown(primary.dispose);
+        expect(
+          await primary.startNode('cHJpdmF0ZWtleXRlc3Q=', 'primary-peer'),
+          isTrue,
+        );
+        await primary.retrieveInbox();
+        expect(primaryGatePeerIds.toSet(), <String>{'primary-peer'});
+      },
+    );
   });
 }

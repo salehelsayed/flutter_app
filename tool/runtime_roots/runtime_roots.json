@@ -718,20 +718,6 @@
       ]
     },
     {
-      "path": "lib/features/identity/application/linked_secondary_setup_use_case.dart",
-      "rootKinds": [],
-      "disposition": "explained-root",
-      "owner": "Plan 360 / GAP-N01 linked-device foundation",
-      "reason": "The crash-safe linked-secondary setup orchestrator is reachable only from the restricted linked setup route, whose builder is supplied by the host; Plan 360 ships the route entry and its default-off selector gate but no production builder, so the only current origin is test/integration.",
-      "condition": "Revisit when Plan 361 wires the linked setup surface that supplies IdentityChoiceWired.linkedDeviceSetupBuilder, at which point this becomes main-reachable and the declaration must be removed rather than retained.",
-      "evidence": [
-        {
-          "kind": "computed-origin",
-          "origin": "test/integration"
-        }
-      ]
-    },
-    {
       "path": "lib/features/posts/application/dismiss_pin_use_case.dart",
       "rootKinds": [],
       "disposition": "explained-root",

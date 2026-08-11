@@ -512,9 +512,10 @@ exposed real gaps in the tests, both closed before the mutation was re-run:
 
 ## Post-Execution Audit Addendum (2026-08-11)
 
-Verdict: `POST_EXECUTION_REVIEW_INCOMPLETE`. The execution receipts above remain
-valid historical evidence, but they do not yet constitute a clean, callable
-closure for Plan 361.
+Historical first-audit verdict: `POST_EXECUTION_REVIEW_INCOMPLETE`. Four findings
+below are resolved by the committed Repair Closure; the later Post-Repair Audit
+Addendum records the remaining shared P2P authority defect. Execution receipts
+remain historical evidence.
 
 - **No auditable closure commit exists.** `HEAD` was still
   `67eca670b72de69994be7e8bd5ffe4ace3f9d372` when this audit ran, with the
@@ -567,7 +568,7 @@ Bounded repair contract:
    run one incremental Graphify refresh/review against that commit, and record
    the resulting SHA/fingerprint before Plan 361 revalidation.
 
-## Repair Closure (2026-08-11)
+## First Repair Receipt (2026-08-11; superseded by residual below)
 
 All five bounded-repair items are implemented and proven. Every finding was
 real; one of them — the Move guards — is the THIRD instance in this execution of
@@ -622,6 +623,59 @@ not only its behavior.
    `b3f410251f97cbbb` described a dirty candidate; NEITHER is a closure
    fingerprint.
 
+## Post-Repair Audit Addendum (2026-08-11)
+
+Verdict remains `POST_EXECUTION_REVIEW_INCOMPLETE`. Setup/QR callability, both
+Move paths, expected-account loading and the blocked-contact transaction race
+are repaired and committed. One logical-account bypass remains:
+
+- `P2PServiceImpl.startNode` and `startNodeCore` explicitly translate the linked
+  transport through `_accountAuthorityPeerId`, but the shared
+  `_allowsAccountNetworkSideEffects` owner still forwards
+  `peerId ?? _currentState.peerId` directly. After linked start, that state peer
+  is the transport identity, so warm, send, inbox retrieve/ACK/drain, health,
+  relay recovery and coordinator callbacks ask account-migration authority about
+  the wrong peer. The repair tests pin the constructor/bootstrap seam but do not
+  exercise a post-start linked operation.
+
+Smallest closure: normalize the selected peer once inside
+`_allowsAccountNetworkSideEffects`, add one causal post-start linked-operation
+row proving the gate observes the logical account, run only that focused owner
+plus the affected curated lane, commit, and refresh Graphify once. No schema,
+core family, Android pair, full-host or Plan-361 scope expansion is justified.
+
+The stale `runtime_roots.json` explained-root for
+`linked_secondary_setup_use_case.dart` was also removed during this audit: the
+Plan-360 repair now makes that owner main-reachable through
+`StartupRouter -> LinkedDeviceSetupWired`.
+
+## Residual Closure (2026-08-11)
+
+The follow-up audit's residual is closed. The finding was exact: the previous
+repair normalized the account-authority peer at the two node-start call sites,
+but node start is only the FIRST gated operation. Warm/background, send, inbox
+store/retrieve/ack, health checks and recovery also consult
+`_allowsAccountNetworkSideEffects`, and most pass no peer at all — falling
+through to `_currentState.peerId`, which on a linked secondary IS the transport
+peer. Every one of those was asking account authority about an identity it does
+not cover, so a migrated-out account could have kept transmitting from its
+linked device.
+
+- **Normalized centrally.** `_accountAuthorityPeerId` now has exactly ONE
+  caller: `_allowsAccountNetworkSideEffects`, which normalizes both the explicit
+  `peerId` and the `_currentState.peerId` fallback before consulting the gate.
+  The two start call sites no longer normalize locally. All 15 gated call sites
+  are covered by construction, and a new gated caller cannot bypass it.
+- **Proven on POST-START operations.** A new causal row drives `retrieveInbox`
+  and `warmBackground` after a linked start and asserts that every gate question
+  names the LOGICAL account peer, that the transport peer never appears in the
+  gate at all, and that the BRIDGE nevertheless ran on the transport identity
+  (`node:start` namespace and `currentState.peerId`). An ordinary-primary
+  control proves the gate still sees exactly the peer it always saw.
+- **Reverse-mutated once.** Restoring the previous shape — normalization at the
+  start call sites only — re-reds this row, then was reverted. The row therefore
+  discriminates the exact defect rather than restating the fix.
+
 ## Reviewer Findings
 
 ### Lens 1 - Claims and boundaries
@@ -652,22 +706,22 @@ not only its behavior.
 
 ## Arbiter Decision
 
-`POST_EXECUTION_REVIEW_INCOMPLETE.` The architectural split remains sound, and
-the recorded execution gates need not be discarded. The post-execution source
-audit nevertheless found real production reachability, Move-wiring,
-logical-account qualification and transactional trust defects, and there is no
-committed candidate SHA. Plan 360 is therefore not audit-closed and cannot yet
-serve as Plan 361's accepted baseline.
+`POST_EXECUTION_REVIEW_INCOMPLETE.` The architectural split remains sound and
+four bounded repair findings are closed, but central post-start P2P network
+gating still uses the linked transport instead of the logical account. HEAD
+`481a23d4e350ac5447819bf32279c9ba0418a445` and fingerprint
+`55f4851041c517b5` are the audited repair candidate, not the final Plan-360
+closure. Plan 361 cannot use them as an accepted baseline yet.
 
 ## Handoff
 
-- Current state: implementation receipts exist in an uncommitted dirty candidate,
-  but closure is `POST_EXECUTION_REVIEW_INCOMPLETE` and no accepted SHA exists.
-- Next: implement the six bounded repair steps in the addendum, prove only their
-  causal rows plus the affected curated lane, commit the whole Plan-360 closure,
-  and refresh/review Graphify once against that commit.
-- Plan 361 remains blocked. After the repair commit, revalidate its forward and
-  reverse device authority, contact-delete transaction and restricted-runtime
-  assumptions before replacing its baseline placeholder.
+- Current state: `POST_EXECUTION_REVIEW_INCOMPLETE` at audited repair candidate
+  `481a23d4e350ac5447819bf32279c9ba0418a445`.
+- Next: centralize logical-account translation in the shared P2P network gate,
+  add the one post-start causal row, run its focused/curated proof, commit the
+  runtime-root hygiene with the repair, and refresh Graphify once.
+- Plan 361 remains blocked; after that commit it may pin the new SHA/fingerprint
+  and retain its already-reviewed forward/reverse authority, contact-delete and
+  restricted-runtime implementation contract.
 - Plan 362 still owns media/voice/v111 fanout; no activation, GAP-N01 or release
   claim is created by this repair.

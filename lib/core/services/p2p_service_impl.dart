@@ -140,7 +140,10 @@ class P2PServiceImpl
   final String? Function()? _logicalAccountPeerId;
 
   /// The peer the account-migration gate must be asked about for [peerId].
-  String _accountAuthorityPeerId(String peerId) {
+  ///
+  /// Called from exactly one place — [_allowsAccountNetworkSideEffects] — so
+  /// no gated operation can bypass it.
+  String? _accountAuthorityPeerId(String? peerId) {
     final logical = _logicalAccountPeerId?.call()?.trim();
     if (logical == null || logical.isEmpty) return peerId;
     return logical;
@@ -575,11 +578,25 @@ class P2PServiceImpl
   Stream<LocalMediaReady> get incomingLocalMediaStream =>
       _incomingLocalMediaController.stream;
 
+  /// 360: EVERY account-migration authority question is asked about the
+  /// LOGICAL account peer, never the per-device transport peer.
+  ///
+  /// Normalizing here rather than at call sites is deliberate. Node start is
+  /// only the first of many gated operations — warm/background, send, inbox
+  /// store/retrieve/ack, health checks and recovery all consult this gate, and
+  /// most of them pass no peer at all and fall through to
+  /// `_currentState.peerId`, which on a linked secondary IS the transport peer.
+  /// Normalizing per call site left every one of those asking about an identity
+  /// account authority does not cover, so a migrated-out account could keep
+  /// transmitting from its linked device. A central choke point cannot be
+  /// missed by a new caller.
   Future<bool> _allowsAccountNetworkSideEffects(
     String operation, {
     String? peerId,
   }) async {
-    final effectivePeerId = peerId ?? _currentState.peerId;
+    final effectivePeerId = _accountAuthorityPeerId(
+      peerId ?? _currentState.peerId,
+    );
     final allowed = await _accountMigrationNetworkGate(
       peerId: effectivePeerId,
       operation: operation,
@@ -598,7 +615,7 @@ class P2PServiceImpl
   Future<bool> startNode(String privateKeyBase64, String peerId) async {
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_start_node',
-      peerId: _accountAuthorityPeerId(peerId),
+      peerId: peerId,
     )) {
       return false;
     }
@@ -680,7 +697,7 @@ class P2PServiceImpl
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_start_node_core',
-      peerId: _accountAuthorityPeerId(peerId),
+      peerId: peerId,
     )) {
       return false;
     }
