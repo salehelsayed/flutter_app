@@ -611,6 +611,16 @@ not only its behavior.
    the facade API fingerprint, for the one added optional parameter).
    `core-host-all` and the Android pair were deliberately NOT repeated: the
    repair widened no schema, no test-path registration and no device boundary.
+6. **Auditable closure.** The implementation is committed as `6dc052573` and
+   this bounded repair as `395accca5`, both descending from the accepted baseline
+   `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`. The tree is clean apart from a
+   concurrent session's Plan-361 planning doc, deliberately excluded from both
+   commits. One incremental Graphify refresh ran against that committed tree:
+   71,512 nodes / 104,941 edges, overlay 1,565 files / 15,348 named tests /
+   1,207 production targets, committed-tree fingerprint `55f4851041c517b5`. The earlier
+   `cd5da0facf62a050` described the pre-repair tree and the audit's
+   `b3f410251f97cbbb` described a dirty candidate; NEITHER is a closure
+   fingerprint.
 
 ## Reviewer Findings
 
