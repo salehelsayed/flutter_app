@@ -365,6 +365,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
       ? mediaDeletionCapability
       : null;
 
+  // 359: the DB lane is the ONLY authority that may promote exact disappearing
+  // lineage to the strict media owner. Without it every such parent would fall
+  // through to the legacy ordinary stage with no event id and no v109, which is
+  // a silent downgrade of a fingerprinted strict generation. Refuse all-zero
+  // before any encryption, stage or cleanup instead.
+  if (isExactDisappearingParent && laneRepository == null) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_LANE_AUTHORITY_UNAVAILABLE',
+      details: {'id': _messageIdPreview(originalMessage.id)},
+    );
+    emitDeleteTiming(outcome: 'lane_authority_unavailable');
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
   // Lane selection is DB-authoritative. The parent's in-memory media list is a
   // UI snapshot, and the v110 intent is deliberately cleared once v108 staging
   // consumes it, so neither can decide which owner may delete this parent.
@@ -406,7 +421,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
           : selectedLane == OutgoingDirectDeletionLane.text);
   final ownsDirectMediaDeletionInboxCustody =
       selectedLane == OutgoingDirectDeletionLane.strictMedia;
-  if (!requiresPrivateTerminalCleanup && ordinaryTransportRepository == null) {
+  // 359: private CLEANUP and transport SETTLEMENT are separate authorities.
+  // Only Protected/View-Once settle through the private owner; both
+  // disappearing lanes still need this one — legacy force-unwraps it during its
+  // stage, and strict transport would otherwise stage its v109 and destroy
+  // private custody before settlement silently returned no durable row.
+  if (!settlesThroughPrivateOwner && ordinaryTransportRepository == null) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ORDINARY_AUTHORITY_UNAVAILABLE',
@@ -1257,6 +1277,15 @@ Future<void> cleanupDeletedMessageArtifacts({
 /// duration, lifecycle `available`, NO sender-side receiver clock, and a
 /// consumed v110 intent. Selection authority still belongs to the DB lane;
 /// this only decides which cleanup and settlement owners may act.
+///
+/// Deliberately does NOT carry the storage predicate's empty-text/null-edit
+/// lineage checks. Those decide whether a v109 may be MINTED; this decides
+/// whether the parent needs PRIVATE terminal cleanup, and a captioned or
+/// edited private row still does. Narrowing it here would route fingerprinted
+/// strict drift to the ordinary stage and generic artifact cleanup instead of
+/// failing closed: the strict storage owner already refuses that drift
+/// all-zero under the private lease. Proof-less historical drift keeps its
+/// incumbent legacy/no-v109 stage while still using private cleanup.
 bool _isExactOutgoingDisappearingLineage(ConversationMessage message) {
   final durationSeconds = message.privateMediaPolicy.durationSeconds;
   return !message.isIncoming &&

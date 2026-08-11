@@ -780,6 +780,13 @@ bool isStrictOrdinaryOutgoingDirectPolicy(Map<String, Object?> row) =>
 bool isStrictDisappearingOutgoingDirectPolicy(Map<String, Object?> row) {
   final durationSeconds = row['private_media_duration_seconds'];
   return ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+      // A disappearing INITIAL carries no caption, and Plan 359 gives private
+      // EDIT no custody at all, so a caption or edit predecessor is lineage
+      // this modality could never have authored. Its own deletion tombstone
+      // keeps text empty and never stamps `edited_at`, so both sides of the
+      // stage and the persisted completion row satisfy this identically.
+      (row['text'] as String? ?? '').isEmpty &&
+      row['edited_at'] == null &&
       (row['private_media_policy_version'] as num?)?.toInt() == 1 &&
       row['private_media_mode'] == PrivateMediaMode.disappearing.wireValue &&
       durationSeconds is num &&

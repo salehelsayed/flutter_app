@@ -3120,8 +3120,404 @@ void main() {
         ),
         hasLength(1),
       );
+
+      // 5. A genuinely unwired DB deletion-lane selector is all-zero too. The
+      //    lane is the ONLY authority that may promote strict lineage, so its
+      //    absence must refuse rather than silently demote a fingerprinted
+      //    generation onto the legacy ordinary stage with no event id or v109.
+      final laneless = await MediaRepositoryRealDbFixture.create(
+        wireOutgoingDirectDeletionLaneSelection: false,
+      );
+      addTearDown(laneless.dispose);
+      const lanelessId = 'tc359-02a-laneless';
+      final lanelessParent = await seedDisappearingParent(laneless, lanelessId);
+      expect(
+        laneless.repo.supportsOutgoingDirectDeletionLaneSelection,
+        isFalse,
+        reason: 'the real repository is composed without the lane selector',
+      );
+      final lanelessNetwork = FakeP2PNetwork();
+      final lanelessService = FakeP2PService(
+        peerId: sender,
+        network: lanelessNetwork,
+      );
+      addTearDown(lanelessService.dispose);
+      final lanelessManager = FakeMediaFileManager();
+      final lanelessBridge = PassthroughCryptoBridge();
+
+      final (
+        lanelessResult,
+        lanelessTombstone,
+      ) = await deleteMessageForEveryone(
+        p2pService: lanelessService,
+        messageRepo: laneless.messageRepo,
+        originalMessage: lanelessParent,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: laneless.repo,
+        mediaFileManager: lanelessManager,
+        bridge: lanelessBridge,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(lanelessResult, SendChatMessageResult.sendFailed);
+      expect(lanelessTombstone, isNull);
+      expect(
+        lanelessBridge.commandLog,
+        isEmpty,
+        reason: 'missing lane authority refuses before envelope encryption',
+      );
+      expect(lanelessNetwork.deliverCallCount, 0);
+      expect(lanelessNetwork.storeInInboxCallCount, 0);
+      expect(await v109RowsFor(laneless, lanelessId), isEmpty);
+      expect(
+        (await parentRow(laneless, lanelessId))!['deleted_at'],
+        isNull,
+        reason: 'strict lineage never demotes to the legacy ordinary stage',
+      );
+      expect(lanelessManager.deletedFilePaths, isEmpty);
+      expect(
+        await laneless.repo.getAttachmentsForMessage(
+          lanelessId,
+          owner: MediaOwnerLane.direct,
+        ),
+        hasLength(1),
+      );
+      expect(
+        await laneless.secureKeyStore.containsKey(
+          mediaAttachmentEncryptionKeyStoreName('$lanelessId-a'),
+        ),
+        isTrue,
+        reason: 'a refused deletion never retires private custody',
+      );
+
+      // 6. BOTH disappearing lanes settle through the ordinary owner, so its
+      //    absence must also be discovered before encryption. Strict lineage
+      //    would otherwise stage its v109 and destroy private custody before
+      //    settlement silently returned no durable row.
+      final unsettleable = await MediaRepositoryRealDbFixture.create();
+      addTearDown(unsettleable.dispose);
+      const unsettleableId = 'tc359-02a-unsettleable';
+      final unsettleableParent = await seedDisappearingParent(
+        unsettleable,
+        unsettleableId,
+      );
+      final unsettleableNetwork = FakeP2PNetwork();
+      final unsettleableService = FakeP2PService(
+        peerId: sender,
+        network: unsettleableNetwork,
+      );
+      addTearDown(unsettleableService.dispose);
+      final unsettleableManager = FakeMediaFileManager();
+      final unsettleableBridge = PassthroughCryptoBridge();
+
+      final (
+        unsettleableResult,
+        unsettleableTombstone,
+      ) = await deleteMessageForEveryone(
+        p2pService: unsettleableService,
+        messageRepo: _OrdinaryTransportIncapableMessageRepository(
+          unsettleable.messageRepo,
+        ),
+        originalMessage: unsettleableParent,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: unsettleable.repo,
+        mediaFileManager: unsettleableManager,
+        bridge: unsettleableBridge,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(unsettleableResult, SendChatMessageResult.invalidMessage);
+      expect(unsettleableTombstone, isNull);
+      expect(
+        unsettleableBridge.commandLog,
+        isEmpty,
+        reason: 'missing settlement authority refuses before encryption',
+      );
+      expect(unsettleableNetwork.deliverCallCount, 0);
+      expect(unsettleableNetwork.storeInInboxCallCount, 0);
+      expect(await v109RowsFor(unsettleable, unsettleableId), isEmpty);
+      expect(
+        (await parentRow(unsettleable, unsettleableId))!['deleted_at'],
+        isNull,
+        reason: 'no event may be staged for a tombstone nothing can settle',
+      );
+      expect(unsettleableManager.deletedFilePaths, isEmpty);
+      expect(
+        await unsettleable.repo.getAttachmentsForMessage(
+          unsettleableId,
+          owner: MediaOwnerLane.direct,
+        ),
+        hasLength(1),
+      );
+      expect(
+        await unsettleable.secureKeyStore.containsKey(
+          mediaAttachmentEncryptionKeyStoreName('$unsettleableId-a'),
+        ),
+        isTrue,
+      );
+
+      // The proof-less legacy lane force-unwraps the very same owner during its
+      // stage, so it must refuse identically instead of crashing.
+      final unsettleableLegacy = await MediaRepositoryRealDbFixture.create();
+      addTearDown(unsettleableLegacy.dispose);
+      const unsettleableLegacyId = 'tc359-02a-unsettleable-legacy';
+      final unsettleableLegacyParent = await seedDisappearingParent(
+        unsettleableLegacy,
+        unsettleableLegacyId,
+        fingerprint: null,
+      );
+      final unsettleableLegacyNetwork = FakeP2PNetwork();
+      final unsettleableLegacyService = FakeP2PService(
+        peerId: sender,
+        network: unsettleableLegacyNetwork,
+      );
+      addTearDown(unsettleableLegacyService.dispose);
+      final unsettleableLegacyManager = FakeMediaFileManager();
+      final unsettleableLegacyBridge = PassthroughCryptoBridge();
+
+      final (
+        legacyUnsettleableResult,
+        legacyUnsettleableTombstone,
+      ) = await deleteMessageForEveryone(
+        p2pService: unsettleableLegacyService,
+        messageRepo: _OrdinaryTransportIncapableMessageRepository(
+          unsettleableLegacy.messageRepo,
+        ),
+        originalMessage: unsettleableLegacyParent,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: unsettleableLegacy.repo,
+        mediaFileManager: unsettleableLegacyManager,
+        bridge: unsettleableLegacyBridge,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(legacyUnsettleableResult, SendChatMessageResult.invalidMessage);
+      expect(legacyUnsettleableTombstone, isNull);
+      expect(
+        unsettleableLegacyBridge.commandLog,
+        isEmpty,
+        reason: 'legacy missing settlement authority also refuses pre-crypto',
+      );
+      expect(unsettleableLegacyNetwork.deliverCallCount, 0);
+      expect(
+        (await parentRow(
+          unsettleableLegacy,
+          unsettleableLegacyId,
+        ))!['deleted_at'],
+        isNull,
+      );
+      expect(unsettleableLegacyManager.deletedFilePaths, isEmpty);
+      expect(
+        await unsettleableLegacy.repo.getAttachmentsForMessage(
+          unsettleableLegacyId,
+          owner: MediaOwnerLane.direct,
+        ),
+        hasLength(1),
+      );
+
+      // 7. A caption/edit predecessor is lineage this modality could never have
+      //    authored. The application predicate deliberately stays broad so such
+      //    drift keeps the PRIVATE cleanup owner and the storage predicate
+      //    refuses it all-zero under the lease — narrowing it here would route
+      //    a private row to the ordinary stage and generic artifact cleanup.
+      for (final drift
+          in const <({String label, String text, String? editedAt})>[
+            (label: 'captioned', text: 'disappearing media', editedAt: null),
+            (label: 'edited', text: '', editedAt: t0),
+          ]) {
+        final drifted = await MediaRepositoryRealDbFixture.create();
+        addTearDown(drifted.dispose);
+        final driftedId = 'tc359-02a-drift-${drift.label}';
+        final driftedParent = await seedDisappearingParent(drifted, driftedId);
+        await drifted.db.update(
+          'messages',
+          <String, Object?>{'text': drift.text, 'edited_at': drift.editedAt},
+          where: 'id = ?',
+          whereArgs: <Object?>[driftedId],
+        );
+        final driftedNetwork = FakeP2PNetwork();
+        final driftedService = FakeP2PService(
+          peerId: sender,
+          network: driftedNetwork,
+        );
+        addTearDown(driftedService.dispose);
+        final driftedManager = FakeMediaFileManager();
+
+        final (
+          driftedResult,
+          driftedTombstone,
+        ) = await deleteMessageForEveryone(
+          p2pService: driftedService,
+          messageRepo: drifted.messageRepo,
+          originalMessage: driftedParent,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: drifted.repo,
+          mediaFileManager: driftedManager,
+          bridge: PassthroughCryptoBridge(),
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+        );
+
+        expect(
+          driftedResult,
+          SendChatMessageResult.invalidMessage,
+          reason: drift.label,
+        );
+        expect(driftedTombstone, isNull, reason: drift.label);
+        expect(driftedNetwork.deliverCallCount, 0, reason: drift.label);
+        expect(driftedNetwork.storeInInboxCallCount, 0, reason: drift.label);
+        expect(
+          await v109RowsFor(drifted, driftedId),
+          isEmpty,
+          reason: drift.label,
+        );
+        expect(
+          (await parentRow(drifted, driftedId))!['deleted_at'],
+          isNull,
+          reason: drift.label,
+        );
+        expect(driftedManager.deletedFilePaths, isEmpty, reason: drift.label);
+        expect(
+          await drifted.repo.getAttachmentsForMessage(
+            driftedId,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+          reason: drift.label,
+        );
+        expect(
+          await drifted.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName('$driftedId-a'),
+          ),
+          isTrue,
+          reason: 'generic cleanup never retires a private key: ${drift.label}',
+        );
+      }
     });
   });
+}
+
+/// Composes the real message repository WITHOUT the ordinary transport
+/// mutation authority, exactly as an implementation that never adopted it
+/// would. Every owner a disappearing deletion legitimately needs — private
+/// lifecycle cleanup and the shared v109 lifecycle — is forwarded unchanged,
+/// so the flow really reaches its stage/cleanup/settlement boundaries.
+class _OrdinaryTransportIncapableMessageRepository
+    implements
+        MessageRepository,
+        DirectPrivateMediaLifecycleRepository,
+        DirectMutationInboxCustodyLifecycleRepository {
+  _OrdinaryTransportIncapableMessageRepository(this.delegate);
+
+  final MessageRepositoryImpl delegate;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle =>
+      delegate.supportsDirectMutationInboxCustodyLifecycle;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) => delegate.loadDirectTextMutationInboxCustodyForEvent(
+    recipientPeerId: recipientPeerId,
+    eventId: eventId,
+  );
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) => delegate.recordDirectTextMutationInboxCustodyFailureIfExact(
+    expected: expected,
+    errorCode: errorCode,
+  );
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) => delegate.completeAcceptedDirectTextMutationInboxCustodyIfExact(
+    expected: expected,
+    relayExpiresAt: relayExpiresAt,
+  );
+
+  @override
+  Future<ConversationMessage?> loadPrivateMediaLifecycleMessage(
+    String messageId,
+  ) => delegate.loadPrivateMediaLifecycleMessage(messageId);
+
+  @override
+  Future<bool> claimPrivateMediaOpening(
+    String messageId, {
+    required int nowMs,
+  }) => delegate.claimPrivateMediaOpening(messageId, nowMs: nowMs);
+
+  @override
+  Future<bool> markPrivateMediaViewing(
+    String messageId, {
+    required int nowMs,
+  }) => delegate.markPrivateMediaViewing(messageId, nowMs: nowMs);
+
+  @override
+  Future<bool> rollbackPrivateMediaOpening(String messageId) =>
+      delegate.rollbackPrivateMediaOpening(messageId);
+
+  @override
+  Future<bool> consumePrivateMedia(String messageId, {required int nowMs}) =>
+      delegate.consumePrivateMedia(messageId, nowMs: nowMs);
+
+  @override
+  Future<bool> advancePrivateMediaClock(
+    String messageId, {
+    required int nowMs,
+  }) => delegate.advancePrivateMediaClock(messageId, nowMs: nowMs);
+
+  @override
+  Future<bool> failClosedCorruptPrivateMediaState(
+    String messageId, {
+    required int nowMs,
+  }) => delegate.failClosedCorruptPrivateMediaState(messageId, nowMs: nowMs);
+
+  @override
+  Future<bool> hidePrivateMediaForMe(
+    String messageId, {
+    required String hiddenAt,
+    required int nowMs,
+  }) => delegate.hidePrivateMediaForMe(
+    messageId,
+    hiddenAt: hiddenAt,
+    nowMs: nowMs,
+  );
+
+  @override
+  Future<List<ConversationMessage>> loadActiveDisappearingPrivateMedia({
+    int limit = 100,
+  }) => delegate.loadActiveDisappearingPrivateMedia(limit: limit);
+
+  @override
+  Future<List<ConversationMessage>> loadPrivateMediaRecoveryCandidates({
+    int limit = 100,
+  }) => delegate.loadPrivateMediaRecoveryCandidates(limit: limit);
+
+  @override
+  Future<bool> rotatePrivateMediaRecoveryCandidate(
+    String messageId, {
+    required int nowMs,
+  }) => delegate.rotatePrivateMediaRecoveryCandidate(messageId, nowMs: nowMs);
+
+  @override
+  Future<int?> loadNextPrivateMediaExpiryAtMs() =>
+      delegate.loadNextPrivateMediaExpiryAtMs();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'ordinary-transport-incapable repository received ${invocation.memberName}',
+  );
 }
 
 /// Runs the REAL physical-v109 private deletion stage and then withholds only

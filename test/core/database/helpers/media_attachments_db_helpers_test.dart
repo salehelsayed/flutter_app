@@ -7705,15 +7705,21 @@ void main() {
       int? durationSeconds = 3600,
       String state = 'available',
       String status = 'delivered',
+      String text = '',
+      Object? editedAt,
       Object? receivedAtMs,
       Object? terminalAtMs,
       Object? clockHighWaterMs,
       Object? intentId,
     }) => <String, Object?>{
+      'edited_at': editedAt,
       'id': messageId,
       'contact_peer_id': recipientPeerId,
       'sender_peer_id': sender,
-      'text': 'disappearing media',
+      // A disappearing initial carries no caption on either side, so the
+      // Plan 358 custody parent this lineage descends from could never have
+      // held one. Seeding a caption here described impossible local state.
+      'text': text,
       'timestamp': t0,
       'status': status,
       'is_incoming': 0,
@@ -7756,6 +7762,8 @@ void main() {
       String mode = 'disappearing',
       int policyVersion = 1,
       String state = 'available',
+      String text = '',
+      Object? editedAt,
       Object? receivedAtMs,
       bool fingerprinted = true,
     }) async {
@@ -7770,6 +7778,8 @@ void main() {
           policyVersion: policyVersion,
           durationSeconds: durationSeconds,
           state: state,
+          text: text,
+          editedAt: editedAt,
           receivedAtMs: receivedAtMs,
         ),
       );
@@ -7994,6 +8004,28 @@ void main() {
       await expectRefusedWithNoEffect(
         'a crossed mime/mediaType projection refuses',
         () => stage(crossedMedia, eventId: nextEventId()),
+      );
+
+      // A disappearing initial carries no caption, and private EDIT never gains
+      // custody, so a caption or edit predecessor describes lineage this
+      // modality could not have authored. The v110/v111/v108 custody parent
+      // predicate already refuses both; the deletion owner must agree.
+      final captioned = await seedPostDrainDisappearingParent(
+        'captioned',
+        text: 'disappearing media',
+      );
+      await expectRefusedWithNoEffect(
+        'a caption-bearing disappearing parent refuses',
+        () => stage(captioned, eventId: nextEventId()),
+      );
+
+      final editedPredecessor = await seedPostDrainDisappearingParent(
+        'edited',
+        editedAt: t1,
+      );
+      await expectRefusedWithNoEffect(
+        'an edit-predecessor disappearing parent refuses',
+        () => stage(editedPredecessor, eventId: nextEventId()),
       );
 
       final gif = await seedPostDrainDisappearingParent(

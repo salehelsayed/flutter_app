@@ -72,6 +72,10 @@ class MediaRepositoryRealDbFixture {
     // Plan 354: legacy-lane tests opt out so a selector-on private send keeps
     // exercising the unchanged legacy upload path instead of strict custody.
     bool wireOutgoingDirectPrivateMediaBlobGeneration = true,
+    // 359 repair: composes the REAL repository with the DB-authoritative
+    // deletion-lane selector genuinely unwired, so a capability-absence
+    // counterexample uses production code rather than a hand-rolled stub.
+    bool wireOutgoingDirectDeletionLaneSelection = true,
     Future<bool> Function(
       Map<String, Object?> row, {
       required String messageId,
@@ -149,8 +153,11 @@ class MediaRepositoryRealDbFixture {
             wireMediaBlobManifestHash: wireMediaBlobManifestHash,
             wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
           ),
-      dbClassifyOutgoingDirectDeletionLane: ({required messageId}) =>
-          dbClassifyOutgoingDirectDeletionLane(db, messageId: messageId),
+      dbClassifyOutgoingDirectDeletionLane:
+          wireOutgoingDirectDeletionLaneSelection
+          ? ({required messageId}) =>
+                dbClassifyOutgoingDirectDeletionLane(db, messageId: messageId)
+          : null,
       dbStageOutgoingDirectMediaDeletionInboxCustody:
           ({
             required expectedRow,
