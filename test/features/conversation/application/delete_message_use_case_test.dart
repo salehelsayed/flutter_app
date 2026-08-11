@@ -1020,104 +1020,98 @@ void main() {
       },
     );
 
-    test(
-      'outgoing proof-less disappearing delete-for-everyone keeps legacy '
-      'transport under private-owner cleanup',
-      () async {
-        // 359: the historical proof-less row still takes ordinary legacy
-        // transport with no event id, but its artifacts belong to the private
-        // lifecycle owner — never to generic attachment deletion.
-        final fixture = await MediaRepositoryRealDbFixture.create();
-        addTearDown(fixture.dispose);
-        const messageId = 'disappearing-delete-everyone';
-        const attachmentId = '$messageId-att';
-        await fixture.seedDirectParent(messageId, contactPeerId: 'peer-bob');
-        await fixture.db.update(
-          'messages',
-          <String, Object?>{
-            'sender_peer_id': 'peer-alice',
-            'status': 'delivered',
-            'is_incoming': 0,
-            'private_media_policy_version': 1,
-            'private_media_mode': 'disappearing',
-            'private_media_duration_seconds': 3600,
-            'private_media_state': 'available',
-          },
-          where: 'id = ?',
-          whereArgs: <Object?>[messageId],
-        );
-        await fixture.repo.saveAttachment(
-          makeAttachment(
-            id: attachmentId,
-            messageId: messageId,
-            localPath: MediaFilePathConvention.relativePathForAttachment(
-              contactPeerId: 'peer-bob',
-              blobId: attachmentId,
-              mime: 'image/jpeg',
-            ),
-            downloadStatus: 'done',
-          ).copyWith(
-            encryptionKeyBase64: 'cHJpdmF0ZS1rZXk=',
-            encryptionNonce: 'bm9uY2U=',
-            encryptionScheme: 'blob_aes_256_gcm_v1',
+    test('outgoing proof-less disappearing delete-for-everyone keeps legacy '
+        'transport under private-owner cleanup', () async {
+      // 359: the historical proof-less row still takes ordinary legacy
+      // transport with no event id, but its artifacts belong to the private
+      // lifecycle owner — never to generic attachment deletion.
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'disappearing-delete-everyone';
+      const attachmentId = '$messageId-att';
+      await fixture.seedDirectParent(messageId, contactPeerId: 'peer-bob');
+      await fixture.db.update(
+        'messages',
+        <String, Object?>{
+          'sender_peer_id': 'peer-alice',
+          'status': 'delivered',
+          'is_incoming': 0,
+          'private_media_policy_version': 1,
+          'private_media_mode': 'disappearing',
+          'private_media_duration_seconds': 3600,
+          'private_media_state': 'available',
+        },
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      );
+      await fixture.repo.saveAttachment(
+        makeAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          localPath: MediaFilePathConvention.relativePathForAttachment(
+            contactPeerId: 'peer-bob',
+            blobId: attachmentId,
+            mime: 'image/jpeg',
           ),
+          downloadStatus: 'done',
+        ).copyWith(
+          encryptionKeyBase64: 'cHJpdmF0ZS1rZXk=',
+          encryptionNonce: 'bm9uY2U=',
+          encryptionScheme: 'blob_aes_256_gcm_v1',
+        ),
+        owner: MediaOwnerLane.direct,
+      );
+      expect(
+        await fixture.secureKeyStore.containsKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        isTrue,
+      );
+      final original = (await fixture.messageRepo.getMessage(messageId))!;
+
+      final network = FakeP2PNetwork()..inboxDisabled = true;
+      final p2pService = _UnackedDeleteP2PService(
+        peerId: 'peer-alice',
+        network: network,
+      );
+      final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
+      addTearDown(p2pService.dispose);
+      addTearDown(recipient.dispose);
+
+      final (result, tombstone) = await deleteMessageForEveryone(
+        p2pService: p2pService,
+        messageRepo: fixture.messageRepo,
+        originalMessage: original,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(tombstone, isNotNull);
+      expect(tombstone!.privateMediaPolicy.mode, PrivateMediaMode.disappearing);
+      expect(
+        await fixture.db.query('direct_reaction_inbox_custody_outbox'),
+        isEmpty,
+        reason: 'a proof-less disappearing row never gains a v109 event',
+      );
+      expect(
+        await fixture.repo.getAttachmentsForMessage(
+          messageId,
           owner: MediaOwnerLane.direct,
-        );
-        expect(
-          await fixture.secureKeyStore.containsKey(
-            mediaAttachmentEncryptionKeyStoreName(attachmentId),
-          ),
-          isTrue,
-        );
-        final original = (await fixture.messageRepo.getMessage(messageId))!;
-
-        final network = FakeP2PNetwork()..inboxDisabled = true;
-        final p2pService = _UnackedDeleteP2PService(
-          peerId: 'peer-alice',
-          network: network,
-        );
-        final recipient = FakeP2PService(peerId: 'peer-bob', network: network);
-        addTearDown(p2pService.dispose);
-        addTearDown(recipient.dispose);
-
-        final (result, tombstone) = await deleteMessageForEveryone(
-          p2pService: p2pService,
-          messageRepo: fixture.messageRepo,
-          originalMessage: original,
-          reactionRepo: reactionRepo,
-          mediaAttachmentRepo: fixture.repo,
-          mediaFileManager: mediaFileManager,
-          bridge: PassthroughCryptoBridge(),
-          recipientMlKemPublicKey: recipientMlKemPublicKey,
-        );
-
-        expect(result, SendChatMessageResult.success);
-        expect(tombstone, isNotNull);
-        expect(
-          tombstone!.privateMediaPolicy.mode,
-          PrivateMediaMode.disappearing,
-        );
-        expect(
-          await fixture.db.query('direct_reaction_inbox_custody_outbox'),
-          isEmpty,
-          reason: 'a proof-less disappearing row never gains a v109 event',
-        );
-        expect(
-          await fixture.repo.getAttachmentsForMessage(
-            messageId,
-            owner: MediaOwnerLane.direct,
-          ),
-          isEmpty,
-        );
-        expect(
-          await fixture.secureKeyStore.containsKey(
-            mediaAttachmentEncryptionKeyStoreName(attachmentId),
-          ),
-          isFalse,
-          reason: 'only the private lifecycle owner retires the secure key',
-        );
-      },
-    );
+        ),
+        isEmpty,
+      );
+      expect(
+        await fixture.secureKeyStore.containsKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        isFalse,
+        reason: 'only the private lifecycle owner retires the secure key',
+      );
+    });
 
     test(
       'buildDeletionWireEnvelope emits encrypted v2 deletion envelope',
@@ -3118,10 +3112,7 @@ void main() {
       expect(incapableNetwork.deliverCallCount, 0);
       expect(incapableNetwork.storeInInboxCallCount, 0);
       expect(await v109RowsFor(incapable, incapableId), isEmpty);
-      expect(
-        (await parentRow(incapable, incapableId))!['deleted_at'],
-        isNull,
-      );
+      expect((await parentRow(incapable, incapableId))!['deleted_at'], isNull);
       expect(
         await incapable.repo.getAttachmentsForMessage(
           incapableId,

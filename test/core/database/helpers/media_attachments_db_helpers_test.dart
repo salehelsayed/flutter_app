@@ -7845,12 +7845,11 @@ void main() {
         'and revalidates an existing v109 tombstone', () async {
       // --- 1. Every allowed duration and both coherent media kinds commit the
       // exact tombstone plus one v109 from post-drain Plan 358 lineage. ---
-      for (final positive
-          in <({int duration, String mime, String mediaType})>[
-            (duration: 3600, mime: 'image/jpeg', mediaType: 'image'),
-            (duration: 86400, mime: 'video/mp4', mediaType: 'video'),
-            (duration: 604800, mime: 'image/png', mediaType: 'image'),
-          ]) {
+      for (final positive in <({int duration, String mime, String mediaType})>[
+        (duration: 3600, mime: 'image/jpeg', mediaType: 'image'),
+        (duration: 86400, mime: 'video/mp4', mediaType: 'video'),
+        (duration: 604800, mime: 'image/png', mediaType: 'image'),
+      ]) {
         final suffix = 'ok-${positive.duration}';
         final current = await seedPostDrainDisappearingParent(
           suffix,

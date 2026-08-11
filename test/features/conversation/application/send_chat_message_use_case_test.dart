@@ -11785,19 +11785,15 @@ void main() {
       // 1. Every persisted redaction-requiring target refuses the EDIT before
       //    crypto, staging or network — even when the caller forges an
       //    ordinary policy and supplies stale media.
-      for (final refused
-          in <({String suffix, PrivateMediaPolicy policy})>[
-            (suffix: 'protected', policy: const PrivateMediaPolicy.protected()),
-            (suffix: 'view-once', policy: const PrivateMediaPolicy.viewOnce()),
-            (
-              suffix: 'disappearing',
-              policy: PrivateMediaPolicy.disappearing(3600),
-            ),
-            (
-              suffix: 'unsupported',
-              policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
-            ),
-          ]) {
+      for (final refused in <({String suffix, PrivateMediaPolicy policy})>[
+        (suffix: 'protected', policy: const PrivateMediaPolicy.protected()),
+        (suffix: 'view-once', policy: const PrivateMediaPolicy.viewOnce()),
+        (suffix: 'disappearing', policy: PrivateMediaPolicy.disappearing(3600)),
+        (
+          suffix: 'unsupported',
+          policy: const PrivateMediaPolicy.unsupported(sourceVersion: 9),
+        ),
+      ]) {
         final messageId = 'tc359-04a-${refused.suffix}';
         final durable = persistedTarget(
           id: messageId,
@@ -11856,11 +11852,7 @@ void main() {
           isNull,
           reason: '${refused.suffix} must not mutate the durable target',
         );
-        expect(
-          messages.wireEnvelopeUpdates,
-          isEmpty,
-          reason: refused.suffix,
-        );
+        expect(messages.wireEnvelopeUpdates, isEmpty, reason: refused.suffix);
         expect(
           messages.directMutationCustodyRows,
           isEmpty,
