@@ -4727,12 +4727,18 @@ void main() {
 
       // 2. Capability absence for a selected strict private attempt fails
       //    closed instead of falling back to the legacy split saves.
+      //    358: the SAME gate now additionally requires the incumbent message
+      //    lifecycle owner and the media cleanup runtime, because the
+      //    receiver-local clock must be evaluated under the authority that
+      //    publishes it. Only the spelling moved; the property is unchanged.
       expect(
         source.contains(
-          'strictMediaProjection.isPrivate &&\n            incomingPrivateMediaRepo',
+          'strictMediaProjection.isPrivate &&\n            (incomingPrivateMediaRepo',
         ),
         isTrue,
       );
+      expect(source.contains('privateLifecycleMessageRepo == null'), isTrue);
+      expect(source.contains('privateCleanupRuntime == null'), isTrue);
 
       // 3. The atomic private owner is used, and the terminal disposition is
       //    handled BEFORE the generic supersededByDeletion branch and before
@@ -4749,11 +4755,25 @@ void main() {
       );
       expect(stageCall, greaterThan(-1));
       expect(durableBranch, greaterThan(stageCall));
+      // 358: the atomic stage now runs INSIDE the same exclusive lease as the
+      // marker, publication and promotion, so the post-lease durable-
+      // supersession branch is textually after them. The property that must
+      // still hold is that a non-durable stage outcome leaves the lease BEFORE
+      // any marker can be staged.
+      final leaseNonDurableReturn = source.indexOf(
+        'if (!result.outcome.isDurable) {',
+      );
       expect(
-        durableBranch,
+        leaseNonDurableReturn,
+        greaterThan(stageCall),
+        reason: 'the outcome is classified after the atomic stage',
+      );
+      expect(
+        leaseNonDurableReturn,
         lessThan(markerStage),
         reason: 'a terminal winner is decided before any marker is staged',
       );
+      expect(stageCall, lessThan(markerStage));
       expect(markerStage, lessThan(publication));
 
       // 4. The post-stage terminal re-read runs before marker staging; a
