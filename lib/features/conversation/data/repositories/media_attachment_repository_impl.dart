@@ -268,6 +268,7 @@ class MediaAttachmentRepositoryImpl
     required String localPath,
     required String? sourceRelayPeerId,
     required String updatedAt,
+    required int nowMs,
   })?
   dbCommitIncomingDirectMediaBlobLocalPath;
   final Future<bool> Function({required DirectMediaBlobCustodyRow expected})?
@@ -1830,6 +1831,7 @@ class MediaAttachmentRepositoryImpl
     required String localPath,
     required String? sourceRelayPeerId,
     required String updatedAt,
+    required int nowMs,
   }) {
     final commit = dbCommitIncomingDirectMediaBlobLocalPath;
     if (commit == null) return Future.value(false);
@@ -1840,6 +1842,7 @@ class MediaAttachmentRepositoryImpl
         localPath: localPath,
         sourceRelayPeerId: sourceRelayPeerId,
         updatedAt: updatedAt,
+        nowMs: nowMs,
       );
     });
   }

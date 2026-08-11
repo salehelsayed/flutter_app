@@ -406,3 +406,57 @@ bool privateMediaInitialProducerMatrixAllowsDatabaseIdentity({
     mediaType: mediaType,
   );
 }
+
+/// Exact producer matrix for one newly authored v1 `disappearing` INITIAL.
+///
+/// 358: disappearing permits exactly one coherent image or video and exactly
+/// one of the three allowed durations. It is deliberately a SEPARATE predicate
+/// from [privateMediaInitialProducerMatrixAllows]: Protected/View-Once own the
+/// no-v110 private generation lane, while disappearing adopts the token-bearing
+/// ordinary owners. Widening either predicate into the other would move a
+/// modality between two different custody owners.
+///
+/// GIF stays refused for new authoring even though it remains
+/// compatibility-decodable, and audio/file/unknown are never eligible.
+bool disappearingMediaInitialProducerMatrixAllows({
+  required int policyVersion,
+  required PrivateMediaMode mode,
+  required int? durationSeconds,
+  required String mime,
+  required String mediaType,
+}) {
+  if (policyVersion != 1) return false;
+  if (mode != PrivateMediaMode.disappearing) return false;
+  if (durationSeconds == null ||
+      !PrivateMediaPolicy.allowedDurationsSeconds.contains(durationSeconds)) {
+    return false;
+  }
+  final kind = privateMediaAttachmentKindForMediaIdentity(
+    mime: mime,
+    mediaType: mediaType,
+  );
+  return kind == PrivateMediaAttachmentKind.image ||
+      kind == PrivateMediaAttachmentKind.video;
+}
+
+/// Row-shaped form of [disappearingMediaInitialProducerMatrixAllows] for
+/// durable database predicates.
+bool disappearingMediaInitialProducerMatrixAllowsDatabaseIdentity({
+  required Object? policyVersion,
+  required Object? mode,
+  required Object? durationSeconds,
+  required Object? mime,
+  required Object? mediaType,
+}) {
+  if (mime is! String || mediaType is! String) return false;
+  final version = policyVersion is num ? policyVersion.toInt() : -1;
+  final duration = durationSeconds is num ? durationSeconds.toInt() : null;
+  if (durationSeconds != null && duration == null) return false;
+  return disappearingMediaInitialProducerMatrixAllows(
+    policyVersion: version,
+    mode: PrivateMediaMode.fromWireValue(mode),
+    durationSeconds: duration,
+    mime: mime,
+    mediaType: mediaType,
+  );
+}

@@ -499,6 +499,15 @@ void main() {
         reason: 'production must wire one exact $binding delegate',
       );
     }
+    // 358: the strict local-path commit carries the strict owner's own clock
+    // sample. The production delegate must forward it unchanged, so a
+    // disappearing deadline recheck can never be inferred from the caller's
+    // formatted audit timestamp.
+    final commitDelegate = RegExp(
+      r'dbCommitIncomingDirectMediaBlobLocalPath:[\s\S]*?\),\n',
+    ).firstMatch(production)!.group(0)!;
+    expect(commitDelegate, contains('required nowMs,'));
+    expect(commitDelegate, contains('nowMs: nowMs,'));
     expect(
       'drainDirectMediaBlobCustodyFn:'.allMatches(production),
       hasLength(1),

@@ -36,8 +36,11 @@ const _relocations = <String, List<String>>{
     // relocating anything. Plan 353 adds the caption-edit qualification, the
     // atomic caption stage and the incoming conditional apply to the same
     // adapter. Plan 354 adds the private v111 generation stage over the exact
-    // convention-pending projection — still no relocation.
-    'd58d3a116b2259eae5b2638a0bffb58793ff19790637f222bc0c1a21d3421be4',
+    // convention-pending projection — still no relocation. Plan 358 threads the
+    // strict owner's own sampled clock through the incoming local-path commit
+    // so a disappearing deadline is requalified inside that transaction; the
+    // adapter still owns exactly the same responsibilities in the same place.
+    '027226d27e60c205cbdc8caa19a31728a879e5a9396d5cd3e2a5556537ea530b',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

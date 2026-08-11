@@ -325,6 +325,7 @@ class MediaRepositoryRealDbFixture {
             required localPath,
             required sourceRelayPeerId,
             required updatedAt,
+            required nowMs,
           }) => dbCommitIncomingDirectMediaBlobLocalPath(
             db,
             expectedAttachmentRow: expectedAttachmentRow,
@@ -332,6 +333,9 @@ class MediaRepositoryRealDbFixture {
             localPath: localPath,
             sourceRelayPeerId: sourceRelayPeerId,
             updatedAt: updatedAt,
+            // 358: the strict owner's sampled clock crosses this delegate
+            // unchanged into the DB callback.
+            nowMs: nowMs,
           ),
       dbDeleteIncomingDirectMediaBlobAckPendingIfExact: ({required expected}) =>
           dbDeleteIncomingDirectMediaBlobAckPendingIfExact(

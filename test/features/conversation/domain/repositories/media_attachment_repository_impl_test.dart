@@ -1407,6 +1407,7 @@ void main() {
               localPath: 'media/$contactPeerId/$attachmentId.jpg',
               sourceRelayPeerId: 'relay-source-exact',
               updatedAt: '2026-08-08T10:10:01.000Z',
+              nowMs: 1_800_000_000_000,
             ),
             isTrue,
           );

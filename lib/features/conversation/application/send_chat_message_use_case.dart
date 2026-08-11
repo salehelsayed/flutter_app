@@ -302,6 +302,33 @@ const Set<String> _directMediaCustodyTypes = <String>{
   'file',
 };
 
+/// The two durable parent policies a TOKEN-BEARING media preflight may adopt.
+///
+/// Ordinary v0 keeps its exact historical shape. 358 additionally admits the
+/// authored v1 `disappearing` shape — one allowed duration, lifecycle
+/// `available` — but only when the caller's own effective policy is that same
+/// exact disappearing policy, so a drifted caller can never retarget a durable
+/// parent onto another modality.
+bool _isTokenBearingDirectMediaPreflightPolicy(
+  ConversationMessage durableParent, {
+  required PrivateMediaPolicy expected,
+}) {
+  if (durableParent.privateMediaPolicy.version == 0 &&
+      durableParent.privateMediaMode == PrivateMediaMode.ordinary &&
+      durableParent.privateMediaDurationSeconds == null &&
+      durableParent.privateMediaState == PrivateMediaLifecycleState.none) {
+    return expected.mode == PrivateMediaMode.ordinary;
+  }
+  return expected.mode == PrivateMediaMode.disappearing &&
+      durableParent.privateMediaPolicy == expected &&
+      durableParent.privateMediaMode == PrivateMediaMode.disappearing &&
+      durableParent.privateMediaDurationSeconds != null &&
+      PrivateMediaPolicy.allowedDurationsSeconds.contains(
+        durableParent.privateMediaDurationSeconds,
+      ) &&
+      durableParent.privateMediaState == PrivateMediaLifecycleState.available;
+}
+
 bool _isCompleteDirectMediaCustodyCandidate(
   MediaAttachment attachment, {
   required String messageId,
@@ -796,12 +823,32 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
                 ? existingOutgoing.privateMediaPolicy
                 : const PrivateMediaPolicy.ordinary());
 
+  // 358: the exact newly authored v1 disappearing image/video initial is the
+  // ONLY non-ordinary shape a v110 token may carry. Everything else about the
+  // token's exclusivity is unchanged.
+  final isExactDisappearingTokenBearingInitial =
+      action == MessagePayload.actionSend &&
+      hasAttachments &&
+      mediaAttachments.length == 1 &&
+      sanitizedText.isEmpty &&
+      quotedMessageId == null &&
+      !isForwarded &&
+      disappearingMediaInitialProducerMatrixAllows(
+        policyVersion: effectivePrivateMediaPolicy.version,
+        mode: effectivePrivateMediaPolicy.mode,
+        durationSeconds: effectivePrivateMediaPolicy.durationSeconds,
+        mime: mediaAttachments.single.mime,
+        mediaType: mediaAttachments.single.mediaType,
+      );
+
   // A v110 intent is exclusive preparation authority. It may only enter the
-  // exact ordinary initial-media acquisition path; an empty-media call, edit,
-  // delete, or private-policy reinterpretation must not fall through to a
-  // weaker generic/private staging seam after doing envelope work.
+  // exact ordinary (or, since 358, exact disappearing) initial-media
+  // acquisition path; an empty-media call, edit, delete, or private-policy
+  // reinterpretation must not fall through to a weaker generic/private staging
+  // seam after doing envelope work.
   if (preexistingDirectMediaCustody == null &&
       existingOutgoing?.directMediaCustodyIntentId != null &&
+      !isExactDisappearingTokenBearingInitial &&
       (action != MessagePayload.actionSend ||
           !hasAttachments ||
           effectivePrivateMediaPolicy.version != 0 ||
@@ -904,15 +951,24 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       existingOutgoing.contactPeerId == targetPeerId &&
       existingOutgoing.senderPeerId == senderPeerId &&
       existingOutgoing.directMediaCustodyIntentId == null;
+  // 358: exactly one newly authored v1 disappearing image/video initial adopts
+  // the same token-bearing ordinary owners. It is admitted ONLY from a durable
+  // v110 predecessor (`existing` + intent), never from the marker-free fresh
+  // arm, so external share and internal forward stay ordinary-only.
+  final isTokenBearingDisappearingMedia =
+      isExactDisappearingTokenBearingInitial &&
+      attemptKind == OutgoingOrdinaryAttemptKind.existing &&
+      existingOutgoing?.directMediaCustodyIntentId != null;
   var ownsDirectMediaInboxCustody =
       !isOutgoingPrivateOneMoreLook &&
       action == MessagePayload.actionSend &&
       hasAttachments &&
-      effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary &&
-      ((attemptKind == OutgoingOrdinaryAttemptKind.fresh &&
-              existingOutgoing == null) ||
-          (attemptKind == OutgoingOrdinaryAttemptKind.existing &&
-              existingOutgoing?.directMediaCustodyIntentId != null));
+      (effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary
+          ? ((attemptKind == OutgoingOrdinaryAttemptKind.fresh &&
+                    existingOutgoing == null) ||
+                (attemptKind == OutgoingOrdinaryAttemptKind.existing &&
+                    existingOutgoing?.directMediaCustodyIntentId != null))
+          : isTokenBearingDisappearingMedia);
   final ordinaryMutationRepo =
       messageRepo is OutgoingTransportMutationRepository
       ? messageRepo as OutgoingTransportMutationRepository
@@ -1179,8 +1235,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       nodeWasNotRunningAtEntry &&
       ownsDirectInboxCustody &&
       (ordinaryMutationRepo != null || ownsDirectPrivateMediaInboxCustody) &&
-      (!ownsDirectPrivateMediaInboxCustody ||
-          directTextCustodyRepo != null) &&
+      (!ownsDirectPrivateMediaInboxCustody || directTextCustodyRepo != null) &&
       (!ownsDirectTextInboxCustody || directTextCustodyRepo != null) &&
       (!ownsDirectTextMutationInboxCustody ||
           directMutationCustodyRepo != null) &&
@@ -1377,11 +1432,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             durableParent.wireEnvelope == null &&
             durableParent.relayExpiresAt == null &&
             durableParent.custodyCheckedAt == null &&
-            durableParent.privateMediaPolicy.version == 0 &&
-            durableParent.privateMediaMode == PrivateMediaMode.ordinary &&
-            durableParent.privateMediaDurationSeconds == null &&
-            durableParent.privateMediaState ==
-                PrivateMediaLifecycleState.none &&
+            // 358: the durable parent must carry EITHER the unchanged ordinary
+            // shape or the exact authored disappearing shape. The sender-side
+            // receiver-clock columns stay null in both: only the receiver
+            // starts a disappearance clock.
+            _isTokenBearingDirectMediaPreflightPolicy(
+              durableParent,
+              expected: effectivePrivateMediaPolicy,
+            ) &&
             durableParent.privateMediaReceivedAtMs == null &&
             durableParent.privateMediaExpiresAtMs == null &&
             durableParent.privateMediaRevealedAtMs == null &&
@@ -1931,7 +1989,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           );
         }
         observedMessage =
-            completion.message ?? await messageRepo.getMessage(resolvedMessageId);
+            completion.message ??
+            await messageRepo.getMessage(resolvedMessageId);
       } else if (isOutgoingPrivateOneMoreLook) {
         observedMessage = await _settleOutgoingDirectPrivateTransportState(
           messageRepo: messageRepo,
@@ -3356,10 +3415,7 @@ Future<_RaceResult> _tryDirectSendInner(
 /// [custody] is non-null only for a strict Barrier B commit/adoption; it is the
 /// exact v108 owner returned by the same transaction.
 final class _OutgoingDirectPrivateHandoff {
-  const _OutgoingDirectPrivateHandoff({
-    required this.authorized,
-    this.custody,
-  });
+  const _OutgoingDirectPrivateHandoff({required this.authorized, this.custody});
 
   const _OutgoingDirectPrivateHandoff.refused()
     : authorized = false,
@@ -3399,8 +3455,7 @@ _commitOutgoingDirectPrivateEnvelopeForTransport({
       ? messageRepo as OutgoingDirectPrivateMediaInboxCustodyRepository
       : null;
   if (ownsStrictInboxCustody &&
-      strictCustodyCapability
-              ?.supportsOutgoingDirectPrivateMediaInboxCustody !=
+      strictCustodyCapability?.supportsOutgoingDirectPrivateMediaInboxCustody !=
           true) {
     // Capability absence for an already selected strict private attempt fails
     // closed before egress; it must never silently fall back.

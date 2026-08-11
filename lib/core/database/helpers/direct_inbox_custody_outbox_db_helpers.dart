@@ -9,6 +9,7 @@ import '../direct_media_blob_custody.dart';
 import '../outgoing_transport_mutation.dart';
 import '../../media/direct_media_blob_custody.dart';
 import '../../media/media_owner_lane.dart';
+import '../../media/private_media_policy.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
 import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
@@ -382,7 +383,12 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
           ownsMessage &&
           !userTerminal &&
           (stillProjectsOwnedAttempt || ownsDeliveredSuccessor) &&
-          isStrictOrdinaryOutgoingDirectPolicy(message);
+          (isStrictOrdinaryOutgoingDirectPolicy(message) ||
+              // 358: the exact disappearing successor of the same token-bearing
+              // owners. Protected/View-Once deliberately stay out — they own a
+              // different (no-v110) generation lane and must never receive this
+              // fingerprint.
+              _isStrictDisappearingOutgoingDirectPolicy(message));
       if (ownsExactLineage &&
           !await dbStampExactStrictOutgoingLineageWithinTransaction(
             txn,
@@ -584,6 +590,34 @@ Future<bool> dbStampExactStrictOutgoingLineageWithinTransaction(
     );
   }
   return true;
+}
+
+/// The exact outgoing v1 `disappearing` policy shape whose accepted v108
+/// completion may stamp Plan 352's per-attachment lineage.
+///
+/// This transaction is the last point at which the generation is provable, so
+/// the predicate is deliberately narrow: a v1 disappearing initial with one
+/// allowed duration, lifecycle `available`, no receiver-local clock (this is
+/// the SENDER), and its v110 token already consumed by v108 staging. Any other
+/// private mode, a crossed duration, a terminal state or a sender-side clock
+/// keeps the incumbent unstamped result.
+bool _isStrictDisappearingOutgoingDirectPolicy(Map<String, Object?> row) {
+  final durationSeconds = row['private_media_duration_seconds'];
+  return ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+      (row['private_media_policy_version'] as num?)?.toInt() == 1 &&
+      row['private_media_mode'] == PrivateMediaMode.disappearing.wireValue &&
+      durationSeconds is num &&
+      PrivateMediaPolicy.allowedDurationsSeconds.contains(
+        durationSeconds.toInt(),
+      ) &&
+      row['private_media_state'] ==
+          PrivateMediaLifecycleState.available.wireValue &&
+      row['private_media_received_at_ms'] == null &&
+      row['private_media_expires_at_ms'] == null &&
+      row['private_media_revealed_at_ms'] == null &&
+      row['private_media_terminal_at_ms'] == null &&
+      row['private_media_clock_high_water_ms'] == null &&
+      row['direct_media_custody_intent_id'] == null;
 }
 
 /// Every transport label the ordinary settlement CAS accepts on a delivered

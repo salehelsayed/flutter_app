@@ -1598,6 +1598,10 @@ dbStageOutgoingDirectMediaBlobGeneration(
         recipientPeerId: recipientPeerId,
         intentId: intentId!,
       ) &&
+      _tokenBearingDisappearingMatrixHolds(
+        expectedParentRow,
+        expectedAttachmentRows,
+      ) &&
       expectedAttachmentRows.every(
         (row) => _isValidDirectMediaCustodyPreparationAttachment(
           row,
@@ -2216,7 +2220,23 @@ dbStageOutgoingDirectMediaInboxCustody(
       attachmentRows.isNotEmpty &&
       uniqueAttachmentIds.length == attachmentRows.length &&
       !uniqueAttachmentIds.contains('') &&
-      _isEligibleDirectMediaCustodyParent(stagedRow) &&
+      // 358: only a TOKEN-BEARING binding may carry the exact disappearing
+      // policy. A marker-free fresh acquisition stays ordinary-only, and a
+      // disappearing binding additionally proves the exact one-image/video
+      // producer matrix before it can consume its v110 predecessor.
+      (prepared
+          ? (_isEligibleDirectMediaCustodyParent(stagedRow) ||
+                (_isEligibleDisappearingDirectMediaCustodyParent(stagedRow) &&
+                    attachmentRows.length == 1 &&
+                    disappearingMediaInitialProducerMatrixAllowsDatabaseIdentity(
+                      policyVersion: stagedRow['private_media_policy_version'],
+                      mode: stagedRow['private_media_mode'],
+                      durationSeconds:
+                          stagedRow['private_media_duration_seconds'],
+                      mime: attachmentRows.single['mime'],
+                      mediaType: attachmentRows.single['media_type'],
+                    )))
+          : _isEligibleDirectMediaCustodyParent(stagedRow)) &&
       attachmentRows.every(
         (row) =>
             _isCompleteDirectMediaCustodyAttachment(
@@ -2670,6 +2690,82 @@ bool _isEligibleDirectMediaCustodyParent(Map<String, Object?> row) =>
     row['private_media_terminal_at_ms'] == null &&
     row['private_media_clock_high_water_ms'] == null;
 
+/// The exact newly authored outgoing v1 `disappearing` parent Plan 358 admits
+/// into the TOKEN-BEARING v110/v111/v108 owners.
+///
+/// Every non-policy invariant is identical to the ordinary shape. The policy
+/// columns differ exactly as an authored disappearing initial differs: v1,
+/// `disappearing`, one allowed duration, lifecycle `available`, and — because
+/// this is the SENDER — no receiver-local clock, reveal or terminal stamp at
+/// all. The receiver-local deadline is authored only on receive.
+bool _isEligibleDisappearingDirectMediaCustodyParent(Map<String, Object?> row) {
+  final durationSeconds = row['private_media_duration_seconds'];
+  return _isNonBlankDatabaseString(row['id']) &&
+      _isNonBlankDatabaseString(row['contact_peer_id']) &&
+      _isNonBlankDatabaseString(row['sender_peer_id']) &&
+      _isNonBlankDatabaseString(row['timestamp']) &&
+      _isNonBlankDatabaseString(row['created_at']) &&
+      row['status'] == 'sending' &&
+      ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
+      // A disappearing INITIAL carries no caption on either side.
+      (row['text'] as String? ?? '').isEmpty &&
+      row['edited_at'] == null &&
+      row['deleted_at'] == null &&
+      row['deleted_by_peer_id'] == null &&
+      row['hidden_at'] == null &&
+      row['transport'] == null &&
+      row['relay_expires_at'] == null &&
+      row['custody_checked_at'] == null &&
+      ((row['private_media_policy_version'] as num?)?.toInt() ?? -1) == 1 &&
+      row['private_media_mode'] == PrivateMediaMode.disappearing.wireValue &&
+      durationSeconds is num &&
+      PrivateMediaPolicy.allowedDurationsSeconds.contains(
+        durationSeconds.toInt(),
+      ) &&
+      row['private_media_state'] ==
+          PrivateMediaLifecycleState.available.wireValue &&
+      row['private_media_received_at_ms'] == null &&
+      row['private_media_expires_at_ms'] == null &&
+      row['private_media_revealed_at_ms'] == null &&
+      row['private_media_terminal_at_ms'] == null &&
+      row['private_media_clock_high_water_ms'] == null;
+}
+
+/// The two parent policies a TOKEN-BEARING v110/v111/v108 step may serve.
+///
+/// Marker-free fresh authority deliberately does NOT use this: external share
+/// and authorized internal forward remain ordinary-only.
+bool _isEligibleTokenBearingDirectMediaCustodyParent(
+  Map<String, Object?> row,
+) =>
+    _isEligibleDirectMediaCustodyParent(row) ||
+    _isEligibleDisappearingDirectMediaCustodyParent(row);
+
+/// Additional matrix proof a TOKEN-BEARING disappearing parent must satisfy.
+///
+/// Ordinary parents are unaffected: this returns true for every non-
+/// disappearing shape, leaving the incumbent ordinary predicates as the only
+/// decision. A disappearing parent must carry exactly one coherent image or
+/// video, so a widened composer selection cannot reach v111 or v108.
+bool _tokenBearingDisappearingMatrixHolds(
+  Map<String, Object?> parentRow,
+  List<Map<String, Object?>> attachmentRows,
+) {
+  if (!_isEligibleDisappearingDirectMediaCustodyParent(
+    Map<String, Object?>.from(parentRow)..['status'] = 'sending',
+  )) {
+    return true;
+  }
+  return attachmentRows.length == 1 &&
+      disappearingMediaInitialProducerMatrixAllowsDatabaseIdentity(
+        policyVersion: parentRow['private_media_policy_version'],
+        mode: parentRow['private_media_mode'],
+        durationSeconds: parentRow['private_media_duration_seconds'],
+        mime: attachmentRows.single['mime'],
+        mediaType: attachmentRows.single['media_type'],
+      );
+}
+
 bool _isEligiblePreparedDirectMediaCustodyParent(
   Map<String, Object?> row, {
   required String recipientPeerId,
@@ -2682,7 +2778,7 @@ bool _isEligiblePreparedDirectMediaCustodyParent(
     row['relay_expires_at'] == null &&
     row['custody_checked_at'] == null &&
     const <String>{'sending', 'failed'}.contains(row['status']) &&
-    _isEligibleDirectMediaCustodyParent(
+    _isEligibleTokenBearingDirectMediaCustodyParent(
       Map<String, Object?>.from(row)..['status'] = 'sending',
     );
 
@@ -2717,6 +2813,12 @@ bool _isCanonicalFreshDirectMediaBlobParent(
         row,
         recipientPeerId: recipientPeerId,
         intentId: intentId,
+      ) &&
+      // 358: the token-bearing predicate above now also serves disappearing.
+      // Marker-free fresh authority must NOT widen with it — external share
+      // and authorized internal forward stay exactly ordinary policy v0.
+      _isEligibleDirectMediaCustodyParent(
+        Map<String, Object?>.from(row)..['status'] = 'sending',
       ) &&
       row['timestamp'] == row['created_at'] &&
       row['read_at'] == null &&
@@ -6662,6 +6764,7 @@ bool _isExactIncomingPrivateTerminalParent(
   Map<String, Object?> parent, {
   required Object? senderPeerId,
   required Object? mode,
+  required Object? durationSeconds,
 }) {
   final state = parent['private_media_state'];
   final tombstoned = parent['deleted_at'] != null;
@@ -6677,11 +6780,14 @@ bool _isExactIncomingPrivateTerminalParent(
       parent['contact_peer_id'] == senderPeerId &&
       (parent['private_media_policy_version'] as num?)?.toInt() == 1 &&
       parent['private_media_mode'] == mode &&
-      const <String>{'protected', 'view_once'}.contains(mode) &&
-      // A v1 Protected/View-Once INITIAL never carries a duration; a durable
-      // row that does is a different (disappearing) lane, not this replay's
-      // parent.
-      parent['private_media_duration_seconds'] == null &&
+      const <String>{'protected', 'view_once', 'disappearing'}.contains(mode) &&
+      // A v1 Protected/View-Once INITIAL never carries a duration and a
+      // disappearing one always does. A durable row whose duration disagrees
+      // with the wire is a different lane, not this replay's parent.
+      _sameDatabaseScalar(
+        parent['private_media_duration_seconds'],
+        durationSeconds,
+      ) &&
       // A tombstone is durable precedence for THIS replay only when the
       // message's author wrote it. Any other deletion author is crossed
       // authority and must fail closed rather than mint a receipt.
@@ -6712,8 +6818,12 @@ bool _matchesReducedIncomingPrivateTerminalParent(
       (parent['private_media_policy_version'] as num?)?.toInt() !=
           (messageRow['private_media_policy_version'] as num?)?.toInt() ||
       parent['private_media_mode'] != messageRow['private_media_mode'] ||
-      parent['private_media_duration_seconds'] != null ||
-      messageRow['private_media_duration_seconds'] != null) {
+      // 358: the authored duration is immutable wire identity. P/VO carries
+      // none on either side; disappearing must agree exactly.
+      !_sameDatabaseScalar(
+        parent['private_media_duration_seconds'],
+        messageRow['private_media_duration_seconds'],
+      )) {
     return false;
   }
   // The initial producer shape carries no caption on either side. A terminal
@@ -6776,6 +6886,33 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
   final receivedAtMs = (messageRow['private_media_received_at_ms'] as num?)
       ?.toInt();
   final expiresAtMs = custodyRow.expiresAtMs;
+  final durationSeconds = messageRow['private_media_duration_seconds'];
+  final isDisappearing = mode == PrivateMediaMode.disappearing.wireValue;
+  // 358: the receiver-local deadline is `receivedAt + duration`. It is
+  // validated INDEPENDENTLY of the v111 transport lease: the two clocks are
+  // different obligations and neither may be copied into the other. The
+  // overflow guard keeps a hostile/absurd `receivedAt` from wrapping into a
+  // deadline that is already in the past.
+  final bool validPrivateClock;
+  if (isDisappearing) {
+    final duration = durationSeconds is num ? durationSeconds.toInt() : null;
+    final parentExpiresAtMs =
+        (messageRow['private_media_expires_at_ms'] as num?)?.toInt();
+    if (duration == null ||
+        !PrivateMediaPolicy.allowedDurationsSeconds.contains(duration) ||
+        receivedAtMs == null ||
+        parentExpiresAtMs == null) {
+      validPrivateClock = false;
+    } else {
+      final expected = receivedAtMs + duration * 1000;
+      validPrivateClock =
+          expected > receivedAtMs && parentExpiresAtMs == expected;
+    }
+  } else {
+    validPrivateClock =
+        durationSeconds == null &&
+        messageRow['private_media_expires_at_ms'] == null;
+  }
   final validParent =
       messageId.trim().isNotEmpty &&
       _isNonBlankDatabaseString(senderPeerId) &&
@@ -6788,14 +6925,13 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
       messageRow['edited_at'] == null &&
       messageRow[_directMediaCustodyIntentColumn] == null &&
       (messageRow['private_media_policy_version'] as num?)?.toInt() == 1 &&
-      const <String>{'protected', 'view_once'}.contains(mode) &&
-      messageRow['private_media_duration_seconds'] == null &&
+      const <String>{'protected', 'view_once', 'disappearing'}.contains(mode) &&
       messageRow['private_media_state'] == 'available' &&
       receivedAtMs != null &&
       receivedAtMs > 0 &&
       (messageRow['private_media_clock_high_water_ms'] as num?)?.toInt() ==
           receivedAtMs &&
-      messageRow['private_media_expires_at_ms'] == null &&
+      validPrivateClock &&
       messageRow['private_media_revealed_at_ms'] == null &&
       messageRow['private_media_terminal_at_ms'] == null &&
       DirectPrivateMediaPathGuard.identifiersAreSafe(
@@ -6813,13 +6949,21 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
       _isNonBlankDatabaseString(attachmentRow['mime']) &&
       ((attachmentRow['size'] as num?)?.toInt() ?? 0) > 0 &&
       // The receiver enforces the producer matrix independently of the wire.
-      privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
-        policyVersion: messageRow['private_media_policy_version'],
-        mode: mode,
-        durationSeconds: messageRow['private_media_duration_seconds'],
-        mime: attachmentRow['mime'],
-        mediaType: attachmentRow['media_type'],
-      ) &&
+      (isDisappearing
+          ? disappearingMediaInitialProducerMatrixAllowsDatabaseIdentity(
+              policyVersion: messageRow['private_media_policy_version'],
+              mode: mode,
+              durationSeconds: durationSeconds,
+              mime: attachmentRow['mime'],
+              mediaType: attachmentRow['media_type'],
+            )
+          : privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
+              policyVersion: messageRow['private_media_policy_version'],
+              mode: mode,
+              durationSeconds: durationSeconds,
+              mime: attachmentRow['mime'],
+              mediaType: attachmentRow['media_type'],
+            )) &&
       _isNonBlankDatabaseString(attachmentRow['encryption_key_base64']) &&
       _isNonBlankDatabaseString(attachmentRow['encryption_nonce']) &&
       attachmentRow['encryption_scheme'] == _blobAesGcmV1 &&
@@ -6874,6 +7018,7 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
           existingParents.single,
           senderPeerId: senderPeerId,
           mode: mode,
+          durationSeconds: durationSeconds,
         )) {
       if (!_matchesReducedIncomingPrivateTerminalParent(
         existingParents.single,
@@ -7046,13 +7191,15 @@ dbStageIncomingDirectPrivateMediaBlobCustody(
   });
 }
 
-/// The two durable parent lanes this final commit may serve.
+/// The three durable parent lanes this final commit may serve.
 ///
 /// Policy v0 `ordinary` keeps its historical Plan 347 behavior verbatim. A v1
 /// Protected/View-Once parent is additionally admitted, but only while it is
 /// still `available` and only for the exact `downloading` row the private
 /// transfer claim already owns — the claim, not a UI snapshot, is the
-/// transfer's authority. Disappearing and every other private shape stay out.
+/// transfer's authority. 358 admits the exact v1 disappearing shape on the
+/// same terms; its receiver deadline is requalified separately inside the
+/// commit transaction. Every other private shape stays out.
 bool _acceptsIncomingDirectMediaBlobLocalPathCommit(
   Map<String, Object?> parent, {
   required Map<String, Object?> expectedAttachmentRow,
@@ -7066,6 +7213,15 @@ bool _acceptsIncomingDirectMediaBlobLocalPathCommit(
       expectedAttachmentRow['download_status'] !=
           kMediaDownloadStatusDownloading) {
     return false;
+  }
+  if (mode == PrivateMediaMode.disappearing.wireValue) {
+    return disappearingMediaInitialProducerMatrixAllowsDatabaseIdentity(
+      policyVersion: policyVersion,
+      mode: mode,
+      durationSeconds: parent['private_media_duration_seconds'],
+      mime: expectedAttachmentRow['mime'],
+      mediaType: expectedAttachmentRow['media_type'],
+    );
   }
   return privateMediaInitialProducerMatrixAllowsDatabaseIdentity(
     policyVersion: policyVersion,
@@ -7086,6 +7242,10 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
   required String localPath,
   required String? sourceRelayPeerId,
   required String updatedAt,
+  // 358: the strict owner's own injected clock sample. It is threaded
+  // explicitly rather than inferred from [updatedAt], which is a caller-
+  // formatted audit string and must never become lifecycle authority.
+  required int nowMs,
 }) {
   final attachmentId = expectedAttachmentRow['id'] as String? ?? '';
   final messageId = expectedAttachmentRow['message_id'] as String? ?? '';
@@ -7139,6 +7299,18 @@ Future<bool> dbCommitIncomingDirectMediaBlobLocalPath(
         !_acceptsIncomingDirectMediaBlobLocalPathCommit(
           parentRows.single,
           expectedAttachmentRow: expectedAttachmentRow,
+        )) {
+      return false;
+    }
+    // 358: a disappearing parent is requalified against its receiver-local
+    // deadline inside this same transaction, so an expiry that wins the race
+    // makes the commit lose instead of promoting durable plaintext behind it.
+    if (parentRows.single['private_media_mode'] ==
+            PrivateMediaMode.disappearing.wireValue &&
+        !await dbAdvanceAndQualifyDirectPrivateMediaParentWithinTransaction(
+          txn,
+          messageId,
+          nowMs: nowMs,
         )) {
       return false;
     }

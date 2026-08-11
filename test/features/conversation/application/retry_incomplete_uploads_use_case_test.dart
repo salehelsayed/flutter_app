@@ -2380,148 +2380,144 @@ void main() {
       skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
-    test(
-      'TC-358-02b disappearing strict restart reopens exact v111 without '
-      'legacy upload',
-      () async {
-        const messageId = 'msg-358-02b-disappearing';
-        const attachmentId = 'att-358-02b-disappearing';
-        const contentHash =
-            'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-        final intent = computeDirectMediaCustodyIntentId(
+    test('TC-358-02b disappearing strict restart reopens exact v111 without '
+        'legacy upload', () async {
+      const messageId = 'msg-358-02b-disappearing';
+      const attachmentId = 'att-358-02b-disappearing';
+      const contentHash =
+          'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
+      final intent = computeDirectMediaCustodyIntentId(
+        messageId: messageId,
+        attachmentIds: const <String>[attachmentId],
+      );
+      final pendingPath = MediaFilePathConvention.relativePathForPendingUpload(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        mime: 'image/jpeg',
+      );
+      final message = ConversationMessage(
+        id: messageId,
+        contactPeerId: 'peer-bob',
+        senderPeerId: 'my-peer-id',
+        text: '',
+        timestamp: '2026-08-11T09:00:00.000Z',
+        status: 'failed',
+        isIncoming: false,
+        createdAt: '2026-08-11T09:00:00.000Z',
+        directMediaCustodyIntentId: intent,
+        privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
+        privateMediaState: PrivateMediaLifecycleState.available,
+      );
+      // The already-published generation: an exact convention-pending row
+      // carrying the SAME ciphertext identity as the durable v111 row.
+      final published = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/jpeg',
+        size: 2048,
+        mediaType: 'image',
+        localPath: pendingPath,
+        downloadStatus: 'upload_pending',
+        createdAt: '2026-08-11T09:00:00.000Z',
+        ownerLane: MediaOwnerLane.direct,
+        contentHash: contentHash,
+        encryptionKeyBase64: 'tc358-02b-raw-key',
+        encryptionNonce: 'tc358-02b-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      final repo = _ExistingDirectMediaBlobRepository(
+        DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
           messageId: messageId,
-          attachmentIds: const <String>[attachmentId],
-        );
-        final pendingPath =
-            MediaFilePathConvention.relativePathForPendingUpload(
-              messageId: messageId,
-              attachmentId: attachmentId,
-              mime: 'image/jpeg',
-            );
-        final message = ConversationMessage(
-          id: messageId,
-          contactPeerId: 'peer-bob',
-          senderPeerId: 'my-peer-id',
-          text: '',
-          timestamp: '2026-08-11T09:00:00.000Z',
-          status: 'failed',
-          isIncoming: false,
-          createdAt: '2026-08-11T09:00:00.000Z',
-          directMediaCustodyIntentId: intent,
-          privateMediaPolicy: PrivateMediaPolicy.disappearing(3600),
-          privateMediaState: PrivateMediaLifecycleState.available,
-        );
-        // The already-published generation: an exact convention-pending row
-        // carrying the SAME ciphertext identity as the durable v111 row.
-        final published = MediaAttachment(
-          id: attachmentId,
-          messageId: messageId,
-          mime: 'image/jpeg',
-          size: 2048,
-          mediaType: 'image',
-          localPath: pendingPath,
-          downloadStatus: 'upload_pending',
-          createdAt: '2026-08-11T09:00:00.000Z',
-          ownerLane: MediaOwnerLane.direct,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: 'peer-bob',
+          ciphertextRelativePath:
+              'direct_media_blob_custody_v1/${'6' * 64}/$attachmentId.blob',
           contentHash: contentHash,
-          encryptionKeyBase64: 'tc358-02b-raw-key',
-          encryptionNonce: 'tc358-02b-nonce',
-          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
-        );
-        final repo = _ExistingDirectMediaBlobRepository(
-          DirectMediaBlobCustodyRow(
-            attachmentId: attachmentId,
-            messageId: messageId,
-            direction: DirectMediaBlobCustodyDirection.outgoing,
-            state: DirectMediaBlobCustodyState.outgoingPrepared,
-            inboxCustodyIncarnationId: null,
-            recipientPeerId: 'peer-bob',
-            ciphertextRelativePath:
-                'direct_media_blob_custody_v1/${'6' * 64}/$attachmentId.blob',
-            contentHash: contentHash,
-            ciphertextSize: 4096,
-            expiresAtMs: null,
-            custodyRelayPeerId: null,
-            lastAttemptAt: null,
-            nextAttemptAt: null,
-            createdAt: '2026-08-11T09:00:01.000Z',
-            updatedAt: '2026-08-11T09:00:01.000Z',
-          ),
-        )..seed(<MediaAttachment>[published]);
-        messageRepo.seed(<ConversationMessage>[message]);
-        identityRepo.seed(FakeIdentityRepository.makeIdentity());
+          ciphertextSize: 4096,
+          expiresAtMs: null,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: '2026-08-11T09:00:01.000Z',
+          updatedAt: '2026-08-11T09:00:01.000Z',
+        ),
+      )..seed(<MediaAttachment>[published]);
+      messageRepo.seed(<ConversationMessage>[message]);
+      identityRepo.seed(FakeIdentityRepository.makeIdentity());
 
-        var prepareArtifactCalls = 0;
-        var strictUploadCalls = 0;
-        final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
-          repository: repo,
-          artifactStore: DirectMediaBlobArtifactStore(
-            documentsDirectoryProvider: () async =>
-                Directory.systemTemp.createTempSync('tc358_02b_'),
-          ),
-          prepareArtifact:
-              ({required Bridge bridge, required String localFilePath}) async {
-                prepareArtifactCalls++;
-                throw StateError('reopen must never re-encrypt');
-              },
-          strictUpload:
-              ({
-                required bridge,
-                required attachmentId,
-                required recipientPeerId,
-                required ciphertextPath,
-                required contentHash,
-                required ciphertextSize,
-              }) async {
-                strictUploadCalls++;
-                return <String, dynamic>{'ok': false};
-              },
-        );
+      var prepareArtifactCalls = 0;
+      var strictUploadCalls = 0;
+      final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+        repository: repo,
+        artifactStore: DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async =>
+              Directory.systemTemp.createTempSync('tc358_02b_'),
+        ),
+        prepareArtifact:
+            ({required Bridge bridge, required String localFilePath}) async {
+              prepareArtifactCalls++;
+              throw StateError('reopen must never re-encrypt');
+            },
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              strictUploadCalls++;
+              return <String, dynamic>{'ok': false};
+            },
+      );
 
-        await retryIncompleteUploads(
-          mediaAttachmentRepo: repo,
-          messageRepo: messageRepo,
-          bridge: bridge,
-          p2pService: p2pService,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          uploadMediaFn: fakeUploadFn.call,
-          directMediaBlobCustodyCoordinator: coordinator,
-        );
+      await retryIncompleteUploads(
+        mediaAttachmentRepo: repo,
+        messageRepo: messageRepo,
+        bridge: bridge,
+        p2pService: p2pService,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        uploadMediaFn: fakeUploadFn.call,
+        directMediaBlobCustodyCoordinator: coordinator,
+      );
 
-        expect(
-          repo.ordinaryStageCalls,
-          1,
-          reason:
-              'a complete disappearing v111 generation reopens through the '
-              'ORDINARY strict coordinator',
-        );
-        expect(
-          repo.privateStageCalls,
-          0,
-          reason: 'disappearing never enters the P/VO private coordinator',
-        );
-        expect(
-          prepareArtifactCalls,
-          0,
-          reason: 'an exact reopen must never re-encrypt the blob',
-        );
-        expect(
-          fakeUploadFn.callCount,
-          0,
-          reason: 'a proven strict generation never falls back to legacy '
-              'upload',
-        );
-        // Byte-identical ciphertext identity survives the reopen.
-        final retained = (await repo.getAttachmentById(attachmentId))!;
-        expect(retained.contentHash, contentHash);
-        expect(retained.encryptionKeyBase64, 'tc358-02b-raw-key');
-        expect(retained.encryptionNonce, 'tc358-02b-nonce');
-        expect(repo.row.contentHash, contentHash);
-        expect(strictUploadCalls, lessThanOrEqualTo(1));
-      },
-      skip: !kDirectMediaBlobCustodyClientEnabled,
-    );
+      expect(
+        repo.ordinaryStageCalls,
+        1,
+        reason:
+            'a complete disappearing v111 generation reopens through the '
+            'ORDINARY strict coordinator',
+      );
+      expect(
+        repo.privateStageCalls,
+        0,
+        reason: 'disappearing never enters the P/VO private coordinator',
+      );
+      expect(
+        prepareArtifactCalls,
+        0,
+        reason: 'an exact reopen must never re-encrypt the blob',
+      );
+      expect(
+        fakeUploadFn.callCount,
+        0,
+        reason:
+            'a proven strict generation never falls back to legacy '
+            'upload',
+      );
+      // Byte-identical ciphertext identity survives the reopen.
+      final retained = (await repo.getAttachmentById(attachmentId))!;
+      expect(retained.contentHash, contentHash);
+      expect(retained.encryptionKeyBase64, 'tc358-02b-raw-key');
+      expect(retained.encryptionNonce, 'tc358-02b-nonce');
+      expect(repo.row.contentHash, contentHash);
+      expect(strictUploadCalls, lessThanOrEqualTo(1));
+    }, skip: !kDirectMediaBlobCustodyClientEnabled);
 
     test('TC-354-03a private strict restart reopens completes and binds exact '
         'generation', () async {

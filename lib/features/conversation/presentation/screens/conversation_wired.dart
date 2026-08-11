@@ -3628,9 +3628,25 @@ class _ConversationWiredState extends State<ConversationWired>
         media: optimisticMedia ?? const [],
         privateMediaPolicy: privateMediaPolicy,
         privateMediaState: privateMediaPolicy.initialState,
+        // 358: a newly authored disappearing image/video initial mints the same
+        // deterministic v110 token as ordinary strict media, so it can adopt
+        // the token-bearing v110 -> v111 -> v108 owners. The exact producer
+        // matrix is proved here, before the parent is persisted, and again by
+        // the DB predicates. Protected/View-Once keep their no-v110 lane.
         directMediaCustodyIntentId:
             hasAttachments &&
-                privateMediaPolicy.mode == PrivateMediaMode.ordinary
+                (privateMediaPolicy.mode == PrivateMediaMode.ordinary ||
+                    (kDirectMediaBlobCustodyClientEnabled &&
+                        optimisticMedia!.length == 1 &&
+                        sanitizedText.isEmpty &&
+                        quotedMessageId == null &&
+                        disappearingMediaInitialProducerMatrixAllows(
+                          policyVersion: privateMediaPolicy.version,
+                          mode: privateMediaPolicy.mode,
+                          durationSeconds: privateMediaPolicy.durationSeconds,
+                          mime: optimisticMedia.single.mime,
+                          mediaType: optimisticMedia.single.mediaType,
+                        )))
             ? computeDirectMediaCustodyIntentId(
                 messageId: optimisticMessageId,
                 attachmentIds: optimisticMedia!.map(
@@ -3962,13 +3978,27 @@ class _ConversationWiredState extends State<ConversationWired>
                     repository,
                   _ => null,
                 };
+            // 358: a disappearing initial rides this exact ordinary strict
+            // coordinator. Its producer matrix is re-checked here so a widened
+            // composer selection can never reach encryption or network, and it
+            // never acquires the private one-more-look transfer lease.
             final strictBlobSelected =
                 kDirectMediaBlobCustodyClientEnabled &&
                 privateTransferLease == null &&
                 manifestFailureParent != null &&
                 manifestFailureAttachments.length == mediaToUpload.length &&
                 preparedUploads.length == mediaToUpload.length &&
-                blobCustodyRepository != null;
+                blobCustodyRepository != null &&
+                (privateMediaPolicy.mode == PrivateMediaMode.ordinary ||
+                    (manifestFailureAttachments.length == 1 &&
+                        disappearingMediaInitialProducerMatrixAllows(
+                          policyVersion: privateMediaPolicy.version,
+                          mode: privateMediaPolicy.mode,
+                          durationSeconds: privateMediaPolicy.durationSeconds,
+                          mime: manifestFailureAttachments.single.mime,
+                          mediaType:
+                              manifestFailureAttachments.single.mediaType,
+                        )));
             // 354: exactly one v1 Protected image/video or View-Once image
             // initial may adopt the same strict owner. The producer matrix is
             // re-checked here so a widened composer selection can never reach

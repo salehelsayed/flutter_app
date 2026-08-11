@@ -54,6 +54,30 @@ bool isExactDirectMediaCustodyRetryProjection({
   allowPublishedPending: allowPublishedPending,
 );
 
+/// The two durable parent policies a TOKEN-BEARING retry may reopen.
+///
+/// Ordinary v0 keeps its exact historical shape. 358 additionally admits the
+/// authored v1 `disappearing` shape with one allowed duration and lifecycle
+/// `available`. Protected/View-Once are deliberately absent: they own the
+/// separate no-v110 private reopen coordinator. The sender-side receiver-clock
+/// columns are asserted null by the caller in both cases.
+bool _isTokenBearingRetryPolicy(ConversationMessage message) {
+  if (message.privateMediaPolicy.version == 0 &&
+      message.privateMediaMode == PrivateMediaMode.ordinary &&
+      message.privateMediaDurationSeconds == null &&
+      message.privateMediaState == PrivateMediaLifecycleState.none) {
+    return true;
+  }
+  return message.privateMediaPolicy.version == 1 &&
+      message.privateMediaMode == PrivateMediaMode.disappearing &&
+      message.privateMediaDurationSeconds != null &&
+      PrivateMediaPolicy.allowedDurationsSeconds.contains(
+        message.privateMediaDurationSeconds,
+      ) &&
+      message.privateMediaState == PrivateMediaLifecycleState.available &&
+      message.text.isEmpty;
+}
+
 bool _isExactDirectMediaCustodyRetryProjection({
   required ConversationMessage message,
   required String expectedSenderPeerId,
@@ -78,10 +102,7 @@ bool _isExactDirectMediaCustodyRetryProjection({
       message.transport != null ||
       message.relayExpiresAt != null ||
       message.custodyCheckedAt != null ||
-      message.privateMediaPolicy.version != 0 ||
-      message.privateMediaMode != PrivateMediaMode.ordinary ||
-      message.privateMediaDurationSeconds != null ||
-      message.privateMediaState != PrivateMediaLifecycleState.none ||
+      !_isTokenBearingRetryPolicy(message) ||
       message.privateMediaReceivedAtMs != null ||
       message.privateMediaExpiresAtMs != null ||
       message.privateMediaRevealedAtMs != null ||

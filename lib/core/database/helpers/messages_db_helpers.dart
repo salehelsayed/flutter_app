@@ -4131,7 +4131,7 @@ Future<int> dbAdvanceDirectPrivateMediaClockWithinTransaction(
     [nowMs, id],
   );
   if (evaluated == 0) return 0;
-  await txn.rawUpdate(
+  final expired = await txn.rawUpdate(
     "UPDATE messages SET private_media_state = 'expired', "
     'private_media_terminal_at_ms = '
     'COALESCE(private_media_terminal_at_ms, '
@@ -4143,6 +4143,14 @@ Future<int> dbAdvanceDirectPrivateMediaClockWithinTransaction(
     'AND private_media_clock_high_water_ms >= private_media_expires_at_ms',
     [id],
   );
+  if (expired > 0) {
+    // 358: expiry is a terminal owner, so it also owns presentation. Retiring
+    // the exact message-kind marker inside THIS transaction is what makes the
+    // terminal row the first thing an observer can see — never a stale card
+    // for content the user can no longer open. Same-message reaction rows and
+    // every other message's rows are deliberately untouched.
+    await _retireDirectPrivateMessageDisplayMarker(txn, messageId: id);
+  }
   return evaluated;
 }
 

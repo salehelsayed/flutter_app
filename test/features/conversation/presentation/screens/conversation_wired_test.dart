@@ -2335,10 +2335,7 @@ void main() {
           mediaFileManager: manager,
           preparedDirectMediaBlobCustodyCoordinator: strictCoordinator,
           initialPendingMedia: <PendingComposerMedia>[
-            PendingComposerMedia(
-              file: image,
-              budgetBytes: image.lengthSync(),
-            ),
+            PendingComposerMedia(file: image, budgetBytes: image.lengthSync()),
           ],
           typedUploadMediaFn:
               ({

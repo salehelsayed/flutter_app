@@ -155,8 +155,10 @@ const _privacySha256 =
 // adapter bodies remain byte-identical.
 const _applicationRootNormalizedSha256 =
     '6d918b2711d85c92dc8cfaef2ce508805b4642bec4d6fb2bb9e5ddf9a16d5162';
+// Plan 358 forwards the strict local-path commit's `nowMs` sample through the
+// same already-wired delegate and relocates nothing.
 const _productionBootstrapNormalizedSha256 =
-    'fcb3c6f354cb16f568bdfd5d473207db6b28dd92c44258756eb5b33d46d2eb84';
+    '1d7df44e861fabbcda440328136a66d6e005e53ae80cb0fc40435b525bc0af11';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

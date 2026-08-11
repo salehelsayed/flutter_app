@@ -19,6 +19,8 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:path/path.dart' as p;
@@ -647,6 +649,12 @@ Future<MediaAttachment?> downloadMedia({
   var requiresDirectPrivateCommit = false;
   DirectPrivateMediaDownloadStateRepository? directPrivateDownloadRepo;
   DirectPrivateMediaCleanupRuntime? directPrivateRuntime;
+  // 358: the incumbent direct-parent lifecycle owner plus the policy this
+  // download qualified against. Both are captured during the parent gate so
+  // the strict shortcuts below can requalify a disappearing deadline without
+  // adding a new owner or re-deriving policy from a UI snapshot.
+  DirectPrivateMediaLifecycleRepository? directPrivateLifecycleRepo;
+  PrivateMediaPolicy? directPrivateParentPolicy;
   OrdinaryGroupMediaDownloadFailureRepository? ordinaryGroupDownloadFailureRepo;
   OrdinaryGroupAutomaticMediaDownloadStateRepository?
   ordinaryGroupAutomaticDownloadStateRepo;
@@ -720,6 +728,18 @@ Future<MediaAttachment?> downloadMedia({
           mediaAttachmentRepo as DirectPrivateMediaDownloadStateRepository;
       directPrivateRuntime =
           mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime;
+      directPrivateParentPolicy = policy;
+      directPrivateLifecycleRepo =
+          messageRepo is DirectPrivateMediaLifecycleRepository
+          ? messageRepo as DirectPrivateMediaLifecycleRepository
+          : null;
+      // A disappearing parent without its incumbent lifecycle owner cannot be
+      // requalified against its deadline, so it fails closed rather than
+      // downloading behind an unevaluated clock.
+      if (policy.mode == PrivateMediaMode.disappearing &&
+          directPrivateLifecycleRepo == null) {
+        return null;
+      }
     }
     if (policy.requiresRedaction &&
         (effectiveIntent != MediaDownloadIntent.explicitUser ||
@@ -866,6 +886,28 @@ Future<MediaAttachment?> downloadMedia({
         attachment: attachment,
       )) {
         return null;
+      }
+      // 358: before ANY strict shortcut — ACK-pending local adoption,
+      // already-local committed adoption, or blob-expired convergence — a
+      // disappearing parent is advanced and reloaded through its incumbent
+      // lifecycle owner. A passed deadline returns null with zero ACK, zero
+      // network and zero presentation; the incumbent expiry cleanup then owns
+      // the file, key and attachment. The v111 lease converges independently.
+      if (directPrivateLifecycleRepo != null &&
+          directPrivateParentPolicy?.mode == PrivateMediaMode.disappearing) {
+        await directPrivateLifecycleRepo.advancePrivateMediaClock(
+          attachment.messageId,
+          nowMs: currentNowMs(),
+        );
+        final requalified = await directPrivateLifecycleRepo
+            .loadPrivateMediaLifecycleMessage(attachment.messageId);
+        if (requalified == null ||
+            requalified.hiddenAt != null ||
+            requalified.deletedAt != null ||
+            requalified.privateMediaState !=
+                PrivateMediaLifecycleState.available) {
+          return null;
+        }
       }
       final durableLocal = await _durableLocalDirectAttachment(
         mediaAttachmentRepo: mediaAttachmentRepo,

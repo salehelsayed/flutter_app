@@ -29,6 +29,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -537,17 +538,30 @@ handleIncomingChatMessage({
       strictMediaProjection.selected &&
       strictMediaProjection.isPrivate &&
       _isDurableStrictPrivateTerminalParent(existingMessage);
+  // 358: an ACTIVE disappearing replay is owned by the same transactional
+  // private stage. The generic duplicate branch promotes display and returns
+  // `duplicate`; it can compare neither the durable receiver clock nor the
+  // hydrated key material this modality depends on, and a due replay must be
+  // able to expire instead of re-presenting the card.
+  final strictDisappearingReplay =
+      existingMessage != null &&
+      !payload.isEdit &&
+      strictMediaProjection.selected &&
+      strictMediaProjection.isPrivate &&
+      payload.privateMediaPolicy.mode == PrivateMediaMode.disappearing;
+  final strictPrivateOwnedReplay =
+      strictPrivateTerminalReplay || strictDisappearingReplay;
   final shouldPreserveDeletedPlaceholder =
       existingMessage != null &&
       !payload.isEdit &&
-      !strictPrivateTerminalReplay &&
+      !strictPrivateOwnedReplay &&
       _isIncomingDeletedPlaceholder(existingMessage);
   if (existingMessage != null &&
       !payload.isEdit &&
       !isOrdinaryDirectText &&
       !shouldMaterializeDeferredEdit &&
       !shouldPreserveDeletedPlaceholder &&
-      !strictPrivateTerminalReplay) {
+      !strictPrivateOwnedReplay) {
     if (payload.text != existingMessage.text) {
       final idPrefix = payload.id.length > 8
           ? payload.id.substring(0, 8)
@@ -805,14 +819,29 @@ handleIncomingChatMessage({
         mediaAttachmentRepo is IncomingDirectPrivateMediaBlobCustodyRepository
         ? mediaAttachmentRepo as IncomingDirectPrivateMediaBlobCustodyRepository
         : null;
+    // 358: a strict private initial additionally requires the incumbent
+    // message-lifecycle owner and the media cleanup runtime that carries the
+    // repository-wide exclusive lease. Without both, the receiver-local clock
+    // cannot be evaluated under the same authority that publishes it, so the
+    // attempt fails closed with zero secure-key, DB or display effects.
+    final privateLifecycleMessageRepo =
+        messageRepo is DirectPrivateMediaLifecycleRepository
+        ? messageRepo as DirectPrivateMediaLifecycleRepository
+        : null;
+    final privateCleanupRuntime =
+        mediaAttachmentRepo is DirectPrivateMediaCleanupRuntime
+        ? mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime
+        : null;
     if (resultAfterSave != HandleChatMessageResult.chatMessage ||
         incomingMessageRepo == null ||
         incomingMediaRepo == null ||
         !incomingMediaRepo.supportsIncomingDirectMediaBlobCustody ||
         (strictMediaProjection.isPrivate &&
-            incomingPrivateMediaRepo
-                    ?.supportsIncomingDirectPrivateMediaBlobCustody !=
-                true)) {
+            (incomingPrivateMediaRepo
+                        ?.supportsIncomingDirectPrivateMediaBlobCustody !=
+                    true ||
+                privateLifecycleMessageRepo == null ||
+                privateCleanupRuntime == null))) {
       // A selected strict private attempt fails closed when its capability is
       // absent; it must never fall back to the legacy split saves.
       return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
@@ -854,18 +883,225 @@ handleIncomingChatMessage({
           );
         })
         .toList(growable: false);
-    final staged = strictMediaProjection.isPrivate
-        ? await incomingPrivateMediaRepo!
-              .stageIncomingDirectPrivateMediaBlobCustody(
+    // 355/358: ONE repository-wide exclusive lease spans the hydrated replay
+    // barrier, the atomic stage, the durable re-read, the receiver-deadline
+    // decision, the guarded thumbnail, the display-marker stage, the
+    // repository publication and the ready promotion. Nested repository
+    // acquisitions inside it are reentrant. Network, contact metadata and
+    // receipt transport deliberately stay outside.
+    final IncomingDirectMediaBlobCustodyStageResult staged;
+    _StrictPrivateReceiveDecision? privateDecision;
+    if (strictMediaProjection.isPrivate) {
+      final strictRawMedia = payload.media;
+      final wireIdentity = candidateMessage;
+      final custodyReader =
+          mediaAttachmentRepo is DirectMediaBlobCustodyRepository
+          ? mediaAttachmentRepo as DirectMediaBlobCustodyRepository
+          : null;
+      final leased = await _underPrivateLifecycleAuthority(
+        mediaAttachmentRepo,
+        () async {
+          // The hydrated replay barrier. An ACTIVE durable parent must prove
+          // the same immutable wire identity AND the same hydrated raw key
+          // material before this attempt may write anything at all — a
+          // canonicalized candidate must never be able to hide that drift.
+          final durableBefore = await messageRepo.getMessage(strictMessageId);
+          var stageMessage = conversationMessage;
+          var stageCustody = custodyRows.single;
+          var stageAttachment = strictAttachments.single;
+          MediaAttachment? durableReplayAttachment;
+          if (durableBefore != null &&
+              !_isDurableStrictPrivateTerminalParent(durableBefore)) {
+            if (!_matchesActiveStrictPrivateReplayIdentity(
+              durable: durableBefore,
+              wire: wireIdentity,
+            )) {
+              return (
+                staged:
+                    const IncomingDirectMediaBlobCustodyStageResult.refused(),
+                decision: null,
+              );
+            }
+            final durableAttachments = await mediaAttachmentRepo!
+                .getAttachmentsForMessage(
+                  strictMessageId,
+                  owner: MediaOwnerLane.direct,
+                );
+            if (durableAttachments.length != 1 ||
+                !_sameHydratedStrictPrivateAttachment(
+                  durableAttachments.single,
+                  strictAttachments.single,
+                )) {
+              return (
+                staged:
+                    const IncomingDirectMediaBlobCustodyStageResult.refused(),
+                decision: null,
+              );
+            }
+            durableReplayAttachment = durableAttachments.single;
+            // The attachment's local creation stamp is the FIRST delivery's,
+            // exactly like the parent's.
+            stageAttachment = strictAttachments.single.copyWith(
+              createdAt: durableReplayAttachment.createdAt,
+            );
+            // The local arrival stamp and the local read stamp belong to the
+            // FIRST durable delivery. A replay re-mints neither, so the exact
+            // idempotent comparison inside the stage is against the row this
+            // receiver actually committed.
+            stageMessage = conversationMessage.copyWith(
+              createdAt: durableBefore.createdAt,
+              readAt: durableBefore.readAt,
+            );
+            // Same reasoning for the v111 obligation: an exact replay adopts
+            // the durable row's own audit stamps instead of minting new ones,
+            // and a survivor whose public commitment or state disagrees is
+            // crossed authority that fails closed with no receipt.
+            final durableCustody = await custodyReader
+                ?.loadDirectMediaBlobCustodyForAttachment(
+                  strictAttachments.single.id,
+                );
+            if (durableCustody == null ||
+                durableCustody.state !=
+                    DirectMediaBlobCustodyState.incomingCommitted ||
+                !_sameStrictPrivateCustodyCommitment(
+                  durableCustody,
+                  custodyRows.single,
+                )) {
+              return (
+                staged:
+                    const IncomingDirectMediaBlobCustodyStageResult.refused(),
+                decision: null,
+              );
+            }
+            stageCustody = durableCustody;
+          }
+          // An exact ACTIVE replay whose durable attachment has already left
+          // the fresh `pending` projection (the user downloaded it) has
+          // nothing left to stage: its parent identity, hydrated attachment
+          // identity and v111 commitment were all just proved under this same
+          // lease. Re-running the insert-shaped stage would refuse the very
+          // row it already owns, so adopt the durable projection instead.
+          final adoptsDurableReplay =
+              durableReplayAttachment != null &&
+              (durableReplayAttachment.downloadStatus != 'pending' ||
+                  durableReplayAttachment.localPath != null);
+          final result = adoptsDurableReplay
+              ? IncomingDirectMediaBlobCustodyStageResult(
+                  outcome:
+                      IncomingDirectMediaBlobCustodyStageOutcome.idempotent,
+                  attachments: <MediaAttachment>[durableReplayAttachment],
+                )
+              : await incomingPrivateMediaRepo!
+                    .stageIncomingDirectPrivateMediaBlobCustody(
+                      message: stageMessage,
+                      attachment: stageAttachment,
+                      custodyRow: stageCustody,
+                    );
+          if (!result.outcome.isDurable) {
+            return (staged: result, decision: null);
+          }
+          final durableParent = await messageRepo.getMessage(strictMessageId);
+          if (durableParent == null) {
+            // Without a durable parent there is no author or policy authority
+            // for this event, so nothing is published AND no receipt is owed.
+            return (
+              staged: result,
+              decision: _StrictPrivateReceiveDecision.parentRemoved,
+            );
+          }
+          if (durableParent.hiddenAt != null ||
+              durableParent.deletedAt != null ||
+              durableParent.privateMediaState.isTerminal) {
+            // No display marker was staged yet on this path, so suppression is
+            // simply never staging one; the exact terminal owner retires any
+            // marker an earlier receive left behind.
+            return (
+              staged: result,
+              decision: _StrictPrivateReceiveDecision.terminal,
+            );
+          }
+          // 358: the due-ONLY receiver-deadline decision. Before the deadline
+          // the general stream-emitting clock advance is deliberately NOT
+          // called, so the first `available` event a listener can observe is
+          // post-marker. At or after it, the existing lifecycle advance runs
+          // exactly once, its transaction retires the exact display marker,
+          // and every presentation effect is suppressed.
+          final deadlineMs = durableParent.privateMediaExpiresAtMs;
+          if (durableParent.privateMediaMode == PrivateMediaMode.disappearing &&
+              deadlineMs != null) {
+            final sampledNowMs = DateTime.now().millisecondsSinceEpoch;
+            final highWaterMs = durableParent.privateMediaClockHighWaterMs ?? 0;
+            final effectiveNowMs = sampledNowMs > highWaterMs
+                ? sampledNowMs
+                : highWaterMs;
+            if (effectiveNowMs >= deadlineMs) {
+              await privateLifecycleMessageRepo!.advancePrivateMediaClock(
+                strictMessageId,
+                nowMs: effectiveNowMs,
+              );
+              final reloaded = await messageRepo.getMessage(strictMessageId);
+              if (reloaded != null && reloaded.privateMediaState.isTerminal) {
+                return (
+                  staged: result,
+                  decision: _StrictPrivateReceiveDecision.terminal,
+                );
+              }
+              // The durable state contradicts the decision this lease just
+              // made. Fail closed and retryable rather than presenting media
+              // behind an unevaluated deadline.
+              return (
+                staged: result,
+                decision: _StrictPrivateReceiveDecision.parentRemoved,
+              );
+            }
+          }
+          // The Protected inline thumbnail is a best-effort guarded sibling.
+          // It never becomes authority, never blocks the receipt, and existing
+          // private cleanup still owns its removal.
+          if (mediaFileManager != null && (strictRawMedia?.length ?? 0) == 1) {
+            await _persistIncomingProtectedPhotoThumbnail(
+              rawMediaJson: strictRawMedia!.single,
+              attachment: strictAttachments.single,
+              parent: conversationMessage,
+              mediaFileManager: mediaFileManager,
+            );
+          }
+          await stageNotificationDisplayCustody?.call(conversationMessage);
+          // Publish only the stage result's hydrated durable attachment; the
+          // caller/wire snapshot is never republished behind it.
+          final publication = await incomingMessageRepo
+              .publishIncomingDirectMediaMessage(
                 message: conversationMessage,
-                attachment: strictAttachments.single,
-                custodyRow: custodyRows.single,
-              )
-        : await incomingMediaRepo.stageIncomingDirectMediaBlobCustody(
-            message: conversationMessage,
-            attachments: strictAttachments,
-            custodyRows: custodyRows,
+                attachments: result.attachments.isEmpty
+                    ? strictAttachments
+                    : result.attachments,
+              );
+          if (publication ==
+              StrictIncomingMediaPublicationDisposition.durablySuperseded) {
+            return (
+              staged: result,
+              decision: _StrictPrivateReceiveDecision.terminal,
+            );
+          }
+          // Ready promotion belongs to the same decision: every attachment
+          // effect for this lane is already durable, and leaving it to the
+          // later generic site would let a terminal owner win in between.
+          await promoteNotificationDisplayCustody?.call(conversationMessage);
+          return (
+            staged: result,
+            decision: _StrictPrivateReceiveDecision.published,
           );
+        },
+      );
+      staged = leased.staged;
+      privateDecision = leased.decision;
+    } else {
+      staged = await incomingMediaRepo.stageIncomingDirectMediaBlobCustody(
+        message: conversationMessage,
+        attachments: strictAttachments,
+        custodyRows: custodyRows,
+      );
+    }
     if (staged.outcome ==
         IncomingDirectMediaBlobCustodyStageOutcome.durablySuperseded) {
       // 354: a durable same-author private terminal parent already won. This
@@ -913,60 +1149,8 @@ handleIncomingChatMessage({
     }
     parsedAttachments.addAll(strictAttachments);
     if (strictMediaProjection.isPrivate) {
-      // 355: ONE exclusive private-lifecycle decision covers the post-stage
-      // terminal re-read, the guarded thumbnail, the display-marker stage, the
-      // repository publication and the ready promotion. Hide, consume, expiry
-      // or contact deletion can no longer win between two of those effects.
-      // Network, contact metadata and receipt transport stay outside it.
-      // Dart cannot retain the nullable payload's promotion across a callback,
-      // so capture the exact identity this decision needs up front.
-      final strictRawMedia = payload.media;
-      final decision = await _underPrivateLifecycleAuthority(
-        mediaAttachmentRepo,
-        () async {
-          final durableParent = await messageRepo.getMessage(strictMessageId);
-          if (durableParent == null) {
-            // Without a durable parent there is no author or policy authority
-            // for this event, so nothing is published AND no receipt is owed.
-            return _StrictPrivateReceiveDecision.parentRemoved;
-          }
-          if (durableParent.hiddenAt != null ||
-              durableParent.deletedAt != null ||
-              durableParent.privateMediaState.isTerminal) {
-            // No display marker was staged yet on this path, so suppression is
-            // simply never staging one; the exact terminal owner retires any
-            // marker an earlier receive left behind.
-            return _StrictPrivateReceiveDecision.terminal;
-          }
-          // The Protected inline thumbnail is a best-effort guarded sibling.
-          // It never becomes authority, never blocks the receipt, and existing
-          // private cleanup still owns its removal.
-          if (mediaFileManager != null && (strictRawMedia?.length ?? 0) == 1) {
-            await _persistIncomingProtectedPhotoThumbnail(
-              rawMediaJson: strictRawMedia!.single,
-              attachment: strictAttachments.single,
-              parent: conversationMessage,
-              mediaFileManager: mediaFileManager,
-            );
-          }
-          await stageNotificationDisplayCustody?.call(conversationMessage);
-          final publication = await incomingMessageRepo
-              .publishIncomingDirectMediaMessage(
-                message: conversationMessage,
-                attachments: strictAttachments,
-              );
-          if (publication ==
-              StrictIncomingMediaPublicationDisposition.durablySuperseded) {
-            return _StrictPrivateReceiveDecision.terminal;
-          }
-          // Ready promotion belongs to the same decision: every attachment
-          // effect for this lane is already durable, and leaving it to the
-          // later generic site would let a terminal owner win in between.
-          await promoteNotificationDisplayCustody?.call(conversationMessage);
-          return _StrictPrivateReceiveDecision.published;
-        },
-      );
-      switch (decision) {
+      // The one exclusive decision above already ran under the lease.
+      switch (privateDecision!) {
         case _StrictPrivateReceiveDecision.parentRemoved:
           emitFlowEvent(
             layer: 'FL',
@@ -1434,10 +1618,16 @@ _StrictIncomingMediaProjection _parseStrictIncomingMediaProjection(
       .length;
   if (strictCount == 0) return const _StrictIncomingMediaProjection.none();
   final policy = payload.privateMediaPolicy;
+  // 358: a v1 disappearing initial is a strict private initial too. It reuses
+  // the same atomic private stage and the same exclusive lifecycle decision;
+  // only its producer matrix and its receiver-local clock differ.
+  final isDisappearingInitial =
+      policy.version == 1 && policy.mode == PrivateMediaMode.disappearing;
   final isPrivateInitial =
-      policy.version == 1 &&
-      (policy.mode == PrivateMediaMode.protected ||
-          policy.mode == PrivateMediaMode.viewOnce);
+      isDisappearingInitial ||
+      (policy.version == 1 &&
+          (policy.mode == PrivateMediaMode.protected ||
+              policy.mode == PrivateMediaMode.viewOnce));
   if (strictCount != media.length ||
       payload.isEdit ||
       (policy.requiresRedaction && !isPrivateInitial)) {
@@ -1471,12 +1661,20 @@ _StrictIncomingMediaProjection _parseStrictIncomingMediaProjection(
         payload.text.trim().isEmpty &&
         !payload.isForwarded &&
         payload.quotedMessageId == null &&
-        privateMediaInitialProducerMatrixAllows(
-          policyVersion: policy.version,
-          mode: policy.mode,
-          mime: attachments.single.mime,
-          mediaType: attachments.single.mediaType,
-        );
+        (isDisappearingInitial
+            ? disappearingMediaInitialProducerMatrixAllows(
+                policyVersion: policy.version,
+                mode: policy.mode,
+                durationSeconds: policy.durationSeconds,
+                mime: attachments.single.mime,
+                mediaType: attachments.single.mediaType,
+              )
+            : privateMediaInitialProducerMatrixAllows(
+                policyVersion: policy.version,
+                mode: policy.mode,
+                mime: attachments.single.mime,
+                mediaType: attachments.single.mediaType,
+              ));
     return privateEligible
         ? _StrictIncomingMediaProjection.validPrivate(attachments)
         : const _StrictIncomingMediaProjection.invalid();
@@ -1890,6 +2088,73 @@ bool _isDurableStrictPrivateTerminalParent(ConversationMessage message) =>
         message.hiddenAt != null ||
         message.privateMediaState == PrivateMediaLifecycleState.consumed ||
         message.privateMediaState == PrivateMediaLifecycleState.expired);
+
+/// Immutable wire identity one ACTIVE strict-private replay must still prove
+/// against its durable parent, BEFORE any canonicalization may reuse that
+/// parent's durable lifecycle columns.
+///
+/// The mutable receiver-local clock is deliberately absent: preserving it is
+/// exactly what this barrier protects. What must agree is the authored
+/// identity — including the private mode and its duration, which decide which
+/// modality (and therefore which custody owner) this message belongs to.
+bool _matchesActiveStrictPrivateReplayIdentity({
+  required ConversationMessage durable,
+  required ConversationMessage wire,
+}) =>
+    durable.isIncoming &&
+    durable.id == wire.id &&
+    durable.contactPeerId == wire.contactPeerId &&
+    durable.senderPeerId == wire.senderPeerId &&
+    durable.timestamp == wire.timestamp &&
+    durable.dedupKey == wire.dedupKey &&
+    durable.quotedMessageId == wire.quotedMessageId &&
+    durable.isForwarded == wire.isForwarded &&
+    durable.editedAt == null &&
+    durable.text.isEmpty &&
+    durable.privateMediaPolicy == wire.privateMediaPolicy &&
+    durable.privateMediaMode == wire.privateMediaMode &&
+    durable.privateMediaDurationSeconds == wire.privateMediaDurationSeconds;
+
+/// The complete immutable public commitment one ACTIVE strict-private replay
+/// must still prove against its durable v111 obligation.
+///
+/// Source/relay and retry metadata are deliberately excluded: they belong to
+/// the receiver's own download attempts, not to the replayed wire event.
+bool _sameStrictPrivateCustodyCommitment(
+  DirectMediaBlobCustodyRow durable,
+  DirectMediaBlobCustodyRow wire,
+) =>
+    durable.attachmentId == wire.attachmentId &&
+    durable.messageId == wire.messageId &&
+    durable.direction == wire.direction &&
+    durable.custodyKind == wire.custodyKind &&
+    durable.custodyContract == wire.custodyContract &&
+    durable.contentHash == wire.contentHash &&
+    durable.ciphertextSize == wire.ciphertextSize &&
+    durable.transportMime == wire.transportMime &&
+    durable.expiresAtMs == wire.expiresAtMs;
+
+/// The hydrated durable attachment identity an ACTIVE replay must match.
+///
+/// The repository hydrates the RAW key from secure storage, so this compares
+/// the actual key material rather than a storage reference. Any drift refuses
+/// before the nested stage can overwrite the secure slot.
+bool _sameHydratedStrictPrivateAttachment(
+  MediaAttachment durable,
+  MediaAttachment wire,
+) =>
+    durable.id == wire.id &&
+    durable.messageId == wire.messageId &&
+    durable.mime == wire.mime &&
+    durable.size == wire.size &&
+    durable.mediaType == wire.mediaType &&
+    durable.width == wire.width &&
+    durable.height == wire.height &&
+    durable.durationMs == wire.durationMs &&
+    durable.contentHash == wire.contentHash &&
+    durable.encryptionKeyBase64 == wire.encryptionKeyBase64 &&
+    durable.encryptionNonce == wire.encryptionNonce &&
+    durable.encryptionScheme == wire.encryptionScheme;
 
 ConversationMessage _buildHiddenIncomingEditPlaceholder({
   required MessagePayload payload,

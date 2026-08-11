@@ -4033,6 +4033,7 @@ void main() {
           localPath: 'media/${parent!.contactPeerId}/$attachmentId.jpg',
           sourceRelayPeerId: 'relay-post-ack-exact',
           updatedAt: '2026-08-08T12:30:01.000Z',
+          nowMs: 1_800_000_000_000,
         ),
         isTrue,
       );
@@ -5129,334 +5130,322 @@ void main() {
       whereArgs: <Object?>[messageId],
     )).single;
 
-    test(
-      'TC-358-03a disappearing strict receive commits one clock and '
-      'serializes expiry presentation',
-      () async {
-        // 1. Every allowed duration commits the exact receiver-local clock,
-        //    one secure-key-backed pending attachment and one v111 row before
-        //    any marker, publication or receipt.
-        for (final durationSeconds in <int>[3600, 86400, 604800]) {
-          final fixture = await MediaRepositoryRealDbFixture.create();
-          addTearDown(fixture.dispose);
-          final messageId = 'tc358-03a-$durationSeconds';
-          final first = await receive(
+    test('TC-358-03a disappearing strict receive commits one clock and '
+        'serializes expiry presentation', () async {
+      // 1. Every allowed duration commits the exact receiver-local clock,
+      //    one secure-key-backed pending attachment and one v111 row before
+      //    any marker, publication or receipt.
+      for (final durationSeconds in <int>[3600, 86400, 604800]) {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final messageId = 'tc358-03a-$durationSeconds';
+        final first = await receive(
+          fixture,
+          messageId: messageId,
+          payload: disappearingInnerPayload(
+            messageId: messageId,
+            durationSeconds: durationSeconds,
+          ),
+        );
+        expect(
+          first.result,
+          HandleChatMessageResult.chatMessage,
+          reason: '$durationSeconds',
+        );
+        expect(first.effects, <String>[
+          'marker-stage',
+          'marker-promote',
+          'receipt',
+        ], reason: '$durationSeconds');
+
+        final parent = await parentRow(fixture, messageId);
+        expect(parent['private_media_policy_version'], 1);
+        expect(parent['private_media_mode'], 'disappearing');
+        expect(parent['private_media_duration_seconds'], durationSeconds);
+        expect(parent['private_media_state'], 'available');
+        expect(parent['text'], '');
+        final receivedAtMs = parent['private_media_received_at_ms']! as int;
+        expect(receivedAtMs, greaterThan(0));
+        expect(parent['private_media_clock_high_water_ms'], receivedAtMs);
+        expect(
+          parent['private_media_expires_at_ms'],
+          receivedAtMs + durationSeconds * 1000,
+          reason:
+              'the receiver deadline is receivedAt + duration, independent '
+              'of the v111 transport lease',
+        );
+        expect(parent['private_media_revealed_at_ms'], isNull);
+        expect(parent['private_media_terminal_at_ms'], isNull);
+
+        final attachments = await fixture.db.query(
+          'media_attachments',
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        expect(attachments, hasLength(1));
+        expect(attachments.single['download_status'], 'pending');
+        expect(attachments.single['local_path'], isNull);
+        expect(
+          attachments.single['encryption_key_base64'],
+          secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
+          ),
+          reason: 'the raw key never lands in SQLite',
+        );
+        final custody = await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        expect(custody, hasLength(1));
+        expect(custody.single['state'], 'incoming_committed');
+        expect(custody.single['expires_at_ms'], blobExpiresAtMs);
+      }
+
+      // 2. An exact pre-deadline replay preserves all three receiver clock
+      //    columns byte-for-byte and never resets the lifetime.
+      {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'tc358-03a-replay';
+        final payload = disappearingInnerPayload(messageId: messageId);
+        expect(
+          (await receive(
             fixture,
             messageId: messageId,
-            payload: disappearingInnerPayload(
-              messageId: messageId,
-              durationSeconds: durationSeconds,
-            ),
-          );
-          expect(
-            first.result,
-            HandleChatMessageResult.chatMessage,
-            reason: '$durationSeconds',
-          );
-          expect(first.effects, <String>[
-            'marker-stage',
-            'marker-promote',
-            'receipt',
-          ], reason: '$durationSeconds');
-
-          final parent = await parentRow(fixture, messageId);
-          expect(parent['private_media_policy_version'], 1);
-          expect(parent['private_media_mode'], 'disappearing');
-          expect(parent['private_media_duration_seconds'], durationSeconds);
-          expect(parent['private_media_state'], 'available');
-          expect(parent['text'], '');
-          final receivedAtMs = parent['private_media_received_at_ms']! as int;
-          expect(receivedAtMs, greaterThan(0));
-          expect(parent['private_media_clock_high_water_ms'], receivedAtMs);
-          expect(
-            parent['private_media_expires_at_ms'],
-            receivedAtMs + durationSeconds * 1000,
-            reason:
-                'the receiver deadline is receivedAt + duration, independent '
-                'of the v111 transport lease',
-          );
-          expect(parent['private_media_revealed_at_ms'], isNull);
-          expect(parent['private_media_terminal_at_ms'], isNull);
-
-          final attachments = await fixture.db.query(
+            payload: payload,
+          )).result,
+          HandleChatMessageResult.chatMessage,
+        );
+        final before = await parentRow(fixture, messageId);
+        final replay = await receive(
+          fixture,
+          messageId: messageId,
+          payload: payload,
+        );
+        expect(
+          replay.result,
+          isNot(HandleChatMessageResult.strictMediaCustodyRefused),
+        );
+        final after = await parentRow(fixture, messageId);
+        expect(
+          after['private_media_received_at_ms'],
+          before['private_media_received_at_ms'],
+        );
+        expect(
+          after['private_media_expires_at_ms'],
+          before['private_media_expires_at_ms'],
+        );
+        expect(
+          after['private_media_clock_high_water_ms'],
+          before['private_media_clock_high_water_ms'],
+        );
+        expect(after['private_media_state'], 'available');
+        expect(
+          (await fixture.db.query(
             'media_attachments',
             where: 'message_id = ?',
             whereArgs: <Object?>[messageId],
-          );
-          expect(attachments, hasLength(1));
-          expect(attachments.single['download_status'], 'pending');
-          expect(attachments.single['local_path'], isNull);
-          expect(
-            attachments.single['encryption_key_base64'],
-            secureStoreReferenceForKey(
-              mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
-            ),
-            reason: 'the raw key never lands in SQLite',
-          );
-          final custody = await fixture.db.query(
+          )),
+          hasLength(1),
+        );
+      }
+
+      // 3. Hydrated raw-key drift on an ACTIVE replay refuses before any
+      //    secure-key or DB effect.
+      {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'tc358-03a-key-drift';
+        final payload = disappearingInnerPayload(messageId: messageId);
+        expect(
+          (await receive(
+            fixture,
+            messageId: messageId,
+            payload: payload,
+          )).result,
+          HandleChatMessageResult.chatMessage,
+        );
+        await fixture.secureKeyStore.write(
+          mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
+          'rotated-raw-key',
+        );
+        final before = await parentRow(fixture, messageId);
+        final drifted = await receive(
+          fixture,
+          messageId: messageId,
+          payload: payload,
+        );
+        expect(
+          drifted.result,
+          HandleChatMessageResult.strictMediaCustodyRefused,
+          reason: 'the hydrated key is compared before any stage effect',
+        );
+        expect(drifted.effects, isEmpty);
+        expect(await parentRow(fixture, messageId), before);
+        expect(
+          await fixture.secureKeyStore.read(
+            mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
+          ),
+          'rotated-raw-key',
+          reason: 'a refused replay never overwrites the secure slot',
+        );
+      }
+
+      // 4. A DUE replay expires atomically, presents nothing, and owes
+      //    exactly one receipt.
+      {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'tc358-03a-due';
+        final payload = disappearingInnerPayload(messageId: messageId);
+        expect(
+          (await receive(
+            fixture,
+            messageId: messageId,
+            payload: payload,
+          )).result,
+          HandleChatMessageResult.chatMessage,
+        );
+        // Move the whole receiver clock into the past, preserving the
+        // durable invariant expiresAt == receivedAt + duration * 1000.
+        const pastReceivedAtMs = 1_700_000_000_000;
+        await fixture.db.update(
+          'messages',
+          <String, Object?>{
+            'private_media_received_at_ms': pastReceivedAtMs,
+            'private_media_expires_at_ms': pastReceivedAtMs + 3600 * 1000,
+            'private_media_clock_high_water_ms': pastReceivedAtMs,
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        );
+        final due = await receive(
+          fixture,
+          messageId: messageId,
+          payload: payload,
+        );
+        expect(
+          due.result,
+          HandleChatMessageResult.durablySuperseded,
+          reason: 'a passed deadline is a durable terminal winner',
+        );
+        expect(due.effects, <String>[
+          'receipt',
+        ], reason: 'zero presentation, exactly one initial receipt');
+        final expired = await parentRow(fixture, messageId);
+        expect(expired['private_media_state'], 'expired');
+        expect(expired['private_media_terminal_at_ms'], isNotNull);
+        expect(
+          expired['private_media_expires_at_ms'],
+          pastReceivedAtMs + 3600 * 1000,
+          reason: 'expiry never rewrites the deadline it enforced',
+        );
+      }
+
+      // 5. Missing lifecycle capability fails closed with zero effects.
+      {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'tc358-03a-no-lifecycle';
+        final result = await receive(
+          fixture,
+          messageId: messageId,
+          payload: disappearingInnerPayload(messageId: messageId),
+          messageRepoOverride: _ParentRemovingMessageRepository(
+            delegate: fixture.messageRepo,
+            db: fixture.db,
+            messageId: messageId,
+            // Never removes: this delegate exists only to withhold the
+            // DirectPrivateMediaLifecycleRepository capability.
+            removeOnCall: -1,
+          ),
+        );
+        expect(
+          result.result,
+          HandleChatMessageResult.strictMediaCustodyRefused,
+        );
+        expect(result.effects, isEmpty);
+        expect(
+          await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+        expect(
+          await fixture.db.query(
             kDirectMediaBlobCustodyTable,
             where: 'message_id = ?',
             whereArgs: <Object?>[messageId],
-          );
-          expect(custody, hasLength(1));
-          expect(custody.single['state'], 'incoming_committed');
-          expect(custody.single['expires_at_ms'], blobExpiresAtMs);
-        }
+          ),
+          isEmpty,
+        );
+      }
 
-        // 2. An exact pre-deadline replay preserves all three receiver clock
-        //    columns byte-for-byte and never resets the lifetime.
-        {
-          final fixture = await MediaRepositoryRealDbFixture.create();
-          addTearDown(fixture.dispose);
-          const messageId = 'tc358-03a-replay';
-          final payload = disappearingInnerPayload(messageId: messageId);
-          expect(
-            (await receive(
-              fixture,
-              messageId: messageId,
-              payload: payload,
-            )).result,
-            HandleChatMessageResult.chatMessage,
-          );
-          final before = await parentRow(fixture, messageId);
-          final replay = await receive(
-            fixture,
-            messageId: messageId,
-            payload: payload,
-          );
-          expect(
-            replay.result,
-            isNot(HandleChatMessageResult.strictMediaCustodyRefused),
-          );
-          final after = await parentRow(fixture, messageId);
-          expect(
-            after['private_media_received_at_ms'],
-            before['private_media_received_at_ms'],
-          );
-          expect(
-            after['private_media_expires_at_ms'],
-            before['private_media_expires_at_ms'],
-          );
-          expect(
-            after['private_media_clock_high_water_ms'],
-            before['private_media_clock_high_water_ms'],
-          );
-          expect(after['private_media_state'], 'available');
-          expect(
-            (await fixture.db.query(
-              'media_attachments',
-              where: 'message_id = ?',
-              whereArgs: <Object?>[messageId],
-            )),
-            hasLength(1),
-          );
-        }
-
-        // 3. Hydrated raw-key drift on an ACTIVE replay refuses before any
-        //    secure-key or DB effect.
-        {
-          final fixture = await MediaRepositoryRealDbFixture.create();
-          addTearDown(fixture.dispose);
-          const messageId = 'tc358-03a-key-drift';
-          final payload = disappearingInnerPayload(messageId: messageId);
-          expect(
-            (await receive(
-              fixture,
-              messageId: messageId,
-              payload: payload,
-            )).result,
-            HandleChatMessageResult.chatMessage,
-          );
-          await fixture.secureKeyStore.write(
-            mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
-            'rotated-raw-key',
-          );
-          final before = await parentRow(fixture, messageId);
-          final drifted = await receive(
-            fixture,
-            messageId: messageId,
-            payload: payload,
-          );
-          expect(
-            drifted.result,
-            HandleChatMessageResult.strictMediaCustodyRefused,
-            reason: 'the hydrated key is compared before any stage effect',
-          );
-          expect(drifted.effects, isEmpty);
-          expect(await parentRow(fixture, messageId), before);
-          expect(
-            await fixture.secureKeyStore.read(
-              mediaAttachmentEncryptionKeyStoreName('$messageId-a'),
-            ),
-            'rotated-raw-key',
-            reason: 'a refused replay never overwrites the secure slot',
-          );
-        }
-
-        // 4. A DUE replay expires atomically, presents nothing, and owes
-        //    exactly one receipt.
-        {
-          final fixture = await MediaRepositoryRealDbFixture.create();
-          addTearDown(fixture.dispose);
-          const messageId = 'tc358-03a-due';
-          final payload = disappearingInnerPayload(messageId: messageId);
-          expect(
-            (await receive(
-              fixture,
-              messageId: messageId,
-              payload: payload,
-            )).result,
-            HandleChatMessageResult.chatMessage,
-          );
-          // Move the whole receiver clock into the past, preserving the
-          // durable invariant expiresAt == receivedAt + duration * 1000.
-          const pastReceivedAtMs = 1_700_000_000_000;
-          await fixture.db.update(
+      // 6. Every producer-matrix drift refuses before key/DB/display work.
+      final drifts = <String, String Function(String)>{
+        'gif': (messageId) =>
+            disappearingInnerPayload(messageId: messageId, mime: 'image/gif'),
+        'audio': (messageId) => disappearingInnerPayload(
+          messageId: messageId,
+          mime: 'audio/mp4',
+          mediaType: 'audio',
+        ),
+        'crossed mime and media type': (messageId) => disappearingInnerPayload(
+          messageId: messageId,
+          mime: 'video/mp4',
+          mediaType: 'image',
+        ),
+        'caption': (messageId) =>
+            disappearingInnerPayload(messageId: messageId, text: 'caption'),
+        'two attachments': (messageId) =>
+            disappearingInnerPayload(messageId: messageId, attachmentCount: 2),
+        'invalid duration': (messageId) => disappearingInnerPayload(
+          messageId: messageId,
+          durationOverride: 7200,
+        ),
+        'missing duration': (messageId) => disappearingInnerPayload(
+          messageId: messageId,
+          durationOverride: null,
+        ),
+      };
+      for (final entry in drifts.entries) {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        final messageId = 'tc358-03a-${entry.key.replaceAll(' ', '-')}';
+        final result = await receive(
+          fixture,
+          messageId: messageId,
+          payload: entry.value(messageId),
+        );
+        expect(
+          result.result,
+          HandleChatMessageResult.strictMediaCustodyRefused,
+          reason: entry.key,
+        );
+        expect(result.effects, isEmpty, reason: entry.key);
+        expect(
+          await fixture.db.query(
             'messages',
-            <String, Object?>{
-              'private_media_received_at_ms': pastReceivedAtMs,
-              'private_media_expires_at_ms': pastReceivedAtMs + 3600 * 1000,
-              'private_media_clock_high_water_ms': pastReceivedAtMs,
-            },
             where: 'id = ?',
             whereArgs: <Object?>[messageId],
-          );
-          final due = await receive(
-            fixture,
-            messageId: messageId,
-            payload: payload,
-          );
-          expect(
-            due.result,
-            HandleChatMessageResult.durablySuperseded,
-            reason: 'a passed deadline is a durable terminal winner',
-          );
-          expect(
-            due.effects,
-            <String>['receipt'],
-            reason: 'zero presentation, exactly one initial receipt',
-          );
-          final expired = await parentRow(fixture, messageId);
-          expect(expired['private_media_state'], 'expired');
-          expect(expired['private_media_terminal_at_ms'], isNotNull);
-          expect(
-            expired['private_media_expires_at_ms'],
-            pastReceivedAtMs + 3600 * 1000,
-            reason: 'expiry never rewrites the deadline it enforced',
-          );
-        }
-
-        // 5. Missing lifecycle capability fails closed with zero effects.
-        {
-          final fixture = await MediaRepositoryRealDbFixture.create();
-          addTearDown(fixture.dispose);
-          const messageId = 'tc358-03a-no-lifecycle';
-          final result = await receive(
-            fixture,
-            messageId: messageId,
-            payload: disappearingInnerPayload(messageId: messageId),
-            messageRepoOverride: _ParentRemovingMessageRepository(
-              delegate: fixture.messageRepo,
-              db: fixture.db,
-              messageId: messageId,
-              // Never removes: this delegate exists only to withhold the
-              // DirectPrivateMediaLifecycleRepository capability.
-              removeOnCall: -1,
-            ),
-          );
-          expect(
-            result.result,
-            HandleChatMessageResult.strictMediaCustodyRefused,
-          );
-          expect(result.effects, isEmpty);
-          expect(
-            await fixture.db.query(
-              'messages',
-              where: 'id = ?',
-              whereArgs: <Object?>[messageId],
-            ),
-            isEmpty,
-          );
-          expect(
-            await fixture.db.query(
-              kDirectMediaBlobCustodyTable,
-              where: 'message_id = ?',
-              whereArgs: <Object?>[messageId],
-            ),
-            isEmpty,
-          );
-        }
-
-        // 6. Every producer-matrix drift refuses before key/DB/display work.
-        final drifts = <String, String Function(String)>{
-          'gif': (messageId) => disappearingInnerPayload(
-            messageId: messageId,
-            mime: 'image/gif',
           ),
-          'audio': (messageId) => disappearingInnerPayload(
-            messageId: messageId,
-            mime: 'audio/mp4',
-            mediaType: 'audio',
+          isEmpty,
+          reason: entry.key,
+        );
+        expect(
+          await fixture.db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[messageId],
           ),
-          'crossed mime and media type': (messageId) =>
-              disappearingInnerPayload(
-                messageId: messageId,
-                mime: 'video/mp4',
-                mediaType: 'image',
-              ),
-          'caption': (messageId) => disappearingInnerPayload(
-            messageId: messageId,
-            text: 'caption',
-          ),
-          'two attachments': (messageId) => disappearingInnerPayload(
-            messageId: messageId,
-            attachmentCount: 2,
-          ),
-          'invalid duration': (messageId) => disappearingInnerPayload(
-            messageId: messageId,
-            durationOverride: 7200,
-          ),
-          'missing duration': (messageId) => disappearingInnerPayload(
-            messageId: messageId,
-            durationOverride: null,
-          ),
-        };
-        for (final entry in drifts.entries) {
-          final fixture = await MediaRepositoryRealDbFixture.create();
-          addTearDown(fixture.dispose);
-          final messageId = 'tc358-03a-${entry.key.replaceAll(' ', '-')}';
-          final result = await receive(
-            fixture,
-            messageId: messageId,
-            payload: entry.value(messageId),
-          );
-          expect(
-            result.result,
-            HandleChatMessageResult.strictMediaCustodyRefused,
-            reason: entry.key,
-          );
-          expect(result.effects, isEmpty, reason: entry.key);
-          expect(
-            await fixture.db.query(
-              'messages',
-              where: 'id = ?',
-              whereArgs: <Object?>[messageId],
-            ),
-            isEmpty,
-            reason: entry.key,
-          );
-          expect(
-            await fixture.db.query(
-              'media_attachments',
-              where: 'message_id = ?',
-              whereArgs: <Object?>[messageId],
-            ),
-            isEmpty,
-            reason: entry.key,
-          );
-        }
-      },
-    );
+          isEmpty,
+          reason: entry.key,
+        );
+      }
+    });
   });
 }
 

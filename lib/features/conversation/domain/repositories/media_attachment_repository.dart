@@ -412,12 +412,18 @@ abstract interface class IncomingDirectMediaBlobCustodyRepository {
   /// Commits an already-durable plaintext file and the exact ACK obligation in
   /// one SQL transaction. A null [sourceRelayPeerId] is verified LAN adoption:
   /// the row remains source-less `incoming_committed` until exact expiry.
+  ///
+  /// 358: [nowMs] is the strict owner's own injected clock sample. A
+  /// disappearing parent is advanced and requalified against its receiver-local
+  /// deadline inside the same transaction, so lifecycle authority never comes
+  /// from the caller-formatted [updatedAt] audit string.
   Future<bool> commitIncomingDirectMediaBlobLocalPath({
     required MediaAttachment expectedAttachment,
     required DirectMediaBlobCustodyRow expectedCustody,
     required String localPath,
     required String? sourceRelayPeerId,
     required String updatedAt,
+    required int nowMs,
   });
 
   Future<bool> deleteIncomingDirectMediaBlobAckIfExact(

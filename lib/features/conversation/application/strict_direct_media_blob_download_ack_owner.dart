@@ -353,13 +353,18 @@ final class StrictDirectMediaBlobDownloadAckOwner {
               await decrypted.rename(canonical.path);
             }
             await _flushFile(canonical);
+            // 358: one sample serves both the audit timestamp and the
+            // disappearing deadline recheck, so the transaction can never
+            // qualify against a different instant than it records.
+            final commitAt = now().toUtc();
             final didCommit = await incomingRepository
                 .commitIncomingDirectMediaBlobLocalPath(
                   expectedAttachment: attachment,
                   expectedCustody: custody,
                   localPath: relativePath,
                   sourceRelayPeerId: sourceRelayPeerId,
-                  updatedAt: now().toUtc().toIso8601String(),
+                  updatedAt: commitAt.toIso8601String(),
+                  nowMs: commitAt.millisecondsSinceEpoch,
                 );
             if (!didCommit) {
               // The DB refused this promotion — a deletion, hide, or crossed

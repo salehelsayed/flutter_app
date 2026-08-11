@@ -1117,220 +1117,215 @@ void main() {
       expect(retained.contentHash, contentHash);
     });
 
-    test(
-      'TC-358-04b disappearing strict custody and local expiry remain '
-      'independent across reopen',
-      () async {
-        final temp = Directory.systemTemp.createTempSync(
-          'private-strict-disappearing-',
+    test('TC-358-04b disappearing strict custody and local expiry remain '
+        'independent across reopen', () async {
+      final temp = Directory.systemTemp.createTempSync(
+        'private-strict-disappearing-',
+      );
+      addTearDown(() {
+        if (temp.existsSync()) temp.deleteSync(recursive: true);
+      });
+      const contactPeerId = 'tc358-04b-peer';
+      const contentHash =
+          'aaaabbbbccccddddeeeeffff00001111222233334444555566667777888899aa';
+      const ciphertext = <int>[9, 9, 4, 2];
+      const receivedAtMs = 1_800_000_000_000;
+      const durationSeconds = 604800;
+      const deadlineMs = receivedAtMs + durationSeconds * 1000;
+
+      /// Seeds one durable incoming disappearing parent through the exact
+      /// production strict-private stage, so its receiver clock and its
+      /// independent v111 transport lease are authored by real code.
+      Future<void> seed(
+        MediaRepositoryRealDbFixture fixture, {
+        required String messageId,
+        required String attachmentId,
+        required int blobExpiresAtMs,
+      }) async {
+        final custody = DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          ciphertextRelativePath: null,
+          contentHash: contentHash,
+          ciphertextSize: ciphertext.length,
+          expiresAtMs: blobExpiresAtMs,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: '2026-08-11T12:00:00.000Z',
+          updatedAt: '2026-08-11T12:00:00.000Z',
         );
-        addTearDown(() {
-          if (temp.existsSync()) temp.deleteSync(recursive: true);
-        });
-        const contactPeerId = 'tc358-04b-peer';
-        const contentHash =
-            'aaaabbbbccccddddeeeeffff00001111222233334444555566667777888899aa';
-        const ciphertext = <int>[9, 9, 4, 2];
-        const receivedAtMs = 1_800_000_000_000;
-        const durationSeconds = 604800;
-        const deadlineMs = receivedAtMs + durationSeconds * 1000;
-
-        /// Seeds one durable incoming disappearing parent through the exact
-        /// production strict-private stage, so its receiver clock and its
-        /// independent v111 transport lease are authored by real code.
-        Future<void> seed(
-          MediaRepositoryRealDbFixture fixture, {
-          required String messageId,
-          required String attachmentId,
-          required int blobExpiresAtMs,
-        }) async {
-          final custody = DirectMediaBlobCustodyRow(
-            attachmentId: attachmentId,
-            messageId: messageId,
-            direction: DirectMediaBlobCustodyDirection.incoming,
-            state: DirectMediaBlobCustodyState.incomingCommitted,
-            inboxCustodyIncarnationId: null,
-            recipientPeerId: null,
-            ciphertextRelativePath: null,
-            contentHash: contentHash,
-            ciphertextSize: ciphertext.length,
-            expiresAtMs: blobExpiresAtMs,
-            custodyRelayPeerId: null,
-            lastAttemptAt: null,
-            nextAttemptAt: null,
-            createdAt: '2026-08-11T12:00:00.000Z',
-            updatedAt: '2026-08-11T12:00:00.000Z',
-          );
-          final stage =
-              await (fixture.repo
-                      as IncomingDirectPrivateMediaBlobCustodyRepository)
-                  .stageIncomingDirectPrivateMediaBlobCustody(
-                    message: ConversationMessage(
-                      id: messageId,
-                      contactPeerId: contactPeerId,
-                      senderPeerId: contactPeerId,
-                      text: '',
-                      timestamp: '2026-08-11T12:00:00.000Z',
-                      status: 'delivered',
-                      isIncoming: true,
-                      createdAt: '2026-08-11T12:00:00.000Z',
-                      dedupKey: messageId,
-                      privateMediaPolicy: PrivateMediaPolicy.disappearing(
-                        durationSeconds,
-                      ),
-                      privateMediaState: PrivateMediaLifecycleState.available,
-                      privateMediaReceivedAtMs: receivedAtMs,
-                      privateMediaExpiresAtMs: deadlineMs,
-                      privateMediaClockHighWaterMs: receivedAtMs,
+        final stage =
+            await (fixture.repo
+                    as IncomingDirectPrivateMediaBlobCustodyRepository)
+                .stageIncomingDirectPrivateMediaBlobCustody(
+                  message: ConversationMessage(
+                    id: messageId,
+                    contactPeerId: contactPeerId,
+                    senderPeerId: contactPeerId,
+                    text: '',
+                    timestamp: '2026-08-11T12:00:00.000Z',
+                    status: 'delivered',
+                    isIncoming: true,
+                    createdAt: '2026-08-11T12:00:00.000Z',
+                    dedupKey: messageId,
+                    privateMediaPolicy: PrivateMediaPolicy.disappearing(
+                      durationSeconds,
                     ),
-                    attachment: MediaAttachment(
-                      id: attachmentId,
-                      messageId: messageId,
-                      mime: 'image/jpeg',
-                      size: 4,
-                      mediaType: 'image',
-                      downloadStatus: 'pending',
-                      createdAt: '2026-08-11T12:00:00.000Z',
+                    privateMediaState: PrivateMediaLifecycleState.available,
+                    privateMediaReceivedAtMs: receivedAtMs,
+                    privateMediaExpiresAtMs: deadlineMs,
+                    privateMediaClockHighWaterMs: receivedAtMs,
+                  ),
+                  attachment: MediaAttachment(
+                    id: attachmentId,
+                    messageId: messageId,
+                    mime: 'image/jpeg',
+                    size: 4,
+                    mediaType: 'image',
+                    downloadStatus: 'pending',
+                    createdAt: '2026-08-11T12:00:00.000Z',
+                    contentHash: contentHash,
+                    encryptionKeyBase64: 'tc358-04b-raw-key',
+                    encryptionNonce: 'tc358-04b-nonce',
+                    encryptionScheme: 'blob_aes_256_gcm_v1',
+                    ownerLane: MediaOwnerLane.direct,
+                    blobCustody: DirectMediaBlobCustodyCommitment(
                       contentHash: contentHash,
-                      encryptionKeyBase64: 'tc358-04b-raw-key',
-                      encryptionNonce: 'tc358-04b-nonce',
-                      encryptionScheme: 'blob_aes_256_gcm_v1',
-                      ownerLane: MediaOwnerLane.direct,
-                      blobCustody: DirectMediaBlobCustodyCommitment(
-                        contentHash: contentHash,
-                        ciphertextSize: ciphertext.length,
-                        expiresAtMs: blobExpiresAtMs,
-                      ),
+                      ciphertextSize: ciphertext.length,
+                      expiresAtMs: blobExpiresAtMs,
                     ),
-                    custodyRow: custody,
-                  );
-          expect(stage.outcome.name, 'applied', reason: messageId);
-        }
+                  ),
+                  custodyRow: custody,
+                );
+        expect(stage.outcome.name, 'applied', reason: messageId);
+      }
 
-        Future<Map<String, Object?>> parentOf(
-          MediaRepositoryRealDbFixture fixture,
-          String messageId,
-        ) async => (await fixture.db.query(
-          'messages',
-          where: 'id = ?',
-          whereArgs: <Object?>[messageId],
-        )).single;
+      Future<Map<String, Object?>> parentOf(
+        MediaRepositoryRealDbFixture fixture,
+        String messageId,
+      ) async => (await fixture.db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
 
-        // Order A: the CONTENT deadline passes first. It expires the parent
-        // and lets terminal cleanup own the key/attachment, while the v111
-        // transport lease survives untouched across a real reopen.
-        {
-          final databasePath = p.join(temp.path, 'content-first.db');
-          var fixture = await MediaRepositoryRealDbFixture.create(
-            databasePath: databasePath,
-          );
-          addTearDown(() async {
-            try {
-              await fixture.dispose();
-            } catch (_) {}
-          });
-          const messageId = 'tc358-04b-content-first';
-          const attachmentId = 'tc358-04b-content-first-att';
-          await seed(
-            fixture,
-            messageId: messageId,
-            attachmentId: attachmentId,
-            blobExpiresAtMs: deadlineMs + 900_000,
-          );
+      // Order A: the CONTENT deadline passes first. It expires the parent
+      // and lets terminal cleanup own the key/attachment, while the v111
+      // transport lease survives untouched across a real reopen.
+      {
+        final databasePath = p.join(temp.path, 'content-first.db');
+        var fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: databasePath,
+        );
+        addTearDown(() async {
+          try {
+            await fixture.dispose();
+          } catch (_) {}
+        });
+        const messageId = 'tc358-04b-content-first';
+        const attachmentId = 'tc358-04b-content-first-att';
+        await seed(
+          fixture,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          blobExpiresAtMs: deadlineMs + 900_000,
+        );
 
-          fixture = await fixture.reopen();
-          // The reopened process still sees the exact durable clock.
-          final reopened = await parentOf(fixture, messageId);
-          expect(reopened['private_media_received_at_ms'], receivedAtMs);
-          expect(reopened['private_media_expires_at_ms'], deadlineMs);
-          expect(reopened['private_media_clock_high_water_ms'], receivedAtMs);
+        fixture = await fixture.reopen();
+        // The reopened process still sees the exact durable clock.
+        final reopened = await parentOf(fixture, messageId);
+        expect(reopened['private_media_received_at_ms'], receivedAtMs);
+        expect(reopened['private_media_expires_at_ms'], deadlineMs);
+        expect(reopened['private_media_clock_high_water_ms'], receivedAtMs);
 
-          final engine = PrivateMediaLifecycleEngine(
-            adapter: DirectPrivateMediaLifecycle(
-              messageRepository: fixture.messageRepo,
-              mediaAttachmentRepository: fixture.repo,
-              mediaFileManager: FakeMediaFileManager(),
-            ),
-            lifecycleLock: fixture.repo.lifecycleLock,
-            nowMs: () => deadlineMs + 1000,
-          );
-          await engine.reconcileLocalLifecycle();
+        final engine = PrivateMediaLifecycleEngine(
+          adapter: DirectPrivateMediaLifecycle(
+            messageRepository: fixture.messageRepo,
+            mediaAttachmentRepository: fixture.repo,
+            mediaFileManager: FakeMediaFileManager(),
+          ),
+          lifecycleLock: fixture.repo.lifecycleLock,
+          nowMs: () => deadlineMs + 1000,
+        );
+        await engine.reconcileLocalLifecycle();
 
-          final expired = await parentOf(fixture, messageId);
-          expect(expired['private_media_state'], 'expired');
-          expect(
-            expired['private_media_expires_at_ms'],
-            deadlineMs,
-            reason: 'content expiry never rewrites its own deadline',
-          );
-          final lease =
-              await (fixture.repo as DirectMediaBlobCustodyRepository)
-                  .loadDirectMediaBlobCustodyForAttachment(attachmentId);
-          expect(
-            lease,
-            isNotNull,
-            reason: 'the no-FK v111 lease outlives content expiry',
-          );
-          expect(lease!.expiresAtMs, deadlineMs + 900_000);
-        }
+        final expired = await parentOf(fixture, messageId);
+        expect(expired['private_media_state'], 'expired');
+        expect(
+          expired['private_media_expires_at_ms'],
+          deadlineMs,
+          reason: 'content expiry never rewrites its own deadline',
+        );
+        final lease = await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+        expect(
+          lease,
+          isNotNull,
+          reason: 'the no-FK v111 lease outlives content expiry',
+        );
+        expect(lease!.expiresAtMs, deadlineMs + 900_000);
+      }
 
-        // Order B: the TRANSPORT lease expires first. Converging it removes
-        // only v111; the unexpired local parent and its clock are untouched.
-        {
-          final databasePath = p.join(temp.path, 'transport-first.db');
-          var fixture = await MediaRepositoryRealDbFixture.create(
-            databasePath: databasePath,
-          );
-          addTearDown(() async {
-            try {
-              await fixture.dispose();
-            } catch (_) {}
-          });
-          const messageId = 'tc358-04b-transport-first';
-          const attachmentId = 'tc358-04b-transport-first-att';
-          await seed(
-            fixture,
-            messageId: messageId,
-            attachmentId: attachmentId,
-            blobExpiresAtMs: receivedAtMs + 60_000,
-          );
+      // Order B: the TRANSPORT lease expires first. Converging it removes
+      // only v111; the unexpired local parent and its clock are untouched.
+      {
+        final databasePath = p.join(temp.path, 'transport-first.db');
+        var fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: databasePath,
+        );
+        addTearDown(() async {
+          try {
+            await fixture.dispose();
+          } catch (_) {}
+        });
+        const messageId = 'tc358-04b-transport-first';
+        const attachmentId = 'tc358-04b-transport-first-att';
+        await seed(
+          fixture,
+          messageId: messageId,
+          attachmentId: attachmentId,
+          blobExpiresAtMs: receivedAtMs + 60_000,
+        );
 
-          fixture = await fixture.reopen();
-          final incoming =
-              fixture.repo as IncomingDirectMediaBlobCustodyRepository;
-          final lease =
-              await (fixture.repo as DirectMediaBlobCustodyRepository)
-                  .loadDirectMediaBlobCustodyForAttachment(attachmentId);
-          expect(
-            await incoming.deleteIncomingDirectMediaBlobIfExpired(
-              expected: lease!,
-              nowMs: receivedAtMs + 120_000,
-            ),
-            isTrue,
-          );
-          expect(
-            await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(attachmentId),
-            isNull,
-          );
+        fixture = await fixture.reopen();
+        final incoming =
+            fixture.repo as IncomingDirectMediaBlobCustodyRepository;
+        final lease = await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+        expect(
+          await incoming.deleteIncomingDirectMediaBlobIfExpired(
+            expected: lease!,
+            nowMs: receivedAtMs + 120_000,
+          ),
+          isTrue,
+        );
+        expect(
+          await (fixture.repo as DirectMediaBlobCustodyRepository)
+              .loadDirectMediaBlobCustodyForAttachment(attachmentId),
+          isNull,
+        );
 
-          final parent = await parentOf(fixture, messageId);
-          expect(
-            parent['private_media_state'],
-            'available',
-            reason: 'a blob-lease expiry never expires the local card',
-          );
-          expect(parent['private_media_received_at_ms'], receivedAtMs);
-          expect(parent['private_media_expires_at_ms'], deadlineMs);
-          expect(parent['private_media_clock_high_water_ms'], receivedAtMs);
-          expect(
-            await fixture.rawAttachmentRow(attachmentId),
-            isNotNull,
-            reason: 'transport convergence never deletes the local row',
-          );
-        }
-      },
-    );
+        final parent = await parentOf(fixture, messageId);
+        expect(
+          parent['private_media_state'],
+          'available',
+          reason: 'a blob-lease expiry never expires the local card',
+        );
+        expect(parent['private_media_received_at_ms'], receivedAtMs);
+        expect(parent['private_media_expires_at_ms'], deadlineMs);
+        expect(parent['private_media_clock_high_water_ms'], receivedAtMs);
+        expect(
+          await fixture.rawAttachmentRow(attachmentId),
+          isNotNull,
+          reason: 'transport convergence never deletes the local row',
+        );
+      }
+    });
   });
 }
 

@@ -1982,6 +1982,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required localPath,
             required sourceRelayPeerId,
             required updatedAt,
+            required nowMs,
           }) => dbCommitIncomingDirectMediaBlobLocalPath(
             db,
             expectedAttachmentRow: expectedAttachmentRow,
@@ -1989,6 +1990,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             localPath: localPath,
             sourceRelayPeerId: sourceRelayPeerId,
             updatedAt: updatedAt,
+            // 358: forwarded unchanged so the strict owner's sampled clock —
+            // never this delegate — decides the disappearing deadline.
+            nowMs: nowMs,
           ),
       dbDeleteIncomingDirectMediaBlobAckPendingIfExact: ({required expected}) =>
           dbDeleteIncomingDirectMediaBlobAckPendingIfExact(
