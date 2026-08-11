@@ -675,6 +675,15 @@ linked device.
 - **Reverse-mutated once.** Restoring the previous shape — normalization at the
   start call sites only — re-reds this row, then was reverted. The row therefore
   discriminates the exact defect rather than restating the fix.
+- **Gates and closure.** Affected focused proofs `+168`; host `1to1` PASS
+  122/122; analyzer, changed-Dart format and all diff checks clean.
+  `core-host-all` and the Android pair were NOT repeated: one production file and
+  one existing test owner changed, with no schema, interface, registration or
+  device-boundary movement. Committed as `c3d2e434b`; one incremental Graphify
+  refresh against that committed tree gives 71,512 nodes / 104,942 edges,
+  overlay 1,565 files / 15,349 named tests / 1,207 production targets,
+  committed-tree fingerprint `6e0d3e61531b9292` — which supersedes `55f4851041c517b5` as the
+  current closure fingerprint.
 
 ## Reviewer Findings
 
