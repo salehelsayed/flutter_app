@@ -1,11 +1,20 @@
+import 'dart:async';
+
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
+import 'package:flutter_app/core/services/p2p_service_impl.dart'
+    show RecoveredInboxChatDisposition;
+import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
+import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_deletion_payload.dart';
@@ -1206,4 +1215,323 @@ void main() {
       await proveOneMode(suffix: 'view-once', mode: 'view_once');
     });
   });
+
+  group('Plan 357 contact deletion versus current deletion', () {
+    const author = 'peer-alice';
+    const t0 = '2026-08-10T09:00:00.000Z';
+    const t1 = '2026-08-10T09:00:01.000Z';
+
+    ChatMessage deletionEvent(String messageId, String eventId) {
+      final inner = MessageDeletionPayload(
+        messageId: messageId,
+        senderPeerId: author,
+        timestamp: t1,
+        eventId: eventId,
+      );
+      return ChatMessage(
+        from: author,
+        to: 'peer-bob',
+        content: MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: author,
+          eventId: eventId,
+          kem: 'kem',
+          ciphertext: inner.toInnerJson(),
+          nonce: 'nonce',
+        ),
+        timestamp: t1,
+        isIncoming: true,
+        transport: 'inbox',
+      );
+    }
+
+    test('TC-357-02 contact deletion winner prevents current deletion '
+        'tombstone resurrection and receipt', () async {
+      // --- Order A: real contact deletion wins the shared lease while the
+      // handler still holds a stale-positive first contact read. ---
+      final lock = _SignallingLifecycleLock();
+      final fixture = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: lock,
+      );
+      addTearDown(fixture.dispose);
+      const staleId = 'tc357-02-stale-contact';
+      const staleEvent = '35700000-0000-4000-8000-000000000201';
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': staleId,
+        'contact_peer_id': author,
+        'sender_peer_id': author,
+        'text': 'about to be purged',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': t0,
+      });
+      final releaseFirstRead = Completer<void>();
+      addTearDown(() {
+        if (!releaseFirstRead.isCompleted) releaseFirstRead.complete();
+      });
+      final barrierContacts = _BarrierContactRepository(
+        gate: () => releaseFirstRead.future,
+      )..contacts[author] = makeContact(author);
+
+      final staleReceipts = <String>[];
+      final handled = handleIncomingMessageDeletion(
+        message: deletionEvent(staleId, staleEvent),
+        messageRepo: fixture.messageRepo,
+        contactRepo: barrierContacts,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'secret',
+        stagedEntryId: 'relay-uuid-tc357-02a',
+        sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+            staleReceipts.add('$id/$mutationEventId'),
+      );
+      await barrierContacts.firstReadEntered.future.timeout(
+        const Duration(seconds: 10),
+      );
+
+      // The real contact-delete use case runs to completion under the same
+      // exclusive private lifecycle lease.
+      await deleteContactAndMessages(
+        contactRepo: barrierContacts,
+        messageRepo: fixture.messageRepo,
+        peerId: author,
+        mediaAttachmentRepo: fixture.repo,
+        reactionRepo: reactionRepo,
+        mediaFileManager: mediaFileManager,
+      ).timeout(const Duration(seconds: 10));
+      expect(await barrierContacts.getContact(author), isNull);
+      expect(
+        await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[staleId],
+        ),
+        isEmpty,
+      );
+
+      releaseFirstRead.complete();
+      final (staleResult, staleStored) = await handled.timeout(
+        const Duration(seconds: 10),
+      );
+
+      expect(
+        staleResult,
+        HandleMessageDeletionResult.unauthorized,
+        reason: 'a contact removed under the lease revokes deletion authority',
+      );
+      expect(staleStored, isNull);
+      expect(
+        mapMessageDeletionReplayResultToDisposition(staleResult).disposition,
+        RecoveredInboxChatDisposition.rejected,
+        reason: 'recovered replay must be terminal, never retryable',
+      );
+      expect(staleReceipts, isEmpty);
+      expect(
+        await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[staleId],
+        ),
+        isEmpty,
+        reason: 'no orphan tombstone may follow contact deletion',
+      );
+      expect(
+        await fixture.db.query(
+          'messages',
+          where: 'contact_peer_id = ?',
+          whereArgs: const <Object?>[author],
+        ),
+        isEmpty,
+      );
+
+      // --- Order B: the handler owns the lease first. Deletion-before-initial
+      // still converges, receipts exactly once, and the later contact purge
+      // leaves nothing behind. ---
+      final secondLock = _SignallingLifecycleLock();
+      final second = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: secondLock,
+      );
+      addTearDown(second.dispose);
+      const handlerFirstId = 'tc357-02-handler-first';
+      const handlerFirstEvent = '35700000-0000-4000-8000-000000000202';
+      final liveContacts = _BarrierContactRepository()
+        ..contacts[author] = makeContact(author);
+      final applyEntered = Completer<void>();
+      final releaseApply = Completer<void>();
+      addTearDown(() {
+        if (!releaseApply.isCompleted) releaseApply.complete();
+      });
+      final gatedRepo = _GatedIncomingDeletionApplyRepository(
+        second.messageRepo,
+        onApply: () async {
+          if (!applyEntered.isCompleted) applyEntered.complete();
+          await releaseApply.future;
+        },
+      );
+
+      final handlerReceipts = <String>[];
+      final handlerFirst = handleIncomingMessageDeletion(
+        message: deletionEvent(handlerFirstId, handlerFirstEvent),
+        messageRepo: gatedRepo,
+        contactRepo: liveContacts,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: second.repo,
+        mediaFileManager: mediaFileManager,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'secret',
+        stagedEntryId: 'relay-uuid-tc357-02b',
+        sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+            handlerReceipts.add('$id/$mutationEventId'),
+      );
+      await applyEntered.future.timeout(const Duration(seconds: 10));
+
+      // Started from the test zone so the exclusive lease cannot be inherited.
+      final contactAttempted = secondLock.nextExclusiveAttempt();
+      final purge = deleteContactAndMessages(
+        contactRepo: liveContacts,
+        messageRepo: second.messageRepo,
+        peerId: author,
+        mediaAttachmentRepo: second.repo,
+        reactionRepo: reactionRepo,
+        mediaFileManager: mediaFileManager,
+      );
+      await contactAttempted.timeout(const Duration(seconds: 10));
+      expect(
+        await liveContacts.getContact(author),
+        isNotNull,
+        reason: 'the competing purge cannot run while the handler holds it',
+      );
+      expect(handlerReceipts, isEmpty);
+
+      releaseApply.complete();
+      final (handlerResult, handlerStored) = await handlerFirst.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(handlerResult, HandleMessageDeletionResult.success);
+      expect(handlerStored?.isDeleted, isTrue);
+      expect(handlerReceipts, <String>['$handlerFirstId/$handlerFirstEvent']);
+      expect(secondLock.exclusiveActive, 0);
+
+      await purge.timeout(const Duration(seconds: 10));
+      expect(
+        await second.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[handlerFirstId],
+        ),
+        isEmpty,
+        reason: 'the later purge removes the durable tombstone it inventoried',
+      );
+      expect(await liveContacts.getContact(author), isNull);
+    });
+  });
+}
+
+/// Signals every exclusive acquisition ATTEMPT on the real repository-wide
+/// private lifecycle lock, so a competing contender is observed deterministically
+/// instead of by polling or sleeping.
+class _SignallingLifecycleLock extends MediaAttachmentLifecycleLock {
+  final List<Completer<void>> _attemptWaiters = <Completer<void>>[];
+  int exclusiveAttempts = 0;
+  int exclusiveActive = 0;
+
+  Future<void> nextExclusiveAttempt() {
+    final waiter = Completer<void>();
+    _attemptWaiters.add(waiter);
+    return waiter.future;
+  }
+
+  @override
+  Future<T> synchronizedAll<T>(Future<T> Function() action) {
+    exclusiveAttempts++;
+    for (final waiter in _attemptWaiters) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    _attemptWaiters.clear();
+    return super.synchronizedAll(() async {
+      exclusiveActive++;
+      try {
+        return await action();
+      } finally {
+        exclusiveActive--;
+      }
+    });
+  }
+}
+
+/// Holds the handler's FIRST contact read open so a real contact deletion can
+/// win the shared lease behind it; later reads observe live state.
+class _BarrierContactRepository implements ContactRepository {
+  _BarrierContactRepository({this.gate});
+
+  final Future<void> Function()? gate;
+  final Map<String, ContactModel> contacts = <String, ContactModel>{};
+  final Completer<void> firstReadEntered = Completer<void>();
+  int getContactCalls = 0;
+
+  @override
+  Future<ContactModel?> getContact(String peerId) async {
+    getContactCalls++;
+    if (getContactCalls == 1 && gate != null) {
+      final captured = contacts[peerId];
+      if (!firstReadEntered.isCompleted) firstReadEntered.complete();
+      await gate!();
+      return captured;
+    }
+    return contacts[peerId];
+  }
+
+  @override
+  Future<void> deleteContact(String peerId) async {
+    contacts.remove(peerId);
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'barrier contact repository received ${invocation.memberName}',
+  );
+}
+
+/// Pauses inside the current-deletion apply, which production runs under the
+/// exclusive private lifecycle lease.
+class _GatedIncomingDeletionApplyRepository
+    implements MessageRepository, IncomingDirectDeletionApplyRepository {
+  _GatedIncomingDeletionApplyRepository(this.delegate, {required this.onApply});
+
+  final MessageRepositoryImpl delegate;
+  final Future<void> Function() onApply;
+
+  @override
+  bool get supportsIncomingDirectDeletionApply =>
+      delegate.supportsIncomingDirectDeletionApply;
+
+  @override
+  Future<IncomingDirectDeletionApplyResult> applyIncomingDirectMessageDeletion({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    String? transport,
+  }) async {
+    await onApply();
+    return delegate.applyIncomingDirectMessageDeletion(
+      messageId: messageId,
+      senderPeerId: senderPeerId,
+      deletedAt: deletedAt,
+      transport: transport,
+    );
+  }
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  @override
+  Future<void> saveMessage(ConversationMessage message) =>
+      delegate.saveMessage(message);
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'gated deletion-apply repository received ${invocation.memberName}',
+  );
 }

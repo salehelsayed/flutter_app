@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
@@ -1409,8 +1410,14 @@ void main() {
     test('TC-356-02 private initial and deletion custody converge in both '
         'lifecycle lock orders', () async {
       // ORDER A — the deletion owns the exclusive lease first.
-      final first = await MediaRepositoryRealDbFixture.create();
+      final firstLock = _SignallingLifecycleLock();
+      final first = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: firstLock,
+      );
       addTearDown(first.dispose);
+      // Every ordering claim below is proven from the lock's own attempt /
+      // entry / release signals; this test contains no clock delay.
+      final orderA = <String>[];
       const messageIdA = 'tc356-02-delete-first';
       const attachmentIdA = '$messageIdA-att';
       final parentA = await seedLivePrivateParent(
@@ -1423,6 +1430,7 @@ void main() {
       final releaseDeletion = Completer<void>();
       final gatedManager = _GatedCleanupMediaFileManager(
         onFirstDelete: () async {
+          orderA.add('deletion-entered');
           if (!deletionHoldsLease.isCompleted) deletionHoldsLease.complete();
           await releaseDeletion.future;
         },
@@ -1459,13 +1467,20 @@ void main() {
       );
 
       var handoffStarted = false;
+      // The contender's OWN acquisition attempt is the signal; the deletion is
+      // still inside its exclusive section here, so these are exact.
+      final handoffAttempted = firstLock.nextSharedAttempt();
       final handoffA = runInitialHandoff(
         first,
         messageId: messageIdA,
         attachmentId: attachmentIdA,
-        onEnter: () => handoffStarted = true,
+        onEnter: () {
+          orderA.add('handoff-entered');
+          handoffStarted = true;
+        },
       );
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await handoffAttempted.timeout(const Duration(seconds: 10));
+      orderA.add('handoff-attempted');
       expect(
         handoffStarted,
         isFalse,
@@ -1485,6 +1500,7 @@ void main() {
       expect(networkA.deliverCallCount, 0);
       expect(networkA.storeInInboxCallCount, 0);
 
+      orderA.add('deletion-released');
       releaseDeletion.complete();
       final (resultA, tombstoneA) = await deletionA.timeout(
         const Duration(seconds: 10),
@@ -1506,10 +1522,24 @@ void main() {
       expect(handoffResultA.authorizesTransport, isFalse);
       expect(await v108Rows(first, messageIdA), isEmpty);
       expect(networkA.deliverCallCount, 0);
+      expect(
+        orderA,
+        <String>[
+          'deletion-entered',
+          'handoff-attempted',
+          'deletion-released',
+          'handoff-entered',
+        ],
+        reason: 'the contender entered only after the lease was released',
+      );
 
       // ORDER B — the incumbent initial handoff owns the lease first.
-      final second = await MediaRepositoryRealDbFixture.create();
+      final secondLock = _SignallingLifecycleLock();
+      final second = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: secondLock,
+      );
       addTearDown(second.dispose);
+      final orderB = <String>[];
       const messageIdB = 'tc356-02-handoff-first';
       const attachmentIdB = '$messageIdB-att';
       final parentB = await seedLivePrivateParent(
@@ -1525,6 +1555,7 @@ void main() {
         messageId: messageIdB,
         attachmentId: attachmentIdB,
         onEnter: () {
+          orderB.add('handoff-entered');
           if (!handoffHoldsLease.isCompleted) handoffHoldsLease.complete();
         },
         gate: () => releaseHandoff.future,
@@ -1537,7 +1568,11 @@ void main() {
         network: networkB,
       );
       addTearDown(stoppedB.dispose);
-      final observingManager = FakeMediaFileManager();
+      final observingManager = _GatedCleanupMediaFileManager(
+        onFirstDelete: () async => orderB.add('deletion-entered'),
+      );
+      // The deletion's own exclusive acquisition attempt is the signal.
+      final deletionAttempted = secondLock.nextExclusiveAttempt();
       final deletionB = deleteMessageForEveryone(
         p2pService: stoppedB,
         messageRepo: second.messageRepo,
@@ -1547,7 +1582,8 @@ void main() {
         bridge: PassthroughCryptoBridge(),
         recipientMlKemPublicKey: recipientMlKemPublicKey,
       );
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await deletionAttempted.timeout(const Duration(seconds: 10));
+      orderB.add('deletion-attempted');
 
       expect(
         (await second.db.query(
@@ -1565,6 +1601,7 @@ void main() {
       expect(networkB.deliverCallCount, 0);
       expect(networkB.storeInInboxCallCount, 0);
 
+      orderB.add('handoff-released');
       releaseHandoff.complete();
       await handoffB.timeout(const Duration(seconds: 10));
       final (resultB, tombstoneB) = await deletionB.timeout(
@@ -1573,8 +1610,57 @@ void main() {
       expect(resultB, SendChatMessageResult.nodeNotRunning);
       expect(tombstoneB?.isDeleted, isTrue);
       expect(await v109RowsFor(second, messageIdB), hasLength(1));
+      expect(
+        orderB,
+        <String>[
+          'handoff-entered',
+          'deletion-attempted',
+          'handoff-released',
+          'deletion-entered',
+        ],
+        reason: 'the deletion entered only after the incumbent lease released',
+      );
     });
   });
+}
+
+/// Signals every acquisition ATTEMPT on the real repository-wide private
+/// lifecycle lock, so a competing contender is observed deterministically
+/// instead of by a wall-clock delay.
+class _SignallingLifecycleLock extends MediaAttachmentLifecycleLock {
+  final List<Completer<void>> _exclusiveWaiters = <Completer<void>>[];
+  final List<Completer<void>> _sharedWaiters = <Completer<void>>[];
+
+  Future<void> nextExclusiveAttempt() {
+    final waiter = Completer<void>();
+    _exclusiveWaiters.add(waiter);
+    return waiter.future;
+  }
+
+  Future<void> nextSharedAttempt() {
+    final waiter = Completer<void>();
+    _sharedWaiters.add(waiter);
+    return waiter.future;
+  }
+
+  static void _release(List<Completer<void>> waiters) {
+    for (final waiter in waiters) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    waiters.clear();
+  }
+
+  @override
+  Future<T> synchronizedAll<T>(Future<T> Function() action) {
+    _release(_exclusiveWaiters);
+    return super.synchronizedAll(action);
+  }
+
+  @override
+  Future<T> synchronized<T>(String attachmentId, Future<T> Function() action) {
+    _release(_sharedWaiters);
+    return super.synchronized(attachmentId, action);
+  }
 }
 
 /// Pauses inside the deletion's private artifact cleanup, which runs under the

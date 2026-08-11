@@ -4,6 +4,10 @@ import 'dart:convert';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
+import 'package:flutter_app/core/database/direct_reaction_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/retry_failed_messages_use_case.dart';
@@ -14,6 +18,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/p2p/domain/models/discovered_peer.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -586,103 +591,123 @@ void main() {
 
     test('TC-356-03a failed private deletion with lifecycle-only v109 owner '
         'blocks legacy replay', () async {
-      Future<void> proveOwnerWins({required String suffix}) async {
-        identityRepo.seed(makeIdentity());
-        final messageId = 'tc356-03a-$suffix';
-        final eventId =
-            '35600000-0000-4000-8000-${suffix.hashCode.abs().toString().padLeft(12, '0').substring(0, 12)}';
-        const recipient = 'peer-target';
-        final envelope =
-            '{"type":"message_deletion","version":"2","eventId":"$eventId",'
-            '"senderPeerId":"my-peer-id",'
-            '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
-        final backing = FakeMessageRepository();
-        backing.seed(<ConversationMessage>[
-          makeFailedMessage(
-            id: messageId,
-            contactPeerId: recipient,
-            text: '',
-          ).copyWith(
-            deletedAt: '2026-01-01T00:00:02.000Z',
-            deletedByPeerId: 'my-peer-id',
-            wireEnvelope: envelope,
-            privateMediaPolicy: const PrivateMediaPolicy.protected(),
-          ),
-        ]);
-        // The exact owner is seeded with the SAME physical v109 shape every
-        // other mutation kind uses. It is never created through a private
-        // stage capability here.
-        backing.directMutationCustodyRows['$recipient\u0000$eventId'] =
-            DirectReactionInboxCustodyOutboxEntry(
-              recipientPeerId: recipient,
-              eventId: eventId,
-              wireEnvelope: envelope,
-              retryCount: 0,
-              lastAttemptAt: null,
-              lastErrorCode: null,
-              createdAt: '2026-01-01T00:00:00.000Z',
-              updatedAt: '2026-01-01T00:00:00.000Z',
-            );
-        final messageRepository = _LifecycleOnlyMutationCustodyRepository(
-          backing,
-        );
-        contactRepo.seed([makeContact(peerId: recipient)]);
+      // 357: ownership is resolved from the REAL physical v109 table through
+      // the same production helpers main.dart wires, never from a map fake.
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const recipient = 'peer-target';
 
-        final p2pService = FakeP2PService(
-          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-          discoverPeerResult: const DiscoveredPeer(
-            id: recipient,
-            addresses: ['/ip4/127.0.0.1/tcp/4001'],
-          ),
-          dialPeerResult: true,
-          sendMessageWithReplyResult: const p2p.SendMessageResult(
-            sent: true,
-            reply: 'ack',
-          ),
-          storeInInboxResult: true,
-        );
+      Future<void> seedPhysicalEvent(String eventId, String envelope) async {
+        await fixture.db
+            .insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+              'recipient_peer_id': recipient,
+              'event_id': eventId,
+              'wire_envelope': envelope,
+              'retry_count': 0,
+              'last_attempt_at': null,
+              'last_error_code': null,
+              'created_at': '2026-01-01T00:00:00.000Z',
+              'updated_at': '2026-01-01T00:00:00.000Z',
+            });
+      }
 
-        final count = await retryFailedMessage(
+      Future<List<Map<String, Object?>>> physicalRows(String eventId) =>
+          fixture.db.query(
+            'direct_reaction_inbox_custody_outbox',
+            where: 'event_id = ?',
+            whereArgs: <Object?>[eventId],
+          );
+
+      FakeP2PService makeHealthyP2P() => FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        discoverPeerResult: const DiscoveredPeer(
+          id: recipient,
+          addresses: ['/ip4/127.0.0.1/tcp/4001'],
+        ),
+        dialPeerResult: true,
+        sendMessageWithReplyResult: const p2p.SendMessageResult(
+          sent: true,
+          reply: 'ack',
+        ),
+        storeInInboxResult: true,
+      );
+
+      // 1. A private deletion whose exact event is a physical v109 row is owned
+      //    at its FIRST lookup and can never reach any legacy leg.
+      identityRepo.seed(makeIdentity());
+      const messageId = 'tc356-03a-protected';
+      const eventId = '35600000-0000-4000-8000-000000000301';
+      const envelope =
+          '{"type":"message_deletion","version":"2","eventId":"$eventId",'
+          '"senderPeerId":"my-peer-id",'
+          '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+      final backing = FakeMessageRepository();
+      backing.seed(<ConversationMessage>[
+        makeFailedMessage(
+          id: messageId,
+          contactPeerId: recipient,
+          text: '',
+        ).copyWith(
+          deletedAt: '2026-01-01T00:00:02.000Z',
+          deletedByPeerId: 'my-peer-id',
+          wireEnvelope: envelope,
+          privateMediaPolicy: const PrivateMediaPolicy.protected(),
+        ),
+      ]);
+      await seedPhysicalEvent(eventId, envelope);
+      final messageRepository = _LifecycleOnlyMutationCustodyRepository(
+        backing,
+        db: fixture.db,
+      );
+      contactRepo.seed([makeContact(peerId: recipient)]);
+      final p2pService = makeHealthyP2P();
+
+      expect(
+        await retryFailedMessage(
           messageId: messageId,
           messageRepo: messageRepository,
           identityRepo: identityRepo,
           contactRepo: contactRepo,
           p2pService: p2pService,
           bridge: PassthroughCryptoBridge(),
-        );
+        ),
+        0,
+      );
+      expect(
+        messageRepository.ownedAtLookups,
+        contains(1),
+        reason: 'a physical owner wins at the first generic lifecycle lookup',
+      );
+      expect(
+        p2pService.sendMessageWithReplyCallCount,
+        0,
+        reason: 'the exact v109 owner blocks the legacy send leg',
+      );
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(backing.ordinaryAttemptStages, isEmpty);
+      final retained = await physicalRows(eventId);
+      expect(
+        retained,
+        hasLength(1),
+        reason: 'a retained failure leaves the exact event retryable',
+      );
+      expect(
+        retained.single['last_error_code'],
+        isNotNull,
+        reason: 'the real physical row recorded its own bounded failure',
+      );
+      expect(
+        (await backing.getMessage(messageId))!.status,
+        'failed',
+        reason: 'retry never settles the tombstone on its own',
+      );
 
-        expect(count, 0);
-        expect(
-          messageRepository.lifecycleLookups,
-          greaterThanOrEqualTo(1),
-          reason: 'ownership is resolved through the generic v109 lifecycle',
-        );
-        expect(
-          p2pService.sendMessageWithReplyCallCount,
-          0,
-          reason: 'the exact v109 owner blocks the legacy send leg',
-        );
-        expect(p2pService.storeInInboxCallCount, 0);
-        expect(backing.ordinaryAttemptStages, isEmpty);
-        expect(
-          backing.directMutationCustodyRows,
-          hasLength(1),
-          reason: 'a retained failure leaves the exact event retryable',
-        );
-        expect(
-          (await backing.getMessage(messageId))!.status,
-          'failed',
-          reason: 'retry never settles the tombstone on its own',
-        );
-      }
-
-      await proveOwnerWins(suffix: 'protected');
-
-      // An event-bearing private deletion with NO owner fails closed.
+      // 2. An event-bearing private deletion with NO physical owner fails
+      //    closed at that same first lookup. There is no later checkpoint it
+      //    could legitimately reach.
       identityRepo.seed(makeIdentity());
       const orphanId = 'tc356-03a-ownerless';
       const orphanEvent = '35600000-0000-4000-8000-000000000999';
-      const recipient = 'peer-target';
       const orphanEnvelope =
           '{"type":"message_deletion","version":"2",'
           '"eventId":"$orphanEvent","senderPeerId":"my-peer-id",'
@@ -702,21 +727,9 @@ void main() {
       ]);
       final orphanRepository = _LifecycleOnlyMutationCustodyRepository(
         orphanBacking,
+        db: fixture.db,
       );
-      contactRepo.seed([makeContact(peerId: recipient)]);
-      final orphanP2p = FakeP2PService(
-        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
-        discoverPeerResult: const DiscoveredPeer(
-          id: recipient,
-          addresses: ['/ip4/127.0.0.1/tcp/4001'],
-        ),
-        dialPeerResult: true,
-        sendMessageWithReplyResult: const p2p.SendMessageResult(
-          sent: true,
-          reply: 'ack',
-        ),
-        storeInInboxResult: true,
-      );
+      final orphanP2p = makeHealthyP2P();
 
       expect(
         await retryFailedMessage(
@@ -729,8 +742,70 @@ void main() {
         ),
         0,
       );
+      expect(
+        orphanRepository.lifecycleLookups,
+        1,
+        reason: 'an ownerless current deletion is terminal at its first look',
+      );
+      expect(orphanRepository.ownedAtLookups, isEmpty);
       expect(orphanP2p.sendMessageWithReplyCallCount, 0);
       expect(orphanP2p.storeInInboxCallCount, 0);
+      expect(await physicalRows(orphanEvent), isEmpty);
+
+      // 3. The applicable LATER owner check: a compatible current EDIT is
+      //    ownerless at load and at the fresh re-read, then acquires its exact
+      //    physical v109 row before egress. The pre-egress lookup must find it.
+      identityRepo.seed(makeIdentity());
+      const editId = 'tc356-03a-edit-pre-egress';
+      const editEvent = '35600000-0000-4000-8000-000000000302';
+      final edit = makeFailedEditMessage(id: editId, eventId: editEvent);
+      final editBacking = FakeMessageRepository();
+      editBacking.seed(<ConversationMessage>[edit]);
+      final editRepository = _LifecycleOnlyMutationCustodyRepository(
+        editBacking,
+        db: fixture.db,
+        onLookup: (index) async {
+          if (index == 3) {
+            await seedPhysicalEvent(editEvent, edit.wireEnvelope!);
+          }
+        },
+      );
+      // No direct leg: this is the cached-envelope relay route the pre-egress
+      // barrier guards.
+      final editP2p = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      expect(
+        await retryFailedMessage(
+          messageId: editId,
+          messageRepo: editRepository,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: editP2p,
+          bridge: PassthroughCryptoBridge(),
+        ),
+        0,
+      );
+      expect(
+        editRepository.lifecycleLookups,
+        3,
+        reason: 'load, fresh re-read, then the pre-egress owner barrier',
+      );
+      expect(
+        editRepository.ownedAtLookups,
+        <int>[3],
+        reason: 'only the pre-egress lookup could see the physical owner',
+      );
+      expect(
+        editP2p.storeInInboxCallCount,
+        0,
+        reason: 'the pre-egress owner check blocks the legacy relay store',
+      );
+      expect(editP2p.sendMessageWithReplyCallCount, 0);
+      expect(editBacking.ordinaryAttemptStages, isEmpty);
+      expect(await physicalRows(editEvent), hasLength(1));
     });
 
     test(
@@ -2322,11 +2397,28 @@ void main() {
 class _LifecycleOnlyMutationCustodyRepository
     implements
         MessageRepository,
+        OutgoingTransportMutationRepository,
         DirectMutationInboxCustodyLifecycleRepository {
-  _LifecycleOnlyMutationCustodyRepository(this.delegate);
+  _LifecycleOnlyMutationCustodyRepository(
+    this.delegate, {
+    required this.db,
+    this.onLookup,
+  });
 
   final FakeMessageRepository delegate;
+
+  /// The REAL physical v109 outbox, read through the same helpers production
+  /// wires into [MessageRepositoryImpl].
+  final Database db;
+
+  /// Fires before each lookup with its 1-based index, so a test can move
+  /// ownership at an exact production checkpoint without a production hook.
+  final Future<void> Function(int lookupIndex)? onLookup;
+
   int lifecycleLookups = 0;
+
+  /// The lookup indexes that actually resolved an owner.
+  final List<int> ownedAtLookups = <int>[];
 
   @override
   bool get supportsDirectMutationInboxCustodyLifecycle => true;
@@ -2336,21 +2428,30 @@ class _LifecycleOnlyMutationCustodyRepository
   loadDirectTextMutationInboxCustodyForEvent({
     required String recipientPeerId,
     required String eventId,
-  }) {
+  }) async {
     lifecycleLookups++;
-    return delegate.loadDirectTextMutationInboxCustodyForEvent(
+    await onLookup?.call(lifecycleLookups);
+    final row = await dbLoadDirectReactionInboxCustodyOutboxForEvent(
+      db,
       recipientPeerId: recipientPeerId,
       eventId: eventId,
     );
+    if (row == null) return null;
+    ownedAtLookups.add(lifecycleLookups);
+    return DirectReactionInboxCustodyOutboxEntry.fromMap(row);
   }
 
   @override
   Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
     required DirectReactionInboxCustodyOutboxEntry expected,
     required String errorCode,
-  }) => delegate.recordDirectTextMutationInboxCustodyFailureIfExact(
-    expected: expected,
+  }) => dbRecordDirectReactionInboxCustodyFailureIfExact(
+    db,
+    recipientPeerId: expected.recipientPeerId,
+    eventId: expected.eventId,
+    expectedWireEnvelope: expected.wireEnvelope,
     errorCode: errorCode,
+    attemptedAt: DateTime.utc(2026).toIso8601String(),
   );
 
   @override
@@ -2358,13 +2459,93 @@ class _LifecycleOnlyMutationCustodyRepository
   completeAcceptedDirectTextMutationInboxCustodyIfExact({
     required DirectReactionInboxCustodyOutboxEntry expected,
     required int? relayExpiresAt,
-  }) => delegate.completeAcceptedDirectTextMutationInboxCustodyIfExact(
-    expected: expected,
+  }) => dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+    db,
+    recipientPeerId: expected.recipientPeerId,
+    eventId: expected.eventId,
+    expectedWireEnvelope: expected.wireEnvelope,
     relayExpiresAt: relayExpiresAt,
   );
 
   @override
   Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  // The incumbent ordinary settlement surface stays available: only the
+  // TEXT-STAGE custody capability is withheld, so a retry that casts through
+  // it misses an owner the shared v109 lifecycle would have found.
+  @override
+  Future<OutgoingOrdinaryMutationResult> stageOutgoingOrdinaryAttempt({
+    required ConversationMessage? expected,
+    required ConversationMessage staged,
+    required OutgoingOrdinaryAttemptKind kind,
+  }) => delegate.stageOutgoingOrdinaryAttempt(
+    expected: expected,
+    staged: staged,
+    kind: kind,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryTransport({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => delegate.settleOutgoingOrdinaryTransport(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> settleOutgoingOrdinaryDeleteTombstone({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+  }) => delegate.settleOutgoingOrdinaryDeleteTombstone(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    status: status,
+    transport: transport,
+    relayExpiresAt: relayExpiresAt,
+    mode: mode,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult> invalidateOutgoingOrdinaryEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+  }) => delegate.invalidateOutgoingOrdinaryEnvelope(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+  );
+
+  @override
+  Future<OutgoingOrdinaryMutationResult>
+  quarantineUnsafeLegacyOutgoingEnvelope({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String expectedEnvelope,
+    required bool isDeleteTombstone,
+  }) => delegate.quarantineUnsafeLegacyOutgoingEnvelope(
+    messageId: messageId,
+    expectedContactPeerId: expectedContactPeerId,
+    expectedEnvelope: expectedEnvelope,
+    isDeleteTombstone: isDeleteTombstone,
+  );
 
   @override
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(

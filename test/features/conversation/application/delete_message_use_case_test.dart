@@ -7,7 +7,9 @@ import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_h
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/direct_reaction_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -2556,6 +2558,278 @@ void main() {
       },
     );
   });
+
+  group('Plan 357 private deletion closure repair', () {
+    const sender = 'peer-alice';
+
+    Future<List<Map<String, Object?>>> v109RowsFor(
+      MediaRepositoryRealDbFixture fixture,
+      String messageId,
+    ) async => (await fixture.db.query('direct_reaction_inbox_custody_outbox'))
+        .where((row) => (row['wire_envelope']! as String).contains(messageId))
+        .toList(growable: false);
+
+    test('TC-357-01b private deletion replay without a committed tombstone '
+        'cannot clean or transmit', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'tc357-01b-null-row';
+      const attachmentId = '$messageId-att';
+      final original = await seedPrivateDeleteForEveryoneParent(
+        fixture,
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+
+      final network = FakeP2PNetwork();
+      final p2pService = FakeP2PService(peerId: sender, network: network);
+      final peer = FakeP2PService(peerId: 'peer-bob', network: network);
+      addTearDown(p2pService.dispose);
+      addTearDown(peer.dispose);
+      final fileManager = FakeMediaFileManager();
+      final localReactions = _RecordingReactionRepository();
+
+      // The physical v109 stage really runs and really authorizes: only its
+      // committed transaction row is withheld.
+      final repository = _NullCommittedRowPrivateStageRepository(
+        fixture.messageRepo,
+      );
+
+      final (result, tombstone) = await deleteMessageForEveryone(
+        p2pService: p2pService,
+        messageRepo: repository,
+        originalMessage: original,
+        reactionRepo: localReactions,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: fileManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(result, SendChatMessageResult.invalidMessage);
+      expect(tombstone, isNull);
+      expect(
+        repository.stageCalls,
+        1,
+        reason: 'the authorized stage really ran before the guard refused',
+      );
+      expect(
+        repository.lastAuthorizedTransport,
+        isTrue,
+        reason: 'an authorized custody result reached the application guard',
+      );
+      expect(
+        network.deliverCallCount,
+        0,
+        reason: 'an uncommitted in-memory tombstone can never be transmitted',
+      );
+      expect(network.storeInInboxCallCount, 0);
+      expect(fileManager.deletedFilePaths, isEmpty);
+      expect(
+        localReactions.deleteForMessageCalls,
+        isEmpty,
+        reason: 'terminal cleanup never starts without a committed tombstone',
+      );
+      expect(
+        await fixture.repo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        ),
+        hasLength(1),
+        reason: 'no private artifact may be cleaned without a durable row',
+      );
+    });
+
+    test('TC-357-03 reaction retirement failure after private stage cannot '
+        'suppress cleanup or settlement', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'tc357-03-reaction-failure';
+      const attachmentId = '$messageId-att';
+      final original = await seedPrivateDeleteForEveryoneParent(
+        fixture,
+        messageId: messageId,
+        attachmentId: attachmentId,
+      );
+
+      final network = FakeP2PNetwork();
+      final stopped = _StoppedDeleteP2PService(peerId: sender, network: network);
+      addTearDown(stopped.dispose);
+      final throwingReactions = _ThrowingReactionRepository();
+      final fileManager = FakeMediaFileManager();
+
+      final (result, tombstone) = await deleteMessageForEveryone(
+        p2pService: stopped,
+        messageRepo: fixture.messageRepo,
+        originalMessage: original,
+        reactionRepo: throwingReactions,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: fileManager,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+      );
+
+      expect(
+        throwingReactions.deleteForMessageCalls,
+        contains(messageId),
+        reason: 'reaction retirement really was attempted and really threw',
+      );
+      expect(
+        result,
+        SendChatMessageResult.nodeNotRunning,
+        reason: 'a non-authoritative reaction failure cannot escape the lane',
+      );
+      expect(tombstone, isNotNull);
+      expect(tombstone!.isDeleted, isTrue);
+      expect(tombstone.status, 'failed');
+      expect(tombstone.transport, isNull);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      expect(
+        await v109RowsFor(fixture, messageId),
+        hasLength(1),
+        reason: 'the exact event stays retryable behind the durable tombstone',
+      );
+      final row = (await fixture.db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(row['status'], 'failed');
+      expect(row['deleted_at'], isNotNull);
+      expect(
+        await fixture.repo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.direct,
+        ),
+        isEmpty,
+        reason: 'incumbent private lifecycle cleanup still ran',
+      );
+      expect(await fixture.rawAttachmentRow(attachmentId), isNull);
+      expect(fileManager.deletedFilePaths, isNotEmpty);
+    });
+  });
+}
+
+/// Runs the REAL physical-v109 private deletion stage and then withholds only
+/// its committed transaction row, so the application guard is reached with an
+/// otherwise authorized exact custody result.
+class _NullCommittedRowPrivateStageRepository
+    implements
+        MessageRepository,
+        DirectPrivateMediaLifecycleRepository,
+        DirectPrivateDeleteForEveryoneRepository,
+        OutgoingDirectPrivateDeletionInboxCustodyRepository,
+        DirectMutationInboxCustodyLifecycleRepository {
+  _NullCommittedRowPrivateStageRepository(this.delegate);
+
+  final MessageRepositoryImpl delegate;
+  int stageCalls = 0;
+  bool? lastAuthorizedTransport;
+
+  @override
+  bool get supportsDirectPrivateDeletionInboxCustody =>
+      delegate.supportsDirectPrivateDeletionInboxCustody;
+
+  @override
+  bool get supportsDirectMutationInboxCustodyLifecycle =>
+      delegate.supportsDirectMutationInboxCustodyLifecycle;
+
+  @override
+  Future<ConversationMessage?> getMessage(String id) => delegate.getMessage(id);
+
+  // Everything after the guard is forwarded unchanged, so a HEAD run really
+  // reaches cleanup and transport instead of failing on a missing member.
+  @override
+  Future<ConversationMessage?> settlePrivateDeleteForEveryoneTombstone({
+    required ConversationMessage tombstone,
+    required String expectedEnvelope,
+  }) => delegate.settlePrivateDeleteForEveryoneTombstone(
+    tombstone: tombstone,
+    expectedEnvelope: expectedEnvelope,
+  );
+
+  @override
+  Future<DirectReactionInboxCustodyOutboxEntry?>
+  loadDirectTextMutationInboxCustodyForEvent({
+    required String recipientPeerId,
+    required String eventId,
+  }) => delegate.loadDirectTextMutationInboxCustodyForEvent(
+    recipientPeerId: recipientPeerId,
+    eventId: eventId,
+  );
+
+  @override
+  Future<bool> recordDirectTextMutationInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) => delegate.recordDirectTextMutationInboxCustodyFailureIfExact(
+    expected: expected,
+    errorCode: errorCode,
+  );
+
+  @override
+  Future<DirectMutationInboxCustodyCompletionOutcome>
+  completeAcceptedDirectTextMutationInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) => delegate.completeAcceptedDirectTextMutationInboxCustodyIfExact(
+    expected: expected,
+    relayExpiresAt: relayExpiresAt,
+  );
+
+  @override
+  Future<OutgoingDirectPrivateDeletionCustodyStageResult>
+  stageOutgoingDirectPrivateDeletionInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage tombstone,
+    required String recipientPeerId,
+    required String eventId,
+    required String wireEnvelope,
+  }) async {
+    stageCalls++;
+    final result = await delegate
+        .stageOutgoingDirectPrivateDeletionInboxCustody(
+          expected: expected,
+          tombstone: tombstone,
+          recipientPeerId: recipientPeerId,
+          eventId: eventId,
+          wireEnvelope: wireEnvelope,
+        );
+    lastAuthorizedTransport = result.authorizesTransport;
+    return OutgoingDirectPrivateDeletionCustodyStageResult(
+      outcome: result.outcome,
+      custody: result.custody,
+    );
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
+    'null-committed-row repository received ${invocation.memberName}',
+  );
+}
+
+/// Fails only reaction retirement, which is never deletion authority.
+class _ThrowingReactionRepository extends FakeReactionRepository {
+  final List<String> deleteForMessageCalls = <String>[];
+
+  @override
+  Future<int> deleteReactionsForMessage(String messageId) async {
+    deleteForMessageCalls.add(messageId);
+    throw StateError('injected reaction store failure');
+  }
+}
+
+/// Records the first step of private terminal cleanup, so a refusal can be
+/// proven to have performed none of it.
+class _RecordingReactionRepository extends FakeReactionRepository {
+  final List<String> deleteForMessageCalls = <String>[];
+
+  @override
+  Future<int> deleteReactionsForMessage(String messageId) {
+    deleteForMessageCalls.add(messageId);
+    return super.deleteReactionsForMessage(messageId);
+  }
 }
 
 /// Gates BOTH network legs a v109-owning deletion uses: the live send and the

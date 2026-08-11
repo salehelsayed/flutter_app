@@ -7,6 +7,7 @@ import 'package:image/image.dart' as img;
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -37,6 +38,7 @@ class _FakePathProvider extends Fake
 void main() {
   late Directory tempDocs;
   late MediaRepositoryRealDbFixture fixture;
+  late _SignallingLifecycleLock lifecycleLock;
   late InMemoryContactRepository contactRepo;
   late MediaFileManager mediaFileManager;
   var timestampCounter = 0;
@@ -44,7 +46,10 @@ void main() {
   setUp(() async {
     tempDocs = Directory.systemTemp.createTempSync('protected_thumb_receive_');
     PathProviderPlatform.instance = _FakePathProvider(tempDocs.path);
-    fixture = await MediaRepositoryRealDbFixture.create();
+    lifecycleLock = _SignallingLifecycleLock();
+    fixture = await MediaRepositoryRealDbFixture.create(
+      lifecycleLock: lifecycleLock,
+    );
     contactRepo = InMemoryContactRepository()
       ..addTestContact(_contact(_senderPeerId));
     mediaFileManager = MediaFileManager();
@@ -767,14 +772,18 @@ void main() {
             'lifecycle lease that strict presentation uses',
       );
 
-      // A competing strict initial cannot make any presentation progress.
-      const competingId = 'tc356-04c-competing-strict';
+      // The competitor is the SAME target: a strict initial replay for the
+      // message this deletion is terminalizing. It may make no presentation
+      // progress while the deletion holds the exclusive lease, and afterwards
+      // it must be durably superseded rather than resurrect the parent.
       final competingEffects = <String>[];
       final competing = strictProtectedPhoto(
-        messageId: competingId,
-        attachmentId: '$competingId-a',
+        messageId: deletedId,
+        attachmentId: deletedAttachment,
         thumbnail: validThumbnailBase64(),
+        timestamp: seeded.timestamp,
       );
+      final competingAttempted = lifecycleLock.nextAttempt();
       final competingReceive = handleIncomingChatMessage(
         message: competing,
         messageRepo: fixture.messageRepo,
@@ -789,24 +798,15 @@ void main() {
             competingEffects.add('marker-promote'),
         sendDeliveryReceipt: (_) async => competingEffects.add('receipt'),
       );
-      for (var i = 0; i < 5; i += 1) {
-        await Future<void>.delayed(Duration.zero);
-      }
+      // The contender's own lifecycle acquisition attempt is the signal; the
+      // deletion is still inside its exclusive section here.
+      await competingAttempted.timeout(const Duration(seconds: 10));
       expect(
         competingEffects,
         isEmpty,
         reason:
             'no strict presentation may start while the deletion holds the '
             'exclusive private lifecycle lease',
-      );
-      expect(
-        await fixture.db.query(
-          'messages',
-          where: 'id = ?',
-          whereArgs: const <Object?>[competingId],
-        ),
-        isEmpty,
-        reason: 'the competing strict DB stage has not run yet',
       );
       expect(deletionReceipts, isEmpty);
 
@@ -819,9 +819,23 @@ void main() {
       expect(deletionReceipts, hasLength(1));
       expect(
         (await competingReceive.timeout(const Duration(seconds: 10))).$1,
-        HandleChatMessageResult.chatMessage,
+        HandleChatMessageResult.durablySuperseded,
+        reason: 'a strict initial can never re-open a durable deletion',
       );
-      expect(competingEffects, contains('marker-stage'));
+      expect(
+        competingEffects,
+        <String>['receipt'],
+        reason: 'a superseded strict initial receipts only, never presents',
+      );
+      expect(
+        (await fixture.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[deletedId],
+        )).single['deleted_at'],
+        isNotNull,
+        reason: 'the tombstone survives the superseded strict replay',
+      );
       expect(
         File(
           await expectedThumbnailPath(
@@ -861,9 +875,6 @@ void main() {
       });
 
       Future<void> assertDeletionBlocked() async {
-        for (var i = 0; i < 5; i += 1) {
-          await Future<void>.delayed(Duration.zero);
-        }
         expect(
           deletionProgressDuringLease,
           isFalse,
@@ -896,7 +907,11 @@ void main() {
         transport: 'direct',
         stageNotificationDisplayCustody: (_) async {
           receiveEffects.add('marker-stage');
+          // Register the contender signal before releasing it, so the block is
+          // proven from the lock's own attempt rather than from elapsed time.
+          final deletionAttempted = lifecycleLock.nextAttempt();
           if (!startDeletion.isCompleted) startDeletion.complete();
+          await deletionAttempted.timeout(const Duration(seconds: 10));
           await assertDeletionBlocked();
         },
         promoteNotificationDisplayCustody: (_) async {
@@ -935,6 +950,38 @@ void main() {
       );
     });
   });
+}
+
+/// Signals every acquisition ATTEMPT on the real repository-wide private
+/// lifecycle lock, so a competing contender is observed deterministically
+/// instead of by pumping the event loop a fixed number of times.
+class _SignallingLifecycleLock extends MediaAttachmentLifecycleLock {
+  final List<Completer<void>> _waiters = <Completer<void>>[];
+
+  Future<void> nextAttempt() {
+    final waiter = Completer<void>();
+    _waiters.add(waiter);
+    return waiter.future;
+  }
+
+  void _releaseWaiters() {
+    for (final waiter in _waiters) {
+      if (!waiter.isCompleted) waiter.complete();
+    }
+    _waiters.clear();
+  }
+
+  @override
+  Future<T> synchronizedAll<T>(Future<T> Function() action) {
+    _releaseWaiters();
+    return super.synchronizedAll(action);
+  }
+
+  @override
+  Future<T> synchronized<T>(String attachmentId, Future<T> Function() action) {
+    _releaseWaiters();
+    return super.synchronized(attachmentId, action);
+  }
 }
 
 /// Pauses inside the deletion's private artifact cleanup, which the shared

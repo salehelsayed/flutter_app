@@ -1311,6 +1311,325 @@ END
       reason: 'a failed event insert must roll the tombstone back',
     );
   });
+
+  test('TC-357-01a exact private deletion v109 replay authorizes only the '
+      'persisted tombstone', () async {
+    final current = await databaseFactoryFfi.openDatabase(
+      '${tempDirectory.path}/replay.db',
+      options: OpenDatabaseOptions(
+        version: currentIdentityDatabaseVersion,
+        singleInstance: false,
+        onCreate: runProductionOnCreate,
+        onUpgrade: runProductionOnUpgrade,
+      ),
+    );
+    addTearDown(current.close);
+
+    var eventSeq = 0;
+    String nextEventId() =>
+        '35700000-0000-4000-8000-${(++eventSeq).toString().padLeft(12, '0')}';
+
+    String deletionEnvelope(String eventId) => jsonEncode(<String, Object?>{
+      'type': 'message_deletion',
+      'version': '2',
+      'eventId': eventId,
+      'senderPeerId': _sender,
+      'encrypted': <String, Object?>{
+        'kem': 'kem-357',
+        'ciphertext': 'cipher-$eventId',
+        'nonce': 'nonce-357',
+      },
+    });
+
+    /// Seeds one live v1 Protected parent plus its pending attachment and
+    /// returns the exact rows the private deletion stage is called with.
+    Future<
+      ({
+        String messageId,
+        Map<String, Object?> expected,
+        Map<String, Object?> tombstone,
+        String eventId,
+        String envelope,
+      })
+    >
+    seedLiveParent(
+      String suffix, {
+      String mode = 'protected',
+      String? eventId,
+      String? envelope,
+    }) async {
+      final messageId = 'tc357-01a-$suffix';
+      final resolvedEventId = eventId ?? nextEventId();
+      final resolvedEnvelope = envelope ?? deletionEnvelope(resolvedEventId);
+      await current.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _recipient,
+        'sender_peer_id': _sender,
+        'text': 'private caption',
+        'timestamp': _t0,
+        'status': 'delivered',
+        'is_incoming': 0,
+        'created_at': _t0,
+        'private_media_policy_version': 1,
+        'private_media_mode': mode,
+        'private_media_state': 'available',
+        'private_media_received_at_ms': 1000,
+        'private_media_clock_high_water_ms': 1000,
+      });
+      await current.insert('media_attachments', <String, Object?>{
+        'id': '$messageId-a',
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 800,
+        'media_type': 'image',
+        'created_at': _t0,
+        'download_status': 'upload_pending',
+        'local_path': 'pending_uploads/$messageId/$messageId-a.jpg',
+      });
+      final expected = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[messageId],
+      )).single;
+      return (
+        messageId: messageId,
+        expected: expected,
+        tombstone: <String, Object?>{
+          ...expected,
+          'text': '',
+          'status': 'sending',
+          'transport': null,
+          'deleted_at': _t1,
+          'deleted_by_peer_id': _sender,
+          'wire_envelope': resolvedEnvelope,
+        },
+        eventId: resolvedEventId,
+        envelope: resolvedEnvelope,
+      );
+    }
+
+    Future<DbDirectPrivateDeletionCustodyStageResult> stage(
+      ({
+        String messageId,
+        Map<String, Object?> expected,
+        Map<String, Object?> tombstone,
+        String eventId,
+        String envelope,
+      })
+      seed, {
+      int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+    }) => dbStageOutgoingDirectPrivateDeletionInboxCustody(
+      current,
+      expectedRow: seed.expected,
+      tombstoneRow: seed.tombstone,
+      recipientPeerId: _recipient,
+      eventId: seed.eventId,
+      wireEnvelope: seed.envelope,
+      capacity: capacity,
+    );
+
+    /// The complete ordered inventory every refusal must leave byte-identical.
+    Future<Map<String, List<Map<String, Object?>>>> inventory() async => {
+      'messages': await current.query('messages', orderBy: 'id ASC'),
+      'v109': await current.query(
+        'direct_reaction_inbox_custody_outbox',
+        orderBy: 'recipient_peer_id ASC, event_id ASC',
+      ),
+      'v108': await current.query(
+        'direct_inbox_custody_outbox',
+        orderBy: 'recipient_peer_id ASC, message_id ASC',
+      ),
+      'v111': await current.query(
+        'direct_media_blob_custody',
+        orderBy: 'attachment_id ASC',
+      ),
+      'attachments': await current.query(
+        'media_attachments',
+        orderBy: 'id ASC',
+      ),
+    };
+
+    /// Deposits the exact physical v109 row a prior attempt would have left,
+    /// using the same shape every other mutation owner writes.
+    Future<void> seedExistingEvent(String eventId, String envelope) =>
+        current.insert('direct_reaction_inbox_custody_outbox', <String, Object?>{
+          'recipient_peer_id': _recipient,
+          'event_id': eventId,
+          'wire_envelope': envelope,
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'created_at': _t0,
+          'updated_at': _t0,
+        });
+
+    Future<void> expectRefusedWithNoEffect(
+      String label,
+      Future<DbDirectPrivateDeletionCustodyStageResult> Function() action,
+    ) async {
+      final before = await inventory();
+      final result = await action();
+      expect(
+        result.outcome,
+        OutgoingOrdinaryMutationOutcome.refused,
+        reason: label,
+      );
+      expect(result.messageRow, isNull, reason: label);
+      expect(result.custodyRow, isNull, reason: label);
+      expect(await inventory(), before, reason: label);
+    }
+
+    // 1. The only authorized replay: the persisted parent already IS the exact
+    //    supplied tombstone. Exact replay still wins before shared capacity.
+    final persisted = await seedLiveParent('persisted');
+    expect(
+      (await stage(persisted)).outcome,
+      OutgoingOrdinaryMutationOutcome.applied,
+    );
+    final replayed = await stage(persisted, capacity: 0);
+    expect(replayed.outcome, OutgoingOrdinaryMutationOutcome.idempotent);
+    expect(replayed.custodyRow!['event_id'], persisted.eventId);
+    expect(
+      replayed.messageRow!['id'],
+      persisted.messageId,
+      reason: 'replay returns the persisted tombstone, never a foreign parent',
+    );
+    expect(replayed.messageRow!['deleted_at'], _t1);
+    expect(replayed.messageRow!['status'], 'sending');
+    expect(replayed.messageRow!['wire_envelope'], persisted.envelope);
+
+    // 2. A LIVE parent whose event already sits in v109 may not authorize
+    //    transport: no durable tombstone exists for it yet.
+    final live = await seedLiveParent('live-parent');
+    await seedExistingEvent(live.eventId, live.envelope);
+    await expectRefusedWithNoEffect(
+      'a live parent can never be authorized by a pre-existing event',
+      () => stage(live),
+    );
+
+    // 3. The deletion envelope carries no target binding, so the same event
+    //    presented for a DIFFERENT live message must refuse.
+    final crossed = await seedLiveParent(
+      'crossed-target',
+      eventId: persisted.eventId,
+      envelope: persisted.envelope,
+    );
+    await expectRefusedWithNoEffect(
+      'a crossed message id cannot inherit another parent\'s event',
+      () => stage(crossed),
+    );
+
+    // 4. Two outgoing rows projecting one envelope are ambiguous.
+    final ambiguous = await seedLiveParent('ambiguous');
+    expect(
+      (await stage(ambiguous)).outcome,
+      OutgoingOrdinaryMutationOutcome.applied,
+    );
+    await current.insert('messages', <String, Object?>{
+      ...ambiguous.tombstone,
+      'id': '${ambiguous.messageId}-twin',
+    });
+    await expectRefusedWithNoEffect(
+      'two parents projecting one envelope cannot be disambiguated',
+      () => stage(ambiguous, capacity: 0),
+    );
+
+    // 5. A physically removed parent is authoritative: replay never recreates
+    //    it, and the pre-existing event stays drainable.
+    final removed = await seedLiveParent('removed-parent');
+    expect(
+      (await stage(removed)).outcome,
+      OutgoingOrdinaryMutationOutcome.applied,
+    );
+    await current.delete(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[removed.messageId],
+    );
+    await expectRefusedWithNoEffect(
+      'an absent parent cannot be resurrected by replay',
+      () => stage(removed),
+    );
+    expect(
+      await current.query(
+        'direct_reaction_inbox_custody_outbox',
+        where: 'event_id = ?',
+        whereArgs: <Object?>[removed.eventId],
+      ),
+      hasLength(1),
+      reason: 'the pre-existing event remains its own drain obligation',
+    );
+
+    // 6. Immutable-projection drift on the persisted row refuses.
+    Future<void> expectDriftRefuses(
+      String suffix,
+      Map<String, Object?> drift,
+    ) async {
+      final seed = await seedLiveParent(suffix);
+      expect(
+        (await stage(seed)).outcome,
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      await current.update(
+        'messages',
+        drift,
+        where: 'id = ?',
+        whereArgs: <Object?>[seed.messageId],
+      );
+      await expectRefusedWithNoEffect(
+        'persisted drift ${drift.keys.join(',')} refuses',
+        () => stage(seed, capacity: 0),
+      );
+    }
+
+    await expectDriftRefuses('drift-timestamp', <String, Object?>{
+      'timestamp': _t2,
+    });
+    await expectDriftRefuses('drift-status', <String, Object?>{
+      'status': 'failed',
+    });
+    await expectDriftRefuses('drift-transport', <String, Object?>{
+      'transport': 'inbox',
+      'relay_expires_at': 1900000060000,
+    });
+    await expectDriftRefuses('drift-duration', <String, Object?>{
+      'private_media_duration_seconds': 3600,
+    });
+    await expectDriftRefuses('drift-author', <String, Object?>{
+      'deleted_by_peer_id': 'peer-impostor',
+    });
+    await expectDriftRefuses('drift-caption', <String, Object?>{
+      'text': 'restored caption',
+    });
+
+    // 7. Only local read/hide and the incumbent private lifecycle clocks may
+    //    drift under an otherwise exact replay.
+    final tolerated = await seedLiveParent('tolerated-drift');
+    expect(
+      (await stage(tolerated)).outcome,
+      OutgoingOrdinaryMutationOutcome.applied,
+    );
+    await current.update(
+      'messages',
+      <String, Object?>{
+        'read_at': _t2,
+        'hidden_at': _t2,
+        'private_media_state': 'consumed',
+        'private_media_terminal_at_ms': 1900000000000,
+        'private_media_clock_high_water_ms': 2000,
+      },
+      where: 'id = ?',
+      whereArgs: <Object?>[tolerated.messageId],
+    );
+    final toleratedReplay = await stage(tolerated, capacity: 0);
+    expect(
+      toleratedReplay.outcome,
+      OutgoingOrdinaryMutationOutcome.idempotent,
+      reason: 'local hide and lifecycle clocks are not deletion identity',
+    );
+    expect(toleratedReplay.messageRow!['hidden_at'], _t2);
+  });
 }
 
 ReactionRepositoryImpl _repository(Database db, {required int capacity}) =>
