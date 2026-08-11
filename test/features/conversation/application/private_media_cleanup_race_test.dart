@@ -1726,27 +1726,24 @@ void main() {
             updatedAt: t0,
           ).toMap(),
         );
-        await target.db.insert(
-          'direct_inbox_custody_outbox',
-          <String, Object?>{
-            'recipient_peer_id': recipient,
-            'message_id': messageId,
-            'incarnation_id': incarnationId,
-            'wire_envelope': initialEnvelope,
-            'retry_count': 0,
-            'created_at': t0,
-            'updated_at': t0,
-            'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
-              <DirectMediaBlobManifestProjection>[
-                DirectMediaBlobManifestProjection(
-                  attachmentId: attachmentId,
-                  commitment: commitment,
-                ),
-              ],
-            ),
-            'media_blob_expires_at_ms': expiresAtMs,
-          },
-        );
+        await target.db.insert('direct_inbox_custody_outbox', <String, Object?>{
+          'recipient_peer_id': recipient,
+          'message_id': messageId,
+          'incarnation_id': incarnationId,
+          'wire_envelope': initialEnvelope,
+          'retry_count': 0,
+          'created_at': t0,
+          'updated_at': t0,
+          'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
+            <DirectMediaBlobManifestProjection>[
+              DirectMediaBlobManifestProjection(
+                attachmentId: attachmentId,
+                commitment: commitment,
+              ),
+            ],
+          ),
+          'media_blob_expires_at_ms': expiresAtMs,
+        });
       }
       return (
         parent: (await target.messageRepo.getMessage(messageId))!,
@@ -1880,25 +1877,50 @@ void main() {
       );
       expect(gatedManager.deletedFilePaths, isNotEmpty);
 
-      // --- ORDER B: a LIVE v108/bound v111 generation retains its exact
-      // attachment, key and artifacts through the same deletion. ---
-      final second = await MediaRepositoryRealDbFixture.create();
+      // --- ORDER B: the incumbent lifecycle contender owns the lease FIRST,
+      // so no tombstone, v109 or cleanup may commit until it releases. The
+      // same run proves that a LIVE v108/bound v111 generation retains its
+      // exact attachment, key and artifacts through the deletion. ---
+      final secondLock = _SignallingLifecycleLock();
+      final second = await MediaRepositoryRealDbFixture.create(
+        lifecycleLock: secondLock,
+      );
       addTearDown(second.dispose);
+      final orderB = <String>[];
       const messageIdB = 'tc359-02b-live-custody';
       final seededB = await seedDisappearingParent(
         second,
         messageIdB,
         live: true,
       );
+
+      final contenderHoldsLease = Completer<void>();
+      final releaseContender = Completer<void>();
+      addTearDown(() {
+        if (!releaseContender.isCompleted) releaseContender.complete();
+      });
+      final contenderB = second.repo.lifecycleLock.synchronized(
+        seededB.attachmentId,
+        () async {
+          orderB.add('contender-entered');
+          if (!contenderHoldsLease.isCompleted) contenderHoldsLease.complete();
+          await releaseContender.future;
+        },
+      );
+      await contenderHoldsLease.future.timeout(const Duration(seconds: 10));
+
       final networkB = FakeP2PNetwork();
       final stoppedB = _StoppedPrivateDeleteP2PService(
         peerId: sender,
         network: networkB,
       );
       addTearDown(stoppedB.dispose);
-      final managerB = FakeMediaFileManager();
-
-      final (resultB, tombstoneB) = await deleteMessageForEveryone(
+      final managerB = _GatedCleanupMediaFileManager(
+        onFirstDelete: () async => orderB.add('deletion-entered'),
+      );
+      // The deletion's OWN exclusive acquisition attempt is the signal.
+      final deletionAttempted = secondLock.nextExclusiveAttempt();
+      final deletionB = deleteMessageForEveryone(
         p2pService: stoppedB,
         messageRepo: second.messageRepo,
         originalMessage: seededB.parent,
@@ -1907,6 +1929,36 @@ void main() {
         bridge: PassthroughCryptoBridge(),
         recipientMlKemPublicKey: recipientMlKemPublicKey,
       );
+      await deletionAttempted.timeout(const Duration(seconds: 10));
+      orderB.add('deletion-attempted');
+
+      expect(
+        (await second.db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageIdB],
+        )).single['deleted_at'],
+        isNull,
+        reason:
+            'no tombstone may commit while the incumbent lifecycle contender '
+            'still owns the private lease',
+      );
+      expect(await v109RowsFor(second, messageIdB), isEmpty);
+      expect(managerB.deletedFilePaths, isEmpty);
+      expect(networkB.deliverCallCount, 0);
+      expect(networkB.storeInInboxCallCount, 0);
+
+      orderB.add('contender-released');
+      releaseContender.complete();
+      await contenderB.timeout(const Duration(seconds: 10));
+      final (resultB, tombstoneB) = await deletionB.timeout(
+        const Duration(seconds: 10),
+      );
+      expect(orderB, <String>[
+        'contender-entered',
+        'deletion-attempted',
+        'contender-released',
+      ], reason: 'the deletion never entered artifact cleanup at all');
 
       expect(resultB, SendChatMessageResult.nodeNotRunning);
       expect(tombstoneB?.isDeleted, isTrue);
