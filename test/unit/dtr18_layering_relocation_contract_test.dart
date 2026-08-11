@@ -167,10 +167,13 @@ const _applicationRootNormalizedSha256 =
 // `startLiveServicesIfAllowed` closure and passes the database-backed
 // linked-device trust capability to MyApp; it also publishes that owner's
 // resolved transport peer to the already-present P2P service's synchronous
-// qualifier through one forward reference. All three are wiring on
-// already-present owners, and nothing moved.
+// qualifier through one forward reference. The Plan-360 bounded repair adds
+// three more wirings on the same already-present owners: the authority load is
+// bound to the current account peer, the logical account peer is published to
+// the P2P migration gate, and the shipping receiver start is wrapped by the
+// linked-destination precondition. Nothing moved.
 const _productionBootstrapNormalizedSha256 =
-    '4dde742d9ad855fab52dd18dd4b575b57d0849c5162154608a6e1ccb01222569';
+    '109545637f7b3a2418ab86f6eea2dee687f7ad5b1f1b540527ef69919913e3d4';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -130,6 +130,22 @@ class P2PServiceImpl
   /// STOPS the node rather than warming it.
   final String? Function()? _requiredTransportPeerId;
 
+  /// 360: resolves the LOGICAL account peer while this installation runs a
+  /// linked transport, or null on an ordinary primary.
+  ///
+  /// The account-migration side-effect gate decides on ACCOUNT authority. Handed
+  /// a transport peer it would be asking about an identity that authority never
+  /// covers, so a migrated-out account could keep transmitting from its linked
+  /// device.
+  final String? Function()? _logicalAccountPeerId;
+
+  /// The peer the account-migration gate must be asked about for [peerId].
+  String _accountAuthorityPeerId(String peerId) {
+    final logical = _logicalAccountPeerId?.call()?.trim();
+    if (logical == null || logical.isEmpty) return peerId;
+    return logical;
+  }
+
   final _stateController = StreamController<NodeState>.broadcast();
   final _messageController = StreamController<ChatMessage>.broadcast();
   final _incomingLocalMediaController =
@@ -284,13 +300,18 @@ class P2PServiceImpl
     // MUST be exactly that transport. Null (every existing call site) keeps the
     // incumbent primary contract byte-for-byte.
     String? Function()? requiredTransportPeerId,
+    // 360: the LOGICAL account peer on a linked secondary. Account-migration
+    // authority is an account-level fact and must never be evaluated against a
+    // per-device transport peer.
+    String? Function()? logicalAccountPeerId,
   }) : _bridge = bridge,
        _pushTokenStore = pushTokenStore,
        _liveFcmTokenReader = liveFcmTokenReader,
        _accountMigrationNetworkGate = accountMigrationNetworkGate,
        _keyRotationGracePeriodOverride = keyRotationGracePeriodOverride,
        _networkChangeSignal = networkChangeSignal,
-       _requiredTransportPeerId = requiredTransportPeerId {
+       _requiredTransportPeerId = requiredTransportPeerId,
+       _logicalAccountPeerId = logicalAccountPeerId {
     _inboxCoordinator = _P2PInboxCoordinator(
       port: _P2PInboxPort(
         readNodeState: () => _currentState,
@@ -577,7 +598,7 @@ class P2PServiceImpl
   Future<bool> startNode(String privateKeyBase64, String peerId) async {
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_start_node',
-      peerId: peerId,
+      peerId: _accountAuthorityPeerId(peerId),
     )) {
       return false;
     }
@@ -659,7 +680,7 @@ class P2PServiceImpl
   Future<bool> startNodeCore(String privateKeyBase64, String peerId) async {
     if (!await _allowsAccountNetworkSideEffects(
       'p2p_start_node_core',
-      peerId: peerId,
+      peerId: _accountAuthorityPeerId(peerId),
     )) {
       return false;
     }

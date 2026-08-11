@@ -516,12 +516,15 @@ Verdict: `POST_EXECUTION_REVIEW_INCOMPLETE`. The execution receipts above remain
 valid historical evidence, but they do not yet constitute a clean, callable
 closure for Plan 361.
 
-- **No auditable closure commit exists.** `HEAD` is still
-  `67eca670b72de69994be7e8bd5ffe4ace3f9d372`, the pre-implementation Plan-360
-  documentation commit. The production, test, script, Graphify, plan and receipt
-  changes are unstaged/untracked in the shared worktree. The fresh review graph
-  fingerprint `b3f410251f97cbbb` describes that dirty candidate and MUST NOT be
-  pinned as a committed closure fingerprint.
+- **No auditable closure commit exists.** `HEAD` was still
+  `67eca670b72de69994be7e8bd5ffe4ace3f9d372` when this audit ran, with the
+  production, test, script, Graphify, plan and receipt changes unstaged in the
+  shared worktree. The review graph fingerprint `b3f410251f97cbbb` describes
+  that dirty candidate and MUST NOT be pinned as a committed closure
+  fingerprint. **Resolved:** the implementation was committed as
+  `6dc052573` while this audit was being written, and the bounded repair below
+  is committed on top; see the Repair Closure section for the auditable SHA and
+  the committed-tree fingerprint.
 - **The setup and QR authority are not production-callable.** The main
   `StartupRouter` does not supply `IdentityChoiceWired.linkedDeviceSetupBuilder`;
   production QR display/scanner/profile composition does not supply the linked
@@ -563,6 +566,51 @@ Bounded repair contract:
 6. Commit the complete Plan-360 implementation and repair, require a clean tree,
    run one incremental Graphify refresh/review against that commit, and record
    the resulting SHA/fingerprint before Plan 361 revalidation.
+
+## Repair Closure (2026-08-11)
+
+All five bounded-repair items are implemented and proven. Every finding was
+real; one of them — the Move guards — is the THIRD instance in this execution of
+the same defect class: a guard implemented and proven against an injected helper
+while the shipping call site never invoked it. The first two (the transport-peer
+barrier, and the role-aware start's dead qualifier) were caught during
+execution; this one was caught by review, after it had already been reported as
+delivered. Every repair below is therefore asserted together with its WIRING,
+not only its behavior.
+
+1. **Setup and QR authority are production-callable.** A new restricted
+   `LinkedDeviceSetupWired` route runs exactly the crash-safe setup use case and
+   then shows the dedicated dual-signed QR; `StartupRouter` supplies its builder
+   (`IdentityChoiceWired` still hides the entry unless the default-off selector
+   allows authoring), and `OrbitWired` supplies the known-contact
+   `onDirectLinkedDeviceQrScanned` action, which authenticates through the
+   existing parser and stages PENDING authority through a new
+   `stagePendingBinding` capability method. No messaging, event, group, push or
+   retry owner is started.
+2. **Both Move protections are on the real journey.** The shipping export
+   decision in `account_migration_journey_wired.dart` now receives
+   `linkedInstallationAuthority`, and production bootstrap wraps
+   `accountMigrationStartReceiver` with the destination precondition — with the
+   linked-role check ahead of the explicit-erase escape hatch, because erasing a
+   migrated-out account does not retire linked authority.
+3. **Logical-account qualification completed.** Bootstrap and the startup router
+   load authority with `expectedAccountPeerId`, so a credential bound to a
+   different logical account resolves `failClosed` instead of `active`; and
+   `P2PServiceImpl` gained a `logicalAccountPeerId` seam so the
+   account-migration side-effect gate is asked about the ACCOUNT peer, never the
+   per-device transport peer it does not cover.
+4. **Blocked-contact TOCTOU closed.** `_currentContactAuthority` reads
+   `is_blocked` alongside the account key, and the staging transaction refuses a
+   contact blocked between a successful parse and the write. The parser's own
+   check cannot protect the write, because authentication and staging are
+   separate operations.
+5. **Gates.** Focused TC-360 `+18` at concurrency 4; host `1to1` PASS 122/122;
+   completeness `1439/1439`; discovery contract PASS; all frozen contracts PASS
+   with three digests repinned with adjacent rationale and unchanged assertions
+   (production-bootstrap normalized sha, the P2P constructor parameter list, and
+   the facade API fingerprint, for the one added optional parameter).
+   `core-host-all` and the Android pair were deliberately NOT repeated: the
+   repair widened no schema, no test-path registration and no device boundary.
 
 ## Reviewer Findings
 

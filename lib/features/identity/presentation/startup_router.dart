@@ -60,6 +60,7 @@ import 'dart:io' show Platform;
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/features/identity/presentation/screens/linked_device_setup_wired.dart';
 import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/push/application/handle_initial_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/prepare_notification_route_target_use_case.dart';
@@ -793,6 +794,22 @@ class _StartupRouterState extends State<StartupRouter> {
                     groupRepo: widget.groupRepository,
                     backgroundPreference:
                         widget.appShellController.backgroundPreference,
+                    // 360: the restricted linked setup/status route. Supplied
+                    // unconditionally here; `IdentityChoiceWired` still hides
+                    // the entry unless the default-off direct selector allows
+                    // authoring, so a stock build has no entry point.
+                    linkedDeviceSetupBuilder: (_) => LinkedDeviceSetupWired(
+                      repository: repository,
+                      secureKeyStore: widget.secureKeyStore,
+                      bridge: bridge,
+                      callIdentityRestore: (mnemonic) =>
+                          callIdentityRestore(bridge, mnemonic),
+                      callMlKemKeygen: () => callMlKemKeygen(bridge),
+                      callIdentityGenerateForTransport: () =>
+                          callIdentityGenerate(bridge),
+                      backgroundPreference:
+                          widget.appShellController.backgroundPreference,
+                    ),
                     moveFromOldPhoneBuilder: (_) =>
                         AccountMigrationJourneyWired.newPhone(
                           bridge: bridge,
@@ -934,9 +951,13 @@ class _StartupRouterState extends State<StartupRouter> {
             // linked secondary starts its own transport; a half-written or
             // crossed credential refuses instead of falling back to the
             // account transport.
-            linkedAuthority: await LinkedInstallationAuthority(
-              secureKeyStore: widget.secureKeyStore,
-            ).load(),
+            linkedAuthority:
+                await LinkedInstallationAuthority(
+                  secureKeyStore: widget.secureKeyStore,
+                ).load(
+                  expectedAccountPeerId:
+                      (await widget.repository.loadIdentity())?.peerId,
+                ),
           );
 
     emitFlowEvent(

@@ -8,6 +8,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_safety_numbe
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
 
@@ -592,6 +593,8 @@ class _FakeDirectContactDeviceTrust
   _FakeDirectContactDeviceTrust({this.roster});
 
   final DirectContactDeviceRoster? roster;
+  final List<DirectLinkedDeviceQrDocument> stagedDocuments =
+      <DirectLinkedDeviceQrDocument>[];
   final List<List<String>> verifyCalls = <List<String>>[];
   final List<List<String>> rejectCalls = <List<String>>[];
   final List<List<String>> revokeCalls = <List<String>>[];
@@ -608,6 +611,14 @@ class _FakeDirectContactDeviceTrust
             bindings: const <DirectContactDeviceBinding>[],
           ),
     );
+  }
+
+  @override
+  Future<DirectContactDeviceBindingStageOutcome> stagePendingBinding(
+    DirectLinkedDeviceQrDocument document,
+  ) async {
+    stagedDocuments.add(document);
+    return DirectContactDeviceBindingStageOutcome.staged;
   }
 
   @override

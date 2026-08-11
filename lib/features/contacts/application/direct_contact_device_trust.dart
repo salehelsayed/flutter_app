@@ -1,4 +1,5 @@
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 /// The exact linked-device trust authority the contact profile owns.
@@ -12,6 +13,16 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 abstract interface class DirectContactDeviceTrustCapability {
   /// Loads the roster snapshot shown on the profile.
   Future<DirectContactDeviceRoster> loadRoster(String contactAccountPeerId);
+
+  /// Stages ONE authenticated linked-device document as `pending`.
+  ///
+  /// Admission is NOT granted here — the row is pending until explicit Verify
+  /// on the contact profile. The repository re-reads the contact's current
+  /// account key AND its blocked state inside the staging transaction, so a
+  /// contact blocked or rotated between the scan and this write is refused.
+  Future<DirectContactDeviceBindingStageOutcome> stagePendingBinding(
+    DirectLinkedDeviceQrDocument document,
+  );
 
   /// Activates exactly one PENDING binding.
   Future<bool> verifyDevice({
@@ -79,6 +90,11 @@ class UnavailableDirectContactDeviceTrust
   }
 
   @override
+  Future<DirectContactDeviceBindingStageOutcome> stagePendingBinding(
+    DirectLinkedDeviceQrDocument document,
+  ) => Future.value(DirectContactDeviceBindingStageOutcome.refused);
+
+  @override
   Future<bool> verifyDevice({
     required String contactAccountPeerId,
     required String deviceId,
@@ -128,6 +144,22 @@ class DatabaseDirectContactDeviceTrust
   @override
   Future<DirectContactDeviceRoster> loadRoster(String contactAccountPeerId) {
     return dbLoadDirectContactDeviceRoster(_database, contactAccountPeerId);
+  }
+
+  @override
+  Future<DirectContactDeviceBindingStageOutcome> stagePendingBinding(
+    DirectLinkedDeviceQrDocument document,
+  ) {
+    return dbStageDirectContactDeviceBinding(
+      _database,
+      contactAccountPeerId: document.accountPeerId,
+      accountSigningPublicKey: document.accountPublicKey,
+      deviceId: document.deviceId,
+      transportPeerId: document.transportPeerId,
+      transportPublicKey: document.transportPublicKey,
+      deviceMlKemPublicKey: document.deviceMlKemPublicKey,
+      stagedAt: _decidedAt,
+    );
   }
 
   @override

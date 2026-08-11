@@ -29,6 +29,7 @@ import 'package:flutter_app/features/contact_request/application/decline_contact
 import 'package:flutter_app/features/contact_request/domain/models/contact_request_model.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/contact_profile/presentation/screens/contact_profile_screen.dart';
 import 'package:flutter_app/features/contact_request/presentation/widgets/contact_request_dialog.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -2698,11 +2699,61 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
 
   // 209: same Future-returning contract as [_onMyQR]; the `.then` keeps the
   // post-scan `_applyRouteChanges` refresh and completes on scanner pop.
+  /// 360: authenticates a scanned linked-device document for an EXISTING
+  /// contact and stages exactly one `pending` binding.
+  ///
+  /// Everything admission-related stays where it already lives: the parser owns
+  /// authentication (dual signatures, both peer derivations, canonical UTC age
+  /// and skew, known non-blocked contact, byte-equal stored account material),
+  /// the repository owns the transactional stage, and explicit Verify/Reject on
+  /// the contact profile owns admission. This wiring adds no new authority — it
+  /// only makes the existing owners reachable from the trust flow.
+  Future<void> _stageScannedLinkedDeviceQr(
+    BuildContext scannerContext,
+    String qrData,
+  ) async {
+    final trust = widget.directDeviceTrust;
+    if (trust == null) return;
+    final (result, document) = await parseDirectLinkedDeviceQr(
+      qrString: qrData,
+      ownAccountPeerId: _identity?.peerId ?? '',
+      lookupContact: widget.contactRepo.getContact,
+      callVerify:
+          ({
+            required String publicKey,
+            required String data,
+            required String signature,
+          }) => callVerifyPayload(
+            bridge: widget.bridge,
+            publicKey: publicKey,
+            data: data,
+            signature: signature,
+          ),
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'DIRECT_LINKED_DEVICE_SCAN_RESULT',
+      details: {'result': result.name},
+    );
+    if (result != ParseDirectLinkedDeviceQrResult.success || document == null) {
+      return;
+    }
+    await trust.stagePendingBinding(document);
+  }
+
   Future<void> _onScanQR() {
     return Navigator.of(context)
         .push(
           buildConversationRoute(
             builder: (scannerContext) => QRScannerWired(
+              // 360: the known-contact linked-device scan action. Supplying it
+              // here is what makes the dedicated dual-signed document reach the
+              // trust flow instead of being refused as invalid; the handler
+              // itself still requires the default-off selector, an existing
+              // non-blocked contact, and byte-equal stored account material,
+              // and it stages PENDING authority only.
+              onDirectLinkedDeviceQrScanned: (qrData) =>
+                  _stageScannedLinkedDeviceQr(scannerContext, qrData),
               bridge: widget.bridge,
               contactRepository: widget.contactRepo,
               contactRequestRepository: widget.contactRequestRepo,

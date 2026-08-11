@@ -1,0 +1,176 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_app/core/bridge/bridge.dart'
+    show Bridge, callSignPayload, callVerifyPayload;
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/features/identity/application/linked_secondary_setup_use_case.dart';
+import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
+import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+
+/// The RESTRICTED linked-secondary setup and status route.
+///
+/// This is the only production surface that creates linked authority, and it is
+/// deliberately minimal. It runs exactly the crash-safe setup use case and then
+/// shows the dedicated dual-signed QR — it starts no messaging, event, group,
+/// push, or retry owner, because a linked secondary must not reach generic
+/// runtime startup until Plan 361 makes event fanout device-aware.
+///
+/// Reachable only when the direct selector is enabled; the composition root
+/// omits its builder entirely otherwise, so a stock build has no entry point.
+class LinkedDeviceSetupWired extends StatefulWidget {
+  const LinkedDeviceSetupWired({
+    super.key,
+    required this.repository,
+    required this.secureKeyStore,
+    required this.bridge,
+    required this.callIdentityRestore,
+    required this.callMlKemKeygen,
+    required this.callIdentityGenerateForTransport,
+    this.selector = const DirectLinkedDeviceSelector(),
+    this.backgroundPreference = BackgroundPreference.defaultBackground,
+  });
+
+  final IdentityRepository repository;
+  final SecureKeyStore secureKeyStore;
+  final Bridge bridge;
+  final Future<Map<String, dynamic>> Function(String mnemonic)
+  callIdentityRestore;
+  final Future<Map<String, dynamic>> Function() callMlKemKeygen;
+  final Future<Map<String, dynamic>> Function()
+  callIdentityGenerateForTransport;
+  final DirectLinkedDeviceSelector selector;
+  final BackgroundPreference backgroundPreference;
+
+  @override
+  State<LinkedDeviceSetupWired> createState() => _LinkedDeviceSetupWiredState();
+}
+
+class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
+  final TextEditingController _mnemonic = TextEditingController();
+  bool _busy = false;
+  bool _linked = false;
+  String? _error;
+
+  late final LinkedInstallationAuthority _authority =
+      LinkedInstallationAuthority(secureKeyStore: widget.secureKeyStore);
+
+  @override
+  void initState() {
+    super.initState();
+    unawaitedLoad();
+  }
+
+  void unawaitedLoad() {
+    _authority.load().then((snapshot) {
+      if (!mounted) return;
+      setState(() => _linked = snapshot.isActiveLinkedSecondary);
+    });
+  }
+
+  @override
+  void dispose() {
+    _mnemonic.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+    });
+    final result = await setUpLinkedSecondaryInstallation(
+      mnemonic: _mnemonic.text,
+      authority: _authority,
+      identityRepo: widget.repository,
+      callRestore: widget.callIdentityRestore,
+      callMlKemKeygen: widget.callMlKemKeygen,
+      callIdentityGenerate: widget.callIdentityGenerateForTransport,
+      callSign: (data, privateKey) => callSignPayload(
+        bridge: widget.bridge,
+        dataToSign: data,
+        privateKey: privateKey,
+      ),
+      callVerify:
+          ({
+            required String publicKey,
+            required String data,
+            required String signature,
+          }) => callVerifyPayload(
+            bridge: widget.bridge,
+            publicKey: publicKey,
+            data: data,
+            signature: signature,
+          ),
+      selector: widget.selector,
+    );
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'LINKED_DEVICE_SETUP_ROUTE_RESULT',
+      details: {'result': result.name},
+    );
+    if (!mounted) return;
+    setState(() {
+      _busy = false;
+      _linked = result == LinkedSecondarySetupResult.success;
+      _error = result == LinkedSecondarySetupResult.success
+          ? null
+          : 'Could not link this device (${result.name}).';
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_linked) {
+      // Status route: the dedicated dual-signed device QR, nothing else.
+      return QRDisplayWired(
+        repo: widget.repository,
+        bridgeClient: widget.bridge,
+        onClose: () => Navigator.of(context).maybePop(),
+        backgroundPreference: widget.backgroundPreference,
+        linkedDeviceQrSource: DirectLinkedDeviceQrSource(
+          selector: widget.selector,
+          loadAuthority: _authority.load,
+        ),
+      );
+    }
+
+    return Scaffold(
+      appBar: AppBar(title: const Text('Link this device')),
+      body: Padding(
+        padding: const EdgeInsets.all(20),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const Text(
+              'Enter the 12-word recovery phrase of the account you want this '
+              'phone to join as an additional device.',
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              key: const Key('linked-device-setup-mnemonic'),
+              controller: _mnemonic,
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(border: OutlineInputBorder()),
+            ),
+            if (_error case final error?) ...[
+              const SizedBox(height: 12),
+              Text(error, key: const Key('linked-device-setup-error')),
+            ],
+            const SizedBox(height: 20),
+            FilledButton(
+              key: const Key('linked-device-setup-submit'),
+              onPressed: _busy ? null : _submit,
+              child: Text(_busy ? 'Linking…' : 'Link this device'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

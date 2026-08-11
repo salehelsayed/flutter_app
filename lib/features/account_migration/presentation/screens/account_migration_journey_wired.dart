@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/account_migration/application/migration_pairing_session_repository_impl.dart';
 import 'package:flutter_app/features/account_migration/application/migration_qr_payload_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/migration_transfer_keep_alive.dart';
@@ -394,6 +395,13 @@ class _AccountMigrationJourneyWiredState
       ),
       payload: payload,
       authorizedAt: DateTime.now().toUtc(),
+      // 360: the linked-source refusal must be on the REAL export decision, not
+      // only on an injected helper. A linked secondary does not own the account,
+      // so exporting from it would hand a destination an account this device was
+      // never the authority for while the real primary keeps running.
+      linkedInstallationAuthority: LinkedInstallationAuthority(
+        secureKeyStore: widget.secureKeyStore,
+      ),
     );
 
     if (result != MigrationExportAuthorizationResult.authorized ||

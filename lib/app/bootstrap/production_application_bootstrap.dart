@@ -8,6 +8,11 @@ import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_import_precondition.dart';
+import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart'
+    show
+        AccountMigrationReceiverStartResult,
+        AccountMigrationReceiverStartFailureCode;
 import 'package:flutter_app/debug/debug_e2e_composition_root.dart';
 import 'package:flutter_app/core/database/migrations/005_secret_null_checks.dart';
 import 'package:flutter_app/core/device/disk_space.dart';
@@ -4597,6 +4602,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     p2pService = P2PServiceImpl(
       requiredTransportPeerId: () =>
           roleAwareDeferredRuntimeStartRef?.activeLinkedTransportPeerId,
+      logicalAccountPeerId: () =>
+          roleAwareDeferredRuntimeStartRef?.activeLinkedAccountPeerId,
       bridge: bridge,
       localP2PService: localP2PService,
       pushTokenStore: pushTokenStore,
@@ -6846,8 +6853,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // mode, because every one of those owners assumes a single primary
     // installation on one account mailbox. Plan 361 makes them device-aware.
     final roleAwareDeferredRuntimeStart = RoleAwareDeferredRuntimeStart(
-      loadLinkedAuthority: () =>
-          LinkedInstallationAuthority(secureKeyStore: secureKeyStore).load(),
+      // 360: bind the load to the CURRENT account peer. Without the expected
+      // peer, a credential bound to a different logical account resolves as a
+      // usable `active` snapshot instead of `failClosed`, and this installation
+      // would start a transport that belongs to someone else's account.
+      loadLinkedAuthority: () async {
+        final identity = await repository.loadIdentity();
+        return LinkedInstallationAuthority(
+          secureKeyStore: secureKeyStore,
+        ).load(expectedAccountPeerId: identity?.peerId);
+      },
       startPrimaryRuntimeServices: startLiveServicesIfAllowed,
       startLinkedFoundationPrerequisites: () async {
         await bridge.initialize();
@@ -7051,8 +7066,40 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         accountMigrationRunTransfer:
             accountMigrationTransferRuntime.runOldPhoneTransfer,
         accountMigrationSizeGate: accountMigrationSizeGate,
-        accountMigrationStartReceiver:
-            accountMigrationTransferRuntime.startNewPhoneReceiver,
+        // 360: the linked-DESTINATION refusal must be on the REAL journey, not
+        // only on an injected helper. A linked secondary is a restricted role,
+        // not a second primary, so it can never receive an account import —
+        // that would leave one installation holding both a promoted primary
+        // identity and a transport credential contacts have already bound
+        // device rows to. Checked BEFORE the receiver starts, and the
+        // linked-role check inside the precondition deliberately runs ahead of
+        // the explicit-erase escape hatch, because erasing a migrated-out
+        // account does not retire linked authority.
+        accountMigrationStartReceiver: (output) async {
+          final precondition = await evaluateAccountMigrationImportPrecondition(
+            identityRepository: repository,
+            authorityRepository:
+                SecureKeyStoreAccountMigrationAuthorityRepository(
+                  secureKeyStore: secureKeyStore,
+                ),
+            explicitErasePreconditionSatisfied: true,
+            linkedInstallationAuthority: LinkedInstallationAuthority(
+              secureKeyStore: secureKeyStore,
+            ),
+          );
+          if (precondition.status ==
+              AccountMigrationImportPreconditionStatus
+                  .linkedSecondaryInstallation) {
+            return const AccountMigrationReceiverStartResult.failure(
+              code:
+                  AccountMigrationReceiverStartFailureCode.receiverUnavailable,
+              safeMessage:
+                  'This device is set up as a linked device, so it cannot '
+                  'receive an account. Use a phone that is not linked.',
+            );
+          }
+          return accountMigrationTransferRuntime.startNewPhoneReceiver(output);
+        },
         accountMigrationStopReceiver:
             accountMigrationTransferRuntime.stopNewPhoneReceiver,
         accountMigrationReceiverEvents:

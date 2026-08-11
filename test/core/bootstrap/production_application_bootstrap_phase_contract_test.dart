@@ -1220,6 +1220,64 @@ void main() {
         );
       }
 
+      // ── The logical ACCOUNT peer is published too, and the P2P service is
+      // asked about THAT peer by the account-migration gate — never the
+      // transport peer, which account authority does not cover. ──
+      final wiring = File(_productionPath).readAsStringSync();
+      final accountPublisher = build(LinkedInstallationDisposition.active);
+      await accountPublisher.start();
+      expect(accountPublisher.activeLinkedAccountPeerId, 'account-peer');
+      final accountRefuser = build(LinkedInstallationDisposition.preparing);
+      await accountRefuser.start();
+      expect(accountRefuser.activeLinkedAccountPeerId, isNull);
+      expect(
+        build(LinkedInstallationDisposition.primary).activeLinkedAccountPeerId,
+        isNull,
+      );
+      expect(wiring, contains('logicalAccountPeerId: () =>'));
+      expect(wiring, contains('activeLinkedAccountPeerId,'));
+
+      // ── Bootstrap binds the authority load to the CURRENT account peer.
+      // Without it a credential bound to a DIFFERENT logical account resolves
+      // as a usable `active` snapshot instead of `failClosed`. ──
+      expect(
+        wiring,
+        contains('.load(expectedAccountPeerId: identity?.peerId)'),
+      );
+
+      // ── Both Move protections are on the REAL journey, not just injected
+      // helpers. ──
+      expect(
+        wiring,
+        contains('accountMigrationStartReceiver: (output) async {'),
+      );
+      expect(wiring, contains('evaluateAccountMigrationImportPrecondition('));
+      expect(wiring, contains('.linkedSecondaryInstallation'));
+      expect(
+        File(
+          'lib/features/account_migration/presentation/screens/'
+          'account_migration_journey_wired.dart',
+        ).readAsStringSync(),
+        contains('linkedInstallationAuthority: LinkedInstallationAuthority('),
+        reason: 'the real export decision must receive the linked guard',
+      );
+
+      // ── The restricted setup route and the known-contact scan action are
+      // supplied by the production composition roots, so the authority is
+      // reachable rather than dead code behind a default-off flag. ──
+      expect(
+        File(
+          'lib/features/identity/presentation/startup_router.dart',
+        ).readAsStringSync(),
+        contains('linkedDeviceSetupBuilder: (_) => LinkedDeviceSetupWired('),
+      );
+      expect(
+        File(
+          'lib/features/orbit/presentation/screens/orbit_wired.dart',
+        ).readAsStringSync(),
+        contains('onDirectLinkedDeviceQrScanned:'),
+      );
+
       // ── An unreadable authority is fail-closed, never "assume primary".
       primaryStarts = 0;
       linkedFoundationStarts = 0;

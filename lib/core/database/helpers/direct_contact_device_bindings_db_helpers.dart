@@ -229,19 +229,38 @@ String computeDirectContactLegacyTargetFingerprint({
 
 bool _isBlank(String? value) => value == null || value.trim().isEmpty;
 
-/// Reads the contact's CURRENT account signing key inside [txn].
+/// The contact facts every admission and resolution re-reads transactionally.
+class _CurrentContactAuthority {
+  const _CurrentContactAuthority({
+    required this.accountSigningPublicKey,
+    required this.isBlocked,
+  });
+
+  final String accountSigningPublicKey;
+  final bool isBlocked;
+}
+
+/// Reads the contact's CURRENT account signing key and blocked state in [txn].
 ///
-/// Returns null when the contact does not exist. Every trust decision and
-/// every resolution re-reads this rather than trusting a value the UI captured
-/// earlier: a contact whose account key rotated must invalidate stale device
-/// authority instead of silently keeping it.
-Future<String?> _currentContactAccountKey(
+/// Returns null when the contact does not exist, or when its account key is
+/// missing. Every trust decision and every resolution re-reads this rather than
+/// trusting a value the UI or a QR parse captured earlier: a contact whose
+/// account key rotated must invalidate stale device authority instead of
+/// silently keeping it.
+///
+/// Blocked state is read HERE, inside the transaction, not only at parse time.
+/// The scanner necessarily checks `contact.isBlocked` before it can even
+/// authenticate a document, but that check and the staging write are separate
+/// operations — a contact blocked in between would otherwise still acquire a
+/// pending binding, and blocking is exactly the signal that the user no longer
+/// wants new authority from that person.
+Future<_CurrentContactAuthority?> _currentContactAuthority(
   DatabaseExecutor txn,
   String contactAccountPeerId,
 ) async {
   final rows = await txn.query(
     'contacts',
-    columns: const <String>['public_key'],
+    columns: const <String>['public_key', 'is_blocked'],
     where: 'peer_id = ?',
     whereArgs: <Object?>[contactAccountPeerId],
     limit: 1,
@@ -250,8 +269,24 @@ Future<String?> _currentContactAccountKey(
     return null;
   }
   final key = rows.first['public_key'];
-  return key is String && key.trim().isNotEmpty ? key : null;
+  if (key is! String || key.trim().isEmpty) {
+    return null;
+  }
+  final blocked = rows.first['is_blocked'];
+  return _CurrentContactAuthority(
+    accountSigningPublicKey: key,
+    isBlocked: blocked is int ? blocked != 0 : blocked == true,
+  );
 }
+
+/// Convenience for callers that only need the current account key.
+Future<String?> _currentContactAccountKey(
+  DatabaseExecutor txn,
+  String contactAccountPeerId,
+) async => (await _currentContactAuthority(
+  txn,
+  contactAccountPeerId,
+))?.accountSigningPublicKey;
 
 /// Stages one scanned linked-device binding as `pending`.
 ///
@@ -344,14 +379,20 @@ dbStageDirectContactDeviceBinding(
     return await dbWriteTransaction<DirectContactDeviceBindingStageOutcome>(
       db,
       (txn) async {
-        final currentAccountKey = await _currentContactAccountKey(
+        final currentAuthority = await _currentContactAuthority(
           txn,
           normalizedContact,
         );
-        if (currentAccountKey == null) {
+        if (currentAuthority == null) {
           return _refusedStage('unknown_contact');
         }
-        if (currentAccountKey != normalizedAccountKey) {
+        if (currentAuthority.isBlocked) {
+          // TOCTOU close: the scanner checked this before authenticating, but a
+          // contact blocked between that check and this write must not acquire
+          // authority.
+          return _refusedStage('blocked_contact');
+        }
+        if (currentAuthority.accountSigningPublicKey != normalizedAccountKey) {
           return _refusedStage('contact_account_key_drift');
         }
 

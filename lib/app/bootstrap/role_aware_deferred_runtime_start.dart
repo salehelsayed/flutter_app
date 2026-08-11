@@ -50,6 +50,7 @@ class RoleAwareDeferredRuntimeStart {
 
   RoleAwareRuntimeStartOutcome? _lastOutcome;
   String? _activeLinkedTransportPeerId;
+  String? _activeLinkedAccountPeerId;
 
   /// The outcome of the most recent [start], for diagnostics and proofs.
   RoleAwareRuntimeStartOutcome? get lastOutcome => _lastOutcome;
@@ -68,6 +69,15 @@ class RoleAwareDeferredRuntimeStart {
   /// the incumbent primary behavior.
   String? get activeLinkedTransportPeerId => _activeLinkedTransportPeerId;
 
+  /// The LOGICAL account peer an ACTIVE linked credential is bound to, or null
+  /// on an ordinary primary.
+  ///
+  /// The P2P service asks the account-migration gate about THIS peer, never the
+  /// transport peer: migration authority is account-level, and asking it about a
+  /// per-device identity it does not cover would let a migrated-out account keep
+  /// transmitting from its linked device.
+  String? get activeLinkedAccountPeerId => _activeLinkedAccountPeerId;
+
   /// Runs the correct startup for this installation's persisted role.
   ///
   /// Returns whether runtime services this installation is entitled to are
@@ -79,6 +89,7 @@ class RoleAwareDeferredRuntimeStart {
     } catch (error) {
       // An unreadable authority is fail-closed, never "assume primary".
       _activeLinkedTransportPeerId = null;
+      _activeLinkedAccountPeerId = null;
       emitFlowEvent(
         layer: 'FL',
         event: 'ROLE_AWARE_RUNTIME_START_AUTHORITY_ERROR',
@@ -90,6 +101,7 @@ class RoleAwareDeferredRuntimeStart {
 
     if (snapshot.isOrdinaryPrimary) {
       _activeLinkedTransportPeerId = null;
+      _activeLinkedAccountPeerId = null;
       _lastOutcome = RoleAwareRuntimeStartOutcome.primaryRuntimeStarted;
       return _startPrimaryRuntimeServices();
     }
@@ -98,6 +110,7 @@ class RoleAwareDeferredRuntimeStart {
       // Publish the exact transport peer BEFORE starting anything, so the node
       // start that follows is qualified against it.
       _activeLinkedTransportPeerId = snapshot.credential?.transportPeerId;
+      _activeLinkedAccountPeerId = snapshot.credential?.accountPeerId;
       emitFlowEvent(
         layer: 'FL',
         event: 'ROLE_AWARE_RUNTIME_START_LINKED_FOUNDATION',
@@ -108,6 +121,7 @@ class RoleAwareDeferredRuntimeStart {
     }
 
     _activeLinkedTransportPeerId = null;
+    _activeLinkedAccountPeerId = null;
     emitFlowEvent(
       layer: 'FL',
       event: 'ROLE_AWARE_RUNTIME_START_REFUSED',
