@@ -3,6 +3,7 @@
 Status: EXECUTION_COMPLETED / POST_EXECUTION_AUDIT_CLOSED / independently reviewed / default-off / not release-eligible
 Type: Modification
 Baseline: `4e24d7451c30d2a6f6f609dfcc3b0880d2ac70f6` (clean, committed, post-execution-audited Plan 358 closure HEAD)
+Repair closure HEAD: `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7` (committed post-execution repair and final causal proof; Graphify fingerprint `0c34708b5a8f68fa`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03/A-28; `Test-Flight-Improv/234-1to1-private-media-lifecycle-tdd-plan.md` D-234-01/D-234-02/D-234-05; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
 Classification: bounded mutation adopter plus explicit unsupported-product disposition; Plan 358's final durable disappearing lineage prerequisite is satisfied and revalidated
 Closure tier: behavioral host tests with current-schema SQLite, physical v108/v109/v111 rows, secure-key/temp-file cleanup and actual lifecycle locks; no schema, relay/native, device, activation, or release boundary
@@ -280,7 +281,7 @@ Targeted storage/sender, receiver/private-EDIT and gate/economy re-reviews retur
 
 **CLOSED (post-execution audit + bounded repair).** The addendum below is resolved; see `Addendum Closure`. Plan 360's prerequisite is satisfied at the repair commit.
 
-**EXECUTION_READY. Core bet confirmed.** Plan 359 is one bounded mutation slice: strict disappearing DFE reuses the existing media v109 transaction and private cleanup authority, legacy disappearing never promotes, and private EDIT is explicitly discarded through existing outcomes rather than gaining custody.
+**Historical execution decision (retained).** Plan 359 is one bounded mutation slice: strict disappearing DFE reuses the existing media v109 transaction and private cleanup authority, legacy disappearing never promotes, and private EDIT is explicitly discarded through existing outcomes rather than gaining custody.
 
 The proof is intentionally lean: seven causal rows in existing files, one concurrency-4 RED, one concurrency-4 final filtered proof, host `1to1` once, and the once-only direct-private/disappearing wave `host-all` at concurrency 4. That wave gate subsumes core/feature; no separate family, device, relay/native, completeness or registration campaign is authorized.
 

@@ -1,8 +1,8 @@
 # 360 - GAP-N01 Authenticated Direct Linked-Device Addressing Foundation
 
-Status: PREREQUISITE_SATISFIED_PENDING_COMMIT / independently reviewed / default-off / not release-eligible
+Status: EXECUTION_READY / independently reviewed / default-off / not release-eligible
 Type: Modification
-Planning baseline: Plan 359's post-execution addendum is CLOSED by a bounded in-place repair (lane-selector + ordinary settlement qualification before encryption; empty-text/null-edit guards on the shared storage predicate). The repair is proven and hygiene-clean but not yet committed at the time of writing: pin its exact commit SHA here before RED, verify ancestry from `9c67b1272a869e3696cddca2a57a09e31f29d6c3`, and confirm only Plan-359 repair files plus planning/index docs sit above the prior baseline.
+Planning baseline: `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7` (clean committed Plan 359 bounded-repair closure, descended from execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3`; lane-selector + ordinary settlement qualification precede encryption, and the shared storage predicate owns the empty-text/null-edit guards).
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; this linked-secondary authority remains distinct from the single-primary account-move MVP in `Test-Flight-Improv/Move-Feature/01-move-account-to-new-device-pr.md`
 Classification: identity, addressing, and explicit trust foundation only; no direct event or blob custody adopter
 Closure tier: host behavior + v112 migration + fixed-vector peer-derivation proof + one availability-bounded Android two-target identity/trust scenario; no activation, release, iOS, or full-host claim
@@ -17,6 +17,7 @@ Closure tier: host behavior + v112 migration + fixed-vector peer-derivation proo
 | 2026-08-11 | Test/gate review | Existing migration/identity/QR/profile tests; 1:1/core inventories; Android reliability runner; DTR-18 pins | Five compact host bundles plus one device acceptance are sufficient. Current inventory is host 1:1=120 and core Dart=404; the two planned headline paths would make them 122/405. | One final concurrency-4 focused proof, one serial 1:1, one core c4 sweep, fixed-vector Dart peer derivation, and one registered Android scenario; no feature/full-host/iOS campaign. |
 | 2026-08-11 | Plan 359 execution/source revalidation | Clean execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3`; current Graphify fingerprint `7a7dc08f28bf4b4d`; exact Plan-359 seven-file production diff versus this plan's owners | No production/test overlap changes Plan 360's reviewed identity/roster/QR boundary, and its command paths plus 120/404 pre-registration inventories remain valid. The separate Plan-359 audit found a bounded disappearing-DFE capability/predicate defect, so the required audited closure SHA does not yet exist. | Source-overlap revalidation passed; execution remains prerequisite-blocked only on the bounded Plan-359 repair and targeted re-audit. |
 | 2026-08-11 | Plan 359 repair closure and post-repair overlap | Plan-359 repair diff (`delete_message_use_case.dart`, `direct_reaction_inbox_custody_outbox_db_helpers.dart`, two existing test paths, one shared fixture flag); Graphify fingerprint `c83d9864200b15db`; host `1to1` 120/120 PASS | The repair touches only the direct deletion sender and the shared v109 storage predicate. It adds no identity, transport-peer, contact-roster, QR or migration surface, so Plan 360's reviewed boundary and its 120/404 pre-registration inventories are unchanged. Plan 359's addendum is closed, including a recorded deviation that deliberately leaves `_isExactOutgoingDisappearingLineage` broad. | Prerequisite satisfied. Pin the repair commit SHA as the planning baseline, re-run the one-query Graphify revalidation, then author RED. |
+| 2026-08-11 | Final prerequisite release | Committed Plan-359 repair closure `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; one post-commit review-profile Graphify query, fingerprint `0c34708b5a8f68fa`; literal Plan-360 command paths/inventories | No identity/startup/P2P, v112/contact-roster, QR/trust, migration, bootstrap or runner owner changed. Existing inventories remain host 1:1=120 and core Dart=404 before the two planned headline registrations. | `EXECUTION_READY`; author only the per-owner semantic REDs below. |
 
 ## Problem And Source-Backed Evidence
 
@@ -26,7 +27,7 @@ Closure tier: host behavior + v112 migration + fixed-vector peer-derivation proo
 - v108 helpers enforce one message owner, v109 authoring/completion is single-recipient despite its fanout-shaped key, and v111 is one attachment/recipient/incarnation. None can be safely widened here.
 - The account-move MVP deliberately permits one active primary. A linked secondary is a separate, restricted role: it cannot be a Move source/destination, cannot enter normal messaging before Plan 361, and cannot silently fall back to the account transport.
 - The existing contact-request transport is not suitable for device authority. Its LAN `from` is caller supplied, old receivers reject distinct transport/account identities, and its retry owner knows only contact ML-KEM exchange. A dedicated signed QR handoff for an already-known contact avoids a new network protocol and remains callable before Plan 361.
-- Plan 359 execution is committed and its production surface does not overlap this identity/roster/QR foundation. Its post-execution audit found a bounded disappearing-DFE fail-closed defect, which is now closed by an in-place repair to the deletion sender and the shared v109 storage predicate; that repair adds no identity, transport-peer, roster, QR or migration surface, so this foundation is unaffected. Pin the repair's commit SHA before authoring RED.
+- Plan 359's bounded repair is committed at `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`. It changes only the deletion sender and shared v109 storage predicate; it adds no identity, transport-peer, roster, QR or migration surface, so this foundation is unaffected.
 
 Expected production surface after the Plan-359 revalidation:
 
@@ -44,17 +45,17 @@ Stop and re-review before touching chat/reaction/deletion senders or receivers, 
 
 ## Graph Grounding Snapshot
 
-- Graph: `graphify-arch`, fingerprint `7a7dc08f28bf4b4d`; current at Plan 359 execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3`.
+- Graph: `graphify-arch`, fingerprint `0c34708b5a8f68fa`; current at committed Plan 359 repair closure `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`.
 - Planning query: `python3 graphify-arch/tdd_context.py query "GAP-N01 Plan 360 direct authenticated linked-device recipient roster and per-device v108 v109 event custody; current sender recipient authority, linked devices, direct inbox fanout, ACK completion, ContactModel and direct inbox custody outboxes" --profile tdd --budget 700`.
 - Review query: `python3 graphify-arch/tdd_context.py query "Review exact symbols startP2PNode restoreIdentityFromMnemonic ContactModel handleIncomingMessage direct_inbox_custody_outbox direct_reaction_inbox_custody_outbox GroupMemberDeviceIdentity pending_sibling_devices for Plan 360 linked device authority" --profile review --budget 800`.
 - Confidence: anchored; load-bearing claims were verified in source.
-- Revalidation: the execution-HEAD source/overlap pass found no Plan-360 boundary change. After the bounded Plan-359 repair closes, refresh/query once against its exact audit SHA; any new direct-device authority or overlap returns this artifact to review before RED.
+- Revalidation: both the execution-HEAD pass and the final post-repair committed-tree query found no Plan-360 boundary change. The prerequisite is satisfied; any later direct-device authority or unlisted overlap returns this artifact to review before RED.
 
 ## Scope Contract
 
 ### Prerequisite and roadmap split
 
-- Do not execute on a transient Plan-359 tree. Pin the exact Plan-359 repair-closure SHA, verify ancestry from `9c67b1272a869e3696cddca2a57a09e31f29d6c3`, and allow only Plan-360 planning/index docs above it before RED.
+- Execute from committed Plan-359 repair closure `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7` or a descendant containing only the Plan-359 committed-closure receipt plus Plan-360 planning/index/status/coverage docs before RED; verify ancestry from `9c67b1272a869e3696cddca2a57a09e31f29d6c3`.
 - Plan 360 establishes a production linked-secondary transport identity, a remote-contact device roster, explicit trust decisions, and a real QR producer/consumer. It does not adopt custody.
 - Plan 361 is the immediate consumer: blob-free fresh text v108 plus supported v109 reaction/edit/deletion fanout and receive authentication. Plan 362 owns every media/voice/v111 obligation. `TC-345-09b` single-owner behavior remains unchanged through Plan 360.
 - Record the maintained product arbitration: a linked secondary is not a second primary or an account-move target. It stays in a restricted setup/status/QR route until Plan 361. Generic recovery and Move remain single-primary.
@@ -137,7 +138,7 @@ Test notes:
 
 ## Implementation Steps
 
-1. Wait for Plan 359's bounded post-execution repair and clean audit. Pin that closure SHA, refresh/query Graphify, and revalidate every listed owner. The first execution-HEAD overlap pass at `9c67b1272a869e3696cddca2a57a09e31f29d6c3` found no boundary change.
+1. **Satisfied.** Plan 359's bounded repair is committed at `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; the final review-profile Graphify query is current at fingerprint `0c34708b5a8f68fa`, and every listed owner plus the 120/404 pre-registration inventories remain valid.
 2. Record the linked-secondary versus Move arbitration in maintained docs: restricted linked role, no second primary, Plan 361 immediate consumer.
 3. Register the new direct selector and author per-owner compile-clean REDs for TC-360-01a through 03b. Author the host runner contract but do not treat the device leg as RED.
 4. Add the two device-local secure records and crash-safe setup/resume owner. Keep primary recovery unchanged and gate linked source/destination Move.
@@ -161,18 +162,17 @@ Test notes:
 - Device: one registered physical-Android + Android-emulator scenario if available; otherwise `N/A (target unavailable by project policy)`. No iOS substitute or third device.
 - Not run: non-host 1:1, full `host-all`, feature family, Go/relay/native/bindings, SQLCipher duplicate, group, performance, feed/posts, iOS, activation/release campaigns.
 
-## Provisional Acceptance Commands
+## Acceptance Commands
 
-These commands remain blocked until the post-repair Plan-359 closure SHA replaces the placeholder and the final targeted source review passes.
+These commands are authorized from the pinned repair closure. Run each inner RED/GREEN only for its owning row, then run the final aggregate cadence once.
 
 ```bash
 # Preflight after Plan 359 repair/audit. A committed Plan-360 doc/index may sit above the base.
-PLAN360_ACCEPTED_BASE='<PLAN_359_POST_EXECUTION_AUDIT_SHA>'
-test "$PLAN360_ACCEPTED_BASE" != '<PLAN_359_POST_EXECUTION_AUDIT_SHA>'
+PLAN360_ACCEPTED_BASE='6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7'
 test -z "$(git status --porcelain)"
 git rev-parse --verify "${PLAN360_ACCEPTED_BASE}^{commit}"
 git merge-base --is-ancestor "$PLAN360_ACCEPTED_BASE" HEAD
-test -z "$(git diff --name-only "$PLAN360_ACCEPTED_BASE"...HEAD | grep -Ev '^(Test-Flight-Improv/360-gap-n01-authenticated-direct-device-addressing-authority-foundation-tdd-plan.md|Test-Flight-Improv/00-INDEX.md|STATUS.md)$' || true)"
+test -z "$(git diff --name-only "$PLAN360_ACCEPTED_BASE"...HEAD | grep -Ev '^(Test-Flight-Improv/359-gap-n01-disappearing-direct-media-delete-for-everyone-v109-custody-and-private-edit-disposition-tdd-plan.md|Test-Flight-Improv/360-gap-n01-authenticated-direct-device-addressing-authority-foundation-tdd-plan.md|Test-Flight-Improv/00-INDEX.md|STATUS.md|UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md)$' || true)"
 
 # Per-owner compile-clean semantic RED, then the same command for its inner GREEN.
 flutter test --concurrency=4 \
@@ -258,7 +258,7 @@ RELIABILITY_MULTI_DEVICE_IDS='<USB_ANDROID_ID>,<ANDROID_EMULATOR_ID>' \
 
 # Final static/hygiene checks.
 set -euo pipefail
-plan360_base_ref='<PLAN_359_POST_EXECUTION_AUDIT_SHA>'
+plan360_base_ref='6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7'
 flutter analyze
 plan360_dart_list="$(mktemp)"
 trap 'rm -f "$plan360_dart_list"' EXIT
@@ -295,7 +295,7 @@ The device runner must pass `--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=t
 
 ## Done Criteria
 
-- [ ] Plan 359's bounded post-execution repair is committed and audited, and its exact closure SHA/fresh Graphify fingerprint are pinned here. Execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3` is evidence only, not the accepted base.
+- [x] Plan 359's bounded post-execution repair is committed and audited at `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; fresh Graphify fingerprint `0c34708b5a8f68fa` is pinned here. Execution HEAD `9c67b1272a869e3696cddca2a57a09e31f29d6c3` remains historical evidence only.
 - [x] The maintained linked-secondary/Move arbitration and immediate Plan-361 consumer are recorded.
 - [ ] Five host bundles receive compile-clean behavioral REDs and one final concurrency-4 GREEN; TC-360-04a is a registered acceptance, not a fabricated host RED.
 - [ ] Three representative mutations re-red independently and are reverted.
@@ -338,14 +338,14 @@ The device runner must pass `--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=t
 
 ## Arbiter Decision
 
-`READY AS A REVIEWED CONTRACT / EXECUTION PREREQUISITE-BLOCKED.` The core bet is confirmed after narrowing: DB v112 remote-contact authority plus a stable distinct installation transport is necessary; v108/v109 and v111 adoption are separate owner-aligned plans. The QR substitution closes the unsafe contact-request/LAN and unused-producer counterexamples without adding a network protocol. No further test family or platform campaign is justified.
+`EXECUTION_READY.` The core bet is confirmed after narrowing: DB v112 remote-contact authority plus a stable distinct installation transport is necessary; v108/v109 and v111 adoption are separate owner-aligned plans. The QR substitution closes the unsafe contact-request/LAN and unused-producer counterexamples without adding a network protocol. No further test family or platform campaign is justified.
 
-Execution may unblock only after Plan 359's bounded repair has a clean post-execution-audit SHA and the Step-1 source/Graphify revalidation still finds no overlap. The execution-HEAD pass already found none, and the reviewed linked-secondary versus single-primary Move separation is maintained; do not silently implement a second primary.
+Execution is unblocked at Plan-359 repair SHA `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; the final source/Graphify revalidation found no overlap. The reviewed linked-secondary versus single-primary Move separation remains mandatory; do not silently implement a second primary.
 
 ## Handoff
 
-- Current state: planning/review, product arbitration, and execution-HEAD overlap revalidation are complete; execution is blocked only by Plan 359's bounded repair and targeted re-audit.
-- After unblock: pin the exact base, run per-owner semantic REDs, then implement only the listed foundation.
+- Current state: `EXECUTION_READY` from exact base `6d3bc6ccd7a26b8a9d8cc94ad3c5eee148cc08d7`; planning/review, product arbitration, committed-tree overlap revalidation, and gate-economy review are complete.
+- Next: run the literal clean-tree preflight and per-owner semantic REDs, then implement only the listed foundation.
 - New registration: exactly two headline paths, followed by one completeness check; do not pad counts.
 - Expensive boundary: one final c4 host batch, one serial 1:1, one core c4, and one Android pair scenario. No full/feature/iOS duplicate.
 - Successors: Plan 361 consumes this authority for blob-free direct event fanout; Plan 362 owns media/voice/v111 fanout.
