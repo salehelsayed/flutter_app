@@ -1,9 +1,9 @@
 # 356 - GAP-N01 Protected/View-Once Delete-for-Everyone v109 Custody Adoption
 
-Status: execution-completed
+Status: implemented / post-execution-review-incomplete / superseded by Plan 357 repair; historical execution receipts retained
 Type: Modification
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
-Classification: implementation-ready
+Classification: implemented default-off adopter with a bounded post-execution correctness/evidence repair required
 Closure tier: host (real SQLite and file-backed restart where persistence is causal); no schema, relay/native, device, iOS, activation, or release boundary
 
 ## Planning Progress
@@ -14,6 +14,7 @@ Closure tier: host (real SQLite and file-backed restart where persistence is cau
 | 2026-08-10 | Planner | Graphify architecture graph plus current source/tests and gate registrations | The smallest coherent slice is one atomic P/VO tombstone+v109 stage, its existing lifecycle/drain/retry adoption, and the narrow current-deletion receiver qualification the new event requires. The enabled pause flush may make a compatibility deposit but must not complete or delete v109. | Write causal contracts and economical gates, then run `$tdd-review`. |
 | 2026-08-10 | Reviewers | Fresh source/counterexample audit plus literal path, name, option and gate dry-run review | Required deltas closed: causal existing-method completion RED; raw outer/inner identity; generic-lifecycle retry seeding; shared incoming lifecycle lease; private cleanup plus separate reactions; correct peer+target display retirement; outgoing/incoming v111 distinction; truly overlapping lock barriers; DTR preflight; staged/committed hygiene; consolidated concurrency-4 proof. | Final verdict READY; no correctness, sufficiency, cadence or overengineering blocker. |
 | 2026-08-10 | Arbiter | Amended four-bundle contract, four mutation re-reds, exact preservation regex, host-only cadence and stop conditions | Reuse physical v109 plus incumbent private lifecycle authority. No schema, owner, drain, protocol, feature-family, device or release expansion is justified. | Append readiness ledgers and hand off to a separate implementation session. |
+| 2026-08-10 | Post-execution auditors | Implemented private v109 replay branch, incoming contact/deletion lock ordering, outgoing cleanup failure path, and the named retry/lock tests | Historical gates are real, but they do not establish closure. Exact existing-v109 replay can authorize a non-tombstoned parent; contact deletion can win the shared lease and still be followed by an orphan tombstone plus receipt; reaction retirement can throw after durable stage but before settlement/hedge. Three named tests also miss their reviewed physical/pre-egress/same-target/deterministic boundaries. | Mark Plan 356 post-execution-review incomplete and repair only these seams in Plan 357 before another N01 modality. |
 
 ## Problem And Evidence
 
@@ -337,3 +338,35 @@ No new test path was created, so the completeness check remains correctly
 omitted. `feature-host-all` remains omitted: the change adds one narrow optional
 capability to `MessageRepositoryImpl` and does not broaden its common
 save/load/publication semantics.
+
+## Post-Execution Audit Addendum
+
+The execution receipts above are retained as historical evidence, but the
+post-execution audit found three executable defects and three proof gaps. Plan
+356 therefore is not code-closed until Plan 357 executes:
+
+- The exact existing-v109 branch checks matching event bytes but returns
+  `idempotent` with whatever row currently occupies the target message ID. A
+  live or crossed parent can therefore authorize deletion transport without a
+  durable local tombstone.
+- `handleIncomingMessageDeletion` authenticates the contact before it acquires
+  the private lifecycle lease. If `deleteContactAndMessages` wins that lease,
+  removes the messages and contact, and releases it, the handler can enter
+  afterward, insert the absent-target tombstone, and send a receipt for an
+  orphan conversation row.
+- Outgoing private terminal cleanup awaits reaction retirement outside its
+  best-effort catch. A reaction-store failure after the atomic tombstone+v109
+  commit escapes before node settlement, hedge scheduling, or live transport.
+- TC-356-03a/03b use a map-backed owner and do not prove the physical-v109
+  lookup/pre-egress contract; TC-356-04c's deletion-first competitor uses a
+  different target; and TC-356-02 uses timed sleeps rather than its reviewed
+  deterministic competing-start contract.
+- The committed host `1to1` selector dry-runs as 120 unique paths at the Plan
+  356 baseline. The historical `121 paths` receipt is retained verbatim but is
+  not reproducible from the committed gate script and is not closure evidence.
+
+Plan 357 is intentionally a same-owner closure repair. It adds no schema,
+outbox, drain, protocol, modality, activation, device, or release work. The
+dead tombstone-only repository method remains deferred hygiene: removing its
+interface/bootstrap/fixture surface would expand this correctness repair and
+touch frozen owners without improving the demonstrated invariants.

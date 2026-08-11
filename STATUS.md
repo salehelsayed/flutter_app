@@ -27,3 +27,5 @@ Before starting work, read the latest line for the assigned plan.
 - Plan 355 — EXECUTION_COMPLETED (13/13 named tests, 4/4 mutation re-reds, host 1to1 + dart-only core/feature families, analyzer/format/diff/Graphify all green; two DTR-18 digests re-pinned, never weakened)
 - Plan 356 — EXECUTION_READY
 - Plan 356 — EXECUTION_COMPLETED (12/12 named tests, 4/4 mutation re-reds, 11/11 preservation sentinels, host 1to1 121 paths + dart-only core-host-all 404 paths/3,232 tests, analyzer/format/diff/Graphify all green; two DTR-18 digests re-pinned, never weakened; feature family, full host-all, completeness, device and iOS legs correctly omitted)
+- Plan 356 — POST_EXECUTION_REVIEW_INCOMPLETE (exact existing-v109 replay can authorize a non-tombstoned parent; contact deletion can be followed by an orphan tombstone plus receipt; reaction cleanup can escape after durable stage; three named proofs miss their reviewed physical/pre-egress/same-target/deterministic boundary; committed host 1to1 selector is 120 unique paths, so the historical 121-path count is unverified; historical receipts retained; superseded by Plan 357 repair)
+- Plan 357 — EXECUTION_READY
