@@ -18,6 +18,7 @@ class DirectInboxCustodyOutboxEntry {
     required this.lastErrorCode,
     this.mediaBlobManifestHash,
     this.mediaBlobExpiresAtMs,
+    this.contactAccountPeerId,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -31,6 +32,11 @@ class DirectInboxCustodyOutboxEntry {
   final String? lastErrorCode;
   final String? mediaBlobManifestHash;
   final int? mediaBlobExpiresAtMs;
+
+  /// 361: the LOGICAL contact of a v113 fanout sibling. NULL retains the
+  /// incumbent single-target meaning ([recipientPeerId] IS the contact).
+  final String? contactAccountPeerId;
+
   final String createdAt;
   final String updatedAt;
 
@@ -46,6 +52,7 @@ class DirectInboxCustodyOutboxEntry {
         mediaBlobManifestHash: map['media_blob_manifest_hash'] as String?,
         mediaBlobExpiresAtMs: (map['media_blob_expires_at_ms'] as num?)
             ?.toInt(),
+        contactAccountPeerId: map['contact_account_peer_id'] as String?,
         createdAt: map['created_at'] as String,
         updatedAt: map['updated_at'] as String,
       );
@@ -60,6 +67,7 @@ class DirectInboxCustodyOutboxEntry {
     'last_error_code': lastErrorCode,
     'media_blob_manifest_hash': mediaBlobManifestHash,
     'media_blob_expires_at_ms': mediaBlobExpiresAtMs,
+    'contact_account_peer_id': contactAccountPeerId,
     'created_at': createdAt,
     'updated_at': updatedAt,
   };
@@ -74,6 +82,7 @@ class DirectInboxCustodyOutboxEntry {
     Object? lastErrorCode = _unset,
     Object? mediaBlobManifestHash = _unset,
     Object? mediaBlobExpiresAtMs = _unset,
+    Object? contactAccountPeerId = _unset,
     String? createdAt,
     String? updatedAt,
   }) => DirectInboxCustodyOutboxEntry(
@@ -94,6 +103,9 @@ class DirectInboxCustodyOutboxEntry {
     mediaBlobExpiresAtMs: identical(mediaBlobExpiresAtMs, _unset)
         ? this.mediaBlobExpiresAtMs
         : mediaBlobExpiresAtMs as int?,
+    contactAccountPeerId: identical(contactAccountPeerId, _unset)
+        ? this.contactAccountPeerId
+        : contactAccountPeerId as String?,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );

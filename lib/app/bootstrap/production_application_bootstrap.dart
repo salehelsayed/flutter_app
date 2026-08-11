@@ -130,6 +130,14 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/app/bootstrap/direct_blob_free_linked_services.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart'
+    show dbReadDirectContactFanoutSnapshot;
+import 'package:flutter_app/features/contacts/domain/repositories/direct_contact_conversation_purge.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_blob_free_linked_event_fanout_use_case.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_projection_owner.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_display_retry_coordinator.dart';
@@ -755,6 +763,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       await action();
     }
 
+    // 361: the ONE shared physical->logical reverse transport authority.
+    final directTransportAuthority = DatabaseDirectTransportAuthority(
+      database: db,
+    );
+
     // Create contact repository
     final contactRepository = ContactRepositoryImpl(
       dbLoadAllContacts: () => dbLoadAllContacts(db),
@@ -772,6 +785,20 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
       dbSetIntrosSentAt: (peerId, timestamp) =>
           dbSetIntrosSentAt(db, peerId, timestamp),
+      // 361: the exact final serialized contact-conversation purge owner.
+      dbPurgeDirectContactConversationAndContact: (peerId) async {
+        final result = await dbPurgeDirectContactConversationAndContact(
+          db,
+          peerId,
+        );
+        return DirectContactConversationPurgeSummary(
+          deletedTextCustodyRows: result.deletedTextCustodyRows,
+          deletedEventCustodyRows: result.deletedEventCustodyRows,
+          deletedReactions: result.deletedReactions,
+          deletedMessages: result.deletedMessages,
+          deletedContact: result.deletedContact,
+        );
+      },
       directReactionProjection: directReactionNotificationProjection,
       onPushEligibilityChanged: () =>
           notifyContactPushEligibilityChanged?.call(),
@@ -1182,6 +1209,130 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             incarnationId: incarnationId,
             wireEnvelope: wireEnvelope,
           ),
+      // 361: v113 blob-free fanout + linked-transport authority delegates.
+      dbReadDirectContactFanoutSnapshot: ({required contactAccountPeerId}) =>
+          dbReadDirectContactFanoutSnapshot(
+            db,
+            contactAccountPeerId: contactAccountPeerId,
+          ),
+      dbLoadDirectInboxCustodyOutboxRowsForMessageId: ({required messageId}) =>
+          dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+            db,
+            messageId: messageId,
+          ),
+      dbLoadDirectReactionInboxCustodyOutboxRowsForEventId:
+          ({required eventId}) =>
+              dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+                db,
+                eventId: eventId,
+              ),
+      dbStageOutgoingDirectTextFanoutInboxCustody:
+          ({
+            required stagedRow,
+            required messageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) => dbStageOutgoingDirectTextFanoutInboxCustody(
+            db,
+            stagedRow: stagedRow,
+            messageId: messageId,
+            contactAccountPeerId: contactAccountPeerId,
+            senderTransportPeerId: senderTransportPeerId,
+            expectedSnapshot: expectedSnapshot,
+            candidates: candidates,
+          ),
+      dbStageOutgoingDirectTextMutationFanoutInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required eventId,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) => dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            eventId: eventId,
+            parentMessageId: parentMessageId,
+            contactAccountPeerId: contactAccountPeerId,
+            senderTransportPeerId: senderTransportPeerId,
+            expectedSnapshot: expectedSnapshot,
+            candidates: candidates,
+          ),
+      dbApplyIncomingOrdinaryTextMutationWithAuthority:
+          ({
+            required incomingRow,
+            required kind,
+            required authenticatedTransportPeerId,
+          }) => dbApplyIncomingOrdinaryTextMutation(
+            db,
+            incomingRow: incomingRow,
+            kind: kind,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
+          ),
+      dbApplyIncomingDirectMessageDeletionWithAuthority:
+          ({
+            required messageId,
+            required senderPeerId,
+            required deletedAt,
+            required transport,
+            required createdAt,
+            required authenticatedTransportPeerId,
+          }) => dbApplyIncomingDirectMessageDeletion(
+            db,
+            messageId: messageId,
+            senderPeerId: senderPeerId,
+            deletedAt: deletedAt,
+            transport: transport,
+            createdAt: createdAt,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
+          ),
+      dbSettleOutgoingOrdinaryTransportWithFanoutAuthority:
+          ({
+            required messageId,
+            required expectedContactPeerId,
+            required expectedEnvelope,
+            required status,
+            required transport,
+            required relayExpiresAt,
+            required mode,
+            required isDeleteTombstone,
+            expectedDirectEventFanoutGenerationId,
+            authenticatedTransportPeerId,
+          }) => isDeleteTombstone
+          ? dbSettleOutgoingOrdinaryDeleteTombstone(
+              db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              status: status,
+              transport: transport,
+              relayExpiresAt: relayExpiresAt,
+              mode: mode,
+              expectedDirectEventFanoutGenerationId:
+                  expectedDirectEventFanoutGenerationId,
+              authenticatedTransportPeerId: authenticatedTransportPeerId,
+            )
+          : dbSettleOutgoingOrdinaryTransport(
+              db,
+              messageId: messageId,
+              expectedContactPeerId: expectedContactPeerId,
+              expectedEnvelope: expectedEnvelope,
+              status: status,
+              transport: transport,
+              relayExpiresAt: relayExpiresAt,
+              mode: mode,
+              expectedDirectEventFanoutGenerationId:
+                  expectedDirectEventFanoutGenerationId,
+              authenticatedTransportPeerId: authenticatedTransportPeerId,
+            ),
       dbLoadDirectInboxCustodyOutbox: ({limit = 50}) =>
           dbLoadDirectInboxCustodyOutbox(db, limit: limit),
       dbLoadDirectInboxCustodyOutboxForMessage:
@@ -2572,6 +2723,70 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // Create reaction repository
     final reactionRepository = ReactionRepositoryImpl(
       dbInsertReaction: (row) => dbInsertReaction(db, row),
+      // 361: linked-transport reaction applies (in-transaction reauth) and
+      // the v113 blob-free reaction fanout stage.
+      dbApplyIncomingAddWithAuthority:
+          (row, {required authenticatedTransportPeerId}) async {
+            final result = await dbApplyIncomingReactionMutation(
+              db,
+              row,
+              mutation: DbIncomingReactionMutation.add,
+              authenticatedTransportPeerId: authenticatedTransportPeerId,
+            );
+            return switch (result) {
+              DbIncomingReactionApplyResult.inserted =>
+                ReactionAddApplyResult.inserted,
+              DbIncomingReactionApplyResult.updated =>
+                ReactionAddApplyResult.updated,
+              DbIncomingReactionApplyResult.exactReplay =>
+                ReactionAddApplyResult.exactReplay,
+              DbIncomingReactionApplyResult.stale =>
+                ReactionAddApplyResult.stale,
+              DbIncomingReactionApplyResult.removed => throw StateError(
+                'ADD transaction returned REMOVE result',
+              ),
+            };
+          },
+      dbApplyIncomingRemoveWithAuthority:
+          (row, {required authenticatedTransportPeerId}) async {
+            final result = await dbApplyIncomingReactionMutation(
+              db,
+              row,
+              mutation: DbIncomingReactionMutation.remove,
+              authenticatedTransportPeerId: authenticatedTransportPeerId,
+            );
+            return switch (result) {
+              DbIncomingReactionApplyResult.removed =>
+                ReactionRemoveApplyResult.applied,
+              DbIncomingReactionApplyResult.exactReplay =>
+                ReactionRemoveApplyResult.exactReplay,
+              DbIncomingReactionApplyResult.stale =>
+                ReactionRemoveApplyResult.stale,
+              DbIncomingReactionApplyResult.inserted ||
+              DbIncomingReactionApplyResult.updated => throw StateError(
+                'REMOVE transaction returned ADD result',
+              ),
+            };
+          },
+      dbStageOutgoingDirectReactionFanoutInboxCustody:
+          ({
+            required reactionRow,
+            required action,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) => dbStageOutgoingDirectReactionFanoutInboxCustody(
+            db,
+            reactionRow: reactionRow,
+            action: action,
+            parentMessageId: parentMessageId,
+            contactAccountPeerId: contactAccountPeerId,
+            senderTransportPeerId: senderTransportPeerId,
+            expectedSnapshot: expectedSnapshot,
+            candidates: candidates,
+          ),
       dbApplyIncomingAdd: (row) async {
         final result = await dbApplyIncomingReactionMutation(
           db,
@@ -4464,6 +4679,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       final notify = reactionNotifyDeps;
       final (result, change) = await handleIncomingReaction(
         message: message,
+        transportAuthority: directTransportAuthority,
         messageRepo: messageRepository,
         reactionRepo: reactionRepository,
         contactRepo: contactRepository,
@@ -4525,6 +4741,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       final identity = await repository.loadIdentity();
       final (result, _) = await handleIncomingMessageDeletion(
         message: message,
+        transportAuthority: directTransportAuthority,
         messageRepo: messageRepository,
         contactRepo: contactRepository,
         reactionRepo: reactionRepository,
@@ -4596,6 +4813,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // deferred start has already resolved persisted authority. Null — an
     // ordinary primary, or any moment before the deferred start ran — makes
     // the qualification a no-op, which is exactly the incumbent behavior.
+
+    /// 361: the account peer the deferred role-aware start last observed —
+    /// consumed synchronously by the route-push fanout authoring resolver.
+    String? lastKnownAccountPeerId;
     RoleAwareDeferredRuntimeStart? roleAwareDeferredRuntimeStartRef;
 
     // Create P2P service (uses the same bridge + local P2P)
@@ -5239,6 +5460,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // Create chat message listener (sendDeliveryReceiptForPeer is hoisted above
     // the P2PServiceImpl construction so the F7 deletion replay can reference it).
     chatMessageListener = ChatMessageListener(
+      transportAuthority: directTransportAuthority,
       chatMessageStream: messageRouter.chatMessageStream,
       messageRepo: messageRepository,
       contactRepo: contactRepository,
@@ -5278,6 +5500,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // 115 P2: consume incoming receipts — the only place 'inboxed' rows flip
     // to 'delivered' (G4 site a).
     final deliveryReceiptListener = DeliveryReceiptListener(
+      transportAuthority: directTransportAuthority,
       receiptStream: messageRouter.deliveryReceiptStream,
       messageRepo: messageRepository,
       mediaAttachmentRepo: mediaAttachmentRepository,
@@ -5386,6 +5609,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create reaction listener
     final reactionListener = ReactionListener(
+      transportAuthority: directTransportAuthority,
       reactionStream: messageRouter.reactionStream,
       messageRepo: messageRepository,
       reactionRepo: reactionRepository,
@@ -5433,6 +5657,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     publishPersistedReactionChange = reactionListener.publishPersistedChange;
 
     final messageDeletionListener = MessageDeletionListener(
+      transportAuthority: directTransportAuthority,
       deletionStream: messageRouter.messageDeletionStream,
       messageRepo: messageRepository,
       contactRepo: contactRepository,
@@ -6261,6 +6486,26 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // families for every lifecycle trigger. Each bounded drain has its own
     // fault boundary, so a poison row/family cannot starve its sibling or the
     // failed/unacked rebuild work that follows this shared callback.
+    // 361: the restricted linked drain — EXACT nonnull-v113 blob-free rows
+    // only, never a broad historical/media/private loader. Durable rows drain
+    // even with the authoring selector OFF.
+    Future<int> drainDirectBlobFreeLinkedOutboxes() =>
+        runAccountRuntimeNetworkAction<int>(
+          operation: 'direct_blob_free_linked_fanout_drain',
+          blockedValue: 0,
+          action: () => drainDirectBlobFreeLinkedEventFanout(
+            loadExactTextFanoutRows: () =>
+                dbLoadDirectInboxCustodyOutboxExactFanoutRows(db),
+            loadExactEventFanoutRows: () =>
+                dbLoadDirectReactionInboxCustodyOutboxExactFanoutRows(db),
+            custodyRepository: messageRepository,
+            storeInAckCustodyInboxDetailed:
+                p2pService.storeInAckCustodyInboxDetailed,
+            mutationCustodyRepository: messageRepository,
+            reactionCustodyRepository: reactionRepository,
+          ),
+        );
+
     Future<int> drainDirectInboxCustodyFamilies() =>
         runAccountRuntimeNetworkAction(
           operation: 'direct_inbox_custody_families_drain',
@@ -6859,15 +7104,30 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       // would start a transport that belongs to someone else's account.
       loadLinkedAuthority: () async {
         final identity = await repository.loadIdentity();
+        // 361: cache the account peer for the route-push fanout resolver.
+        lastKnownAccountPeerId = identity?.peerId;
         return LinkedInstallationAuthority(
           secureKeyStore: secureKeyStore,
         ).load(expectedAccountPeerId: identity?.peerId);
       },
       startPrimaryRuntimeServices: startLiveServicesIfAllowed,
+      // 361: the restricted linked runtime starts ONLY the exact direct
+      // blob-free owners — router, chat/reaction/deletion/receipt listeners,
+      // one exact inbox replay pass, and the exact v113 fanout drain. It
+      // deliberately never calls the generic startLiveServices.
       startLinkedFoundationPrerequisites: () async {
-        await bridge.initialize();
         StartupTiming.instance.mark('bridge_initialized');
-        return true;
+        final linkedServices = DirectBlobFreeLinkedServices(
+          initializeBridge: bridge.initialize,
+          startMessageRouter: messageRouter.start,
+          startChatMessageListener: chatMessageListener.start,
+          startReactionListener: reactionListener.start,
+          startMessageDeletionListener: messageDeletionListener.start,
+          startDeliveryReceiptListener: deliveryReceiptListener.start,
+          drainOfflineInbox: p2pService.drainOfflineInbox,
+          drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,
+        );
+        return linkedServices.start();
       },
     );
     // Publish it to the P2P service's transport-peer qualifier.
@@ -6991,6 +7251,45 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         messageRouter: messageRouter,
         pendingMessageRetrier: pendingMessageRetrier,
         drainDirectInboxCustodyOutbox: drainDirectInboxCustodyFamilies,
+        // 361: blob-free fanout authoring plus the restricted linked runtime
+        // seams. The resolver builds the authoring owner at route-push time so
+        // role facts and the local transport identity are current; a
+        // pre-identity call yields null (incumbent senders).
+        directEventFanoutResolver: () {
+          final linkedTransport =
+              roleAwareDeferredRuntimeStart.activeLinkedTransportPeerId;
+          final senderTransport = linkedTransport ?? lastKnownAccountPeerId;
+          if (senderTransport == null || senderTransport.isEmpty) return null;
+          return DirectEventFanoutAuthoring(
+            selector: const DirectLinkedEventFanoutSelector(),
+            linkedOrigin: linkedTransport != null,
+            senderTransportPeerId: senderTransport,
+            readSnapshot: messageRepository.readDirectContactFanoutSnapshot,
+            encrypt:
+                ({required recipientMlKemPublicKey, required plaintext}) async {
+                  final result = await callEncryptMessage(
+                    bridge: bridge,
+                    recipientMlKemPublicKey: recipientMlKemPublicKey,
+                    plaintext: plaintext,
+                  );
+                  if (result['ok'] != true) return null;
+                  return (
+                    kem: result['kem'] as String,
+                    ciphertext: result['ciphertext'] as String,
+                    nonce: result['nonce'] as String,
+                  );
+                },
+            loadTextSiblings: messageRepository.loadDirectTextFanoutSiblings,
+            stageTextFanout: messageRepository.stageDirectTextFanout,
+            loadEventSiblings: messageRepository.loadDirectEventFanoutSiblings,
+            stageMutationFanout:
+                messageRepository.stageDirectTextMutationFanout,
+            stageReactionFanout: reactionRepository.stageDirectReactionFanout,
+          );
+        },
+        isLinkedBlobFreeRuntime: () =>
+            roleAwareDeferredRuntimeStart.activeLinkedTransportPeerId != null,
+        drainDirectBlobFreeLinkedOutboxes: drainDirectBlobFreeLinkedOutboxes,
         drainDirectMediaBlobCustody: drainDirectMediaBlobCustody,
         pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
         pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/direct_contact_conversation_purge.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
@@ -47,6 +48,21 @@ Future<void> deleteContactAndMessages({
         ? mediaAttachmentRepo as DirectPrivateMediaCleanupRepository
         : null;
 
+    // 361: the final DB decision converges messages, reactions, v108/v109
+    // sibling rows, roster and contact in ONE serialized transaction when the
+    // contact repository owns that capability. Everything BEFORE it — files,
+    // keys, attachments, introductions, requests, and the best-effort early
+    // reaction sweep — stays an early cleanup that must never physically
+    // purge messages first.
+    final purgeCapability =
+        contactRepo is DirectContactConversationPurgeCapability
+        ? contactRepo as DirectContactConversationPurgeCapability
+        : null;
+    final finalPurge =
+        (purgeCapability?.supportsDirectContactConversationPurge ?? false)
+        ? purgeCapability
+        : null;
+
     Future<void> purgeRelatedState(
       List<ConversationMessage> candidateMessages,
     ) async {
@@ -68,8 +84,6 @@ Future<void> deleteContactAndMessages({
         await contactRequestRepo.deleteRequest(peerId);
       }
 
-      final deletedCount = await messageRepo.deleteMessagesForContact(peerId);
-
       emitFlowEvent(
         layer: 'UC',
         event: 'DELETE_CONTACT_RELATED_STATE_PURGED',
@@ -80,6 +94,33 @@ Future<void> deleteContactAndMessages({
           'deletedIntroductions': deletedIntroductionCount,
         },
       );
+
+      if (finalPurge != null) {
+        final summary = await finalPurge
+            .purgeDirectContactConversationAndContact(peerId);
+        emitFlowEvent(
+          layer: 'UC',
+          event: 'DELETE_CONTACT_FINAL_PURGE_COMMITTED',
+          details: {
+            'peerId': peerIdPreview,
+            'deletedMessages': summary.deletedMessages,
+            'deletedReactions': summary.deletedReactions,
+            'deletedTextCustodyRows': summary.deletedTextCustodyRows,
+            'deletedEventCustodyRows': summary.deletedEventCustodyRows,
+          },
+        );
+        if (messageRepo is DirectContactPurgeReconciliation) {
+          await (messageRepo as DirectContactPurgeReconciliation)
+              .reconcileDirectContactConversationPurge(peerId);
+        }
+        if (reactionRepo is DirectContactPurgeReconciliation) {
+          await (reactionRepo as DirectContactPurgeReconciliation)
+              .reconcileDirectContactConversationPurge(peerId);
+        }
+        return;
+      }
+
+      final deletedCount = await messageRepo.deleteMessagesForContact(peerId);
 
       emitFlowEvent(
         layer: 'UC',

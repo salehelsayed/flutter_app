@@ -11,6 +11,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
@@ -35,6 +36,9 @@ Future<void> handleDeliveryReceipt({
   required ChatMessage message,
   required MessageRepository messageRepo,
   MediaAttachmentRepository? mediaAttachmentRepo,
+  // 361: shared physical->logical reverse authority for receipts that arrive
+  // from a linked origin transport. Null keeps incumbent strict equality.
+  DirectTransportAuthorityResolver? transportAuthority,
 }) async {
   if (!_trustedDeliveryReceiptTransports.contains(message.transport)) return;
 
@@ -86,7 +90,22 @@ Future<void> handleDeliveryReceipt({
       );
       continue;
     }
-    if (row.isIncoming || row.contactPeerId != message.from) {
+    var foreignPeer = row.isIncoming;
+    if (!foreignPeer && row.contactPeerId != message.from) {
+      // 361: an authenticated linked origin transport is an account-level
+      // delivery assertion for its LOGICAL contact; anything unresolvable is
+      // still a foreign peer.
+      if (transportAuthority == null) {
+        foreignPeer = true;
+      } else {
+        final resolution = await transportAuthority
+            .resolveDirectTransportAuthority(message.from);
+        foreignPeer =
+            !resolution.authorized ||
+            resolution.contactAccountPeerId != row.contactPeerId;
+      }
+    }
+    if (foreignPeer) {
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_FOREIGN_PEER',
@@ -99,6 +118,19 @@ Future<void> handleDeliveryReceipt({
         : classifyDirectInboxEventEnvelope(row.wireEnvelope!);
     if (classified?.isMutation == true &&
         mutationEventIds[messageId] != classified!.eventId) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_MUTATION_EVENT_MISMATCH',
+        details: {'from': fromPreview, 'id': idPreview},
+      );
+      continue;
+    }
+    // 361: a fanout-marked row settles ONLY against its exact CURRENT
+    // generation — the message ID for a fresh initial, the current event ID
+    // for a mutation. Stale, prior and future event receipts are zero-effect.
+    final fanoutGeneration = row.directEventFanoutGenerationId;
+    if (fanoutGeneration != null &&
+        (mutationEventIds[messageId] ?? messageId) != fanoutGeneration) {
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_MUTATION_EVENT_MISMATCH',
@@ -177,26 +209,65 @@ Future<void> handleDeliveryReceipt({
       continue;
     }
     final mutationRepo = messageRepo as OutgoingTransportMutationRepository;
-    final settled = row.isDeleted
-        ? await mutationRepo.settleOutgoingOrdinaryDeleteTombstone(
+    // 361: a fanout-marked row or a linked-origin receipt settles through the
+    // generation- and authority-aware owner; everything else keeps the
+    // incumbent settlement byte-identically.
+    final needsFanoutSettlement =
+        fanoutGeneration != null || row.contactPeerId != message.from;
+    final fanoutSettlementRepo =
+        messageRepo is OutgoingDirectFanoutReceiptSettlementRepository
+        ? messageRepo as OutgoingDirectFanoutReceiptSettlementRepository
+        : null;
+    if (needsFanoutSettlement &&
+        (fanoutSettlementRepo == null ||
+            !fanoutSettlementRepo.supportsDirectFanoutReceiptSettlement)) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DELIVERY_RECEIPT_NO_TRANSITION',
+        details: {'from': fromPreview, 'id': idPreview, 'status': row.status},
+      );
+      continue;
+    }
+    bool settledChanged;
+    if (needsFanoutSettlement) {
+      final outcome = await fanoutSettlementRepo!
+          .settleOutgoingOrdinaryTransportWithFanoutAuthority(
             messageId: row.id,
-            expectedContactPeerId: message.from,
+            expectedContactPeerId: row.contactPeerId,
             expectedEnvelope: row.wireEnvelope,
             status: 'delivered',
             transport: row.transport,
             relayExpiresAt: null,
             mode: OutgoingOrdinarySettlementMode.receipt,
-          )
-        : await mutationRepo.settleOutgoingOrdinaryTransport(
-            messageId: row.id,
-            expectedContactPeerId: message.from,
-            expectedEnvelope: row.wireEnvelope,
-            status: 'delivered',
-            transport: row.transport,
-            relayExpiresAt: null,
-            mode: OutgoingOrdinarySettlementMode.receipt,
+            isDeleteTombstone: row.isDeleted,
+            expectedDirectEventFanoutGenerationId:
+                mutationEventIds[messageId] ?? messageId,
+            authenticatedTransportPeerId: message.from,
           );
-    if (!settled.changed) {
+      settledChanged = outcome.changed;
+    } else {
+      final settled = row.isDeleted
+          ? await mutationRepo.settleOutgoingOrdinaryDeleteTombstone(
+              messageId: row.id,
+              expectedContactPeerId: message.from,
+              expectedEnvelope: row.wireEnvelope,
+              status: 'delivered',
+              transport: row.transport,
+              relayExpiresAt: null,
+              mode: OutgoingOrdinarySettlementMode.receipt,
+            )
+          : await mutationRepo.settleOutgoingOrdinaryTransport(
+              messageId: row.id,
+              expectedContactPeerId: message.from,
+              expectedEnvelope: row.wireEnvelope,
+              status: 'delivered',
+              transport: row.transport,
+              relayExpiresAt: null,
+              mode: OutgoingOrdinarySettlementMode.receipt,
+            );
+      settledChanged = settled.changed;
+    }
+    if (!settledChanged) {
       emitFlowEvent(
         layer: 'FL',
         event: 'DELIVERY_RECEIPT_NO_TRANSITION',

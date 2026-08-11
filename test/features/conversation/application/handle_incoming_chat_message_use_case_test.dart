@@ -19,6 +19,7 @@ import 'package:flutter_app/features/contacts/domain/repositories/contact_reposi
 
 import '../../../shared/fakes/in_memory_contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
@@ -124,8 +125,45 @@ class _MessageRepositoryWithoutOrdinaryApply implements MessageRepository {
 }
 
 class FakeMessageRepository
-    implements MessageRepository, IncomingOrdinaryTextApplyRepository {
+    implements
+        MessageRepository,
+        IncomingOrdinaryTextApplyRepository,
+        LinkedTransportIncomingApplyRepository {
   final List<ConversationMessage> saved = [];
+
+  // 361: linked-transport apply recording.
+  final List<String> linkedApplyTransports = [];
+
+  @override
+  bool get supportsLinkedTransportIncomingApply => true;
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult>
+  applyIncomingOrdinaryTextMutationWithTransportAuthority({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+    required String authenticatedTransportPeerId,
+  }) {
+    linkedApplyTransports.add(authenticatedTransportPeerId);
+    return applyIncomingOrdinaryTextMutation(incoming: incoming, kind: kind);
+  }
+
+  @override
+  Future<IncomingDirectDeletionApplyResult>
+  applyIncomingDirectMessageDeletionWithTransportAuthority({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+    required String authenticatedTransportPeerId,
+  }) async {
+    linkedApplyTransports.add(authenticatedTransportPeerId);
+    return const IncomingDirectDeletionApplyResult(
+      outcome: IncomingDirectDeletionOutcome.refused,
+      message: null,
+    );
+  }
+
   VoidCallback? onSave;
   final Set<String> _existingIds;
   final Map<String, ConversationMessage> _existingMessages;
@@ -590,6 +628,14 @@ void main() {
 
   const senderPeerId = '12D3KooWSender123';
 
+  const linkedTransportPeerId = '12D3KooWLinkedDevice1';
+  DirectTransportAuthorityResolution linkedResolution() =>
+      const DirectTransportAuthorityResolution.authorized(
+        kind: DirectTransportAuthorityKind.linked,
+        contactAccountPeerId: senderPeerId,
+        contactIsBlocked: false,
+      );
+
   ChatMessage buildP2PMessage(String content) {
     return ChatMessage(
       from: senderPeerId,
@@ -649,6 +695,186 @@ void main() {
   setUp(() {
     contactRepo = FakeContactRepository(existingPeerIds: {senderPeerId});
     messageRepo = FakeMessageRepository();
+  });
+
+  group('TC-361-03a linked transport authority', () {
+    String linkedEnvelope({String id = 'linked-msg-1'}) => jsonEncode({
+      'type': 'chat_message',
+      'version': '2',
+      'id': id,
+      'senderPeerId': linkedTransportPeerId,
+      'encrypted': {
+        'kem': 'kem-blob',
+        'ciphertext': 'cipher-blob',
+        'nonce': 'nonce-blob',
+      },
+    });
+
+    String innerText({String id = 'linked-msg-1', List<Object?>? media}) =>
+        jsonEncode({
+          'id': id,
+          'text': 'from a linked device',
+          'senderPeerId': senderPeerId,
+          'senderUsername': 'Alice',
+          'timestamp': '2026-08-11T12:00:00.000Z',
+          'media': ?media,
+        });
+
+    ChatMessage linkedMessage(String content) => ChatMessage(
+      from: linkedTransportPeerId,
+      to: 'my-peer',
+      content: content,
+      timestamp: '2026-08-11T12:00:00.000Z',
+      isIncoming: true,
+      transport: 'inbox',
+    );
+
+    test(
+      'TC-361-03a exact active linked text is accepted with physical outer '
+      'and logical inner identities and an in-apply reauthorization',
+      () async {
+        final authority = _FakeTransportAuthority({
+          linkedTransportPeerId: linkedResolution(),
+        });
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: linkedMessage(linkedEnvelope()),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: innerText(),
+          transportAuthority: authority,
+        );
+        expect(result, HandleChatMessageResult.chatMessage);
+        expect(stored, isNotNull);
+        expect(
+          stored!.contactPeerId,
+          senderPeerId,
+          reason: 'the durable row belongs to the LOGICAL contact',
+        );
+        expect(
+          messageRepo.linkedApplyTransports,
+          [linkedTransportPeerId],
+          reason: 'the durable apply re-authorizes the physical transport',
+        );
+      },
+    );
+
+    test('TC-361-03a an outer envelope that does not match the authenticated '
+        'transport is unauthorized', () async {
+      final authority = _FakeTransportAuthority({
+        linkedTransportPeerId: linkedResolution(),
+      });
+      final crossedEnvelope = jsonEncode({
+        'type': 'chat_message',
+        'version': '2',
+        'id': 'linked-crossed-1',
+        'senderPeerId': senderPeerId,
+        'encrypted': {
+          'kem': 'kem-blob',
+          'ciphertext': 'cipher-blob',
+          'nonce': 'nonce-blob',
+        },
+      });
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: linkedMessage(crossedEnvelope),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: innerText(id: 'linked-crossed-1'),
+        transportAuthority: authority,
+      );
+      expect(result, HandleChatMessageResult.unauthorized);
+      expect(messageRepo.saved, isEmpty);
+    });
+
+    test('TC-361-03a a revoked or unknown transport is unauthorized with zero '
+        'apply', () async {
+      final authority = _FakeTransportAuthority(
+        const <String, DirectTransportAuthorityResolution>{},
+      );
+      final (result, _, _) = await handleIncomingChatMessage(
+        message: linkedMessage(linkedEnvelope(id: 'linked-revoked-1')),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: innerText(id: 'linked-revoked-1'),
+        transportAuthority: authority,
+      );
+      expect(result, HandleChatMessageResult.unauthorized);
+      expect(messageRepo.saved, isEmpty);
+      expect(messageRepo.linkedApplyTransports, isEmpty);
+    });
+
+    test(
+      'TC-361-03a authenticated linked media is terminally refused with zero '
+      'publication',
+      () async {
+        final authority = _FakeTransportAuthority({
+          linkedTransportPeerId: linkedResolution(),
+        });
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: linkedMessage(linkedEnvelope(id: 'linked-media-1')),
+          messageRepo: messageRepo,
+          contactRepo: contactRepo,
+          predecryptedText: innerText(
+            id: 'linked-media-1',
+            media: [
+              {
+                'id': 'linked-media-blob',
+                'mime': 'image/jpeg',
+                'size': 1024,
+                'mediaType': 'image',
+              },
+            ],
+          ),
+          transportAuthority: authority,
+        );
+        expect(result, HandleChatMessageResult.linkedModalityRefused);
+        expect(stored, isNull);
+        expect(messageRepo.saved, isEmpty);
+        expect(messageRepo.linkedApplyTransports, isEmpty);
+      },
+    );
+
+    test('TC-361-03a a legacy transport resolution keeps the incumbent path '
+        'byte-identical', () async {
+      final authority = _FakeTransportAuthority({
+        senderPeerId: const DirectTransportAuthorityResolution.authorized(
+          kind: DirectTransportAuthorityKind.legacy,
+          contactAccountPeerId: senderPeerId,
+          contactIsBlocked: false,
+        ),
+      });
+      final legacyEnvelope = jsonEncode({
+        'type': 'chat_message',
+        'version': '2',
+        'id': 'legacy-with-resolver-1',
+        'senderPeerId': senderPeerId,
+        'encrypted': {
+          'kem': 'kem-blob',
+          'ciphertext': 'cipher-blob',
+          'nonce': 'nonce-blob',
+        },
+      });
+      final (result, stored, _) = await handleIncomingChatMessage(
+        message: ChatMessage(
+          from: senderPeerId,
+          to: 'my-peer',
+          content: legacyEnvelope,
+          timestamp: '2026-08-11T12:00:00.000Z',
+          isIncoming: true,
+          transport: 'inbox',
+        ),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        predecryptedText: innerText(id: 'legacy-with-resolver-1'),
+        transportAuthority: authority,
+      );
+      expect(result, HandleChatMessageResult.chatMessage);
+      expect(stored, isNotNull);
+      expect(
+        messageRepo.linkedApplyTransports,
+        isEmpty,
+        reason: 'legacy traffic keeps the incumbent apply',
+      );
+    });
   });
 
   group('TC-331-08 direct notification marker ordering', () {
@@ -5839,4 +6065,20 @@ class _ParentRemovingMessageRepository
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
     'unexpected repository call: ${invocation.memberName}',
   );
+}
+
+class _FakeTransportAuthority implements DirectTransportAuthorityResolver {
+  _FakeTransportAuthority(this.byTransport);
+
+  final Map<String, DirectTransportAuthorityResolution> byTransport;
+  int resolveCalls = 0;
+
+  @override
+  Future<DirectTransportAuthorityResolution> resolveDirectTransportAuthority(
+    String transportPeerId,
+  ) async {
+    resolveCalls++;
+    return byTransport[transportPeerId] ??
+        const DirectTransportAuthorityResolution.refused('unknown_transport');
+  }
 }

@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 112);
+        expect(currentIdentityDatabaseVersion, 113);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -138,10 +138,13 @@ void main() {
         expect(
           inventory.tables['direct_reaction_inbox_custody_outbox'],
           <String>[
+            // 361: DB v113 adds the nullable logical contact/parent facts.
+            'contact_account_peer_id',
             'created_at',
             'event_id',
             'last_attempt_at',
             'last_error_code',
+            'parent_message_id',
             'recipient_peer_id',
             'retry_count',
             'updated_at',
@@ -166,7 +169,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 112);
+        expect(currentIdentityDatabaseVersion, 113);
         expect(inventory.tables['direct_media_blob_custody'], <String>[
           'attachment_id',
           'ciphertext_relative_path',

@@ -18,11 +18,20 @@ class FakeMessageRepository
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectTextMutationInboxCustodyRepository,
         IncomingOrdinaryTextApplyRepository,
-        IncomingDirectDeletionApplyRepository {
+        IncomingDirectDeletionApplyRepository,
+        LinkedTransportIncomingApplyRepository,
+        OutgoingDirectFanoutReceiptSettlementRepository {
   final List<ConversationMessage> _messages = [];
   final Map<String, DirectInboxCustodyOutboxEntry> directCustodyRows = {};
   final Map<String, DirectReactionInboxCustodyOutboxEntry>
   directMutationCustodyRows = {};
+
+  // 361: linked-transport apply/settlement recording.
+  bool supportsLinkedTransportIncomingApplyOverride = true;
+  bool supportsDirectFanoutReceiptSettlementOverride = true;
+  final List<String> linkedApplyTransports = [];
+  final List<({String? generation, String? transport})>
+  fanoutReceiptSettlements = [];
 
   // Call tracking
   int saveMessageCallCount = 0;
@@ -669,7 +678,10 @@ class FakeMessageRepository
         .where((entry) => entry.messageId == messageId)
         .take(2)
         .toList(growable: false);
-    if (matches.length > 1) {
+    // 361: mirrors the DB owner loader — plural siblings and fanout-marked
+    // rows are never selectable through the single-owner contract.
+    if (matches.length > 1 ||
+        matches.any((entry) => entry.contactAccountPeerId != null)) {
       throw StateError('Ambiguous direct inbox custody owner for message');
     }
     return matches.firstOrNull;
@@ -720,7 +732,11 @@ class FakeMessageRepository
       );
     }
     final current = _messages[index];
-    if (current.status == 'delivered' ||
+    final siblingSurvives = directCustodyRows.values.any(
+      (entry) => entry.messageId == expected.messageId,
+    );
+    if (siblingSurvives ||
+        current.status == 'delivered' ||
         current.status == 'inboxed' ||
         current.isDeleted ||
         current.hiddenAt != null) {
@@ -944,6 +960,92 @@ class FakeMessageRepository
       outcome: IncomingDirectDeletionOutcome.tombstoned,
       message: tombstone,
     );
+  }
+
+  @override
+  bool get supportsLinkedTransportIncomingApply =>
+      supportsLinkedTransportIncomingApplyOverride;
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult>
+  applyIncomingOrdinaryTextMutationWithTransportAuthority({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+    required String authenticatedTransportPeerId,
+  }) {
+    linkedApplyTransports.add(authenticatedTransportPeerId);
+    return applyIncomingOrdinaryTextMutation(incoming: incoming, kind: kind);
+  }
+
+  @override
+  Future<IncomingDirectDeletionApplyResult>
+  applyIncomingDirectMessageDeletionWithTransportAuthority({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+    required String authenticatedTransportPeerId,
+  }) {
+    linkedApplyTransports.add(authenticatedTransportPeerId);
+    return applyIncomingDirectMessageDeletion(
+      messageId: messageId,
+      senderPeerId: senderPeerId,
+      deletedAt: deletedAt,
+      transport: transport,
+    );
+  }
+
+  @override
+  bool get supportsDirectFanoutReceiptSettlement =>
+      supportsDirectFanoutReceiptSettlementOverride;
+
+  @override
+  Future<OutgoingOrdinaryMutationOutcome>
+  settleOutgoingOrdinaryTransportWithFanoutAuthority({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool isDeleteTombstone,
+    String? expectedDirectEventFanoutGenerationId,
+    String? authenticatedTransportPeerId,
+  }) async {
+    fanoutReceiptSettlements.add((
+      generation: expectedDirectEventFanoutGenerationId,
+      transport: authenticatedTransportPeerId,
+    ));
+    // 361: mirror the DB generation guard — a generation-blind or mismatched
+    // settlement is zero-effect on a marked row.
+    final row = await getMessage(messageId);
+    if (row == null) return OutgoingOrdinaryMutationOutcome.removed;
+    final generation = row.directEventFanoutGenerationId;
+    if (generation != null &&
+        expectedDirectEventFanoutGenerationId != generation) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
+    }
+    final settled = isDeleteTombstone
+        ? await settleOutgoingOrdinaryDeleteTombstone(
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          )
+        : await settleOutgoingOrdinaryTransport(
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+          );
+    return settled.outcome;
   }
 
   @override

@@ -98,6 +98,37 @@ void main() {
       expect(count, 0);
     });
 
+    test(
+      'TC-361-01b an unacked wrapper without the plural capability refuses a '
+      'fanout-marked generation before any legacy network',
+      () async {
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        );
+        final marked = _makeSentMessage(
+          id: 'msg-fanout-marked',
+        ).copyWith(directEventFanoutGenerationId: 'msg-fanout-marked');
+        await messageRepo.saveMessage(marked);
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+
+        expect(count, 0);
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason:
+              'a marked generation must never reach the legacy single-'
+              'target inbox store',
+        );
+        final untouched = await messageRepo.getMessage('msg-fanout-marked');
+        expect(untouched!.status, 'sent');
+        expect(untouched.wireEnvelope, isNotNull);
+      },
+    );
+
     test('TC-186-01 threads olderThan to getUnackedOutgoingMessages '
         '(default 60s; reconnect passes Duration.zero)', () async {
       final p2pService = FakeP2PService(

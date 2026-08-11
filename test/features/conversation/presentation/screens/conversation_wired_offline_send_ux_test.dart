@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -505,6 +506,7 @@ class _GatedSendRecorder {
         List<MediaAttachment>? mediaAttachments,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
+        DirectEventFanoutAuthoring? directEventFanout,
         PrivateMediaPolicy? privateMediaPolicy,
       }) {
         callCount++;

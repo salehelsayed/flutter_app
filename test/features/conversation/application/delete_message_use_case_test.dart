@@ -18,6 +18,10 @@ import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/services/p2p_service.dart'
     show RelayProbeResult;
 import 'package:flutter_app/features/contacts/application/delete_contact_use_case.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -351,6 +355,227 @@ void main() {
   });
 
   group('delete_message_use_case', () {
+    DirectEventFanoutAuthoring deletionFanoutAuthoring({
+      required bool selectorOn,
+      required List<String> events,
+      void Function({
+        required OutgoingOrdinaryAttemptKind kind,
+        required String eventId,
+        required String parentMessageId,
+        required List<DirectEventFanoutTargetCandidate> candidates,
+      })?
+      onStageMutation,
+    }) => DirectEventFanoutAuthoring(
+      selector: selectorOn
+          ? const DirectLinkedEventFanoutSelector.enabled()
+          : const DirectLinkedEventFanoutSelector.disabled(),
+      linkedOrigin: false,
+      senderTransportPeerId: 'peer-alice',
+      readSnapshot: (contact) async {
+        events.add('resolve');
+        return DirectContactFanoutSnapshot(
+          contactAccountPeerId: contact,
+          contactAccountSigningPublicKey: 'signing-key',
+          rosterInitialized: true,
+          targets: const <DirectContactFanoutTargetFact>[
+            DirectContactFanoutTargetFact(
+              peerId: 'peer-device-a',
+              mlKemPublicKey: 'mlkem-a',
+              isLegacyAccountTarget: false,
+              fingerprint:
+                  'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+              deviceId: 'device-a',
+            ),
+            DirectContactFanoutTargetFact(
+              peerId: 'peer-device-b',
+              mlKemPublicKey: 'mlkem-b',
+              isLegacyAccountTarget: false,
+              fingerprint:
+                  'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+              deviceId: 'device-b',
+            ),
+          ],
+        );
+      },
+      encrypt: ({required recipientMlKemPublicKey, required plaintext}) async {
+        events.add('encrypt:$recipientMlKemPublicKey');
+        return (
+          kem: 'k',
+          ciphertext: 'ct-$recipientMlKemPublicKey',
+          nonce: 'n',
+        );
+      },
+      loadTextSiblings: (_) async => const [],
+      stageTextFanout:
+          ({
+            required stagedRow,
+            required messageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async => throw StateError('deletion never stages fresh text'),
+      loadEventSiblings: (_) async => const [],
+      stageMutationFanout:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required eventId,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async {
+            events.add('stage:${kind.name}');
+            onStageMutation?.call(
+              kind: kind,
+              eventId: eventId,
+              parentMessageId: parentMessageId,
+              candidates: candidates,
+            );
+            return DbDirectEventFanoutStageResult(
+              outcome: DirectEventFanoutStageOutcome.applied,
+              rows: <Map<String, Object?>>[
+                for (final candidate in candidates)
+                  <String, Object?>{
+                    'recipient_peer_id': candidate.recipientPeerId,
+                    'event_id': eventId,
+                    'wire_envelope': candidate.wireEnvelope,
+                    'retry_count': 0,
+                    'last_attempt_at': null,
+                    'last_error_code': null,
+                    'contact_account_peer_id': contactAccountPeerId,
+                    'parent_message_id': parentMessageId,
+                    'created_at': '2026-08-11T12:00:00.000Z',
+                    'updated_at': '2026-08-11T12:00:00.000Z',
+                  },
+              ],
+            );
+          },
+      stageReactionFanout:
+          ({
+            required reactionRow,
+            required action,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async => throw StateError('deletion never stages reactions'),
+    );
+
+    test('TC-361-02a selector OFF refuses a blob-free DFE pre-crypto without '
+        'demoting to the legacy single target', () async {
+      final events = <String>[];
+      final messageRepo = FakeMessageRepository();
+      final original = makeMessage();
+      await messageRepo.saveMessage(original);
+      final network = FakeP2PNetwork();
+      final p2pService = FakeP2PService(peerId: 'peer-alice', network: network);
+      addTearDown(p2pService.dispose);
+
+      final (result, tombstone) = await deleteMessageForEveryone(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        originalMessage: original,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        directEventFanout: deletionFanoutAuthoring(
+          selectorOn: false,
+          events: events,
+        ),
+      );
+
+      expect(result, SendChatMessageResult.sendFailed);
+      expect(tombstone, isNull);
+      expect(events, ['resolve']);
+      expect(network.deliverCallCount, 0);
+      expect(network.storeInInboxCallCount, 0);
+      final persisted = await messageRepo.getMessage(original.id);
+      expect(persisted!.isDeleted, isFalse);
+    });
+
+    test('TC-361-02a ON stages the DFE batch through the shared owner with the '
+        'persisted parent identity', () async {
+      final events = <String>[];
+      OutgoingOrdinaryAttemptKind? stagedKind;
+      String? stagedEventId;
+      String? stagedParent;
+      List<DirectEventFanoutTargetCandidate>? stagedCandidates;
+      final messageRepo = FakeMessageRepository();
+      final original = makeMessage();
+      await messageRepo.saveMessage(original);
+      final p2pService = FakeP2PService(
+        peerId: 'peer-alice',
+        network: FakeP2PNetwork(),
+      );
+      addTearDown(p2pService.dispose);
+      var stores = 0;
+      Future<InboxStoreOutcome> store(
+        String toPeerId,
+        String message, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async {
+        stores++;
+        expect(custodyKind, AckCustodyKind.directMutationV109);
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+          expiresAtMs: 1900000060000,
+        );
+      }
+
+      final (result, _) = await deleteMessageForEveryone(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        originalMessage: original,
+        bridge: PassthroughCryptoBridge(),
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        storeInAckCustodyInboxDetailed: store,
+        directEventFanout: deletionFanoutAuthoring(
+          selectorOn: true,
+          events: events,
+          onStageMutation:
+              ({
+                required kind,
+                required eventId,
+                required parentMessageId,
+                required candidates,
+              }) {
+                stagedKind = kind;
+                stagedEventId = eventId;
+                stagedParent = parentMessageId;
+                stagedCandidates = candidates;
+              },
+        ),
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(stagedKind, OutgoingOrdinaryAttemptKind.tombstoneInitial);
+      expect(stagedEventId, isNotNull);
+      expect(
+        stagedParent,
+        original.id,
+        reason:
+            'the clear deletion envelope hides its target, so the '
+            'batch persists the logical parent explicitly',
+      );
+      expect(stagedCandidates, hasLength(2));
+      expect(
+        stagedCandidates!.map((candidate) => candidate.wireEnvelope).toSet(),
+        hasLength(2),
+      );
+      expect(
+        events.indexOf('stage:tombstoneInitial'),
+        greaterThan(events.lastIndexOf('resolve')),
+      );
+      expect(stores, 2, reason: 'each committed row rides its own store');
+    });
+
     test(
       'authority read failure returns zero with no cleanup mutation',
       () async {

@@ -97,6 +97,14 @@ RecoveredInboxReplayOutcome mapChatReplayOutcomeToDisposition(
         reasonCode: 'blocked_sender',
         reasonDetail: null,
       );
+    case ChatMessageProcessState.linkedModalityRefused:
+      // 361: an authenticated linked transport carried an unsupported
+      // modality — durably rejected with zero apply/receipt/publication.
+      return (
+        disposition: RecoveredInboxChatDisposition.rejected,
+        reasonCode: 'linked_modality_refused',
+        reasonDetail: null,
+      );
     case ChatMessageProcessState.notChatMessage:
       return (
         disposition: RecoveredInboxChatDisposition.rejected,

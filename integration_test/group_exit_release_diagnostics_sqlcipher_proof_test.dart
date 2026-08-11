@@ -41,7 +41,7 @@ void main() {
         isFalse,
         reason: 'This proof must run with --release.',
       );
-      expect(currentIdentityDatabaseVersion, 112);
+      expect(currentIdentityDatabaseVersion, 113);
 
       final temp = await Directory.systemTemp.createTemp(
         'group_exit_release_diagnostics_',

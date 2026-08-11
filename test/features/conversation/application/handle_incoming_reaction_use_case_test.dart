@@ -10,6 +10,7 @@ import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -148,6 +149,61 @@ void main() {
   });
 
   group('handleIncomingReaction', () {
+    test('TC-361-03a an exact active linked reaction applies with in-apply '
+        'transport reauthorization and a revoked transport refuses', () async {
+      const linkedTransport = '12D3KooWLinkedDevice1';
+      final envelope = ReactionPayload.buildEncryptedEnvelope(
+        senderPeerId: linkedTransport,
+        eventId: 'r1',
+        action: ReactionPayload.addAction,
+        targetMessageId: 'msg-1',
+        kem: 'k',
+        ciphertext: 'c',
+        nonce: 'n',
+      );
+      ChatMessage linkedMessage() => ChatMessage(
+        from: linkedTransport,
+        to: 'my-peer',
+        content: envelope,
+        timestamp: '2026-08-11T12:00:00.000Z',
+        isIncoming: true,
+      );
+
+      final (result, change) = await handleIncomingReaction(
+        message: linkedMessage(),
+        messageRepo: messageRepo,
+        reactionRepo: reactionRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: _ownMlKemSecretKey,
+        transportAuthority: _FakeTransportAuthority({
+          linkedTransport: const DirectTransportAuthorityResolution.authorized(
+            kind: DirectTransportAuthorityKind.linked,
+            contactAccountPeerId: _senderPeerId,
+            contactIsBlocked: false,
+          ),
+        }),
+      );
+      expect(result, HandleReactionResult.success);
+      expect(change, isNotNull);
+      expect(reactionRepo.linkedApplyTransports, [linkedTransport]);
+
+      final (revokedResult, revokedChange) = await handleIncomingReaction(
+        message: linkedMessage(),
+        messageRepo: messageRepo,
+        reactionRepo: reactionRepo,
+        contactRepo: contactRepo,
+        bridge: bridge,
+        ownMlKemSecretKey: _ownMlKemSecretKey,
+        transportAuthority: _FakeTransportAuthority(
+          const <String, DirectTransportAuthorityResolution>{},
+        ),
+      );
+      expect(revokedResult, HandleReactionResult.senderMismatch);
+      expect(revokedChange, isNull);
+      expect(reactionRepo.linkedApplyTransports, hasLength(1));
+    });
+
     test(
       'TC-331-09 fresh ADD stages before canonical mutation and promotes before retry',
       () async {
@@ -1317,4 +1373,17 @@ void main() {
       expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
     });
   });
+}
+
+class _FakeTransportAuthority implements DirectTransportAuthorityResolver {
+  _FakeTransportAuthority(this.byTransport);
+
+  final Map<String, DirectTransportAuthorityResolution> byTransport;
+
+  @override
+  Future<DirectTransportAuthorityResolution> resolveDirectTransportAuthority(
+    String transportPeerId,
+  ) async =>
+      byTransport[transportPeerId] ??
+      const DirectTransportAuthorityResolution.refused('unknown_transport');
 }

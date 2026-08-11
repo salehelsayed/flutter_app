@@ -8,6 +8,7 @@ import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_reaction_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -38,6 +39,9 @@ class ReactionListener {
   final MessageRepository messageRepo;
   final ReactionRepository reactionRepo;
   final ContactRepository contactRepo;
+
+  /// 361: shared physical->logical reverse authority (null = incumbent).
+  final DirectTransportAuthorityResolver? transportAuthority;
   final Bridge bridge;
   final Future<String?> Function() getOwnMlKemSecretKey;
   final ResolveReactionNotificationDependencies?
@@ -59,6 +63,7 @@ class ReactionListener {
     required this.messageRepo,
     required this.reactionRepo,
     required this.contactRepo,
+    this.transportAuthority,
     required this.bridge,
     required this.getOwnMlKemSecretKey,
     this.resolveNotificationDependencies,
@@ -134,9 +139,18 @@ class ReactionListener {
 
   Future<void> _onMessage(ChatMessage message) async {
     try {
-      // Check if sender is blocked
+      // Check if sender is blocked. 361: with a transport authority present
+      // the blocked policy applies to the RESOLVED logical contact.
       final senderPeerId = message.from;
-      final senderContact = await contactRepo.getContact(senderPeerId);
+      var blockedLookupPeerId = senderPeerId;
+      if (transportAuthority != null) {
+        final resolution = await transportAuthority!
+            .resolveDirectTransportAuthority(senderPeerId);
+        if (resolution.authorized) {
+          blockedLookupPeerId = resolution.contactAccountPeerId!;
+        }
+      }
+      final senderContact = await contactRepo.getContact(blockedLookupPeerId);
       if (senderContact != null && senderContact.isBlocked) {
         emitFlowEvent(
           layer: 'FL',
@@ -158,6 +172,7 @@ class ReactionListener {
         messageRepo: messageRepo,
         reactionRepo: reactionRepo,
         contactRepo: contactRepo,
+        transportAuthority: transportAuthority,
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
         notificationService: notify?.service,

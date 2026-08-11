@@ -1,15 +1,18 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:crypto/crypto.dart';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import '../direct_event_fanout_contract.dart';
 import '../direct_inbox_custody_outbox_contract.dart';
 import '../direct_media_blob_custody.dart';
 import '../outgoing_transport_mutation.dart';
 import '../../media/direct_media_blob_custody.dart';
 import '../../media/media_owner_lane.dart';
 import '../../media/private_media_policy.dart';
+import 'direct_contact_device_bindings_db_helpers.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
 import 'direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
@@ -185,7 +188,12 @@ Future<Map<String, Object?>?> dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
     whereArgs: <Object?>[messageId],
     limit: 2,
   );
-  if (rows.length > 1) {
+  // 361: a fanout-marked generation has no single owner. Selecting one
+  // sibling through this contract would let a generic single-target path
+  // interpret the batch, so plural AND marked rows both fail closed here;
+  // fanout-aware callers use the plural sibling loader instead.
+  if (rows.length > 1 ||
+      rows.any((row) => row['contact_account_peer_id'] != null)) {
     throw StateError('Ambiguous direct inbox custody owner for message');
   }
   return rows.isEmpty ? null : rows.single;
@@ -272,6 +280,24 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
     if ((mediaBlobManifestHash == null) != (mediaBlobExpiresAtMs == null)) {
       return DirectInboxCustodyCompletionOutcome.stale;
     }
+    // 361: a fanout sibling belongs to its LOGICAL contact and is blob-free
+    // by contract. Whether this row is the last surviving sibling decides
+    // whether the canonical transition may project.
+    final fanoutContact = custody['contact_account_peer_id'] as String?;
+    final isFanoutSibling = fanoutContact != null;
+    if (isFanoutSibling && hasStrictBlobBinding) {
+      return DirectInboxCustodyCompletionOutcome.stale;
+    }
+    final ownerContactPeerId = fanoutContact ?? recipientPeerId;
+    var isFinalSurvivingSibling = true;
+    if (isFanoutSibling) {
+      final siblingCountRows = await txn.rawQuery(
+        'SELECT COUNT(*) AS count FROM $_table WHERE message_id = ?',
+        <Object?>[messageId],
+      );
+      isFinalSurvivingSibling =
+          ((siblingCountRows.single['count'] as num?)?.toInt() ?? 0) == 1;
+    }
     List<DirectMediaBlobCustodyRow> strictBlobRows = const [];
     if (hasStrictBlobBinding) {
       if (relayExpiresAt == null ||
@@ -335,15 +361,19 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
       // outbox row was the only durable fact preventing a delayed generic
       // whole-row save from recreating the message after completion. Replace
       // that authority inside this same transaction with a scrubbed local
-      // tombstone before retiring the exact v108 incarnation.
+      // tombstone before retiring the exact v108 incarnation. A fanout
+      // sibling reconstructs it against the LOGICAL contact — never the
+      // delivery transport — and preserves the generation as the no-remint
+      // fact any later sibling converges on.
       await txn.insert(
         'messages',
         _removedMessageTombstoneFromCustody(
           custody,
           messageId: messageId,
-          recipientPeerId: recipientPeerId,
+          recipientPeerId: ownerContactPeerId,
           expectedWireEnvelope: expectedWireEnvelope,
           relayExpiresAt: relayExpiresAt,
+          directEventFanoutGenerationId: isFanoutSibling ? messageId : null,
         ),
         conflictAlgorithm: ConflictAlgorithm.abort,
       );
@@ -352,11 +382,23 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
       final status = message['status'] as String?;
       final ownsMessage =
           ((message['is_incoming'] as num?)?.toInt() ?? 0) == 0 &&
-          message['contact_peer_id'] == recipientPeerId;
+          message['contact_peer_id'] == ownerContactPeerId;
       final userTerminal =
           message['deleted_at'] != null || message['hidden_at'] != null;
-      final stillProjectsOwnedAttempt =
-          message['wire_envelope'] == expectedWireEnvelope;
+      // 361: a nonrepresentative sibling's ciphertext never equals the
+      // canonical witness. Completion compares clear kind/message identity
+      // plus the persisted generation instead of ciphertext equality.
+      final ownsCurrentFanoutGeneration =
+          isFanoutSibling &&
+          message['direct_event_fanout_generation_id'] == messageId &&
+          _exactInitialEnvelopeSenderPeerId(
+                expectedWireEnvelope,
+                messageId: messageId,
+              ) !=
+              null;
+      final stillProjectsOwnedAttempt = isFanoutSibling
+          ? ownsCurrentFanoutGeneration
+          : message['wire_envelope'] == expectedWireEnvelope;
       // A direct/LAN receipt commits `delivered` and CLEARS the initial
       // envelope, so the common successful path reaches this transaction with
       // no projected attempt at all. That successor was CAS-derived from this
@@ -402,6 +444,10 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
           ownsMessage &&
           !userTerminal &&
           stillProjectsOwnedAttempt &&
+          // 361: only the FINAL surviving sibling of a fanout generation may
+          // project the canonical transition; earlier siblings retire their
+          // exact row and preserve the message untouched.
+          isFinalSurvivingSibling &&
           const <String>{
             'sending',
             'sent',
@@ -428,7 +474,7 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
             where:
                 'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
                 'AND status = ? AND deleted_at IS NULL AND hidden_at IS NULL',
-            whereArgs: <Object?>[messageId, recipientPeerId, status],
+            whereArgs: <Object?>[messageId, ownerContactPeerId, status],
           );
           if (changed != 1) {
             throw StateError(
@@ -669,6 +715,7 @@ Map<String, Object?> _removedMessageTombstoneFromCustody(
   required String recipientPeerId,
   required String expectedWireEnvelope,
   required int? relayExpiresAt,
+  String? directEventFanoutGenerationId,
 }) {
   final senderPeerId = _exactInitialEnvelopeSenderPeerId(
     expectedWireEnvelope,
@@ -698,6 +745,9 @@ Map<String, Object?> _removedMessageTombstoneFromCustody(
     'custody_checked_at': null,
     'hidden_at': completedAt,
     'direct_media_custody_intent_id': null,
+    // 361: the reconstructed tombstone carries the generation so the scrubbed
+    // no-remint fact survives message-only removal.
+    'direct_event_fanout_generation_id': ?directEventFanoutGenerationId,
   };
 }
 
@@ -792,3 +842,270 @@ bool _isNonBlankString(Object? value) =>
     value is String && value.trim().isNotEmpty;
 
 int? _asInt(Object? value) => value is num ? value.toInt() : null;
+
+/// Domain separator for the deterministic per-(message,target) incarnation.
+const String _fanoutIncarnationDomain =
+    'mknoon-direct-event-fanout-incarnation-v1';
+
+/// Mints the one stable 32-character incarnation for `(message, target)`.
+///
+/// v108 requires one globally unique incarnation per row; fanout requires that
+/// the SAME `(message, target)` pair always reproduces the SAME incarnation so
+/// a byte-exact stage replay can never contradict the surviving rows.
+String computeDirectEventFanoutIncarnation({
+  required String messageId,
+  required String recipientPeerId,
+}) {
+  final material =
+      '$_fanoutIncarnationDomain\n'
+      'message:${messageId.trim()}\n'
+      'target:${recipientPeerId.trim()}';
+  return sha256.convert(utf8.encode(material)).toString().substring(0, 32);
+}
+
+/// Loads EVERY surviving v108 sibling of one logical message generation, in
+/// stable target order. Surviving rows are the complete pending set.
+Future<List<Map<String, Object?>>>
+dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+  DatabaseExecutor db, {
+  required String messageId,
+}) {
+  return db.query(
+    _table,
+    where: 'message_id = ?',
+    whereArgs: <Object?>[messageId],
+    orderBy: 'recipient_peer_id ASC',
+  );
+}
+
+/// Loads a fair bounded batch of EXACT v113 blob-free fanout rows only.
+///
+/// The restricted linked runtime drains through this loader so historical
+/// (null logical contact), media-bound, and private rows are never selected.
+Future<List<Map<String, Object?>>>
+dbLoadDirectInboxCustodyOutboxExactFanoutRows(
+  DatabaseExecutor db, {
+  int limit = kDirectInboxCustodyOutboxMaxLoadBatch,
+}) {
+  if (limit <= 0) return Future<List<Map<String, Object?>>>.value(const []);
+  final boundedLimit = math.min(limit, kDirectInboxCustodyOutboxMaxLoadBatch);
+  return db.rawQuery(
+    'SELECT * FROM $_table '
+    'WHERE contact_account_peer_id IS NOT NULL '
+    'AND media_blob_manifest_hash IS NULL '
+    'AND media_blob_expires_at_ms IS NULL '
+    'ORDER BY last_attempt_at ASC, created_at ASC, '
+    'recipient_peer_id ASC, message_id ASC LIMIT ?',
+    <Object?>[boundedLimit],
+  );
+}
+
+/// Validates that [candidates] covers [snapshot] targets exactly, in the same
+/// deterministic order, with no duplicate transport.
+bool directEventFanoutCandidatesMatchSnapshot(
+  List<DirectEventFanoutTargetCandidate> candidates,
+  DirectContactFanoutSnapshot snapshot,
+) {
+  if (candidates.isEmpty || candidates.length != snapshot.targets.length) {
+    return false;
+  }
+  final seen = <String>{};
+  for (var index = 0; index < candidates.length; index++) {
+    final candidate = candidates[index];
+    if (candidate.recipientPeerId != snapshot.targets[index].peerId ||
+        candidate.wireEnvelope.trim().isEmpty ||
+        !seen.add(candidate.recipientPeerId)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/// Atomically stages one fresh blob-free ordinary direct text message and its
+/// COMPLETE all-target v108 sibling batch (Plan 361 / DB v113).
+///
+/// Survivor-first: ANY surviving sibling for [messageId] is authoritative
+/// evidence the atomic batch already exists, and is returned — before roster,
+/// capacity, or canonical work — as the complete pending set. With zero
+/// survivors, an owned canonical row whose generation still equals [messageId]
+/// is terminal and can never be reminted. Otherwise the persisted-contact
+/// snapshot is re-read and exactly compared inside this transaction, capacity
+/// must admit the WHOLE batch, and the canonical message plus every sibling
+/// commit together or not at all.
+Future<DbDirectEventFanoutStageResult>
+dbStageOutgoingDirectTextFanoutInboxCustody(
+  Database db, {
+  required Map<String, Object?> stagedRow,
+  required String messageId,
+  required String contactAccountPeerId,
+  required String senderTransportPeerId,
+  required DirectContactFanoutSnapshot expectedSnapshot,
+  required List<DirectEventFanoutTargetCandidate> candidates,
+  int capacity = kDirectInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeSiblingInsertForTest,
+}) {
+  final createdAt = stagedRow['created_at'] as String? ?? '';
+  final validAuthority =
+      capacity >= 0 &&
+      messageId.trim().isNotEmpty &&
+      contactAccountPeerId.trim().isNotEmpty &&
+      senderTransportPeerId.trim().isNotEmpty &&
+      expectedSnapshot.contactAccountPeerId == contactAccountPeerId &&
+      directEventFanoutCandidatesMatchSnapshot(candidates, expectedSnapshot) &&
+      stagedRow['id'] == messageId &&
+      stagedRow['contact_peer_id'] == contactAccountPeerId &&
+      stagedRow['direct_event_fanout_generation_id'] == messageId &&
+      stagedRow['wire_envelope'] == candidates.first.wireEnvelope &&
+      createdAt.trim().isNotEmpty &&
+      _isEligibleFreshOrdinaryDirectText(stagedRow) &&
+      candidates.every(
+        (candidate) => isExactV2DirectChatInitialEnvelope(
+          candidate.wireEnvelope,
+          messageId: messageId,
+          senderPeerId: senderTransportPeerId,
+        ),
+      );
+  if (!validAuthority) {
+    return Future<DbDirectEventFanoutStageResult>.value(
+      const DbDirectEventFanoutStageResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final survivors = await txn.query(
+      _table,
+      where: 'message_id = ?',
+      whereArgs: <Object?>[messageId],
+      orderBy: 'recipient_peer_id ASC',
+    );
+    if (survivors.isNotEmpty) {
+      // Surviving rows are the complete pending set. The attempt must agree
+      // with them byte-for-byte; roster and capacity are never consulted and
+      // no target is appended or recreated.
+      for (final row in survivors) {
+        final candidate = candidates
+            .where((c) => c.recipientPeerId == row['recipient_peer_id'])
+            .firstOrNull;
+        if (row['contact_account_peer_id'] != contactAccountPeerId ||
+            row['incarnation_id'] !=
+                computeDirectEventFanoutIncarnation(
+                  messageId: messageId,
+                  recipientPeerId: row['recipient_peer_id'] as String,
+                ) ||
+            (candidate != null &&
+                candidate.wireEnvelope != row['wire_envelope'])) {
+          return const DbDirectEventFanoutStageResult.refused();
+        }
+      }
+      return DbDirectEventFanoutStageResult(
+        outcome: DirectEventFanoutStageOutcome.survivorReplay,
+        rows: survivors
+            .map((row) => Map<String, Object?>.from(row))
+            .toList(growable: false),
+      );
+    }
+
+    final messageRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[messageId],
+      limit: 1,
+    );
+    if (messageRows.isNotEmpty) {
+      final message = messageRows.single;
+      final terminal =
+          message['direct_event_fanout_generation_id'] == messageId &&
+          message['contact_peer_id'] == contactAccountPeerId &&
+          ((message['is_incoming'] as num?)?.toInt() ?? 0) == 0;
+      // With zero siblings, an exact matching generation is terminal and
+      // idempotent — including after a receipt cleared the witness or a
+      // delete-for-me scrubbed the row. Anything else is conflicting bytes.
+      return terminal
+          ? const DbDirectEventFanoutStageResult(
+              outcome: DirectEventFanoutStageOutcome.terminal,
+              rows: <Map<String, Object?>>[],
+            )
+          : const DbDirectEventFanoutStageResult.refused();
+    }
+
+    // Re-read the persisted contact + complete v112 facts inside this
+    // transaction; a removed contact or ANY drift from the caller's snapshot
+    // fails the whole batch all-zero.
+    final currentSnapshot = await dbReadDirectContactFanoutSnapshot(
+      txn,
+      contactAccountPeerId: contactAccountPeerId,
+    );
+    if (currentSnapshot == null ||
+        currentSnapshot.targets.isEmpty ||
+        !currentSnapshot.sameSnapshotAs(expectedSnapshot)) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    // Capacity admits the whole batch or nothing.
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_table',
+    );
+    final count = (countRows.single['count'] as num?)?.toInt() ?? 0;
+    if (count + candidates.length > capacity) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    // Blob-free only: a message that already owns direct media authority can
+    // never ride the event fanout lane.
+    final hasMediaTable = (await txn.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'media_attachments' LIMIT 1",
+    )).isNotEmpty;
+    if (hasMediaTable) {
+      final directMedia = await txn.rawQuery(
+        'SELECT 1 FROM media_attachments '
+        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+        <Object?>[messageId, MediaOwnerLane.direct.dbValue],
+      );
+      if (directMedia.isNotEmpty) {
+        return const DbDirectEventFanoutStageResult.refused();
+      }
+    }
+
+    final messageOutcome =
+        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+          txn,
+          expectedRow: null,
+          stagedRow: stagedRow,
+          kind: OutgoingOrdinaryAttemptKind.fresh,
+        );
+    if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    final stagedRows = <Map<String, Object?>>[];
+    for (final candidate in candidates) {
+      final siblingRow = <String, Object?>{
+        'recipient_peer_id': candidate.recipientPeerId,
+        'message_id': messageId,
+        'incarnation_id': computeDirectEventFanoutIncarnation(
+          messageId: messageId,
+          recipientPeerId: candidate.recipientPeerId,
+        ),
+        'wire_envelope': candidate.wireEnvelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'contact_account_peer_id': contactAccountPeerId,
+        'created_at': createdAt,
+        'updated_at': createdAt,
+      };
+      await beforeSiblingInsertForTest?.call();
+      await txn.insert(
+        _table,
+        siblingRow,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      stagedRows.add(siblingRow);
+    }
+    return DbDirectEventFanoutStageResult(
+      outcome: DirectEventFanoutStageOutcome.applied,
+      rows: stagedRows,
+    );
+  });
+}

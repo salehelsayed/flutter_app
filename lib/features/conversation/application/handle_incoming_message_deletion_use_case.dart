@@ -6,6 +6,7 @@ import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
@@ -49,6 +50,9 @@ handleIncomingMessageDeletion({
   SendIncomingDeletionDeliveryReceipt? sendDeliveryReceipt,
   SendIncomingDeletionMutationDeliveryReceipt? sendMutationDeliveryReceipt,
   String? stagedEntryId,
+  // 361: shared physical->logical reverse authority; null keeps the
+  // incumbent transport==logical equality byte-identically.
+  DirectTransportAuthorityResolver? transportAuthority,
 }) async {
   Future<void> maybeSendDeliveryReceipt(
     String messageId, {
@@ -148,9 +152,22 @@ handleIncomingMessageDeletion({
     return (HandleMessageDeletionResult.unauthorized, null);
   }
 
-  final senderMismatch =
-      message.from != payload.senderPeerId ||
-      (v2Envelope != null && envelopeSenderPeerId != payload.senderPeerId);
+  DirectTransportAuthorityResolution? transportResolution;
+  bool senderMismatch;
+  if (transportAuthority == null) {
+    senderMismatch =
+        message.from != payload.senderPeerId ||
+        (v2Envelope != null && envelopeSenderPeerId != payload.senderPeerId);
+  } else {
+    transportResolution = await transportAuthority
+        .resolveDirectTransportAuthority(message.from);
+    senderMismatch =
+        (v2Envelope != null && envelopeSenderPeerId != message.from) ||
+        !transportResolution.authorized ||
+        transportResolution.contactAccountPeerId != payload.senderPeerId;
+  }
+  final isLinkedTransportOrigin =
+      transportResolution?.kind == DirectTransportAuthorityKind.linked;
   if (senderMismatch) {
     emitFlowEvent(
       layer: 'FL',
@@ -271,14 +288,38 @@ handleIncomingMessageDeletion({
           return null;
         }
         IncomingDirectDeletionApplyResult applied;
+        final linkedApplyRepository =
+            isLinkedTransportOrigin &&
+                messageRepo is LinkedTransportIncomingApplyRepository
+            ? messageRepo as LinkedTransportIncomingApplyRepository
+            : null;
+        if (isLinkedTransportOrigin &&
+            (linkedApplyRepository == null ||
+                !linkedApplyRepository.supportsLinkedTransportIncomingApply)) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_DELETE_RECEIVE_LINKED_APPLY_UNAVAILABLE',
+            details: const {},
+          );
+          return null;
+        }
         try {
-          applied = await directDeletionRepository
-              .applyIncomingDirectMessageDeletion(
-                messageId: payload.messageId,
-                senderPeerId: payload.senderPeerId,
-                deletedAt: payload.timestamp,
-                transport: message.transport,
-              );
+          applied = linkedApplyRepository != null
+              ? await linkedApplyRepository
+                    .applyIncomingDirectMessageDeletionWithTransportAuthority(
+                      messageId: payload.messageId,
+                      senderPeerId: payload.senderPeerId,
+                      deletedAt: payload.timestamp,
+                      transport: message.transport,
+                      authenticatedTransportPeerId: message.from,
+                    )
+              : await directDeletionRepository
+                    .applyIncomingDirectMessageDeletion(
+                      messageId: payload.messageId,
+                      senderPeerId: payload.senderPeerId,
+                      deletedAt: payload.timestamp,
+                      transport: message.transport,
+                    );
         } catch (error) {
           emitFlowEvent(
             layer: 'FL',

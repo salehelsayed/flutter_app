@@ -3,7 +3,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
@@ -18,6 +21,10 @@ const _sender = 'peer-self';
 const _t0 = '2026-08-07T07:00:00.000Z';
 const _t1 = '2026-08-07T07:00:01.000Z';
 const _t2 = '2026-08-07T07:00:02.000Z';
+const _fanoutContact = 'peer-fanout-contact-account';
+const _fanoutContactKey = 'fanout-contact-signing-key';
+const _fanoutTransportA = 'peer-fanout-device-transport-a';
+const _fanoutTransportB = 'peer-fanout-device-transport-b';
 
 void main() {
   sqfliteFfiInit();
@@ -1899,6 +1906,728 @@ END
       (await parentOf(protectedControl.messageId))!['private_media_mode'],
       'protected',
     );
+  });
+
+  group('TC-361-01c blob-free v109 event fanout (DB v113)', () {
+    late Database current;
+
+    setUp(() async {
+      current = await databaseFactoryFfi.openDatabase(
+        '${tempDirectory.path}/tc361-01c.db',
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        ),
+      );
+      await current.insert('contacts', <String, Object?>{
+        'peer_id': _fanoutContact,
+        'public_key': _fanoutContactKey,
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'Fanout Contact',
+        'signature': 'sig-base64',
+        'scanned_at': _t0,
+        'ml_kem_public_key': 'legacy-mlkem',
+      });
+      await current.insert(
+        'direct_contact_device_roster_metadata',
+        const <String, Object?>{
+          'contact_account_peer_id': _fanoutContact,
+          'roster_initialized': 1,
+          'legacy_target_state': 'revoked',
+          'initialized_at': _t0,
+          'legacy_revoked_at': _t0,
+          'updated_at': _t0,
+        },
+      );
+      for (final device in const <(String, String, String)>[
+        ('device-a', _fanoutTransportA, 'a'),
+        ('device-b', _fanoutTransportB, 'b'),
+      ]) {
+        await current
+            .insert('direct_contact_device_bindings', <String, Object?>{
+              'contact_account_peer_id': _fanoutContact,
+              'device_id': device.$1,
+              'verified_account_signing_public_key': _fanoutContactKey,
+              'transport_peer_id': device.$2,
+              'transport_public_key': 'transport-key-${device.$1}',
+              'device_ml_kem_public_key': 'mlkem-${device.$1}',
+              'binding_fingerprint': device.$3 * 64,
+              'state': 'active',
+              'staged_at': _t0,
+              'decided_at': _t0,
+            });
+      }
+    });
+
+    tearDown(() async {
+      if (current.isOpen) await current.close();
+    });
+
+    Future<DirectContactFanoutSnapshot> snapshot() async =>
+        (await dbReadDirectContactFanoutSnapshot(
+          current,
+          contactAccountPeerId: _fanoutContact,
+        ))!;
+
+    Future<Map<String, Object?>> parentRow(String messageId) async =>
+        (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[messageId],
+        )).single;
+
+    Future<Map<String, Object?>> seedOutgoingParent(
+      String messageId, {
+      String status = 'delivered',
+    }) async {
+      await current.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': _fanoutContact,
+        'sender_peer_id': _sender,
+        'text': 'before',
+        'timestamp': _t0,
+        'status': status,
+        'is_incoming': 0,
+        'created_at': _t0,
+        'private_media_policy_version': 0,
+        'private_media_mode': 'ordinary',
+        'private_media_state': 'none',
+      });
+      return parentRow(messageId);
+    }
+
+    String editEnvelope(String messageId, String eventId, String cipher) =>
+        jsonEncode(<String, Object?>{
+          'type': 'chat_message',
+          'version': '2',
+          'id': messageId,
+          'eventId': eventId,
+          'senderPeerId': _sender,
+          'encrypted': <String, Object?>{
+            'kem': 'kem-361',
+            'ciphertext': cipher,
+            'nonce': 'nonce-361',
+          },
+        });
+
+    String deletionEnvelope(String eventId, String cipher) =>
+        jsonEncode(<String, Object?>{
+          'type': 'message_deletion',
+          'version': '2',
+          'eventId': eventId,
+          'senderPeerId': _sender,
+          'encrypted': <String, Object?>{
+            'kem': 'kem-361',
+            'ciphertext': cipher,
+            'nonce': 'nonce-361',
+          },
+        });
+
+    String reactionEnvelope({
+      required String eventId,
+      required String action,
+      required String targetMessageId,
+      required String cipher,
+    }) => jsonEncode(<String, Object?>{
+      'type': 'message_reaction',
+      'version': '2',
+      'senderPeerId': _sender,
+      'eventId': eventId,
+      'action': action,
+      'targetMessageId': targetMessageId,
+      'encrypted': <String, Object?>{
+        'kem': 'kem-361',
+        'ciphertext': cipher,
+        'nonce': 'nonce-361',
+      },
+    });
+
+    List<DirectEventFanoutTargetCandidate> candidatesOf(
+      DirectContactFanoutSnapshot snap,
+      String Function(String targetPeer) envelopeFor,
+    ) => <DirectEventFanoutTargetCandidate>[
+      for (final target in snap.targets)
+        DirectEventFanoutTargetCandidate(
+          recipientPeerId: target.peerId,
+          wireEnvelope: envelopeFor(target.peerId),
+        ),
+    ];
+
+    test(
+      'TC-361-01c mutation fanout stages atomically, persists parent '
+      'identity, and settles receipts only for the current generation',
+      () async {
+        final snap = await snapshot();
+        expect(
+          snap.targets.map((target) => target.peerId).toList(),
+          const <String>[_fanoutTransportA, _fanoutTransportB],
+        );
+
+        // ── EDIT E1 over parent-1. ──
+        const messageId = 'tc361-01c-parent-1';
+        const e1 = 'tc361-01c-e1';
+        final expected = await seedOutgoingParent(messageId);
+        final e1Candidates = candidatesOf(
+          snap,
+          (peer) => editEnvelope(messageId, e1, 'cipher-e1-$peer'),
+        );
+        final e1Staged = <String, Object?>{
+          ...expected,
+          'text': 'after',
+          'status': 'sending',
+          'edited_at': _t1,
+          'wire_envelope': e1Candidates.first.wireEnvelope,
+        };
+        final stage = await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+          current,
+          expectedRow: expected,
+          stagedRow: e1Staged,
+          kind: OutgoingOrdinaryAttemptKind.edit,
+          eventId: e1,
+          parentMessageId: messageId,
+          contactAccountPeerId: _fanoutContact,
+          senderTransportPeerId: _sender,
+          expectedSnapshot: snap,
+          candidates: e1Candidates,
+        );
+        expect(stage.outcome, DirectEventFanoutStageOutcome.applied);
+        expect(stage.rows, hasLength(2));
+
+        final parent = await parentRow(messageId);
+        expect(parent['text'], 'after');
+        expect(parent['direct_event_fanout_generation_id'], e1);
+        expect(parent['wire_envelope'], e1Candidates.first.wireEnvelope);
+
+        final rows = await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+          current,
+          eventId: e1,
+        );
+        expect(rows, hasLength(2));
+        for (final row in rows) {
+          expect(row['contact_account_peer_id'], _fanoutContact);
+          expect(
+            row['parent_message_id'],
+            messageId,
+            reason: 'every new fanout event row persists its logical parent',
+          );
+        }
+
+        // Partial completion: the first sibling retires without projecting;
+        // restart replays the exact survivor only.
+        final completionA =
+            await dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+              current,
+              recipientPeerId: _fanoutTransportA,
+              eventId: e1,
+              expectedWireEnvelope: e1Candidates.first.wireEnvelope,
+              relayExpiresAt: 1900000060000,
+            );
+        expect(
+          completionA,
+          DirectMutationInboxCustodyCompletionOutcome.completed,
+        );
+        expect((await parentRow(messageId))['status'], 'sending');
+        final survivors =
+            await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+              current,
+              eventId: e1,
+            );
+        expect(survivors, hasLength(1));
+        expect(survivors.single['recipient_peer_id'], _fanoutTransportB);
+        final survivorReplay =
+            await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+              current,
+              expectedRow: expected,
+              stagedRow: e1Staged,
+              kind: OutgoingOrdinaryAttemptKind.edit,
+              eventId: e1,
+              parentMessageId: messageId,
+              contactAccountPeerId: _fanoutContact,
+              senderTransportPeerId: _sender,
+              expectedSnapshot: snap,
+              candidates: e1Candidates,
+            );
+        expect(
+          survivorReplay.outcome,
+          DirectEventFanoutStageOutcome.survivorReplay,
+        );
+        expect(survivorReplay.rows, hasLength(1));
+        expect(
+          survivorReplay.rows!.single['recipient_peer_id'],
+          _fanoutTransportB,
+        );
+
+        // The final sibling projects the canonical transition.
+        final completionB =
+            await dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+              current,
+              recipientPeerId: _fanoutTransportB,
+              eventId: e1,
+              expectedWireEnvelope: e1Candidates[1].wireEnvelope,
+              relayExpiresAt: 1900000060000,
+            );
+        expect(
+          completionB,
+          DirectMutationInboxCustodyCompletionOutcome.completed,
+        );
+        final projected = await parentRow(messageId);
+        expect(projected['status'], 'inboxed');
+        expect(projected['transport'], 'inbox');
+
+        // A real exact receipt clears the representative witness; stale and
+        // future event receipts refuse; same-event replay stages zero rows.
+        expect(
+          await dbSettleOutgoingOrdinaryTransport(
+            current,
+            messageId: messageId,
+            expectedContactPeerId: _fanoutContact,
+            expectedEnvelope: projected['wire_envelope'] as String?,
+            status: 'delivered',
+            transport: 'inbox',
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.receipt,
+            expectedDirectEventFanoutGenerationId: 'tc361-01c-e0-stale',
+          ),
+          OutgoingOrdinaryMutationOutcome.preserved,
+          reason: 'a stale event receipt is zero-effect',
+        );
+        expect(
+          await dbSettleOutgoingOrdinaryTransport(
+            current,
+            messageId: messageId,
+            expectedContactPeerId: _fanoutContact,
+            expectedEnvelope: projected['wire_envelope'] as String?,
+            status: 'delivered',
+            transport: 'inbox',
+            relayExpiresAt: null,
+            mode: OutgoingOrdinarySettlementMode.receipt,
+            expectedDirectEventFanoutGenerationId: e1,
+          ),
+          OutgoingOrdinaryMutationOutcome.applied,
+        );
+        final delivered = await parentRow(messageId);
+        expect(delivered['status'], 'delivered');
+        expect(delivered['wire_envelope'], isNull);
+        expect(delivered['direct_event_fanout_generation_id'], e1);
+        final afterReceipt =
+            await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+              current,
+              expectedRow: expected,
+              stagedRow: e1Staged,
+              kind: OutgoingOrdinaryAttemptKind.edit,
+              eventId: e1,
+              parentMessageId: messageId,
+              contactAccountPeerId: _fanoutContact,
+              senderTransportPeerId: _sender,
+              expectedSnapshot: snap,
+              candidates: e1Candidates,
+            );
+        expect(
+          afterReceipt.outcome,
+          DirectEventFanoutStageOutcome.terminal,
+          reason: 'a receipt-cleared witness cannot be reminted',
+        );
+
+        // ── Overlapping generations on parent-2: E2 stages while E1 rows
+        // survive, and the late E1 completion retires itself without
+        // projecting E2. ──
+        const overlapId = 'tc361-01c-parent-2';
+        const o1 = 'tc361-01c-o1';
+        const o2 = 'tc361-01c-o2';
+        final overlapExpected = await seedOutgoingParent(overlapId);
+        final o1Candidates = candidatesOf(
+          snap,
+          (peer) => editEnvelope(overlapId, o1, 'cipher-o1-$peer'),
+        );
+        final o1Stage =
+            await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+              current,
+              expectedRow: overlapExpected,
+              stagedRow: <String, Object?>{
+                ...overlapExpected,
+                'text': 'first edit',
+                'status': 'sending',
+                'edited_at': _t1,
+                'wire_envelope': o1Candidates.first.wireEnvelope,
+              },
+              kind: OutgoingOrdinaryAttemptKind.edit,
+              eventId: o1,
+              parentMessageId: overlapId,
+              contactAccountPeerId: _fanoutContact,
+              senderTransportPeerId: _sender,
+              expectedSnapshot: snap,
+              candidates: o1Candidates,
+            );
+        expect(o1Stage.outcome, DirectEventFanoutStageOutcome.applied);
+        final o1Parent = await parentRow(overlapId);
+        final o2Candidates = candidatesOf(
+          snap,
+          (peer) => editEnvelope(overlapId, o2, 'cipher-o2-$peer'),
+        );
+        final o2Stage =
+            await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+              current,
+              expectedRow: o1Parent,
+              stagedRow: <String, Object?>{
+                ...o1Parent,
+                'text': 'second edit',
+                'status': 'sending',
+                'edited_at': _t2,
+                'wire_envelope': o2Candidates.first.wireEnvelope,
+              },
+              kind: OutgoingOrdinaryAttemptKind.edit,
+              eventId: o2,
+              parentMessageId: overlapId,
+              contactAccountPeerId: _fanoutContact,
+              senderTransportPeerId: _sender,
+              expectedSnapshot: snap,
+              candidates: o2Candidates,
+            );
+        expect(
+          o2Stage.outcome,
+          DirectEventFanoutStageOutcome.applied,
+          reason: 'a genuinely later generation may stage over survivors',
+        );
+        expect(
+          (await parentRow(overlapId))['direct_event_fanout_generation_id'],
+          o2,
+        );
+        final lateO1 =
+            await dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
+              current,
+              recipientPeerId: _fanoutTransportA,
+              eventId: o1,
+              expectedWireEnvelope: o1Candidates.first.wireEnvelope,
+              relayExpiresAt: 1900000060000,
+            );
+        expect(lateO1, DirectMutationInboxCustodyCompletionOutcome.completed);
+        final o2Parent = await parentRow(overlapId);
+        expect(
+          o2Parent['status'],
+          'sending',
+          reason: 'a superseded sibling never projects the newer generation',
+        );
+        expect(o2Parent['text'], 'second edit');
+        expect(o2Parent['direct_event_fanout_generation_id'], o2);
+        // The superseded generation cannot be restaged either.
+        final o1Restage =
+            await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+              current,
+              expectedRow: overlapExpected,
+              stagedRow: <String, Object?>{
+                ...overlapExpected,
+                'text': 'first edit',
+                'status': 'sending',
+                'edited_at': _t1,
+                'wire_envelope': o1Candidates.first.wireEnvelope,
+              },
+              kind: OutgoingOrdinaryAttemptKind.edit,
+              eventId: o1,
+              parentMessageId: overlapId,
+              contactAccountPeerId: _fanoutContact,
+              senderTransportPeerId: _sender,
+              expectedSnapshot: snap,
+              candidates: o1Candidates,
+            );
+        expect(
+          o1Restage.outcome,
+          isNot(DirectEventFanoutStageOutcome.applied),
+          reason: 'an older generation is superseded, never re-minted',
+        );
+
+        // ── Delete-for-Everyone fanout persists the hidden logical parent ID
+        // that the clear deletion envelope cannot disclose. ──
+        const dfeParentId = 'tc361-01c-parent-3';
+        const d1 = 'tc361-01c-d1';
+        final dfeExpected = await seedOutgoingParent(dfeParentId);
+        final d1Candidates = candidatesOf(
+          snap,
+          (peer) => deletionEnvelope(d1, 'cipher-d1-$peer'),
+        );
+        final dfeStage =
+            await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+              current,
+              expectedRow: dfeExpected,
+              stagedRow: <String, Object?>{
+                ...dfeExpected,
+                'text': '',
+                'status': 'sending',
+                'deleted_at': _t1,
+                'deleted_by_peer_id': _sender,
+                'wire_envelope': d1Candidates.first.wireEnvelope,
+              },
+              kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+              eventId: d1,
+              parentMessageId: dfeParentId,
+              contactAccountPeerId: _fanoutContact,
+              senderTransportPeerId: _sender,
+              expectedSnapshot: snap,
+              candidates: d1Candidates,
+            );
+        expect(dfeStage.outcome, DirectEventFanoutStageOutcome.applied);
+        final dfeRows =
+            await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+              current,
+              eventId: d1,
+            );
+        expect(dfeRows, hasLength(2));
+        for (final row in dfeRows) {
+          expect(row['parent_message_id'], dfeParentId);
+          expect(row['contact_account_peer_id'], _fanoutContact);
+        }
+        expect(
+          (await parentRow(dfeParentId))['direct_event_fanout_generation_id'],
+          d1,
+        );
+      },
+    );
+
+    test('TC-361-01c reaction fanout generations progress exactly and an old '
+        'survivor cannot mutate the newer canonical row', () async {
+      final snap = await snapshot();
+      const targetId = 'tc361-01c-reaction-target';
+      await current.insert('messages', const <String, Object?>{
+        'id': targetId,
+        'contact_peer_id': _fanoutContact,
+        'sender_peer_id': _fanoutContact,
+        'text': 'target',
+        'timestamp': _t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': _t0,
+      });
+
+      Map<String, Object?> reactionRow({
+        required String id,
+        required String timestamp,
+        Object? removedAt,
+      }) => <String, Object?>{
+        'id': id,
+        'message_id': targetId,
+        'emoji': '👍',
+        'sender_peer_id': _sender,
+        'timestamp': timestamp,
+        'created_at': timestamp,
+        'removed_at': removedAt,
+      };
+
+      Future<DbDirectEventFanoutStageResult> stageReaction({
+        required String eventId,
+        required String action,
+        required String timestamp,
+      }) => dbStageOutgoingDirectReactionFanoutInboxCustody(
+        current,
+        reactionRow: reactionRow(
+          id: eventId,
+          timestamp: timestamp,
+          removedAt: action == 'remove' ? timestamp : null,
+        ),
+        action: action,
+        parentMessageId: targetId,
+        contactAccountPeerId: _fanoutContact,
+        senderTransportPeerId: _sender,
+        expectedSnapshot: snap,
+        candidates: candidatesOf(
+          snap,
+          (peer) => reactionEnvelope(
+            eventId: eventId,
+            action: action,
+            targetMessageId: targetId,
+            cipher: 'cipher-$eventId-$peer',
+          ),
+        ),
+      );
+
+      Future<Map<String, Object?>?> canonical() async {
+        final rows = await current.query(
+          'message_reactions',
+          where: 'message_id = ? AND sender_peer_id = ?',
+          whereArgs: const <Object?>[targetId, _sender],
+          limit: 1,
+        );
+        return rows.isEmpty ? null : rows.single;
+      }
+
+      // R1 ADD stages the full batch and completes on both devices.
+      const r1 = 'tc361-01c-r1';
+      final r1Stage = await stageReaction(
+        eventId: r1,
+        action: 'add',
+        timestamp: _t0,
+      );
+      expect(r1Stage.outcome, DirectEventFanoutStageOutcome.applied);
+      expect(r1Stage.rows, hasLength(2));
+      expect((await canonical())!['id'], r1);
+      for (final row in r1Stage.rows!) {
+        expect(row['parent_message_id'], targetId);
+        expect(row['contact_account_peer_id'], _fanoutContact);
+        expect(
+          await dbCompleteAcceptedDirectReactionInboxCustodyIfExact(
+            current,
+            recipientPeerId: row['recipient_peer_id'] as String,
+            eventId: r1,
+            expectedWireEnvelope: row['wire_envelope'] as String,
+          ),
+          DirectReactionInboxCustodyCompletionOutcome.completed,
+        );
+      }
+
+      // Exact replay after full completion is terminal — zero staging.
+      final r1Replay = await stageReaction(
+        eventId: r1,
+        action: 'add',
+        timestamp: _t0,
+      );
+      expect(r1Replay.outcome, DirectEventFanoutStageOutcome.terminal);
+      expect(
+        await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+          current,
+          eventId: r1,
+        ),
+        isEmpty,
+      );
+
+      // R2 REMOVE supersedes; a stale R1 replay stages zero and leaves the
+      // newer canonical untouched; R3 later ADD stages.
+      const r2 = 'tc361-01c-r2';
+      final r2Stage = await stageReaction(
+        eventId: r2,
+        action: 'remove',
+        timestamp: _t1,
+      );
+      expect(r2Stage.outcome, DirectEventFanoutStageOutcome.applied);
+      expect((await canonical())!['id'], r2);
+      expect((await canonical())!['removed_at'], _t1);
+
+      final staleR1 = await stageReaction(
+        eventId: r1,
+        action: 'add',
+        timestamp: _t0,
+      );
+      expect(
+        staleR1.outcome,
+        isNot(DirectEventFanoutStageOutcome.applied),
+        reason: 'an older event cannot stage over a newer canonical row',
+      );
+      expect((await canonical())!['id'], r2);
+      expect(
+        await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+          current,
+          eventId: r1,
+        ),
+        isEmpty,
+      );
+
+      const r3 = 'tc361-01c-r3';
+      final r3Stage = await stageReaction(
+        eventId: r3,
+        action: 'add',
+        timestamp: _t2,
+      );
+      expect(r3Stage.outcome, DirectEventFanoutStageOutcome.applied);
+      expect((await canonical())!['id'], r3);
+
+      // An old R2 survivor completion retires its exact row only — it can
+      // never mutate the newer canonical row.
+      final r2Survivor =
+          (await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+            current,
+            eventId: r2,
+          )).first;
+      expect(
+        await dbCompleteAcceptedDirectReactionInboxCustodyIfExact(
+          current,
+          recipientPeerId: r2Survivor['recipient_peer_id'] as String,
+          eventId: r2,
+          expectedWireEnvelope: r2Survivor['wire_envelope'] as String,
+        ),
+        DirectReactionInboxCustodyCompletionOutcome.completed,
+      );
+      expect((await canonical())!['id'], r3);
+
+      // Reactions never stage against a hidden/deleted parent: the single
+      // message delete owner sweeps reactions before its scrub, and later
+      // staging refuses.
+      const markedParentId = 'tc361-01c-marked-parent';
+      await current.insert('messages', const <String, Object?>{
+        'id': markedParentId,
+        'contact_peer_id': _fanoutContact,
+        'sender_peer_id': _sender,
+        'text': 'marked',
+        'timestamp': _t0,
+        'status': 'inboxed',
+        'is_incoming': 0,
+        'created_at': _t0,
+        'transport': 'inbox',
+        'direct_event_fanout_generation_id': markedParentId,
+      });
+      await current.insert('message_reactions', const <String, Object?>{
+        'id': 'tc361-01c-marked-reaction',
+        'message_id': markedParentId,
+        'emoji': '🎯',
+        'sender_peer_id': _fanoutContact,
+        'timestamp': _t1,
+        'created_at': _t1,
+      });
+      expect(await dbDeleteMessage(current, markedParentId), 1);
+      expect(
+        await current.query(
+          'message_reactions',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[markedParentId],
+        ),
+        isEmpty,
+        reason: 'the delete owner sweeps reactions before the scrub',
+      );
+      final hiddenParent = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[markedParentId],
+      )).single;
+      expect(hiddenParent['hidden_at'], isNotNull);
+      expect(hiddenParent['direct_event_fanout_generation_id'], markedParentId);
+      const r4 = 'tc361-01c-r4';
+      final hiddenStage = await dbStageOutgoingDirectReactionFanoutInboxCustody(
+        current,
+        reactionRow: <String, Object?>{
+          'id': r4,
+          'message_id': markedParentId,
+          'emoji': '👍',
+          'sender_peer_id': _sender,
+          'timestamp': _t2,
+          'created_at': _t2,
+          'removed_at': null,
+        },
+        action: 'add',
+        parentMessageId: markedParentId,
+        contactAccountPeerId: _fanoutContact,
+        senderTransportPeerId: _sender,
+        expectedSnapshot: snap,
+        candidates: candidatesOf(
+          snap,
+          (peer) => reactionEnvelope(
+            eventId: r4,
+            action: 'add',
+            targetMessageId: markedParentId,
+            cipher: 'cipher-r4-$peer',
+          ),
+        ),
+      );
+      expect(
+        hiddenStage.outcome,
+        DirectEventFanoutStageOutcome.refused,
+        reason: 'later staging refuses the hidden/deleted parent',
+      );
+      expect(
+        await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+          current,
+          eventId: r4,
+        ),
+        isEmpty,
+      );
+    });
   });
 }
 

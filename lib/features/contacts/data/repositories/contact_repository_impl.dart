@@ -3,13 +3,20 @@ import 'package:flutter_app/core/notifications/direct_reaction_notification_proj
 
 import '../../domain/models/contact_model.dart';
 import '../../domain/repositories/contact_repository.dart';
+import '../../domain/repositories/direct_contact_conversation_purge.dart';
 
 /// Implementation of ContactRepository using database helper functions.
-class ContactRepositoryImpl implements ContactRepository {
+class ContactRepositoryImpl
+    implements ContactRepository, DirectContactConversationPurgeCapability {
   final Future<List<Map<String, Object?>>> Function() dbLoadAllContacts;
   final Future<Map<String, Object?>?> Function(String peerId) dbLoadContact;
   final Future<void> Function(Map<String, Object?> row) dbUpsertContact;
   final Future<void> Function(String peerId) dbDeleteContact;
+
+  /// 361: the exact final serialized purge owner (nullable so incumbent test
+  /// construction sites stay untouched; production wires the real helper).
+  final Future<DirectContactConversationPurgeSummary> Function(String peerId)?
+  dbPurgeDirectContactConversationAndContact;
   final Future<int> Function() dbGetContactCount;
   final Future<bool> Function(String peerId) dbContactExists;
   final Future<void> Function(String peerId) dbArchiveContact;
@@ -39,9 +46,27 @@ class ContactRepositoryImpl implements ContactRepository {
     required this.dbUnblockContact,
     required this.dbDismissIntroBanner,
     required this.dbSetIntrosSentAt,
+    this.dbPurgeDirectContactConversationAndContact,
     this.directReactionProjection,
     this.onPushEligibilityChanged,
   });
+
+  @override
+  bool get supportsDirectContactConversationPurge =>
+      dbPurgeDirectContactConversationAndContact != null;
+
+  @override
+  Future<DirectContactConversationPurgeSummary>
+  purgeDirectContactConversationAndContact(String peerId) async {
+    final delegate = dbPurgeDirectContactConversationAndContact;
+    if (delegate == null) {
+      throw StateError('direct contact conversation purge is unavailable');
+    }
+    final summary = await delegate(peerId);
+    await directReactionProjection?.removeContact(peerId);
+    _notifyPushEligibilityChanged();
+    return summary;
+  }
 
   @override
   Future<void> addContact(ContactModel contact) async {

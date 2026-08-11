@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
 
@@ -65,6 +66,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/reaction_r
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_screen.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
 import 'package:flutter_app/features/conversation/presentation/controllers/reaction_optimistic_attempt_guard.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/attachment_preview_strip.dart';
 import 'package:flutter_app/features/conversation/presentation/widgets/compose_area.dart';
@@ -1597,6 +1599,7 @@ void main() {
     ReceivedMediaActionController? receivedMediaActionController,
     PreparedDirectMediaBlobCustodyCoordinator?
     preparedDirectMediaBlobCustodyCoordinator,
+    DirectConversationModalityGate? modalityGate,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1649,6 +1652,7 @@ void main() {
           receivedMediaActionController: receivedMediaActionController,
           preparedDirectMediaBlobCustodyCoordinator:
               preparedDirectMediaBlobCustodyCoordinator,
+          modalityGate: modalityGate ?? const DirectConversationModalityGate(),
         ),
       ),
     );
@@ -1724,6 +1728,7 @@ void main() {
             required String emoji,
             required String senderPeerId,
             required String recipientMlKemPublicKey,
+            DirectEventFanoutAuthoring? directEventFanout,
           }) async => (diagnostic, committed);
 
           Future<RemoveReactionResult> removeStub({
@@ -1735,6 +1740,7 @@ void main() {
             required String emoji,
             required String senderPeerId,
             required String recipientMlKemPublicKey,
+            DirectEventFanoutAuthoring? directEventFanout,
           }) async => RemoveReactionResult.success;
 
           await pumpReactionHarness(
@@ -1779,6 +1785,7 @@ void main() {
           required String emoji,
           required String senderPeerId,
           required String recipientMlKemPublicKey,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) => addCompletions[addCalls++].future;
 
         Future<RemoveReactionResult> immediateRemove({
@@ -1790,6 +1797,7 @@ void main() {
           required String emoji,
           required String senderPeerId,
           required String recipientMlKemPublicKey,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async => RemoveReactionResult.success;
 
         await pumpReactionHarness(
@@ -1844,6 +1852,7 @@ void main() {
           required String emoji,
           required String senderPeerId,
           required String recipientMlKemPublicKey,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) => delayedAdd.future;
 
         Future<RemoveReactionResult> delayedRemove({
@@ -1855,6 +1864,7 @@ void main() {
           required String emoji,
           required String senderPeerId,
           required String recipientMlKemPublicKey,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) => removeCompletion.future;
 
         await pumpReactionHarness(
@@ -2101,6 +2111,7 @@ void main() {
               privateMediaPolicy,
               mediaAttachmentRepo,
               transportMetrics,
+              directEventFanout,
             }) async {
               sendCalls++;
               networkOrder.add('envelope');
@@ -2318,6 +2329,7 @@ void main() {
                 privateMediaPolicy,
                 mediaAttachmentRepo,
                 transportMetrics,
+                directEventFanout,
               }) async {
                 sendCalls++;
                 networkOrder.add('envelope');
@@ -2754,6 +2766,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalls++;
           return (SendChatMessageResult.sendFailed, null);
@@ -2942,6 +2955,7 @@ void main() {
               privateMediaPolicy,
               mediaAttachmentRepo,
               transportMetrics,
+              directEventFanout,
             }) async {
               final policy =
                   privateMediaPolicy ?? const PrivateMediaPolicy.ordinary();
@@ -3169,6 +3183,7 @@ void main() {
               privateMediaPolicy,
               mediaAttachmentRepo,
               transportMetrics,
+              directEventFanout,
             }) async {
               sendCalls++;
               return _instantSuccessSendFn(
@@ -3319,6 +3334,7 @@ void main() {
               privateMediaPolicy,
               mediaAttachmentRepo,
               transportMetrics,
+              directEventFanout,
             }) async {
               sendCalls++;
               return _instantSuccessSendFn(
@@ -3444,6 +3460,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           capturedText = text;
           capturedMessageId = messageId;
@@ -3658,6 +3675,7 @@ void main() {
         PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
+        DirectEventFanoutAuthoring? directEventFanout,
       }) async {
         sentMessageId = messageId;
         sentTimestamp = timestamp;
@@ -3740,6 +3758,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sentMessageId = messageId;
           sentMessageIdIsFresh = preassignedMessageIdIsFresh;
@@ -3820,6 +3839,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalls++;
           if (sendCalls > 1) {
@@ -3931,6 +3951,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalls++;
           if (sendCalls > 1) {
@@ -4035,6 +4056,7 @@ void main() {
         PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
+        DirectEventFanoutAuthoring? directEventFanout,
       }) async {
         sentMessageId = messageId;
         await gate.future;
@@ -4395,6 +4417,7 @@ void main() {
             PrivateMediaPolicy? privateMediaPolicy,
             MediaAttachmentRepository? mediaAttachmentRepo,
             TransportMetrics? transportMetrics,
+            DirectEventFanoutAuthoring? directEventFanout,
           }) async {
             sendCalls++;
             return (SendChatMessageResult.sendFailed, null);
@@ -4508,6 +4531,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           expectSync(mediaAttachments, hasLength(2));
           expectSync(
@@ -5084,6 +5108,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sentMessageId = messageId;
           if (mediaAttachments != null && mediaAttachmentRepo != null) {
@@ -5309,6 +5334,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalled = true;
           return (SendChatMessageResult.success, null);
@@ -5431,6 +5457,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalled = true;
           return (SendChatMessageResult.success, null);
@@ -5546,6 +5573,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sentMessageId = messageId;
           final delivered = ConversationMessage(
@@ -5672,6 +5700,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sentMessageId = messageId;
           final delivered = ConversationMessage(
@@ -5797,6 +5826,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sentMessageId = messageId;
           if (mediaAttachments != null && mediaAttachmentRepo != null) {
@@ -5945,6 +5975,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sentMessageId = messageId;
           await gate.future;
@@ -6023,6 +6054,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCallCount += 1;
           await gate.future;
@@ -8177,6 +8209,7 @@ void main() {
         PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
+        DirectEventFanoutAuthoring? directEventFanout,
       }) async {
         passedMedia = mediaAttachments;
         passedMediaRepo = mediaAttachmentRepo;
@@ -8247,6 +8280,7 @@ void main() {
         PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
+        DirectEventFanoutAuthoring? directEventFanout,
       }) async {
         sendCalled = true;
         return (SendChatMessageResult.success, null);
@@ -8310,6 +8344,7 @@ void main() {
         PrivateMediaPolicy? privateMediaPolicy,
         MediaAttachmentRepository? mediaAttachmentRepo,
         TransportMetrics? transportMetrics,
+        DirectEventFanoutAuthoring? directEventFanout,
       }) async {
         capturedQuotedMessageId = quotedMessageId;
         final delivered = ConversationMessage(
@@ -8401,6 +8436,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           capturedQuotedMessageId = quotedMessageId;
           final delivered = ConversationMessage(
@@ -8493,6 +8529,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           capturedQuotedMessageId = quotedMessageId;
           final delivered = ConversationMessage(
@@ -8947,6 +8984,7 @@ void main() {
         String? recipientMlKemPublicKey,
         MediaAttachmentRepository? mediaAttachmentRepo,
         bool emitTimingEvent = true,
+        DirectEventFanoutAuthoring? directEventFanout,
       }) async {
         editCalls++;
         return (SendChatMessageResult.success, originalMessage);
@@ -9069,6 +9107,7 @@ void main() {
           String? recipientMlKemPublicKey,
           MediaAttachmentRepository? mediaAttachmentRepo,
           bool emitTimingEvent = true,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           capturedOriginalId = originalMessage.id;
           capturedUpdatedText = updatedText;
@@ -11345,6 +11384,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalls++;
           return _instantSuccessSendFn(
@@ -11503,6 +11543,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           sendCalls++;
           return _instantSuccessSendFn(
@@ -12144,6 +12185,7 @@ void main() {
           PrivateMediaPolicy? privateMediaPolicy,
           MediaAttachmentRepository? mediaAttachmentRepo,
           TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
         }) async => (SendChatMessageResult.sendFailed, null);
 
         await pumpScreen(
@@ -13613,6 +13655,88 @@ void main() {
       },
     );
   });
+
+  testWidgets(
+    'TC-361-03b linked runtime starts only direct blob-free event owners — '
+    'the restricted conversation surface refuses media and voice authoring '
+    'while the default gate keeps the incumbent full surface',
+    (tester) async {
+      final identityRepo = FakeIdentityRepository(makeIdentity());
+      final messageRepo = FakeMessageRepository();
+      final recorder = FakeAudioRecorderService()..fakeDurationMs = 100;
+      final chatListener = ChatMessageListener(
+        chatMessageStream: const Stream.empty(),
+        messageRepo: messageRepo,
+        contactRepo: FakeContactRepository(),
+      );
+
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        audioRecorderService: recorder,
+        modalityGate: const DirectConversationModalityGate.linkedBlobFree(),
+      );
+
+      // Voice authoring: the record press never starts a recording session on
+      // the restricted surface.
+      final micGesture = await tester.startGesture(
+        tester.getCenter(find.byIcon(Icons.mic_rounded)),
+      );
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await tester.pump();
+      expect(find.byType(RecordingOverlay), findsNothing);
+      expect(recorder.startCallCount, 0);
+      expect(
+        find.text('Voice messages are not available on this linked device yet'),
+        findsOneWidget,
+      );
+      await micGesture.up();
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
+
+      // Media authoring on a fresh restricted surface: the picker sheet
+      // never opens; the sender-facing refusal copy shows instead.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        audioRecorderService: recorder,
+        modalityGate: const DirectConversationModalityGate.linkedBlobFree(),
+      );
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Media Library'), findsNothing);
+      expect(
+        find.text('Media is not available on this linked device yet'),
+        findsOneWidget,
+      );
+      await tester.pump(const Duration(seconds: 5));
+      await tester.pump();
+
+      // Contrast: the DEFAULT gate keeps the incumbent full surface — the
+      // same tap opens the media sheet.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await pumpScreen(
+        tester,
+        identityRepo: identityRepo,
+        messageRepo: messageRepo,
+        chatListener: chatListener,
+        sendFn: _instantSuccessSendFn,
+        audioRecorderService: recorder,
+      );
+      await tester.tap(find.byIcon(Icons.add_rounded));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.text('Media Library'), findsOneWidget);
+    },
+  );
 }
 
 /// 248 — a contact repo that reports one other active friend so the overflow
@@ -13649,6 +13773,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   final delivered = ConversationMessage(
     id: messageId ?? 'msg-default',
@@ -13754,6 +13879,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _throwingSendFn({
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   throw StateError('media action must not call the chat send seam');
 }
@@ -13771,6 +13897,7 @@ _throwingDeleteForEveryoneFn({
   Bridge? bridge,
   String? recipientMlKemPublicKey,
   bool emitTimingEvent = true,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   throw StateError('media action must not call delete-for-everyone delivery');
 }

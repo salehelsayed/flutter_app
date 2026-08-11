@@ -22,7 +22,10 @@ const _relocations = <String, List<String>>{
   'lib/features/contacts/domain/repositories/'
       'contact_repository_impl.dart': <String>[
     'lib/features/contacts/data/repositories/contact_repository_impl.dart',
-    'b632e4f770f8beeb2e4801a0b469dcc7952a12a19496d479376a297a716eb1e2',
+    // Plan 361 adds the serialized contact-conversation purge capability
+    // delegate (dbPurgeDirectContactConversationAndContact) and its
+    // reconciliation surface to the SAME data adapter; nothing relocates.
+    'b086161e3449442c6b98ee1513798e55d75616008acca40b59b0132062737da9',
   ],
   'lib/features/conversation/domain/repositories/'
       'media_attachment_repository_impl.dart': <String>[
@@ -54,12 +57,18 @@ const _relocations = <String, List<String>>{
     // optional delegate plus its capability getter and staging method for the
     // atomic private tombstone + physical-v109 transaction. The adapter remains
     // in data.
-    '31b40cc510b09245d48be212f7fde1b1c1645fd316fa4987e0c997676ffb6b9c',
+    // Plan 361 threads the fanout-generation receipt settlement expectation
+    // through the already-wired upload settle delegate; the adapter remains
+    // in data with nothing relocated.
+    'cc6402c85bb27a22e601ac21c3cd8dc326746e242e1b108201bed1d282cd2051',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
     'lib/features/conversation/data/repositories/reaction_repository_impl.dart',
-    '095dd392c4c1c8a47efad20985ed1ca04f61ce4932bd903c2de56cef67114278',
+    // Plan 361 adds the v113 reaction fanout stage and the linked
+    // in-transaction reaction apply delegates to the SAME data adapter;
+    // nothing relocates.
+    'bfab8703792dc98c332f12b7f27bf03f6baf9f4431028a2549b43930bbd37ed7',
   ],
   'lib/features/groups/domain/repositories/'
       'group_exit_diagnostic_repository_impl.dart': <String>[

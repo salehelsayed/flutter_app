@@ -18,6 +18,7 @@ import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_runtime_network_gate.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_chat_message_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -47,6 +48,12 @@ enum ChatMessageProcessState {
   durablySuperseded,
   ignoredEdit,
   editMissingOriginal,
+
+  /// 361: an authenticated linked transport carried a modality the restricted
+  /// linked role does not support. Terminal rejection: the staged envelope is
+  /// durably rejected/quarantined with zero apply/receipt/publication/
+  /// notification and must never redrive the display retry.
+  linkedModalityRefused,
   accountMigrationBlocked,
   error,
 }
@@ -83,6 +90,9 @@ class ChatMessageListener {
   final Stream<ChatMessage> chatMessageStream;
   final MessageRepository messageRepo;
   final ContactRepository contactRepo;
+
+  /// 361: shared physical->logical reverse authority (null = incumbent).
+  final DirectTransportAuthorityResolver? transportAuthority;
   final Bridge? bridge;
   final Future<String?> Function()? getOwnMlKemSecretKey;
 
@@ -135,6 +145,7 @@ class ChatMessageListener {
     required this.chatMessageStream,
     required this.messageRepo,
     required this.contactRepo,
+    this.transportAuthority,
     this.bridge,
     this.getOwnMlKemSecretKey,
     this.getOwnMlKemSecretKeyRing,
@@ -377,6 +388,9 @@ class ChatMessageListener {
       case ChatMessageProcessState.duplicate:
       case ChatMessageProcessState.durablySuperseded:
       case ChatMessageProcessState.ignoredEdit:
+      // 361: a terminally refused linked modality releases transport custody
+      // exactly like the other durable rejections.
+      case ChatMessageProcessState.linkedModalityRefused:
         return true;
       case ChatMessageProcessState.notChatMessage:
       case ChatMessageProcessState.missingMlKemSecret:
@@ -465,9 +479,21 @@ class ChatMessageListener {
         );
       }
 
-      // Check if sender is blocked — reject message entirely (don't persist)
+      // Check if sender is blocked — reject message entirely (don't persist).
+      // 361: with a transport authority present, the blocked policy applies
+      // to the RESOLVED logical contact before decrypt; an unresolvable
+      // transport falls through to the handler's own fail-closed identity
+      // checks.
       final senderPeerId = message.from;
-      final senderContact = await contactRepo.getContact(senderPeerId);
+      String blockedLookupPeerId = senderPeerId;
+      if (transportAuthority != null) {
+        final resolution = await transportAuthority!
+            .resolveDirectTransportAuthority(senderPeerId);
+        if (resolution.authorized) {
+          blockedLookupPeerId = resolution.contactAccountPeerId!;
+        }
+      }
+      final senderContact = await contactRepo.getContact(blockedLookupPeerId);
       if (senderContact != null && senderContact.isBlocked) {
         emitFlowEvent(
           layer: 'FL',
@@ -539,6 +565,7 @@ class ChatMessageListener {
               ),
         stageNotificationDisplayCustody: stageNotificationDisplayCustody,
         promoteNotificationDisplayCustody: promoteNotificationDisplayCustody,
+        transportAuthority: transportAuthority,
       );
 
       if (updatedContact != null) {
@@ -629,6 +656,16 @@ class ChatMessageListener {
         return finish(
           ChatMessageProcessOutcome(
             state: ChatMessageProcessState.ignoredEdit,
+            updatedContact: updatedContact,
+          ),
+        );
+      }
+
+      if (result == HandleChatMessageResult.linkedModalityRefused) {
+        // 361: terminal — zero publication, zero display retry.
+        return finish(
+          ChatMessageProcessOutcome(
+            state: ChatMessageProcessState.linkedModalityRefused,
             updatedContact: updatedContact,
           ),
         );

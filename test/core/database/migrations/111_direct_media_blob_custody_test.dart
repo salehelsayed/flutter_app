@@ -72,8 +72,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 112);
-      expect(await _userVersion(db), 112);
+      expect(currentIdentityDatabaseVersion, 113);
+      expect(await _userVersion(db), 113);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -124,7 +124,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 112);
+      expect(await _userVersion(db), 113);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,
@@ -154,7 +154,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 112);
+      expect(await _userVersion(db), 113);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,

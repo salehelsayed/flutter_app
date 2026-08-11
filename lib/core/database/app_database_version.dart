@@ -45,4 +45,9 @@
 // unchanged ContactModel peer/ML-KEM. v112 remains a one-way schema floor; the
 // installation's own linked role/transport credential are device-local secure
 // records and are absent from this schema and from every migration bundle.
-const int currentIdentityDatabaseVersion = 112;
+// 361: DB v113 adds the blob-free direct-event fanout facts: the per-message
+// current generation marker plus the logical-contact/parent columns on the
+// v108/v109 outboxes, with generation-first lookup indexes. All four columns
+// are nullable and historical rows are never promoted; v113 remains a one-way
+// schema floor.
+const int currentIdentityDatabaseVersion = 113;

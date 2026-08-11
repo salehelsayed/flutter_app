@@ -51,6 +51,9 @@ import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../domain/repositories/fake_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_contact_repository.dart';
@@ -1908,6 +1911,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   storeInMediaExpiryBoundedInboxDetailed,
   bool? preassignedMessageIdIsFresh,
   void Function(String messageId)? onDirectTextCustodyStaged,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) {
   final strictStore =
       storeInAckCustodyInboxDetailed ??
@@ -2039,6 +2043,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     storeInMediaExpiryBoundedInboxDetailed:
         storeInMediaExpiryBoundedInboxDetailed,
     onDirectTextCustodyStaged: onDirectTextCustodyStaged,
+    directEventFanout: directEventFanout,
   );
 }
 
@@ -2087,6 +2092,443 @@ void main() {
   setUp(() {
     p2pService = FakeP2PService();
     messageRepo = FakeMessageRepository();
+  });
+
+  group('TC-361-02a blob-free fanout sender adapter', () {
+    const contactAccount = 'peer-contact-account';
+    const transportA = 'peer-device-transport-a';
+    const transportB = 'peer-device-transport-b';
+
+    DirectContactFanoutSnapshot snapshotOf(List<String> targets) =>
+        DirectContactFanoutSnapshot(
+          contactAccountPeerId: contactAccount,
+          contactAccountSigningPublicKey: 'contact-signing-key',
+          rosterInitialized: true,
+          targets: <DirectContactFanoutTargetFact>[
+            for (final peer in targets)
+              DirectContactFanoutTargetFact(
+                peerId: peer,
+                mlKemPublicKey: 'mlkem-$peer',
+                isLegacyAccountTarget: false,
+                fingerprint: 'f' * 64,
+                deviceId: 'device-$peer',
+              ),
+          ],
+        );
+
+    test(
+      'TC-361-02a selector OFF with an initialized roster refuses before any '
+      'crypto or network and never demotes to legacy',
+      () async {
+        var snapshotReads = 0;
+        var encrypts = 0;
+        final bridge = FakeBridge();
+        final authoring = DirectEventFanoutAuthoring(
+          selector: const DirectLinkedEventFanoutSelector.disabled(),
+          linkedOrigin: false,
+          senderTransportPeerId: 'my-peer',
+          readSnapshot: (contact) async {
+            snapshotReads++;
+            return snapshotOf(const [transportA, transportB]);
+          },
+          encrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async {
+                encrypts++;
+                return (kem: 'k', ciphertext: 'c', nonce: 'n');
+              },
+          loadTextSiblings: (_) async => const [],
+          stageTextFanout:
+              ({
+                required stagedRow,
+                required messageId,
+                required contactAccountPeerId,
+                required senderTransportPeerId,
+                required expectedSnapshot,
+                required candidates,
+              }) async => throw StateError('must not stage when OFF'),
+          loadEventSiblings: (_) async => const [],
+          stageMutationFanout:
+              ({
+                required expectedRow,
+                required stagedRow,
+                required kind,
+                required eventId,
+                required parentMessageId,
+                required contactAccountPeerId,
+                required senderTransportPeerId,
+                required expectedSnapshot,
+                required candidates,
+              }) async => throw StateError('must not stage when OFF'),
+          stageReactionFanout:
+              ({
+                required reactionRow,
+                required action,
+                required parentMessageId,
+                required contactAccountPeerId,
+                required senderTransportPeerId,
+                required expectedSnapshot,
+                required candidates,
+              }) async => throw StateError('must not stage when OFF'),
+        );
+
+        final (result, message) = await sendChatMessage(
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          targetPeerId: contactAccount,
+          text: 'refused before crypto',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          bridge: bridge,
+          recipientMlKemPublicKey: 'legacy-mlkem',
+          directEventFanout: authoring,
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNull);
+        expect(snapshotReads, 1);
+        expect(encrypts, 0, reason: 'refusal precedes target crypto');
+        expect(bridge.sendCallCount, 0);
+        expect(p2pService.sendCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(messageRepo.directCustodyRows, isEmpty);
+      },
+    );
+
+    test('TC-361-02a ON commits every sibling before transport and one partial '
+        'network outcome cannot cancel the other row', () async {
+      final events = <String>[];
+      var encrypts = 0;
+      final authoring = DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: 'my-peer',
+        readSnapshot: (contact) async {
+          events.add('resolve');
+          return snapshotOf(const [transportA, transportB]);
+        },
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              encrypts++;
+              events.add('encrypt:$recipientMlKemPublicKey');
+              return (
+                kem: 'k',
+                ciphertext: 'ct-$recipientMlKemPublicKey',
+                nonce: 'n',
+              );
+            },
+        loadTextSiblings: (_) async => const [],
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async {
+              events.add('stage');
+              final rows = <Map<String, Object?>>[];
+              for (final candidate in candidates) {
+                final row = <String, Object?>{
+                  'recipient_peer_id': candidate.recipientPeerId,
+                  'message_id': messageId,
+                  'incarnation_id': candidate.recipientPeerId
+                      .padRight(32, '0')
+                      .substring(0, 32),
+                  'wire_envelope': candidate.wireEnvelope,
+                  'retry_count': 0,
+                  'last_attempt_at': null,
+                  'last_error_code': null,
+                  'contact_account_peer_id': contactAccountPeerId,
+                  'created_at': '2026-08-11T12:00:00.000Z',
+                  'updated_at': '2026-08-11T12:00:00.000Z',
+                };
+                rows.add(row);
+                final entry = DirectInboxCustodyOutboxEntry.fromMap(row);
+                messageRepo
+                        .directCustodyRows['${entry.recipientPeerId}\u0000${entry.messageId}'] =
+                    entry;
+              }
+              await messageRepo.saveMessage(
+                ConversationMessage.fromMap(
+                  Map<String, dynamic>.from(stagedRow),
+                ),
+              );
+              return DbDirectEventFanoutStageResult(
+                outcome: DirectEventFanoutStageOutcome.applied,
+                rows: rows,
+              );
+            },
+        loadEventSiblings: (_) async => const [],
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('fresh send never stages an edit'),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('fresh send never stages reactions'),
+      );
+
+      final storedByPeer = <String, String>{};
+      Future<InboxStoreOutcome> store(
+        String toPeerId,
+        String message, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async {
+        events.add('store:$toPeerId');
+        storedByPeer[toPeerId] = message;
+        if (toPeerId == transportB) {
+          return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+        }
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+          expiresAtMs: 1900000060000,
+        );
+      }
+
+      final (result, message) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: contactAccount,
+        text: 'fanout text',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        storeInAckCustodyInboxDetailed: store,
+        directEventFanout: authoring,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(message, isNotNull);
+      expect(encrypts, 2, reason: 'one independent encryption per target');
+      expect(
+        events.indexOf('stage'),
+        lessThan(events.indexOf('store:$transportA')),
+        reason: 'every row commits before any network',
+      );
+      expect(storedByPeer.keys.toSet(), {transportA, transportB});
+      expect(
+        storedByPeer[transportA],
+        isNot(storedByPeer[transportB]),
+        reason: 'each sibling replays its own exact ciphertext',
+      );
+      final survivors = messageRepo.directCustodyRows.values.toList();
+      expect(survivors, hasLength(1));
+      expect(
+        survivors.single.recipientPeerId,
+        transportB,
+        reason: 'a failed sibling is retained; acceptance never cancels it',
+      );
+    });
+
+    test('TC-361-02a an existing survivor is drained before resolver or crypto '
+        'with zero re-encryption', () async {
+      var snapshotReads = 0;
+      var encrypts = 0;
+      const messageId = 'fanout-survivor-drain';
+      final survivorRow = <String, Object?>{
+        'recipient_peer_id': transportB,
+        'message_id': messageId,
+        'incarnation_id': 'bbbb2222bbbb2222bbbb2222bbbb2222',
+        'wire_envelope': 'exact-survivor-envelope',
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'contact_account_peer_id': contactAccount,
+        'created_at': '2026-08-11T12:00:00.000Z',
+        'updated_at': '2026-08-11T12:00:00.000Z',
+      };
+      final survivorEntry = DirectInboxCustodyOutboxEntry.fromMap(survivorRow);
+      messageRepo.directCustodyRows['${survivorEntry.recipientPeerId}\u0000'
+              '${survivorEntry.messageId}'] =
+          survivorEntry;
+      final authoring = DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: 'my-peer',
+        readSnapshot: (contact) async {
+          snapshotReads++;
+          return snapshotOf(const [transportB, 'peer-device-transport-c']);
+        },
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              encrypts++;
+              return (kem: 'k', ciphertext: 'c', nonce: 'n');
+            },
+        loadTextSiblings: (id) async =>
+            id == messageId ? [survivorRow] : const [],
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('survivors must never restage'),
+        loadEventSiblings: (_) async => const [],
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('survivors must never restage'),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('survivors must never restage'),
+      );
+
+      final storedEnvelopes = <String>[];
+      Future<InboxStoreOutcome> store(
+        String toPeerId,
+        String message, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async {
+        storedEnvelopes.add(message);
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+          expiresAtMs: 1900000060000,
+        );
+      }
+
+      final (result, _) = await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: contactAccount,
+        text: 'retry text',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        messageId: messageId,
+        storeInAckCustodyInboxDetailed: store,
+        directEventFanout: authoring,
+      );
+
+      expect(result, SendChatMessageResult.success);
+      expect(
+        storedEnvelopes,
+        ['exact-survivor-envelope'],
+        reason: 'B/C roster drift still retries B only, with exact bytes',
+      );
+      expect(snapshotReads, 0, reason: 'survivors precede the resolver');
+      expect(encrypts, 0, reason: 'survivors precede bridge crypto');
+      expect(messageRepo.directCustodyRows, isEmpty);
+    });
+
+    test('TC-361-02a an attachment-bearing ordinary draft is never routed to '
+        'v113', () async {
+      var snapshotReads = 0;
+      final authoring = DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: 'my-peer',
+        readSnapshot: (contact) async {
+          snapshotReads++;
+          return snapshotOf(const [transportA]);
+        },
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                (kem: 'k', ciphertext: 'c', nonce: 'n'),
+        loadTextSiblings: (_) async => const [],
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('media never rides v113'),
+        loadEventSiblings: (_) async => const [],
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('media never rides v113'),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('media never rides v113'),
+      );
+
+      const attachment = MediaAttachment(
+        id: 'fanout-media-probe',
+        messageId: '',
+        mime: 'image/png',
+        size: 24,
+        mediaType: 'image',
+        localPath: 'media/peer/fanout-media-probe.png',
+        downloadStatus: 'done',
+        createdAt: '2026-08-11T12:00:00.000Z',
+        contentHash:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        encryptionKeyBase64: 'key',
+        encryptionNonce: 'nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      );
+      await sendChatMessage(
+        p2pService: p2pService,
+        messageRepo: messageRepo,
+        targetPeerId: contactAccount,
+        text: 'media draft',
+        senderPeerId: 'my-peer',
+        senderUsername: 'Me',
+        mediaAttachments: const <MediaAttachment>[attachment],
+        mediaAttachmentRepo: _DirectMediaCustodyFakeRepository(messageRepo),
+        directEventFanout: authoring,
+      );
+
+      expect(
+        snapshotReads,
+        0,
+        reason: 'a media-bearing draft never consults the fanout resolver',
+      );
+    });
   });
 
   test(

@@ -8,6 +8,7 @@
 // ignore_for_file: unused_element_parameter
 
 import 'dart:async';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -479,6 +480,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _instantSuccessSendFn({
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   final ts = timestamp ?? DateTime.now().toUtc().toIso8601String();
   final delivered = ConversationMessage(
@@ -680,6 +682,7 @@ void main() {
                 PrivateMediaPolicy? privateMediaPolicy,
                 MediaAttachmentRepository? mediaAttachmentRepo,
                 TransportMetrics? transportMetrics,
+                DirectEventFanoutAuthoring? directEventFanout,
               }) async {
                 sendCalled = true;
                 operationLog.add('sendChatMessageFn');
@@ -802,6 +805,7 @@ void main() {
                 PrivateMediaPolicy? privateMediaPolicy,
                 MediaAttachmentRepository? mediaAttachmentRepo,
                 TransportMetrics? transportMetrics,
+                DirectEventFanoutAuthoring? directEventFanout,
               }) async {
                 sendCalled = true;
                 operationLog.add('sendChatMessageFn');

@@ -2,6 +2,9 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/database/direct_reaction_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -1333,6 +1336,191 @@ void main() {
       expect(crossed.authorizesTransport, isFalse);
       expect(privateDeletionStageCallCount, 2);
     });
+  });
+
+  test('TC-361-02a the fanout capability is all-or-nothing and the adapters '
+      'delegate exactly', () async {
+    expect(
+      repo.supportsDirectEventFanout,
+      isFalse,
+      reason: 'a repository lacking any fanout delegate must fail closed',
+    );
+
+    var snapshotCalls = 0;
+    var textStageCalls = 0;
+    var mutationStageCalls = 0;
+    const snapshot = DirectContactFanoutSnapshot(
+      contactAccountPeerId: 'peer-contact',
+      contactAccountSigningPublicKey: 'signing-key',
+      rosterInitialized: true,
+      targets: <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(
+          peerId: 'peer-device-a',
+          mlKemPublicKey: 'mlkem-a',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          deviceId: 'device-a',
+        ),
+      ],
+    );
+    final fanoutRepo = MessageRepositoryImpl(
+      dbInsertMessage: (row) async {},
+      dbLoadMessagesForContact: (_) async => const [],
+      dbLoadLatestMessageForContact: (_) async => null,
+      dbUpdateMessageStatus: (_, _) async => 0,
+      dbLoadMessage: (_) async => null,
+      dbCountMessagesForContact: (_) async => 0,
+      dbMarkConversationAsRead: (_) async => 0,
+      dbCountUnreadForContact: (_) async => 0,
+      dbCountTotalUnread: () async => 0,
+      dbCountTotalUnreadExcludingArchived: () async => 0,
+      dbDeleteMessagesForContact: (_) async => 0,
+      dbDeleteMessage: (_) async => 0,
+      dbExistsMessageByContent: (_, _, _, _) async => false,
+      dbLoadMessagesPage: (_, {limit = 50, beforeTimestamp}) async => const [],
+      dbLoadFailedOutgoingMessages: () async => const [],
+      dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) async =>
+          const [],
+      dbLoadConversationThreadSummaries: (_) async => const [],
+      dbRecoverStuckSendingMessages: ({required olderThan, limit = 50}) async =>
+          0,
+      dbLoadStuckSendingOutgoingMessages:
+          ({required olderThan, limit = 50}) async => const [],
+      dbLoadSendingOutgoingMessages: () async => const [],
+      dbConditionalTransitionStatus:
+          (_, {required fromStatus, required toStatus}) async => 0,
+      dbStageOutgoingDirectTextInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required messageId,
+            required incarnationId,
+            required wireEnvelope,
+          }) async => OutgoingOrdinaryMutationOutcome.refused,
+      dbLoadDirectInboxCustodyOutbox: ({limit = 50}) async => const [],
+      dbLoadDirectInboxCustodyOutboxForMessage:
+          ({required recipientPeerId, required messageId}) async => null,
+      dbLoadDirectInboxCustodyOutboxOwnerForMessageId:
+          ({required messageId}) async => null,
+      dbRecordDirectInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required messageId,
+            required expectedIncarnationId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) async => false,
+      dbCompleteAcceptedDirectInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required messageId,
+            required expectedIncarnationId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) async => DirectInboxCustodyCompletionOutcome.stale,
+      dbStageOutgoingDirectTextMutationInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required recipientPeerId,
+            required eventId,
+            required wireEnvelope,
+          }) async => const DbDirectTextMutationCustodyStageResult(
+            outcome: OutgoingOrdinaryMutationOutcome.refused,
+            custodyRow: null,
+          ),
+      dbLoadDirectTextMutationInboxCustodyForEvent:
+          ({required recipientPeerId, required eventId}) async => null,
+      dbRecordDirectTextMutationInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) async => false,
+      dbCompleteAcceptedDirectTextMutationInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required relayExpiresAt,
+          }) async => DirectMutationInboxCustodyCompletionOutcome.stale,
+      dbReadDirectContactFanoutSnapshot:
+          ({required contactAccountPeerId}) async {
+            snapshotCalls++;
+            return snapshot;
+          },
+      dbLoadDirectInboxCustodyOutboxRowsForMessageId:
+          ({required messageId}) async => const [],
+      dbLoadDirectReactionInboxCustodyOutboxRowsForEventId:
+          ({required eventId}) async => const [],
+      dbStageOutgoingDirectTextFanoutInboxCustody:
+          ({
+            required stagedRow,
+            required messageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async {
+            textStageCalls++;
+            return const DbDirectEventFanoutStageResult(
+              outcome: DirectEventFanoutStageOutcome.terminal,
+              rows: <Map<String, Object?>>[],
+            );
+          },
+      dbStageOutgoingDirectTextMutationFanoutInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required eventId,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async {
+            mutationStageCalls++;
+            return const DbDirectEventFanoutStageResult.refused();
+          },
+    );
+
+    expect(fanoutRepo.supportsDirectEventFanout, isTrue);
+    expect(
+      await fanoutRepo.readDirectContactFanoutSnapshot('peer-contact'),
+      same(snapshot),
+    );
+    expect(snapshotCalls, 1);
+    final stagedText = await fanoutRepo.stageDirectTextFanout(
+      stagedRow: const <String, Object?>{},
+      messageId: 'm1',
+      contactAccountPeerId: 'peer-contact',
+      senderTransportPeerId: 'peer-self',
+      expectedSnapshot: snapshot,
+      candidates: const <DirectEventFanoutTargetCandidate>[],
+    );
+    expect(stagedText.outcome, DirectEventFanoutStageOutcome.terminal);
+    expect(textStageCalls, 1);
+    final stagedMutation = await fanoutRepo.stageDirectTextMutationFanout(
+      expectedRow: null,
+      stagedRow: const <String, Object?>{},
+      kind: OutgoingOrdinaryAttemptKind.edit,
+      eventId: 'e1',
+      parentMessageId: 'm1',
+      contactAccountPeerId: 'peer-contact',
+      senderTransportPeerId: 'peer-self',
+      expectedSnapshot: snapshot,
+      candidates: const <DirectEventFanoutTargetCandidate>[],
+    );
+    expect(stagedMutation.outcome, DirectEventFanoutStageOutcome.refused);
+    expect(mutationStageCalls, 1);
   });
 }
 

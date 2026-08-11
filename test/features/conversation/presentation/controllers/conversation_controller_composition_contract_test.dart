@@ -53,7 +53,14 @@ const _controllerTestPaths = <String>[
 // `ConversationWired` — `directDeviceTrust`, the linked-device trust capability
 // handed to the contact profile this screen opens from its header avatar. No
 // handoff expression, controller, or pure-screen boundary changed.
-const _expectedDirectApiFingerprint = '27829d11';
+// 361: repinned for exactly two added optional widget fields on
+// `ConversationWired` — `modalityGate` (the injectable linked blob-free
+// composer policy, defaulting to the incumbent allow-everything gate) and
+// `directEventFanout` (the target-batch authoring owner; null keeps the
+// incumbent single-target senders), plus the optional `directEventFanout`
+// parameter on the five send/edit/delete/reaction Fn typedefs. No handoff
+// expression, controller, or pure-screen boundary changed.
+const _expectedDirectApiFingerprint = '5e80dc06';
 const _expectedGroupApiFingerprint = '2d8f881b';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection

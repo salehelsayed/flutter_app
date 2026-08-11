@@ -70,8 +70,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 112);
-      expect(await _userVersion(upgraded), 112);
+      expect(currentIdentityDatabaseVersion, 113);
+      expect(await _userVersion(upgraded), 113);
       expect(await upgraded.query('messages'), hasLength(1));
       expect(
         await upgraded.query('direct_inbox_custody_outbox'),
@@ -142,7 +142,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 112);
+      expect(await _userVersion(upgraded), 113);
       await _expectExactSchema(upgraded);
       expect(
         await upgraded.query(
@@ -221,11 +221,12 @@ void main() {
           'final index107 = registry.indexWhere((entry) => entry.version == $historicalVersion);',
         ): 1,
         // 360: DB v112 appended one registry entry, so the v107 offset in the
-        // v104 test shifted from `length - 5` to `length - 6`. The assertion
-        // itself is unchanged; only its position in the registry moved.
+        // v104 test shifted from `length - 5` to `length - 6`.
+        // 361: DB v113 appended another entry, shifting it to `length - 7`.
+        // The assertion itself is unchanged; only its position moved.
         classified(
           'test/core/database/migrations/104_group_exit_diagnostics_test.dart',
-          'expect(registry[registry.length - 6].version, $historicalVersion);',
+          'expect(registry[registry.length - 7].version, $historicalVersion);',
         ): 1,
         classified(
           'test/core/database/migrations/106_group_notification_display_outbox_test.dart',
@@ -304,6 +305,8 @@ Future<void> _expectExactSchema(Database db) async {
     'updated_at',
     'media_blob_expires_at_ms',
     'media_blob_manifest_hash',
+    // 361: DB v113 appends the nullable logical-contact fanout fact.
+    'contact_account_peer_id',
   ]);
   expect(
     columns.map((row) => row['name']),

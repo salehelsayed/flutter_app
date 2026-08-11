@@ -68,7 +68,9 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_window_cap.dart';
@@ -140,6 +142,7 @@ typedef SendChatMessageFn =
       PrivateMediaPolicy? privateMediaPolicy,
       MediaAttachmentRepository? mediaAttachmentRepo,
       TransportMetrics? transportMetrics,
+      DirectEventFanoutAuthoring? directEventFanout,
     });
 
 typedef SendVoiceMessageFn =
@@ -173,6 +176,7 @@ typedef SendReactionFn =
       required String emoji,
       required String senderPeerId,
       required String recipientMlKemPublicKey,
+      DirectEventFanoutAuthoring? directEventFanout,
     });
 
 typedef RemoveReactionFn =
@@ -185,6 +189,7 @@ typedef RemoveReactionFn =
       required String emoji,
       required String senderPeerId,
       required String recipientMlKemPublicKey,
+      DirectEventFanoutAuthoring? directEventFanout,
     });
 
 typedef DownloadMediaFn =
@@ -210,6 +215,7 @@ typedef EditChatMessageFn =
       String? recipientMlKemPublicKey,
       MediaAttachmentRepository? mediaAttachmentRepo,
       bool emitTimingEvent,
+      DirectEventFanoutAuthoring? directEventFanout,
     });
 
 typedef DeleteMessageForMeFn =
@@ -267,6 +273,7 @@ typedef DeleteMessageForEveryoneFn =
       Bridge? bridge,
       String? recipientMlKemPublicKey,
       bool emitTimingEvent,
+      DirectEventFanoutAuthoring? directEventFanout,
     });
 
 typedef DeleteContactFn = Future<void> Function(String peerId);
@@ -491,6 +498,15 @@ class ConversationWired extends StatefulWidget {
   /// empty uninitialized roster and refuses every decision.
   final DirectContactDeviceTrustCapability? directDeviceTrust;
 
+  /// 361: the smallest conversation modality policy. The default allows the
+  /// incumbent full surface; the restricted linked role injects
+  /// [DirectConversationModalityGate.linkedBlobFree].
+  final DirectConversationModalityGate modalityGate;
+
+  /// 361: the shared blob-free target-batch authoring owner. Null keeps the
+  /// incumbent single-target senders byte-identically.
+  final DirectEventFanoutAuthoring? directEventFanout;
+
   const ConversationWired({
     super.key,
     required this.contact,
@@ -546,6 +562,8 @@ class ConversationWired extends StatefulWidget {
     this.directMediaBatchForwardPickerLauncher,
     this.revealConversationMessageFn,
     this.directDeviceTrust,
+    this.modalityGate = const DirectConversationModalityGate(),
+    this.directEventFanout,
   });
 
   @override
@@ -2783,6 +2801,7 @@ class _ConversationWiredState extends State<ConversationWired>
       mediaFileManager: widget.mediaFileManager,
       bridge: widget.bridge,
       recipientMlKemPublicKey: _contact.mlKemPublicKey,
+      directEventFanout: widget.directEventFanout,
     );
 
     if (!mounted) return;
@@ -3483,6 +3502,7 @@ class _ConversationWiredState extends State<ConversationWired>
           bridge: widget.bridge,
           recipientMlKemPublicKey: _contact.mlKemPublicKey,
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
+          directEventFanout: widget.directEventFanout,
         );
 
         if (!mounted) return;
@@ -4455,6 +4475,7 @@ class _ConversationWiredState extends State<ConversationWired>
           privateMediaPolicy: privateMediaPolicy,
           mediaAttachmentRepo: widget.mediaAttachmentRepo,
           transportMetrics: widget.transportMetrics,
+          directEventFanout: widget.directEventFanout,
         );
 
         if (preparedUploads.isNotEmpty &&
@@ -5115,6 +5136,20 @@ class _ConversationWiredState extends State<ConversationWired>
   }
 
   void _onAttach() {
+    // 361: the restricted linked role authors blob-free events only.
+    if (!widget.modalityGate.allowsMediaAuthoring) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_MODALITY_GATE_MEDIA_REFUSED',
+        details: const {},
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Media is not available on this linked device yet'),
+        ),
+      );
+      return;
+    }
     final readableColors = context.backgroundReadableColors;
     showModalBottomSheet<void>(
       context: context,
@@ -5307,6 +5342,22 @@ class _ConversationWiredState extends State<ConversationWired>
   // -- Voice recording --
 
   Future<void> _onRecordStart() async {
+    // 361: the restricted linked role authors blob-free events only.
+    if (!widget.modalityGate.allowsVoiceAuthoring) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_MODALITY_GATE_VOICE_REFUSED',
+        details: const {},
+      );
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Voice messages are not available on this linked device yet',
+          ),
+        ),
+      );
+      return;
+    }
     final recorder = widget.audioRecorderService;
     if (recorder == null ||
         _composerViewState.recordingState.isActive ||
@@ -5934,6 +5985,7 @@ class _ConversationWiredState extends State<ConversationWired>
         emoji: emoji,
         senderPeerId: identity.peerId,
         recipientMlKemPublicKey: _contact.mlKemPublicKey ?? '',
+        directEventFanout: widget.directEventFanout,
       );
       return;
     }
@@ -5969,6 +6021,7 @@ class _ConversationWiredState extends State<ConversationWired>
       emoji: emoji,
       senderPeerId: identity.peerId,
       recipientMlKemPublicKey: _contact.mlKemPublicKey ?? '',
+      directEventFanout: widget.directEventFanout,
     );
 
     // The atomic custody stage, rather than the immediate transport diagnostic,

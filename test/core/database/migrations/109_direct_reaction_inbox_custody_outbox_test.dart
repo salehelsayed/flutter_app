@@ -79,8 +79,8 @@ void main() {
         if (upgraded.isOpen) await upgraded.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 112);
-      expect(await _userVersion(upgraded), 112);
+      expect(currentIdentityDatabaseVersion, 113);
+      expect(await _userVersion(upgraded), 113);
       expect(await upgraded.query('message_reactions'), hasLength(1));
       expect(
         await upgraded.query('direct_reaction_inbox_custody_outbox'),
@@ -101,7 +101,7 @@ void main() {
           same(runDirectReactionInboxCustodyOutboxMigration),
         );
         expect(registry[registry.indexOf(entries.single) + 1].version, 110);
-        expect(registry.last.version, 112);
+        expect(registry.last.version, 113);
         final v108 = registry.indexWhere((entry) => entry.version == 108);
         expect(registry.indexOf(entries.single), v108 + 1);
       }
@@ -126,7 +126,7 @@ void main() {
         ),
       );
       await _expectExactSchema(fresh);
-      expect(await _userVersion(fresh), 112);
+      expect(await _userVersion(fresh), 113);
       expect(
         await fresh.query('direct_reaction_inbox_custody_outbox'),
         isEmpty,
@@ -166,7 +166,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(upgraded), 112);
+      expect(await _userVersion(upgraded), 113);
       expect(
         await upgraded.query('direct_reaction_inbox_custody_outbox'),
         snapshotBeforeDowngrade,
@@ -226,6 +226,9 @@ Future<void> _expectExactSchema(Database db) async {
     'last_error_code',
     'created_at',
     'updated_at',
+    // 361: DB v113 appends the nullable logical-contact/parent fanout facts.
+    'contact_account_peer_id',
+    'parent_message_id',
   ]);
   expect(columns.map((column) => column['type']).toList(), <String>[
     'TEXT',
@@ -236,10 +239,14 @@ Future<void> _expectExactSchema(Database db) async {
     'TEXT',
     'TEXT',
     'TEXT',
+    'TEXT',
+    'TEXT',
   ]);
   expect(columns.map((column) => column['pk']).toList(), <int>[
     1,
     2,
+    0,
+    0,
     0,
     0,
     0,
@@ -268,8 +275,11 @@ Future<void> _expectExactSchema(Database db) async {
   ]) {
     expect(tableSql, contains("'$code'"));
   }
+  // 361: `parent_message_id` is the one deliberate exception — the deletion
+  // outer envelope hides its target, so a NEW fanout row persists the logical
+  // parent at authoring time. The exact column list above still proves no
+  // bare `message_id` column exists.
   for (final forbidden in const <String>[
-    'message_id',
     'emoji',
     'preview',
     'media',

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'dart:io';
@@ -54,6 +55,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _unusedSendFn({
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   return (SendChatMessageResult.success, null);
 }

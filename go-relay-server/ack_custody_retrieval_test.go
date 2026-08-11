@@ -304,4 +304,99 @@ func TestRelayNotificationClosure_AckCustodyRetrievalAndAckIsolation(t *testing.
 			t.Fatalf("final protected drain = %#v", final)
 		}
 	})
+
+	// 361 (unchanged-relay premise): a client-side fanout stores the SAME
+	// logical event ID once per recipient with different exact ciphertext.
+	// Each per-recipient row is an independent protected custody tuple: ACKing
+	// one recipient's row must leave every other recipient's row present and
+	// byte-identical.
+	t.Run("per_recipient_fanout_ack_isolation", func(t *testing.T) {
+		server := miniredis.RunT(t)
+		backend := newAckCustodyRedisBackend(t, server, "ack-fanout-iso:", 10)
+		inbox := NewInboxStoreWithBackendAndCapacity(backend, nil, 10)
+		inbox.SetAckCustodyAdmissionEnabled(true)
+		groupInbox := NewGroupInboxStore(500, 7*24*time.Hour)
+		env := setupInboxStreamEnv(t, inbox, groupInbox)
+		peerA := env.recipient.ID().String()
+		peerB := env.intruder.ID().String()
+		sender := env.sender.ID().String()
+
+		envelopeA := ackCustodyTextEnvelope("fanout-evt-1", sender, "cipher-for-peer-a")
+		envelopeB := ackCustodyTextEnvelope("fanout-evt-1", sender, "cipher-for-peer-b")
+		if envelopeA == envelopeB {
+			t.Fatalf("fixtures must carry different exact ciphertext bytes")
+		}
+		for _, fixture := range []struct{ to, envelope string }{
+			{peerA, envelopeA},
+			{peerB, envelopeB},
+		} {
+			resp := sendAckCustodyStoreRequest(
+				t,
+				env,
+				fixture.to,
+				ackCustodyDirectTextKind,
+				ackCustodyContract,
+				fixture.envelope,
+			)
+			if resp.Status != "OK" || resp.CustodyContract != ackCustodyContract {
+				t.Fatalf("fanout store to %s = %#v", fixture.to, resp)
+			}
+		}
+
+		retrieveAs := func(from host.Host) inboxResponse {
+			return sendInboxAction(t, from, env.server, inboxRequest{
+				Action:          ackCustodyRetrievePendingAction,
+				Limit:           50,
+				CustodyContract: ackCustodyContract,
+			})
+		}
+		pageA := retrieveAs(env.recipient)
+		if pageA.Status != "OK" || len(pageA.Messages) != 1 || pageA.Messages[0].Message != envelopeA {
+			t.Fatalf("peer A protected page = %#v", pageA)
+		}
+		pageB := retrieveAs(env.intruder)
+		if pageB.Status != "OK" || len(pageB.Messages) != 1 {
+			t.Fatalf("peer B protected page = %#v", pageB)
+		}
+		preAckB := pageB.Messages[0]
+		if preAckB.Message != envelopeB {
+			t.Fatalf("peer B pre-ACK bytes = %q, want its own exact envelope", preAckB.Message)
+		}
+
+		ack := sendInboxAction(t, env.recipient, env.server, inboxRequest{
+			Action:          ackCustodyAckAction,
+			EntryIds:        []string{pageA.Messages[0].ID},
+			CustodyContract: ackCustodyContract,
+		})
+		if ack.Status != "OK" || ack.Acked != 1 || ack.CustodyContract != ackCustodyContract {
+			t.Fatalf("peer A ACK = %#v", ack)
+		}
+
+		drainedA := retrieveAs(env.recipient)
+		if drainedA.Status != "NO_MESSAGES" {
+			t.Fatalf("peer A after own ACK = %#v, want drained", drainedA)
+		}
+		replayB := retrieveAs(env.intruder)
+		if replayB.Status != "OK" || len(replayB.Messages) != 1 {
+			t.Fatalf("peer B after peer A ACK = %#v, want untouched row", replayB)
+		}
+		postAckB := replayB.Messages[0]
+		if postAckB.ID != preAckB.ID ||
+			postAckB.From != preAckB.From ||
+			postAckB.Message != preAckB.Message ||
+			postAckB.Message != envelopeB {
+			t.Fatalf(
+				"peer B row mutated by peer A ACK: pre=%#v post=%#v",
+				preAckB,
+				postAckB,
+			)
+		}
+		if backend.CountAckCustody(peerA) != 0 || backend.CountAckCustody(peerB) != 1 {
+			t.Fatalf(
+				"protected counts after ACK = A:%d B:%d, want 0/1",
+				backend.CountAckCustody(peerA),
+				backend.CountAckCustody(peerB),
+			)
+		}
+	})
 }

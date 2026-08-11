@@ -4,9 +4,12 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../media/private_media_policy.dart';
 import '../db_write_transaction.dart';
+import '../direct_event_fanout_contract.dart';
 import '../direct_inbox_event_envelope.dart';
 import '../direct_reaction_inbox_custody_outbox_contract.dart';
 import '../outgoing_transport_mutation.dart';
+import 'direct_contact_device_bindings_db_helpers.dart';
+import 'direct_inbox_custody_outbox_db_helpers.dart';
 import 'messages_db_helpers.dart';
 
 /// The one physical v109 outbox shared by direct reaction and mutation events.
@@ -627,7 +630,6 @@ dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
   return dbWriteTransaction(db, (txn) async {
     final custodyRows = await txn.query(
       _table,
-      columns: const <String>['wire_envelope'],
       where: 'recipient_peer_id = ? AND event_id = ?',
       whereArgs: <Object?>[recipientPeerId, eventId],
       limit: 1,
@@ -637,6 +639,77 @@ dbCompleteAcceptedDirectMutationInboxCustodyIfExact(
     }
     if (custodyRows.single['wire_envelope'] != expectedWireEnvelope) {
       return DirectMutationInboxCustodyCompletionOutcome.stale;
+    }
+
+    // 361: a fanout sibling resolves its parent through the persisted logical
+    // facts, never through witness-ciphertext equality, and only its FINAL
+    // surviving sibling may project — and only while the parent's generation
+    // still equals this exact event. A superseded sibling retires alone.
+    final fanoutContact =
+        custodyRows.single['contact_account_peer_id'] as String?;
+    final fanoutParentId = custodyRows.single['parent_message_id'] as String?;
+    if (fanoutContact != null) {
+      final siblingCountRows = await txn.rawQuery(
+        'SELECT COUNT(*) AS count FROM $_table WHERE event_id = ?',
+        <Object?>[eventId],
+      );
+      final isFinalSurvivingSibling =
+          ((siblingCountRows.single['count'] as num?)?.toInt() ?? 0) == 1;
+      if (fanoutParentId != null && isFinalSurvivingSibling) {
+        final parents = await txn.query(
+          'messages',
+          where: 'id = ? AND contact_peer_id = ? AND is_incoming = 0',
+          whereArgs: <Object?>[fanoutParentId, fanoutContact],
+          limit: 1,
+        );
+        if (parents.length == 1 &&
+            parents.single['direct_event_fanout_generation_id'] == eventId &&
+            parents.single['hidden_at'] == null) {
+          final parent = parents.single;
+          final status = parent['status'];
+          final projectable = const <String>{
+            'sending',
+            'sent',
+            'failed',
+            'inboxed',
+          }.contains(status);
+          final alreadyProjected =
+              status == 'inboxed' &&
+              parent['transport'] == 'inbox' &&
+              parent['relay_expires_at'] == relayExpiresAt;
+          if (projectable && !alreadyProjected) {
+            final changed = await txn.update(
+              'messages',
+              <String, Object?>{
+                'status': 'inboxed',
+                'transport': 'inbox',
+                'relay_expires_at': relayExpiresAt,
+                'custody_checked_at': null,
+              },
+              where:
+                  'id = ? AND contact_peer_id = ? AND is_incoming = 0 '
+                  'AND status = ?',
+              whereArgs: <Object?>[fanoutParentId, fanoutContact, status],
+            );
+            if (changed != 1) {
+              throw StateError(
+                'direct mutation fanout completion lost its exact parent',
+              );
+            }
+          }
+        }
+      }
+      final deleted = await txn.delete(
+        _table,
+        where: 'recipient_peer_id = ? AND event_id = ? AND wire_envelope = ?',
+        whereArgs: <Object?>[recipientPeerId, eventId, expectedWireEnvelope],
+      );
+      if (deleted != 1) {
+        throw StateError(
+          'direct mutation custody completion lost its exact event',
+        );
+      }
+      return DirectMutationInboxCustodyCompletionOutcome.completed;
     }
 
     final editTarget = classified.kind == DirectInboxEventEnvelopeKind.edit
@@ -867,3 +940,457 @@ bool _isExactOutgoingDeletionProjection(Map<String, Object?> row) =>
     row['hidden_at'] == null;
 
 bool _isNonBlank(Object? value) => value is String && value.trim().isNotEmpty;
+
+/// Loads EVERY surviving v109 sibling of one logical event, in stable order.
+Future<List<Map<String, Object?>>>
+dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+  DatabaseExecutor db, {
+  required String eventId,
+}) {
+  return db.query(
+    _table,
+    where: 'event_id = ?',
+    whereArgs: <Object?>[eventId],
+    orderBy: 'recipient_peer_id ASC',
+  );
+}
+
+/// Loads a fair bounded batch of EXACT v113 blob-free fanout event rows only.
+Future<List<Map<String, Object?>>>
+dbLoadDirectReactionInboxCustodyOutboxExactFanoutRows(
+  DatabaseExecutor db, {
+  int limit = kDirectReactionInboxCustodyOutboxMaxLoadBatch,
+}) {
+  if (limit <= 0) return Future<List<Map<String, Object?>>>.value(const []);
+  final boundedLimit = math.min(
+    limit,
+    kDirectReactionInboxCustodyOutboxMaxLoadBatch,
+  );
+  return db.rawQuery(
+    'SELECT * FROM $_table '
+    'WHERE contact_account_peer_id IS NOT NULL '
+    'ORDER BY last_attempt_at ASC, created_at ASC, '
+    'recipient_peer_id ASC, event_id ASC LIMIT ?',
+    <Object?>[boundedLimit],
+  );
+}
+
+/// Loads surviving v109 siblings of [eventId] inside [txn] and verifies the
+/// caller's attempt agrees with them byte-for-byte. Returns null on conflict.
+Future<List<Map<String, Object?>>?> _consistentEventSurvivors(
+  DatabaseExecutor txn, {
+  required String eventId,
+  required String contactAccountPeerId,
+  required String parentMessageId,
+  required List<DirectEventFanoutTargetCandidate> candidates,
+}) async {
+  final survivors = await txn.query(
+    _table,
+    where: 'event_id = ?',
+    whereArgs: <Object?>[eventId],
+    orderBy: 'recipient_peer_id ASC',
+  );
+  for (final row in survivors) {
+    final candidate = candidates
+        .where((c) => c.recipientPeerId == row['recipient_peer_id'])
+        .firstOrNull;
+    if (row['contact_account_peer_id'] != contactAccountPeerId ||
+        row['parent_message_id'] != parentMessageId ||
+        (candidate != null && candidate.wireEnvelope != row['wire_envelope'])) {
+      return null;
+    }
+  }
+  return survivors
+      .map((row) => Map<String, Object?>.from(row))
+      .toList(growable: false);
+}
+
+/// Atomically stages one ordinary text EDIT / Delete-for-Everyone mutation and
+/// its COMPLETE all-target v109 sibling batch (Plan 361 / DB v113), replacing
+/// the parent's current fanout generation with [eventId].
+///
+/// Survivor-first: surviving siblings for [eventId] are the complete pending
+/// set and win before roster/capacity. With zero survivors, a parent whose
+/// generation already equals [eventId] is terminal. A genuinely later
+/// generation stages over an older one's survivors; the superseded event can
+/// still drain its own exact rows but can never project or be reminted.
+Future<DbDirectEventFanoutStageResult>
+dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+  Database db, {
+  required Map<String, Object?>? expectedRow,
+  required Map<String, Object?> stagedRow,
+  required OutgoingOrdinaryAttemptKind kind,
+  required String eventId,
+  required String parentMessageId,
+  required String contactAccountPeerId,
+  required String senderTransportPeerId,
+  required DirectContactFanoutSnapshot expectedSnapshot,
+  required List<DirectEventFanoutTargetCandidate> candidates,
+  int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeSiblingInsertForTest,
+}) {
+  final createdAt = stagedRow['created_at'];
+  final isEdit = kind == OutgoingOrdinaryAttemptKind.edit;
+  final isDeletion =
+      kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
+      kind == OutgoingOrdinaryAttemptKind.tombstoneRetry;
+  bool exactCandidate(DirectEventFanoutTargetCandidate candidate) {
+    final classified = classifyDirectInboxEventEnvelope(candidate.wireEnvelope);
+    if (classified == null ||
+        classified.eventId != eventId ||
+        classified.senderPeerId != senderTransportPeerId) {
+      return false;
+    }
+    return isEdit
+        ? classified.kind == DirectInboxEventEnvelopeKind.edit &&
+              classified.targetMessageId == parentMessageId
+        : isDeletion &&
+              classified.kind == DirectInboxEventEnvelopeKind.deletion;
+  }
+
+  final valid =
+      capacity >= 0 &&
+      (isEdit || isDeletion) &&
+      expectedRow != null &&
+      _isNonBlank(eventId) &&
+      _isNonBlank(parentMessageId) &&
+      _isNonBlank(contactAccountPeerId) &&
+      _isNonBlank(senderTransportPeerId) &&
+      expectedSnapshot.contactAccountPeerId == contactAccountPeerId &&
+      directEventFanoutCandidatesMatchSnapshot(candidates, expectedSnapshot) &&
+      stagedRow['id'] == parentMessageId &&
+      expectedRow['id'] == parentMessageId &&
+      stagedRow['contact_peer_id'] == contactAccountPeerId &&
+      expectedRow['contact_peer_id'] == contactAccountPeerId &&
+      stagedRow['wire_envelope'] == candidates.first.wireEnvelope &&
+      createdAt is String &&
+      _isNonBlank(createdAt) &&
+      DateTime.tryParse(createdAt) != null &&
+      candidates.every(exactCandidate) &&
+      _isStrictOrdinaryTextPolicy(expectedRow) &&
+      _isStrictOrdinaryTextPolicy(stagedRow) &&
+      (isEdit || _isExactOutgoingDeletionProjection(stagedRow));
+  if (!valid) {
+    return Future<DbDirectEventFanoutStageResult>.value(
+      const DbDirectEventFanoutStageResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final survivors = await _consistentEventSurvivors(
+      txn,
+      eventId: eventId,
+      contactAccountPeerId: contactAccountPeerId,
+      parentMessageId: parentMessageId,
+      candidates: candidates,
+    );
+    if (survivors == null) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+    if (survivors.isNotEmpty) {
+      return DbDirectEventFanoutStageResult(
+        outcome: DirectEventFanoutStageOutcome.survivorReplay,
+        rows: survivors,
+      );
+    }
+
+    final parentRows = await txn.query(
+      'messages',
+      where: 'id = ?',
+      whereArgs: <Object?>[parentMessageId],
+      limit: 1,
+    );
+    if (parentRows.isNotEmpty &&
+        parentRows.single['direct_event_fanout_generation_id'] == eventId) {
+      return const DbDirectEventFanoutStageResult(
+        outcome: DirectEventFanoutStageOutcome.terminal,
+        rows: <Map<String, Object?>>[],
+      );
+    }
+
+    final currentSnapshot = await dbReadDirectContactFanoutSnapshot(
+      txn,
+      contactAccountPeerId: contactAccountPeerId,
+    );
+    if (currentSnapshot == null ||
+        currentSnapshot.targets.isEmpty ||
+        !currentSnapshot.sameSnapshotAs(expectedSnapshot)) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_table',
+    );
+    final count = (countRows.single['count'] as num?)?.toInt() ?? 0;
+    if (count + candidates.length > capacity) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    final hasMediaTable = (await txn.rawQuery(
+      "SELECT 1 FROM sqlite_master WHERE type = 'table' "
+      "AND name = 'media_attachments' LIMIT 1",
+    )).isNotEmpty;
+    if (hasMediaTable) {
+      final directMedia = await txn.rawQuery(
+        'SELECT 1 FROM media_attachments '
+        'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
+        <Object?>[parentMessageId, 'direct'],
+      );
+      if (directMedia.isNotEmpty) {
+        return const DbDirectEventFanoutStageResult.refused();
+      }
+    }
+
+    final messageOutcome =
+        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+          txn,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+        );
+    if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+    // Atomically replace the parent's current generation: the older event is
+    // superseded and can never project or remint from now on.
+    final markerChanged = await txn.update(
+      'messages',
+      <String, Object?>{'direct_event_fanout_generation_id': eventId},
+      where: 'id = ?',
+      whereArgs: <Object?>[parentMessageId],
+    );
+    if (markerChanged != 1) {
+      throw StateError('mutation fanout lost its exact parent generation');
+    }
+
+    final stagedRows = <Map<String, Object?>>[];
+    for (final candidate in candidates) {
+      final siblingRow = <String, Object?>{
+        'recipient_peer_id': candidate.recipientPeerId,
+        'event_id': eventId,
+        'wire_envelope': candidate.wireEnvelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'contact_account_peer_id': contactAccountPeerId,
+        'parent_message_id': parentMessageId,
+        'created_at': createdAt,
+        'updated_at': createdAt,
+      };
+      await beforeSiblingInsertForTest?.call();
+      await txn.insert(
+        _table,
+        siblingRow,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      stagedRows.add(siblingRow);
+    }
+    return DbDirectEventFanoutStageResult(
+      outcome: DirectEventFanoutStageOutcome.applied,
+      rows: stagedRows,
+    );
+  });
+}
+
+/// Atomically applies one canonical direct-reaction ADD/REMOVE transition and
+/// stages its COMPLETE all-target v109 sibling batch (Plan 361 / DB v113).
+///
+/// The canonical reaction row ID is the exact event generation: an exact
+/// canonical transition with zero surviving siblings is terminal, an OLDER
+/// event stages zero rows against a newer canonical row, and a hidden or
+/// deleted parent refuses new staging entirely.
+Future<DbDirectEventFanoutStageResult>
+dbStageOutgoingDirectReactionFanoutInboxCustody(
+  Database db, {
+  required Map<String, Object?> reactionRow,
+  required String action,
+  required String parentMessageId,
+  required String contactAccountPeerId,
+  required String senderTransportPeerId,
+  required DirectContactFanoutSnapshot expectedSnapshot,
+  required List<DirectEventFanoutTargetCandidate> candidates,
+  int capacity = kDirectReactionInboxCustodyOutboxCapacity,
+  Future<void> Function()? beforeSiblingInsertForTest,
+}) {
+  final eventId = reactionRow['id'];
+  final messageId = reactionRow['message_id'];
+  final senderPeerId = reactionRow['sender_peer_id'];
+  final timestamp = reactionRow['timestamp'];
+  final createdAt = reactionRow['created_at'];
+  bool exactCandidate(DirectEventFanoutTargetCandidate candidate) {
+    final classified = classifyDirectInboxEventEnvelope(candidate.wireEnvelope);
+    return classified?.kind == DirectInboxEventEnvelopeKind.reaction &&
+        classified?.eventId == eventId &&
+        classified?.reactionAction == action &&
+        classified?.targetMessageId == parentMessageId &&
+        classified?.senderPeerId == senderTransportPeerId;
+  }
+
+  final valid =
+      capacity >= 0 &&
+      eventId is String &&
+      _isNonBlank(eventId) &&
+      messageId == parentMessageId &&
+      _isNonBlank(parentMessageId) &&
+      _isNonBlank(contactAccountPeerId) &&
+      _isNonBlank(senderTransportPeerId) &&
+      senderPeerId is String &&
+      _isNonBlank(senderPeerId) &&
+      timestamp is String &&
+      _isNonBlank(timestamp) &&
+      DateTime.tryParse(timestamp) != null &&
+      createdAt is String &&
+      _isNonBlank(createdAt) &&
+      DateTime.tryParse(createdAt) != null &&
+      _isNonBlank(reactionRow['emoji']) &&
+      (action == 'add' || action == 'remove') &&
+      (action != 'add' || reactionRow['removed_at'] == null) &&
+      expectedSnapshot.contactAccountPeerId == contactAccountPeerId &&
+      directEventFanoutCandidatesMatchSnapshot(candidates, expectedSnapshot) &&
+      candidates.every(exactCandidate);
+  if (!valid) {
+    return Future<DbDirectEventFanoutStageResult>.value(
+      const DbDirectEventFanoutStageResult.refused(),
+    );
+  }
+
+  return dbWriteTransaction(db, (txn) async {
+    final survivors = await _consistentEventSurvivors(
+      txn,
+      eventId: eventId,
+      contactAccountPeerId: contactAccountPeerId,
+      parentMessageId: parentMessageId,
+      candidates: candidates,
+    );
+    if (survivors == null) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+    if (survivors.isNotEmpty) {
+      return DbDirectEventFanoutStageResult(
+        outcome: DirectEventFanoutStageOutcome.survivorReplay,
+        rows: survivors,
+      );
+    }
+
+    final normalizedReaction = Map<String, Object?>.from(reactionRow);
+    normalizedReaction['removed_at'] = action == 'remove' ? timestamp : null;
+
+    final eventRows = await txn.query(
+      'message_reactions',
+      where: 'id = ?',
+      whereArgs: <Object?>[eventId],
+      limit: 1,
+    );
+    if (eventRows.isNotEmpty) {
+      final row = eventRows.single;
+      // Exact canonical event plus zero surviving rows is terminal — never
+      // authority to resolve a new roster and remint the event.
+      final exactTransition =
+          row['message_id'] == parentMessageId &&
+          row['sender_peer_id'] == senderPeerId &&
+          _canonicalTransitionMatches(row, normalizedReaction, action: action);
+      return exactTransition
+          ? const DbDirectEventFanoutStageResult(
+              outcome: DirectEventFanoutStageOutcome.terminal,
+              rows: <Map<String, Object?>>[],
+            )
+          : const DbDirectEventFanoutStageResult.refused();
+    }
+
+    // New staging requires a live parent in this logical conversation. The
+    // fanout owner sweeps or scrubs parents deliberately, so a hidden or
+    // deleted parent terminally refuses new reaction generations.
+    final parents = await txn.query(
+      'messages',
+      where: 'id = ? AND contact_peer_id = ?',
+      whereArgs: <Object?>[parentMessageId, contactAccountPeerId],
+      limit: 1,
+    );
+    if (parents.isEmpty ||
+        parents.single['deleted_at'] != null ||
+        parents.single['hidden_at'] != null) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+    final groupTargets = await txn.query(
+      'group_messages',
+      columns: const <String>['id'],
+      where: 'id = ?',
+      whereArgs: <Object?>[parentMessageId],
+      limit: 1,
+    );
+    if (groupTargets.isNotEmpty) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    // An OLDER event never mutates a newer canonical transition and never
+    // stages rows: the newer generation owns the (message, sender) lane.
+    final currentRows = await txn.query(
+      'message_reactions',
+      where: 'message_id = ? AND sender_peer_id = ?',
+      whereArgs: <Object?>[parentMessageId, senderPeerId],
+      limit: 1,
+    );
+    final current = currentRows.isEmpty ? null : currentRows.single;
+    if (current != null) {
+      final currentTimestamp =
+          current['removed_at'] as String? ?? current['timestamp'] as String?;
+      final currentAt = currentTimestamp == null
+          ? null
+          : DateTime.tryParse(currentTimestamp);
+      if (currentAt != null && DateTime.parse(timestamp).isBefore(currentAt)) {
+        return const DbDirectEventFanoutStageResult.refused();
+      }
+    }
+
+    final currentSnapshot = await dbReadDirectContactFanoutSnapshot(
+      txn,
+      contactAccountPeerId: contactAccountPeerId,
+    );
+    if (currentSnapshot == null ||
+        currentSnapshot.targets.isEmpty ||
+        !currentSnapshot.sameSnapshotAs(expectedSnapshot)) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    final countRows = await txn.rawQuery(
+      'SELECT COUNT(*) AS count FROM $_table',
+    );
+    final count = (countRows.single['count'] as num?)?.toInt() ?? 0;
+    if (count + candidates.length > capacity) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    await txn.insert(
+      'message_reactions',
+      normalizedReaction,
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    final stagedRows = <Map<String, Object?>>[];
+    for (final candidate in candidates) {
+      final siblingRow = <String, Object?>{
+        'recipient_peer_id': candidate.recipientPeerId,
+        'event_id': eventId,
+        'wire_envelope': candidate.wireEnvelope,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'last_error_code': null,
+        'contact_account_peer_id': contactAccountPeerId,
+        'parent_message_id': parentMessageId,
+        'created_at': createdAt,
+        'updated_at': createdAt,
+      };
+      await beforeSiblingInsertForTest?.call();
+      await txn.insert(
+        _table,
+        siblingRow,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      stagedRows.add(siblingRow);
+    }
+    return DbDirectEventFanoutStageResult(
+      outcome: DirectEventFanoutStageOutcome.applied,
+      rows: stagedRows,
+    );
+  });
+}

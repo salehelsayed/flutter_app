@@ -12,6 +12,7 @@ import 'package:flutter_app/features/contact_request/domain/models/contact_reque
 import 'package:flutter_app/features/contact_request/domain/repositories/contact_request_repository.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/contacts/domain/repositories/direct_contact_conversation_purge.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
@@ -295,6 +296,67 @@ class BarrierReactionRepository extends FakeReactionRepository {
   }
 }
 
+/// 361: a contact repository that owns the final serialized purge.
+class FakePurgeContactRepository extends FakeContactRepository
+    implements DirectContactConversationPurgeCapability {
+  FakePurgeContactRepository({super.operations});
+
+  final List<String> purgedPeerIds = [];
+  final Map<String, int> pendingRowsAtPurge = {};
+  Map<String, int> rowsSeenAtPurge = const {};
+
+  @override
+  bool get supportsDirectContactConversationPurge => true;
+
+  @override
+  Future<DirectContactConversationPurgeSummary>
+  purgeDirectContactConversationAndContact(String peerId) async {
+    purgedPeerIds.add(peerId);
+    operations?.add('purge:$peerId');
+    // The final transaction sweeps whatever exists at commit time.
+    rowsSeenAtPurge = Map<String, int>.from(pendingRowsAtPurge);
+    pendingRowsAtPurge.clear();
+    return const DirectContactConversationPurgeSummary(
+      deletedTextCustodyRows: 1,
+      deletedEventCustodyRows: 1,
+      deletedReactions: 1,
+      deletedMessages: 2,
+      deletedContact: true,
+    );
+  }
+}
+
+/// 361: a message repository that reconciles from the committed purge.
+class ReconcilingFakeMessageRepository extends FakeMessageRepository
+    implements DirectContactPurgeReconciliation {
+  ReconcilingFakeMessageRepository({super.operations});
+
+  @override
+  Future<void> reconcileDirectContactConversationPurge(String peerId) async {
+    operations?.add('reconcile-messages:$peerId');
+  }
+}
+
+/// 361: a reaction repository that reconciles from the committed purge.
+class ReconcilingFakeReactionRepository extends FakeReactionRepository
+    implements DirectContactPurgeReconciliation {
+  ReconcilingFakeReactionRepository({super.operations});
+
+  void Function()? onDeleteReactionsForContact;
+
+  @override
+  Future<int> deleteReactionsForContact(String contactPeerId) async {
+    final deleted = await super.deleteReactionsForContact(contactPeerId);
+    onDeleteReactionsForContact?.call();
+    return deleted;
+  }
+
+  @override
+  Future<void> reconcileDirectContactConversationPurge(String peerId) async {
+    operations?.add('reconcile-reactions:$peerId');
+  }
+}
+
 class FakeContactRequestRepository implements ContactRequestRepository {
   final List<String> deletedPeerIds = [];
   final List<String>? operations;
@@ -501,6 +563,87 @@ void main() {
 
       expect(messageRepo.deletedForContact, ['peer-1234567890']);
       expect(contactRepo.deletedPeerIds, ['peer-1234567890']);
+    });
+
+    test(
+      'TC-361-01b the final purge owner replaces the split message/contact '
+      'deletion and the repositories reconcile from the committed purge',
+      () async {
+        final operations = <String>[];
+        final contactRepo = FakePurgeContactRepository(operations: operations);
+        final messageRepo = ReconcilingFakeMessageRepository(
+          operations: operations,
+        );
+        final reactionRepo = ReconcilingFakeReactionRepository(
+          operations: operations,
+        );
+
+        await deleteContactAndMessages(
+          contactRepo: contactRepo,
+          messageRepo: messageRepo,
+          reactionRepo: reactionRepo,
+          peerId: 'peer-purge-12345',
+        );
+
+        expect(
+          messageRepo.deletedForContact,
+          isEmpty,
+          reason:
+              'messages are never physically purged before the final '
+              'serialized transaction',
+        );
+        expect(
+          contactRepo.deletedPeerIds,
+          isEmpty,
+          reason: 'the split contact delete is replaced by the final owner',
+        );
+        expect(contactRepo.purgedPeerIds, ['peer-purge-12345']);
+        expect(
+          operations,
+          [
+            'reactions:peer-purge-12345',
+            'purge:peer-purge-12345',
+            'reconcile-messages:peer-purge-12345',
+            'reconcile-reactions:peer-purge-12345',
+          ],
+          reason:
+              'early best-effort reaction cleanup precedes the final '
+              'purge; cache reconciliation follows the committed purge',
+        );
+      },
+    );
+
+    test('TC-361-01c a reaction applied after the early cleanup is still owned '
+        'by the final purge transaction', () async {
+      final operations = <String>[];
+      final contactRepo = FakePurgeContactRepository(operations: operations);
+      final messageRepo = ReconcilingFakeMessageRepository(
+        operations: operations,
+      );
+      final reactionRepo = ReconcilingFakeReactionRepository(
+        operations: operations,
+      );
+      // Interleave: the moment the early sweep runs, a racing apply lands a
+      // fresh reaction. Only the final serialized owner may sweep it.
+      reactionRepo.onDeleteReactionsForContact = () {
+        contactRepo.pendingRowsAtPurge['late-reaction'] = 1;
+      };
+
+      await deleteContactAndMessages(
+        contactRepo: contactRepo,
+        messageRepo: messageRepo,
+        reactionRepo: reactionRepo,
+        peerId: 'peer-race-12345',
+      );
+
+      expect(contactRepo.purgedPeerIds, ['peer-race-12345']);
+      expect(
+        contactRepo.rowsSeenAtPurge,
+        containsPair('late-reaction', 1),
+        reason:
+            'the final transaction still sees and sweeps the '
+            'post-cleanup reaction; nothing survives it',
+      );
     });
 
     test('rethrows errors from message repository', () async {

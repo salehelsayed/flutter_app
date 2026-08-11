@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
@@ -98,6 +99,68 @@ void main() {
   tearDown(() {
     listener.dispose();
     reactionStreamController.close();
+  });
+
+  test('TC-361-03a the reaction listener applies the blocked policy to the '
+      'RESOLVED logical contact before decrypt', () async {
+    const linkedTransport = 'peer-linked-transport';
+    contactRepo.seed([
+      ContactModel(
+        peerId: _senderPeerId,
+        publicKey: 'pk',
+        rendezvous: '/relay',
+        username: 'Sender',
+        signature: 'sig',
+        scannedAt: '2026-01-01T00:00:00.000Z',
+        isBlocked: true,
+        blockedAt: '2026-08-11T12:00:00.000Z',
+      ),
+    ]);
+    final blockedStream = StreamController<ChatMessage>.broadcast();
+    addTearDown(blockedStream.close);
+    final blockedListener = ReactionListener(
+      reactionStream: blockedStream.stream,
+      messageRepo: messageRepo,
+      reactionRepo: reactionRepo,
+      contactRepo: contactRepo,
+      bridge: bridge,
+      getOwnMlKemSecretKey: () async => 'own-secret-key',
+      transportAuthority: _FakeTransportAuthority({
+        linkedTransport: const DirectTransportAuthorityResolution.authorized(
+          kind: DirectTransportAuthorityKind.linked,
+          contactAccountPeerId: _senderPeerId,
+          contactIsBlocked: true,
+        ),
+      }),
+    );
+    addTearDown(blockedListener.dispose);
+    blockedListener.start();
+
+    final envelope = ReactionPayload.buildEncryptedEnvelope(
+      senderPeerId: linkedTransport,
+      eventId: 'r-linked-blocked',
+      action: ReactionPayload.addAction,
+      targetMessageId: 'msg-1',
+      kem: 'k',
+      ciphertext: 'c',
+      nonce: 'n',
+    );
+    blockedStream.add(
+      ChatMessage(
+        from: linkedTransport,
+        to: 'my-peer',
+        content: envelope,
+        timestamp: '2026-08-11T12:00:00.000Z',
+        isIncoming: true,
+      ),
+    );
+    await Future.delayed(const Duration(milliseconds: 100));
+    expect(
+      reactionRepo.linkedApplyTransports,
+      isEmpty,
+      reason: 'a blocked logical contact never reaches the handler apply',
+    );
+    expect(bridge.sendCallCount, 0, reason: 'blocked precedes decrypt');
   });
 
   group('ReactionListener', () {
@@ -334,4 +397,17 @@ void main() {
       // No error on dispose
     });
   });
+}
+
+class _FakeTransportAuthority implements DirectTransportAuthorityResolver {
+  _FakeTransportAuthority(this.byTransport);
+
+  final Map<String, DirectTransportAuthorityResolution> byTransport;
+
+  @override
+  Future<DirectTransportAuthorityResolution> resolveDirectTransportAuthority(
+    String transportPeerId,
+  ) async =>
+      byTransport[transportPeerId] ??
+      const DirectTransportAuthorityResolution.refused('unknown_transport');
 }

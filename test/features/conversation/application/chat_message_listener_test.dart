@@ -17,6 +17,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart'
     show RecoveredInboxChatDisposition;
 import 'package:flutter_app/features/conversation/application/recovered_inbox_chat_disposition.dart';
@@ -695,6 +696,7 @@ void main() {
         Map<String, String>? mutationEventIds,
       })?
       sendDeliveryReceipt,
+      DirectTransportAuthorityResolver? transportAuthority,
     }) {
       return ChatMessageListener(
         chatMessageStream: const Stream<ChatMessage>.empty(),
@@ -704,8 +706,72 @@ void main() {
         getOwnMlKemSecretKey: getOwnMlKemSecretKey,
         downloadProfilePictureFn: _noopDownloadProfilePicture,
         sendDeliveryReceipt: sendDeliveryReceipt,
+        transportAuthority: transportAuthority,
       );
     }
+
+    test('TC-361-03a a linked unsupported modality is terminally rejected and '
+        'a blocked logical contact is refused before decrypt', () async {
+      const linkedTransport = 'peer-linked-transport';
+      const logicalContact = 'peer-logical-account';
+      contactRepo.seedContact(
+        _makeContact(logicalContact, username: 'Logical'),
+      );
+      final listener = createListener(
+        transportAuthority: _FakeTransportAuthority({
+          linkedTransport: const DirectTransportAuthorityResolution.authorized(
+            kind: DirectTransportAuthorityKind.linked,
+            contactAccountPeerId: logicalContact,
+            contactIsBlocked: false,
+          ),
+        }),
+      );
+
+      final mediaMessage = ChatMessage(
+        from: linkedTransport,
+        to: 'my-peer',
+        content: jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'linked-media-listener-1',
+            'text': '',
+            'senderPeerId': logicalContact,
+            'senderUsername': 'Logical',
+            'timestamp': '2026-08-11T12:00:00.000Z',
+            'media': [
+              {
+                'id': 'linked-media-item',
+                'mime': 'image/jpeg',
+                'size': 512,
+                'mediaType': 'image',
+              },
+            ],
+          },
+        }),
+        timestamp: '2026-08-11T12:00:00.000Z',
+        isIncoming: true,
+        transport: 'inbox',
+      );
+      final outcome = await listener.processIncomingMessage(mediaMessage);
+      expect(outcome.state, ChatMessageProcessState.linkedModalityRefused);
+      expect(messageRepo.saved, isEmpty);
+      final mapped = mapChatReplayOutcomeToDisposition(outcome);
+      expect(
+        mapped.disposition,
+        RecoveredInboxChatDisposition.rejected,
+        reason: 'the staged envelope is durably rejected, never redriven',
+      );
+
+      // Blocked LOGICAL contact refuses the linked transport before decrypt.
+      contactRepo.seedContact(
+        _makeContact(logicalContact, isBlocked: true, username: 'Logical'),
+      );
+      final blockedOutcome = await listener.processIncomingMessage(
+        mediaMessage,
+      );
+      expect(blockedOutcome.state, ChatMessageProcessState.blockedSender);
+    });
 
     test(
       'returns blockedSender for blocked contacts before persistence',
@@ -2737,4 +2803,17 @@ void main() {
       },
     );
   });
+}
+
+class _FakeTransportAuthority implements DirectTransportAuthorityResolver {
+  _FakeTransportAuthority(this.byTransport);
+
+  final Map<String, DirectTransportAuthorityResolution> byTransport;
+
+  @override
+  Future<DirectTransportAuthorityResolution> resolveDirectTransportAuthority(
+    String transportPeerId,
+  ) async =>
+      byTransport[transportPeerId] ??
+      const DirectTransportAuthorityResolution.refused('unknown_transport');
 }

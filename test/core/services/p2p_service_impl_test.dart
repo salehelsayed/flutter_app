@@ -7594,7 +7594,8 @@ void main() {
       );
       expect(bridge.calledCommands, isNot(contains('node:stop')));
 
-      // ── Linked, matching peer: qualification passes and warm work runs. ──
+      // ── Linked, matching peer: qualification passes; 361 parks the
+      // generic warm/discovery owners for the linked role. ──
       bridge = _FakeBridge();
       inboxStagingRepository = InMemoryInboxStagingRepository();
       stubStart(peerId: 'transport-peer');
@@ -7775,6 +7776,94 @@ void main() {
         await primary.retrieveInbox();
         expect(primaryGatePeerIds.toSet(), <String>{'primary-peer'});
       },
+    );
+  });
+
+  test('TC-361-03b linked runtime starts only direct blob-free event owners — '
+      'linked node start parks generic discovery and warm while a primary '
+      'still warms', () async {
+    void stubStartOn(_FakeBridge target, {required String peerId}) {
+      target.whenCommand(
+        'node:start',
+        (_) => jsonEncode({
+          'ok': true,
+          'peerId': peerId,
+          'isStarted': true,
+          'listenAddresses': <String>[],
+          'circuitAddresses': <String>[],
+          'connections': <dynamic>[],
+          'relayState': 'online',
+          'healthyRelayCount': 1,
+        }),
+      );
+      target.whenCommand(
+        'inbox:retrieve',
+        (_) => jsonEncode({'ok': true, 'messages': [], 'hasMore': false}),
+      );
+      target.whenCommand('node:status', (_) => jsonEncode({'ok': true}));
+    }
+
+    // ── Linked role: the transport qualifier is published, so node start
+    // must stop at qualification — no warm body, no generic discovery. ──
+    final linkedBridge = _FakeBridge();
+    stubStartOn(linkedBridge, peerId: 'transport-peer');
+    final linked = P2PServiceImpl(
+      bridge: linkedBridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+      requiredTransportPeerId: () => 'transport-peer',
+      accountMigrationNetworkGate: allowAccountMigrationNetworkSideEffects,
+    );
+    addTearDown(linked.dispose);
+    final linkedEvents = await _captureFlowEvents(() async {
+      expect(
+        await linked.startNode('cHJpdmF0ZWtleXRlc3Q=', 'transport-peer'),
+        isTrue,
+      );
+      // Give any wrongly-fired unawaited warm/discovery body time to run.
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    final linkedEventNames = linkedEvents
+        .map((event) => event['event'])
+        .toList(growable: false);
+    expect(
+      linkedEventNames,
+      contains('P2P_SERVICE_LINKED_ROLE_GENERIC_START_SKIPPED'),
+      reason: 'the linked role must take the restricted-start branch',
+    );
+    expect(
+      linkedEventNames,
+      isNot(contains('P2P_SERVICE_WARM_BACKGROUND_BEGIN')),
+      reason: 'the generic warm body must stay parked for the linked role',
+    );
+    expect(
+      linkedBridge.calledCommands,
+      isNot(contains('inbox:retrieve')),
+      reason:
+          'no broad inbox work may start from node start on the linked '
+          'role; the restricted runtime owns the exact replay explicitly',
+    );
+
+    // ── Ordinary primary: byte-identical incumbent behavior — the warm
+    // body still fires from node start. ──
+    final primaryBridge = _FakeBridge();
+    stubStartOn(primaryBridge, peerId: 'primary-peer');
+    final primary = P2PServiceImpl(
+      bridge: primaryBridge,
+      inboxStagingRepository: InMemoryInboxStagingRepository(),
+      accountMigrationNetworkGate: allowAccountMigrationNetworkSideEffects,
+    );
+    addTearDown(primary.dispose);
+    final primaryEvents = await _captureFlowEvents(() async {
+      expect(
+        await primary.startNode('cHJpdmF0ZWtleXRlc3Q=', 'primary-peer'),
+        isTrue,
+      );
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    });
+    expect(
+      primaryEvents.map((event) => event['event']),
+      contains('P2P_SERVICE_WARM_BACKGROUND_BEGIN'),
+      reason: 'a primary keeps the incumbent warm start',
     );
   });
 }

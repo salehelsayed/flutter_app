@@ -365,4 +365,133 @@ void main() {
       expect((await messageRepo.getMessage(message.id))!.status, 'failed');
     },
   );
+
+  test('TC-361-01b the retrier pass replays exact fanout siblings and the '
+      'failed-rebuild wrapper never re-encrypts a marked generation', () async {
+    final messageRepo = FakeMessageRepository();
+    final identityRepo = FakeIdentityRepository()
+      ..seed(FakeIdentityRepository.makeIdentity());
+    final contactRepo = FakeContactRepository()
+      ..seed(const <ContactModel>[
+        ContactModel(
+          peerId: 'peer-contact-account',
+          publicKey: 'contact-public-key',
+          rendezvous: '/ip4/127.0.0.1/tcp/4001',
+          username: 'Fanout Contact',
+          signature: 'signature',
+          scannedAt: '2026-08-11T10:00:00.000Z',
+          mlKemPublicKey: 'contact-ml-kem-key',
+        ),
+      ]);
+    const message = ConversationMessage(
+      id: 'fanout-marked-message',
+      contactPeerId: 'peer-contact-account',
+      senderPeerId: 'my-peer-id',
+      text: 'fanout direct text',
+      timestamp: '2026-08-11T10:00:00.000Z',
+      status: 'failed',
+      isIncoming: false,
+      createdAt: '2026-08-11T10:00:00.000Z',
+      directEventFanoutGenerationId: 'fanout-marked-message',
+    );
+    messageRepo
+      ..seed(const <ConversationMessage>[message])
+      ..seedDirectInboxCustody(
+        const DirectInboxCustodyOutboxEntry(
+          recipientPeerId: 'peer-device-transport-a',
+          messageId: 'fanout-marked-message',
+          incarnationId: 'aaaa1111aaaa1111aaaa1111aaaa1111',
+          wireEnvelope: 'exact-fanout-envelope-device-a',
+          retryCount: 0,
+          lastAttemptAt: null,
+          lastErrorCode: null,
+          contactAccountPeerId: 'peer-contact-account',
+          createdAt: '2026-08-11T10:00:00.000Z',
+          updatedAt: '2026-08-11T10:00:00.000Z',
+        ),
+      )
+      ..seedDirectInboxCustody(
+        const DirectInboxCustodyOutboxEntry(
+          recipientPeerId: 'peer-device-transport-b',
+          messageId: 'fanout-marked-message',
+          incarnationId: 'bbbb1111bbbb1111bbbb1111bbbb1111',
+          wireEnvelope: 'exact-fanout-envelope-device-b',
+          retryCount: 0,
+          lastAttemptAt: null,
+          lastErrorCode: null,
+          contactAccountPeerId: 'peer-contact-account',
+          createdAt: '2026-08-11T10:00:00.000Z',
+          updatedAt: '2026-08-11T10:00:00.000Z',
+        ),
+      );
+    final p2pService = FakeP2PService(initialState: online);
+    final bridge = FakeBridge();
+    final passCompleted = Completer<void>();
+    final retrier = PendingMessageRetrier(
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      identityRepo: identityRepo,
+      contactRepo: contactRepo,
+      bridge: bridge,
+      retryDebounce: Duration.zero,
+      periodicRetryInterval: const Duration(days: 1),
+      groupContinuitySweepInterval: const Duration(days: 1),
+      drainDirectInboxCustodyOutboxFn: () => drainDirectInboxCustodyOutbox(
+        custodyRepository: messageRepo,
+        storeInAckCustodyInboxDetailed:
+            (
+              toPeerId,
+              envelope, {
+              required AckCustodyKind custodyKind,
+              int? timeoutMs,
+            }) async {
+              await p2pService.storeInInbox(
+                toPeerId,
+                envelope,
+                timeoutMs: timeoutMs,
+              );
+              return const InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+                expiresAtMs: 1900000060000,
+              );
+            },
+      ),
+      retryUnackedMessagesOverride: () async {
+        if (!passCompleted.isCompleted) passCompleted.complete();
+        return 0;
+      },
+    );
+    addTearDown(retrier.dispose);
+    addTearDown(p2pService.dispose);
+
+    retrier.start();
+    await passCompleted.future.timeout(const Duration(seconds: 2));
+
+    expect(
+      p2pService.storeInInboxCallCount,
+      2,
+      reason: 'both siblings replay their own exact immutable bytes',
+    );
+    expect(p2pService.storeInInboxLog.map((call) => call.message).toSet(), {
+      'exact-fanout-envelope-device-a',
+      'exact-fanout-envelope-device-b',
+    });
+    expect(
+      bridge.sendCallCount,
+      0,
+      reason:
+          'a marked generation must never be re-encrypted by the '
+          'failed-message rebuild',
+    );
+    expect(p2pService.sendMessageCallCount, 0);
+    expect(p2pService.sendMessageWithReplyCallCount, 0);
+    expect(messageRepo.directCustodyRows, isEmpty);
+    expect(
+      (await messageRepo.getMessage(message.id))!.status,
+      'inboxed',
+      reason: 'the final sibling handoff projects the canonical transition',
+    );
+  });
 }

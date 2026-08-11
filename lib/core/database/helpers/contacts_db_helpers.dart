@@ -124,8 +124,7 @@ Future<void> dbDeleteContact(Database db, String peerId) async {
 
   try {
     await dbWriteTransaction<void>(db, (txn) async {
-      await dbDeleteDirectContactDeviceRoster(txn, peerId);
-      await txn.delete('contacts', where: 'peer_id = ?', whereArgs: [peerId]);
+      await dbDeleteContactWithinTransaction(txn, peerId);
     });
 
     emitFlowEvent(
@@ -137,6 +136,152 @@ Future<void> dbDeleteContact(Database db, String peerId) async {
     emitFlowEvent(
       layer: 'DB',
       event: 'CONTACTS_DB_DELETE_ERROR',
+      details: {'error': e.toString()},
+    );
+    rethrow;
+  }
+}
+
+/// Transaction-body variant of [dbDeleteContact] (Plan 361).
+///
+/// The final serialized contact-deletion owner must remove v108/v109 rows,
+/// reactions, messages, roster and contact in ONE transaction; factoring the
+/// roster+contact body out lets that owner serialize everything without
+/// nesting a second transaction.
+Future<void> dbDeleteContactWithinTransaction(
+  DatabaseExecutor txn,
+  String peerId,
+) async {
+  await dbDeleteDirectContactDeviceRoster(txn, peerId);
+  await txn.delete('contacts', where: 'peer_id = ?', whereArgs: [peerId]);
+}
+
+/// Row counts committed by one final serialized contact-conversation purge.
+class DbContactConversationPurgeResult {
+  const DbContactConversationPurgeResult({
+    required this.deletedTextCustodyRows,
+    required this.deletedEventCustodyRows,
+    required this.deletedReactions,
+    required this.deletedMessages,
+    required this.deletedContact,
+  });
+
+  final int deletedTextCustodyRows;
+  final int deletedEventCustodyRows;
+  final int deletedReactions;
+  final int deletedMessages;
+  final bool deletedContact;
+}
+
+/// The exact final DB owner of direct-contact deletion (Plan 361).
+///
+/// In ONE serialized transaction: delete v108/v109 rows whose LOGICAL contact
+/// is the removed account (`COALESCE(contact_account_peer_id,
+/// recipient_peer_id)` for historical compatibility), delete
+/// `message_reactions` through the still-live contact message IDs, delete
+/// those messages, then delete the Plan 360 roster metadata/bindings and the
+/// contact row itself. Reaction/apply/completion racing this owner either
+/// commits first and is swept here, or runs after and finds its parent and
+/// contact authority gone.
+///
+/// [beforeContactDeleteForTest] is a test-only barrier between the message
+/// purge and the roster/contact deletion. It must only signal/await
+/// completers; a same-connection write inside it would deadlock SQLite.
+Future<DbContactConversationPurgeResult>
+dbPurgeDirectContactConversationAndContact(
+  Database db,
+  String peerId, {
+  Future<void> Function()? beforeContactDeleteForTest,
+}) async {
+  final normalized = peerId.trim();
+  emitFlowEvent(
+    layer: 'DB',
+    event: 'CONTACTS_DB_PURGE_START',
+    details: {
+      'peerId': normalized.length > 10
+          ? normalized.substring(0, 10)
+          : normalized,
+    },
+  );
+
+  try {
+    final result = await dbWriteTransaction<DbContactConversationPurgeResult>(
+      db,
+      (txn) async {
+        Future<bool> tableExists(String name) async => (await txn.rawQuery(
+          "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ? "
+          'LIMIT 1',
+          <Object?>[name],
+        )).isNotEmpty;
+
+        var textCustodyRows = 0;
+        if (await tableExists('direct_inbox_custody_outbox')) {
+          textCustodyRows = await txn.rawDelete(
+            'DELETE FROM direct_inbox_custody_outbox '
+            'WHERE COALESCE(contact_account_peer_id, recipient_peer_id) = ?',
+            <Object?>[normalized],
+          );
+        }
+        var eventCustodyRows = 0;
+        if (await tableExists('direct_reaction_inbox_custody_outbox')) {
+          eventCustodyRows = await txn.rawDelete(
+            'DELETE FROM direct_reaction_inbox_custody_outbox '
+            'WHERE COALESCE(contact_account_peer_id, recipient_peer_id) = ?',
+            <Object?>[normalized],
+          );
+        }
+        var reactions = 0;
+        if (await tableExists('message_reactions')) {
+          // Reactions resolve through the STILL-LIVE contact message IDs, so
+          // physically purging messages first would strand them; the order
+          // here is load-bearing.
+          reactions = await txn.rawDelete(
+            'DELETE FROM message_reactions WHERE message_id IN '
+            '(SELECT id FROM messages WHERE contact_peer_id = ?)',
+            <Object?>[normalized],
+          );
+        }
+        final messages = await txn.delete(
+          'messages',
+          where: 'contact_peer_id = ?',
+          whereArgs: <Object?>[normalized],
+        );
+        // Test-only barrier between the conversation purge and the
+        // roster/contact deletion. It must only signal/await completers.
+        await beforeContactDeleteForTest?.call();
+        await dbDeleteContactWithinTransaction(txn, normalized);
+        final contactRemains = await txn.query(
+          'contacts',
+          columns: const <String>['peer_id'],
+          where: 'peer_id = ?',
+          whereArgs: <Object?>[normalized],
+          limit: 1,
+        );
+        return DbContactConversationPurgeResult(
+          deletedTextCustodyRows: textCustodyRows,
+          deletedEventCustodyRows: eventCustodyRows,
+          deletedReactions: reactions,
+          deletedMessages: messages,
+          deletedContact: contactRemains.isEmpty,
+        );
+      },
+    );
+
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'CONTACTS_DB_PURGE_SUCCESS',
+      details: {
+        'deletedMessages': result.deletedMessages,
+        'deletedReactions': result.deletedReactions,
+        'deletedTextCustodyRows': result.deletedTextCustodyRows,
+        'deletedEventCustodyRows': result.deletedEventCustodyRows,
+      },
+    );
+    return result;
+  } catch (e) {
+    emitFlowEvent(
+      layer: 'DB',
+      event: 'CONTACTS_DB_PURGE_ERROR',
       details: {'error': e.toString()},
     );
     rethrow;

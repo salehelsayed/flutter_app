@@ -75,8 +75,12 @@ void main() {
         // their live-parent and tombstone exact CAS branches. All four ride the
         // fail-closed authenticated-ingress allowlist plus the existing row-peer
         // guard; only direct, relay, and inbox provenance may reach settlement.
+        // 361 adds the fifth site: the SAME receipt settlement routed through
+        // the fanout-authority owner (mode: receipt, exact-generation gated,
+        // in-transaction physical->logical reauth) for fanout-marked rows —
+        // still receiver confirmation, never a sender-side mint.
         'lib/features/conversation/application/handle_delivery_receipt_use_case.dart':
-            4,
+            5,
         // (b) the live deferred-ack branch of _persistOutgoingSendResult —
         // Go withholds the wire ack until the receiver durably stages
         // (node.go deferred direct ack), so this IS receiver confirmation.

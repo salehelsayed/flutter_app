@@ -17,7 +17,9 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_tombstone_visibility.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
@@ -216,6 +218,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   String? recipientMlKemPublicKey,
   StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
   bool emitTimingEvent = true,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   final deleteStopwatch = clock.stopwatch()..start();
   final liveDeadline = OutgoingLiveDeadline(() => deleteStopwatch.elapsed);
@@ -528,6 +531,35 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   final mutationEventId = ownsDirectMutationInboxCustody
       ? _deletionUuid.v4()
       : null;
+
+  // 361: the v113 fanout owner may claim the pure blob-free text DFE lane
+  // before any single-target crypto. Media/private lanes remain Plan 362.
+  if (directEventFanout != null && ownsDirectTextMutationInboxCustody) {
+    final routing = await directEventFanout.decideRoute(
+      currentMessage.contactPeerId,
+    );
+    switch (routing.route) {
+      case DirectEventFanoutRoute.incumbentLegacy:
+        break;
+      case DirectEventFanoutRoute.refusedSelectorOff:
+      case DirectEventFanoutRoute.refusedUnavailable:
+        emitDeleteTiming(outcome: 'fanout_refused_${routing.route.name}');
+        return (SendChatMessageResult.sendFailed, null);
+      case DirectEventFanoutRoute.fanout:
+        return _authorDirectBlobFreeDeletionFanout(
+          directEventFanout: directEventFanout,
+          routing: routing,
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          mutationCustodyRepository: mutationCustodyRepository!,
+          storeInAckCustodyInboxDetailed: availableStrictMutationStore,
+          currentMessage: currentMessage,
+          deletedAt: deletedAt,
+          mutationEventId: mutationEventId!,
+          emitDeleteTiming: emitDeleteTiming,
+        );
+    }
+  }
 
   final privateLifecycleRepository =
       messageRepo is DirectPrivateMediaLifecycleRepository
@@ -1799,3 +1831,135 @@ bool _isOwnedMessageStoredPath(String storedPath, String messageId) {
 }
 
 String _messageIdPreview(String id) => id.length > 8 ? id.substring(0, 8) : id;
+
+/// 361: the blob-free Delete-for-Everyone fanout tail. One logical deletion
+/// event is encrypted independently per target and the tombstone plus EVERY
+/// v109 sibling commit atomically; each committed row rides the incumbent
+/// per-row protected-STORE owner independently.
+Future<(SendChatMessageResult, ConversationMessage?)>
+_authorDirectBlobFreeDeletionFanout({
+  required DirectEventFanoutAuthoring directEventFanout,
+  required DirectEventFanoutRouting routing,
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required OutgoingDirectTextMutationInboxCustodyRepository
+  mutationCustodyRepository,
+  required StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  required ConversationMessage currentMessage,
+  required String deletedAt,
+  required String mutationEventId,
+  required void Function({
+    required String outcome,
+    Map<String, dynamic> details,
+  })
+  emitDeleteTiming,
+}) async {
+  final snapshot = routing.snapshot!;
+  final payload = MessageDeletionPayload(
+    messageId: currentMessage.id,
+    senderPeerId: currentMessage.senderPeerId,
+    timestamp: deletedAt,
+    eventId: mutationEventId,
+  );
+  final candidates = await directEventFanout.buildCandidates(
+    snapshot: snapshot,
+    innerPayloadJson: payload.toInnerJson(),
+    buildEnvelope: ({required kem, required ciphertext, required nonce}) =>
+        MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: directEventFanout.senderTransportPeerId,
+          kem: kem,
+          ciphertext: ciphertext,
+          nonce: nonce,
+          eventId: mutationEventId,
+        ),
+  );
+  if (candidates == null) {
+    emitDeleteTiming(outcome: 'fanout_encrypt_failed', details: const {});
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
+  final expectedRow = <String, Object?>{
+    ...currentMessage.toMap(),
+    if (currentMessage.directEventFanoutGenerationId != null)
+      'direct_event_fanout_generation_id':
+          currentMessage.directEventFanoutGenerationId,
+  };
+  final stagedRow = <String, Object?>{
+    ...currentMessage
+        .copyWith(
+          text: '',
+          status: 'sending',
+          deletedAt: deletedAt,
+          deletedByPeerId: currentMessage.senderPeerId,
+          transport: null,
+          wireEnvelope: candidates.first.wireEnvelope,
+          relayExpiresAt: null,
+          custodyCheckedAt: null,
+        )
+        .toMap(),
+    'direct_event_fanout_generation_id': mutationEventId,
+  };
+  final staged = await directEventFanout.stageMutationFanout(
+    expectedRow: expectedRow,
+    stagedRow: stagedRow,
+    kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+    eventId: mutationEventId,
+    parentMessageId: currentMessage.id,
+    contactAccountPeerId: currentMessage.contactPeerId,
+    senderTransportPeerId: directEventFanout.senderTransportPeerId,
+    expectedSnapshot: snapshot,
+    candidates: candidates,
+  );
+  switch (staged.outcome) {
+    case DirectEventFanoutStageOutcome.refused:
+      emitDeleteTiming(outcome: 'fanout_stage_refused', details: const {});
+      return (SendChatMessageResult.sendFailed, null);
+    case DirectEventFanoutStageOutcome.terminal:
+      emitDeleteTiming(
+        outcome: 'fanout_terminal_idempotent',
+        details: const {},
+      );
+      return (
+        SendChatMessageResult.success,
+        await messageRepo.getMessage(currentMessage.id),
+      );
+    case DirectEventFanoutStageOutcome.survivorReplay:
+    case DirectEventFanoutStageOutcome.applied:
+      break;
+  }
+
+  final rows = staged.rows ?? const <Map<String, Object?>>[];
+  var completedRows = 0;
+  for (final row in rows) {
+    unawaited(
+      p2pService
+          .sendMessage(
+            row['recipient_peer_id'] as String,
+            row['wire_envelope'] as String,
+          )
+          .catchError((_) => false),
+    );
+    if (storeInAckCustodyInboxDetailed == null) continue;
+    final completed = await drainOwnedDirectMutationInboxCustodyOutboxEntry(
+      entry: DirectReactionInboxCustodyOutboxEntry.fromMap(row),
+      custodyRepository: mutationCustodyRepository,
+      storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+    );
+    if (completed) completedRows++;
+  }
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'DIRECT_EVENT_FANOUT_AUTHORED',
+    details: <String, Object?>{
+      'id': _messageIdPreview(currentMessage.id),
+      'kind': 'delete_for_everyone',
+      'targets': rows.length,
+      'completed': completedRows,
+    },
+  );
+  emitDeleteTiming(outcome: 'success', details: const {});
+  return (
+    SendChatMessageResult.success,
+    await messageRepo.getMessage(currentMessage.id),
+  );
+}

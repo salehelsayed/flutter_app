@@ -14,6 +14,7 @@ import '../../media/outgoing_direct_private_mutation_coordinator.dart';
 import '../../media/private_media_policy.dart';
 import '../../secure_storage/secret_storage_references.dart';
 import '../../utils/flow_event_emitter.dart';
+import 'direct_contact_device_bindings_db_helpers.dart';
 import 'direct_inbox_custody_outbox_db_helpers.dart';
 import 'direct_media_blob_custody_db_helpers.dart';
 import 'direct_notification_display_outbox_db_helpers.dart';
@@ -31,6 +32,7 @@ dbApplyIncomingOrdinaryTextMutation(
   Database db, {
   required Map<String, Object?> incomingRow,
   required IncomingOrdinaryTextMutationKind kind,
+  String? authenticatedTransportPeerId,
 }) {
   if (!_validIncomingOrdinaryTextMutationRow(incomingRow, kind: kind)) {
     return Future<DbIncomingOrdinaryTextMutationResult>.value(
@@ -42,6 +44,24 @@ dbApplyIncomingOrdinaryTextMutation(
   }
 
   return dbWriteTransaction(db, (txn) async {
+    // 361: a linked physical transport is re-authorized INSIDE the durable
+    // apply transaction, so revoke-first has zero effect and apply-first
+    // commits exactly once. A legacy transport equals the logical contact and
+    // keeps the incumbent zero-overhead path.
+    if (authenticatedTransportPeerId != null &&
+        authenticatedTransportPeerId != incomingRow['contact_peer_id']) {
+      final authority = await dbResolveDirectTransportToLogicalContact(
+        txn,
+        transportPeerId: authenticatedTransportPeerId,
+      );
+      if (!authority.authorized ||
+          authority.contactAccountPeerId != incomingRow['contact_peer_id']) {
+        return const DbIncomingOrdinaryTextMutationResult(
+          outcome: IncomingOrdinaryTextMutationOutcome.unauthorized,
+          row: null,
+        );
+      }
+    }
     final messageId = incomingRow['id'] as String;
     final currentRows = await txn.query(
       'messages',
@@ -264,6 +284,7 @@ Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
   required String deletedAt,
   required String? transport,
   required String createdAt,
+  String? authenticatedTransportPeerId,
 }) {
   final deletedOrder = DateTime.tryParse(deletedAt);
   if (!_nonBlankDatabaseString(messageId) ||
@@ -279,6 +300,21 @@ Future<DbIncomingDirectDeletionResult> dbApplyIncomingDirectMessageDeletion(
   }
 
   return dbWriteTransaction(db, (txn) async {
+    // 361: linked physical transports re-authorize inside the durable apply.
+    if (authenticatedTransportPeerId != null &&
+        authenticatedTransportPeerId != senderPeerId) {
+      final authority = await dbResolveDirectTransportToLogicalContact(
+        txn,
+        transportPeerId: authenticatedTransportPeerId,
+      );
+      if (!authority.authorized ||
+          authority.contactAccountPeerId != senderPeerId) {
+        return const DbIncomingDirectDeletionResult(
+          outcome: IncomingDirectDeletionOutcome.unauthorized,
+          row: null,
+        );
+      }
+    }
     Future<DbIncomingDirectDeletionResult> retireMarkerAndReturn(
       IncomingDirectDeletionOutcome outcome,
       Map<String, Object?>? row,
@@ -537,6 +573,18 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
             ((existing['is_incoming'] as num?)?.toInt() ?? 0) == 0;
         final existingUserTerminal =
             existing['deleted_at'] != null || existing['hidden_at'] != null;
+        // 361: a nonnull fanout generation is the no-remint fact for its
+        // whole batch. Generic saves never clear it, never resurrect a
+        // scrubbed marked row, and never thaw its transport columns.
+        final existingFanoutGeneration =
+            existing['direct_event_fanout_generation_id'];
+        final existingFanoutMarked =
+            existingFanoutGeneration is String &&
+            existingFanoutGeneration.trim().isNotEmpty;
+        if (existingFanoutMarked) {
+          merged['direct_event_fanout_generation_id'] =
+              existingFanoutGeneration;
+        }
         if (existingIsOutgoing && existingUserTerminal) {
           // Retained outgoing deletion state is durable authority. An active
           // v108 owner and the scrubbed completion tombstone admit no generic
@@ -547,6 +595,7 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
           // failure projection). Incoming hidden-edit and deleted placeholders
           // remain fully writable for their exact materialization/merge paths.
           if (custody != null ||
+              existingFanoutMarked ||
               _isScrubbedCustodyCompletionTombstone(existing)) {
             return;
           }
@@ -607,7 +656,10 @@ Future<void> dbInsertMessage(Database db, Map<String, Object?> row) async {
               senderPeerId: existing['sender_peer_id'],
             );
 
-        if (custody != null || settledOutgoingInitial || settledOutgoingEdit) {
+        if (custody != null ||
+            existingFanoutMarked ||
+            settledOutgoingInitial ||
+            settledOutgoingEdit) {
           // A combined direct-media commit consumes the v110 intent and
           // leaves its exact initial envelope owned by the independent v108
           // row. A delayed pre-commit whole-row save commonly carries a null
@@ -1319,6 +1371,13 @@ Future<int> dbDeleteMessagesForContact(
 }
 
 /// Deletes a single message by ID.
+///
+/// 361: an OUTGOING row with a nonnull `direct_event_fanout_generation_id` is
+/// the only durable no-remint fact for its whole fanout batch, so the central
+/// delete owner must never physically erase it. In one transaction it first
+/// removes the message's reactions, then scrubs and hides the row while
+/// preserving id, logical contact and generation. Unmarked rows keep the
+/// incumbent physical delete byte-for-byte.
 Future<int> dbDeleteMessage(Database db, String id) async {
   emitFlowEvent(
     layer: 'DB',
@@ -1327,7 +1386,39 @@ Future<int> dbDeleteMessage(Database db, String id) async {
   );
 
   try {
-    final count = await db.delete('messages', where: 'id = ?', whereArgs: [id]);
+    final count = await dbWriteTransaction<int>(db, (txn) async {
+      final rows = await txn.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[id],
+        limit: 1,
+      );
+      if (rows.isEmpty) return 0;
+      final row = rows.single;
+      final generation = row['direct_event_fanout_generation_id'];
+      final fanoutMarked =
+          generation is String &&
+          generation.trim().isNotEmpty &&
+          ((row['is_incoming'] as num?)?.toInt() ?? 0) == 0;
+      if (!fanoutMarked) {
+        return txn.delete('messages', where: 'id = ?', whereArgs: [id]);
+      }
+      await txn.delete(
+        'message_reactions',
+        where: 'message_id = ?',
+        whereArgs: <Object?>[id],
+      );
+      return txn.update(
+        'messages',
+        <String, Object?>{
+          'text': '',
+          'wire_envelope': null,
+          'hidden_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: <Object?>[id],
+      );
+    });
 
     emitFlowEvent(
       layer: 'DB',
@@ -1402,10 +1493,15 @@ Future<List<Map<String, Object?>>> dbLoadUnackedOutgoingMessages(
   );
 
   try {
+    // 361: a fanout-marked generation is retried only through its exact
+    // surviving v108 siblings; the generic unacked rebuild must never select
+    // it and manufacture a single logical-account target.
+    final fanoutExclusion = await _messagesFanoutGenerationExclusionSql(db);
     final results = await db.query(
       'messages',
       where:
-          "status = ? AND is_incoming = 0 AND wire_envelope IS NOT NULL AND timestamp < ?",
+          "status = ? AND is_incoming = 0 AND wire_envelope IS NOT NULL "
+          "AND timestamp < ?$fanoutExclusion",
       whereArgs: ['sent', olderThan.toUtc().toIso8601String()],
       orderBy: 'timestamp ASC',
       limit: limit,
@@ -1426,6 +1522,16 @@ Future<List<Map<String, Object?>>> dbLoadUnackedOutgoingMessages(
     );
     rethrow;
   }
+}
+
+/// SQL fragment excluding fanout-marked rows, empty when the fixture schema
+/// predates DB v113 (the column reference would fail to parse there).
+Future<String> _messagesFanoutGenerationExclusionSql(Database db) async {
+  final columns = await db.rawQuery('PRAGMA table_info(messages)');
+  final hasColumn = columns.any(
+    (column) => column['name'] == 'direct_event_fanout_generation_id',
+  );
+  return hasColumn ? ' AND direct_event_fanout_generation_id IS NULL' : '';
 }
 
 /// Loads outgoing inbox-custody rows that need a custody verification sweep.
@@ -1451,15 +1557,20 @@ Future<List<Map<String, Object?>>> dbLoadInboxCustodyOutgoingMessages(
   );
 
   try {
+    // 361: the custody verifier may never re-store a fanout witness to the
+    // logical contact, so marked generations are excluded at the source.
+    final fanoutExclusion = await _messagesFanoutGenerationExclusionSql(db);
     final results = await db.query(
       'messages',
-      where: '''
+      where:
+          '''
 status = ?
 AND is_incoming = 0
 AND wire_envelope IS NOT NULL
 AND wire_envelope != ''
 AND (custody_checked_at IS NULL OR custody_checked_at < ?)
-''',
+'''
+          '$fanoutExclusion',
       whereArgs: ['inboxed', cutoff],
       orderBy: 'timestamp ASC',
       limit: limit,
@@ -2218,6 +2329,8 @@ Future<OutgoingOrdinaryMutationOutcome> dbSettleOutgoingOrdinaryTransport(
   required String? transport,
   required int? relayExpiresAt,
   required OutgoingOrdinarySettlementMode mode,
+  String? expectedDirectEventFanoutGenerationId,
+  String? authenticatedTransportPeerId,
 }) => _dbSettleOutgoingOrdinaryTransport(
   db,
   messageId: messageId,
@@ -2228,6 +2341,8 @@ Future<OutgoingOrdinaryMutationOutcome> dbSettleOutgoingOrdinaryTransport(
   relayExpiresAt: relayExpiresAt,
   mode: mode,
   isDeleteTombstone: false,
+  expectedDirectEventFanoutGenerationId: expectedDirectEventFanoutGenerationId,
+  authenticatedTransportPeerId: authenticatedTransportPeerId,
 );
 
 /// Tombstone-specific ordinary settlement. Delivery atomically derives
@@ -2241,6 +2356,8 @@ Future<OutgoingOrdinaryMutationOutcome> dbSettleOutgoingOrdinaryDeleteTombstone(
   required String? transport,
   required int? relayExpiresAt,
   required OutgoingOrdinarySettlementMode mode,
+  String? expectedDirectEventFanoutGenerationId,
+  String? authenticatedTransportPeerId,
 }) => _dbSettleOutgoingOrdinaryTransport(
   db,
   messageId: messageId,
@@ -2251,6 +2368,8 @@ Future<OutgoingOrdinaryMutationOutcome> dbSettleOutgoingOrdinaryDeleteTombstone(
   relayExpiresAt: relayExpiresAt,
   mode: mode,
   isDeleteTombstone: true,
+  expectedDirectEventFanoutGenerationId: expectedDirectEventFanoutGenerationId,
+  authenticatedTransportPeerId: authenticatedTransportPeerId,
 );
 
 Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
@@ -2263,6 +2382,8 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
   required int? relayExpiresAt,
   required OutgoingOrdinarySettlementMode mode,
   required bool isDeleteTombstone,
+  String? expectedDirectEventFanoutGenerationId,
+  String? authenticatedTransportPeerId,
 }) {
   if (!_validOrdinarySettlementCandidate(
     messageId: messageId,
@@ -2285,12 +2406,36 @@ Future<OutgoingOrdinaryMutationOutcome> _dbSettleOutgoingOrdinaryTransport(
       limit: 1,
     );
     if (rows.isEmpty) return OutgoingOrdinaryMutationOutcome.removed;
+    // 361: a linked receipt origin transport re-authorizes to the row's
+    // LOGICAL contact inside this same settlement transaction.
+    if (authenticatedTransportPeerId != null &&
+        authenticatedTransportPeerId != expectedContactPeerId) {
+      final authority = await dbResolveDirectTransportToLogicalContact(
+        txn,
+        transportPeerId: authenticatedTransportPeerId,
+      );
+      if (!authority.authorized ||
+          authority.contactAccountPeerId != expectedContactPeerId) {
+        return OutgoingOrdinaryMutationOutcome.refused;
+      }
+    }
     final current = rows.single;
     if (current[_directMediaCustodyIntentColumn] != null ||
         ((current['is_incoming'] as num?)?.toInt() ?? 0) != 0 ||
         current['contact_peer_id'] != expectedContactPeerId ||
         !_isSupportedOutgoingOrdinaryPolicy(current)) {
       return OutgoingOrdinaryMutationOutcome.refused;
+    }
+
+    // 361: a fanout-marked generation is settled only by a caller that proves
+    // the exact CURRENT generation. Stale, prior, future, and generation-blind
+    // settlements are zero-effect; the marker itself always survives.
+    final currentFanoutGeneration =
+        current['direct_event_fanout_generation_id'];
+    if (currentFanoutGeneration is String &&
+        currentFanoutGeneration.trim().isNotEmpty &&
+        expectedDirectEventFanoutGenerationId != currentFanoutGeneration) {
+      return OutgoingOrdinaryMutationOutcome.preserved;
     }
 
     final deletedAt = current['deleted_at'] as String?;

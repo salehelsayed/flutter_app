@@ -31,7 +31,10 @@ import 'package:flutter_app/features/conversation/domain/models/direct_inbox_cus
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_inbox_custody_outbox_use_case.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_reaction_inbox_custody_outbox_use_case.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_direct_private_transport_settlement.dart';
 import 'package:flutter_app/features/conversation/application/outgoing_live_deadline.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -605,6 +608,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   StoreInMediaExpiryBoundedInboxDetailedFn?
   storeInMediaExpiryBoundedInboxDetailed,
   void Function(String messageId)? onDirectTextCustodyStaged,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   final sendStopwatch = clock.stopwatch()..start();
   final liveDeadline = OutgoingLiveDeadline(() => sendStopwatch.elapsed);
@@ -736,8 +740,86 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.success, null);
   }
 
+  // 361: blob-free fresh text and text EDIT may be owned by the v113 fanout
+  // coordinator. Anything media/private-shaped never routes here.
+  final fanoutEligibleShape =
+      directEventFanout != null &&
+      !hasAttachments &&
+      (action == MessagePayload.actionSend ||
+          action == MessagePayload.actionEdit) &&
+      (privateMediaPolicy == null ||
+          privateMediaPolicy.mode == PrivateMediaMode.ordinary);
+
+  // Survivor-first: for a retried fresh send, ANY surviving fanout sibling is
+  // the complete pending set. It is discovered BEFORE the roster resolver and
+  // BEFORE any bridge crypto, and is drained through the incumbent per-row
+  // owner without consulting the current roster.
+  if (fanoutEligibleShape &&
+      action == MessagePayload.actionSend &&
+      messageId != null) {
+    final siblingRows = await directEventFanout.loadTextSiblings(messageId);
+    final fanoutSurvivors = siblingRows
+        .where((row) => row['contact_account_peer_id'] != null)
+        .toList(growable: false);
+    if (fanoutSurvivors.isNotEmpty) {
+      final strictStore = effectiveStoreInAckCustodyInboxDetailed;
+      if (strictStore == null || directTextCustodyRepo == null) {
+        emitSendTiming(outcome: 'fanout_survivors_retained');
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      var allCompleted = true;
+      for (final row in fanoutSurvivors) {
+        final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+          entry: DirectInboxCustodyOutboxEntry.fromMap(row),
+          custodyRepository: directTextCustodyRepo,
+          storeInAckCustodyInboxDetailed: strictStore,
+          storeInMediaExpiryBoundedInboxDetailed:
+              effectiveStoreInMediaExpiryBoundedInboxDetailed,
+        );
+        allCompleted = allCompleted && attempt.completed;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_FANOUT_SURVIVORS_DRAINED',
+        details: {
+          'id': shortenMessageId(messageId),
+          'survivors': fanoutSurvivors.length,
+          'completed': allCompleted,
+        },
+      );
+      if (!allCompleted) {
+        emitSendTiming(outcome: 'fanout_survivors_retained');
+        return (SendChatMessageResult.sendFailed, null);
+      }
+      recordMetrics(transport: 'inbox', rung: 'inbox');
+      emitSendTiming(outcome: 'success');
+      return (
+        SendChatMessageResult.success,
+        await messageRepo.getMessage(messageId),
+      );
+    }
+  }
+
+  DirectEventFanoutRouting? fanoutRouting;
+  if (fanoutEligibleShape) {
+    final routing = await directEventFanout.decideRoute(targetPeerId);
+    switch (routing.route) {
+      case DirectEventFanoutRoute.incumbentLegacy:
+        fanoutRouting = null;
+      case DirectEventFanoutRoute.refusedSelectorOff:
+      case DirectEventFanoutRoute.refusedUnavailable:
+        // Refusal happens BEFORE target crypto/network and never demotes to
+        // the incumbent single legacy target.
+        emitSendTiming(outcome: 'fanout_refused_${routing.route.name}');
+        return (SendChatMessageResult.sendFailed, null);
+      case DirectEventFanoutRoute.fanout:
+        fanoutRouting = routing;
+    }
+  }
+
   DirectInboxCustodyOutboxEntry? preexistingDirectMediaCustody;
-  if (action == MessagePayload.actionSend &&
+  if (fanoutRouting == null &&
+      action == MessagePayload.actionSend &&
       messageId != null &&
       directTextCustodyRepo != null) {
     try {
@@ -1347,6 +1429,57 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final resolvedEventId = action == MessagePayload.actionEdit
       ? _uuid.v4()
       : null;
+
+  // 361: the v113 all-target fanout branch. Everything above proved the
+  // blob-free ordinary shape; anything the batch owner cannot own refuses
+  // rather than demoting to the single legacy target.
+  if (fanoutRouting != null) {
+    final eligibleFanoutShape =
+        !isOutgoingPrivateOneMoreLook &&
+        effectivePrivateMediaPolicy.version == 0 &&
+        effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary &&
+        (action == MessagePayload.actionSend
+            ? attemptKind == OutgoingOrdinaryAttemptKind.fresh
+            : attemptKind == OutgoingOrdinaryAttemptKind.edit &&
+                  existingOutgoing != null &&
+                  !existingOutgoing.isIncoming &&
+                  !existingOutgoing.isDeleted &&
+                  existingOutgoing.contactPeerId == targetPeerId &&
+                  existingOutgoing.senderPeerId == senderPeerId &&
+                  existingOutgoing.directMediaCustodyIntentId == null);
+    if (!eligibleFanoutShape) {
+      emitSendTiming(outcome: 'fanout_shape_refused');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    return _authorDirectBlobFreeTextFanout(
+      directEventFanout: directEventFanout!,
+      routing: fanoutRouting,
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      directTextCustodyRepo: directTextCustodyRepo,
+      directMutationCustodyRepo: directMutationCustodyRepo,
+      storeInAckCustodyInboxDetailed: effectiveStoreInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          effectiveStoreInMediaExpiryBoundedInboxDetailed,
+      action: action,
+      targetPeerId: targetPeerId,
+      senderPeerId: senderPeerId,
+      senderUsername: senderUsername,
+      sanitizedText: sanitizedText,
+      resolvedMessageId: resolvedMessageId,
+      resolvedTimestamp: resolvedTimestamp,
+      resolvedEventId: resolvedEventId,
+      resolvedEditedAt: resolvedEditedAt,
+      resolvedDedupKey: resolvedDedupKey,
+      quotedMessageId: effectiveQuotedMessageId,
+      isForwarded: effectiveIsForwarded,
+      createdAt: createdAt,
+      existingOutgoing: existingOutgoing,
+      onDirectTextCustodyStaged: onDirectTextCustodyStaged,
+      emitSendTiming: emitSendTiming,
+      recordMetrics: recordMetrics,
+    );
+  }
   final normalizedAttachments = effectiveMediaAttachments
       ?.map(
         (attachment) => attachment.copyWith(
@@ -2883,6 +3016,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
   MediaAttachmentRepository? mediaAttachmentRepo,
   bool emitTimingEvent = true,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) {
   if (originalMessage.isIncoming) {
     return Future.value((SendChatMessageResult.invalidMessage, null));
@@ -2917,6 +3051,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> editChatMessage({
     recipientMlKemPublicKey: recipientMlKemPublicKey,
     emitTimingEvent: emitTimingEvent,
     transportMetrics: transportMetrics,
+    directEventFanout: directEventFanout,
   );
 }
 
@@ -3844,5 +3979,208 @@ Future<ConversationMessage> _persistOutgoingSendResult({
     editedAt: editedAt,
     transport: via,
     wireEnvelope: jsonString,
+  );
+}
+
+/// 361: the shared blob-free fanout authoring tail for fresh text and text
+/// EDIT. One logical inner event is encrypted independently per target, every
+/// row commits before any network, and each committed row rides the incumbent
+/// per-row protected-STORE owner independently — one outcome never cancels a
+/// sibling.
+Future<(SendChatMessageResult, ConversationMessage?)>
+_authorDirectBlobFreeTextFanout({
+  required DirectEventFanoutAuthoring directEventFanout,
+  required DirectEventFanoutRouting routing,
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required OutgoingDirectTextInboxCustodyRepository? directTextCustodyRepo,
+  required OutgoingDirectTextMutationInboxCustodyRepository?
+  directMutationCustodyRepo,
+  required StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  required StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
+  required String action,
+  required String targetPeerId,
+  required String senderPeerId,
+  required String senderUsername,
+  required String sanitizedText,
+  required String resolvedMessageId,
+  required String resolvedTimestamp,
+  required String? resolvedEventId,
+  required String? resolvedEditedAt,
+  required String? resolvedDedupKey,
+  required String? quotedMessageId,
+  required bool isForwarded,
+  required String? createdAt,
+  required ConversationMessage? existingOutgoing,
+  required void Function(String messageId)? onDirectTextCustodyStaged,
+  required void Function({
+    required String outcome,
+    Map<String, dynamic> details,
+  })
+  emitSendTiming,
+  required void Function({required String? transport, required String rung})
+  recordMetrics,
+}) async {
+  final snapshot = routing.snapshot!;
+  final isEdit = action == MessagePayload.actionEdit;
+  final generationId = isEdit ? resolvedEventId! : resolvedMessageId;
+
+  final payload = MessagePayload(
+    id: resolvedMessageId,
+    text: sanitizedText,
+    senderPeerId: senderPeerId,
+    senderUsername: senderUsername,
+    timestamp: resolvedTimestamp,
+    action: action,
+    eventId: resolvedEventId,
+    editedAt: resolvedEditedAt,
+    quotedMessageId: quotedMessageId,
+    media: null,
+    dedupKey: resolvedDedupKey,
+    isForwarded: isForwarded,
+    privateMediaPolicy: const PrivateMediaPolicy.ordinary(),
+  );
+
+  // ONE authenticated logical inner event, encrypted independently per
+  // target. The outer sender is the local installation's actual transport.
+  final candidates = await directEventFanout.buildCandidates(
+    snapshot: snapshot,
+    innerPayloadJson: payload.toInnerJson(),
+    buildEnvelope: ({required kem, required ciphertext, required nonce}) =>
+        MessagePayload.buildEncryptedEnvelope(
+          id: resolvedMessageId,
+          senderPeerId: directEventFanout.senderTransportPeerId,
+          senderUsername: senderUsername,
+          kem: kem,
+          ciphertext: ciphertext,
+          nonce: nonce,
+          eventId: resolvedEventId,
+        ),
+  );
+  if (candidates == null) {
+    emitSendTiming(outcome: 'fanout_encrypt_failed', details: const {});
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
+  final stagedRow = <String, Object?>{
+    ...payload
+        .toConversationMessage(
+          contactPeerId: targetPeerId,
+          isIncoming: false,
+          status: 'sending',
+          createdAt: isEdit
+              ? (createdAt ?? existingOutgoing?.createdAt ?? resolvedTimestamp)
+              : (createdAt ?? resolvedTimestamp),
+          editedAt: resolvedEditedAt,
+          wireEnvelope: candidates.first.wireEnvelope,
+        )
+        .toMap(),
+    'direct_event_fanout_generation_id': generationId,
+  };
+
+  final DbDirectEventFanoutStageResult staged;
+  if (isEdit) {
+    final expected = existingOutgoing!;
+    final expectedRow = <String, Object?>{
+      ...expected.toMap(),
+      if (expected.directEventFanoutGenerationId != null)
+        'direct_event_fanout_generation_id':
+            expected.directEventFanoutGenerationId,
+    };
+    staged = await directEventFanout.stageMutationFanout(
+      expectedRow: expectedRow,
+      stagedRow: stagedRow,
+      kind: OutgoingOrdinaryAttemptKind.edit,
+      eventId: resolvedEventId!,
+      parentMessageId: resolvedMessageId,
+      contactAccountPeerId: targetPeerId,
+      senderTransportPeerId: directEventFanout.senderTransportPeerId,
+      expectedSnapshot: snapshot,
+      candidates: candidates,
+    );
+  } else {
+    staged = await directEventFanout.stageTextFanout(
+      stagedRow: stagedRow,
+      messageId: resolvedMessageId,
+      contactAccountPeerId: targetPeerId,
+      senderTransportPeerId: directEventFanout.senderTransportPeerId,
+      expectedSnapshot: snapshot,
+      candidates: candidates,
+    );
+  }
+
+  switch (staged.outcome) {
+    case DirectEventFanoutStageOutcome.refused:
+      emitSendTiming(outcome: 'fanout_stage_refused', details: const {});
+      return (SendChatMessageResult.sendFailed, null);
+    case DirectEventFanoutStageOutcome.terminal:
+      // Zero survivors with the exact current generation: idempotent no-op.
+      emitSendTiming(outcome: 'fanout_terminal_idempotent', details: const {});
+      return (
+        SendChatMessageResult.success,
+        await messageRepo.getMessage(resolvedMessageId),
+      );
+    case DirectEventFanoutStageOutcome.survivorReplay:
+    case DirectEventFanoutStageOutcome.applied:
+      break;
+  }
+  if (staged.outcome == DirectEventFanoutStageOutcome.applied && !isEdit) {
+    onDirectTextCustodyStaged?.call(resolvedMessageId);
+  }
+
+  // Network begins only after every row exists durably. Each row rides the
+  // incumbent per-row owner; one acceptance or failure never cancels another
+  // sibling. A missing strict store leaves rows to the global retrier.
+  final rows = staged.rows ?? const <Map<String, Object?>>[];
+  var completedRows = 0;
+  for (final row in rows) {
+    unawaited(
+      p2pService
+          .sendMessage(
+            row['recipient_peer_id'] as String,
+            row['wire_envelope'] as String,
+          )
+          .catchError((_) => false),
+    );
+    if (storeInAckCustodyInboxDetailed == null) continue;
+    if (isEdit) {
+      if (directMutationCustodyRepo == null) continue;
+      final completed = await drainOwnedDirectMutationInboxCustodyOutboxEntry(
+        entry: DirectReactionInboxCustodyOutboxEntry.fromMap(row),
+        custodyRepository: directMutationCustodyRepo,
+        storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+      );
+      if (completed) completedRows++;
+    } else {
+      if (directTextCustodyRepo == null) continue;
+      final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+        entry: DirectInboxCustodyOutboxEntry.fromMap(row),
+        custodyRepository: directTextCustodyRepo,
+        storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+        storeInMediaExpiryBoundedInboxDetailed:
+            storeInMediaExpiryBoundedInboxDetailed,
+      );
+      if (attempt.completed) completedRows++;
+    }
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'DIRECT_EVENT_FANOUT_AUTHORED',
+    details: <String, Object?>{
+      'id': shortenMessageId(resolvedMessageId),
+      'kind': isEdit ? 'edit' : 'fresh_text',
+      'targets': rows.length,
+      'completed': completedRows,
+      'replayedSurvivors':
+          staged.outcome == DirectEventFanoutStageOutcome.survivorReplay,
+    },
+  );
+  recordMetrics(transport: 'inbox', rung: 'inbox');
+  emitSendTiming(outcome: 'success', details: const {});
+  return (
+    SendChatMessageResult.success,
+    await messageRepo.getMessage(resolvedMessageId),
   );
 }

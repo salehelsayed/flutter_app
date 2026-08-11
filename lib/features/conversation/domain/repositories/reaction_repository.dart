@@ -1,4 +1,5 @@
 import '../models/message_reaction.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import '../models/direct_reaction_inbox_custody_outbox_entry.dart';
 
 /// Result of atomically applying an incoming ADD event.
@@ -167,6 +168,38 @@ abstract interface class OutgoingDirectReactionInboxCustodyRepository {
   Future<DirectReactionInboxCustodyCompletionOutcome>
   completeAcceptedDirectReactionInboxCustodyIfExact({
     required DirectReactionInboxCustodyOutboxEntry expected,
+  });
+}
+
+/// 361: optional fail-closed authority for linked-transport reaction applies.
+/// The physical transport re-authorizes to the logical sender INSIDE the
+/// durable apply transaction.
+abstract interface class LinkedTransportReactionApplyRepository {
+  bool get supportsLinkedTransportReactionApply;
+
+  Future<ReactionAddApplyResult> applyIncomingAddWithTransportAuthority(
+    MessageReaction reaction, {
+    required String authenticatedTransportPeerId,
+  });
+
+  Future<ReactionRemoveApplyResult> applyIncomingRemoveWithTransportAuthority(
+    MessageReaction reaction, {
+    required String authenticatedTransportPeerId,
+  });
+}
+
+/// 361: optional fail-closed authority for v113 blob-free reaction fanout.
+abstract interface class OutgoingDirectReactionEventFanoutRepository {
+  bool get supportsDirectReactionEventFanout;
+
+  Future<DbDirectEventFanoutStageResult> stageDirectReactionFanout({
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String parentMessageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
   });
 }
 

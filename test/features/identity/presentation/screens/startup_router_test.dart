@@ -6,6 +6,7 @@
 library;
 
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
@@ -277,6 +278,87 @@ void main() {
         StartNodeResult.linkedAuthorityRefused,
       );
       expect(refusingP2p.startNodeCallCount, 0);
+    });
+  });
+
+  group('TC-361-03b restricted linked post-start owners', () {
+    test('TC-361-03b linked runtime starts only direct blob-free event owners '
+        '— the router skips every generic post-start owner for an active '
+        'linked secondary', () async {
+      // The post-start block runs inside the router widget state; the exact
+      // wiring is asserted at source level (same style as the lifecycle
+      // wiring locks) so the skip cannot silently move below a generic
+      // owner: the ACTIVE-LINKED check must sit AFTER the p2p startup
+      // summary and BEFORE LAN discovery, nearby refresh, push open/
+      // registration, wake-token mint and the group rejoin/drain block.
+      final routerSource = await File(
+        'lib/features/identity/presentation/startup_router.dart',
+      ).readAsString();
+
+      // The loaded snapshot has one injection seam and one production load.
+      expect(
+        routerSource,
+        contains('widget.linkedAuthorityOverride ??'),
+        reason: 'tests must be able to inject the persisted role snapshot',
+      );
+
+      final summaryIndex = routerSource.indexOf(
+        "StartupTiming.instance.mark('p2p_startup_complete');",
+      );
+      final skipCheckIndex = routerSource.indexOf(
+        'if (linkedAuthority?.isActiveLinkedSecondary == true) {',
+      );
+      final skipEventIndex = routerSource.indexOf(
+        "'P2P_STARTUP_LINKED_ROLE_GENERIC_OWNERS_SKIPPED'",
+      );
+      final skipReturnIndex = routerSource.indexOf('return;', skipEventIndex);
+
+      expect(summaryIndex, isNonNegative);
+      expect(
+        skipCheckIndex,
+        greaterThan(summaryIndex),
+        reason: 'the role check belongs to the success branch',
+      );
+      expect(skipEventIndex, greaterThan(skipCheckIndex));
+      expect(
+        skipReturnIndex,
+        greaterThan(skipEventIndex),
+        reason: 'the linked branch must RETURN, not fall through',
+      );
+
+      // No generic post-start owner may run between the success summary and
+      // the linked return; each one must sit strictly BELOW the return so an
+      // active linked secondary never reaches it.
+      final guardedRegion = routerSource.substring(
+        summaryIndex,
+        skipReturnIndex,
+      );
+      for (final genericOwner in const <String>[
+        'unawaited(widget.startEarlyLocalDiscovery?.call());',
+        'refreshNearbyOnStartup(',
+        'pushRegistrationCoordinator.ensureStarted()',
+        '_handleInitialPushOpen()',
+      ]) {
+        expect(
+          guardedRegion,
+          isNot(contains(genericOwner)),
+          reason: '$genericOwner must not precede the linked-role return',
+        );
+        expect(
+          routerSource.indexOf(genericOwner, skipReturnIndex),
+          isPositive,
+          reason:
+              '$genericOwner still runs for a primary below the linked '
+              'return',
+        );
+      }
+      expect(
+        "'P2P_STARTUP_LINKED_ROLE_GENERIC_OWNERS_SKIPPED'".allMatches(
+          routerSource,
+        ),
+        hasLength(1),
+        reason: 'exactly one restricted-role skip site',
+      );
     });
   });
 }

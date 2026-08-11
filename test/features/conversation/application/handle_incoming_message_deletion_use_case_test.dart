@@ -13,6 +13,7 @@ import 'package:flutter_app/features/contacts/application/delete_contact_use_cas
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/application/recovered_inbox_sibling_dispositions.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -119,6 +120,87 @@ void main() {
   });
 
   group('handleIncomingMessageDeletion', () {
+    test('TC-361-03a an exact active linked deletion applies to the logical '
+        'conversation with in-apply transport reauthorization', () async {
+      const linkedTransport = '12D3KooWLinkedDevice1';
+      contactRepo.seed([makeContact('peer-alice')]);
+      messageRepo.seed([
+        makeMessage(
+          id: 'linked-deletion-target',
+          contactPeerId: 'peer-alice',
+          senderPeerId: 'peer-alice',
+        ),
+      ]);
+      final inner = MessageDeletionPayload(
+        messageId: 'linked-deletion-target',
+        senderPeerId: 'peer-alice',
+        timestamp: '2026-08-11T12:00:00.000Z',
+        eventId: 'linked-deletion-event-1',
+      );
+      ChatMessage linkedMessage() => ChatMessage(
+        from: linkedTransport,
+        to: 'peer-bob',
+        content: MessageDeletionPayload.buildEncryptedEnvelope(
+          senderPeerId: linkedTransport,
+          eventId: 'linked-deletion-event-1',
+          kem: 'kem',
+          ciphertext: inner.toInnerJson(),
+          nonce: 'nonce',
+        ),
+        timestamp: '2026-08-11T12:00:00.000Z',
+        isIncoming: true,
+        transport: 'inbox',
+      );
+
+      // Revoke-first: an unresolvable transport has zero durable effect.
+      final (
+        revokedResult,
+        revokedTombstone,
+      ) = await handleIncomingMessageDeletion(
+        message: linkedMessage(),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'secret',
+        transportAuthority: _FakeTransportAuthority(
+          const <String, DirectTransportAuthorityResolution>{},
+        ),
+      );
+      expect(revokedResult, HandleMessageDeletionResult.unauthorized);
+      expect(revokedTombstone, isNull);
+      expect(
+        (await messageRepo.getMessage('linked-deletion-target'))!.isDeleted,
+        isFalse,
+      );
+
+      // Apply-first commits exactly once through the reauthorizing apply.
+      final (result, tombstone) = await handleIncomingMessageDeletion(
+        message: linkedMessage(),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'secret',
+        transportAuthority: _FakeTransportAuthority({
+          linkedTransport: const DirectTransportAuthorityResolution.authorized(
+            kind: DirectTransportAuthorityKind.linked,
+            contactAccountPeerId: 'peer-alice',
+            contactIsBlocked: false,
+          ),
+        }),
+      );
+      expect(result, HandleMessageDeletionResult.success);
+      expect(tombstone, isNotNull);
+      expect(
+        messageRepo.linkedApplyTransports,
+        [linkedTransport],
+        reason: 'the durable apply re-authorizes the physical transport',
+      );
+      expect(
+        (await messageRepo.getMessage('linked-deletion-target'))!.isDeleted,
+        isTrue,
+      );
+    });
+
     test(
       'TC-349-03 partial blank or mismatched deletion identity has zero side effects',
       () async {
@@ -1930,4 +2012,17 @@ class _GatedIncomingDeletionApplyRepository
   dynamic noSuchMethod(Invocation invocation) => throw UnsupportedError(
     'gated deletion-apply repository received ${invocation.memberName}',
   );
+}
+
+class _FakeTransportAuthority implements DirectTransportAuthorityResolver {
+  _FakeTransportAuthority(this.byTransport);
+
+  final Map<String, DirectTransportAuthorityResolution> byTransport;
+
+  @override
+  Future<DirectTransportAuthorityResolution> resolveDirectTransportAuthority(
+    String transportPeerId,
+  ) async =>
+      byTransport[transportPeerId] ??
+      const DirectTransportAuthorityResolution.refused('unknown_transport');
 }

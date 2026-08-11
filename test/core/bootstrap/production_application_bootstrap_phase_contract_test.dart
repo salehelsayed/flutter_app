@@ -1318,6 +1318,66 @@ void main() {
       );
     });
   });
+  test('TC-361-03b linked runtime starts only direct blob-free event owners — '
+      'production composes one reverse transport authority, one restricted '
+      'linked service set and the exact route-push fanout seams', () {
+    final production = File(_productionPath).readAsStringSync();
+
+    // ONE shared physical->logical reverse authority, wired into all four
+    // direct event listeners plus the two recovered-inbox replay closures.
+    expect(
+      'final directTransportAuthority = DatabaseDirectTransportAuthority('
+          .allMatches(production),
+      hasLength(1),
+      reason: 'exactly one shared reverse transport authority',
+    );
+    expect(
+      'transportAuthority: directTransportAuthority,'.allMatches(production),
+      hasLength(6),
+      reason:
+          'chat/reaction/deletion/receipt listeners plus the reaction and '
+          'deletion replay closures all share the ONE authority',
+    );
+
+    // ONE restricted linked composition and ONE exact blob-free drain.
+    expect(
+      'DirectBlobFreeLinkedServices('.allMatches(production),
+      hasLength(1),
+      reason: 'the restricted linked owner set is composed exactly once',
+    );
+    expect(
+      'Future<int> drainDirectBlobFreeLinkedOutboxes() =>'.allMatches(
+        production,
+      ),
+      hasLength(1),
+      reason: 'one exact v113 blob-free linked drain',
+    );
+    expect(
+      "operation: 'direct_blob_free_linked_fanout_drain',".allMatches(
+        production,
+      ),
+      hasLength(1),
+      reason: 'the linked drain runs under the account-runtime gate',
+    );
+
+    // The route-push seams reach MyApp exactly once each.
+    expect(
+      'directEventFanoutResolver: () {'.allMatches(production),
+      hasLength(1),
+      reason: 'fanout authoring is resolved at route-push time',
+    );
+    expect(
+      'isLinkedBlobFreeRuntime: () =>'.allMatches(production),
+      hasLength(1),
+      reason: 'the restricted-surface fact is a live callback',
+    );
+    expect(
+      'drainDirectBlobFreeLinkedOutboxes: drainDirectBlobFreeLinkedOutboxes,'
+          .allMatches(production),
+      hasLength(1),
+      reason: 'the exact drain is the resume seam for the linked role',
+    );
+  });
 }
 
 /// Collects every `MessageRepositoryImpl(...)` construction in a unit.

@@ -239,6 +239,8 @@ readonly ONE_TO_ONE_TESTS=(
   # addressing foundation — the v112 remote-contact roster migration and the
   # real-SQLite QR -> stage -> trust -> resolve foundation proof.
   "test/core/database/migrations/112_direct_linked_device_addressing_test.dart"
+  # 361: the v113 direct linked-device blob-free event fanout migration.
+  "test/core/database/migrations/113_direct_linked_device_event_fanout_test.dart"
   "test/features/contacts/integration/direct_linked_device_addressing_foundation_test.dart"
   "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart"
   "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"

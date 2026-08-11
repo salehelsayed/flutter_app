@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -296,6 +297,7 @@ SendChatMessageFn _delayedSuccessSend(Duration delay) {
     PrivateMediaPolicy? privateMediaPolicy,
     MediaAttachmentRepository? mediaAttachmentRepo,
     TransportMetrics? transportMetrics,
+    DirectEventFanoutAuthoring? directEventFanout,
   }) async {
     await Future<void>.delayed(delay);
     return (SendChatMessageResult.success, null);
@@ -319,6 +321,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendChatMessage({
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   return (SendChatMessageResult.success, null);
 }

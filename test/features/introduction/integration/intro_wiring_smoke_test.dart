@@ -4,6 +4,7 @@
 // and verify that "Make introductions" actually opens the FriendPickerWired
 // bottom sheet, and that the full send flow works.
 import 'package:flutter/material.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -335,6 +336,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> _noOpSendFn({
   PrivateMediaPolicy? privateMediaPolicy,
   MediaAttachmentRepository? mediaAttachmentRepo,
   TransportMetrics? transportMetrics,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   return (SendChatMessageResult.nodeNotRunning, null);
 }

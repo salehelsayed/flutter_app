@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'dart:convert';
 import 'dart:io';
 
@@ -425,6 +426,7 @@ void main() {
                     PrivateMediaPolicy? privateMediaPolicy,
                     MediaAttachmentRepository? mediaAttachmentRepo,
                     TransportMetrics? transportMetrics,
+                    DirectEventFanoutAuthoring? directEventFanout,
                   }) async {
                     sentPrivateMediaPolicy = privateMediaPolicy;
                     sentMessageId = messageId;
@@ -968,6 +970,7 @@ void main() {
                   PrivateMediaPolicy? privateMediaPolicy,
                   MediaAttachmentRepository? mediaAttachmentRepo,
                   TransportMetrics? transportMetrics,
+                  DirectEventFanoutAuthoring? directEventFanout,
                 }) async {
                   sendInvoked = true;
                   return (SendChatMessageResult.success, null);
@@ -1167,6 +1170,7 @@ void main() {
                   PrivateMediaPolicy? privateMediaPolicy,
                   MediaAttachmentRepository? mediaAttachmentRepo,
                   TransportMetrics? transportMetrics,
+                  DirectEventFanoutAuthoring? directEventFanout,
                 }) async {
                   sendInvoked = true;
                   return (SendChatMessageResult.success, null);
@@ -1379,6 +1383,7 @@ void main() {
                   PrivateMediaPolicy? privateMediaPolicy,
                   MediaAttachmentRepository? mediaAttachmentRepo,
                   TransportMetrics? transportMetrics,
+                  DirectEventFanoutAuthoring? directEventFanout,
                 }) async {
                   sendInvoked = true;
                   return (SendChatMessageResult.success, null);

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
@@ -116,6 +117,92 @@ void main() {
   setUpAll(() {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
+  });
+
+  test('TC-361-02a the reaction fanout capability is all-or-nothing and the '
+      'adapter delegates exactly', () async {
+    expect(repo.supportsDirectReactionEventFanout, isFalse);
+
+    var stageCalls = 0;
+    const snapshot = DirectContactFanoutSnapshot(
+      contactAccountPeerId: 'peer-contact',
+      contactAccountSigningPublicKey: 'signing-key',
+      rosterInitialized: true,
+      targets: <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(
+          peerId: 'peer-device-a',
+          mlKemPublicKey: 'mlkem-a',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          deviceId: 'device-a',
+        ),
+      ],
+    );
+    final fanoutRepo = ReactionRepositoryImpl(
+      dbInsertReaction: (row) async {},
+      dbLoadReactionsForMessage: (_) async => const [],
+      dbLoadReactionsForMessages: (_) async => const [],
+      dbLoadActiveOrTombstonedReactionForSender: (_, _) async => null,
+      dbDeleteReaction: (_, _, {removedAtTimestamp}) async => 0,
+      dbDeleteReactionsForMessage: (_) async => 0,
+      dbDeleteReactionsForContact: (_) async => 0,
+      dbStageOutgoingDirectReactionInboxCustody:
+          ({
+            required reactionRow,
+            required recipientPeerId,
+            required action,
+            required wireEnvelope,
+          }) async => const DbDirectReactionCustodyStageResult(
+            outcome: DirectReactionCustodyStageOutcome.refused,
+            custodyRow: null,
+          ),
+      dbLoadDirectReactionInboxCustodyOutbox: ({limit = 50}) async => const [],
+      dbLoadDirectReactionInboxCustodyOutboxForEvent:
+          ({required recipientPeerId, required eventId}) async => null,
+      dbRecordDirectReactionInboxCustodyFailureIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+            required errorCode,
+            required attemptedAt,
+          }) async => false,
+      dbCompleteAcceptedDirectReactionInboxCustodyIfExact:
+          ({
+            required recipientPeerId,
+            required eventId,
+            required expectedWireEnvelope,
+          }) async => DirectReactionInboxCustodyCompletionOutcome.stale,
+      dbStageOutgoingDirectReactionFanoutInboxCustody:
+          ({
+            required reactionRow,
+            required action,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async {
+            stageCalls++;
+            return const DbDirectEventFanoutStageResult(
+              outcome: DirectEventFanoutStageOutcome.terminal,
+              rows: <Map<String, Object?>>[],
+            );
+          },
+    );
+    expect(fanoutRepo.supportsDirectReactionEventFanout, isTrue);
+    final staged = await fanoutRepo.stageDirectReactionFanout(
+      reactionRow: const <String, Object?>{},
+      action: 'add',
+      parentMessageId: 'msg-1',
+      contactAccountPeerId: 'peer-contact',
+      senderTransportPeerId: 'peer-self',
+      expectedSnapshot: snapshot,
+      candidates: const <DirectEventFanoutTargetCandidate>[],
+    );
+    expect(staged.outcome, DirectEventFanoutStageOutcome.terminal);
+    expect(stageCalls, 1);
   });
 
   setUp(() {
@@ -241,6 +328,10 @@ void main() {
           'retry_count': 0,
           'last_attempt_at': null,
           'last_error_code': null,
+          // 361: legacy single-target rows carry the v113 fanout facts as
+          // NULL — the incumbent meaning is unchanged.
+          'contact_account_peer_id': null,
+          'parent_message_id': null,
           'created_at': testReaction.createdAt,
           'updated_at': testReaction.createdAt,
         };

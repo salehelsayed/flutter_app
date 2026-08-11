@@ -157,8 +157,14 @@ final class _InMemoryCustodyRepository
         message: null,
       );
     }
-    if (currentMessage.status == 'delivered' ||
+    final siblingSurvives = rows.values.any(
+      (entry) => entry.messageId == expected.messageId,
+    );
+    if (siblingSurvives ||
+        currentMessage.status == 'delivered' ||
         currentMessage.status == 'inboxed') {
+      // 361: only the FINAL surviving sibling of a fanout generation may
+      // project the canonical transition — mirrors the v113 DB owner.
       return DirectInboxCustodyCompletionResult(
         outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
         message: currentMessage,
@@ -577,4 +583,67 @@ void main() {
       expect(repository.messages[entry.messageId]!.status, 'inboxed');
     },
   );
+
+  test('TC-361-01b fanout siblings drain independently: one acceptance never '
+      'cancels or downgrades the other row', () async {
+    final repository = _InMemoryCustodyRepository();
+    final siblingA = _entry('fanout-message').copyWith(
+      recipientPeerId: 'peer-device-a',
+      incarnationId: 'aaaa0000aaaa0000aaaa0000aaaa0000',
+      wireEnvelope: 'wire-fanout-device-a',
+      contactAccountPeerId: 'peer-contact-account',
+    );
+    final siblingB = _entry('fanout-message').copyWith(
+      recipientPeerId: 'peer-device-b',
+      incarnationId: 'bbbb0000bbbb0000bbbb0000bbbb0000',
+      wireEnvelope: 'wire-fanout-device-b',
+      contactAccountPeerId: 'peer-contact-account',
+    );
+    repository.seed(siblingA, messageStatus: 'sending');
+    repository.seed(siblingB);
+
+    final storedPayloads = <String, String>{};
+    Future<InboxStoreOutcome> store(
+      String toPeerId,
+      String message, {
+      required AckCustodyKind custodyKind,
+      int? timeoutMs,
+    }) async {
+      storedPayloads[toPeerId] = message;
+      expect(custodyKind, AckCustodyKind.directTextV108);
+      if (toPeerId == 'peer-device-b') {
+        return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+      }
+      return const InboxStoreOutcome(
+        status: InboxStoreStatus.stored,
+        storeStatus: 'stored',
+        custodyContract: ackOrExpiryInboxCustodyContract,
+        expiresAtMs: 1900000060000,
+      );
+    }
+
+    final completed = await drainDirectInboxCustodyOutbox(
+      custodyRepository: repository,
+      storeInAckCustodyInboxDetailed: store,
+    );
+
+    expect(completed, 1);
+    expect(storedPayloads, {
+      'peer-device-a': 'wire-fanout-device-a',
+      'peer-device-b': 'wire-fanout-device-b',
+    }, reason: 'each sibling replays its own exact immutable bytes');
+    expect(
+      repository.rows.values.single.recipientPeerId,
+      'peer-device-b',
+      reason: 'the accepted sibling retires alone; the failed one survives',
+    );
+    expect(repository.rows.values.single.retryCount, 1);
+    expect(
+      repository.messages['fanout-message']!.status,
+      'sending',
+      reason:
+          'a non-final sibling acceptance never projects the canonical '
+          'message',
+    );
+  });
 }

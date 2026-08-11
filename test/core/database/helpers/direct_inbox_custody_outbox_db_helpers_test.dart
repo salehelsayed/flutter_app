@@ -1,7 +1,9 @@
 import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
@@ -141,7 +143,8 @@ void main() {
   );
 
   test(
-    'TC-345-09b fresh text stage cannot create a sibling global message-id owner',
+    'TC-361-01b legacy uninitialized fresh text stage cannot create a sibling '
+    'global message-id owner',
     () async {
       const messageId = 'global-message-id-stage-exclusion';
       const secondPeer = 'peer-second-recipient';
@@ -1620,7 +1623,831 @@ void main() {
       }
     });
   });
+
+  group('TC-361-01b blob-free direct event fanout (DB v113)', () {
+    Future<DirectContactFanoutSnapshot> seedInitializedFanoutContact({
+      bool legacyRevoked = true,
+      bool includeDeviceB = true,
+    }) async {
+      await db.insert('contacts', _fanoutContactRow());
+      await db.insert(
+        'direct_contact_device_roster_metadata',
+        _fanoutRosterMetadataRow(legacyRevoked: legacyRevoked),
+      );
+      await db.insert(
+        'direct_contact_device_bindings',
+        _fanoutBindingRow('device-a', _deviceTransportA, 'mlkem-device-a'),
+      );
+      if (includeDeviceB) {
+        await db.insert(
+          'direct_contact_device_bindings',
+          _fanoutBindingRow('device-b', _deviceTransportB, 'mlkem-device-b'),
+        );
+      }
+      final snapshot = await dbReadDirectContactFanoutSnapshot(
+        db,
+        contactAccountPeerId: _contactAccount,
+      );
+      expect(snapshot, isNotNull);
+      return snapshot!;
+    }
+
+    Future<DbDirectEventFanoutStageResult> stageFanout({
+      required String messageId,
+      required DirectContactFanoutSnapshot snapshot,
+      required List<DirectEventFanoutTargetCandidate> candidates,
+      Map<String, Object?>? stagedRowOverride,
+      int capacity = kDirectInboxCustodyOutboxCapacity,
+      Future<void> Function()? beforeSiblingInsertForTest,
+    }) {
+      return dbStageOutgoingDirectTextFanoutInboxCustody(
+        db,
+        stagedRow:
+            stagedRowOverride ??
+            _fanoutStagedRow(
+              messageId,
+              witnessEnvelope: candidates.first.wireEnvelope,
+            ),
+        messageId: messageId,
+        contactAccountPeerId: _contactAccount,
+        senderTransportPeerId: 'peer-self',
+        expectedSnapshot: snapshot,
+        candidates: candidates,
+        capacity: capacity,
+        beforeSiblingInsertForTest: beforeSiblingInsertForTest,
+      );
+    }
+
+    List<DirectEventFanoutTargetCandidate> candidatesFor(
+      String messageId,
+      DirectContactFanoutSnapshot snapshot,
+    ) => <DirectEventFanoutTargetCandidate>[
+      for (final target in snapshot.targets)
+        DirectEventFanoutTargetCandidate(
+          recipientPeerId: target.peerId,
+          wireEnvelope: _envelope(messageId, 'cipher-for-${target.peerId}'),
+        ),
+    ];
+
+    test('TC-361-01b authorized fanout stages the exact all-target batch '
+        'atomically and every contradiction is all-zero', () async {
+      final snapshot = await seedInitializedFanoutContact(legacyRevoked: false);
+      expect(
+        snapshot.targets.map((target) => target.peerId).toList(),
+        const <String>[_contactAccount, _deviceTransportA, _deviceTransportB],
+        reason: 'legacy target first, then stable device order',
+      );
+
+      const messageId = 'fanout-initial-1';
+      final candidates = candidatesFor(messageId, snapshot);
+      final staged = await stageFanout(
+        messageId: messageId,
+        snapshot: snapshot,
+        candidates: candidates,
+      );
+      expect(staged.outcome, DirectEventFanoutStageOutcome.applied);
+      expect(staged.authorizesTransport, isTrue);
+      expect(staged.rows, hasLength(3));
+
+      final message = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(message['direct_event_fanout_generation_id'], messageId);
+      expect(message['contact_peer_id'], _contactAccount);
+      expect(
+        message['wire_envelope'],
+        candidates.first.wireEnvelope,
+        reason: 'the representative witness is the first stable target',
+      );
+
+      final rows = await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+        db,
+        messageId: messageId,
+      );
+      expect(rows, hasLength(3));
+      for (final candidate in candidates) {
+        final row = rows.singleWhere(
+          (row) => row['recipient_peer_id'] == candidate.recipientPeerId,
+        );
+        expect(row['wire_envelope'], candidate.wireEnvelope);
+        expect(row['contact_account_peer_id'], _contactAccount);
+        expect(
+          row['incarnation_id'],
+          computeDirectEventFanoutIncarnation(
+            messageId: messageId,
+            recipientPeerId: candidate.recipientPeerId,
+          ),
+          reason: 'one deterministic incarnation per (message, target)',
+        );
+      }
+
+      Future<void> expectAllZero(
+        Future<DbDirectEventFanoutStageResult> Function() attempt, {
+        required String reason,
+      }) async {
+        final beforeMessages = await db.query('messages', orderBy: 'id');
+        final beforeRows = await db.query(
+          _fanoutTable,
+          orderBy: 'incarnation_id',
+        );
+        final result = await attempt();
+        expect(
+          result.outcome,
+          DirectEventFanoutStageOutcome.refused,
+          reason: reason,
+        );
+        expect(result.authorizesTransport, isFalse, reason: reason);
+        expect(
+          await db.query('messages', orderBy: 'id'),
+          beforeMessages,
+          reason: reason,
+        );
+        expect(
+          await db.query(_fanoutTable, orderBy: 'incarnation_id'),
+          beforeRows,
+          reason: reason,
+        );
+      }
+
+      // Zero targets: initialized roster, legacy revoked, no active binding.
+      await db.insert('contacts', _fanoutContactRow(peerId: _secondAccount));
+      await db
+          .insert('direct_contact_device_roster_metadata', <String, Object?>{
+            ..._fanoutRosterMetadataRow(legacyRevoked: true),
+            'contact_account_peer_id': _secondAccount,
+          });
+      final zeroTargets = await dbReadDirectContactFanoutSnapshot(
+        db,
+        contactAccountPeerId: _secondAccount,
+      );
+      expect(zeroTargets, isNotNull);
+      expect(zeroTargets!.targets, isEmpty);
+      await expectAllZero(
+        () => dbStageOutgoingDirectTextFanoutInboxCustody(
+          db,
+          stagedRow: _fanoutStagedRow(
+            'fanout-zero-targets',
+            witnessEnvelope: _envelope('fanout-zero-targets', 'cipher-zero'),
+            contactPeerId: _secondAccount,
+          ),
+          messageId: 'fanout-zero-targets',
+          contactAccountPeerId: _secondAccount,
+          senderTransportPeerId: 'peer-self',
+          expectedSnapshot: zeroTargets,
+          candidates: const <DirectEventFanoutTargetCandidate>[],
+        ),
+        reason: 'zero authorized targets must fail closed',
+      );
+
+      // Snapshot drift between capture and stage: key/fingerprint changed.
+      const driftedId = 'fanout-drifted';
+      final driftedCandidates = candidatesFor(driftedId, snapshot);
+      await db.update(
+        'direct_contact_device_bindings',
+        <String, Object?>{
+          'device_ml_kem_public_key': 'mlkem-device-b-rotated',
+          'binding_fingerprint': 'b' * 64,
+        },
+        where: 'device_id = ?',
+        whereArgs: const <Object?>['device-b'],
+      );
+      await expectAllZero(
+        () => stageFanout(
+          messageId: driftedId,
+          snapshot: snapshot,
+          candidates: driftedCandidates,
+        ),
+        reason: 'a stale caller snapshot must fail the whole batch',
+      );
+      await db.update(
+        'direct_contact_device_bindings',
+        <String, Object?>{
+          'device_ml_kem_public_key': 'mlkem-device-b',
+          'binding_fingerprint': _fanoutFingerprint('device-b'),
+        },
+        where: 'device_id = ?',
+        whereArgs: const <Object?>['device-b'],
+      );
+
+      // Partial candidate set, duplicate transport, and capacity shortage.
+      const partialId = 'fanout-partial';
+      final partial = candidatesFor(partialId, snapshot)..removeLast();
+      await expectAllZero(
+        () => stageFanout(
+          messageId: partialId,
+          snapshot: snapshot,
+          candidates: partial,
+        ),
+        reason: 'a missing per-target candidate must fail the whole batch',
+      );
+      final duplicated = candidatesFor(partialId, snapshot);
+      duplicated[2] = DirectEventFanoutTargetCandidate(
+        recipientPeerId: duplicated[1].recipientPeerId,
+        wireEnvelope: duplicated[1].wireEnvelope,
+      );
+      await expectAllZero(
+        () => stageFanout(
+          messageId: partialId,
+          snapshot: snapshot,
+          candidates: duplicated,
+        ),
+        reason: 'a duplicate transport must fail the whole batch',
+      );
+      await expectAllZero(
+        () => stageFanout(
+          messageId: partialId,
+          snapshot: snapshot,
+          candidates: candidatesFor(partialId, snapshot),
+          capacity: 5,
+        ),
+        reason: 'capacity must admit the whole batch or nothing',
+      );
+
+      // Injected sibling-insert failure rolls the whole batch back.
+      var insertsBeforeFailure = 0;
+      await expectLater(
+        stageFanout(
+          messageId: 'fanout-injected-failure',
+          snapshot: snapshot,
+          candidates: candidatesFor('fanout-injected-failure', snapshot),
+          beforeSiblingInsertForTest: () async {
+            insertsBeforeFailure++;
+            if (insertsBeforeFailure == 2) {
+              throw StateError('injected sibling insert failure');
+            }
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['fanout-injected-failure'],
+        ),
+        isEmpty,
+        reason: 'a partial batch must roll back the canonical message',
+      );
+      expect(
+        await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+          db,
+          messageId: 'fanout-injected-failure',
+        ),
+        isEmpty,
+        reason: 'a partial batch must roll back every sibling',
+      );
+
+      // A conflicting existing canonical message refuses.
+      await expectAllZero(
+        () => stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidatesFor(messageId, snapshot)
+            ..removeAt(0)
+            ..insert(
+              0,
+              DirectEventFanoutTargetCandidate(
+                recipientPeerId: _contactAccount,
+                wireEnvelope: _envelope(messageId, 'cipher-crossed'),
+              ),
+            ),
+          stagedRowOverride: _fanoutStagedRow(
+            messageId,
+            witnessEnvelope: _envelope(messageId, 'cipher-crossed'),
+          ),
+        ),
+        reason: 'crossed canonical bytes for an owned generation refuse',
+      );
+    });
+
+    test(
+      'TC-361-01b survivor-first replay precedes resolver and capacity and a '
+      'terminal generation cannot be reminted',
+      () async {
+        final snapshot = await seedInitializedFanoutContact();
+        expect(
+          snapshot.targets.map((target) => target.peerId).toList(),
+          const <String>[_deviceTransportA, _deviceTransportB],
+          reason: 'revoked legacy target never resurrects',
+        );
+
+        const messageId = 'fanout-survivor-1';
+        final candidates = candidatesFor(messageId, snapshot);
+        final staged = await stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidates,
+        );
+        expect(staged.outcome, DirectEventFanoutStageOutcome.applied);
+
+        // Byte-exact replay wins BEFORE capacity: a full outbox cannot refuse
+        // an already-committed batch.
+        final replay = await stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidates,
+          capacity: 0,
+        );
+        expect(replay.outcome, DirectEventFanoutStageOutcome.survivorReplay);
+        expect(replay.rows, hasLength(2));
+
+        // Device A transfers to protected custody.
+        final completionA = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: _deviceTransportA,
+          messageId: messageId,
+          expectedIncarnationId: computeDirectEventFanoutIncarnation(
+            messageId: messageId,
+            recipientPeerId: _deviceTransportA,
+          ),
+          expectedWireEnvelope: candidates.first.wireEnvelope,
+          relayExpiresAt: 1754899200000,
+        );
+        expect(
+          completionA.completed,
+          isTrue,
+          reason: 'accepted handoff retires the exact sibling',
+        );
+        expect(
+          completionA,
+          DirectInboxCustodyCompletionOutcome.messagePreserved,
+          reason: 'a surviving sibling forbids the canonical projection',
+        );
+        expect(
+          (await db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[messageId],
+          )).single['status'],
+          'sending',
+        );
+
+        // Roster drifts A/B -> B/C. Replay drains the surviving B row only:
+        // no re-resolution, no C append, no A re-creation.
+        expect(
+          await dbRevokeDirectContactDeviceBinding(
+            db,
+            contactAccountPeerId: _contactAccount,
+            deviceId: 'device-a',
+            expectedFingerprint: _fanoutFingerprint('device-a'),
+            expectedAccountSigningPublicKey: _fanoutContactPublicKey,
+            decidedAt: _t1,
+          ),
+          isTrue,
+        );
+        await db.insert(
+          'direct_contact_device_bindings',
+          _fanoutBindingRow('device-c', _deviceTransportC, 'mlkem-device-c'),
+        );
+        final drifted = await stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidates,
+        );
+        expect(drifted.outcome, DirectEventFanoutStageOutcome.survivorReplay);
+        expect(drifted.rows, hasLength(1));
+        expect(drifted.rows!.single['recipient_peer_id'], _deviceTransportB);
+        expect(
+          (await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+            db,
+            messageId: messageId,
+          )).map((row) => row['recipient_peer_id']),
+          const <String>[_deviceTransportB],
+          reason: 'survivors are the complete pending set: no joined target',
+        );
+
+        // The final surviving sibling projects the canonical transition.
+        final completionB = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: _deviceTransportB,
+          messageId: messageId,
+          expectedIncarnationId: computeDirectEventFanoutIncarnation(
+            messageId: messageId,
+            recipientPeerId: _deviceTransportB,
+          ),
+          expectedWireEnvelope: candidates[1].wireEnvelope,
+          relayExpiresAt: 1754899200000,
+        );
+        expect(
+          completionB,
+          DirectInboxCustodyCompletionOutcome.messageAdvanced,
+        );
+        final projected = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(projected['status'], 'inboxed');
+        expect(projected['transport'], 'inbox');
+        expect(projected['direct_event_fanout_generation_id'], messageId);
+
+        // Zero survivors + matching generation is terminal, not restageable.
+        final terminal = await stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidates,
+        );
+        expect(terminal.outcome, DirectEventFanoutStageOutcome.terminal);
+        expect(
+          await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+            db,
+            messageId: messageId,
+          ),
+          isEmpty,
+        );
+
+        // An authenticated receipt clears the representative witness only for
+        // the exact current generation, and the cleared witness still cannot
+        // be reminted.
+        final staleReceipt = await dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: _contactAccount,
+          expectedEnvelope: projected['wire_envelope'] as String?,
+          status: 'delivered',
+          transport: projected['transport'] as String?,
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+          expectedDirectEventFanoutGenerationId: 'later-generation',
+        );
+        expect(
+          staleReceipt,
+          OutgoingOrdinaryMutationOutcome.preserved,
+          reason: 'a stale/future event receipt is zero-effect',
+        );
+        final ignoredReceipt = await dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: _contactAccount,
+          expectedEnvelope: projected['wire_envelope'] as String?,
+          status: 'delivered',
+          transport: projected['transport'] as String?,
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+        );
+        expect(
+          ignoredReceipt,
+          OutgoingOrdinaryMutationOutcome.preserved,
+          reason: 'a settlement that ignores the generation is zero-effect',
+        );
+        final receipt = await dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: _contactAccount,
+          expectedEnvelope: projected['wire_envelope'] as String?,
+          status: 'delivered',
+          transport: projected['transport'] as String?,
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+          expectedDirectEventFanoutGenerationId: messageId,
+        );
+        expect(receipt, OutgoingOrdinaryMutationOutcome.applied);
+        final delivered = (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(delivered['status'], 'delivered');
+        expect(delivered['wire_envelope'], isNull);
+        expect(
+          delivered['direct_event_fanout_generation_id'],
+          messageId,
+          reason: 'the generation persists through receipt settlement',
+        );
+        final afterReceipt = await stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidates,
+        );
+        expect(
+          afterReceipt.outcome,
+          DirectEventFanoutStageOutcome.terminal,
+          reason: 'a receipt-cleared witness is still no-remint authority',
+        );
+      },
+    );
+
+    test('TC-361-01b completion reconstructs the logical tombstone and the '
+        'delete owner preserves the scrubbed generation witness', () async {
+      final snapshot = await seedInitializedFanoutContact();
+
+      // Physical parent removal before completion: any sibling rebuilds the
+      // scrubbed hidden tombstone against the LOGICAL contact.
+      const removedId = 'fanout-removed-parent';
+      final removedCandidates = candidatesFor(removedId, snapshot);
+      expect(
+        (await stageFanout(
+          messageId: removedId,
+          snapshot: snapshot,
+          candidates: removedCandidates,
+        )).outcome,
+        DirectEventFanoutStageOutcome.applied,
+      );
+      await db.delete(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[removedId],
+      );
+      final reconstructed = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: _deviceTransportA,
+        messageId: removedId,
+        expectedIncarnationId: computeDirectEventFanoutIncarnation(
+          messageId: removedId,
+          recipientPeerId: _deviceTransportA,
+        ),
+        expectedWireEnvelope: removedCandidates.first.wireEnvelope,
+        relayExpiresAt: 1754899200000,
+      );
+      expect(reconstructed, DirectInboxCustodyCompletionOutcome.messageRemoved);
+      final tombstone = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[removedId],
+      )).single;
+      expect(
+        tombstone['contact_peer_id'],
+        _contactAccount,
+        reason:
+            'the tombstone owner is the logical contact, never the '
+            'delivery transport',
+      );
+      expect(tombstone['hidden_at'], isNotNull);
+      expect(tombstone['text'], '');
+      expect(tombstone['wire_envelope'], isNull);
+      expect(tombstone['direct_event_fanout_generation_id'], removedId);
+      // The second sibling converges on the same tombstone.
+      final second = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: _deviceTransportB,
+        messageId: removedId,
+        expectedIncarnationId: computeDirectEventFanoutIncarnation(
+          messageId: removedId,
+          recipientPeerId: _deviceTransportB,
+        ),
+        expectedWireEnvelope: removedCandidates[1].wireEnvelope,
+        relayExpiresAt: 1754899200000,
+      );
+      expect(second, DirectInboxCustodyCompletionOutcome.messagePreserved);
+      expect(
+        await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+          db,
+          messageId: removedId,
+        ),
+        isEmpty,
+      );
+
+      // All-complete then delete-for-me: the delete owner sweeps reactions,
+      // scrubs and hides, and preserves id/logical contact/generation.
+      const completedId = 'fanout-completed-then-deleted';
+      final completedCandidates = candidatesFor(completedId, snapshot);
+      expect(
+        (await stageFanout(
+          messageId: completedId,
+          snapshot: snapshot,
+          candidates: completedCandidates,
+        )).outcome,
+        DirectEventFanoutStageOutcome.applied,
+      );
+      for (final candidate in completedCandidates) {
+        await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: candidate.recipientPeerId,
+          messageId: completedId,
+          expectedIncarnationId: computeDirectEventFanoutIncarnation(
+            messageId: completedId,
+            recipientPeerId: candidate.recipientPeerId,
+          ),
+          expectedWireEnvelope: candidate.wireEnvelope,
+          relayExpiresAt: 1754899200000,
+        );
+      }
+      await db.insert('message_reactions', <String, Object?>{
+        'id': 'reaction-on-deleted',
+        'message_id': completedId,
+        'emoji': '👍',
+        'sender_peer_id': _contactAccount,
+        'timestamp': _t1,
+        'created_at': _t1,
+      });
+      expect(await dbDeleteMessage(db, completedId), 1);
+      expect(
+        await db.query(
+          'message_reactions',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[completedId],
+        ),
+        isEmpty,
+        reason: 'single-message delete sweeps reactions before the scrub',
+      );
+      final scrubbed = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[completedId],
+      )).single;
+      expect(scrubbed['text'], '');
+      expect(scrubbed['wire_envelope'], isNull);
+      expect(scrubbed['hidden_at'], isNotNull);
+      expect(scrubbed['contact_peer_id'], _contactAccount);
+      expect(
+        scrubbed['direct_event_fanout_generation_id'],
+        completedId,
+        reason: 'delete-for-me must preserve the only no-remint fact',
+      );
+      final replay = await stageFanout(
+        messageId: completedId,
+        snapshot: snapshot,
+        candidates: completedCandidates,
+      );
+      expect(
+        replay.outcome,
+        DirectEventFanoutStageOutcome.terminal,
+        reason: 'exact same-generation replay after delete is zero-effect',
+      );
+      expect(
+        await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+          db,
+          messageId: completedId,
+        ),
+        isEmpty,
+      );
+
+      // A legacy unmarked row keeps the incumbent physical delete.
+      final legacy = _message(
+        'legacy-physical-delete',
+        envelope: _envelope('legacy-physical-delete', 'cipher-legacy'),
+      );
+      await dbInsertMessage(db, legacy.toMap());
+      expect(await dbDeleteMessage(db, legacy.id), 1);
+      expect(
+        await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: <Object?>[legacy.id],
+        ),
+        isEmpty,
+        reason: 'unmarked rows keep the incumbent physical delete',
+      );
+    });
+
+    test('TC-361-01b generic single-owner wrappers fail closed on marked '
+        'generations', () async {
+      final snapshot = await seedInitializedFanoutContact();
+      const messageId = 'fanout-single-owner-guard';
+      final candidates = candidatesFor(messageId, snapshot);
+      expect(
+        (await stageFanout(
+          messageId: messageId,
+          snapshot: snapshot,
+          candidates: candidates,
+        )).outcome,
+        DirectEventFanoutStageOutcome.applied,
+      );
+
+      // The generic single-owner loader may never select an arbitrary
+      // sibling of a fanout generation — plural and single-marked alike.
+      await expectLater(
+        dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+          db,
+          messageId: messageId,
+        ),
+        throwsA(isA<StateError>()),
+      );
+      await dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: _deviceTransportA,
+        messageId: messageId,
+        expectedIncarnationId: computeDirectEventFanoutIncarnation(
+          messageId: messageId,
+          recipientPeerId: _deviceTransportA,
+        ),
+        expectedWireEnvelope: candidates.first.wireEnvelope,
+        relayExpiresAt: 1754899200000,
+      );
+      await expectLater(
+        dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+          db,
+          messageId: messageId,
+        ),
+        throwsA(isA<StateError>()),
+        reason: 'one surviving marked sibling is still fanout-owned',
+      );
+
+      // The custody verifier and unacked-rebuild loaders never select a
+      // marked generation: they could only re-store the canonical witness
+      // to the logical contact.
+      await db.update(
+        'messages',
+        const <String, Object?>{'status': 'inboxed', 'transport': 'inbox'},
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      );
+      final legacyInboxed = _message(
+        'legacy-inboxed-owner',
+        envelope: _envelope('legacy-inboxed-owner', 'cipher-owner'),
+      );
+      await dbInsertMessage(db, legacyInboxed.toMap());
+      await db.update(
+        'messages',
+        const <String, Object?>{'status': 'inboxed', 'transport': 'inbox'},
+        where: 'id = ?',
+        whereArgs: <Object?>[legacyInboxed.id],
+      );
+      expect(
+        (await dbLoadInboxCustodyOutgoingMessages(
+          db,
+          recheckOlderThan: Duration.zero,
+        )).map((row) => row['id']),
+        <Object?>[legacyInboxed.id],
+        reason: 'the verifier sweep must skip marked generations',
+      );
+
+      await db.update(
+        'messages',
+        <String, Object?>{'status': 'sent', 'timestamp': _t0},
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      );
+      await db.update(
+        'messages',
+        <String, Object?>{'status': 'sent', 'timestamp': _t0},
+        where: 'id = ?',
+        whereArgs: <Object?>[legacyInboxed.id],
+      );
+      expect(
+        (await dbLoadUnackedOutgoingMessages(
+          db,
+          olderThan: DateTime.parse(_t1),
+        )).map((row) => row['id']),
+        <Object?>[legacyInboxed.id],
+        reason: 'the unacked rebuild must skip marked generations',
+      );
+    });
+  });
 }
+
+const String _fanoutTable = 'direct_inbox_custody_outbox';
+const String _contactAccount = 'peer-contact-account';
+const String _secondAccount = 'peer-second-account';
+const String _deviceTransportA = 'peer-device-transport-a';
+const String _deviceTransportB = 'peer-device-transport-b';
+const String _deviceTransportC = 'peer-device-transport-c';
+const String _fanoutContactPublicKey = 'contact-account-signing-key';
+
+Map<String, Object?> _fanoutContactRow({String peerId = _contactAccount}) =>
+    <String, Object?>{
+      'peer_id': peerId,
+      'public_key': _fanoutContactPublicKey,
+      'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+      'username': 'Fanout Contact',
+      'signature': 'sig-base64',
+      'scanned_at': _t0,
+      'ml_kem_public_key': 'legacy-mlkem',
+    };
+
+Map<String, Object?> _fanoutRosterMetadataRow({required bool legacyRevoked}) =>
+    <String, Object?>{
+      'contact_account_peer_id': _contactAccount,
+      'roster_initialized': 1,
+      'legacy_target_state': legacyRevoked ? 'revoked' : 'active',
+      'initialized_at': _t0,
+      'legacy_revoked_at': legacyRevoked ? _t0 : null,
+      'updated_at': _t0,
+    };
+
+String _fanoutFingerprint(String deviceId) =>
+    deviceId.hashCode.toUnsigned(16).toRadixString(16).padLeft(4, '0') * 16;
+
+Map<String, Object?> _fanoutBindingRow(
+  String deviceId,
+  String transportPeerId,
+  String mlKemPublicKey,
+) => <String, Object?>{
+  'contact_account_peer_id': _contactAccount,
+  'device_id': deviceId,
+  'verified_account_signing_public_key': _fanoutContactPublicKey,
+  'transport_peer_id': transportPeerId,
+  'transport_public_key': 'transport-key-$deviceId',
+  'device_ml_kem_public_key': mlKemPublicKey,
+  'binding_fingerprint': _fanoutFingerprint(deviceId),
+  'state': 'active',
+  'staged_at': _t0,
+  'decided_at': _t0,
+};
+
+Map<String, Object?> _fanoutStagedRow(
+  String messageId, {
+  required String witnessEnvelope,
+  String contactPeerId = _contactAccount,
+}) => <String, Object?>{
+  ..._message(
+    messageId,
+    envelope: witnessEnvelope,
+  ).copyWith(contactPeerId: contactPeerId).toMap(),
+  'direct_event_fanout_generation_id': messageId,
+};
 
 ConversationMessage _message(
   String id, {

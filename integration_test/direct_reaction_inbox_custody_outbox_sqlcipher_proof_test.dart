@@ -40,7 +40,7 @@ void main() {
         isTrue,
         reason: 'TC-343-10 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 112);
+      expect(currentIdentityDatabaseVersion, 113);
 
       final previousFlowEventLoggingEnabled = flowEventLoggingEnabled;
       flowEventLoggingEnabled = false;

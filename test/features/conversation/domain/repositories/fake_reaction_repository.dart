@@ -4,7 +4,39 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 
 /// In-memory fake of ReactionRepository for unit tests.
-class FakeReactionRepository implements ReactionRepository {
+class FakeReactionRepository
+    implements ReactionRepository, LinkedTransportReactionApplyRepository {
+  // 361: linked-transport apply recording.
+  bool supportsLinkedTransportReactionApplyOverride = true;
+  final List<String> linkedApplyTransports = [];
+
+  @override
+  bool get supportsLinkedTransportReactionApply =>
+      supportsLinkedTransportReactionApplyOverride;
+
+  @override
+  Future<ReactionAddApplyResult> applyIncomingAddWithTransportAuthority(
+    MessageReaction reaction, {
+    required String authenticatedTransportPeerId,
+  }) {
+    linkedApplyTransports.add(authenticatedTransportPeerId);
+    return applyIncomingAdd(reaction);
+  }
+
+  @override
+  Future<ReactionRemoveApplyResult> applyIncomingRemoveWithTransportAuthority(
+    MessageReaction reaction, {
+    required String authenticatedTransportPeerId,
+  }) async {
+    linkedApplyTransports.add(authenticatedTransportPeerId);
+    await removeReaction(
+      reaction.messageId,
+      reaction.senderPeerId,
+      removedAtTimestamp: reaction.removedAt ?? reaction.timestamp,
+    );
+    return ReactionRemoveApplyResult.applied;
+  }
+
   final List<MessageReaction> _reactions = [];
 
   int saveReactionCallCount = 0;

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -15,12 +16,16 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 class DeliveryReceiptListener {
   final Stream<ChatMessage> receiptStream;
   final MessageRepository messageRepo;
+
+  /// 361: shared physical->logical reverse authority (null = incumbent).
+  final DirectTransportAuthorityResolver? transportAuthority;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   StreamSubscription<ChatMessage>? _subscription;
 
   DeliveryReceiptListener({
     required this.receiptStream,
     required this.messageRepo,
+    this.transportAuthority,
     this.mediaAttachmentRepo,
   });
 
@@ -38,6 +43,7 @@ class DeliveryReceiptListener {
           await handleDeliveryReceipt(
             message: message,
             messageRepo: messageRepo,
+            transportAuthority: transportAuthority,
             mediaAttachmentRepo: mediaAttachmentRepo,
           );
         } catch (e) {

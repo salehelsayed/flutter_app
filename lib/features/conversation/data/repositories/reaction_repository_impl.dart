@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
 import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -15,7 +16,9 @@ class ReactionRepositoryImpl
         AtomicIncomingReactionMutationRepository,
         AtomicGroupReactionAdditionRepository,
         AtomicGroupReactionRemovalRepository,
-        OutgoingDirectReactionInboxCustodyRepository {
+        OutgoingDirectReactionInboxCustodyRepository,
+        OutgoingDirectReactionEventFanoutRepository,
+        LinkedTransportReactionApplyRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsertReaction;
   final Future<ReactionAddApplyResult> Function(Map<String, Object?> row)?
   dbApplyIncomingAdd;
@@ -27,6 +30,17 @@ class ReactionRepositoryImpl
   dbApplyGroupAdd;
   final Future<ReactionRemoveApplyResult> Function(Map<String, Object?> row)?
   dbApplyIncomingRemove;
+  // 361: linked-transport apply delegates (in-transaction reauthorization).
+  final Future<ReactionAddApplyResult> Function(
+    Map<String, Object?> row, {
+    required String authenticatedTransportPeerId,
+  })?
+  dbApplyIncomingAddWithAuthority;
+  final Future<ReactionRemoveApplyResult> Function(
+    Map<String, Object?> row, {
+    required String authenticatedTransportPeerId,
+  })?
+  dbApplyIncomingRemoveWithAuthority;
   final Future<ReactionRemoveApplyResult> Function({
     required String groupId,
     required Map<String, Object?> row,
@@ -56,6 +70,17 @@ class ReactionRepositoryImpl
     required String wireEnvelope,
   })?
   dbStageOutgoingDirectReactionInboxCustody;
+  // 361: v113 blob-free reaction fanout delegate.
+  final Future<DbDirectEventFanoutStageResult> Function({
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String parentMessageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  })?
+  dbStageOutgoingDirectReactionFanoutInboxCustody;
   final Future<List<Map<String, Object?>>> Function({int limit})?
   dbLoadDirectReactionInboxCustodyOutbox;
   final Future<Map<String, Object?>?> Function({
@@ -91,6 +116,8 @@ class ReactionRepositoryImpl
     this.dbApplyIncomingAdd,
     this.dbApplyGroupAdd,
     this.dbApplyIncomingRemove,
+    this.dbApplyIncomingAddWithAuthority,
+    this.dbApplyIncomingRemoveWithAuthority,
     this.dbApplyGroupRemove,
     required this.dbLoadReactionsForMessage,
     required this.dbLoadReactionsForMessages,
@@ -99,6 +126,7 @@ class ReactionRepositoryImpl
     required this.dbDeleteReactionsForMessage,
     required this.dbDeleteReactionsForContact,
     this.dbStageOutgoingDirectReactionInboxCustody,
+    this.dbStageOutgoingDirectReactionFanoutInboxCustody,
     this.dbLoadDirectReactionInboxCustodyOutbox,
     this.dbLoadDirectReactionInboxCustodyOutboxForEvent,
     this.dbRecordDirectReactionInboxCustodyFailureIfExact,
@@ -115,6 +143,71 @@ class ReactionRepositoryImpl
       dbLoadDirectReactionInboxCustodyOutboxForEvent != null &&
       dbRecordDirectReactionInboxCustodyFailureIfExact != null &&
       dbCompleteAcceptedDirectReactionInboxCustodyIfExact != null;
+
+  @override
+  bool get supportsLinkedTransportReactionApply =>
+      dbApplyIncomingAddWithAuthority != null &&
+      dbApplyIncomingRemoveWithAuthority != null;
+
+  @override
+  Future<ReactionAddApplyResult> applyIncomingAddWithTransportAuthority(
+    MessageReaction reaction, {
+    required String authenticatedTransportPeerId,
+  }) {
+    final delegate = dbApplyIncomingAddWithAuthority;
+    if (delegate == null) {
+      throw StateError('linked transport reaction apply is unavailable');
+    }
+    return delegate(
+      reaction.toMap(),
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+    );
+  }
+
+  @override
+  Future<ReactionRemoveApplyResult> applyIncomingRemoveWithTransportAuthority(
+    MessageReaction reaction, {
+    required String authenticatedTransportPeerId,
+  }) {
+    final delegate = dbApplyIncomingRemoveWithAuthority;
+    if (delegate == null) {
+      throw StateError('linked transport reaction apply is unavailable');
+    }
+    return delegate(
+      reaction.toMap(),
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+    );
+  }
+
+  @override
+  bool get supportsDirectReactionEventFanout =>
+      dbStageOutgoingDirectReactionFanoutInboxCustody != null &&
+      supportsDirectReactionInboxCustody;
+
+  @override
+  Future<DbDirectEventFanoutStageResult> stageDirectReactionFanout({
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String parentMessageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  }) {
+    final delegate = dbStageOutgoingDirectReactionFanoutInboxCustody;
+    if (delegate == null) {
+      throw StateError('direct reaction event fanout is unavailable');
+    }
+    return delegate(
+      reactionRow: reactionRow,
+      action: action,
+      parentMessageId: parentMessageId,
+      contactAccountPeerId: contactAccountPeerId,
+      senderTransportPeerId: senderTransportPeerId,
+      expectedSnapshot: expectedSnapshot,
+      candidates: candidates,
+    );
+  }
 
   @override
   Future<DirectReactionCustodyStageResult>

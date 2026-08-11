@@ -3,6 +3,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../notifications/deterministic_notification_id.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'direct_contact_device_bindings_db_helpers.dart';
 import 'group_notification_display_outbox_db_helpers.dart';
 import 'group_notification_read_acknowledgement_db_helpers.dart';
 import 'group_notification_reconciliation_outbox_db_helpers.dart';
@@ -33,6 +34,7 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
   required DbIncomingReactionMutation mutation,
   String? groupIdForNotificationCleanup,
   String? notificationEventIdForStaleAddCleanup,
+  String? authenticatedTransportPeerId,
 }) async {
   final id = _requiredReactionString(row, 'id');
   final messageId = _requiredReactionString(row, 'message_id');
@@ -75,6 +77,20 @@ Future<DbIncomingReactionApplyResult> dbApplyIncomingReactionMutation(
 
   try {
     final result = await dbWriteTransaction(db, (txn) async {
+      // 361: a linked physical transport re-authorizes to the reaction's
+      // logical sender inside this durable apply transaction; revoke-first is
+      // therefore zero-effect (`stale`, nothing written).
+      if (authenticatedTransportPeerId != null &&
+          authenticatedTransportPeerId != senderPeerId) {
+        final authority = await dbResolveDirectTransportToLogicalContact(
+          txn,
+          transportPeerId: authenticatedTransportPeerId,
+        );
+        if (!authority.authorized ||
+            authority.contactAccountPeerId != senderPeerId) {
+          return DbIncomingReactionApplyResult.stale;
+        }
+      }
       if (hasGroupCustody) {
         final target = await txn.query(
           'group_messages',

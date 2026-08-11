@@ -147,6 +147,18 @@ Future<bool> drainOwnedDirectMutationInboxCustodyOutboxEntry({
   }
 }
 
+/// 361: public per-row owner for one exact reaction obligation, used by the
+/// restricted linked drain that selects exact v113 fanout rows only.
+Future<bool> drainOwnedDirectReactionInboxCustodyOutboxEntry({
+  required DirectReactionInboxCustodyOutboxEntry entry,
+  required OutgoingDirectReactionInboxCustodyRepository custodyRepository,
+  required StoreInAckCustodyInboxDetailedFn storeInAckCustodyInboxDetailed,
+}) => _attemptDirectReactionInboxCustodyEntry(
+  entry: entry,
+  custodyRepository: custodyRepository,
+  storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+);
+
 Future<bool> _attemptDirectReactionInboxCustodyEntry({
   required DirectReactionInboxCustodyOutboxEntry entry,
   required OutgoingDirectReactionInboxCustodyRepository custodyRepository,

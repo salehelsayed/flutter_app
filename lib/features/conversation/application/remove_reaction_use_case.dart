@@ -5,6 +5,8 @@ import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/deliver_outgoing_direct_reaction_custody.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -32,6 +34,7 @@ Future<RemoveReactionResult> removeReaction({
   required String senderPeerId,
   required String recipientMlKemPublicKey,
   StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  DirectEventFanoutAuthoring? directEventFanout,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -82,6 +85,34 @@ Future<RemoveReactionResult> removeReaction({
     senderPeerId: senderPeerId,
     timestamp: timestamp,
   );
+
+  // 361: the v113 fanout owner may claim this REMOVE before any
+  // single-target crypto. `null` means the incumbent path continues.
+  if (directEventFanout != null) {
+    final fanout = await authorDirectReactionFanout(
+      directEventFanout: directEventFanout,
+      p2pService: p2pService,
+      custodyRepo: custodyRepo,
+      storeInAckCustodyInboxDetailed: effectiveStoreInAckCustodyInboxDetailed,
+      targetPeerId: targetPeerId,
+      messageId: messageId,
+      action: ReactionPayload.removeAction,
+      payload: payload,
+      flowPrefix: 'REACTION_REMOVE',
+    );
+    if (fanout != null) {
+      return switch (fanout.$1) {
+        SendReactionResult.success => RemoveReactionResult.success,
+        SendReactionResult.nodeNotRunning =>
+          RemoveReactionResult.nodeNotRunning,
+        SendReactionResult.encryptionRequired =>
+          RemoveReactionResult.encryptionRequired,
+        SendReactionResult.encryptionFailed =>
+          RemoveReactionResult.encryptionFailed,
+        SendReactionResult.sendFailed => RemoveReactionResult.sendFailed,
+      };
+    }
+  }
 
   // 3. Encrypt
   String jsonString;

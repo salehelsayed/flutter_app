@@ -377,4 +377,150 @@ void main() {
       );
     },
   );
+  test('TC-361-03b linked runtime starts only direct blob-free event owners — '
+      'the deferred linked foundation wires the exact restricted owner set and '
+      'the lifecycle roots filter the linked role', () async {
+    expect(app.MyApp.navigatorKey, isNotNull);
+
+    final productionSource = await File(
+      'lib/app/bootstrap/production_application_bootstrap.dart',
+    ).readAsString();
+    final applicationRootSource = await File(
+      'lib/app/application_root.dart',
+    ).readAsString();
+
+    // (i) The linked deferred branch composes DirectBlobFreeLinkedServices
+    // with EXACTLY the restricted owners and never the generic runtime.
+    final foundationStart = productionSource.indexOf(
+      'startLinkedFoundationPrerequisites: () async {',
+    );
+    expect(foundationStart, isNonNegative);
+    final foundationEnd = productionSource.indexOf(
+      'return linkedServices.start();',
+      foundationStart,
+    );
+    expect(foundationEnd, greaterThan(foundationStart));
+    final foundationBody = productionSource.substring(
+      foundationStart,
+      foundationEnd,
+    );
+    expect(foundationBody, contains('DirectBlobFreeLinkedServices('));
+    for (final binding in const <String>[
+      'initializeBridge: bridge.initialize,',
+      'startMessageRouter: messageRouter.start,',
+      'startChatMessageListener: chatMessageListener.start,',
+      'startReactionListener: reactionListener.start,',
+      'startMessageDeletionListener: messageDeletionListener.start,',
+      'startDeliveryReceiptListener: deliveryReceiptListener.start,',
+      'drainOfflineInbox: p2pService.drainOfflineInbox,',
+      'drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,',
+    ]) {
+      expect(
+        foundationBody,
+        contains(binding),
+        reason: 'linked foundation must wire $binding',
+      );
+    }
+    expect(
+      foundationBody,
+      isNot(contains('startLiveServices')),
+      reason: 'the linked role must never reach the generic runtime start',
+    );
+
+    // (ii) The restricted drain reads ONLY the exact nonnull-v113 loaders —
+    // never a broad historical/media/private v108/v109 loader.
+    final drainStart = productionSource.indexOf(
+      'Future<int> drainDirectBlobFreeLinkedOutboxes() =>',
+    );
+    expect(drainStart, isNonNegative);
+    final drainEnd = productionSource.indexOf(
+      'Future<int> drainDirectInboxCustodyFamilies()',
+      drainStart,
+    );
+    expect(drainEnd, greaterThan(drainStart));
+    final drainBody = productionSource.substring(drainStart, drainEnd);
+    expect(
+      drainBody,
+      contains('dbLoadDirectInboxCustodyOutboxExactFanoutRows(db)'),
+    );
+    expect(
+      drainBody,
+      contains('dbLoadDirectReactionInboxCustodyOutboxExactFanoutRows(db)'),
+    );
+    expect(
+      drainBody,
+      isNot(contains('dbLoadDirectInboxCustodyOutbox(db')),
+      reason: 'the broad v108 loader is not a linked-drain input',
+    );
+    expect(
+      drainBody,
+      isNot(contains('dbLoadDirectReactionInboxCustodyOutbox(db')),
+      reason: 'the broad v109 loader is not a linked-drain input',
+    );
+
+    // (iii) Resume: the linked filter sits ABOVE every generic resume owner
+    // and its branch runs only the exact restricted work, then returns.
+    final resumedStart = applicationRootSource.indexOf(
+      'Future<void> _onResumed() async {',
+    );
+    expect(resumedStart, isNonNegative);
+    final resumedLinkedCheck = applicationRootSource.indexOf(
+      'if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {',
+      resumedStart,
+    );
+    final resumedGeneric = applicationRootSource.indexOf(
+      'privateMediaLifecycleRecovery',
+      resumedStart,
+    );
+    expect(resumedLinkedCheck, greaterThan(resumedStart));
+    expect(
+      resumedLinkedCheck,
+      lessThan(resumedGeneric),
+      reason: 'the linked filter must precede private-media recovery',
+    );
+    final resumedReturn = applicationRootSource.indexOf(
+      'return;',
+      resumedLinkedCheck,
+    );
+    final resumedBranch = applicationRootSource.substring(
+      resumedLinkedCheck,
+      resumedReturn,
+    );
+    expect(resumedBranch, contains('markResumeStarted()'));
+    expect(
+      resumedBranch,
+      contains('drainDirectBlobFreeLinkedOutboxes?.call()'),
+    );
+    expect(resumedBranch, contains('checkResumeAlreadyOnline()'));
+    expect(resumedBranch, isNot(contains('handleAppResumed(')));
+
+    // (iv) Pause: the linked filter keeps the local sweep and parks the
+    // FDC-06 pause flush plus every generic pause owner.
+    final pausedStart = applicationRootSource.indexOf('void _onPaused() {');
+    expect(pausedStart, isNonNegative);
+    final pausedLinkedCheck = applicationRootSource.indexOf(
+      'if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {',
+      pausedStart,
+    );
+    final pausedGeneric = applicationRootSource.indexOf(
+      'stopPrivateMediaExpiryScheduler',
+      pausedStart,
+    );
+    expect(pausedLinkedCheck, greaterThan(pausedStart));
+    expect(
+      pausedLinkedCheck,
+      lessThan(pausedGeneric),
+      reason: 'the linked filter must precede the generic pause owners',
+    );
+    final pausedReturn = applicationRootSource.indexOf(
+      'return;',
+      pausedLinkedCheck,
+    );
+    final pausedBranch = applicationRootSource.substring(
+      pausedLinkedCheck,
+      pausedReturn,
+    );
+    expect(pausedBranch, contains('handleAppPaused('));
+    expect(pausedBranch, contains('enablePauseFlush: false,'));
+  });
 }

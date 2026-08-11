@@ -25,6 +25,7 @@ import 'package:flutter_app/features/conversation/application/send_delivery_rece
     show deliveryReceiptMintDecision, kConfirmatoryDirectLanReceiptEnabled;
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/incoming_direct_media_blob_custody_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -83,6 +84,12 @@ enum HandleChatMessageResult {
   /// event, notification, or listener-level message-display retry. Callers
   /// must not route this through the generic duplicate branch.
   durablySuperseded,
+
+  /// 361: an AUTHENTICATED linked transport carried a modality the restricted
+  /// linked role does not support (ordinary media, Protected/View-Once/
+  /// disappearing, unsupported private). Terminal: rejected/quarantined with
+  /// zero v111/private lifecycle/apply/receipt/publication/notification.
+  linkedModalityRefused,
 }
 
 typedef StageDirectMessageNotificationDisplayCustody =
@@ -141,6 +148,9 @@ handleIncomingChatMessage({
   StageDirectMessageNotificationDisplayCustody? stageNotificationDisplayCustody,
   PromoteDirectMessageNotificationDisplayCustody?
   promoteNotificationDisplayCustody,
+  // 361: when present, the shared physical->logical reverse authority.
+  // `null` keeps the incumbent transport==logical equality byte-identically.
+  DirectTransportAuthorityResolver? transportAuthority,
 }) async {
   Future<void> maybeSendDeliveryReceipt(
     String messageId, {
@@ -356,16 +366,38 @@ handleIncomingChatMessage({
   // it is. Only an invalid EDIT defers that decision, so the authenticated
   // private-EDIT disposition below can discard it terminally instead of
   // leaving a retryable strict-custody refusal redriving forever.
+  // 2a. Identity: the outer envelope sender must equal the authenticated
+  // PHYSICAL transport, and the decrypted payload sender must equal the
+  // resolved LOGICAL contact. Without a resolver the incumbent
+  // transport==logical equality applies byte-identically.
+  DirectTransportAuthorityResolution? transportResolution;
+  bool senderMismatch;
+  if (transportAuthority == null) {
+    senderMismatch =
+        message.from != payload.senderPeerId ||
+        (v2Envelope != null && envelopeSenderPeerId != payload.senderPeerId);
+  } else {
+    transportResolution = await transportAuthority
+        .resolveDirectTransportAuthority(message.from);
+    senderMismatch =
+        (v2Envelope != null && envelopeSenderPeerId != message.from) ||
+        !transportResolution.authorized ||
+        transportResolution.contactAccountPeerId != payload.senderPeerId;
+  }
+  final isLinkedTransportOrigin =
+      transportResolution?.kind == DirectTransportAuthorityKind.linked;
+
   if (strictMediaProjection.selected &&
       !strictMediaProjection.isValid &&
       !payload.isEdit) {
+    // 361: an authenticated linked transport's unsupported modality is
+    // TERMINAL, never a retryable strict-custody refusal.
+    if (!senderMismatch && isLinkedTransportOrigin) {
+      return (HandleChatMessageResult.linkedModalityRefused, null, null);
+    }
     return (HandleChatMessageResult.strictMediaCustodyRefused, null, null);
   }
 
-  // 2a. Require the stream sender and decrypted payload sender to agree.
-  final senderMismatch =
-      message.from != payload.senderPeerId ||
-      (v2Envelope != null && envelopeSenderPeerId != payload.senderPeerId);
   if (senderMismatch) {
     emitFlowEvent(
       layer: 'FL',
@@ -400,6 +432,23 @@ handleIncomingChatMessage({
       },
     );
     return (HandleChatMessageResult.unknownSender, null, null);
+  }
+
+  // 361: the restricted linked role supports blob-free ordinary text events
+  // ONLY. Any authenticated linked media/private payload is terminally
+  // rejected before any v111, private-lifecycle, apply, receipt, publication
+  // or notification work exists.
+  if (isLinkedTransportOrigin &&
+      (strictMediaProjection.selected ||
+          (payload.media != null && payload.media!.isNotEmpty) ||
+          payload.privateMediaPolicy.version != 0 ||
+          payload.privateMediaPolicy.mode != PrivateMediaMode.ordinary)) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_RECEIVE_LINKED_MODALITY_REFUSED',
+      details: {'id': shortenMessageId(payload.id)},
+    );
+    return (HandleChatMessageResult.linkedModalityRefused, null, null);
   }
 
   // 359 (D-234-01): private caption/text EDIT is an unsupported product
@@ -1260,14 +1309,34 @@ handleIncomingChatMessage({
   } else {
     if (isOrdinaryDirectText) {
       IncomingOrdinaryTextApplyResult applied;
+      // 361: a linked origin re-authorizes inside the durable apply itself.
+      final linkedApplyRepository =
+          isLinkedTransportOrigin &&
+              messageRepo is LinkedTransportIncomingApplyRepository
+          ? messageRepo as LinkedTransportIncomingApplyRepository
+          : null;
+      if (isLinkedTransportOrigin &&
+          (linkedApplyRepository == null ||
+              !linkedApplyRepository.supportsLinkedTransportIncomingApply)) {
+        return (HandleChatMessageResult.unauthorized, null, null);
+      }
       try {
-        applied = await ordinaryTextApplyRepository!
-            .applyIncomingOrdinaryTextMutation(
-              incoming: conversationMessage,
-              kind: payload.isEdit
-                  ? IncomingOrdinaryTextMutationKind.edit
-                  : IncomingOrdinaryTextMutationKind.initial,
-            );
+        applied = linkedApplyRepository != null
+            ? await linkedApplyRepository
+                  .applyIncomingOrdinaryTextMutationWithTransportAuthority(
+                    incoming: conversationMessage,
+                    kind: payload.isEdit
+                        ? IncomingOrdinaryTextMutationKind.edit
+                        : IncomingOrdinaryTextMutationKind.initial,
+                    authenticatedTransportPeerId: message.from,
+                  )
+            : await ordinaryTextApplyRepository!
+                  .applyIncomingOrdinaryTextMutation(
+                    incoming: conversationMessage,
+                    kind: payload.isEdit
+                        ? IncomingOrdinaryTextMutationKind.edit
+                        : IncomingOrdinaryTextMutationKind.initial,
+                  );
       } catch (error) {
         emitFlowEvent(
           layer: 'FL',

@@ -6,6 +6,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../utils/flow_event_emitter.dart';
 import '../../utils/key_conversion.dart';
 import '../db_write_transaction.dart';
+import '../direct_event_fanout_contract.dart';
 import '../migrations/112_direct_linked_device_addressing.dart';
 
 /// Admission state of one authenticated linked-device binding.
@@ -898,6 +899,240 @@ Future<List<DirectContactDeviceTarget>> dbResolveDirectContactDeviceTargets(
           deviceId: binding.deviceId,
         ),
   ];
+}
+
+/// Builds the persisted-contact forward fanout snapshot for one contact
+/// (Plan 361).
+///
+/// Authority comes ONLY from the database: the persisted nonblocked contact
+/// row supplies the account signing key and the dynamic legacy ML-KEM key, and
+/// the v112 roster supplies the linked bindings. A caller-provided legacy
+/// value is never accepted. Returns null — and the whole fanout stage fails
+/// closed all-zero — when the contact is missing, blocked, or has no current
+/// account signing key.
+///
+/// Target order is deterministic: the dynamic legacy target first while it is
+/// authorized and deliverable, then every ACTIVE binding whose recorded
+/// verified account key still equals the contact's current key, in stable
+/// `device_id` order. The first target is the representative witness.
+Future<DirectContactFanoutSnapshot?> dbReadDirectContactFanoutSnapshot(
+  DatabaseExecutor db, {
+  required String contactAccountPeerId,
+}) async {
+  final normalizedContact = contactAccountPeerId.trim();
+  if (normalizedContact.isEmpty) return null;
+
+  final contactRows = await db.query(
+    'contacts',
+    columns: const <String>[
+      'peer_id',
+      'public_key',
+      'ml_kem_public_key',
+      'is_blocked',
+    ],
+    where: 'peer_id = ?',
+    whereArgs: <Object?>[normalizedContact],
+    limit: 1,
+  );
+  if (contactRows.isEmpty) return null;
+  final contact = contactRows.single;
+  final accountKey = contact['public_key'];
+  if (accountKey is! String || accountKey.trim().isEmpty) return null;
+  final blocked = contact['is_blocked'];
+  if (blocked is int ? blocked != 0 : blocked == true) return null;
+
+  final roster = await dbLoadDirectContactDeviceRoster(db, normalizedContact);
+  final legacyMlKem = contact['ml_kem_public_key'];
+  final legacyDeliverable =
+      legacyMlKem is String && legacyMlKem.trim().isNotEmpty;
+  final legacyAuthorized =
+      !roster.metadata.rosterInitialized ||
+      !roster.metadata.legacyTargetRevoked;
+
+  final targets = <DirectContactFanoutTargetFact>[
+    if (legacyDeliverable && legacyAuthorized)
+      DirectContactFanoutTargetFact(
+        peerId: normalizedContact,
+        mlKemPublicKey: legacyMlKem.trim(),
+        isLegacyAccountTarget: true,
+        fingerprint: computeDirectContactLegacyTargetFingerprint(
+          contactAccountPeerId: normalizedContact,
+          accountSigningPublicKey: accountKey,
+          legacyMlKemPublicKey: legacyMlKem.trim(),
+        ),
+      ),
+    if (roster.metadata.rosterInitialized)
+      for (final binding in roster.activeBindings)
+        if (binding.verifiedAccountSigningPublicKey == accountKey)
+          DirectContactFanoutTargetFact(
+            peerId: binding.transportPeerId,
+            mlKemPublicKey: binding.deviceMlKemPublicKey,
+            isLegacyAccountTarget: false,
+            fingerprint: binding.bindingFingerprint,
+            deviceId: binding.deviceId,
+            transportPublicKey: binding.transportPublicKey,
+          ),
+  ];
+
+  return DirectContactFanoutSnapshot(
+    contactAccountPeerId: normalizedContact,
+    contactAccountSigningPublicKey: accountKey,
+    rosterInitialized: roster.metadata.rosterInitialized,
+    targets: targets,
+  );
+}
+
+/// How one authenticated transport peer maps to logical contact authority.
+enum DirectTransportAuthorityKind {
+  /// The transport IS the contact's own dynamic account target.
+  legacy,
+
+  /// The transport is one ACTIVE, key-current linked device of the contact.
+  linked,
+}
+
+/// The exact reverse resolution from one authenticated physical transport to
+/// AT MOST one current logical contact/account (Plan 361).
+class DirectTransportAuthorityResolution {
+  const DirectTransportAuthorityResolution.authorized({
+    required DirectTransportAuthorityKind this.kind,
+    required String this.contactAccountPeerId,
+    required this.contactIsBlocked,
+  }) : refusalReason = null;
+
+  const DirectTransportAuthorityResolution.refused(this.refusalReason)
+    : kind = null,
+      contactAccountPeerId = null,
+      contactIsBlocked = false;
+
+  final DirectTransportAuthorityKind? kind;
+  final String? contactAccountPeerId;
+
+  /// Blocked state of the LOGICAL contact so per-kind incumbent blocked
+  /// policy can be applied before decrypt. A blocked contact's LINKED
+  /// transports refuse outright — blocking is exactly the signal that no new
+  /// linked authority is wanted.
+  final bool contactIsBlocked;
+  final String? refusalReason;
+
+  bool get authorized => kind != null;
+}
+
+/// Resolves one authenticated transport peer to exactly one current logical
+/// contact, or refuses.
+///
+/// Refusals: unknown transport, pending/rejected/revoked binding, roster not
+/// initialized for a linked claim, verified-key drift from the contact's
+/// CURRENT account key, contact removed, blocked contact behind a linked
+/// transport, a revoked legacy target, and a transport claimed simultaneously
+/// by legacy AND linked authority (ambiguous).
+///
+/// Receive/receipt apply MUST re-run this inside its own SQL transaction so
+/// revoke-first has zero durable effect and apply-first commits exactly once.
+Future<DirectTransportAuthorityResolution>
+dbResolveDirectTransportToLogicalContact(
+  DatabaseExecutor db, {
+  required String transportPeerId,
+}) async {
+  final normalizedTransport = transportPeerId.trim();
+  if (normalizedTransport.isEmpty) {
+    return const DirectTransportAuthorityResolution.refused('blank_transport');
+  }
+
+  final legacyRows = await db.query(
+    'contacts',
+    columns: const <String>['peer_id', 'public_key', 'is_blocked'],
+    where: 'peer_id = ?',
+    whereArgs: <Object?>[normalizedTransport],
+    limit: 1,
+  );
+  final bindingRows = await db.query(
+    'direct_contact_device_bindings',
+    where: 'transport_peer_id = ?',
+    whereArgs: <Object?>[normalizedTransport],
+    limit: 2,
+  );
+
+  if (legacyRows.isNotEmpty && bindingRows.isNotEmpty) {
+    return const DirectTransportAuthorityResolution.refused(
+      'ambiguous_transport',
+    );
+  }
+
+  if (legacyRows.isNotEmpty) {
+    final contact = legacyRows.single;
+    final accountKey = contact['public_key'];
+    if (accountKey is! String || accountKey.trim().isEmpty) {
+      return const DirectTransportAuthorityResolution.refused(
+        'missing_account_key',
+      );
+    }
+    final metadataRows = await db.query(
+      'direct_contact_device_roster_metadata',
+      where: 'contact_account_peer_id = ?',
+      whereArgs: <Object?>[normalizedTransport],
+      limit: 1,
+    );
+    if (metadataRows.isNotEmpty &&
+        metadataRows.single['legacy_target_state'] == 'revoked') {
+      return const DirectTransportAuthorityResolution.refused(
+        'legacy_target_revoked',
+      );
+    }
+    final blocked = contact['is_blocked'];
+    return DirectTransportAuthorityResolution.authorized(
+      kind: DirectTransportAuthorityKind.legacy,
+      contactAccountPeerId: normalizedTransport,
+      contactIsBlocked: blocked is int ? blocked != 0 : blocked == true,
+    );
+  }
+
+  if (bindingRows.isEmpty) {
+    return const DirectTransportAuthorityResolution.refused(
+      'unknown_transport',
+    );
+  }
+  if (bindingRows.length > 1) {
+    return const DirectTransportAuthorityResolution.refused(
+      'ambiguous_transport',
+    );
+  }
+  final binding = DirectContactDeviceBinding.fromRow(bindingRows.single);
+  if (binding.state != DirectContactDeviceBindingState.active) {
+    return DirectTransportAuthorityResolution.refused(
+      'binding_${binding.state.name}',
+    );
+  }
+  final authority = await _currentContactAuthority(
+    db,
+    binding.contactAccountPeerId,
+  );
+  if (authority == null) {
+    return const DirectTransportAuthorityResolution.refused('removed_contact');
+  }
+  if (authority.accountSigningPublicKey !=
+      binding.verifiedAccountSigningPublicKey) {
+    return const DirectTransportAuthorityResolution.refused(
+      'contact_account_key_drift',
+    );
+  }
+  final roster = await dbLoadDirectContactDeviceRoster(
+    db,
+    binding.contactAccountPeerId,
+  );
+  if (!roster.metadata.rosterInitialized) {
+    return const DirectTransportAuthorityResolution.refused(
+      'roster_not_initialized',
+    );
+  }
+  if (authority.isBlocked) {
+    return const DirectTransportAuthorityResolution.refused('blocked_contact');
+  }
+  return DirectTransportAuthorityResolution.authorized(
+    kind: DirectTransportAuthorityKind.linked,
+    contactAccountPeerId: binding.contactAccountPeerId,
+    contactIsBlocked: false,
+  );
 }
 
 /// Deletes one contact's roster metadata and bindings.

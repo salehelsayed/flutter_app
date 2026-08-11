@@ -8,6 +8,9 @@ import 'package:flutter_app/features/conversation/domain/models/direct_reaction_
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/direct_reaction_custody_p2p_service.dart';
@@ -30,6 +33,132 @@ void main() {
       now: () => DateTime.utc(2026, 8, 7, 12),
     );
   });
+
+  test(
+    'TC-361-02a ON stages the reaction REMOVE batch through the shared owner',
+    () async {
+      final events = <String>[];
+      List<DirectEventFanoutTargetCandidate>? stagedCandidates;
+      String? stagedAction;
+      final authoring = DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: 'my-peer',
+        readSnapshot: (contact) async {
+          events.add('resolve');
+          return DirectContactFanoutSnapshot(
+            contactAccountPeerId: contact,
+            contactAccountSigningPublicKey: 'signing-key',
+            rosterInitialized: true,
+            targets: const <DirectContactFanoutTargetFact>[
+              DirectContactFanoutTargetFact(
+                peerId: 'peer-device-a',
+                mlKemPublicKey: 'mlkem-a',
+                isLegacyAccountTarget: false,
+                fingerprint:
+                    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                deviceId: 'device-a',
+              ),
+              DirectContactFanoutTargetFact(
+                peerId: 'peer-device-b',
+                mlKemPublicKey: 'mlkem-b',
+                isLegacyAccountTarget: false,
+                fingerprint:
+                    'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+                deviceId: 'device-b',
+              ),
+            ],
+          );
+        },
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              events.add('encrypt:$recipientMlKemPublicKey');
+              return (
+                kem: 'k',
+                ciphertext: 'ct-$recipientMlKemPublicKey',
+                nonce: 'n',
+              );
+            },
+        loadTextSiblings: (_) async => const [],
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('REMOVE never stages fresh text'),
+        loadEventSiblings: (_) async => const [],
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => throw StateError('REMOVE never stages mutations'),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async {
+              stagedAction = action;
+              stagedCandidates = candidates;
+              expect(reactionRow['removed_at'], isNotNull);
+              return DbDirectEventFanoutStageResult(
+                outcome: DirectEventFanoutStageOutcome.applied,
+                rows: <Map<String, Object?>>[
+                  for (final candidate in candidates)
+                    <String, Object?>{
+                      'recipient_peer_id': candidate.recipientPeerId,
+                      'event_id': reactionRow['id'],
+                      'wire_envelope': candidate.wireEnvelope,
+                      'retry_count': 0,
+                      'last_attempt_at': null,
+                      'last_error_code': null,
+                      'contact_account_peer_id': contactAccountPeerId,
+                      'parent_message_id': parentMessageId,
+                      'created_at': '2026-08-11T12:00:00.000Z',
+                      'updated_at': '2026-08-11T12:00:00.000Z',
+                    },
+                ],
+              );
+            },
+      );
+
+      final result = await removeReaction(
+        p2pService: p2pService,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: 'peer-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'my-peer',
+        recipientMlKemPublicKey: 'key-1',
+        directEventFanout: authoring,
+      );
+
+      expect(result, RemoveReactionResult.success);
+      expect(stagedAction, 'remove');
+      expect(stagedCandidates, hasLength(2));
+      expect(events.where((event) => event.startsWith('encrypt')).length, 2);
+      expect(
+        reactionRepo.stageCallCount,
+        0,
+        reason: 'the shared fanout owner replaces the single-target stage',
+      );
+    },
+  );
 
   Future<RemoveReactionResult> invoke({
     InMemoryDirectReactionCustodyRepository? repository,

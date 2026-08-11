@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart'
@@ -20,6 +21,7 @@ import '../../domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import '../../domain/models/media_attachment.dart';
 import '../../domain/models/outgoing_ordinary_mutation_result.dart';
 import '../../domain/repositories/conversation_thread_summary_repository.dart';
+import '../../../contacts/domain/repositories/direct_contact_conversation_purge.dart';
 import '../../domain/repositories/direct_private_media_lifecycle_repository.dart';
 import '../../domain/repositories/message_repository.dart';
 
@@ -38,6 +40,10 @@ class MessageRepositoryImpl
         OutgoingTransportMutationRepository,
         OutgoingDirectTextInboxCustodyRepository,
         OutgoingDirectTextMutationInboxCustodyRepository,
+        OutgoingDirectEventFanoutRepository,
+        LinkedTransportIncomingApplyRepository,
+        OutgoingDirectFanoutReceiptSettlementRepository,
+        DirectContactPurgeReconciliation,
         IncomingOrdinaryTextApplyRepository,
         IncomingDirectDeletionApplyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
@@ -120,6 +126,66 @@ class MessageRepositoryImpl
   dbLoadDirectInboxCustodyOutboxForMessage;
   final Future<Map<String, Object?>?> Function({required String messageId})?
   dbLoadDirectInboxCustodyOutboxOwnerForMessageId;
+  // 361: v113 blob-free fanout delegates. All-or-nothing capability.
+  final Future<DirectContactFanoutSnapshot?> Function({
+    required String contactAccountPeerId,
+  })?
+  dbReadDirectContactFanoutSnapshot;
+  final Future<List<Map<String, Object?>>> Function({
+    required String messageId,
+  })?
+  dbLoadDirectInboxCustodyOutboxRowsForMessageId;
+  final Future<List<Map<String, Object?>>> Function({required String eventId})?
+  dbLoadDirectReactionInboxCustodyOutboxRowsForEventId;
+  final Future<DbDirectEventFanoutStageResult> Function({
+    required Map<String, Object?> stagedRow,
+    required String messageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  })?
+  dbStageOutgoingDirectTextFanoutInboxCustody;
+  final Future<DbDirectEventFanoutStageResult> Function({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String eventId,
+    required String parentMessageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  })?
+  dbStageOutgoingDirectTextMutationFanoutInboxCustody;
+  final Future<DbIncomingOrdinaryTextMutationResult> Function({
+    required Map<String, Object?> incomingRow,
+    required IncomingOrdinaryTextMutationKind kind,
+    required String authenticatedTransportPeerId,
+  })?
+  dbApplyIncomingOrdinaryTextMutationWithAuthority;
+  final Future<DbIncomingDirectDeletionResult> Function({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+    required String createdAt,
+    required String authenticatedTransportPeerId,
+  })?
+  dbApplyIncomingDirectMessageDeletionWithAuthority;
+  final Future<OutgoingOrdinaryMutationOutcome> Function({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool isDeleteTombstone,
+    String? expectedDirectEventFanoutGenerationId,
+    String? authenticatedTransportPeerId,
+  })?
+  dbSettleOutgoingOrdinaryTransportWithFanoutAuthority;
   final Future<bool> Function({
     required String recipientPeerId,
     required String messageId,
@@ -405,6 +471,14 @@ class MessageRepositoryImpl
     this.dbUpdateWireEnvelope,
     this.dbStageOutgoingOrdinaryAttempt,
     this.dbStageOutgoingDirectTextInboxCustody,
+    this.dbReadDirectContactFanoutSnapshot,
+    this.dbLoadDirectInboxCustodyOutboxRowsForMessageId,
+    this.dbLoadDirectReactionInboxCustodyOutboxRowsForEventId,
+    this.dbStageOutgoingDirectTextFanoutInboxCustody,
+    this.dbStageOutgoingDirectTextMutationFanoutInboxCustody,
+    this.dbApplyIncomingOrdinaryTextMutationWithAuthority,
+    this.dbApplyIncomingDirectMessageDeletionWithAuthority,
+    this.dbSettleOutgoingOrdinaryTransportWithFanoutAuthority,
     this.dbLoadDirectInboxCustodyOutbox,
     this.dbLoadDirectInboxCustodyOutboxForMessage,
     this.dbLoadDirectInboxCustodyOutboxOwnerForMessageId,
@@ -471,6 +545,116 @@ class MessageRepositoryImpl
   bool get supportsDirectTextMutationInboxCustody =>
       dbStageOutgoingDirectTextMutationInboxCustody != null &&
       supportsDirectMutationInboxCustodyLifecycle;
+
+  @override
+  bool get supportsDirectEventFanout =>
+      dbReadDirectContactFanoutSnapshot != null &&
+      dbLoadDirectInboxCustodyOutboxRowsForMessageId != null &&
+      dbLoadDirectReactionInboxCustodyOutboxRowsForEventId != null &&
+      dbStageOutgoingDirectTextFanoutInboxCustody != null &&
+      dbStageOutgoingDirectTextMutationFanoutInboxCustody != null &&
+      supportsDirectTextInboxCustody &&
+      supportsDirectTextMutationInboxCustody;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshot(
+    String contactAccountPeerId,
+  ) {
+    final delegate = dbReadDirectContactFanoutSnapshot;
+    if (delegate == null) {
+      throw StateError('direct event fanout capability is unavailable');
+    }
+    return delegate(contactAccountPeerId: contactAccountPeerId);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> loadDirectTextFanoutSiblings(
+    String messageId,
+  ) {
+    final delegate = dbLoadDirectInboxCustodyOutboxRowsForMessageId;
+    if (delegate == null) {
+      throw StateError('direct event fanout capability is unavailable');
+    }
+    return delegate(messageId: messageId);
+  }
+
+  @override
+  Future<List<Map<String, Object?>>> loadDirectEventFanoutSiblings(
+    String eventId,
+  ) {
+    final delegate = dbLoadDirectReactionInboxCustodyOutboxRowsForEventId;
+    if (delegate == null) {
+      throw StateError('direct event fanout capability is unavailable');
+    }
+    return delegate(eventId: eventId);
+  }
+
+  @override
+  Future<DbDirectEventFanoutStageResult> stageDirectTextFanout({
+    required Map<String, Object?> stagedRow,
+    required String messageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  }) {
+    final delegate = dbStageOutgoingDirectTextFanoutInboxCustody;
+    if (delegate == null) {
+      throw StateError('direct event fanout capability is unavailable');
+    }
+    return delegate(
+      stagedRow: stagedRow,
+      messageId: messageId,
+      contactAccountPeerId: contactAccountPeerId,
+      senderTransportPeerId: senderTransportPeerId,
+      expectedSnapshot: expectedSnapshot,
+      candidates: candidates,
+    );
+  }
+
+  @override
+  Future<DbDirectEventFanoutStageResult> stageDirectTextMutationFanout({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String eventId,
+    required String parentMessageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  }) {
+    final delegate = dbStageOutgoingDirectTextMutationFanoutInboxCustody;
+    if (delegate == null) {
+      throw StateError('direct event fanout capability is unavailable');
+    }
+    return delegate(
+      expectedRow: expectedRow,
+      stagedRow: stagedRow,
+      kind: kind,
+      eventId: eventId,
+      parentMessageId: parentMessageId,
+      contactAccountPeerId: contactAccountPeerId,
+      senderTransportPeerId: senderTransportPeerId,
+      expectedSnapshot: expectedSnapshot,
+      candidates: candidates,
+    );
+  }
+
+  @override
+  Future<void> reconcileDirectContactConversationPurge(String peerId) async {
+    // 361: the final serialized purge already committed the physical deletion.
+    // Reconcile the in-memory caches and removal publication from that
+    // committed truth — mirroring deleteMessagesForContact's post-commit tail
+    // without re-running any DB deletion.
+    _messageSnapshots.removeWhere(
+      (_, message) => message.contactPeerId == peerId,
+    );
+    _messageRemovalController.add(
+      DirectMessageRemoval(contactPeerId: peerId, messageId: null),
+    );
+    await directReactionProjection?.removeAuthoredTargetsForContact(peerId);
+  }
 
   @override
   bool get supportsDirectPrivateDeletionInboxCustody =>
@@ -966,6 +1150,131 @@ class MessageRepositoryImpl
       outcome: result.outcome,
       message: message,
     );
+  }
+
+  @override
+  bool get supportsLinkedTransportIncomingApply =>
+      dbApplyIncomingOrdinaryTextMutationWithAuthority != null &&
+      dbApplyIncomingDirectMessageDeletionWithAuthority != null;
+
+  @override
+  Future<IncomingOrdinaryTextApplyResult>
+  applyIncomingOrdinaryTextMutationWithTransportAuthority({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+    required String authenticatedTransportPeerId,
+  }) async {
+    final apply = dbApplyIncomingOrdinaryTextMutationWithAuthority;
+    if (apply == null || incoming.media.isNotEmpty) {
+      return const IncomingOrdinaryTextApplyResult(
+        outcome: IncomingOrdinaryTextMutationOutcome.refused,
+        message: null,
+      );
+    }
+    final result = await apply(
+      incomingRow: incoming.toMap(),
+      kind: kind,
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+    );
+    final message = result.row == null
+        ? null
+        : _rememberMessage(ConversationMessage.fromMap(result.row!));
+    if (result.outcome.changed && message != null) {
+      try {
+        _messageChangeController.add(message);
+      } catch (_) {
+        // The DB result remains authoritative after publication failure.
+      }
+    }
+    return IncomingOrdinaryTextApplyResult(
+      outcome: result.outcome,
+      message: message,
+    );
+  }
+
+  @override
+  Future<IncomingDirectDeletionApplyResult>
+  applyIncomingDirectMessageDeletionWithTransportAuthority({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+    required String authenticatedTransportPeerId,
+  }) async {
+    final apply = dbApplyIncomingDirectMessageDeletionWithAuthority;
+    if (apply == null) {
+      return const IncomingDirectDeletionApplyResult(
+        outcome: IncomingDirectDeletionOutcome.refused,
+        message: null,
+      );
+    }
+    final result = await apply(
+      messageId: messageId,
+      senderPeerId: senderPeerId,
+      deletedAt: deletedAt,
+      transport: transport,
+      createdAt: DateTime.now().toUtc().toIso8601String(),
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+    );
+    final message = result.row == null
+        ? null
+        : _rememberMessage(ConversationMessage.fromMap(result.row!));
+    if (result.outcome.changed && message != null) {
+      try {
+        _messageChangeController.add(message);
+      } catch (_) {
+        // The committed tombstone remains authoritative after a failed
+        // publication; deletion durability never depends on the stream.
+      }
+    }
+    return IncomingDirectDeletionApplyResult(
+      outcome: result.outcome,
+      message: message,
+    );
+  }
+
+  @override
+  bool get supportsDirectFanoutReceiptSettlement =>
+      dbSettleOutgoingOrdinaryTransportWithFanoutAuthority != null;
+
+  @override
+  Future<OutgoingOrdinaryMutationOutcome>
+  settleOutgoingOrdinaryTransportWithFanoutAuthority({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool isDeleteTombstone,
+    String? expectedDirectEventFanoutGenerationId,
+    String? authenticatedTransportPeerId,
+  }) async {
+    final settle = dbSettleOutgoingOrdinaryTransportWithFanoutAuthority;
+    if (settle == null) {
+      return OutgoingOrdinaryMutationOutcome.refused;
+    }
+    final outcome = await settle(
+      messageId: messageId,
+      expectedContactPeerId: expectedContactPeerId,
+      expectedEnvelope: expectedEnvelope,
+      status: status,
+      transport: transport,
+      relayExpiresAt: relayExpiresAt,
+      mode: mode,
+      isDeleteTombstone: isDeleteTombstone,
+      expectedDirectEventFanoutGenerationId:
+          expectedDirectEventFanoutGenerationId,
+      authenticatedTransportPeerId: authenticatedTransportPeerId,
+    );
+    if (outcome == OutgoingOrdinaryMutationOutcome.applied) {
+      await _publishCommittedOutgoingOrdinaryMutationBestEffort(
+        messageId: messageId,
+        outcome: outcome,
+      );
+    }
+    return outcome;
   }
 
   /// Publishes an already-returned ordinary DB mutation without letting

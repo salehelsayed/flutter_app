@@ -386,6 +386,38 @@ void main() {
       expect(count, 0);
     });
 
+    test('TC-361-01b a failed wrapper without the plural capability refuses a '
+        'marked generation with zero siblings before re-encryption', () async {
+      identityRepo.seed(makeIdentity());
+      final marked = makeFailedMessage().copyWith(
+        directEventFanoutGenerationId: makeFailedMessage().id,
+      );
+      messageRepo.seed(<ConversationMessage>[marked]);
+      contactRepo.seed(<ContactModel>[makeContact()]);
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+      );
+
+      final count = await retryFailedMessages(
+        messageRepo: messageRepo,
+        identityRepo: identityRepo,
+        contactRepo: contactRepo,
+        p2pService: p2pService,
+        bridge: bridge,
+      );
+
+      expect(count, 0);
+      expect(
+        bridge.sendCallCount,
+        0,
+        reason: 'a marked generation must never be re-encrypted',
+      );
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(p2pService.sendMessageCallCount, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect((await messageRepo.getMessage(marked.id))!.status, 'failed');
+    });
+
     test(
       'Plan 344 pending v108 retry cannot wrap bool success as protected receipt',
       () async {

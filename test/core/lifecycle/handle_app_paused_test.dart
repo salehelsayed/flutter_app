@@ -3,6 +3,8 @@ import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 
 import '../../shared/fakes/in_memory_message_repository.dart';
+import '../bridge/fake_bridge.dart';
+import '../services/fake_p2p_service.dart';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -48,20 +50,19 @@ void main() {
     test('completes without error when no sending messages exist', () async {
       final messageRepo = InMemoryMessageRepository();
 
-      await expectLater(
-        handleAppPaused(messageRepo: messageRepo),
-        completes,
-      );
+      await expectLater(handleAppPaused(messageRepo: messageRepo), completes);
     });
 
-    test('returns 0 transitioned messages when no sending messages exist',
-        () async {
-      final messageRepo = InMemoryMessageRepository();
+    test(
+      'returns 0 transitioned messages when no sending messages exist',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
 
-      final result = await handleAppPaused(messageRepo: messageRepo);
+        final result = await handleAppPaused(messageRepo: messageRepo);
 
-      expect(result.transitionedCount, 0);
-    });
+        expect(result.transitionedCount, 0);
+      },
+    );
   });
 
   group('handleAppPaused — transitions sending -> failed', () {
@@ -107,26 +108,27 @@ void main() {
       expect(msgsC.single.status, 'failed');
     });
 
-    test('returns correct count for multiple concurrent sending messages',
-        () async {
-      final messageRepo = InMemoryMessageRepository();
-      for (var i = 1; i <= 5; i++) {
-        await messageRepo.saveMessage(
-          makeSendingMessage(id: 'msg-00$i', contactPeerId: 'peer-$i'),
-        );
-      }
+    test(
+      'returns correct count for multiple concurrent sending messages',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        for (var i = 1; i <= 5; i++) {
+          await messageRepo.saveMessage(
+            makeSendingMessage(id: 'msg-00$i', contactPeerId: 'peer-$i'),
+          );
+        }
 
-      final result = await handleAppPaused(messageRepo: messageRepo);
+        final result = await handleAppPaused(messageRepo: messageRepo);
 
-      expect(result.transitionedCount, 5);
-    });
+        expect(result.transitionedCount, 5);
+      },
+    );
   });
 
   group('handleAppPaused — preserves wireEnvelope', () {
     test('wireEnvelope is preserved after status transition', () async {
       final messageRepo = InMemoryMessageRepository();
-      const envelope =
-          '{"type":"chat_message","version":"2","encrypted":{}}';
+      const envelope = '{"type":"chat_message","version":"2","encrypted":{}}';
       await messageRepo.saveMessage(
         makeSendingMessage(id: 'msg-001', wireEnvelope: envelope),
       );
@@ -180,8 +182,7 @@ void main() {
 
     test('sent messages are untouched', () async {
       final messageRepo = InMemoryMessageRepository();
-      await messageRepo
-          .saveMessage(makeMessageWithStatus('msg-sent', 'sent'));
+      await messageRepo.saveMessage(makeMessageWithStatus('msg-sent', 'sent'));
 
       await handleAppPaused(messageRepo: messageRepo);
 
@@ -211,23 +212,26 @@ void main() {
       expect(messages.single.status, 'sending');
     });
 
-    test('mixed statuses: only sending outgoing messages are transitioned',
-        () async {
-      final messageRepo = InMemoryMessageRepository();
-      await messageRepo.saveMessage(makeMessageWithStatus('ok-1', 'sent'));
-      await messageRepo
-          .saveMessage(makeMessageWithStatus('ok-2', 'delivered'));
-      await messageRepo.saveMessage(makeMessageWithStatus('ok-3', 'failed'));
-      await messageRepo.saveMessage(makeSendingMessage(id: 'bad-1'));
-      await messageRepo.saveMessage(makeSendingMessage(id: 'bad-2'));
+    test(
+      'mixed statuses: only sending outgoing messages are transitioned',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        await messageRepo.saveMessage(makeMessageWithStatus('ok-1', 'sent'));
+        await messageRepo.saveMessage(
+          makeMessageWithStatus('ok-2', 'delivered'),
+        );
+        await messageRepo.saveMessage(makeMessageWithStatus('ok-3', 'failed'));
+        await messageRepo.saveMessage(makeSendingMessage(id: 'bad-1'));
+        await messageRepo.saveMessage(makeSendingMessage(id: 'bad-2'));
 
-      final result = await handleAppPaused(messageRepo: messageRepo);
+        final result = await handleAppPaused(messageRepo: messageRepo);
 
-      expect(result.transitionedCount, 2);
-      final sentMsg = await messageRepo.getMessagesForContact('peer-a');
-      final statuses = sentMsg.map((m) => m.status).toSet();
-      expect(statuses, containsAll(['sent', 'delivered', 'failed']));
-    });
+        expect(result.transitionedCount, 2);
+        final sentMsg = await messageRepo.getMessagesForContact('peer-a');
+        final statuses = sentMsg.map((m) => m.status).toSet();
+        expect(statuses, containsAll(['sent', 'delivered', 'failed']));
+      },
+    );
   });
 
   group('handleAppPaused — result fields', () {
@@ -247,5 +251,49 @@ void main() {
 
       expect(result.transitionedCount, isA<int>());
     });
+  });
+
+  group('TC-361-03b restricted linked pause', () {
+    test(
+      'TC-361-03b linked runtime starts only direct blob-free event owners — '
+      'the linked pause call shape runs the local-only sweep with the '
+      'FDC-06 flush parked and zero network side effects',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        await messageRepo.saveMessage(makeSendingMessage(id: 'linked-p-1'));
+        final p2pService = FakeP2PService();
+        addTearDown(p2pService.dispose);
+        final bridge = FakeBridge();
+
+        // The exact argument shape the application root uses for the
+        // restricted linked role (_onPaused linked branch).
+        final result = await handleAppPaused(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          enablePauseFlush: false,
+        );
+
+        expect(result.transitionedCount, 1);
+        expect(
+          result.flushDepositedCount,
+          0,
+          reason: 'the pause flush must stay parked for the linked role',
+        );
+        final messages = await messageRepo.getMessagesForContact('peer-a');
+        expect(messages.single.status, 'failed');
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason: 'no durable-inbox deposit may run on the linked pause',
+        );
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          bridge.sendCallCount,
+          0,
+          reason: 'the linked pause is local-DB-only',
+        );
+      },
+    );
   });
 }

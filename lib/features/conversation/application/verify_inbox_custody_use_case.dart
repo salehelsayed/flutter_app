@@ -32,6 +32,10 @@ Future<int> verifyInboxCustody({
   for (final row in rows) {
     final envelope = row.wireEnvelope;
     if (envelope == null || envelope.isEmpty) continue;
+    // 361: a fanout-marked generation is excluded at the DB loader and again
+    // here — the verifier may never re-store the canonical witness to the
+    // logical contact.
+    if (row.directEventFanoutGenerationId != null) continue;
     if (!_shouldRecheck(row, now)) continue;
 
     try {

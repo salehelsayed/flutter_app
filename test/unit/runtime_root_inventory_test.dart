@@ -1843,8 +1843,10 @@ flutter:
           'Future<void> callGroupLeave(',
       // 360: DB v112 adds the remote-contact linked-device roster. The anchor
       // tracks the CURRENT floor, so it advances with the schema.
+      // 361: v113 adds the direct linked-device blob-free event fanout
+      // columns; the floor advances with it.
       'lib/core/database/app_database_version.dart':
-          'const int currentIdentityDatabaseVersion = 112;',
+          'const int currentIdentityDatabaseVersion = 113;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

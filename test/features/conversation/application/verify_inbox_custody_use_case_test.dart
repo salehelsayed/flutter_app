@@ -407,5 +407,37 @@ void main() {
         expect(inner['action'], 'edit');
       },
     );
+
+    test(
+      'TC-361-01b the verifier skips fanout-marked generations entirely: it '
+      'may never re-store the canonical witness to the logical contact',
+      () async {
+        final marked = makeInboxedRow(
+          id: 'msg-fanout-marked',
+          contactPeerId: 'peer-logical-contact',
+        ).copyWith(directEventFanoutGenerationId: 'msg-fanout-marked');
+        final legacy = makeInboxedRow(id: 'msg-legacy-owner');
+        final store = RecordingDetailedStoreFn([
+          const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            expiresAtMs: 1900000060000,
+          ),
+        ]);
+
+        final repaired = await runSweep(
+          custodyRows: [marked, legacy],
+          store: store,
+        );
+
+        expect(repaired, 1);
+        expect(store.calls, hasLength(1));
+        expect(store.calls.single.peerId, 'peer-target');
+        expect(
+          custodyMarks.map((mark) => mark.id),
+          ['msg-legacy-owner'],
+          reason: 'a marked generation is left untouched, not marked checked',
+        );
+      },
+    );
   });
 }

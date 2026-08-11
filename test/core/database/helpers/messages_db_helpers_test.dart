@@ -2757,6 +2757,177 @@ void main() {
       }
     });
   });
+
+  group('TC-361-01b fanout generation marker protection', () {
+    const t0 = '2026-08-11T10:00:00.000Z';
+    const contactAccount = 'peer-marker-contact';
+    late Directory tempDirectory;
+    late Database current;
+
+    setUp(() async {
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'messages_fanout_marker_',
+      );
+      current = await _openCurrentSchema('${tempDirectory.path}/identity.db');
+    });
+
+    tearDown(() async {
+      if (current.isOpen) await current.close();
+      if (await tempDirectory.exists()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    test(
+      'TC-361-01b generic saves preserve the generation and cannot restore a '
+      'scrubbed witness',
+      () async {
+        const messageId = 'marker-scrubbed';
+        await current.insert('messages', const <String, Object?>{
+          'id': messageId,
+          'contact_peer_id': contactAccount,
+          'sender_peer_id': 'peer-self',
+          'text': '',
+          'timestamp': t0,
+          'status': 'inboxed',
+          'is_incoming': 0,
+          'created_at': t0,
+          'transport': 'inbox',
+          'wire_envelope': null,
+          'hidden_at': t0,
+          'direct_event_fanout_generation_id': messageId,
+        });
+
+        // A delayed generic whole-row save with a stale visible projection —
+        // including the old witness bytes — may not resurrect anything.
+        await dbInsertMessage(current, const <String, Object?>{
+          'id': messageId,
+          'contact_peer_id': contactAccount,
+          'sender_peer_id': 'peer-self',
+          'text': 'stale visible text',
+          'timestamp': t0,
+          'status': 'sending',
+          'is_incoming': 0,
+          'created_at': t0,
+          'wire_envelope': '{"stale":"witness"}',
+          'hidden_at': null,
+          'direct_event_fanout_generation_id': null,
+        });
+        final scrubbed = (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(scrubbed['text'], '');
+        expect(scrubbed['wire_envelope'], isNull);
+        expect(scrubbed['hidden_at'], t0);
+        expect(
+          scrubbed['direct_event_fanout_generation_id'],
+          messageId,
+          reason: 'a generic save may never clear the no-remint fact',
+        );
+      },
+    );
+
+    test('TC-361-01b a live marked row keeps its generation through generic '
+        'saves and refuses generation-blind receipt settlement', () async {
+      const messageId = 'marker-live';
+      const witness =
+          '{"type":"chat_message","version":"2","id":"marker-live",'
+          '"senderPeerId":"peer-self","encrypted":{"kem":"kem",'
+          '"ciphertext":"cipher-witness","nonce":"nonce"}}';
+      await current.insert('messages', const <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': contactAccount,
+        'sender_peer_id': 'peer-self',
+        'text': 'fanout text',
+        'timestamp': t0,
+        'status': 'inboxed',
+        'is_incoming': 0,
+        'created_at': t0,
+        'transport': 'inbox',
+        'wire_envelope': witness,
+        'direct_event_fanout_generation_id': messageId,
+      });
+
+      await dbInsertMessage(current, const <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': contactAccount,
+        'sender_peer_id': 'peer-self',
+        'text': 'fanout text',
+        'timestamp': t0,
+        'status': 'sending',
+        'is_incoming': 0,
+        'created_at': t0,
+        'wire_envelope': null,
+        'direct_event_fanout_generation_id': null,
+      });
+      final afterSave = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(afterSave['direct_event_fanout_generation_id'], messageId);
+      expect(
+        afterSave['wire_envelope'],
+        witness,
+        reason: 'transport columns stay frozen on a marked generation',
+      );
+      expect(afterSave['status'], 'inboxed');
+
+      // Receipt settlement that ignores or mismatches the generation is
+      // zero-effect; the exact generation settles and clears the witness.
+      expect(
+        await dbSettleOutgoingOrdinaryTransport(
+          current,
+          messageId: messageId,
+          expectedContactPeerId: contactAccount,
+          expectedEnvelope: witness,
+          status: 'delivered',
+          transport: 'inbox',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+        ),
+        OutgoingOrdinaryMutationOutcome.preserved,
+      );
+      expect(
+        await dbSettleOutgoingOrdinaryTransport(
+          current,
+          messageId: messageId,
+          expectedContactPeerId: contactAccount,
+          expectedEnvelope: witness,
+          status: 'delivered',
+          transport: 'inbox',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+          expectedDirectEventFanoutGenerationId: 'a-later-generation',
+        ),
+        OutgoingOrdinaryMutationOutcome.preserved,
+      );
+      expect(
+        await dbSettleOutgoingOrdinaryTransport(
+          current,
+          messageId: messageId,
+          expectedContactPeerId: contactAccount,
+          expectedEnvelope: witness,
+          status: 'delivered',
+          transport: 'inbox',
+          relayExpiresAt: null,
+          mode: OutgoingOrdinarySettlementMode.receipt,
+          expectedDirectEventFanoutGenerationId: messageId,
+        ),
+        OutgoingOrdinaryMutationOutcome.applied,
+      );
+      final delivered = (await current.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(delivered['status'], 'delivered');
+      expect(delivered['wire_envelope'], isNull);
+      expect(delivered['direct_event_fanout_generation_id'], messageId);
+    });
+  });
 }
 
 Future<Database> _openCurrentSchema(String path) =>

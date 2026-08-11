@@ -1,5 +1,9 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/003_mlkem_keys.dart';
 import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
@@ -7,6 +11,10 @@ import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/production_migration_registry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 
 void main() {
   late Database db;
@@ -345,5 +353,314 @@ void main() {
       final exists = await dbContactExists(db, 'peer-exists');
       expect(exists, isTrue);
     });
+  });
+
+  group('TC-361-01b final serialized contact purge', () {
+    const purgeContact = 'peer-purge-contact';
+    const otherContact = 'peer-other-contact';
+    const deviceTransport = 'peer-purge-device-transport';
+    const t0 = '2026-08-11T10:00:00.000Z';
+
+    late Directory tempDirectory;
+    late Database current;
+
+    setUp(() async {
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'contact_purge_v113_',
+      );
+      current = await databaseFactoryFfi.openDatabase(
+        '${tempDirectory.path}/identity.db',
+        options: OpenDatabaseOptions(
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+        ),
+      );
+      for (final peer in const <String>[purgeContact, otherContact]) {
+        await current.insert('contacts', {
+          ...makeContactRow(peerId: peer, mlKemPublicKey: 'mlkem-$peer'),
+        });
+      }
+      await current.insert('direct_contact_device_roster_metadata', {
+        'contact_account_peer_id': purgeContact,
+        'roster_initialized': 1,
+        'legacy_target_state': 'active',
+        'initialized_at': t0,
+        'legacy_revoked_at': null,
+        'updated_at': t0,
+      });
+      await current.insert('direct_contact_device_bindings', {
+        'contact_account_peer_id': purgeContact,
+        'device_id': 'purge-device',
+        'verified_account_signing_public_key': 'pk-base64',
+        'transport_peer_id': deviceTransport,
+        'transport_public_key': 'purge-transport-key',
+        'device_ml_kem_public_key': 'purge-device-mlkem',
+        'binding_fingerprint': 'c' * 64,
+        'state': 'active',
+        'staged_at': t0,
+        'decided_at': t0,
+      });
+
+      Future<void> insertMessage(
+        String id,
+        String contact, {
+        String? generation,
+      }) => current.insert('messages', {
+        'id': id,
+        'contact_peer_id': contact,
+        'sender_peer_id': 'peer-self',
+        'text': 'text for $id',
+        'timestamp': t0,
+        'status': 'sent',
+        'is_incoming': 0,
+        'created_at': t0,
+        'direct_event_fanout_generation_id': generation,
+      });
+      await insertMessage('purge-m1', purgeContact, generation: 'purge-m1');
+      await insertMessage('purge-m2', purgeContact);
+      await insertMessage('other-m1', otherContact);
+      for (final (id, messageId) in const <(String, String)>[
+        ('purge-r1', 'purge-m1'),
+        ('other-r1', 'other-m1'),
+      ]) {
+        await current.insert('message_reactions', {
+          'id': id,
+          'message_id': messageId,
+          'emoji': '👍',
+          'sender_peer_id': 'peer-self',
+          'timestamp': t0,
+          'created_at': t0,
+        });
+      }
+      Future<void> insertV108(
+        String messageId,
+        String recipient, {
+        String? contactAccount,
+        required String incarnation,
+      }) => current.insert('direct_inbox_custody_outbox', {
+        'recipient_peer_id': recipient,
+        'message_id': messageId,
+        'incarnation_id': incarnation,
+        'wire_envelope': '{"probe":"$messageId"}',
+        'retry_count': 0,
+        'created_at': t0,
+        'updated_at': t0,
+        'contact_account_peer_id': contactAccount,
+      });
+      // A marked fanout sibling addressed to the linked transport, plus a
+      // historical row whose ONLY logical-contact fact is its recipient.
+      await insertV108(
+        'purge-m1',
+        deviceTransport,
+        contactAccount: purgeContact,
+        incarnation: '11111111111111111111111111111111',
+      );
+      await insertV108(
+        'purge-m2',
+        purgeContact,
+        incarnation: '22222222222222222222222222222222',
+      );
+      await insertV108(
+        'other-m1',
+        otherContact,
+        incarnation: '33333333333333333333333333333333',
+      );
+      Future<void> insertV109(
+        String eventId,
+        String recipient, {
+        String? contactAccount,
+        String? parentMessageId,
+      }) => current.insert('direct_reaction_inbox_custody_outbox', {
+        'recipient_peer_id': recipient,
+        'event_id': eventId,
+        'wire_envelope': '{"probe":"$eventId"}',
+        'retry_count': 0,
+        'created_at': t0,
+        'updated_at': t0,
+        'contact_account_peer_id': contactAccount,
+        'parent_message_id': parentMessageId,
+      });
+      await insertV109(
+        'purge-e1',
+        deviceTransport,
+        contactAccount: purgeContact,
+        parentMessageId: 'purge-m1',
+      );
+      await insertV109('purge-e2', purgeContact);
+      await insertV109('other-e1', otherContact);
+    });
+
+    tearDown(() async {
+      if (current.isOpen) await current.close();
+      if (await tempDirectory.exists()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    Future<List<Object?>> remainingFor(String table, String column) async =>
+        (await current.query(
+          table,
+          orderBy: column,
+        )).map((row) => row[column]).toList();
+
+    test('one transaction sweeps logical rows, roster, and contact', () async {
+      final result = await dbPurgeDirectContactConversationAndContact(
+        current,
+        purgeContact,
+      );
+
+      expect(result.deletedTextCustodyRows, 2);
+      expect(result.deletedEventCustodyRows, 2);
+      expect(result.deletedReactions, 1);
+      expect(result.deletedMessages, 2);
+      expect(result.deletedContact, isTrue);
+
+      expect(await remainingFor('messages', 'id'), ['other-m1']);
+      expect(await remainingFor('message_reactions', 'id'), ['other-r1']);
+      expect(
+        await remainingFor('direct_inbox_custody_outbox', 'message_id'),
+        ['other-m1'],
+        reason:
+            'COALESCE(contact_account_peer_id, recipient_peer_id) owns '
+            'both marked and historical rows',
+      );
+      expect(
+        await remainingFor('direct_reaction_inbox_custody_outbox', 'event_id'),
+        ['other-e1'],
+      );
+      expect(await current.query('direct_contact_device_bindings'), isEmpty);
+      expect(
+        await current.query('direct_contact_device_roster_metadata'),
+        isEmpty,
+      );
+      expect(await remainingFor('contacts', 'peer_id'), [otherContact]);
+    });
+
+    test(
+      'a racing writer serializes behind the purge and finds no authority',
+      () async {
+        final observer = await databaseFactoryFfi.openDatabase(
+          '${tempDirectory.path}/identity.db',
+          options: OpenDatabaseOptions(readOnly: true, singleInstance: false),
+        );
+        final transactionEntered = Completer<void>();
+        final releaseTransaction = Completer<void>();
+        try {
+          final purge = dbPurgeDirectContactConversationAndContact(
+            current,
+            purgeContact,
+            beforeContactDeleteForTest: () async {
+              transactionEntered.complete();
+              await releaseTransaction.future;
+            },
+          );
+          await transactionEntered.future;
+
+          // The observer still sees the pre-purge state: nothing is visible
+          // until the single transaction commits.
+          expect(
+            (await observer.query(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: const <Object?>[purgeContact],
+            )),
+            hasLength(1),
+          );
+
+          // A racing reaction apply through the SAME database serializes behind
+          // the purge transaction instead of interleaving.
+          var stageCompleted = false;
+          final racing = current
+              .insert('message_reactions', const {
+                'id': 'purge-racing-reaction',
+                'message_id': 'purge-m1',
+                'emoji': '🎯',
+                'sender_peer_id': 'peer-self',
+                'timestamp': t0,
+                'created_at': t0,
+              })
+              .whenComplete(() => stageCompleted = true);
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          expect(
+            stageCompleted,
+            isFalse,
+            reason: 'the racing writer must wait for the owning transaction',
+          );
+
+          releaseTransaction.complete();
+          await purge;
+          await racing;
+
+          // The late reaction row references a purged parent and a purged
+          // contact: it cannot recreate an orphan conversation, and the final
+          // owner's sweep semantics make the next purge-order equivalent.
+          expect(
+            await current.query(
+              'messages',
+              where: 'contact_peer_id = ?',
+              whereArgs: const <Object?>[purgeContact],
+            ),
+            isEmpty,
+          );
+          expect(
+            await current.query(
+              'contacts',
+              where: 'peer_id = ?',
+              whereArgs: const <Object?>[purgeContact],
+            ),
+            isEmpty,
+          );
+        } finally {
+          if (!releaseTransaction.isCompleted) releaseTransaction.complete();
+          await observer.close();
+        }
+      },
+    );
+
+    test(
+      'delete-first makes later completion and staging absent or refused',
+      () async {
+        final capturedRow = (await current.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>['purge-m1'],
+        )).single;
+
+        await dbPurgeDirectContactConversationAndContact(current, purgeContact);
+
+        final completion = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+          current,
+          recipientPeerId: capturedRow['recipient_peer_id'] as String,
+          messageId: capturedRow['message_id'] as String,
+          expectedIncarnationId: capturedRow['incarnation_id'] as String,
+          expectedWireEnvelope: capturedRow['wire_envelope'] as String,
+          relayExpiresAt: 1900000060000,
+        );
+        expect(
+          completion,
+          DirectInboxCustodyCompletionOutcome.stale,
+          reason: 'a purged obligation is absent, never a reconstruction seed',
+        );
+        expect(
+          await current.query(
+            'messages',
+            where: 'contact_peer_id = ?',
+            whereArgs: const <Object?>[purgeContact],
+          ),
+          isEmpty,
+          reason: 'no row may recreate an orphan conversation after the purge',
+        );
+        expect(
+          await dbReadDirectContactFanoutSnapshot(
+            current,
+            contactAccountPeerId: purgeContact,
+          ),
+          isNull,
+          reason: 'a removed contact refuses fanout rather than falling back',
+        );
+      },
+    );
   });
 }

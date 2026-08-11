@@ -9,6 +9,9 @@ import 'package:flutter_app/features/conversation/domain/models/message_reaction
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/services/fake_p2p_service.dart';
 import '../../../shared/fakes/direct_reaction_custody_p2p_service.dart';
@@ -51,6 +54,172 @@ void main() {
     senderPeerId: 'my-peer',
     recipientMlKemPublicKey: 'key-1',
   );
+
+  DirectEventFanoutAuthoring fanoutAuthoring({
+    required bool selectorOn,
+    required List<String> targets,
+    required List<String> events,
+    void Function(List<DirectEventFanoutTargetCandidate> candidates)? onStage,
+  }) => DirectEventFanoutAuthoring(
+    selector: selectorOn
+        ? const DirectLinkedEventFanoutSelector.enabled()
+        : const DirectLinkedEventFanoutSelector.disabled(),
+    linkedOrigin: false,
+    senderTransportPeerId: 'my-peer',
+    readSnapshot: (contact) async {
+      events.add('resolve');
+      return DirectContactFanoutSnapshot(
+        contactAccountPeerId: contact,
+        contactAccountSigningPublicKey: 'signing-key',
+        rosterInitialized: true,
+        targets: <DirectContactFanoutTargetFact>[
+          for (final peer in targets)
+            DirectContactFanoutTargetFact(
+              peerId: peer,
+              mlKemPublicKey: 'mlkem-$peer',
+              isLegacyAccountTarget: false,
+              fingerprint: 'f' * 64,
+              deviceId: 'device-$peer',
+            ),
+        ],
+      );
+    },
+    encrypt: ({required recipientMlKemPublicKey, required plaintext}) async {
+      events.add('encrypt:$recipientMlKemPublicKey');
+      return (kem: 'k', ciphertext: 'ct-$recipientMlKemPublicKey', nonce: 'n');
+    },
+    loadTextSiblings: (_) async => const [],
+    stageTextFanout:
+        ({
+          required stagedRow,
+          required messageId,
+          required contactAccountPeerId,
+          required senderTransportPeerId,
+          required expectedSnapshot,
+          required candidates,
+        }) async => throw StateError('reactions never stage text'),
+    loadEventSiblings: (_) async => const [],
+    stageMutationFanout:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required kind,
+          required eventId,
+          required parentMessageId,
+          required contactAccountPeerId,
+          required senderTransportPeerId,
+          required expectedSnapshot,
+          required candidates,
+        }) async => throw StateError('reactions never stage mutations'),
+    stageReactionFanout:
+        ({
+          required reactionRow,
+          required action,
+          required parentMessageId,
+          required contactAccountPeerId,
+          required senderTransportPeerId,
+          required expectedSnapshot,
+          required candidates,
+        }) async {
+          events.add('stage:$action');
+          onStage?.call(candidates);
+          return DbDirectEventFanoutStageResult(
+            outcome: DirectEventFanoutStageOutcome.applied,
+            rows: <Map<String, Object?>>[
+              for (final candidate in candidates)
+                <String, Object?>{
+                  'recipient_peer_id': candidate.recipientPeerId,
+                  'event_id': reactionRow['id'],
+                  'wire_envelope': candidate.wireEnvelope,
+                  'retry_count': 0,
+                  'last_attempt_at': null,
+                  'last_error_code': null,
+                  'contact_account_peer_id': contactAccountPeerId,
+                  'parent_message_id': parentMessageId,
+                  'created_at': '2026-08-11T12:00:00.000Z',
+                  'updated_at': '2026-08-11T12:00:00.000Z',
+                },
+            ],
+          );
+        },
+  );
+
+  group('TC-361-02a reaction fanout adapter', () {
+    test(
+      'TC-361-02a selector OFF refuses a reaction pre-crypto without staging '
+      'or network',
+      () async {
+        final events = <String>[];
+        final (result, reaction) = await sendReaction(
+          p2pService: p2pService,
+          bridge: bridge,
+          reactionRepo: reactionRepo,
+          targetPeerId: 'peer-1',
+          messageId: 'msg-1',
+          emoji: '👍',
+          senderPeerId: 'my-peer',
+          recipientMlKemPublicKey: 'key-1',
+          directEventFanout: fanoutAuthoring(
+            selectorOn: false,
+            targets: const ['peer-device-a'],
+            events: events,
+          ),
+        );
+        expect(result, SendReactionResult.sendFailed);
+        expect(reaction, isNull);
+        expect(events, ['resolve']);
+        expect(bridge.sendCallCount, 0);
+        expect(reactionRepo.stageCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+      },
+    );
+
+    test('TC-361-02a ON stages the reaction ADD batch through the shared owner '
+        'and delivers each committed row independently', () async {
+      final events = <String>[];
+      List<DirectEventFanoutTargetCandidate>? stagedCandidates;
+      final (result, reaction) = await sendReaction(
+        p2pService: p2pService,
+        bridge: bridge,
+        reactionRepo: reactionRepo,
+        targetPeerId: 'peer-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'my-peer',
+        recipientMlKemPublicKey: 'key-1',
+        directEventFanout: fanoutAuthoring(
+          selectorOn: true,
+          targets: const ['peer-device-a', 'peer-device-b'],
+          events: events,
+          onStage: (candidates) => stagedCandidates = candidates,
+        ),
+      );
+      expect(result, SendReactionResult.success);
+      expect(reaction, isNotNull);
+      expect(events.where((event) => event.startsWith('encrypt')).length, 2);
+      expect(
+        events.indexOf('stage:add'),
+        greaterThan(events.lastIndexOf('resolve')),
+      );
+      expect(stagedCandidates, hasLength(2));
+      expect(
+        stagedCandidates!.map((candidate) => candidate.wireEnvelope).toSet(),
+        hasLength(2),
+        reason: 'one independent ciphertext per target',
+      );
+      expect(
+        p2pService.storeInInboxCallCount,
+        2,
+        reason: 'each committed row rides its own protected store',
+      );
+      expect(
+        reactionRepo.stageCallCount,
+        0,
+        reason: 'the shared fanout owner replaces the single-target stage',
+      );
+    });
+  });
 
   group('sendReaction Plan 343 custody', () {
     test('encryption failure authors no reaction or custody', () async {

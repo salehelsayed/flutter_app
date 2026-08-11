@@ -519,7 +519,89 @@ void main() {
       expect(overlapRepository.rows, isEmpty);
     },
   );
+
+  test(
+    'TC-361-01c fanout event siblings drain independently and one acceptance '
+    'never retires the surviving sibling',
+    () async {
+      final repository = _InMemoryReactionCustodyRepository();
+      final siblingA = _entry('fanout-event', recipientPeerId: 'peer-device-a')
+          .copyWith(
+            contactAccountPeerId: 'peer-contact-account',
+            parentMessageId: 'fanout-parent',
+            wireEnvelope: _reactionEnvelopeFor(
+              'fanout-event',
+              cipher: 'cipher-device-a',
+            ),
+          );
+      final siblingB = _entry('fanout-event', recipientPeerId: 'peer-device-b')
+          .copyWith(
+            contactAccountPeerId: 'peer-contact-account',
+            parentMessageId: 'fanout-parent',
+            wireEnvelope: _reactionEnvelopeFor(
+              'fanout-event',
+              cipher: 'cipher-device-b',
+            ),
+          );
+      repository
+        ..seed(siblingA)
+        ..seed(siblingB);
+
+      final storedByPeer = <String, String>{};
+      Future<InboxStoreOutcome> store(
+        String toPeerId,
+        String message, {
+        required AckCustodyKind custodyKind,
+        int? timeoutMs,
+      }) async {
+        storedByPeer[toPeerId] = message;
+        expect(custodyKind, AckCustodyKind.directReactionV109);
+        if (toPeerId == 'peer-device-b') {
+          return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+        }
+        return const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        );
+      }
+
+      final completed = await drainDirectReactionInboxCustodyOutbox(
+        custodyRepository: repository,
+        storeInAckCustodyInboxDetailed: store,
+      );
+
+      expect(completed, 1);
+      expect(storedByPeer, {
+        'peer-device-a': siblingA.wireEnvelope,
+        'peer-device-b': siblingB.wireEnvelope,
+      });
+      final survivor = repository.rows.values.single;
+      expect(survivor.recipientPeerId, 'peer-device-b');
+      expect(survivor.retryCount, 1);
+      expect(
+        survivor.parentMessageId,
+        'fanout-parent',
+        reason: 'the surviving sibling keeps its persisted logical parent',
+      );
+    },
+  );
 }
+
+String _reactionEnvelopeFor(String eventId, {required String cipher}) =>
+    jsonEncode(<String, Object?>{
+      'type': 'message_reaction',
+      'version': '2',
+      'eventId': eventId,
+      'action': 'add',
+      'targetMessageId': 'fanout-parent',
+      'senderPeerId': 'self-peer',
+      'encrypted': <String, Object?>{
+        'kem': 'kem',
+        'ciphertext': cipher,
+        'nonce': 'nonce',
+      },
+    });
 
 String _editEnvelope(String eventId) => jsonEncode(<String, Object?>{
   'type': 'chat_message',

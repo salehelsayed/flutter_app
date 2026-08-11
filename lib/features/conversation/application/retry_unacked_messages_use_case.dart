@@ -77,6 +77,18 @@ Future<int> retryUnackedMessages({
 
   var count = 0;
   for (final msg in unacked) {
+    // 361: a fanout-marked generation is owned by its exact surviving v108
+    // siblings (or is terminal with zero siblings). The single-target unacked
+    // rebuild must refuse it before any legacy network, capability or not.
+    if (msg.directEventFanoutGenerationId != null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_UNACKED_SKIPPED_FANOUT_GENERATION',
+        details: {'id': msg.id.length > 8 ? msg.id.substring(0, 8) : msg.id},
+      );
+      continue;
+    }
+
     // A persisted fresh-media preparation token is exclusive authority. An
     // unacked snapshot carrying it must never reach the legacy bool inbox
     // store or any ordinary/private settlement writer, even if its v108 row

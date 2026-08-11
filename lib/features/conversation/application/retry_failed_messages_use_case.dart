@@ -32,6 +32,7 @@ import 'package:flutter_app/features/conversation/application/retry_incomplete_u
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
@@ -467,8 +468,26 @@ Future<bool> _retryFailedMessageCandidate({
     if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
       final custodyRepository =
           messageRepo as OutgoingDirectTextInboxCustodyRepository;
-      final owner = await custodyRepository
-          .loadDirectInboxCustodyOwnerForMessageId(messageId: loadedMessageId);
+      DirectInboxCustodyOutboxEntry? owner;
+      try {
+        owner = await custodyRepository.loadDirectInboxCustodyOwnerForMessageId(
+          messageId: loadedMessageId,
+        );
+      } on StateError {
+        // 361: plural/fanout-owned custody has no single owner. The exact
+        // surviving siblings are drained by the global custody drain; this
+        // single-target wrapper refuses before any legacy work.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_DIRECT_INBOX_CUSTODY_FANOUT_OWNED',
+          details: <String, Object?>{
+            'id': loadedMessageId.length > 8
+                ? loadedMessageId.substring(0, 8)
+                : loadedMessageId,
+          },
+        );
+        return false;
+      }
       if (owner != null) {
         if (!retryDirectInboxCustody) {
           emitFlowEvent(
@@ -514,6 +533,22 @@ Future<bool> _retryFailedMessageCandidate({
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_FAILED_MESSAGE_SKIPPED_SETTLED',
+        details: {
+          'id': loadedMessageId.length > 8
+              ? loadedMessageId.substring(0, 8)
+              : loadedMessageId,
+        },
+      );
+      return false;
+    }
+    if (fresh.directEventFanoutGenerationId != null) {
+      // 361: zero surviving siblings with a nonnull generation marker is a
+      // terminal no-remint fact. Re-encrypting or re-sending here would
+      // manufacture a single logical-account target the fanout batch never
+      // authorized.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_SKIPPED_FANOUT_GENERATION',
         details: {
           'id': loadedMessageId.length > 8
               ? loadedMessageId.substring(0, 8)

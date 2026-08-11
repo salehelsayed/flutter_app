@@ -372,7 +372,7 @@ void main() {
   testWidgets(
     'TC-331-22 real SQLCipher v106 to current preserves typed direct and group authority across refusal and reopen',
     (_) async {
-      expect(currentIdentityDatabaseVersion, 112);
+      expect(currentIdentityDatabaseVersion, 113);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_notification_durability_sqlcipher_',

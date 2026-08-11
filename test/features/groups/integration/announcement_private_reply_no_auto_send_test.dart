@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
@@ -302,6 +303,7 @@ void main() {
                     PrivateMediaPolicy? privateMediaPolicy,
                     MediaAttachmentRepository? mediaAttachmentRepo,
                     TransportMetrics? transportMetrics,
+                    DirectEventFanoutAuthoring? directEventFanout,
                   }) async {
                     directSends += 1;
                     throw StateError('Message sender must never auto-send');

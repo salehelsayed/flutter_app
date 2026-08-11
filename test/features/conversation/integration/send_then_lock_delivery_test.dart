@@ -1264,6 +1264,7 @@ void main() {
                 mediaAttachments,
                 mediaAttachmentRepo,
                 transportMetrics,
+                directEventFanout,
                 privateMediaPolicy,
               }) async {
                 canonicalMessageId = messageId;

@@ -38,6 +38,9 @@ const _currentDirectIndexes = <String>{
   ..._v107Indexes,
   'idx_direct_inbox_custody_outbox_fair_load',
   'idx_direct_reaction_inbox_custody_outbox_fair_load',
+  // 361: DB v113 adds the generation-first fanout lookup indexes.
+  'idx_direct_inbox_custody_outbox_generation',
+  'idx_direct_reaction_inbox_custody_outbox_generation',
   'idx_direct_media_blob_custody_inbox_incarnation',
   'idx_direct_media_blob_custody_message',
   'idx_direct_media_blob_custody_state_retry',
@@ -112,8 +115,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 112);
-      expect(await _userVersion(db), 112);
+      expect(currentIdentityDatabaseVersion, 113);
+      expect(await _userVersion(db), 113);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -125,9 +128,9 @@ void main() {
           entries.single.run,
           same(runDirectNotificationDurabilityMigration),
         );
-        expect(registry.last.version, 112);
-        expect(registry.last.name, '112_direct_linked_device_addressing');
-        expect(registry[registry.length - 2].version, 111);
+        expect(registry.last.version, 113);
+        expect(registry.last.name, '113_direct_linked_device_event_fanout');
+        expect(registry[registry.length - 2].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
@@ -469,7 +472,7 @@ void main() {
       addTearDown(() async {
         if (db.isOpen) await db.close();
       });
-      expect(await _userVersion(db), 112);
+      expect(await _userVersion(db), 113);
       expect(
         await dbLoadDirectNotificationReactionTerminalEvent(
           db,

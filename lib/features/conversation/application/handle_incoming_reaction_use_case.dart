@@ -10,6 +10,7 @@ import 'package:flutter_app/features/conversation/domain/models/conversation_mes
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
@@ -89,6 +90,9 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   promoteNotificationDisplayCustody,
   CommitDirectReactionNotificationRemove? commitNotificationRemove,
   Future<void> Function()? retryNotificationDisplays,
+  // 361: shared physical->logical reverse authority; null keeps the incumbent
+  // transport==logical equality byte-identically.
+  DirectTransportAuthorityResolver? transportAuthority,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -173,9 +177,22 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
     return (HandleReactionResult.notReaction, null);
   }
 
-  final senderMismatch =
-      message.from != payload.senderPeerId ||
-      envelopeSenderPeerId != payload.senderPeerId;
+  DirectTransportAuthorityResolution? transportResolution;
+  bool senderMismatch;
+  if (transportAuthority == null) {
+    senderMismatch =
+        message.from != payload.senderPeerId ||
+        envelopeSenderPeerId != payload.senderPeerId;
+  } else {
+    transportResolution = await transportAuthority
+        .resolveDirectTransportAuthority(message.from);
+    senderMismatch =
+        envelopeSenderPeerId != message.from ||
+        !transportResolution.authorized ||
+        transportResolution.contactAccountPeerId != payload.senderPeerId;
+  }
+  final isLinkedTransportOrigin =
+      transportResolution?.kind == DirectTransportAuthorityKind.linked;
   if (senderMismatch) {
     emitFlowEvent(
       layer: 'FL',
@@ -270,9 +287,25 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
         ? reactionRepo as AtomicIncomingReactionMutationRepository
         : null;
     if (atomicRepository != null) {
-      final applyResult = await atomicRepository.applyIncomingRemove(
-        payload.toMessageReaction(),
-      );
+      final linkedApplyRepository =
+          isLinkedTransportOrigin &&
+              reactionRepo is LinkedTransportReactionApplyRepository
+          ? reactionRepo as LinkedTransportReactionApplyRepository
+          : null;
+      if (isLinkedTransportOrigin &&
+          (linkedApplyRepository == null ||
+              !linkedApplyRepository.supportsLinkedTransportReactionApply)) {
+        return (HandleReactionResult.senderMismatch, null);
+      }
+      final applyResult = linkedApplyRepository != null
+          ? await linkedApplyRepository
+                .applyIncomingRemoveWithTransportAuthority(
+                  payload.toMessageReaction(),
+                  authenticatedTransportPeerId: message.from,
+                )
+          : await atomicRepository.applyIncomingRemove(
+              payload.toMessageReaction(),
+            );
       if (applyResult == ReactionRemoveApplyResult.stale) {
         _emitStaleReaction(payload);
         return (HandleReactionResult.success, null);
@@ -339,7 +372,22 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
 
   // action == 'add'
   final reaction = payload.toMessageReaction();
-  final applyResult = await reactionRepo.applyIncomingAdd(reaction);
+  final linkedAddRepository =
+      isLinkedTransportOrigin &&
+          reactionRepo is LinkedTransportReactionApplyRepository
+      ? reactionRepo as LinkedTransportReactionApplyRepository
+      : null;
+  if (isLinkedTransportOrigin &&
+      (linkedAddRepository == null ||
+          !linkedAddRepository.supportsLinkedTransportReactionApply)) {
+    return (HandleReactionResult.senderMismatch, null);
+  }
+  final applyResult = linkedAddRepository != null
+      ? await linkedAddRepository.applyIncomingAddWithTransportAuthority(
+          reaction,
+          authenticatedTransportPeerId: message.from,
+        )
+      : await reactionRepo.applyIncomingAdd(reaction);
   if (applyResult == ReactionAddApplyResult.exactReplay ||
       applyResult == ReactionAddApplyResult.stale) {
     await promoteNotificationDisplayCustody?.call(

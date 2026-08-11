@@ -70,8 +70,8 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 112);
-    expect(await _userVersion(db), 112);
+    expect(currentIdentityDatabaseVersion, 113);
+    expect(await _userVersion(db), 113);
 
     // Registered exactly once in both registries, immediately after v111.
     for (final registry in <List<ProductionMigrationEntry>>[
@@ -85,15 +85,24 @@ void main() {
         entries.single.run,
         same(runDirectLinkedDeviceAddressingMigration),
       );
-      expect(registry.last, same(entries.single));
+      expect(
+        registry[registry.indexOf(entries.single) + 1].version,
+        113,
+        reason: 'v113 event fanout is the only successor',
+      );
       final index111 = registry.indexWhere((entry) => entry.version == 111);
       expect(registry.indexOf(entries.single), index111 + 1);
     }
 
-    // Every durable row survives byte-identically.
+    // Every durable row survives byte-identically. The v113 successor appends
+    // nullable fanout columns to messages/v108, so those two compare on the
+    // v111 projection with the appended columns proven NULL.
     expect(await db.query('contacts'), v111Contacts);
-    expect(await db.query('messages'), v111Messages);
-    expect(await db.query('direct_inbox_custody_outbox'), v111Custody);
+    expect(_withoutNullV113Columns(await db.query('messages')), v111Messages);
+    expect(
+      _withoutNullV113Columns(await db.query('direct_inbox_custody_outbox')),
+      v111Custody,
+    );
 
     await _expectExactSchema(db);
 
@@ -115,7 +124,7 @@ void main() {
     await runDirectLinkedDeviceAddressingMigration(db);
     await runDirectLinkedDeviceAddressingMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 112);
+    expect(await _userVersion(db), 113);
 
     // Stage one real binding, then prove reopen preserves it and that v112
     // is a one-way floor.
@@ -149,7 +158,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 112);
+    expect(await _userVersion(db), 113);
     expect(
       await db.query('direct_contact_device_bindings', orderBy: 'device_id'),
       snapshot,
@@ -180,7 +189,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 112);
+    expect(await _userVersion(db), 113);
     expect(
       await db.query('direct_contact_device_bindings', orderBy: 'device_id'),
       snapshot,
@@ -192,6 +201,28 @@ Future<int> _userVersion(Database db) async {
   final rows = await db.rawQuery('PRAGMA user_version');
   return rows.single.values.first! as int;
 }
+
+const _v113Columns = <String>{
+  'direct_event_fanout_generation_id',
+  'contact_account_peer_id',
+  'parent_message_id',
+};
+
+List<Map<String, Object?>> _withoutNullV113Columns(
+  List<Map<String, Object?>> rows,
+) => rows
+    .map((row) {
+      final projected = Map<String, Object?>.from(row);
+      for (final column in _v113Columns) {
+        expect(
+          projected.remove(column),
+          isNull,
+          reason: 'v113 never promotes historical rows ($column)',
+        );
+      }
+      return projected;
+    })
+    .toList(growable: false);
 
 Future<void> _expectExactSchema(Database db) async {
   final bindingColumns = await db.rawQuery(

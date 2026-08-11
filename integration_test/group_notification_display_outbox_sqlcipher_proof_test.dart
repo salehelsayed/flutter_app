@@ -132,7 +132,7 @@ void main() {
   testWidgets(
     'real SQLCipher v105 to v106 preserves custody and terminal facts across reopen/export',
     (_) async {
-      expect(currentIdentityDatabaseVersion, 112);
+      expect(currentIdentityDatabaseVersion, 113);
 
       final temp = await Directory.systemTemp.createTemp(
         'group_notification_display_outbox_sqlcipher_',

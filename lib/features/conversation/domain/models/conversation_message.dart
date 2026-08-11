@@ -97,6 +97,12 @@ class ConversationMessage {
   final int? privateMediaTerminalAtMs;
   final int? privateMediaClockHighWaterMs;
 
+  /// 361: the message's CURRENT blob-free fanout generation — the message ID
+  /// for a fanout initial, or the exact current edit/deletion event ID. NULL
+  /// for every legacy/historical row. While non-null, generic single-owner
+  /// retry/verify/send paths must refuse rather than re-author the event.
+  final String? directEventFanoutGenerationId;
+
   /// Transient media attachments — populated via copyWith() after batch-loading
   /// from media_attachments table. NOT serialized to DB.
   final List<MediaAttachment> media;
@@ -130,6 +136,7 @@ class ConversationMessage {
     this.privateMediaRevealedAtMs,
     this.privateMediaTerminalAtMs,
     this.privateMediaClockHighWaterMs,
+    this.directEventFanoutGenerationId,
     this.media = const [],
   });
 
@@ -181,6 +188,8 @@ class ConversationMessage {
           ?.toInt(),
       privateMediaClockHighWaterMs:
           (map['private_media_clock_high_water_ms'] as num?)?.toInt(),
+      directEventFanoutGenerationId:
+          map['direct_event_fanout_generation_id'] as String?,
     );
   }
 
@@ -217,6 +226,10 @@ class ConversationMessage {
       'private_media_revealed_at_ms': privateMediaRevealedAtMs,
       'private_media_terminal_at_ms': privateMediaTerminalAtMs,
       'private_media_clock_high_water_ms': privateMediaClockHighWaterMs,
+      // 361: emitted only when set so historical partial-schema fixtures and
+      // pre-v113 writers never reference the column they do not have.
+      if (directEventFanoutGenerationId != null)
+        'direct_event_fanout_generation_id': directEventFanoutGenerationId,
     };
   }
 
@@ -253,6 +266,7 @@ class ConversationMessage {
     Object? privateMediaRevealedAtMs = _sentinel,
     Object? privateMediaTerminalAtMs = _sentinel,
     Object? privateMediaClockHighWaterMs = _sentinel,
+    Object? directEventFanoutGenerationId = _sentinel,
     List<MediaAttachment>? media,
   }) {
     return ConversationMessage(
@@ -306,6 +320,9 @@ class ConversationMessage {
       privateMediaClockHighWaterMs: privateMediaClockHighWaterMs == _sentinel
           ? this.privateMediaClockHighWaterMs
           : privateMediaClockHighWaterMs as int?,
+      directEventFanoutGenerationId: directEventFanoutGenerationId == _sentinel
+          ? this.directEventFanoutGenerationId
+          : directEventFanoutGenerationId as String?,
       media: media ?? this.media,
     );
   }

@@ -635,6 +635,20 @@ class P2PServiceImpl
       if (!await _qualifyLinkedTransportPeer()) {
         return false;
       }
+      // 361: an ACTIVE LINKED SECONDARY starts NO generic LAN discovery and
+      // NO generic warm body from node start. Its restricted runtime owns the
+      // exact inbox retrieve/replay work explicitly; everything broader stays
+      // stopped for the linked role.
+      final linkedRole =
+          _requiredTransportPeerId?.call()?.trim().isNotEmpty ?? false;
+      if (linkedRole) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_SERVICE_LINKED_ROLE_GENERIC_START_SKIPPED',
+          details: const {'skipped': 'early_local_discovery,warm_background'},
+        );
+        return success;
+      }
       // FDC-07: kick off LAN mDNS discovery EARLY — before the warmBackground
       // inbox-drain body — so a same-WiFi peer can populate the LAN map ahead of
       // the first send window. Fire-and-forget + opportunistic: never blocks

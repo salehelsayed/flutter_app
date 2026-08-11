@@ -159,8 +159,12 @@ const _privacySha256 =
 // one more closure on that same wired message adapter — the atomic private
 // tombstone + physical-v109 stage — and relocates nothing. Posts
 // adapter bodies remain byte-identical.
+// Plan 361 adds the route-push fanout authoring resolver seam, the linked
+// blob-free modality gate at the SAME ConversationWired construction site,
+// and the linked-role resume/pause filters ahead of the incumbent owners.
+// Nothing relocates and no core shim returns.
 const _applicationRootNormalizedSha256 =
-    'ed7550d02c5afb70bc2d4c92b5f239f4660d9718491541a968a2d535e8598f6c';
+    '2854e087fa3d8c7bb392c601dce5dcd7d2b807fe02aeae8df72ee8d636a22f4a';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -172,8 +176,14 @@ const _applicationRootNormalizedSha256 =
 // bound to the current account peer, the logical account peer is published to
 // the P2P migration gate, and the shipping receiver start is wrapped by the
 // linked-destination precondition. Nothing moved.
+// Plan 361 composes the shared reverse transport authority, the v113
+// blob-free fanout/purge/settle delegates on the SAME repository
+// constructions, the four listener authority wirings, the restricted
+// DirectBlobFreeLinkedServices behind the SAME deferred linked callback,
+// and the exact linked drain plus route-push resolver seams to MyApp.
+// Nothing moved and no core shim returned.
 const _productionBootstrapNormalizedSha256 =
-    '109545637f7b3a2418ab86f6eea2dee687f7ad5b1f1b540527ef69919913e3d4';
+    'b416e1270bd012fc2e9505eeb28d455fd1223c72f6eed6bff9f9e276ae1d2256';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

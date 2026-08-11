@@ -5,6 +5,7 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/handle_incoming_message_deletion_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -15,6 +16,9 @@ class MessageDeletionListener {
   final Stream<ChatMessage> deletionStream;
   final MessageRepository messageRepo;
   final ContactRepository contactRepo;
+
+  /// 361: shared physical->logical reverse authority (null = incumbent).
+  final DirectTransportAuthorityResolver? transportAuthority;
   final ReactionRepository? reactionRepo;
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
@@ -38,6 +42,7 @@ class MessageDeletionListener {
     required this.deletionStream,
     required this.messageRepo,
     required this.contactRepo,
+    this.transportAuthority,
     this.reactionRepo,
     this.mediaAttachmentRepo,
     this.mediaFileManager,
@@ -95,6 +100,7 @@ class MessageDeletionListener {
         message: message,
         messageRepo: messageRepo,
         contactRepo: contactRepo,
+        transportAuthority: transportAuthority,
         reactionRepo: reactionRepo,
         mediaAttachmentRepo: mediaAttachmentRepo,
         mediaFileManager: mediaFileManager,

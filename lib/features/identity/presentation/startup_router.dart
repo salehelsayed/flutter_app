@@ -346,6 +346,10 @@ class StartupRouter extends StatefulWidget {
   /// Normal application startup continues to use [startP2PNode].
   final Future<StartNodeResult> Function()? startP2PNodeOverride;
 
+  /// 361: test/injection seam for the loaded linked-installation snapshot.
+  /// Null loads the real secure-record snapshot on the production path.
+  final LinkedInstallationAuthoritySnapshot? linkedAuthorityOverride;
+
   /// FDC-07: cold-start hook that starts LAN mDNS discovery early (ahead of the
   /// warmBackground inbox-drain body) so a same-WiFi peer can populate the LAN
   /// map before the first send window. Wired in main.dart to the concrete
@@ -466,6 +470,7 @@ class StartupRouter extends StatefulWidget {
     this.initialShareIntentCapture,
     this.ensureRuntimeServicesReady,
     this.startP2PNodeOverride,
+    this.linkedAuthorityOverride,
     this.startEarlyLocalDiscovery,
     required this.appShellController,
     required this.pendingPostTargetStore,
@@ -934,6 +939,23 @@ class _StartupRouterState extends State<StartupRouter> {
     emitFlowEvent(layer: 'FL', event: 'P2P_STARTUP_BEGIN', details: {});
 
     final startP2PNodeOverride = widget.startP2PNodeOverride;
+    // 360: an ordinary primary resolves to
+    // `LinkedInstallationDisposition.primary`, so this reads the two
+    // secure keys and then takes the byte-for-byte incumbent path. A
+    // linked secondary starts its own transport; a half-written or
+    // crossed credential refuses instead of falling back to the
+    // account transport. 361: the same snapshot also decides which
+    // post-start owners this router may start at all.
+    final linkedAuthority =
+        widget.linkedAuthorityOverride ??
+        (startP2PNodeOverride != null
+            ? null
+            : await LinkedInstallationAuthority(
+                secureKeyStore: widget.secureKeyStore,
+              ).load(
+                expectedAccountPeerId:
+                    (await widget.repository.loadIdentity())?.peerId,
+              ));
     final result = startP2PNodeOverride != null
         ? await startP2PNodeOverride()
         : await startP2PNode(
@@ -945,19 +967,7 @@ class _StartupRouterState extends State<StartupRouter> {
                     secureKeyStore: widget.secureKeyStore,
                   ),
             ).allowsAccountNetworkSideEffects,
-            // 360: an ordinary primary resolves to
-            // `LinkedInstallationDisposition.primary`, so this reads the two
-            // secure keys and then takes the byte-for-byte incumbent path. A
-            // linked secondary starts its own transport; a half-written or
-            // crossed credential refuses instead of falling back to the
-            // account transport.
-            linkedAuthority:
-                await LinkedInstallationAuthority(
-                  secureKeyStore: widget.secureKeyStore,
-                ).load(
-                  expectedAccountPeerId:
-                      (await widget.repository.loadIdentity())?.peerId,
-                ),
+            linkedAuthority: linkedAuthority,
           );
 
     emitFlowEvent(
@@ -969,6 +979,19 @@ class _StartupRouterState extends State<StartupRouter> {
     if (result == StartNodeResult.success) {
       StartupTiming.instance.mark('p2p_startup_complete');
       StartupTiming.instance.printSummary();
+      // 361: an ACTIVE LINKED SECONDARY starts NONE of the generic post-start
+      // owners — no LAN discovery, nearby refresh, push registration,
+      // wake-token mint, group rejoin/dissolve reconciliation or group inbox
+      // drain. Its restricted deferred runtime owns the exact direct
+      // blob-free surface instead.
+      if (linkedAuthority?.isActiveLinkedSecondary == true) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'P2P_STARTUP_LINKED_ROLE_GENERIC_OWNERS_SKIPPED',
+          details: const {},
+        );
+        return;
+      }
       // FDC-07: trigger early LAN mDNS discovery on the cold-start branch — AFTER
       // the plan-164 ensureRuntimeServicesReady gate (above; node-start ordering
       // is NOT reordered) and BEFORE the group-rejoin/drain block below.

@@ -1,4 +1,13 @@
+import 'dart:convert';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/features/conversation/application/drain_direct_blob_free_linked_event_fanout_use_case.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 
@@ -36,6 +45,119 @@ Future<int> _drainBothDirectCustodyFamilies(
 // Helpers to track call ordering across all four recovery steps.
 // Each callback appends its name to the shared `callOrder` list
 // so we can assert exact sequential ordering.
+
+/// 361: records completions/failures so the linked-drain row can prove which
+/// custody tuples were touched at all.
+final class _LinkedFanoutTextCustodyRepository
+    implements OutgoingDirectTextInboxCustodyRepository {
+  final List<String> completedMessageIds = [];
+  final List<String> failureMessageIds = [];
+
+  @override
+  bool get supportsDirectTextInboxCustody => true;
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    completedMessageIds.add(expected.messageId);
+    return const DirectInboxCustodyCompletionResult(
+      outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
+      message: null,
+    );
+  }
+
+  @override
+  Future<bool> recordDirectInboxCustodyFailureIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    failureMessageIds.add(expected.messageId);
+    return true;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+final class _LinkedFanoutReactionCustodyRepository
+    implements OutgoingDirectReactionInboxCustodyRepository {
+  final List<String> completedEventIds = [];
+  final List<String> failureEventIds = [];
+
+  @override
+  bool get supportsDirectReactionInboxCustody => true;
+
+  @override
+  Future<DirectReactionInboxCustodyCompletionOutcome>
+  completeAcceptedDirectReactionInboxCustodyIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+  }) async {
+    completedEventIds.add(expected.eventId);
+    return DirectReactionInboxCustodyCompletionOutcome.completed;
+  }
+
+  @override
+  Future<bool> recordDirectReactionInboxCustodyFailureIfExact({
+    required DirectReactionInboxCustodyOutboxEntry expected,
+    required String errorCode,
+  }) async {
+    failureEventIds.add(expected.eventId);
+    return true;
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) => super.noSuchMethod(invocation);
+}
+
+Map<String, Object?> _linkedTextFanoutRow(
+  String messageId, {
+  String? contactAccountPeerId,
+  String? mediaBlobManifestHash,
+  int? mediaBlobExpiresAtMs,
+}) => <String, Object?>{
+  'recipient_peer_id': 'transport-$messageId',
+  'message_id': messageId,
+  'incarnation_id': messageId.padRight(32, '0').substring(0, 32),
+  'wire_envelope': 'wire-$messageId',
+  'retry_count': 0,
+  'last_attempt_at': null,
+  'last_error_code': null,
+  'media_blob_manifest_hash': mediaBlobManifestHash,
+  'media_blob_expires_at_ms': mediaBlobExpiresAtMs,
+  'contact_account_peer_id': contactAccountPeerId,
+  'created_at': '2026-08-10T10:00:00.000Z',
+  'updated_at': '2026-08-10T10:00:00.000Z',
+};
+
+Map<String, Object?> _linkedEventFanoutRow(
+  String eventId, {
+  String? contactAccountPeerId,
+  String? wireEnvelope,
+}) => <String, Object?>{
+  'recipient_peer_id': 'transport-$eventId',
+  'event_id': eventId,
+  'wire_envelope':
+      wireEnvelope ??
+      jsonEncode({
+        'type': 'message_reaction',
+        'version': '2',
+        'eventId': eventId,
+        'action': 'add',
+        'targetMessageId': 'parent-$eventId',
+        'senderPeerId': 'transport-$eventId',
+        'encrypted': {'kem': 'k', 'ciphertext': 'c', 'nonce': 'n'},
+      }),
+  'retry_count': 0,
+  'last_attempt_at': null,
+  'last_error_code': null,
+  'contact_account_peer_id': contactAccountPeerId,
+  'parent_message_id': 'parent-$eventId',
+  'created_at': '2026-08-10T10:00:00.000Z',
+  'updated_at': '2026-08-10T10:00:00.000Z',
+};
 
 void main() {
   late FakeBridge fakeBridge;
@@ -379,6 +501,88 @@ void main() {
         );
 
         expect(callCount, 1);
+      },
+    );
+  });
+
+  group('TC-361-03b restricted linked resume drain', () {
+    test(
+      'TC-361-03b linked runtime starts only direct blob-free event owners — '
+      'the exact v113 drain completes only nonnull blob-free rows and leaves '
+      'historical, media and unclassifiable rows byte-untouched with the '
+      'authoring selector OFF',
+      () async {
+        // The restricted drain consults no authoring selector at all; the
+        // build-default selector stays OFF while durable rows still drain.
+        expect(
+          const DirectLinkedEventFanoutSelector()
+              .allowsDirectLinkedEventFanoutAuthoring,
+          isFalse,
+        );
+
+        final textRepo = _LinkedFanoutTextCustodyRepository();
+        final reactionRepo = _LinkedFanoutReactionCustodyRepository();
+        final storedEnvelopes = <String>[];
+
+        final completed = await drainDirectBlobFreeLinkedEventFanout(
+          // A wrongly-broad loader result: the drain itself must still refuse
+          // the historical (NULL-contact) and media rows before any store or
+          // repository touch.
+          loadExactTextFanoutRows: () async => <Map<String, Object?>>[
+            _linkedTextFanoutRow('ok-1', contactAccountPeerId: 'contact-a'),
+            _linkedTextFanoutRow('hist-1'),
+            _linkedTextFanoutRow(
+              'med-1',
+              contactAccountPeerId: 'contact-a',
+              mediaBlobManifestHash: 'a' * 64,
+              mediaBlobExpiresAtMs: 1999999999000,
+            ),
+          ],
+          loadExactEventFanoutRows: () async => <Map<String, Object?>>[
+            _linkedEventFanoutRow('evt-ok', contactAccountPeerId: 'contact-a'),
+            _linkedEventFanoutRow('evt-hist'),
+            _linkedEventFanoutRow(
+              'evt-junk',
+              contactAccountPeerId: 'contact-a',
+              wireEnvelope: 'not-a-classifiable-envelope',
+            ),
+          ],
+          custodyRepository: textRepo,
+          storeInAckCustodyInboxDetailed:
+              (
+                toPeerId,
+                message, {
+                required custodyKind,
+                int? timeoutMs,
+              }) async {
+                storedEnvelopes.add(message);
+                return const InboxStoreOutcome(
+                  status: InboxStoreStatus.stored,
+                  storeStatus: 'stored',
+                  custodyContract: ackOrExpiryInboxCustodyContract,
+                );
+              },
+          mutationCustodyRepository: null,
+          reactionCustodyRepository: reactionRepo,
+        );
+
+        expect(completed, 2);
+        expect(textRepo.completedMessageIds, ['ok-1']);
+        expect(reactionRepo.completedEventIds, ['evt-ok']);
+        expect(
+          storedEnvelopes,
+          hasLength(2),
+          reason: 'only the two exact blob-free rows may reach the relay store',
+        );
+        expect(storedEnvelopes.first, 'wire-ok-1');
+        expect(
+          textRepo.failureMessageIds,
+          isEmpty,
+          reason:
+              'refused rows are skipped without recording custody failures — '
+              'their tuples stay byte-identical',
+        );
+        expect(reactionRepo.failureEventIds, isEmpty);
       },
     );
   });

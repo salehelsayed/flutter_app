@@ -5,6 +5,7 @@ import '../models/media_attachment.dart';
 import '../models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 
 /// Repository interface for managing conversation messages.
@@ -343,6 +344,95 @@ abstract interface class OutgoingDirectTextMutationInboxCustodyRepository
     required String recipientPeerId,
     required String eventId,
     required String wireEnvelope,
+  });
+}
+
+/// 361: optional fail-closed authority for linked-transport durable applies.
+/// The physical transport is re-authorized to the logical contact INSIDE the
+/// same SQL transaction as the apply, so revoke-first is zero-effect and
+/// apply-first commits exactly once.
+abstract interface class LinkedTransportIncomingApplyRepository {
+  bool get supportsLinkedTransportIncomingApply;
+
+  Future<IncomingOrdinaryTextApplyResult>
+  applyIncomingOrdinaryTextMutationWithTransportAuthority({
+    required ConversationMessage incoming,
+    required IncomingOrdinaryTextMutationKind kind,
+    required String authenticatedTransportPeerId,
+  });
+
+  Future<IncomingDirectDeletionApplyResult>
+  applyIncomingDirectMessageDeletionWithTransportAuthority({
+    required String messageId,
+    required String senderPeerId,
+    required String deletedAt,
+    required String? transport,
+    required String authenticatedTransportPeerId,
+  });
+}
+
+/// 361: optional fail-closed settlement authority for fanout receipts. The
+/// receipt may clear the representative witness only when its event ID
+/// matches the exact CURRENT generation, and a linked origin transport is
+/// re-authorized inside the settlement transaction.
+abstract interface class OutgoingDirectFanoutReceiptSettlementRepository {
+  bool get supportsDirectFanoutReceiptSettlement;
+
+  Future<OutgoingOrdinaryMutationOutcome>
+  settleOutgoingOrdinaryTransportWithFanoutAuthority({
+    required String messageId,
+    required String expectedContactPeerId,
+    required String? expectedEnvelope,
+    required String status,
+    required String? transport,
+    required int? relayExpiresAt,
+    required OutgoingOrdinarySettlementMode mode,
+    required bool isDeleteTombstone,
+    String? expectedDirectEventFanoutGenerationId,
+    String? authenticatedTransportPeerId,
+  });
+}
+
+/// 361: optional fail-closed authority for the v113 blob-free all-target
+/// event fanout (fresh text plus text EDIT/Delete-for-Everyone batches).
+///
+/// The capability is all-or-nothing: a repository lacking ANY delegate
+/// reports false, and the single-target wrappers stay fail-closed on
+/// fanout-marked generations regardless.
+abstract interface class OutgoingDirectEventFanoutRepository {
+  bool get supportsDirectEventFanout;
+
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshot(
+    String contactAccountPeerId,
+  );
+
+  Future<List<Map<String, Object?>>> loadDirectTextFanoutSiblings(
+    String messageId,
+  );
+
+  Future<List<Map<String, Object?>>> loadDirectEventFanoutSiblings(
+    String eventId,
+  );
+
+  Future<DbDirectEventFanoutStageResult> stageDirectTextFanout({
+    required Map<String, Object?> stagedRow,
+    required String messageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  });
+
+  Future<DbDirectEventFanoutStageResult> stageDirectTextMutationFanout({
+    required Map<String, Object?>? expectedRow,
+    required Map<String, Object?> stagedRow,
+    required OutgoingOrdinaryAttemptKind kind,
+    required String eventId,
+    required String parentMessageId,
+    required String contactAccountPeerId,
+    required String senderTransportPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectEventFanoutTargetCandidate> candidates,
   });
 }
 

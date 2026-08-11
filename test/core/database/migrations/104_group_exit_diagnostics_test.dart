@@ -103,22 +103,22 @@ void main() {
         (await db.rawQuery('PRAGMA user_version')).single.values.single,
         104,
       );
-      expect(currentIdentityDatabaseVersion, 112);
+      expect(currentIdentityDatabaseVersion, 113);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
       ]) {
         expect(registry.where((entry) => entry.version == 104), hasLength(1));
-        expect(registry.last.version, 112);
-        expect(registry.last.name, '112_direct_linked_device_addressing');
-        expect(registry[registry.length - 2].version, 111);
-        expect(registry[registry.length - 3].version, 110);
-        expect(registry[registry.length - 4].version, 109);
-        expect(registry[registry.length - 5].version, 108);
-        expect(registry[registry.length - 6].version, 107);
-        expect(registry[registry.length - 7].version, 106);
-        expect(registry[registry.length - 8].version, 105);
-        expect(registry[registry.length - 9].version, 104);
+        expect(registry.last.version, 113);
+        expect(registry.last.name, '113_direct_linked_device_event_fanout');
+        expect(registry[registry.length - 2].version, 112);
+        expect(registry[registry.length - 3].version, 111);
+        expect(registry[registry.length - 4].version, 110);
+        expect(registry[registry.length - 5].version, 109);
+        expect(registry[registry.length - 6].version, 108);
+        expect(registry[registry.length - 7].version, 107);
+        expect(registry[registry.length - 8].version, 106);
+        expect(registry[registry.length - 9].version, 105);
       }
 
       expect(await db.query('group_exit_diagnostics'), isEmpty);

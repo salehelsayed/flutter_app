@@ -12,6 +12,7 @@ import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/application/handle_delivery_receipt_use_case.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
@@ -196,6 +197,81 @@ void main() {
   });
 
   group('handleDeliveryReceipt', () {
+    test('TC-361-03a a linked origin receipt settles only the exact current '
+        'generation of the logical contact row', () async {
+      const messageId = 'msg-linked-receipt';
+      const linkedTransport = 'peer-linked-transport';
+      const logicalContact = 'peer-logical-contact';
+      messageRepo.seed(<ConversationMessage>[
+        makeInboxedOutgoing(
+          id: messageId,
+          contactPeerId: logicalContact,
+        ).copyWith(directEventFanoutGenerationId: messageId),
+      ]);
+      final authority = _FakeTransportAuthority({
+        linkedTransport: const DirectTransportAuthorityResolution.authorized(
+          kind: DirectTransportAuthorityKind.linked,
+          contactAccountPeerId: logicalContact,
+          contactIsBlocked: false,
+        ),
+      });
+
+      // A stale/future event receipt is zero-effect.
+      await handleDeliveryReceipt(
+        message: buildReceipt(
+          from: linkedTransport,
+          messageIds: const <String>[messageId],
+          mutationEventIds: const <String, String>{
+            messageId: 'a-later-generation',
+          },
+        ),
+        messageRepo: messageRepo,
+        transportAuthority: authority,
+      );
+      expect((await messageRepo.getMessage(messageId))!.status, 'inboxed');
+
+      // The exact current generation settles once and clears the witness.
+      await handleDeliveryReceipt(
+        message: buildReceipt(
+          from: linkedTransport,
+          messageIds: const <String>[messageId],
+        ),
+        messageRepo: messageRepo,
+        transportAuthority: authority,
+      );
+      final settled = await messageRepo.getMessage(messageId);
+      expect(settled!.status, 'delivered');
+      expect(messageRepo.fanoutReceiptSettlements.last.generation, messageId);
+      expect(
+        messageRepo.fanoutReceiptSettlements.last.transport,
+        linkedTransport,
+      );
+    });
+
+    test('TC-361-03a an unresolvable receipt origin transport stays a foreign '
+        'peer with zero effect', () async {
+      const messageId = 'msg-foreign-receipt';
+      const logicalContact = 'peer-logical-contact';
+      messageRepo.seed(<ConversationMessage>[
+        makeInboxedOutgoing(id: messageId, contactPeerId: logicalContact),
+      ]);
+      final authority = _FakeTransportAuthority(
+        const <String, DirectTransportAuthorityResolution>{},
+      );
+
+      await handleDeliveryReceipt(
+        message: buildReceipt(
+          from: 'peer-unknown-transport',
+          messageIds: const <String>[messageId],
+        ),
+        messageRepo: messageRepo,
+        transportAuthority: authority,
+      );
+
+      expect((await messageRepo.getMessage(messageId))!.status, 'inboxed');
+      expect(messageRepo.fanoutReceiptSettlements, isEmpty);
+    });
+
     test(
       'TC-349-06 delayed initial receipt cannot settle current edit',
       () async {
@@ -948,4 +1024,20 @@ void main() {
       },
     );
   });
+}
+
+class _FakeTransportAuthority implements DirectTransportAuthorityResolver {
+  _FakeTransportAuthority(this.byTransport);
+
+  final Map<String, DirectTransportAuthorityResolution> byTransport;
+  int resolveCalls = 0;
+
+  @override
+  Future<DirectTransportAuthorityResolution> resolveDirectTransportAuthority(
+    String transportPeerId,
+  ) async {
+    resolveCalls++;
+    return byTransport[transportPeerId] ??
+        const DirectTransportAuthorityResolution.refused('unknown_transport');
+  }
 }

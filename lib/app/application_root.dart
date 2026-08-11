@@ -105,6 +105,8 @@ import 'package:flutter/foundation.dart'
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
@@ -373,6 +375,16 @@ class MyApp extends StatefulWidget {
   /// `UnavailableDirectContactDeviceTrust`.
   final DirectContactDeviceTrustCapability? directDeviceTrust;
 
+  /// 361: builds the shared blob-free fanout authoring owner for the CURRENT
+  /// role/identity at route-push time (null result = incumbent senders).
+  final DirectEventFanoutAuthoring? Function()? directEventFanoutResolver;
+
+  /// 361: true while this process runs the restricted linked blob-free role.
+  final bool Function()? isLinkedBlobFreeRuntime;
+
+  /// 361: the restricted linked outbox drain (exact v113 rows only).
+  final Future<int> Function()? drainDirectBlobFreeLinkedOutboxes;
+
   final GroupMediaDeleteForMeCoordinator groupMediaDeleteForMeCoordinator;
 
   /// 235: one bounded deletion-journal reconciliation pass; runs on resume
@@ -507,6 +519,9 @@ class MyApp extends StatefulWidget {
     required this.mediaAttachmentRepository,
     required this.groupMediaDeleteForMeCoordinator,
     this.directDeviceTrust,
+    this.directEventFanoutResolver,
+    this.isLinkedBlobFreeRuntime,
+    this.drainDirectBlobFreeLinkedOutboxes,
     required this.groupMediaDeletionCleanup,
     this.privateMediaLifecycleRecovery,
     this.directMediaBlobLocalCleanup,
@@ -1840,6 +1855,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         builder: (_) => ConversationWired(
           contact: contact,
           directDeviceTrust: widget.directDeviceTrust,
+          directEventFanout: widget.directEventFanoutResolver?.call(),
+          modalityGate: (widget.isLinkedBlobFreeRuntime?.call() ?? false)
+              ? const DirectConversationModalityGate.linkedBlobFree()
+              : const DirectConversationModalityGate(),
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
           uploadRetryProjectionRepo: widget.messageRepository,
@@ -2133,6 +2152,26 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   void _onPaused() {
+    // 361: the restricted linked role owns a blob-free surface only. Pause
+    // runs the local-only sweep without the media/group repositories and
+    // without the FDC-06 pause flush; every generic pause owner stays zero.
+    if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
+      unawaited(
+        handleAppPaused(
+          messageRepo: widget.messageRepository,
+          p2pService: widget.p2pService,
+          bridge: widget.bridge,
+          enablePauseFlush: false,
+        ).then((result) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'APP_LIFECYCLE_LINKED_PAUSE_COMPLETE',
+            details: {'transitioned': result.transitionedCount},
+          );
+        }),
+      );
+      return;
+    }
     widget.stopPrivateMediaExpiryScheduler?.call();
     // Fire-and-forget (PS-4): we have at most a few hundred milliseconds of
     // foreground execution. handleAppPaused() is local-DB-only EXCEPT for the
@@ -2209,6 +2248,21 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onResumed() async {
+    // 361: the restricted linked role resumes ONLY the exact direct blob-free
+    // drains — no private-media recovery, no broad retry families, no group,
+    // post, upload or push owners.
+    if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
+      widget.p2pService.markResumeStarted();
+      final drained =
+          await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_LIFECYCLE_LINKED_RESUME_COMPLETE',
+        details: {'drained': drained},
+      );
+      widget.p2pService.checkResumeAlreadyOnline();
+      return;
+    }
     // Private lifecycle recovery has its own generation/queue. Start it before
     // the broad network-resume coalescing guard: resume A may still be pending
     // after a pause when resume B arrives, and B must be able to re-arm the
