@@ -1,6 +1,6 @@
 # 358 - GAP-N01 Disappearing Direct-Media Initial Inbox/Blob Custody Adoption
 
-Status: execution-ready / independently reviewed / default-off / not release-eligible
+Status: IMPLEMENTED / EXECUTION_COMPLETED / default-off / not release-eligible
 Type: Modification
 Baseline observed while planning: `66a5940de0d1a0d00f743c97ecca03c22527ca54` (`fix(357): close Plan 356 private delete-for-everyone post-execution defects`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` sections 3.1 and 5, A-01/A-03/A-28; `Test-Flight-Improv/234-1to1-private-media-lifecycle-tdd-plan.md` D-234-01/D-234-02/D-234-05; gap inventory `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md` GAP-N01 / WP-01 / section 9.2
@@ -236,19 +236,19 @@ git status --short
 - Environment blocker: none. Host SQLite/temp-file evidence is the intended closure tier; no unavailable device can block this plan.
 - Scope drift: any schema/relay/native/new owner/scheduler/lock/test-path/GIF-authoring/fresh-marker-free expansion stops execution for re-review.
 
-- [ ] Every behavior has a named causal test or exact preservation proof.
-- [ ] One combined behavioral RED, final combined GREEN, and four mutation re-reds are recorded.
-- [ ] v111 commits before blob network and v108 commits before chat egress.
-- [ ] Receiver clock starts once, survives replay/reopen, and expires without stale display.
-- [ ] Pre-deadline replay preserves all receiver clock columns, compares hydrated key material under the lifecycle lease, and emits no available stream event before marker staging; due replay emits only the terminal row after marker retirement.
-- [ ] Strict download checks expiry before every shortcut and again at final commit.
-- [ ] Transport expiry and receiver-local disappearance remain independent in both orders.
-- [ ] Selector-off/proof-less/GIF legacy, ordinary and P/VO behavior stay unchanged.
-- [ ] Host `1to1` and only the justified dart-only core family pass once.
-- [ ] No new test path/registration/completeness or unauthorized family/device gate is added.
-- [ ] Analyzer, changed-Dart format, staged/unstaged/baseline diff hygiene and incremental Graphify are clean.
-- [ ] The bootstrap delegate and shared real-DB fixture forward the exact `nowMs`; only the two reviewed DTR-18 digests are re-pinned with adjacent reasons and unchanged assertions.
-- [ ] Scope Contract And Guard is respected; no activation, GAP-N01 closure or release claim is made.
+- [x] Every behavior has a named causal test or exact preservation proof.
+- [x] One combined behavioral RED, final combined GREEN, and four mutation re-reds are recorded.
+- [x] v111 commits before blob network and v108 commits before chat egress.
+- [x] Receiver clock starts once, survives replay/reopen, and expires without stale display.
+- [x] Pre-deadline replay preserves all receiver clock columns, compares hydrated key material under the lifecycle lease, and emits no available stream event before marker staging; due replay emits only the terminal row after marker retirement.
+- [x] Strict download checks expiry before every shortcut and again at final commit.
+- [x] Transport expiry and receiver-local disappearance remain independent in both orders.
+- [x] Selector-off/proof-less/GIF legacy, ordinary and P/VO behavior stay unchanged.
+- [x] Host `1to1` and only the justified dart-only core family pass once.
+- [x] No new test path/registration/completeness or unauthorized family/device gate is added.
+- [x] Analyzer, changed-Dart format, staged/unstaged/baseline diff hygiene and incremental Graphify are clean.
+- [x] The bootstrap delegate and shared real-DB fixture forward the exact `nowMs`; only the two reviewed DTR-18 digests are re-pinned with adjacent reasons and unchanged assertions.
+- [x] Scope Contract And Guard is respected; no activation, GAP-N01 closure or release claim is made.
 
 ## Handoff
 
@@ -286,4 +286,33 @@ The test disposition is intentionally lean: ten named causal tests in four bundl
 
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
-| - | not started | - | - | - | awaiting reviewed plan | contract extraction |
+| 2026-08-11 | Causal RED | The ten plan test paths | One selector-on concurrency-4 `--name 'TC-358-'` invocation | `+1 -10`: every named row failed behaviorally (HEAD mints no disappearing v110, DB predicates refuse the prepared parent, completion skips nonordinary lineage, the receiver refuses the strict disappearing initial and its local commit, retry validators refuse the token-bearing parent, and expiry retires no display marker). The single pass is the added TC-358-03b Protected/View-Once control, which asserts unchanged incumbent behavior. | No missing-symbol or source-substring failure was accepted. | production edits |
+| 2026-08-11 | Implementation | The 14 expected production files plus the shared real-DB fixture and the TC-347-07b wiring contract | Per-bundle GREEN after each step | Policy predicate, token-bearing v110/v111/v108 admission, exact-lineage stamp, composer/sender/retry adoption, strict disappearing receive under one lease, expiry marker retirement, download requalification and the explicit `nowMs` thread | No file outside the expected surface was touched. No schema, wire, relay, native, new owner/scheduler/lock/repository method. | combined proof |
+| 2026-08-11 | Combined GREEN | The eleven-file filtered proof | One selector-on concurrency-4 invocation | `+14` and zero failures: ten named TC-358 rows, the TC-358-03b P/VO control, and the three out-of-lane sentinels `TC-347-08c`, `TC-347-03b`, `TC-355-04d` | Every selected name ran. | curated closure |
+| 2026-08-11 | Curated closure | `1to1` and dart-only `core-host-all` | `./scripts/run_host_test_gates.sh 1to1`; `./scripts/run_host_test_gates.sh core-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only` | `1to1` PASS at **120/120 paths** (live count measured, final path `#120`); `core-host-all` PASS at **404 test paths / 3,237 tests**. Both ran concurrently. | One recorded correction was required first (below). | mutations + hygiene |
+| 2026-08-11 | Recorded correction | `handle_incoming_chat_message_use_case_test.dart` | Default-define `1to1` surfaced `TC-354-04c` | That incumbent Plan-354 contract pinned the exact pre-358 spelling of the strict-private capability gate and the textual position of the durable-supersession branch relative to marker staging. Plan 358 adds the lifecycle-owner and cleanup-runtime requirements to that same fail-closed gate and moves the atomic stage INSIDE the exclusive lease that already owned the marker/publication/promotion. Both original properties are retained and restated against the real structure, and the assertion now additionally requires the two new capabilities. | Property preserved and strengthened; only the literal spelling and textual order moved. | mutations |
+| 2026-08-11 | Mutation re-reds | Four independent production mutations, each reverted | Each named row re-run under its mutation | M1 ordinary-only token-bearing admission -> TC-358-01b RED; M2 disappearing removed from the shared token-bearing retry predicate -> TC-358-02b and TC-358-02c RED; M3 expiry marker retirement unhooked -> TC-358-03b RED; M4 pre-shortcut deadline requalification bypassed -> TC-358-04a RED. All four reverted and the combined `+14` proof re-confirmed on the restored tree. | 4/4 required mutations executed and reverted. | hygiene |
+| 2026-08-11 | Static/hygiene/graph | Final tree | `flutter analyze`; changed-Dart `dart format`; three `git diff --check`; incremental Graphify | Analyzer: **No issues found**. Format: 28 changed Dart paths, clean. Baseline/unstaged/staged diff checks clean before and after Graphify. Incremental Graphify: 28 changed code files / 3,123 unchanged / 0 deleted, closing at **71,012 nodes / 104,353 edges**; TDD overlay 1,563 files / 15,323 named tests / 1,199 production targets. Two reviewed DTR-18 digests re-pinned with adjacent Plan-358 reasons and unchanged assertions (media-repository placement `027226d2…`, production-bootstrap layering `1d7df44e…`). | No feature/full/device/Go/completeness campaign was run, per the authorized cadence. | closed |
+
+## Execution Outcome
+
+**EXECUTION_COMPLETED / DEFAULT-OFF / NOT RELEASE-ELIGIBLE.**
+
+Every Done Criteria item is satisfied:
+
+- Ten named causal tests plus three exact out-of-lane preservation proofs, all in existing paths; no new test file, registration or completeness run was added.
+- One combined behavioral RED (`+1 -10`), one combined GREEN (`+14`), and four mutation re-reds executed and reverted.
+- v111 commits before the first LAN/relay blob callback and v108 commits before chat egress (TC-358-01a observes the durable v110 token and the complete `outgoing_prepared` generation inside the first strict upload callback).
+- The receiver clock starts once, survives replay and file-backed reopen, and expires without stale display.
+- Pre-deadline replay preserves all three receiver clock columns and compares hydrated key material under the lease; a due replay emits only the terminal row after marker retirement.
+- Strict download checks expiry before every shortcut and again at the final in-transaction commit.
+- Transport expiry and receiver-local disappearance remain independent in both orders across a real reopen.
+- Selector-off, proof-less, GIF-legacy, ordinary and P/VO behavior are unchanged (default-define host `1to1` 120/120; selector-on proof-less compatibility is inside TC-358-02a).
+- Host `1to1` and only the justified dart-only core family ran, once each.
+- Analyzer, changed-Dart format, all three diff-hygiene checks and one incremental Graphify refresh are clean on the same final tree.
+- The bootstrap delegate and the shared real-DB fixture forward the exact `nowMs`; only the two reviewed DTR-18 digests were re-pinned.
+- No activation, GAP-N01 closure or release claim is made.
+
+Accepted differences carried forward unchanged: disappearing Delete-for-Everyone remains a separate Plan 359 candidate; private EDIT remains a separate product/authority decision; a receiver-local 7-day deadline may outlive the remaining fixed relay blob lease after delayed delivery, and no renewal or server change is added under D-234-05; pre-358, no-v111, selector-off, proof-less GIF and already-drained historical rows are neither scanned nor promoted.
+
+One further accepted difference is new: an ACTIVE strict-private replay whose durable attachment has already left the fresh `pending` projection (the user downloaded it) adopts that durable projection instead of re-running the insert-shaped stage, and a durable v111 survivor in any state other than `incoming_committed`, or with a disagreeing public commitment, fails closed with no receipt. This is strictly narrower than the pre-358 generic duplicate shortcut it replaces for this modality, and it exists only for disappearing media, which has no shipped production behavior to regress.
