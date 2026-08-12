@@ -7,7 +7,10 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
-    show DirectMediaBlobCustodyRow, DirectMediaBlobCustodyState;
+    show
+        DirectMediaBlobCustodyDirection,
+        DirectMediaBlobCustodyRow,
+        DirectMediaBlobCustodyState;
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
     show isExactV2DirectChatInitialEnvelope;
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
@@ -1543,9 +1546,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // transaction repeats these checks after serialization to close the race.
   if (ownsDirectMediaInboxCustody && replayedDirectMediaCustody == null) {
     // 362 plural-authority-first: a marked linked generation may settle ONLY
-    // through the plural fanout stage. Without the caller-proven fanout
-    // context, any persisted linked row refuses this singular path before
-    // encryption or network — an unreadable authority likewise fails closed.
+    // through the plural fanout stage. The persisted survivors ARE the
+    // authority, so a producer that uploaded through the all-target owner
+    // needs no caller-threaded context: it is self-assembled here from the
+    // stored rows plus the live snapshot (the plural stage requalifies that
+    // snapshot inside its transaction). Anything underivable — missing
+    // capability, unloadable snapshot, incoherent or unstored rows — refuses
+    // this singular path before encryption or network, and an unreadable
+    // authority likewise fails closed.
     if (directLinkedMediaFanout == null &&
         mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
         (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
@@ -1555,13 +1563,21 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
             await (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
                 .loadDirectMediaBlobCustodyForMessage(resolvedMessageId);
         if (persistedBlobRows.any((row) => row.isLinkedFanoutRow)) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CHAT_MSG_SEND_MEDIA_FANOUT_SINGULAR_REFUSED',
-            details: {'id': shortenMessageId(resolvedMessageId)},
-          );
-          emitSendTiming(outcome: 'media_fanout_singular_refused');
-          return (SendChatMessageResult.sendFailed, null);
+          directLinkedMediaFanout =
+              await _deriveLinkedMediaFanoutContextFromSurvivors(
+                rows: persistedBlobRows,
+                targetPeerId: targetPeerId,
+                mediaAttachmentRepo: mediaAttachmentRepo,
+              );
+          if (directLinkedMediaFanout == null) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'CHAT_MSG_SEND_MEDIA_FANOUT_SINGULAR_REFUSED',
+              details: {'id': shortenMessageId(resolvedMessageId)},
+            );
+            emitSendTiming(outcome: 'media_fanout_singular_refused');
+            return (SendChatMessageResult.sendFailed, null);
+          }
         }
       } catch (error) {
         emitFlowEvent(
@@ -4296,6 +4312,51 @@ _authorDirectBlobFreeTextFanout({
 /// (per-target manifest/expiry/envelope, canonical witness = FIRST target),
 /// and each committed row rides the incumbent per-row strict-STORE owner
 /// independently — one outcome never cancels a sibling.
+/// 362: rebuilds the plural fanout context from persisted survivor rows.
+///
+/// Survivors are retry/settlement authority: every row must be a STORED
+/// linked sibling of one logical contact equal to the send target, the
+/// repository must own the fanout capability, and the live snapshot must
+/// load. The plural v108 stage revalidates that snapshot inside its own
+/// transaction, so roster drift after this read still fails closed there.
+Future<DirectLinkedMediaFanoutContext?>
+_deriveLinkedMediaFanoutContextFromSurvivors({
+  required List<DirectMediaBlobCustodyRow> rows,
+  required String targetPeerId,
+  required MediaAttachmentRepository? mediaAttachmentRepo,
+}) async {
+  if (mediaAttachmentRepo is! OutgoingDirectLinkedMediaBlobFanoutRepository) {
+    return null;
+  }
+  final fanoutRepository =
+      mediaAttachmentRepo as OutgoingDirectLinkedMediaBlobFanoutRepository;
+  if (!fanoutRepository.supportsDirectLinkedMediaBlobFanout) return null;
+  if (rows.isEmpty ||
+      rows.any(
+        (row) =>
+            !row.isLinkedFanoutRow ||
+            row.contactAccountPeerId != targetPeerId ||
+            row.direction != DirectMediaBlobCustodyDirection.outgoing ||
+            row.state != DirectMediaBlobCustodyState.outgoingStored,
+      )) {
+    return null;
+  }
+  final snapshot = await fanoutRepository
+      .readDirectContactFanoutSnapshotForMedia(targetPeerId);
+  if (snapshot == null || snapshot.targets.isEmpty) return null;
+  final targetRows = <String, List<DirectMediaBlobCustodyRow>>{};
+  for (final row in rows) {
+    targetRows
+        .putIfAbsent(row.recipientPeerId!, () => <DirectMediaBlobCustodyRow>[])
+        .add(row);
+  }
+  return DirectLinkedMediaFanoutContext(
+    contactAccountPeerId: targetPeerId,
+    snapshot: snapshot,
+    targetRows: targetRows,
+  );
+}
+
 Future<(SendChatMessageResult, ConversationMessage?)>
 _authorDirectLinkedMediaFanout({
   required DirectLinkedMediaFanoutContext fanout,

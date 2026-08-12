@@ -4373,6 +4373,23 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       ),
       identityPeerId: () async => (await repository.loadIdentity())?.peerId,
       strictDownloadAckOwner: strictDirectMediaBlobDownloadAckOwner,
+      // 362: the shared encrypted artifact is unlinked only by the LAST v114
+      // sibling still referencing its exact (path, hash, size) proof; earlier
+      // target retirements delete their row but must preserve the ciphertext
+      // the surviving targets still retry from.
+      countOtherArtifactReferences:
+          ({
+            required ciphertextRelativePath,
+            required contentHash,
+            required ciphertextSize,
+            required excluding,
+          }) => dbCountOtherDirectMediaBlobCustodyRowsReferencingArtifact(
+            db,
+            ciphertextRelativePath: ciphertextRelativePath,
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            excluding: excluding,
+          ),
       retryIncomingDownload: (row) async {
         final parent = await messageRepository.getMessage(row.messageId);
         // 355: the exact shared drain predicate decides. A tombstoned, hidden

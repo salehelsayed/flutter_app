@@ -1938,167 +1938,149 @@ void main() {
       expect(await v111Rows(unGatedInternalForward.fixture), isEmpty);
     });
 
-    test(
-      'TC-362-02a external share keeps the incumbent primary entry and never demotes a linked generation',
-      () async {
-        final previousPathProvider = PathProviderPlatform.instance;
-        final root = Directory.systemTemp.createTempSync(
-          'external_share_362_primary_',
-        );
+    test('TC-362-02a external share fails closed on an initialized roster and '
+        'never demotes to one target', () async {
+      final previousPathProvider = PathProviderPlatform.instance;
+      final root = Directory.systemTemp.createTempSync(
+        'external_share_362_primary_',
+      );
+      mediaUploadInFlightTracker.clearAll();
+      addTearDown(() async {
         mediaUploadInFlightTracker.clearAll();
-        addTearDown(() async {
-          mediaUploadInFlightTracker.clearAll();
-          PathProviderPlatform.instance = previousPathProvider;
-          if (root.existsSync()) root.deleteSync(recursive: true);
-        });
-        final documents = Directory('${root.path}/scenario')
-          ..createSync(recursive: true);
-        PathProviderPlatform.instance = _SharePathProvider(documents.path);
-        final fixture = await MediaRepositoryRealDbFixture.create(
-          databasePath: '${documents.path}/identity.sqlite',
-        );
-        addTearDown(fixture.dispose);
+        PathProviderPlatform.instance = previousPathProvider;
+        if (root.existsSync()) root.deleteSync(recursive: true);
+      });
+      final documents = Directory('${root.path}/scenario')
+        ..createSync(recursive: true);
+      PathProviderPlatform.instance = _SharePathProvider(documents.path);
+      final fixture = await MediaRepositoryRealDbFixture.create(
+        databasePath: '${documents.path}/identity.sqlite',
+      );
+      addTearDown(fixture.dispose);
 
-        // The destination contact ALSO owns an initialized linked-device
-        // roster: Plan 362 makes the repository fanout-capable, and the
-        // external OS-share entry must STILL ride the incumbent single
-        // legacy-primary strict lane — it never resolves the roster, never
-        // mints linked rows, and never marks a fanout generation.
-        const seededAt = '2026-08-10T12:00:00.000Z';
-        final contact = _makeMlKemContact(
-          'peer-share-362-linked-roster',
-          'Linked Roster Contact',
-        );
-        final contacts = InMemoryContactRepository();
-        await contacts.addContact(contact);
-        await fixture.db.insert('contacts', <String, Object?>{
-          'peer_id': contact.peerId,
-          'public_key': contact.publicKey,
-          'rendezvous': contact.rendezvous,
-          'username': contact.username,
-          'signature': contact.signature,
-          'scanned_at': seededAt,
-          'ml_kem_public_key': contact.mlKemPublicKey,
-        });
-        await fixture.db
-            .insert('direct_contact_device_roster_metadata', <String, Object?>{
-              'contact_account_peer_id': contact.peerId,
-              'roster_initialized': 1,
-              'legacy_target_state': 'active',
-              'initialized_at': seededAt,
-              'legacy_revoked_at': null,
-              'updated_at': seededAt,
-            });
-        await fixture.db
-            .insert('direct_contact_device_bindings', <String, Object?>{
-              'contact_account_peer_id': contact.peerId,
-              'device_id': 'device-a',
-              'verified_account_signing_public_key': contact.publicKey,
-              'transport_peer_id': 'peer-transport-device-a',
-              'transport_public_key': 'transport-key-device-a',
-              'device_ml_kem_public_key': 'mlkem-device-a',
-              'binding_fingerprint': 'a1b2' * 16,
-              'state': 'active',
-              'staged_at': seededAt,
-              'decided_at': seededAt,
-            });
-        final fanoutRepository =
-            fixture.repo as OutgoingDirectLinkedMediaBlobFanoutRepository;
-        expect(fanoutRepository.supportsDirectLinkedMediaBlobFanout, isTrue);
-        final linkedSnapshot = await fanoutRepository
-            .readDirectContactFanoutSnapshotForMedia(contact.peerId);
-        expect(
-          linkedSnapshot!.targets,
-          hasLength(2),
-          reason:
-              'the linked roster is real and visible to the fanout '
-              'reader — the share lane must simply never consult it',
-        );
+      // The destination contact owns an initialized linked-device roster:
+      // the external OS-share entry has no plural fanout owner wired, so
+      // it must REFUSE this destination before media crypto, file write,
+      // upload or network — never silently ride the singular
+      // legacy-primary lane and never demote the generation to one target.
+      const seededAt = '2026-08-10T12:00:00.000Z';
+      final contact = _makeMlKemContact(
+        'peer-share-362-linked-roster',
+        'Linked Roster Contact',
+      );
+      final contacts = InMemoryContactRepository();
+      await contacts.addContact(contact);
+      await fixture.db.insert('contacts', <String, Object?>{
+        'peer_id': contact.peerId,
+        'public_key': contact.publicKey,
+        'rendezvous': contact.rendezvous,
+        'username': contact.username,
+        'signature': contact.signature,
+        'scanned_at': seededAt,
+        'ml_kem_public_key': contact.mlKemPublicKey,
+      });
+      await fixture.db
+          .insert('direct_contact_device_roster_metadata', <String, Object?>{
+            'contact_account_peer_id': contact.peerId,
+            'roster_initialized': 1,
+            'legacy_target_state': 'active',
+            'initialized_at': seededAt,
+            'legacy_revoked_at': null,
+            'updated_at': seededAt,
+          });
+      await fixture.db
+          .insert('direct_contact_device_bindings', <String, Object?>{
+            'contact_account_peer_id': contact.peerId,
+            'device_id': 'device-a',
+            'verified_account_signing_public_key': contact.publicKey,
+            'transport_peer_id': 'peer-transport-device-a',
+            'transport_public_key': 'transport-key-device-a',
+            'device_ml_kem_public_key': 'mlkem-device-a',
+            'binding_fingerprint': 'a1b2' * 16,
+            'state': 'active',
+            'staged_at': seededAt,
+            'decided_at': seededAt,
+          });
+      final fanoutRepository =
+          fixture.repo as OutgoingDirectLinkedMediaBlobFanoutRepository;
+      expect(fanoutRepository.supportsDirectLinkedMediaBlobFanout, isTrue);
+      final linkedSnapshot = await fanoutRepository
+          .readDirectContactFanoutSnapshotForMedia(contact.peerId);
+      expect(
+        linkedSnapshot!.targets,
+        hasLength(2),
+        reason:
+            'the linked roster is real and visible to the fanout reader — '
+            'exactly the authority that forbids the singular lane',
+      );
 
-        final source = File('${documents.path}/primary.jpg')
-          ..writeAsBytesSync(List<int>.generate(48, (index) => index));
-        final uploads = <Map<String, dynamic>>[];
-        final bridge = _AuthorityObservingShareBridge(
-          onFirstMediaUpload: (payload) async {
-            uploads.add(Map<String, dynamic>.from(payload));
-          },
-        );
-        final p2pService = _DirectMediaCustodyFakeP2PService(
-          initialState: const NodeState(
-            isStarted: true,
-            peerId: 'my-peer-id-12345',
-          ),
-        )..isConnectedToPeerResult = false;
-        final coordinator = DefaultShareBatchDeliveryCoordinator(
-          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
-          contactRepository: contacts,
-          messageRepository: fixture.messageRepo,
-          mediaAttachmentRepository: fixture.repo,
-          groupRepository: InMemoryGroupRepository(),
-          groupMessageRepository: InMemoryGroupMessageRepository(),
-          bridge: bridge,
-          p2pService: p2pService,
-          mediaFileManager: MediaFileManager(),
-          imageProcessor: _imageProcessor(),
-          directMediaBlobCustodyClientEnabled: true,
-          processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
-            processedMedia: <PendingComposerMedia>[
-              PendingComposerMedia(
-                file: source,
-                budgetBytes: source.lengthSync(),
-              ),
-            ],
-          ),
-        );
-
-        final result = await coordinator.deliver(
-          shareIntent: ShareIntent(
-            type: ShareIntentType.files,
-            filePaths: <String>[source.path],
-          ),
-          targets: <ShareTargetSelection>[
-            ShareTargetSelection.contact(contact),
+      final source = File('${documents.path}/primary.jpg')
+        ..writeAsBytesSync(List<int>.generate(48, (index) => index));
+      final uploads = <Map<String, dynamic>>[];
+      final bridge = _AuthorityObservingShareBridge(
+        onFirstMediaUpload: (payload) async {
+          uploads.add(Map<String, dynamic>.from(payload));
+        },
+      );
+      final p2pService = _DirectMediaCustodyFakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      )..isConnectedToPeerResult = false;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: contacts,
+        messageRepository: fixture.messageRepo,
+        mediaAttachmentRepository: fixture.repo,
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: bridge,
+        p2pService: p2pService,
+        mediaFileManager: MediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        directMediaBlobCustodyClientEnabled: true,
+        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
+          processedMedia: <PendingComposerMedia>[
+            PendingComposerMedia(
+              file: source,
+              budgetBytes: source.lengthSync(),
+            ),
           ],
-        );
+        ),
+      );
 
-        expect(result.failureCount, 0);
-        expect(
-          uploads,
-          hasLength(1),
-          reason:
-              'exactly ONE strict upload: the incumbent legacy-primary '
-              'entry, never one per linked target',
-        );
-        expect(uploads.single['custodyContract'], 'ack_or_expiry_v1');
-        expect(
-          uploads.single['to'],
-          contact.peerId,
-          reason: 'addressed to the account primary, never a linked device',
-        );
-        final v111 = await fixture.db.query(kDirectMediaBlobCustodyTable);
-        expect(
-          v111,
-          hasLength(1),
-          reason: 'a SINGLE-target generation: no linked fanout rows minted',
-        );
-        expect(v111.single['recipient_peer_id'], contact.peerId);
-        expect(
-          v111.single['contact_account_peer_id'],
-          isNull,
-          reason:
-              'the external share never promotes itself into (or demotes '
-              'an incumbent) linked generation',
-        );
-        expect(v111.single['recipient_ml_kem_public_key'], isNull);
-        final parents = await fixture.db.query('messages');
-        expect(parents, hasLength(1));
-        expect(
-          parents.single['direct_event_fanout_generation_id'],
-          isNull,
-          reason: 'no fanout no-remint marker on an external-share parent',
-        );
-      },
-    );
+      final result = await coordinator.deliver(
+        shareIntent: ShareIntent(
+          type: ShareIntentType.files,
+          filePaths: <String>[source.path],
+        ),
+        targets: <ShareTargetSelection>[ShareTargetSelection.contact(contact)],
+      );
+
+      expect(
+        result.failureCount,
+        1,
+        reason: 'the initialized-roster destination fails closed',
+      );
+      expect(
+        uploads,
+        isEmpty,
+        reason:
+            'zero network: the refusal precedes media crypto, file write '
+            'and upload',
+      );
+      expect(
+        await fixture.db.query(kDirectMediaBlobCustodyTable),
+        isEmpty,
+        reason: 'no singular or linked generation is minted',
+      );
+      expect(
+        await fixture.db.query('messages'),
+        isEmpty,
+        reason: 'the refusal precedes the fresh parent stage',
+      );
+    });
 
     test(
       'TC-350-04 internal forward custody decision table varies one authority at a time',

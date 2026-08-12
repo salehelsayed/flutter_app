@@ -48,7 +48,9 @@ const _relocations = <String, List<String>>{
     // fanout generation + per-target v108 batch stages and the in-transaction
     // reverse-transport recheck seam on the incoming stages; nothing
     // relocates.
-    'c6ca0d68178cdfc0914754c5d4555276425f66bc99117704bdd8c7dd96cadd48',
+    // The Plan-362 execution's final format pass reflowed this adapter after
+    // the first repin; the digest below is the formatted body.
+    'c79a0b6427a97a5c5bdd971c72802f0dab3002ca5ac98613722ca9b1d44700fa',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

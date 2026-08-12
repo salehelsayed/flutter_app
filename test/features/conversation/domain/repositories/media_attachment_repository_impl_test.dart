@@ -9082,5 +9082,154 @@ END
         );
       },
     );
+
+    test('TC-362-02b production-composed drain preserves the shared artifact '
+        'until the last sibling retires', () async {
+      const identityPeerId = 'tc362-drain-identity';
+      const messageId = 'tc362-drain-shared';
+      const attachmentId = '$messageId-a1';
+      final tempDir = await Directory.systemTemp.createTemp(
+        'tc362_drain_shared_',
+      );
+      addTearDown(() async {
+        if (await tempDir.exists()) await tempDir.delete(recursive: true);
+      });
+      final store = DirectMediaBlobArtifactStore(
+        documentsDirectoryProvider: () async => tempDir,
+      );
+      final bytes = <int>[7, 14, 21, 28];
+      final source = File('${tempDir.path}/shared-source.enc');
+      await source.writeAsBytes(bytes, flush: true);
+      final contentHash = sha256.convert(bytes).toString();
+      final artifact = await store.persistCandidate(
+        identityPeerId: identityPeerId,
+        attachmentId: attachmentId,
+        encryptedSourcePath: source.path,
+        expectedContentHash: contentHash,
+      );
+
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': contactAccount,
+        'sender_peer_id': 'peer-self',
+        'text': '',
+        'timestamp': seededAt,
+        'status': 'sending',
+        'is_incoming': 0,
+        'created_at': seededAt,
+      });
+      Map<String, Object?> siblingRow({
+        required String recipientPeerId,
+        required String state,
+      }) => <String, Object?>{
+        'attachment_id': attachmentId,
+        'message_id': messageId,
+        'direction': 'outgoing',
+        'state': state,
+        'inbox_custody_incarnation_id': null,
+        'recipient_peer_id': recipientPeerId,
+        'contact_account_peer_id': contactAccount,
+        'recipient_ml_kem_public_key': 'mlkem-$recipientPeerId',
+        'ciphertext_relative_path': artifact.relativePath,
+        'custody_kind': 'direct_media_blob_v1',
+        'custody_contract': 'ack_or_expiry_v1',
+        'content_hash': contentHash,
+        'ciphertext_size': bytes.length,
+        'transport_mime': 'application/octet-stream',
+        'expires_at_ms': null,
+        'custody_relay_peer_id': null,
+        'retry_count': 0,
+        'last_attempt_at': null,
+        'next_attempt_at': null,
+        'created_at': seededAt,
+        'updated_at': seededAt,
+      };
+      await fixture.db.insert(
+        'direct_media_blob_custody',
+        siblingRow(
+          recipientPeerId: contactAccount,
+          state: 'outgoing_cleanup_pending',
+        ),
+      );
+      await fixture.db.insert(
+        'direct_media_blob_custody',
+        siblingRow(
+          recipientPeerId: 'peer-transport-device-00',
+          state: 'outgoing_prepared',
+        ),
+      );
+
+      // Composed EXACTLY like production: the last-reference counter is the
+      // real DB helper over the same database.
+      final drain = DirectMediaBlobCustodyDrain(
+        repository: fixture.repo as DirectMediaBlobCustodyRepository,
+        incomingRepository:
+            fixture.repo as IncomingDirectMediaBlobCustodyRepository,
+        artifactStore: store,
+        identityPeerId: () async => identityPeerId,
+        strictDownloadAckOwner: StrictDirectMediaBlobDownloadAckOwner(
+          bridge: RecordingFakeBridge(),
+          mediaAttachmentRepository: fixture.repo,
+          mediaFileManager: MediaFileManager(),
+        ),
+        countOtherArtifactReferences:
+            ({
+              required ciphertextRelativePath,
+              required contentHash,
+              required ciphertextSize,
+              required excluding,
+            }) => dbCountOtherDirectMediaBlobCustodyRowsReferencingArtifact(
+              fixture.db,
+              ciphertextRelativePath: ciphertextRelativePath,
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              excluding: excluding,
+            ),
+      );
+
+      // Pass 1: the FIRST retired target deletes only its exact row — the
+      // surviving sibling still retries from the shared ciphertext.
+      final firstPass = await drain.runLocalCleanupBounded();
+      expect(firstPass.failed, 0);
+      final afterFirst = await fixture.db.query(
+        'direct_media_blob_custody',
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+      );
+      expect(afterFirst, hasLength(1));
+      expect(
+        afterFirst.single['recipient_peer_id'],
+        'peer-transport-device-00',
+      );
+      expect(
+        File(artifact.absolutePath).existsSync(),
+        isTrue,
+        reason:
+            'the first completed target must never unlink ciphertext a '
+            'surviving sibling still needs',
+      );
+
+      // Pass 2: the LAST sibling retires and alone authorizes the unlink.
+      await fixture.db.rawUpdate(
+        "UPDATE direct_media_blob_custody SET state = 'outgoing_cleanup_pending' "
+        'WHERE message_id = ? AND recipient_peer_id = ?',
+        const <Object?>[messageId, 'peer-transport-device-00'],
+      );
+      final secondPass = await drain.runLocalCleanupBounded();
+      expect(secondPass.failed, 0);
+      expect(
+        await fixture.db.query(
+          'direct_media_blob_custody',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageId],
+        ),
+        isEmpty,
+      );
+      expect(
+        File(artifact.absolutePath).existsSync(),
+        isFalse,
+        reason: 'the last reference unlinks the shared artifact',
+      );
+    });
   });
 }

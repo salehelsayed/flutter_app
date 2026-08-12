@@ -187,9 +187,11 @@ const _applicationRootNormalizedSha256 =
 // Nothing moved and no core shim returned.
 // Plan 362 injects the v114 linked-media fanout snapshot/generation/v108
 // delegates and the incoming reverse-recheck transport pass-through on the
-// SAME media repository construction. Nothing moved.
+// SAME media repository construction; its post-audit repair additionally
+// wires the last-reference artifact counter into the SAME drain
+// construction. Nothing moved.
 const _productionBootstrapNormalizedSha256 =
-    'e1f09c2b279cc8e04209b8af0bd5db02999a7b271c7a3cf75ec91d3747d022a5';
+    'c541007b8418989cfaf1c5dcf8e66ee9f9abd46732daaa862df466c716d688b0';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

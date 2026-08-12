@@ -470,6 +470,31 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
         );
     final parent = preparedVoiceParent!;
     final attachment = preparedVoiceAttachment!;
+    // 362: fresh voice has no plural fanout owner wired yet. An initialized
+    // roster forbids the singular fresh path — refuse BEFORE media crypto,
+    // upload or network and never demote to one target. Reopen replays the
+    // exact persisted survivor rows and stays untouched.
+    if (!preparedVoiceHasStrictGeneration &&
+        strictRepository is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+        (strictRepository as OutgoingDirectLinkedMediaBlobFanoutRepository)
+            .supportsDirectLinkedMediaBlobFanout) {
+      final fanoutSnapshot =
+          await (strictRepository
+                  as OutgoingDirectLinkedMediaBlobFanoutRepository)
+              .readDirectContactFanoutSnapshotForMedia(targetPeerId);
+      if (fanoutSnapshot != null && fanoutSnapshot.rosterInitialized) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'VOICE_SEND_MEDIA_FANOUT_SINGULAR_REFUSED',
+          details: {
+            'target': targetPeerId.length > 10
+                ? targetPeerId.substring(0, 10)
+                : targetPeerId,
+          },
+        );
+        return (SendVoiceMessageResult.sendFailed, null);
+      }
+    }
     final strictResult = preparedVoiceHasStrictGeneration
         ? await coordinator.reopenAndUpload(
             bridge: bridge,

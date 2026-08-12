@@ -1,4 +1,9 @@
 import 'dart:io';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
@@ -220,6 +225,119 @@ const _tinyGifBytes = <int>[
 
 const _gifReplacementPolicyTestName =
     'replacing a private image draft with GIF resets to keep in chat before optimistic persistence';
+
+/// 362: the strict composer fake with the fanout capability and natural
+/// (attachment, recipient) row identity, so the routed composer scenario can
+/// run inside the widget zone without a real database.
+class _FanoutComposerMediaRepository extends _StrictComposerMediaRepository
+    implements OutgoingDirectLinkedMediaBlobFanoutRepository {
+  _FanoutComposerMediaRepository({required this.snapshot});
+
+  final DirectContactFanoutSnapshot snapshot;
+  final Map<String, DirectMediaBlobCustodyRow> fanoutRows =
+      <String, DirectMediaBlobCustodyRow>{};
+
+  String _key(String attachmentId, String recipientPeerId) =>
+      '$attachmentId|$recipientPeerId';
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async =>
+      contactAccountPeerId == snapshot.contactAccountPeerId ? snapshot : null;
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  }) async {
+    if (fanoutRows.isNotEmpty ||
+        contactAccountPeerId != snapshot.contactAccountPeerId ||
+        !expectedSnapshot.sameSnapshotAs(snapshot) ||
+        custodyRows.length !=
+            expectedAttachments.length * snapshot.targets.length) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+    seed(preparedAttachments);
+    for (final row in custodyRows) {
+      fanoutRows[_key(row.attachmentId, row.recipientPeerId!)] = row;
+    }
+    return DirectMediaBlobGenerationStageResult(
+      outcome: DirectMediaBlobGenerationStageOutcome.applied,
+      attachments: preparedAttachments,
+      custodyRows: custodyRows,
+    );
+  }
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) => throw StateError('the faked send function owns v108 in this test');
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) async =>
+      fanoutRows[_key(attachmentId, recipientPeerId)] ??
+      await super.loadOutgoingDirectMediaBlobCustodyForTarget(
+        attachmentId: attachmentId,
+        recipientPeerId: recipientPeerId,
+      );
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(
+    String attachmentId,
+  ) async => <DirectMediaBlobCustodyRow>[
+    ...fanoutRows.values.where((row) => row.attachmentId == attachmentId),
+    ...await super.loadDirectMediaBlobCustodyRowsForAttachment(attachmentId),
+  ];
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => <DirectMediaBlobCustodyRow>[
+    ...fanoutRows.values.where((row) => row.messageId == messageId),
+    ...await super.loadDirectMediaBlobCustodyForMessage(messageId),
+  ];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final key = _key(expected.attachmentId, expected.recipientPeerId!);
+    final current = fanoutRows[key];
+    if (current == null) {
+      return super.transitionDirectMediaBlobCustodyIfExact(
+        expected: expected,
+        next: next,
+      );
+    }
+    if (!current.exactDatabaseProjectionMatches(expected) ||
+        !expected.canTransitionTo(next)) {
+      return false;
+    }
+    fanoutRows[key] = next;
+    return true;
+  }
+}
 
 class _StrictComposerMediaRepository extends FakeMediaAttachmentRepository
     implements DirectMediaBlobCustodyRepository {
@@ -1628,6 +1746,8 @@ void main() {
     PreparedDirectMediaBlobCustodyCoordinator?
     preparedDirectMediaBlobCustodyCoordinator,
     DirectConversationModalityGate? modalityGate,
+    DirectEventFanoutAuthoring? directEventFanout,
+    DirectLinkedMediaFanoutSelector? directLinkedMediaFanoutSelector,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1644,6 +1764,10 @@ void main() {
           notificationTappedAt: notificationTappedAt,
           bridge: bridge,
           sendChatMessageFn: sendFn,
+          directEventFanout: directEventFanout,
+          directLinkedMediaFanoutSelector:
+              directLinkedMediaFanoutSelector ??
+              const DirectLinkedMediaFanoutSelector(),
           editChatMessageFn: editFn ?? editChatMessage,
           deleteMessageForMeFn: deleteForMeFn ?? deleteMessageForMe,
           deleteMessageForEveryoneFn:
@@ -2249,6 +2373,265 @@ void main() {
     testWidgets(
       'TC-347-08 prepared ordinary composer selects strict blob coordinator',
       runStrictComposerScenario,
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    Future<void> runFanoutRoutedComposerScenario(
+      WidgetTester tester, {
+      required bool selectorOn,
+    }) async {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'composer_fanout_route_',
+      );
+      addTearDown(() {
+        if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+      });
+      final contact = makeContact();
+      const linkedTransport = 'peer-composer-linked-device';
+      final snapshot = DirectContactFanoutSnapshot(
+        contactAccountPeerId: contact.peerId,
+        contactAccountSigningPublicKey: 'composer-signing-key',
+        rosterInitialized: true,
+        targets: <DirectContactFanoutTargetFact>[
+          DirectContactFanoutTargetFact(
+            peerId: contact.peerId,
+            mlKemPublicKey: 'mlkem-legacy-account',
+            isLegacyAccountTarget: true,
+            fingerprint: 'f' * 64,
+          ),
+          DirectContactFanoutTargetFact(
+            peerId: linkedTransport,
+            mlKemPublicKey: 'mlkem-composer-a',
+            isLegacyAccountTarget: false,
+            fingerprint: 'e' * 64,
+            deviceId: 'composer-device-a',
+            transportPublicKey: 'transport-key-composer-a',
+          ),
+        ],
+      );
+      final repository = _FanoutComposerMediaRepository(snapshot: snapshot);
+
+      final strictUploadRecipients = <String>[];
+      final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+        repository: repository,
+        artifactStore: DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => tempDir,
+        ),
+        prepareArtifact:
+            ({required Bridge bridge, required String localFilePath}) async {
+              final ciphertextPath = '$localFilePath.strict.enc';
+              final bytes = File(localFilePath).readAsBytesSync();
+              File(ciphertextPath).writeAsBytesSync(bytes, flush: true);
+              return EncryptedMediaArtifact(
+                encryptedPath: ciphertextPath,
+                keyBase64: 'fanout-key',
+                nonce: 'fanout-nonce',
+                scheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+                contentHash: sha256.convert(bytes).toString(),
+                plaintextSize: bytes.length,
+              );
+            },
+        strictUpload:
+            ({
+              required bridge,
+              required attachmentId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              strictUploadRecipients.add(recipientPeerId);
+              return <String, dynamic>{
+                'ok': true,
+                'id': attachmentId,
+                'storeStatus': 'stored',
+                'custodyKind': 'direct_media_blob_v1',
+                'custodyContract': 'ack_or_expiry_v1',
+                'contentHash': contentHash,
+                'size': ciphertextSize,
+                'mime': 'application/octet-stream',
+                'expiresAtMs': 2000000000000 + strictUploadRecipients.length,
+                'custodyRelayPeerId': 'relay-362',
+              };
+            },
+      );
+      // The route decision consults only the selector and the LIVE persisted
+      // snapshot; every other authoring delegate must stay unreachable.
+      Never neverCalled() =>
+          throw StateError('route decision must not author events');
+      final authoring = DirectEventFanoutAuthoring(
+        selector: selectorOn
+            ? const DirectLinkedEventFanoutSelector.enabled()
+            : const DirectLinkedEventFanoutSelector.disabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: 'my-peer-id-12345',
+        readSnapshot: repository.readDirectContactFanoutSnapshotForMedia,
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                neverCalled(),
+        loadTextSiblings: (_) async => neverCalled(),
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => neverCalled(),
+        loadEventSiblings: (_) async => neverCalled(),
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => neverCalled(),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => neverCalled(),
+      );
+
+      final messages = FakeMessageRepository();
+      var sendCalls = 0;
+      var legacyUploadCalls = 0;
+      final source = File('${tempDir.path}/fanout.jpg')
+        ..writeAsBytesSync(List<int>.generate(64, (index) => index));
+
+      await pumpScreen(
+        tester,
+        identityRepo: FakeIdentityRepository(makeIdentity()),
+        messageRepo: messages,
+        chatListener: ChatMessageListener(
+          chatMessageStream: const Stream.empty(),
+          messageRepo: messages,
+          contactRepo: FakeContactRepository(),
+        ),
+        sendFn:
+            ({
+              required p2pService,
+              required messageRepo,
+              required targetPeerId,
+              required text,
+              required senderPeerId,
+              required senderUsername,
+              messageId,
+              required bool preassignedMessageIdIsFresh,
+              timestamp,
+              bridge,
+              recipientMlKemPublicKey,
+              quotedMessageId,
+              mediaAttachments,
+              privateMediaPolicy,
+              mediaAttachmentRepo,
+              transportMetrics,
+              directEventFanout,
+            }) async {
+              sendCalls++;
+              return (
+                SendChatMessageResult.success,
+                await messageRepo.getMessage(messageId!),
+              );
+            },
+        bridge: FakeBridge(),
+        mediaAttachmentRepo: repository,
+        mediaFileManager: TrackingDurableConversationMediaFileManager(tempDir),
+        typedUploadMediaFn:
+            ({
+              required bridge,
+              required localFilePath,
+              required mime,
+              required recipientPeerId,
+              mediaFileManager,
+              width,
+              height,
+              durationMs,
+              waveform,
+              allowedPeers,
+              blobId,
+              deleteSourceWhenDone = false,
+              preparedArtifact,
+            }) async {
+              legacyUploadCalls++;
+              return const UploadMediaFailed(
+                stage: UploadMediaStage.transport,
+                disposition: UploadMediaDisposition.terminal,
+                errorCode: 'LEGACY_UPLOAD_MUST_NOT_RUN',
+              );
+            },
+        initialAttachments: <File>[source],
+        preparedDirectMediaBlobCustodyCoordinator: coordinator,
+        directEventFanout: authoring,
+        directLinkedMediaFanoutSelector: selectorOn
+            ? const DirectLinkedMediaFanoutSelector.enabled()
+            : const DirectLinkedMediaFanoutSelector.disabled(),
+      );
+      await tester.enterText(find.byType(TextField), 'Fanout route');
+      await tester.pump(const Duration(milliseconds: 300));
+      await tester.runAsync(() async {
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        final deadline = Stopwatch()..start();
+        while (sendCalls == 0 &&
+            deadline.elapsed < const Duration(seconds: 5)) {
+          await Future<void>.delayed(const Duration(milliseconds: 10));
+          if (!selectorOn && deadline.elapsed.inMilliseconds > 1500) break;
+        }
+      });
+
+      expect(legacyUploadCalls, 0);
+      if (selectorOn) {
+        // 362: the fresh generation reached the ALL-TARGET owner — one
+        // upload per persisted target in snapshot order, linked rows for
+        // both targets, and the canonical send proceeded.
+        expect(strictUploadRecipients.toSet(), <String>{
+          contact.peerId,
+          linkedTransport,
+        });
+        expect(sendCalls, 1);
+        expect(repository.fanoutRows.values, hasLength(2));
+        expect(
+          repository.fanoutRows.values.every(
+            (row) =>
+                row.contactAccountPeerId == contact.peerId &&
+                row.recipientMlKemPublicKey != null &&
+                row.state == DirectMediaBlobCustodyState.outgoingStored,
+          ),
+          isTrue,
+        );
+      } else {
+        // 362: an initialized roster with a required selector OFF refuses
+        // BEFORE media crypto/upload and never demotes to one target.
+        expect(strictUploadRecipients, isEmpty);
+        expect(sendCalls, 0);
+        expect(repository.fanoutRows, isEmpty);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+    }
+
+    testWidgets(
+      'TC-362-02a composer routes a fresh strict generation through the '
+      'all-target owner',
+      (tester) => runFanoutRoutedComposerScenario(tester, selectorOn: true),
+      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    testWidgets(
+      'TC-362-02a composer refuses a fresh strict send when a required '
+      'selector is off',
+      (tester) => runFanoutRoutedComposerScenario(tester, selectorOn: false),
       skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 

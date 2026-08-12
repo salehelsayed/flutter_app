@@ -1,4 +1,7 @@
 import 'dart:convert';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show DirectMediaFanoutTargetBinding;
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -296,6 +299,67 @@ class _RecordingVoiceUploadProjection
       state: UploadRetryProjectionState.retryPending,
     );
   }
+}
+
+/// 362: the prepared-voice fake with the fanout capability visible, so the
+/// fresh-lane roster guard is reachable. The stagers must stay uncalled — a
+/// fresh voice send on an initialized roster refuses BEFORE any owner work.
+class _FanoutCapableVoiceRepository
+    extends _StrictPreparedVoiceCustodyRepository
+    implements OutgoingDirectLinkedMediaBlobFanoutRepository {
+  _FanoutCapableVoiceRepository(FakeMessageRepository messages)
+    : super(messages, _TestDirectMediaBlobState());
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async => DirectContactFanoutSnapshot(
+    contactAccountPeerId: contactAccountPeerId,
+    contactAccountSigningPublicKey: 'voice-signing-key',
+    rosterInitialized: true,
+    targets: <DirectContactFanoutTargetFact>[
+      DirectContactFanoutTargetFact(
+        peerId: contactAccountPeerId,
+        mlKemPublicKey: 'mlkem-legacy',
+        isLegacyAccountTarget: true,
+        fingerprint: 'f' * 64,
+      ),
+      const DirectContactFanoutTargetFact(
+        peerId: 'peer-voice-linked-device',
+        mlKemPublicKey: 'mlkem-linked',
+        isLegacyAccountTarget: false,
+        fingerprint:
+            'a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4',
+        deviceId: 'voice-device-a',
+        transportPublicKey: 'transport-key-voice-a',
+      ),
+    ],
+  );
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  }) => throw StateError('fresh voice must refuse before the fanout owner');
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) => throw StateError('fresh voice must refuse before the fanout stage');
 }
 
 class _PreparedVoiceCustodyRepository extends _FakeMediaAttachmentRepository
@@ -1400,6 +1464,111 @@ void main() {
           expect(media.saved.single.contentHash, isNotNull);
           expect(media.saved.single.encryptionKeyBase64, isNotNull);
           expect(media.saved.single.encryptionNonce, isNotNull);
+        },
+        skip: !kDirectMediaBlobCustodyClientEnabled,
+      );
+
+      test(
+        'TC-362-02a fresh voice fails closed on an initialized roster before '
+        'any coordinator work',
+        () async {
+          final messages = FakeMessageRepository();
+          final media = _FanoutCapableVoiceRepository(messages);
+          const messageId = 'voice-362-fresh-roster';
+          const attachmentId = 'voice-362-fresh-roster-attachment';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          final prepared = ConversationMessage(
+            id: messageId,
+            contactPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            text: '',
+            timestamp: '2026-08-12T12:00:00.000Z',
+            status: 'sending',
+            isIncoming: false,
+            createdAt: '2026-08-12T12:00:00.000Z',
+            directMediaCustodyIntentId: intent,
+          );
+          messages.existingMessages[messageId] = prepared;
+          media.saved.add(
+            MediaAttachment(
+              id: attachmentId,
+              messageId: messageId,
+              mime: 'audio/mp4',
+              size: 48000,
+              mediaType: 'audio',
+              localPath: MediaFilePathConvention.relativePathForPendingUpload(
+                messageId: messageId,
+                attachmentId: attachmentId,
+                mime: 'audio/mp4',
+              ),
+              durationMs: 3000,
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-08-12T12:00:00.000Z',
+              ownerLane: MediaOwnerLane.direct,
+            ),
+          );
+          final savedBefore = media.saved.single;
+          var prepareArtifactCalls = 0;
+          var strictUploadCalls = 0;
+          final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+            repository: media,
+            artifactStore: DirectMediaBlobArtifactStore(),
+            prepareArtifact: ({required bridge, required localFilePath}) async {
+              prepareArtifactCalls++;
+              throw StateError('fresh voice must refuse before crypto');
+            },
+            strictUpload:
+                ({
+                  required bridge,
+                  required attachmentId,
+                  required recipientPeerId,
+                  required ciphertextPath,
+                  required contentHash,
+                  required ciphertextSize,
+                }) async {
+                  strictUploadCalls++;
+                  throw StateError('fresh voice must refuse before upload');
+                },
+          );
+          final p2p = FakeP2PService(
+            currentState: const NodeState(isStarted: false, peerId: 'my-peer'),
+          );
+
+          final (result, message) = await sendVoiceMessage(
+            p2pService: p2p,
+            messageRepo: messages,
+            targetPeerId: prepared.contactPeerId,
+            senderPeerId: prepared.senderPeerId,
+            senderUsername: 'Me',
+            recording: createRecording(),
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: media,
+            mediaFileManager: FakeMediaFileManager(),
+            messageId: messageId,
+            timestamp: prepared.timestamp,
+            blobId: attachmentId,
+            directMediaBlobCustodyCoordinator: coordinator,
+          );
+
+          // 362: an initialized roster forbids the singular fresh voice path
+          // — the refusal precedes media crypto, artifact persistence,
+          // upload and network, and demotes nothing.
+          expect(result, SendVoiceMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(prepareArtifactCalls, 0);
+          expect(strictUploadCalls, 0);
+          expect(media.saved.single, same(savedBefore));
+          expect(
+            messages.existingMessages[messageId]!.directMediaCustodyIntentId,
+            intent,
+            reason: 'the v110 token is not consumed by a refused attempt',
+          );
+          expect(p2p.sendCallCount, 0);
+          expect(p2p.storeInInboxCallCount, 0);
         },
         skip: !kDirectMediaBlobCustodyClientEnabled,
       );

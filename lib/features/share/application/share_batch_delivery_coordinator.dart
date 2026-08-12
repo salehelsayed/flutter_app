@@ -1380,6 +1380,28 @@ class DefaultShareBatchDeliveryCoordinator
       }
       progressStarted = true;
 
+      // 362: the external-share/forward fresh entry has no plural fanout
+      // owner wired yet. An initialized roster forbids the singular path —
+      // refuse this destination BEFORE media crypto, file write, upload or
+      // network, and never demote to one target.
+      if (repository is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+          (repository as OutgoingDirectLinkedMediaBlobFanoutRepository)
+              .supportsDirectLinkedMediaBlobFanout) {
+        final fanoutSnapshot =
+            await (repository as OutgoingDirectLinkedMediaBlobFanoutRepository)
+                .readDirectContactFanoutSnapshotForMedia(contact.peerId);
+        if (fanoutSnapshot != null && fanoutSnapshot.rosterInitialized) {
+          for (final _ in attachmentIds) {
+            uploadHooks.settled(succeeded: false);
+          }
+          progressSettled = true;
+          return ShareBatchTargetResult(
+            target: ShareTargetSelection.contact(contact),
+            status: ShareBatchTargetStatus.failed,
+            detail: 'Media preparation failed.',
+          );
+        }
+      }
       final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
         repository: repository,
         artifactStore: DirectMediaBlobArtifactStore(),

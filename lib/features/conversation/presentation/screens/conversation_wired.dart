@@ -68,6 +68,7 @@ import 'package:flutter_app/features/conversation/application/upload_media_use_c
 import 'package:flutter_app/features/conversation/application/mark_conversation_read_use_case.dart';
 import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
@@ -439,6 +440,10 @@ class ConversationWired extends StatefulWidget {
   final PrepareEncryptedMediaArtifactFn prepareEncryptedMediaArtifactFn;
   final PreparedDirectMediaBlobCustodyCoordinator?
   preparedDirectMediaBlobCustodyCoordinator;
+
+  /// 362: injectable authoring seam over the build-time linked-media
+  /// selector; host proofs enable it per case, production reads the const.
+  final DirectLinkedMediaFanoutSelector directLinkedMediaFanoutSelector;
   final DateTime? notificationTappedAt;
   final AppShellController? appShellController;
   final TransportMetrics? transportMetrics;
@@ -546,6 +551,8 @@ class ConversationWired extends StatefulWidget {
     this.downloadMediaFn = downloadMedia,
     this.prepareEncryptedMediaArtifactFn = prepareEncryptedMediaArtifact,
     this.preparedDirectMediaBlobCustodyCoordinator,
+    this.directLinkedMediaFanoutSelector =
+        const DirectLinkedMediaFanoutSelector(),
     this.notificationTappedAt,
     this.appShellController,
     this.transportMetrics,
@@ -4073,6 +4080,22 @@ class _ConversationWiredState extends State<ConversationWired>
                     artifactStore: DirectMediaBlobArtifactStore(),
                     prepareArtifact: widget.prepareEncryptedMediaArtifactFn,
                   );
+              // 362: a Protected/View-Once initial has no plural owner yet.
+              // Any non-legacy route (fanout, selector-off, unavailable) on
+              // an initialized roster refuses BEFORE media crypto or network
+              // and never demotes to one target.
+              if (widget.directEventFanout != null) {
+                final privateRouting = await widget.directEventFanout!
+                    .decideRoute(_contact.peerId);
+                if (privateRouting.route !=
+                    DirectEventFanoutRoute.incumbentLegacy) {
+                  await _uploadActivityController.complete(uploadOperation);
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) _updateComposerState(isUploading: false);
+                  return;
+                }
+              }
               final strictResult = await coordinator.prepareAndUploadPrivate(
                 bridge: widget.bridge!,
                 identityPeerId: identity.peerId,
@@ -4166,52 +4189,125 @@ class _ConversationWiredState extends State<ConversationWired>
                 for (final attachment in manifestFailureAttachments)
                   attachment.id: attachment,
               };
-              final strictResult = await coordinator.prepareAndUploadFresh(
-                bridge: widget.bridge!,
-                identityPeerId: identity.peerId,
-                recipientPeerId: _contact.peerId,
-                expectedParent: manifestFailureParent,
-                sources: preparedUploads
-                    .map(
-                      (plan) => PreparedDirectMediaBlobSource(
-                        attachment:
-                            expectedById[plan.pendingAttachment.id] ??
-                            plan.pendingAttachment,
-                        plaintextPath: plan.absoluteDurablePath,
-                      ),
-                    )
-                    .toList(growable: false),
-                onGenerationReady:
-                    widget.p2pService.isLocalPeer(_contact.peerId)
-                    ? (artifacts) async {
-                        for (final artifact in artifacts) {
-                          await widget.p2pService.sendLocalMedia(
-                            peerId: _contact.peerId,
-                            filePath: artifact.absoluteCiphertextPath,
-                            mime: kOpaqueMediaTransportMime,
-                            mediaId: artifact.attachment.id,
-                            fromPeerId: identity.peerId,
-                            durationMs: artifact.attachment.durationMs,
-                            enc: true,
-                            encScheme: artifact.attachment.encryptionScheme,
-                          );
-                        }
-                      }
-                    : null,
-              );
-              if (!strictResult.isComplete) {
-                await _uploadActivityController.complete(uploadOperation);
-                _updateLocalMessageStatus(optimisticMessage.id, 'sending');
-                await _refreshMessageWithHydratedMedia(optimisticMessage.id);
-                if (mounted) _updateComposerState(isUploading: false);
-                return;
+              // 362: the target route is decided BEFORE any media crypto or
+              // upload. The fanout route sends the ONE generation to every
+              // persisted target through the all-target owner; an initialized
+              // roster whose required selector is OFF (or whose route is
+              // unavailable) refuses here and never demotes to one target.
+              // Primary + uninitialized roster keeps the incumbent singular
+              // path byte-identically, including its LAN acceleration.
+              DirectEventFanoutRouting? mediaFanoutRouting;
+              if (widget.directEventFanout != null) {
+                mediaFanoutRouting = await widget.directEventFanout!
+                    .decideRoute(_contact.peerId);
               }
-              uploadedAttachments.addAll(strictResult.attachments);
-              for (var index = 0; index < mediaToUpload.length; index++) {
-                _uploadActivityController.markUploadCompleted(
-                  uploadOperation,
-                  mediaToUpload[index].budgetBytes,
+              final mediaFanoutRepository =
+                  blobCustodyRepository
+                          is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+                      (blobCustodyRepository
+                              as OutgoingDirectLinkedMediaBlobFanoutRepository)
+                          .supportsDirectLinkedMediaBlobFanout
+                  ? blobCustodyRepository
+                        as OutgoingDirectLinkedMediaBlobFanoutRepository
+                  : null;
+              if (mediaFanoutRouting != null &&
+                  mediaFanoutRouting.route !=
+                      DirectEventFanoutRoute.incumbentLegacy) {
+                final routedSnapshot = mediaFanoutRouting.snapshot;
+                final canFanOut =
+                    mediaFanoutRouting.route == DirectEventFanoutRoute.fanout &&
+                    widget
+                        .directLinkedMediaFanoutSelector
+                        .allowsDirectLinkedMediaFanoutAuthoring &&
+                    mediaFanoutRepository != null &&
+                    routedSnapshot != null;
+                if (!canFanOut) {
+                  await _uploadActivityController.complete(uploadOperation);
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) _updateComposerState(isUploading: false);
+                  return;
+                }
+                final fanoutResult = await coordinator
+                    .prepareAndUploadFreshFanout(
+                      bridge: widget.bridge!,
+                      identityPeerId: identity.peerId,
+                      contactAccountPeerId: _contact.peerId,
+                      snapshot: routedSnapshot,
+                      expectedParent: manifestFailureParent,
+                      sources: preparedUploads
+                          .map(
+                            (plan) => PreparedDirectMediaBlobSource(
+                              attachment:
+                                  expectedById[plan.pendingAttachment.id] ??
+                                  plan.pendingAttachment,
+                              plaintextPath: plan.absoluteDurablePath,
+                            ),
+                          )
+                          .toList(growable: false),
+                    );
+                if (!fanoutResult.isComplete) {
+                  await _uploadActivityController.complete(uploadOperation);
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) _updateComposerState(isUploading: false);
+                  return;
+                }
+                uploadedAttachments.addAll(fanoutResult.attachments);
+                for (var index = 0; index < mediaToUpload.length; index++) {
+                  _uploadActivityController.markUploadCompleted(
+                    uploadOperation,
+                    mediaToUpload[index].budgetBytes,
+                  );
+                }
+              } else {
+                final strictResult = await coordinator.prepareAndUploadFresh(
+                  bridge: widget.bridge!,
+                  identityPeerId: identity.peerId,
+                  recipientPeerId: _contact.peerId,
+                  expectedParent: manifestFailureParent,
+                  sources: preparedUploads
+                      .map(
+                        (plan) => PreparedDirectMediaBlobSource(
+                          attachment:
+                              expectedById[plan.pendingAttachment.id] ??
+                              plan.pendingAttachment,
+                          plaintextPath: plan.absoluteDurablePath,
+                        ),
+                      )
+                      .toList(growable: false),
+                  onGenerationReady:
+                      widget.p2pService.isLocalPeer(_contact.peerId)
+                      ? (artifacts) async {
+                          for (final artifact in artifacts) {
+                            await widget.p2pService.sendLocalMedia(
+                              peerId: _contact.peerId,
+                              filePath: artifact.absoluteCiphertextPath,
+                              mime: kOpaqueMediaTransportMime,
+                              mediaId: artifact.attachment.id,
+                              fromPeerId: identity.peerId,
+                              durationMs: artifact.attachment.durationMs,
+                              enc: true,
+                              encScheme: artifact.attachment.encryptionScheme,
+                            );
+                          }
+                        }
+                      : null,
                 );
+                if (!strictResult.isComplete) {
+                  await _uploadActivityController.complete(uploadOperation);
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) _updateComposerState(isUploading: false);
+                  return;
+                }
+                uploadedAttachments.addAll(strictResult.attachments);
+                for (var index = 0; index < mediaToUpload.length; index++) {
+                  _uploadActivityController.markUploadCompleted(
+                    uploadOperation,
+                    mediaToUpload[index].budgetBytes,
+                  );
+                }
               }
             } else {
               for (var index = 0; index < mediaToUpload.length; index++) {
