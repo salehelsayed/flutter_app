@@ -1,6 +1,6 @@
 # 361 - GAP-N01 Direct Linked-Device Blob-Free Event Fanout
 
-Status: EXECUTION_READY / independently reviewed and revalidated / default-off authoring / not release-eligible
+Status: POST_EXECUTION_AUDIT_CLOSED / CODE_COMPLETE / default-off authoring / not release-eligible
 Type: Modification
 Planning baseline: `d016f5449b4f1593317f76d720879762a813a5f6` (clean committed Plan 360 post-execution audit-hygiene closure; residual production repair `c3d2e434bd1dd7340c3dfd5a0e6ae40aaad7b55b`, source/Graphify closure HEAD `97af7e1fe4e68d77dfe1d6e684425f83e30927f0`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; immediate consumer of Plan 360's linked transport/roster authority and predecessor to Plan 362 media/voice/v111 fanout
@@ -40,6 +40,7 @@ Closure tier: host behavior + additive v113 migration + one exact unchanged-rela
 | 2026-08-11 | Gates | completeness 1440/1440 (113 test registered in both 1:1 inventories); serial host `1to1` PASS 123/123; `core-host-all --dart-only --batch-flutter --concurrency 4 --reporter failures-only` PASS 406 paths / `+3262`; both lanes rerun once more on the final formatted tree and PASS | GREEN on the settled tree. |
 | 2026-08-11 | TC-361-04a Android SQLCipher | PASS on discovered target `emulator-5554`: v112 create -> historical v108/v109 seed -> v113 upgrade with NULL new columns -> idempotent migration + both generation indexes -> persisted fanout generation authority -> wrong-key refusal -> byte-identical reopen -> v113->v112 downgrade refusal -> unchanged reopen. Pixel 6 deliberately not used (`flutter test -d` destroys its stamped release install). Six stale `_userVersion == 112` asserts and the v109 historical-row equality in the shared proof file were repaired for v113 | Acceptance proof on a real Android SQLCipher boundary. |
 | 2026-08-11 | Hygiene | Analyzer `No issues found`; 118 changed Dart files format-canonical; `git diff --check` x3 clean; one incremental Graphify refresh (71,897 nodes / 105,515 edges) | Ready to commit implementation + doc receipts. |
+| 2026-08-12 | Post-execution audit and Plan-362 prerequisite revalidation | Implementation `be897336d60f94c742fa04cb9933d90886489265`; receipt closure `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`; current anchored Graphify review fingerprint `488091ffcb7bae21` (71,897 nodes / 105,515 links); direct inspection of v113 generation authority, deterministic persisted-contact target snapshots, reverse transport authority, serialized contact purge, restricted cold/resume/pause runtime, and plural retry/drain fail-closed guards | No executable defect or missing Plan-362 prerequisite API found. Historical receipts reconcile, the tracked tree at the receipt closure is clean, and no test gate needs repetition. Mark `POST_EXECUTION_AUDIT_CLOSED / CODE_COMPLETE` and release Plan 362 for its docs-only baseline pin. |
 
 ## Final Plan-360 Revalidation Delta
 
@@ -94,6 +95,7 @@ Stop and re-review before adding a third outbox/table, per-target accepted state
 
 ## Graph Grounding Snapshot
 
+- Post-execution audit: current anchored fingerprint `488091ffcb7bae21` (71,897 nodes / 105,515 links) over implementation `be897336d60f94c742fa04cb9933d90886489265` and receipt closure `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`; the focused review found no Plan-362 prerequisite defect.
 - Graph: `graphify-arch`, current anchored fingerprint `6e0d3e61531b9292` (71,512 nodes / 104,942 links; overlay 1,565 files / 15,349 tests / 1,207 production targets / 1,485 registered), built at residual source commit `c3d2e434bd1dd7340c3dfd5a0e6ae40aaad7b55b` and carried by source/Graphify closure HEAD `97af7e1fe4e68d77dfe1d6e684425f83e30927f0`.
 - Planning query: `python3 graphify-arch/tdd_context.py query "Plan 361 blob-free direct linked-device event fanout after Plan 360 direct device roster; direct_inbox_custody_outbox v108, direct_reaction_inbox_custody_outbox v109, send_chat_message_use_case, reactions, edit/delete, retry, ACK completion, receive account-to-transport authentication" --profile tdd --budget 700`.
 - Review query: `python3 graphify-arch/tdd_context.py query "Review Plan 361 DB v113 extension of existing v108 v109 for blob-free linked-device fanout; counterexamples: removed parent/contact and roster, partial target completion, linked transport outer versus account inner, receipt mapping, revocation race, retry bypass, selector rollback, media v111 exclusion" --profile review --budget 800`.
@@ -446,21 +448,25 @@ If no Android target is available, record the SQLCipher leg exactly as `N/A (tar
 
 ## Arbiter Decision
 
-`EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED.` The core v113 bet is
+`POST_EXECUTION_AUDIT_CLOSED / CODE_COMPLETE.` The core v113 bet is
 sound: no third queue, accepted-row ledger, target-set hash, representative bit,
 new relay protocol, event-specific scheduler or per-plan device pair is
-justified. Plan 360's setup/QR, Move, expected-account, blocked-contact and
-central post-start P2P authority repairs are audit-closed. The persisted-contact
+justified. The committed v113 implementation supplies the persisted-contact
 forward snapshot, exact reverse authority, final contact transaction and
-cold/resume/pause role filtering remain the reviewed Plan-361 implementation
-contract, not prerequisite defects.
+cold/resume/pause role filtering that Plan 362 consumes. Post-execution source,
+receipt and Graphify review found no executable defect and requires no gate
+repeat. This is default-off event-fanout code closure, not activation, GAP-N01 or
+release closure.
 
 ## Handoff
 
-- Current state: `EXECUTION_READY`; accepted Plan-360 audit-hygiene baseline
-  `d016f5449b4f1593317f76d720879762a813a5f6`, residual repair
-  `c3d2e434bd1dd7340c3dfd5a0e6ae40aaad7b55b`, Graphify
-  `6e0d3e61531b9292`.
-- First execution action: run the clean-tree preflight, add only inert compile scaffolding if necessary, then record the four per-owner semantic RED commands.
-- Runtime economy: use concurrency 4 for every multi-file Flutter batch that supports it; run serial only where the gate/device/mutation owner requires it.
-- Successor: Plan 362 owns every media/voice/v111 target and the one aggregate real Android event+blob pair plus dependency-wave full `host-all`.
+- Current state: `POST_EXECUTION_AUDIT_CLOSED / CODE_COMPLETE`; implementation
+  `be897336d60f94c742fa04cb9933d90886489265`, receipt closure
+  `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`, current anchored Graphify
+  `488091ffcb7bae21`.
+- Audit outcome: no executable defect or missing successor API; Plan 361's
+  focused, mutation, curated, core, SQLCipher and hygiene receipts remain
+  accepted without repetition.
+- Successor: Plan 362 may pin this audit-hygiene closure and execute its reviewed
+  media/voice/v111 fanout contract, aggregate Android event+blob proof and
+  dependency-wave full `host-all`. Activation, GAP-N01 and release remain open.
