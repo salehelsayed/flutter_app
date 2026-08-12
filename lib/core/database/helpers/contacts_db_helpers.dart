@@ -214,6 +214,28 @@ dbPurgeDirectContactConversationAndContact(
           <Object?>[name],
         )).isNotEmpty;
 
+        // 362: the final contact owner transitions every OUTGOING
+        // logical-contact v114 blob row to cleanup BEFORE the v108/v109/
+        // message purge, so the shared encrypted artifacts drain through the
+        // incumbent last-reference lifecycle instead of orphaning. Exact
+        // INCOMING committed/ACK-pending obligations deliberately survive —
+        // they finish their own ACK/expiry convergence. The raw state UPDATE
+        // is CHECK-safe for every legal outgoing shape (prepared rows carry
+        // no proof tuple; stored/bound rows keep theirs).
+        if (await tableExists('direct_media_blob_custody')) {
+          await txn.rawUpdate(
+            "UPDATE direct_media_blob_custody SET state = ?, updated_at = ? "
+            "WHERE direction = 'outgoing' AND state IN (?, ?) "
+            'AND COALESCE(contact_account_peer_id, recipient_peer_id) = ?',
+            <Object?>[
+              'outgoing_cleanup_pending',
+              DateTime.now().toUtc().toIso8601String(),
+              'outgoing_prepared',
+              'outgoing_stored',
+              normalized,
+            ],
+          );
+        }
         var textCustodyRows = 0;
         if (await tableExists('direct_inbox_custody_outbox')) {
           textCustodyRows = await txn.rawDelete(

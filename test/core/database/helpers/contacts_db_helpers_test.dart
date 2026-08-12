@@ -10,8 +10,10 @@ import 'package:flutter_app/core/database/migrations/007_archive_columns.dart';
 import 'package:flutter_app/core/database/migrations/008_block_columns.dart';
 import 'package:flutter_app/core/database/migrations/011_avatar_version.dart';
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
@@ -662,5 +664,132 @@ void main() {
         );
       },
     );
+
+    test('TC-362-03a final contact purge transitions outgoing linked v114 rows '
+        'and retains incoming obligations', () async {
+      const attachmentId = 'purge-blob-att';
+      final contentHash = 'c8' * 32;
+      DirectMediaBlobCustodyRow blobRow({
+        required String attachmentId,
+        required DirectMediaBlobCustodyState state,
+        String? recipientPeerId,
+        String? contactAccountPeerId,
+        String? recipientMlKemPublicKey,
+        int? expiresAtMs,
+        String? custodyRelayPeerId,
+      }) => DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: 'purge-m1',
+        direction: state.direction,
+        state: state,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: recipientPeerId,
+        contactAccountPeerId: contactAccountPeerId,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        ciphertextRelativePath: recipientPeerId == null
+            ? null
+            : 'direct_media_blob_custody_v1/${'d' * 64}/$attachmentId.blob',
+        contentHash: contentHash,
+        ciphertextSize: 4096,
+        expiresAtMs: expiresAtMs,
+        custodyRelayPeerId: custodyRelayPeerId,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: t0,
+        updatedAt: t0,
+      );
+
+      // Two OUTGOING linked target rows (one prepared, one stored with its
+      // full relay proof) owned by the purged logical contact.
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: attachmentId,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          recipientPeerId: deviceTransport,
+          contactAccountPeerId: purgeContact,
+          recipientMlKemPublicKey: 'purge-device-mlkem',
+        ).toMap(),
+      );
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: attachmentId,
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          recipientPeerId: purgeContact,
+          contactAccountPeerId: purgeContact,
+          recipientMlKemPublicKey: 'mlkem-$purgeContact',
+          expiresAtMs: 1900000600000,
+          custodyRelayPeerId: 'relay-purge',
+        ).toMap(),
+      );
+      // Two INCOMING obligations: one carries the linked logical-contact
+      // marker, one keeps the historical NULL marker — BOTH must survive.
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: 'purge-blob-incoming-marked',
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          contactAccountPeerId: purgeContact,
+          expiresAtMs: 1900000700000,
+        ).toMap(),
+      );
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: 'purge-blob-incoming-null',
+          state: DirectMediaBlobCustodyState.incomingAckPending,
+          expiresAtMs: 1900000800000,
+          custodyRelayPeerId: 'relay-purge-source',
+        ).toMap(),
+      );
+      final incomingBefore = await current.query(
+        kDirectMediaBlobCustodyTable,
+        where: "direction = 'incoming'",
+        orderBy: 'attachment_id ASC',
+      );
+
+      final result = await dbPurgeDirectContactConversationAndContact(
+        current,
+        purgeContact,
+      );
+      expect(result.deletedContact, isTrue);
+
+      // Outgoing linked rows transitioned to cleanup so the shared artifact
+      // drains through the incumbent last-reference lifecycle.
+      final outgoingAfter = await current.query(
+        kDirectMediaBlobCustodyTable,
+        where: "direction = 'outgoing'",
+        orderBy: 'recipient_peer_id ASC',
+      );
+      expect(outgoingAfter, hasLength(2));
+      for (final row in outgoingAfter) {
+        expect(row['state'], 'outgoing_cleanup_pending');
+        expect(row['contact_account_peer_id'], purgeContact);
+      }
+
+      // Incoming committed/ACK-pending obligations survive byte-identical:
+      // they finish their own ACK/expiry convergence.
+      expect(
+        await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: "direction = 'incoming'",
+          orderBy: 'attachment_id ASC',
+        ),
+        incomingBefore,
+      );
+
+      // The logical conversation itself is gone: v108/v109 rows, messages
+      // and the contact row.
+      expect(await remainingFor('direct_inbox_custody_outbox', 'message_id'), [
+        'other-m1',
+      ]);
+      expect(
+        await remainingFor('direct_reaction_inbox_custody_outbox', 'event_id'),
+        ['other-e1'],
+      );
+      expect(await remainingFor('messages', 'id'), ['other-m1']);
+      expect(await remainingFor('contacts', 'peer_id'), [otherContact]);
+    });
   });
 }

@@ -95,6 +95,16 @@ Future<Process> _startRole({
     // group key continuity behind an unrelated proof.
     if (options.scenario == directLinkedDeviceAddressingScenario)
       '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true',
+    // 362: ONLY the aggregate event+blob wave scenario compiles the full
+    // linked-media authoring triple (plus device admission). Group
+    // multi-device behavior stays off.
+    if (options.scenario ==
+        directLinkedDeviceEventBlobFanoutScenario) ...const [
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true',
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_EVENT_FANOUT=true',
+      '--dart-define=MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED=true',
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_MEDIA_FANOUT=true',
+    ],
     '--dart-define=E2E_DB_NAME=${options.scenario}_${runId}_$role.db',
     '--dart-define=MKNOON_RELAY_ADDRESSES=$relayAddresses',
     '-d',

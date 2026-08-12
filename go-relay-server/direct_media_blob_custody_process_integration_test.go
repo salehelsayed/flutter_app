@@ -54,7 +54,7 @@ func TestDirectMediaBlobCustodySurvivesRelayProcessHandoff(t *testing.T) {
 		t.Fatalf("final reopen: %v", err)
 	}
 	reopened.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return processNow })
-	meta := reopened.custody.entries["process-handoff"]
+	meta := reopened.custody.entries[custodyKeyOf(mediaCustodyProcessRecipient, "process-handoff")]
 	if meta == nil || meta.State != mediaCustodyStateAcked {
 		t.Fatalf("final reconstructed state = %#v, want ACK tombstone", meta)
 	}

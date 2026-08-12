@@ -1846,7 +1846,7 @@ flutter:
       // 361: v113 adds the direct linked-device blob-free event fanout
       // columns; the floor advances with it.
       'lib/core/database/app_database_version.dart':
-          'const int currentIdentityDatabaseVersion = 113;',
+          'const int currentIdentityDatabaseVersion = 114;',
     };
     for (final entry in preservedSources.entries) {
       final source = requiredSource(entry.key);

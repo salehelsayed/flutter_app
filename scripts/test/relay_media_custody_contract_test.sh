@@ -128,6 +128,10 @@ readonly STRICT_SCHEMA_OWNERS=(
   # not a network owner: the stricter helper allowlist above is unchanged.
   lib/core/database/helpers/messages_db_helpers.dart
   lib/core/database/migrations/111_direct_media_blob_custody.dart
+  # Plan 362: the v114 rebuild migration re-declares the same immutable DDL
+  # CHECK tokens the v111 migration already owns; it is schema DDL, not a
+  # network owner.
+  lib/core/database/migrations/114_direct_linked_device_media_blob_fanout.dart
   lib/debug/android_direct_media_blob_custody_e2e.dart
   lib/core/media/direct_media_blob_custody.dart
   lib/core/services/inbox_store_outcome.dart

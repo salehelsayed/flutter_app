@@ -4540,7 +4540,7 @@ void main() {
         );
         expect(attachmentRows.single['local_path'], isNotNull);
         final pending = await (fixture.repo as DirectMediaBlobCustodyRepository)
-            .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+            .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
         expect(
           pending!.state,
           DirectMediaBlobCustodyState.incomingAckPending,
@@ -4575,7 +4575,7 @@ void main() {
       expect(bridge.deleteRequests, hasLength(1));
       expect(
         await (fixture.repo as DirectMediaBlobCustodyRepository)
-            .loadDirectMediaBlobCustodyForAttachment(attachment.id),
+            .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id),
         isNull,
         reason: 'only the exact successful same-source ACK retires v111',
       );
@@ -4622,7 +4622,7 @@ void main() {
         expect(bridge.deleteRequests, isEmpty);
         final retained =
             await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+                .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
         expect(retained, isNotNull);
         expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
         expect(retained.custodyRelayPeerId, isNull);
@@ -4705,7 +4705,9 @@ void main() {
             expect(row.state, DirectMediaBlobCustodyState.incomingAckPending);
             final reloaded =
                 await (fixture.repo as DirectMediaBlobCustodyRepository)
-                    .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+                    .loadIncomingDirectMediaBlobCustodyForAttachment(
+                      attachment.id,
+                    );
             expect(reloaded, isNotNull);
             expect(reloaded!.exactDatabaseProjectionMatches(row), isTrue);
           },
@@ -4810,7 +4812,7 @@ void main() {
         expect(bridge.commandLog, <String>['media:download', 'media:download']);
         final retained =
             await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+                .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
         expect(retained, isNotNull);
         expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
       },
@@ -4855,7 +4857,7 @@ void main() {
           );
           expect(
             await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(attachment.id),
+                .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id),
             isNull,
           );
 
@@ -4973,7 +4975,7 @@ void main() {
         // ACK and must not retire or rewrite the incoming custody row.
         final retained =
             await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+                .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
         expect(retained, isNotNull);
         expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
         expect(
@@ -5935,7 +5937,7 @@ void main() {
           final row = await fixture.rawAttachmentRow(staged.attachment.id);
           final pending =
               await (fixture.repo as DirectMediaBlobCustodyRepository)
-                  .loadDirectMediaBlobCustodyForAttachment(
+                  .loadIncomingDirectMediaBlobCustodyForAttachment(
                     staged.attachment.id,
                   );
           ackSawDurableCommit =
@@ -5978,7 +5980,9 @@ void main() {
         );
         expect(
           await (fixture.repo as DirectMediaBlobCustodyRepository)
-              .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+              .loadIncomingDirectMediaBlobCustodyForAttachment(
+                staged.attachment.id,
+              ),
           isNull,
           reason: 'only the exact successful same-source ACK retires v111',
         );
@@ -6016,7 +6020,9 @@ void main() {
         expect(bridge.deleteRequests, isEmpty);
         final survivor =
             await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id);
+                .loadIncomingDirectMediaBlobCustodyForAttachment(
+                  staged.attachment.id,
+                );
         expect(survivor!.state, DirectMediaBlobCustodyState.incomingCommitted);
         expect(survivor.custodyRelayPeerId, isNull);
         expect(
@@ -6093,7 +6099,9 @@ void main() {
         expect(bridge.commandLog, <String>['media:delete']);
         expect(
           await (fixture.repo as DirectMediaBlobCustodyRepository)
-              .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+              .loadIncomingDirectMediaBlobCustodyForAttachment(
+                staged.attachment.id,
+              ),
           isNull,
         );
       }
@@ -6148,7 +6156,9 @@ void main() {
         );
         final retained =
             await (fixture.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id);
+                .loadIncomingDirectMediaBlobCustodyForAttachment(
+                  staged.attachment.id,
+                );
         expect(retained!.state, DirectMediaBlobCustodyState.incomingAckPending);
       }
 
@@ -6351,7 +6361,7 @@ void main() {
         expect(row['local_path'], isNull);
         expect(
           (await (fixture.repo as DirectMediaBlobCustodyRepository)
-                  .loadDirectMediaBlobCustodyForAttachment(
+                  .loadIncomingDirectMediaBlobCustodyForAttachment(
                     staged.attachment.id,
                   ))!
               .state,
@@ -6415,7 +6425,7 @@ void main() {
         expect(bridge.deleteRequests, isEmpty);
         expect(
           (await (fixture.repo as DirectMediaBlobCustodyRepository)
-                  .loadDirectMediaBlobCustodyForAttachment(
+                  .loadIncomingDirectMediaBlobCustodyForAttachment(
                     staged.attachment.id,
                   ))!
               .state,
@@ -6589,7 +6599,7 @@ void main() {
           final row = await fixture.rawAttachmentRow(staged.attachment.id);
           final pending =
               await (fixture.repo as DirectMediaBlobCustodyRepository)
-                  .loadDirectMediaBlobCustodyForAttachment(
+                  .loadIncomingDirectMediaBlobCustodyForAttachment(
                     staged.attachment.id,
                   );
           ackSawDurableCommit =
@@ -6661,7 +6671,9 @@ void main() {
         expect(File(staged.canonicalAbsolutePath).existsSync(), isFalse);
         expect(
           await (fixture.repo as DirectMediaBlobCustodyRepository)
-              .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+              .loadIncomingDirectMediaBlobCustodyForAttachment(
+                staged.attachment.id,
+              ),
           isNotNull,
           reason: 'the independent v111 lease is never ACKed or deleted',
         );
@@ -6748,7 +6760,9 @@ void main() {
         );
         expect(
           await (fixture.repo as DirectMediaBlobCustodyRepository)
-              .loadDirectMediaBlobCustodyForAttachment(staged.attachment.id),
+              .loadIncomingDirectMediaBlobCustodyForAttachment(
+                staged.attachment.id,
+              ),
           isNotNull,
           reason:
               'content expiry never converges the transport lease '

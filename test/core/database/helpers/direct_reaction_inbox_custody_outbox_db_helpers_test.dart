@@ -4,7 +4,9 @@ import 'dart:io';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
@@ -2626,6 +2628,235 @@ END
           eventId: r4,
         ),
         isEmpty,
+      );
+    });
+
+    DirectMediaBlobCustodyRow tc362BlobRow({
+      required String attachmentId,
+      required String messageId,
+      required String recipientPeerId,
+      required String contentHash,
+      String? inboxCustodyIncarnationId,
+    }) => DirectMediaBlobCustodyRow(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      state: DirectMediaBlobCustodyState.outgoingStored,
+      inboxCustodyIncarnationId: inboxCustodyIncarnationId,
+      recipientPeerId: recipientPeerId,
+      contactAccountPeerId: _fanoutContact,
+      recipientMlKemPublicKey: 'mlkem-for-$recipientPeerId',
+      ciphertextRelativePath:
+          'direct_media_blob_custody_v1/${'c' * 64}/$attachmentId.blob',
+      contentHash: contentHash,
+      ciphertextSize: 4096,
+      expiresAtMs: 1900000600000,
+      custodyRelayPeerId: 'relay-tc362',
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: _t0,
+      updatedAt: _t0,
+    );
+
+    Future<void> tc362SeedDirectAttachment({
+      required String messageId,
+      required String attachmentId,
+      required String contentHash,
+    }) => current.insert('media_attachments', <String, Object?>{
+      'id': attachmentId,
+      'message_id': messageId,
+      'owner_lane': 'direct',
+      'mime': 'image/jpeg',
+      'size': 2048,
+      'media_type': 'image',
+      'download_status': 'done',
+      'created_at': _t0,
+      'content_hash': contentHash,
+    });
+
+    test('TC-362-03a ordinary media caption EDIT fans out through v109 with '
+        'zero blob rows', () async {
+      final snap = await snapshot();
+      const messageId = 'tc362-03a-media-edit-parent';
+      const attachmentId = '$messageId-att';
+      const eventId = 'tc362-03a-media-edit-e1';
+      final contentHash = 'a6' * 32;
+      final expected = await seedOutgoingParent(messageId);
+      // The parent owns ONE direct media attachment plus one stored v114
+      // LINKED target row: the caption EDIT is a blob-free v109 event that
+      // must leave the whole blob custody table byte-untouched.
+      await tc362SeedDirectAttachment(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        contentHash: contentHash,
+      );
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        tc362BlobRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          recipientPeerId: _fanoutTransportA,
+          contentHash: contentHash,
+        ).toMap(),
+      );
+      final custodyBefore = await current.query(
+        kDirectMediaBlobCustodyTable,
+        orderBy: 'attachment_id ASC, recipient_peer_id ASC',
+      );
+
+      final candidates = candidatesOf(
+        snap,
+        (peer) => editEnvelope(messageId, eventId, 'cipher-tc362-e1-$peer'),
+      );
+      final stage = await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+        current,
+        expectedRow: expected,
+        stagedRow: <String, Object?>{
+          ...expected,
+          'text': 'caption after edit',
+          'status': 'sending',
+          'edited_at': _t1,
+          'wire_envelope': candidates.first.wireEnvelope,
+        },
+        kind: OutgoingOrdinaryAttemptKind.edit,
+        eventId: eventId,
+        parentMessageId: messageId,
+        contactAccountPeerId: _fanoutContact,
+        senderTransportPeerId: _sender,
+        expectedSnapshot: snap,
+        candidates: candidates,
+      );
+      expect(
+        stage.outcome,
+        DirectEventFanoutStageOutcome.applied,
+        reason: 'a direct-media parent caption EDIT is a blob-free v109 event',
+      );
+      expect(stage.rows, hasLength(2));
+      final siblings =
+          await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+            current,
+            eventId: eventId,
+          );
+      expect(siblings, hasLength(2));
+      for (final row in siblings) {
+        expect(row['contact_account_peer_id'], _fanoutContact);
+        expect(row['parent_message_id'], messageId);
+      }
+      final parent = await parentRow(messageId);
+      expect(parent['text'], 'caption after edit');
+      expect(parent['direct_event_fanout_generation_id'], eventId);
+      expect(
+        await current.query(
+          kDirectMediaBlobCustodyTable,
+          orderBy: 'attachment_id ASC, recipient_peer_id ASC',
+        ),
+        custodyBefore,
+        reason: 'the caption EDIT event carries zero blob bytes',
+      );
+    });
+
+    test('TC-362-03a media deletion fanout terminalizes unbound targets '
+        'atomically with the tombstone', () async {
+      final snap = await snapshot();
+      const messageId = 'tc362-03a-media-dfe-parent';
+      const attachmentId = '$messageId-att';
+      const eventId = 'tc362-03a-media-dfe-d1';
+      const boundRecipient = 'peer-fanout-bound-target';
+      final contentHash = 'b7' * 32;
+      final expected = await seedOutgoingParent(messageId);
+      await tc362SeedDirectAttachment(
+        messageId: messageId,
+        attachmentId: attachmentId,
+        contentHash: contentHash,
+      );
+      // Two unbound ACTIVE v114 target rows plus one v108-BOUND stored row:
+      // the deletion may retire only the unbound generation.
+      for (final recipient in const <String>[
+        _fanoutTransportA,
+        _fanoutTransportB,
+      ]) {
+        await current.insert(
+          kDirectMediaBlobCustodyTable,
+          tc362BlobRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            recipientPeerId: recipient,
+            contentHash: contentHash,
+          ).toMap(),
+        );
+      }
+      await current.insert(
+        kDirectMediaBlobCustodyTable,
+        tc362BlobRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          recipientPeerId: boundRecipient,
+          contentHash: contentHash,
+          inboxCustodyIncarnationId: 'abcdef0123456789abcdef0123456789',
+        ).toMap(),
+      );
+      final boundBefore = (await current.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'recipient_peer_id = ?',
+        whereArgs: const <Object?>[boundRecipient],
+      )).single;
+
+      final candidates = candidatesOf(
+        snap,
+        (peer) => deletionEnvelope(eventId, 'cipher-tc362-d1-$peer'),
+      );
+      final stage = await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+        current,
+        expectedRow: expected,
+        stagedRow: <String, Object?>{
+          ...expected,
+          'text': '',
+          'status': 'sending',
+          'deleted_at': _t1,
+          'deleted_by_peer_id': _sender,
+          'wire_envelope': candidates.first.wireEnvelope,
+        },
+        kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+        eventId: eventId,
+        parentMessageId: messageId,
+        contactAccountPeerId: _fanoutContact,
+        senderTransportPeerId: _sender,
+        expectedSnapshot: snap,
+        candidates: candidates,
+      );
+      expect(stage.outcome, DirectEventFanoutStageOutcome.applied);
+      expect(stage.rows, hasLength(2));
+      final parent = await parentRow(messageId);
+      expect(parent['deleted_at'], _t1);
+      expect(parent['text'], '');
+      expect(parent['direct_event_fanout_generation_id'], eventId);
+
+      // BOTH unbound targets terminalized atomically with the tombstone …
+      for (final recipient in const <String>[
+        _fanoutTransportA,
+        _fanoutTransportB,
+      ]) {
+        final row = (await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'recipient_peer_id = ?',
+          whereArgs: <Object?>[recipient],
+        )).single;
+        expect(
+          row['state'],
+          'outgoing_cleanup_pending',
+          reason: 'unbound $recipient terminalizes with the tombstone',
+        );
+        expect(row['inbox_custody_incarnation_id'], isNull);
+      }
+      // … while the v108-BOUND row keeps converging through its own drain.
+      expect(
+        (await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'recipient_peer_id = ?',
+          whereArgs: const <Object?>[boundRecipient],
+        )).single,
+        boundBefore,
+        reason: 'a bound target row stays byte-identical',
       );
     });
   });

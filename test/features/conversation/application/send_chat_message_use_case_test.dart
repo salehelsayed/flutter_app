@@ -6,9 +6,15 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/db_write_transaction.dart'
+    show assertNotInsideDbWriteTransaction;
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
+    show computeDirectEventFanoutIncarnation;
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show OutgoingDirectMediaCaptionEditLane;
+    show DirectMediaFanoutTargetBinding, OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
@@ -12368,6 +12374,365 @@ void main() {
       }
     });
   });
+
+  group('Plan 362 direct linked-media fanout send authority', () {
+    const contactAccount = 'target-peer';
+    const deviceTransport = 'peer-device-a';
+    const legacyKey = 'mlkem-legacy-account';
+    const deviceKey = 'mlkem-device-a';
+    const authoredAt = '2026-08-10T10:00:00.000Z';
+    const contentHash =
+        'abababababababababababababababababababababababababababababababab';
+    const fanoutSnapshot = DirectContactFanoutSnapshot(
+      contactAccountPeerId: contactAccount,
+      contactAccountSigningPublicKey: 'contact-signing-key',
+      rosterInitialized: true,
+      targets: <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(
+          peerId: contactAccount,
+          mlKemPublicKey: legacyKey,
+          isLegacyAccountTarget: true,
+          fingerprint: 'legacy-fingerprint',
+        ),
+        DirectContactFanoutTargetFact(
+          peerId: deviceTransport,
+          mlKemPublicKey: deviceKey,
+          isLegacyAccountTarget: false,
+          fingerprint: 'device-fingerprint',
+          deviceId: 'device-a',
+          transportPublicKey: 'transport-key-a',
+        ),
+      ],
+    );
+
+    DirectMediaBlobCustodyRow storedLinkedRow({
+      required String messageId,
+      required String attachmentId,
+      required String recipientPeerId,
+      required String recipientMlKemPublicKey,
+      required int expiresAtMs,
+    }) => DirectMediaBlobCustodyRow(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      state: DirectMediaBlobCustodyState.outgoingStored,
+      inboxCustodyIncarnationId: null,
+      recipientPeerId: recipientPeerId,
+      contactAccountPeerId: contactAccount,
+      recipientMlKemPublicKey: recipientMlKemPublicKey,
+      ciphertextRelativePath:
+          'direct_media_blob_custody_v1/$contentHash/$attachmentId.blob',
+      contentHash: contentHash,
+      ciphertextSize: 64,
+      expiresAtMs: expiresAtMs,
+      custodyRelayPeerId: 'peer-relay',
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: authoredAt,
+      updatedAt: authoredAt,
+    );
+
+    ({ConversationMessage parent, MediaAttachment candidate}) preparedLinked({
+      required String messageId,
+      required String attachmentId,
+      required int commitmentExpiresAtMs,
+    }) {
+      final parent = ConversationMessage(
+        id: messageId,
+        contactPeerId: contactAccount,
+        senderPeerId: 'my-peer',
+        text: 'linked media',
+        timestamp: authoredAt,
+        status: 'sending',
+        isIncoming: false,
+        createdAt: authoredAt,
+        directMediaCustodyIntentId: computeDirectMediaCustodyIntentId(
+          messageId: messageId,
+          attachmentIds: <String>[attachmentId],
+        ),
+      ).copyWith(directEventFanoutGenerationId: messageId);
+      final candidate = MediaAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        mime: 'image/png',
+        size: 24,
+        mediaType: 'image',
+        localPath: 'media/peer/$attachmentId.png',
+        downloadStatus: 'done',
+        createdAt: authoredAt,
+        contentHash: contentHash,
+        encryptionKeyBase64: 'tc362-raw-key',
+        encryptionNonce: 'tc362-raw-nonce',
+        encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+        ownerLane: MediaOwnerLane.direct,
+        blobCustody: DirectMediaBlobCustodyCommitment(
+          contentHash: contentHash,
+          ciphertextSize: 64,
+          expiresAtMs: commitmentExpiresAtMs,
+        ),
+      );
+      return (parent: parent, candidate: candidate);
+    }
+
+    test(
+      'TC-362-02a linked media fanout binds per-target envelopes through one shared owner',
+      () async {
+        const messageId = 'tc362-02a-send';
+        const attachmentId = 'tc362-02a-attachment';
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final legacyExpiry = nowMs + const Duration(days: 7).inMilliseconds;
+        final deviceExpiry = legacyExpiry + 60000;
+        final fixture = preparedLinked(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          commitmentExpiresAtMs: legacyExpiry,
+        );
+        final messages = FakeMessageRepository()..forceCurrent(fixture.parent);
+        final media = _LinkedMediaFanoutFakeRepository()
+          ..seed(<MediaAttachment>[fixture.candidate]);
+        final targetRows = <String, List<DirectMediaBlobCustodyRow>>{
+          contactAccount: <DirectMediaBlobCustodyRow>[
+            storedLinkedRow(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              recipientPeerId: contactAccount,
+              recipientMlKemPublicKey: legacyKey,
+              expiresAtMs: legacyExpiry,
+            ),
+          ],
+          deviceTransport: <DirectMediaBlobCustodyRow>[
+            storedLinkedRow(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              recipientPeerId: deviceTransport,
+              recipientMlKemPublicKey: deviceKey,
+              expiresAtMs: deviceExpiry,
+            ),
+          ],
+        };
+        final bridge = _RecipientRecordingCryptoBridge();
+        final service = FakeP2PService();
+        final storePeers = <String>[];
+
+        final (result, message) = await chat_use_case.sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          targetPeerId: contactAccount,
+          text: 'linked media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: authoredAt,
+          createdAt: authoredAt,
+          bridge: bridge,
+          recipientMlKemPublicKey: legacyKey,
+          mediaAttachments: <MediaAttachment>[fixture.candidate],
+          mediaAttachmentRepo: media,
+          storeInAckCustodyInboxDetailed:
+              (peer, envelope, {required custodyKind, timeoutMs}) async {
+                storePeers.add(peer);
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peer,
+                envelope, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async {
+                storePeers.add(peer);
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+          directLinkedMediaFanout: DirectLinkedMediaFanoutContext(
+            contactAccountPeerId: contactAccount,
+            snapshot: fanoutSnapshot,
+            targetRows: targetRows,
+          ),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(message, isNotNull);
+        expect(message!.directMediaCustodyIntentId, isNull);
+        expect(
+          bridge.encryptRecipientKeys,
+          const <String>[legacyKey, deviceKey],
+          reason:
+              'one encrypt per target with its DISTINCT persisted key, '
+              'in snapshot order',
+        );
+        expect(media.fanoutStageCalls, 1);
+        expect(
+          media.singularMediaStageCalls,
+          0,
+          reason: 'the plural owner never demotes to the singular v108 stage',
+        );
+        expect(messages.ordinaryStageCalls, isEmpty);
+
+        final bindings = media.fanoutStageBindings;
+        expect(bindings, hasLength(2));
+        expect(bindings[0].recipientPeerId, contactAccount);
+        expect(bindings[1].recipientPeerId, deviceTransport);
+        expect(
+          bindings[0].wireEnvelope,
+          isNot(bindings[1].wireEnvelope),
+          reason: 'each target rides its own exact ciphertext',
+        );
+        for (final binding in bindings) {
+          final encrypted =
+              (jsonDecode(binding.wireEnvelope)
+                      as Map<String, dynamic>)['encrypted']
+                  as Map<String, dynamic>;
+          final expectedKey = binding.recipientPeerId == contactAccount
+              ? legacyKey
+              : deviceKey;
+          expect(
+            encrypted['ciphertext'],
+            contains(expectedKey),
+            reason: 'the envelope is encrypted with the persisted target key',
+          );
+          final manifest = targetRows[binding.recipientPeerId]!
+              .map(
+                (row) => DirectMediaBlobManifestProjection(
+                  attachmentId: row.attachmentId,
+                  commitment: DirectMediaBlobCustodyCommitment(
+                    contentHash: row.contentHash,
+                    ciphertextSize: row.ciphertextSize,
+                    expiresAtMs: row.expiresAtMs!,
+                  ),
+                ),
+              )
+              .toList(growable: false);
+          expect(
+            binding.wireMediaBlobManifestHash,
+            computeDirectMediaBlobManifestHash(manifest),
+            reason: "each binding carries ONLY its target's own manifest",
+          );
+          expect(
+            binding.wireMediaBlobExpiresAtMs,
+            earliestDirectMediaBlobExpiryMs(manifest),
+          );
+        }
+        expect(
+          media.fanoutStageStaged!.wireEnvelope,
+          bindings.first.wireEnvelope,
+          reason: 'the canonical witness is the FIRST target envelope',
+        );
+        expect(
+          media.fanoutStageStaged!.directEventFanoutGenerationId,
+          messageId,
+        );
+        expect(
+          media.fanoutStageExpected!.directMediaCustodyIntentId,
+          fixture.parent.directMediaCustodyIntentId,
+          reason: 'the expected parent still carries the live v110 token',
+        );
+        expect(media.fanoutStageSnapshot, same(fanoutSnapshot));
+
+        // Network began only after the whole batch existed durably: one send
+        // plus one per-row strict store attempt per target.
+        await Future<void>.delayed(Duration.zero);
+        expect(service.sendCallCount, 2);
+        expect(storePeers.toSet(), const <String>{
+          contactAccount,
+          deviceTransport,
+        });
+      },
+    );
+
+    test(
+      'TC-362-02b a marked plural generation refuses singular settlement',
+      () async {
+        const messageId = 'tc362-02b-refuse-singular';
+        const attachmentId = 'tc362-02b-refuse-attachment';
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final expiry = nowMs + const Duration(days: 7).inMilliseconds;
+        final fixture = preparedLinked(
+          messageId: messageId,
+          attachmentId: attachmentId,
+          commitmentExpiresAtMs: expiry,
+        );
+        final messages = FakeMessageRepository()..forceCurrent(fixture.parent);
+        final media = _LinkedMediaFanoutFakeRepository()
+          ..seed(<MediaAttachment>[fixture.candidate])
+          ..persistedBlobRows.addAll(<DirectMediaBlobCustodyRow>[
+            storedLinkedRow(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              recipientPeerId: contactAccount,
+              recipientMlKemPublicKey: legacyKey,
+              expiresAtMs: expiry,
+            ),
+            storedLinkedRow(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              recipientPeerId: deviceTransport,
+              recipientMlKemPublicKey: deviceKey,
+              expiresAtMs: expiry + 60000,
+            ),
+          ]);
+        final bridge = _RecipientRecordingCryptoBridge();
+        final service = FakeP2PService();
+        var storeCalls = 0;
+
+        final (result, message) = await chat_use_case.sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          targetPeerId: contactAccount,
+          text: 'linked media',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: authoredAt,
+          createdAt: authoredAt,
+          bridge: bridge,
+          recipientMlKemPublicKey: legacyKey,
+          mediaAttachments: <MediaAttachment>[fixture.candidate],
+          mediaAttachmentRepo: media,
+          storeInAckCustodyInboxDetailed:
+              (peer, envelope, {required custodyKind, timeoutMs}) async {
+                storeCalls++;
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peer,
+                envelope, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async {
+                storeCalls++;
+                return const InboxStoreOutcome(status: InboxStoreStatus.failed);
+              },
+        );
+
+        expect(result, SendChatMessageResult.sendFailed);
+        expect(message, isNull);
+        expect(
+          media.blobLoadsForMessage,
+          1,
+          reason: 'the plural-authority-first guard reads persisted rows',
+        );
+        expect(
+          bridge.encryptRecipientKeys,
+          isEmpty,
+          reason: 'zero encryption before the plural-authority refusal',
+        );
+        expect(media.fanoutStageCalls, 0);
+        expect(media.singularMediaStageCalls, 0);
+        expect(messages.ordinaryStageCalls, isEmpty);
+        expect(service.sendCallCount, 0);
+        expect(service.storeInInboxCallCount, 0);
+        expect(storeCalls, 0, reason: 'zero network of any kind');
+        expect(
+          (await messages.getMessage(messageId))!.directMediaCustodyIntentId,
+          fixture.parent.directMediaCustodyIntentId,
+          reason: 'the durable prepared parent is untouched',
+        );
+      },
+    );
+  });
 }
 
 /// Fake caption-edit custody owner: returns the persisted classification and
@@ -13106,6 +13471,218 @@ class _PrivateStrictCustodyMessageRepository extends FakeMessageRepository
     return DirectInboxCustodyCompletionResult(
       outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
       message: current,
+    );
+  }
+}
+
+/// 362: recording crypto bridge that mints a DISTINCT ciphertext per
+/// `message.encrypt` call and records the exact recipient public key each
+/// envelope was encrypted with (the per-target fanout proof).
+class _RecipientRecordingCryptoBridge extends FakeBridge {
+  final List<String> encryptRecipientKeys = <String>[];
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    assertNotInsideDbWriteTransaction(commandPreview: cmd ?? '');
+    if (cmd == 'message.encrypt') {
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      final payload = parsed['payload'] as Map<String, dynamic>;
+      final recipientKey = payload['recipientPublicKey'] as String;
+      encryptRecipientKeys.add(recipientKey);
+      return jsonEncode(<String, Object?>{
+        'ok': true,
+        'kem': 'kem-$recipientKey',
+        'ciphertext': 'ct-${encryptRecipientKeys.length}-$recipientKey',
+        'nonce': 'nonce-$recipientKey',
+      });
+    }
+    return super.send(message);
+  }
+}
+
+/// 362: linked-media fanout repository fake — records the plural v108 stage
+/// exactly as invoked and exposes persisted linked v114 rows, while the
+/// singular media stage records-and-refuses so any demotion is loudly
+/// visible.
+class _LinkedMediaFanoutFakeRepository extends FakeMediaAttachmentRepository
+    implements
+        DirectMediaBlobCustodyRepository,
+        OutgoingDirectLinkedMediaBlobFanoutRepository {
+  _LinkedMediaFanoutFakeRepository() {
+    onStageOutgoingDirectMediaInboxCustody =
+        ({
+          required expected,
+          required staged,
+          required attachments,
+          required kind,
+          required recipientPeerId,
+          required wireEnvelope,
+        }) async {
+          singularMediaStageCalls++;
+          return const OutgoingDirectMediaCustodyStageResult(
+            outcome: OutgoingOrdinaryMutationOutcome.refused,
+            message: null,
+            custody: null,
+          );
+        };
+  }
+
+  final List<DirectMediaBlobCustodyRow> persistedBlobRows =
+      <DirectMediaBlobCustodyRow>[];
+  int singularMediaStageCalls = 0;
+  int blobLoadsForMessage = 0;
+  int fanoutStageCalls = 0;
+  ConversationMessage? fanoutStageExpected;
+  ConversationMessage? fanoutStageStaged;
+  List<MediaAttachment> fanoutStageAttachments = const <MediaAttachment>[];
+  DirectContactFanoutSnapshot? fanoutStageSnapshot;
+  List<DirectMediaFanoutTargetBinding> fanoutStageBindings =
+      const <DirectMediaFanoutTargetBinding>[];
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(
+    Future<T> Function() action,
+  ) => action();
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async => const DirectMediaBlobGenerationStageResult.refused();
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId) async =>
+      persistedBlobRows
+          .where((row) => row.attachmentId == attachmentId)
+          .toList(growable: false);
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId) async =>
+      null;
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) async => persistedBlobRows
+      .where(
+        (row) =>
+            row.attachmentId == attachmentId &&
+            row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+            row.recipientPeerId == recipientPeerId,
+      )
+      .firstOrNull;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async {
+    blobLoadsForMessage++;
+    return persistedBlobRows
+        .where((row) => row.messageId == messageId)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async => false;
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async => null;
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  }) async => const DirectMediaBlobGenerationStageResult.refused();
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) async {
+    fanoutStageCalls++;
+    fanoutStageExpected = expected;
+    fanoutStageStaged = staged;
+    fanoutStageAttachments = attachments;
+    fanoutStageSnapshot = expectedSnapshot;
+    fanoutStageBindings = targetBindings;
+    final committedMedia = attachments
+        .map(
+          (attachment) => attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        )
+        .toList(growable: false);
+    seed(committedMedia);
+    return DirectMediaFanoutInboxCustodyStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      message: staged.copyWith(
+        directMediaCustodyIntentId: null,
+        media: committedMedia,
+      ),
+      attachments: committedMedia,
+      custodyRows: <Map<String, Object?>>[
+        for (final binding in targetBindings)
+          <String, Object?>{
+            'recipient_peer_id': binding.recipientPeerId,
+            'message_id': staged.id,
+            'incarnation_id': computeDirectEventFanoutIncarnation(
+              messageId: staged.id,
+              recipientPeerId: binding.recipientPeerId,
+            ),
+            'wire_envelope': binding.wireEnvelope,
+            'retry_count': 0,
+            'last_attempt_at': null,
+            'last_error_code': null,
+            'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
+            'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
+            'contact_account_peer_id': contactAccountPeerId,
+            'created_at': staged.createdAt,
+            'updated_at': staged.createdAt,
+          },
+      ],
     );
   }
 }

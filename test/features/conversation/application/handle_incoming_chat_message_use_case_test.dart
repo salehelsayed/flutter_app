@@ -877,6 +877,292 @@ void main() {
     });
   });
 
+  group('TC-362-04a linked strict media transport authority', () {
+    const expiresAtMs = 1_900_000_400_000;
+
+    String linkedEnvelope(String id) => jsonEncode({
+      'type': 'chat_message',
+      'version': '2',
+      'id': id,
+      'senderPeerId': linkedTransportPeerId,
+      'encrypted': {
+        'kem': 'kem-blob',
+        'ciphertext': 'cipher-blob',
+        'nonce': 'nonce-blob',
+      },
+    });
+
+    ChatMessage linkedInboxMessage(String content) => ChatMessage(
+      from: linkedTransportPeerId,
+      to: 'my-peer',
+      content: content,
+      timestamp: '2026-08-12T09:00:00.000Z',
+      isIncoming: true,
+      transport: 'inbox',
+    );
+
+    String innerJson({
+      required String id,
+      List<Object?>? media,
+      Map<String, Object?>? privateMedia,
+    }) => jsonEncode({
+      'id': id,
+      'text': '',
+      'senderPeerId': senderPeerId,
+      'senderUsername': 'Alice',
+      'timestamp': '2026-08-12T09:00:00.000Z',
+      'media': ?media,
+      'privateMedia': ?privateMedia,
+    });
+
+    Map<String, Object?> strictMedia({
+      required String id,
+      required String hash,
+      required int ciphertextSize,
+    }) => <String, Object?>{
+      'id': id,
+      'mime': 'image/jpeg',
+      'size': 13,
+      'mediaType': 'image',
+      'contentHash': hash,
+      'encryptionKeyBase64': 'key-$id',
+      'encryptionNonce': 'nonce-$id',
+      'encryptionScheme': kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      'blobCustody': DirectMediaBlobCustodyCommitment(
+        contentHash: hash,
+        ciphertextSize: ciphertextSize,
+        expiresAtMs: expiresAtMs,
+      ).toJson(),
+    };
+
+    test(
+      'TC-362-04a linked strict ordinary media stages incoming custody under '
+      'the logical contact',
+      () async {
+        final fixture = await MediaRepositoryRealDbFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'tc362-linked-strict-1';
+        const attachmentId = '$messageId-att';
+        const t0 = '2026-08-12T09:00:00.000Z';
+        final hash = 'ab' * 32;
+        // The durable stage re-runs the reverse transport authorization
+        // INSIDE its transaction, so the persisted logical contact, the
+        // initialized roster and the ACTIVE binding must really exist.
+        await fixture.db.insert('contacts', <String, Object?>{
+          'peer_id': senderPeerId,
+          'public_key': 'tc362-account-signing-key',
+          'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+          'username': 'Alice',
+          'signature': 'sig-base64',
+          'scanned_at': t0,
+          'ml_kem_public_key': 'legacy-mlkem',
+        });
+        await fixture.db.insert(
+          'direct_contact_device_roster_metadata',
+          const <String, Object?>{
+            'contact_account_peer_id': senderPeerId,
+            'roster_initialized': 1,
+            'legacy_target_state': 'active',
+            'initialized_at': t0,
+            'legacy_revoked_at': null,
+            'updated_at': t0,
+          },
+        );
+        await fixture.db.insert(
+          'direct_contact_device_bindings',
+          <String, Object?>{
+            'contact_account_peer_id': senderPeerId,
+            'device_id': 'tc362-linked-device',
+            'verified_account_signing_public_key': 'tc362-account-signing-key',
+            'transport_peer_id': linkedTransportPeerId,
+            'transport_public_key': 'transport-key-tc362-linked-device',
+            'device_ml_kem_public_key': 'mlkem-tc362-linked-device',
+            'binding_fingerprint': 'a' * 64,
+            'state': 'active',
+            'staged_at': t0,
+            'decided_at': t0,
+          },
+        );
+        final authority = _FakeTransportAuthority({
+          linkedTransportPeerId: linkedResolution(),
+        });
+        final receiptIds = <String>[];
+
+        final (result, stored, _) = await handleIncomingChatMessage(
+          message: linkedInboxMessage(linkedEnvelope(messageId)),
+          messageRepo: fixture.messageRepo,
+          contactRepo: contactRepo,
+          mediaAttachmentRepo: fixture.repo,
+          predecryptedText: innerJson(
+            id: messageId,
+            media: [
+              strictMedia(id: attachmentId, hash: hash, ciphertextSize: 29),
+            ],
+          ),
+          transport: 'inbox',
+          stagedEntryId: 'tc362-linked-relay-entry',
+          sendDeliveryReceipt: (id) async => receiptIds.add(id),
+          transportAuthority: authority,
+        );
+        expect(
+          result,
+          HandleChatMessageResult.chatMessage,
+          reason:
+              'a linked-resolved VALID strict ordinary media payload now '
+              'saves and publishes exactly like a legacy origin',
+        );
+        expect(stored, isNotNull);
+        expect(
+          stored!.contactPeerId,
+          senderPeerId,
+          reason: 'the durable row belongs to the LOGICAL contact',
+        );
+
+        final custody = (await fixture.db.query(
+          'direct_media_blob_custody',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(custody['state'], 'incoming_committed');
+        expect(
+          custody['contact_account_peer_id'],
+          senderPeerId,
+          reason:
+              'a LINKED origin persists the logical contact as the durable '
+              'discriminator on the newly authored incoming v114 row',
+        );
+        expect(custody['recipient_peer_id'], isNull);
+        expect(custody['recipient_ml_kem_public_key'], isNull);
+
+        final attachment = (await fixture.db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: const <Object?>[attachmentId],
+        )).single;
+        expect(
+          attachment['direct_media_blob_custody_fingerprint'],
+          computeDirectMediaBlobCommitmentFingerprint(
+            attachmentId: attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              contentHash: hash,
+              ciphertextSize: 29,
+              expiresAtMs: expiresAtMs,
+            ),
+          ),
+          reason: 'incoming keeps the exact v1 target-specific commitment',
+        );
+        expect(
+          attachment['direct_media_blob_custody_fingerprint_version'],
+          isNull,
+          reason: 'incoming strict rows never gain the v2 generation marker',
+        );
+        expect(
+          receiptIds,
+          <String>[messageId],
+          reason:
+              'the delivery receipt hook fires for the authenticated '
+              'PHYSICAL inbox arrival after the durable stage',
+        );
+      },
+    );
+
+    test('TC-362-04a linked legacy-media and crossed shapes stay terminally '
+        'refused', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      final authority = _FakeTransportAuthority({
+        linkedTransportPeerId: linkedResolution(),
+      });
+      var sideEffects = 0;
+
+      Future<(HandleChatMessageResult, ConversationMessage?, ContactModel?)>
+      receive({
+        required String id,
+        List<Object?>? media,
+        Map<String, Object?>? privateMedia,
+      }) => handleIncomingChatMessage(
+        message: linkedInboxMessage(linkedEnvelope(id)),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+        predecryptedText: innerJson(
+          id: id,
+          media: media,
+          privateMedia: privateMedia,
+        ),
+        transport: 'inbox',
+        stagedEntryId: 'tc362-linked-refused-entry',
+        sendDeliveryReceipt: (_) async => sideEffects++,
+        stageNotificationDisplayCustody: (_) async => sideEffects++,
+        promoteNotificationDisplayCustody: (_) async => sideEffects++,
+        transportAuthority: authority,
+      );
+
+      // (a) Media WITHOUT blobCustody: legacy transport media stays a
+      //     terminal linked refusal.
+      const legacyMediaId = 'tc362-linked-legacy-media';
+      final (legacyMedia, legacyStored, _) = await receive(
+        id: legacyMediaId,
+        media: const [
+          {
+            'id': 'tc362-legacy-blob',
+            'mime': 'image/jpeg',
+            'size': 1024,
+            'mediaType': 'image',
+          },
+        ],
+      );
+      expect(legacyMedia, HandleChatMessageResult.linkedModalityRefused);
+      expect(legacyStored, isNull);
+
+      // (b) A private policy without a strict projection is a crossed shape.
+      const crossedPrivateId = 'tc362-linked-private-crossed';
+      final (crossedPrivate, privateStored, _) = await receive(
+        id: crossedPrivateId,
+        media: const [
+          {
+            'id': 'tc362-crossed-private-blob',
+            'mime': 'image/jpeg',
+            'size': 1024,
+            'mediaType': 'image',
+          },
+        ],
+        privateMedia: const {'version': 1, 'mode': 'protected'},
+      );
+      expect(crossedPrivate, HandleChatMessageResult.linkedModalityRefused);
+      expect(privateStored, isNull);
+
+      expect(sideEffects, 0, reason: 'terminal refusals have no side effects');
+      for (final id in const <String>[legacyMediaId, crossedPrivateId]) {
+        expect(
+          await fixture.db.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: <Object?>[id],
+          ),
+          isEmpty,
+          reason: '$id must stage zero parent rows',
+        );
+        expect(
+          await fixture.db.query(
+            'media_attachments',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[id],
+          ),
+          isEmpty,
+        );
+        expect(
+          await fixture.db.query(
+            'direct_media_blob_custody',
+            where: 'message_id = ?',
+            whereArgs: <Object?>[id],
+          ),
+          isEmpty,
+        );
+      }
+    });
+  });
+
   group('TC-331-08 direct notification marker ordering', () {
     const messageId = 'direct-marker-media-1';
     const timestamp = '2026-08-03T10:00:00.000Z';
@@ -4254,7 +4540,7 @@ void main() {
       final incomingRepository =
           fixture.repo as IncomingDirectMediaBlobCustodyRepository;
       final committed = await custodyRepository
-          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+          .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
       final parent = await fixture.messageRepo.getMessage(messageId);
       expect(committed, isNotNull);
       expect(parent, isNotNull);
@@ -4270,7 +4556,7 @@ void main() {
         isTrue,
       );
       final ackPending = await custodyRepository
-          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+          .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
       expect(ackPending, isNotNull);
       expect(
         await incomingRepository.deleteIncomingDirectMediaBlobAckIfExact(
@@ -4279,7 +4565,7 @@ void main() {
         isTrue,
       );
       expect(
-        await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
+        await custodyRepository.loadIncomingDirectMediaBlobCustodyForAttachment(
           attachmentId,
         ),
         isNull,

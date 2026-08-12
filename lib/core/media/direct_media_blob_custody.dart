@@ -6,6 +6,13 @@ const kDirectMediaBlobCustodyKind = 'direct_media_blob_v1';
 const kDirectMediaBlobCustodyContract = 'ack_or_expiry_v1';
 const kDirectMediaBlobTransportMime = 'application/octet-stream';
 const kDirectMediaBlobManifestDomain = 'mknoon.direct-media-blob-manifest.v1';
+const kDirectMediaBlobGenerationDomainV2 =
+    'mknoon.direct-media-blob-generation.v2';
+
+/// `media_attachments.direct_media_blob_custody_fingerprint_version` value for
+/// the Plan-362 sender-local target-independent generation digest. NULL keeps
+/// the incumbent exact target-specific commitment digest contract.
+const kDirectMediaBlobFingerprintVersionGeneration = 2;
 
 final RegExp _lowercaseSha256Pattern = RegExp(r'^[0-9a-f]{64}$');
 
@@ -209,6 +216,47 @@ String computeDirectMediaBlobCommitmentFingerprint({
     commitment: commitment,
   ),
 ]);
+
+/// Sender-local, target-INDEPENDENT v2 generation fingerprint for one
+/// outgoing ordinary/disappearing strict attachment (Plan 362).
+///
+/// The digest commits only the immutable blob generation — attachment ID,
+/// custody kind/contract, content hash, ciphertext size and transport MIME.
+/// Per-target relay identity, expiry and recipient facts are deliberately
+/// EXCLUDED so every fanout target of one canonical attachment agrees on one
+/// persisted value. Pair it with
+/// [kDirectMediaBlobFingerprintVersionGeneration]; a legacy/NULL version
+/// retains the incumbent exact target-specific
+/// [computeDirectMediaBlobCommitmentFingerprint] meaning.
+String computeDirectMediaBlobGenerationFingerprintV2({
+  required String attachmentId,
+  String custodyKind = kDirectMediaBlobCustodyKind,
+  String custodyContract = kDirectMediaBlobCustodyContract,
+  required String contentHash,
+  required int ciphertextSize,
+  String transportMime = kDirectMediaBlobTransportMime,
+}) {
+  if (attachmentId.trim().isEmpty || attachmentId != attachmentId.trim()) {
+    throw const FormatException('invalid blob attachment id');
+  }
+  if (custodyKind != kDirectMediaBlobCustodyKind ||
+      custodyContract != kDirectMediaBlobCustodyContract ||
+      transportMime != kDirectMediaBlobTransportMime ||
+      !_lowercaseSha256Pattern.hasMatch(contentHash) ||
+      ciphertextSize <= 0) {
+    throw const FormatException('invalid blob generation commitment');
+  }
+  final canonical = <Object>[
+    kDirectMediaBlobGenerationDomainV2,
+    attachmentId,
+    custodyKind,
+    custodyContract,
+    contentHash,
+    ciphertextSize,
+    transportMime,
+  ];
+  return sha256.convert(utf8.encode(jsonEncode(canonical))).toString();
+}
 
 int earliestDirectMediaBlobExpiryMs(
   Iterable<DirectMediaBlobManifestProjection> manifest,

@@ -9,6 +9,8 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
         DirectMediaBlobGenerationDbStageResult,
         DirectMediaCaptionEditCustodyDbStageResult,
         DirectMediaDeletionCustodyDbStageResult,
+        DirectMediaFanoutInboxCustodyDbStageResult,
+        DirectMediaFanoutTargetBinding,
         DirectMediaInboxCustodyDbStageResult,
         GenericMediaAttachmentCustodySaveRefused,
         IncomingDirectMediaBlobDbStageOutcome,
@@ -19,6 +21,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
         OutgoingDirectMediaCaptionEditLane,
         OutgoingDirectMediaCaptionEditProjection,
         shouldPreserveImmutableDirectMediaCustodyAttachmentProjection;
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
@@ -138,6 +141,7 @@ class MediaAttachmentRepositoryImpl
         OutgoingDirectMediaCaptionEditInboxCustodyRepository,
         IncomingDirectMediaCaptionEditApplyRepository,
         DirectMediaBlobCustodyRepository,
+        OutgoingDirectLinkedMediaBlobFanoutRepository,
         FreshOutgoingDirectMediaBlobGenerationRepository,
         OutgoingDirectPrivateMediaBlobGenerationRepository,
         OutgoingDirectMediaBlobTerminalizationRepository,
@@ -224,10 +228,38 @@ class MediaAttachmentRepositoryImpl
     required DirectMediaBlobCustodyRow custodyRow,
   })?
   dbStageOutgoingDirectPrivateMediaBlobGeneration;
-  final Future<DirectMediaBlobCustodyRow?> Function({
+  final Future<DirectContactFanoutSnapshot?> Function({
+    required String contactAccountPeerId,
+  })?
+  dbReadDirectContactFanoutSnapshotForMedia;
+  final Future<DirectMediaBlobGenerationDbStageResult> Function({
+    required Map<String, Object?> expectedParentRow,
+    required List<Map<String, Object?>> expectedAttachmentRows,
+    required List<Map<String, Object?>> preparedAttachmentRows,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  })?
+  dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration;
+  final Future<DirectMediaFanoutInboxCustodyDbStageResult> Function({
+    required Map<String, Object?> expectedRow,
+    required Map<String, Object?> stagedRow,
+    required List<Map<String, Object?>> attachmentRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  })?
+  dbStageOutgoingDirectMediaFanoutInboxCustody;
+  final Future<List<DirectMediaBlobCustodyRow>> Function({
     required String attachmentId,
   })?
-  dbLoadDirectMediaBlobCustodyForAttachment;
+  dbLoadDirectMediaBlobCustodyRowsForAttachment;
+  final Future<DirectMediaBlobCustodyRow?> Function({
+    required String attachmentId,
+    required DirectMediaBlobCustodyDirection direction,
+    String? recipientPeerId,
+  })?
+  dbLoadDirectMediaBlobCustodyForTarget;
   final Future<List<DirectMediaBlobCustodyRow>> Function({
     required String messageId,
   })?
@@ -254,12 +286,14 @@ class MediaAttachmentRepositoryImpl
     required Map<String, Object?> messageRow,
     required List<Map<String, Object?>> attachmentRows,
     required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authenticatedTransportPeerId,
   })?
   dbStageIncomingDirectMediaBlobCustody;
   final Future<IncomingDirectMediaBlobDbStageResult> Function({
     required Map<String, Object?> messageRow,
     required Map<String, Object?> attachmentRow,
     required DirectMediaBlobCustodyRow custodyRow,
+    String? authenticatedTransportPeerId,
   })?
   dbStageIncomingDirectPrivateMediaBlobCustody;
   final Future<bool> Function({
@@ -624,7 +658,11 @@ class MediaAttachmentRepositoryImpl
     this.dbStageOutgoingDirectMediaBlobGeneration,
     this.dbStageFreshOutgoingDirectMediaBlobGeneration,
     this.dbStageOutgoingDirectPrivateMediaBlobGeneration,
-    this.dbLoadDirectMediaBlobCustodyForAttachment,
+    this.dbReadDirectContactFanoutSnapshotForMedia,
+    this.dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration,
+    this.dbStageOutgoingDirectMediaFanoutInboxCustody,
+    this.dbLoadDirectMediaBlobCustodyRowsForAttachment,
+    this.dbLoadDirectMediaBlobCustodyForTarget,
     this.dbLoadDirectMediaBlobCustodyForMessage,
     this.dbLoadDirectMediaBlobCustodyByStates,
     this.dbTransitionDirectMediaBlobCustodyIfExact,
@@ -995,7 +1033,8 @@ class MediaAttachmentRepositoryImpl
   @override
   bool get supportsDirectMediaBlobCustody =>
       dbStageOutgoingDirectMediaBlobGeneration != null &&
-      dbLoadDirectMediaBlobCustodyForAttachment != null &&
+      dbLoadDirectMediaBlobCustodyRowsForAttachment != null &&
+      dbLoadDirectMediaBlobCustodyForTarget != null &&
       dbLoadDirectMediaBlobCustodyForMessage != null &&
       dbLoadDirectMediaBlobCustodyByStates != null &&
       dbTransitionDirectMediaBlobCustodyIfExact != null &&
@@ -1018,7 +1057,8 @@ class MediaAttachmentRepositoryImpl
       dbCommitIncomingDirectMediaBlobLocalPath != null &&
       dbDeleteIncomingDirectMediaBlobAckPendingIfExact != null &&
       dbDeleteIncomingDirectMediaBlobIfExpired != null &&
-      dbLoadDirectMediaBlobCustodyForAttachment != null &&
+      dbLoadDirectMediaBlobCustodyRowsForAttachment != null &&
+      dbLoadDirectMediaBlobCustodyForTarget != null &&
       dbLoadDirectMediaBlobCustodyByStates != null;
 
   @override
@@ -1125,6 +1165,179 @@ class MediaAttachmentRepositoryImpl
               .toList(growable: false),
           preparedAttachmentRows: preparedRows,
           custodyRows: custodyRows,
+        );
+        if (result.outcome != DirectMediaBlobGenerationDbStageOutcome.applied) {
+          // An idempotent result belongs to a concurrent winner. Never leave a
+          // loser's raw key under the stable per-attachment secure-store name.
+          await restoreAll();
+        }
+        return result;
+      } catch (_) {
+        await restoreAll();
+        rethrow;
+      }
+    });
+
+    if (!dbResult.outcome.authorizesStrictUpload ||
+        dbResult.attachmentRows.length != expectedAttachments.length ||
+        dbResult.custodyRows.length != custodyRows.length) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+    final attachments = await _attachmentsFromRows(dbResult.attachmentRows);
+    final rows = dbResult.custodyRows
+        .map(DirectMediaBlobCustodyRow.fromMap)
+        .toList(growable: false);
+    final outcome = switch (dbResult.outcome) {
+      DirectMediaBlobGenerationDbStageOutcome.applied =>
+        DirectMediaBlobGenerationStageOutcome.applied,
+      DirectMediaBlobGenerationDbStageOutcome.idempotent =>
+        DirectMediaBlobGenerationStageOutcome.idempotent,
+      DirectMediaBlobGenerationDbStageOutcome.refused =>
+        DirectMediaBlobGenerationStageOutcome.refused,
+    };
+    return DirectMediaBlobGenerationStageResult(
+      outcome: outcome,
+      attachments: attachments,
+      custodyRows: rows,
+    );
+  }
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout =>
+      dbReadDirectContactFanoutSnapshotForMedia != null &&
+      dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration != null &&
+      dbStageOutgoingDirectMediaFanoutInboxCustody != null &&
+      publishOutgoingOrdinaryMutation != null &&
+      supportsDirectMediaBlobCustody;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) {
+    final read = dbReadDirectContactFanoutSnapshotForMedia;
+    if (!supportsDirectLinkedMediaBlobFanout ||
+        read == null ||
+        contactAccountPeerId.isEmpty ||
+        contactAccountPeerId != contactAccountPeerId.trim()) {
+      return Future<DirectContactFanoutSnapshot?>.value(null);
+    }
+    return read(contactAccountPeerId: contactAccountPeerId);
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  }) async {
+    final stage = dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration;
+    final targets = expectedSnapshot.targets;
+    final targetPeerIds = targets.map((target) => target.peerId).toSet();
+    if (!supportsDirectLinkedMediaBlobFanout ||
+        stage == null ||
+        contactAccountPeerId.isEmpty ||
+        expectedSnapshot.contactAccountPeerId != contactAccountPeerId ||
+        expectedParent.contactPeerId != contactAccountPeerId ||
+        targets.isEmpty ||
+        targetPeerIds.length != targets.length ||
+        expectedAttachments.isEmpty ||
+        expectedAttachments.length != preparedAttachments.length ||
+        custodyRows.length != expectedAttachments.length * targets.length) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+    final expectedIds = expectedAttachments
+        .map((attachment) => attachment.id)
+        .toSet();
+    if (expectedIds.length != expectedAttachments.length ||
+        preparedAttachments.any(
+          (attachment) =>
+              !expectedIds.contains(attachment.id) ||
+              attachment.messageId != expectedParent.id ||
+              attachment.ownerLane != MediaOwnerLane.direct ||
+              attachment.encryptionKeyBase64 == null ||
+              attachment.encryptionKeyBase64!.isEmpty ||
+              isSecureStoreReference(attachment.encryptionKeyBase64),
+        ) ||
+        custodyRows.any(
+          (row) =>
+              !expectedIds.contains(row.attachmentId) ||
+              row.messageId != expectedParent.id ||
+              row.contactAccountPeerId != contactAccountPeerId ||
+              row.recipientPeerId == null ||
+              !targetPeerIds.contains(row.recipientPeerId),
+        )) {
+      return const DirectMediaBlobGenerationStageResult.refused();
+    }
+
+    final stamped = preparedAttachments
+        .map(
+          (attachment) => attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        )
+        .toList(growable: false);
+    final dbResult = await lifecycleLock.synchronizedAll(() async {
+      // Identical secure-key discipline to the single-target generation: a
+      // visible DB winner is validated/adopted with reference-only candidate
+      // rows so a losing raw key never reaches the stable secure slot.
+      final existingRows = await dbLoadDirectMediaBlobCustodyForMessage!(
+        messageId: expectedParent.id,
+      );
+      if (existingRows.isNotEmpty) {
+        return stage(
+          expectedParentRow: expectedParent.toMap(),
+          expectedAttachmentRows: expectedAttachments
+              .map((attachment) => attachment.toMap())
+              .toList(growable: false),
+          preparedAttachmentRows: stamped
+              .map(_toStorageReferenceRowWithoutKeyWrite)
+              .toList(growable: false),
+          custodyRows: custodyRows,
+          contactAccountPeerId: contactAccountPeerId,
+          expectedSnapshot: expectedSnapshot,
+        );
+      }
+
+      final snapshots = <_MediaEncryptionKeyWriteSnapshot>[];
+      var restored = false;
+      Future<void> restoreAll() async {
+        if (restored) return;
+        restored = true;
+        Object? firstError;
+        for (final snapshot in snapshots.reversed) {
+          try {
+            await snapshot.restore();
+          } catch (error) {
+            firstError ??= error;
+          }
+        }
+        if (firstError != null) {
+          throw StateError(
+            'direct linked-media fanout generation key compensation failed: '
+            '$firstError',
+          );
+        }
+      }
+
+      try {
+        for (final attachment in stamped) {
+          snapshots.add(await _captureEncryptionKeyWriteSnapshot(attachment));
+        }
+        final preparedRows = <Map<String, Object?>>[];
+        for (final attachment in stamped) {
+          preparedRows.add(await _toStorageRow(attachment));
+        }
+        final result = await stage(
+          expectedParentRow: expectedParent.toMap(),
+          expectedAttachmentRows: expectedAttachments
+              .map((attachment) => attachment.toMap())
+              .toList(growable: false),
+          preparedAttachmentRows: preparedRows,
+          custodyRows: custodyRows,
+          contactAccountPeerId: contactAccountPeerId,
+          expectedSnapshot: expectedSnapshot,
         );
         if (result.outcome != DirectMediaBlobGenerationDbStageOutcome.applied) {
           // An idempotent result belongs to a concurrent winner. Never leave a
@@ -1518,12 +1731,38 @@ class MediaAttachmentRepositoryImpl
   }
 
   @override
-  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
-    String attachmentId,
-  ) {
-    final load = dbLoadDirectMediaBlobCustodyForAttachment;
-    if (load == null) return Future.value();
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId) {
+    final load = dbLoadDirectMediaBlobCustodyRowsForAttachment;
+    if (load == null) return Future.value(const []);
     return load(attachmentId: attachmentId);
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId) {
+    final load = dbLoadDirectMediaBlobCustodyForTarget;
+    if (load == null) return Future.value();
+    return load(
+      attachmentId: attachmentId,
+      direction: DirectMediaBlobCustodyDirection.incoming,
+      recipientPeerId: null,
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) {
+    final load = dbLoadDirectMediaBlobCustodyForTarget;
+    if (load == null) return Future.value();
+    return load(
+      attachmentId: attachmentId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      recipientPeerId: recipientPeerId,
+    );
   }
 
   @override
@@ -1600,6 +1839,7 @@ class MediaAttachmentRepositoryImpl
     required ConversationMessage message,
     required List<MediaAttachment> attachments,
     required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authenticatedTransportPeerId,
   }) async {
     final stage = dbStageIncomingDirectMediaBlobCustody;
     if (!supportsIncomingDirectMediaBlobCustody ||
@@ -1684,6 +1924,7 @@ class MediaAttachmentRepositoryImpl
           messageRow: message.toMap(),
           attachmentRows: storageRows,
           custodyRows: custodyRows,
+          authenticatedTransportPeerId: authenticatedTransportPeerId,
         );
         if (result.outcome != IncomingDirectMediaBlobDbStageOutcome.applied) {
           await restoreAll();
@@ -1738,6 +1979,7 @@ class MediaAttachmentRepositoryImpl
     required ConversationMessage message,
     required MediaAttachment attachment,
     required DirectMediaBlobCustodyRow custodyRow,
+    String? authenticatedTransportPeerId,
   }) async {
     final stage = dbStageIncomingDirectPrivateMediaBlobCustody;
     if (!supportsIncomingDirectPrivateMediaBlobCustody ||
@@ -1786,6 +2028,7 @@ class MediaAttachmentRepositoryImpl
           messageRow: message.toMap(),
           attachmentRow: row,
           custodyRow: custodyRow,
+          authenticatedTransportPeerId: authenticatedTransportPeerId,
         );
         if (result.outcome != IncomingDirectMediaBlobDbStageOutcome.applied) {
           await restore();
@@ -3175,17 +3418,19 @@ class MediaAttachmentRepositoryImpl
             '(${owner.dbValue}, ${attachment.messageId})',
           );
         }
-        final loadBlobCustody = dbLoadDirectMediaBlobCustodyForAttachment;
+        final loadBlobCustody = dbLoadDirectMediaBlobCustodyRowsForAttachment;
         if (loadBlobCustody != null) {
-          final blobCustody = await loadBlobCustody(
+          final blobCustodyRows = await loadBlobCustody(
             attachmentId: attachment.id,
           );
-          if (blobCustody != null &&
-              blobCustody.messageId == attachment.messageId &&
-              blobCustody.direction ==
-                  DirectMediaBlobCustodyDirection.outgoing &&
-              blobCustody.state ==
-                  DirectMediaBlobCustodyState.outgoingPrepared) {
+          if (blobCustodyRows.any(
+            (blobCustody) =>
+                blobCustody.messageId == attachment.messageId &&
+                blobCustody.direction ==
+                    DirectMediaBlobCustodyDirection.outgoing &&
+                blobCustody.state ==
+                    DirectMediaBlobCustodyState.outgoingPrepared,
+          )) {
             // A v111 generation already owns the exact ciphertext identity
             // and its pending-upload path. Only the typed blob coordinator may
             // advance it; the legacy upload_pending -> done exception below is
@@ -3699,6 +3944,182 @@ class MediaAttachmentRepositoryImpl
       outcome: dbResult.outcome,
       message: committedMessage,
       custody: custody,
+    );
+  }
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) async {
+    final stage = dbStageOutgoingDirectMediaFanoutInboxCustody;
+    final bindingPeerIds = targetBindings
+        .map((binding) => binding.recipientPeerId)
+        .toSet();
+    // The attachment projection carries the canonical (legacy-primary/first)
+    // blob commitment; per-target manifests ride the bindings and are
+    // recomputed from each target's own v114 rows inside the transaction.
+    final canonicalWireBinding = _canonicalDirectMediaBlobWireBinding(
+      attachments,
+    );
+    if (!supportsDirectLinkedMediaBlobFanout ||
+        stage == null ||
+        canonicalWireBinding == null ||
+        canonicalWireBinding.manifestHash == null ||
+        attachments.isEmpty ||
+        staged.id.isEmpty ||
+        expected.id != staged.id ||
+        expectedSnapshot.contactAccountPeerId != contactAccountPeerId ||
+        expected.contactPeerId != contactAccountPeerId ||
+        staged.contactPeerId != contactAccountPeerId ||
+        targetBindings.isEmpty ||
+        bindingPeerIds.length != targetBindings.length ||
+        staged.wireEnvelope != targetBindings.first.wireEnvelope ||
+        attachments.any(
+          (attachment) =>
+              attachment.id.isEmpty ||
+              attachment.messageId != staged.id ||
+              attachment.encryptionKeyBase64 == null ||
+              attachment.encryptionKeyBase64!.isEmpty ||
+              isSecureStoreReference(attachment.encryptionKeyBase64) ||
+              (attachment.ownerLane != null &&
+                  attachment.ownerLane != MediaOwnerLane.direct),
+        ) ||
+        attachments.map((attachment) => attachment.id).toSet().length !=
+            attachments.length) {
+      return const DirectMediaFanoutInboxCustodyStageResult.refused();
+    }
+
+    final stamped = attachments
+        .map(
+          (attachment) => attachment.copyWith(ownerLane: MediaOwnerLane.direct),
+        )
+        .toList(growable: false);
+    final dbResult = await lifecycleLock.synchronizedAll(() async {
+      final snapshots = <_MediaEncryptionKeyWriteSnapshot>[];
+      var restoreAttempted = false;
+      Future<void> restoreSnapshots() async {
+        if (restoreAttempted) return;
+        restoreAttempted = true;
+        Object? firstError;
+        for (final snapshot in snapshots.reversed) {
+          try {
+            await snapshot.restore();
+          } catch (error) {
+            firstError ??= error;
+          }
+        }
+        if (firstError != null) {
+          throw StateError(
+            'direct media fanout custody secure-key compensation failed: '
+            '$firstError',
+          );
+        }
+      }
+
+      try {
+        for (final attachment in stamped) {
+          snapshots.add(await _captureEncryptionKeyWriteSnapshot(attachment));
+        }
+        final rows = <Map<String, Object?>>[];
+        for (final attachment in stamped) {
+          rows.add(await _toStorageRow(attachment));
+        }
+        final result = await stage(
+          expectedRow: expected.toMap(),
+          stagedRow: staged.toMap(),
+          attachmentRows: rows,
+          contactAccountPeerId: contactAccountPeerId,
+          expectedSnapshot: expectedSnapshot,
+          targetBindings: targetBindings,
+        );
+        if (result.outcome == OutgoingOrdinaryMutationOutcome.idempotent) {
+          // A survivor replay returns the exact durable batch and projection.
+          // Restore only values this losing attempt overwrote; a genuinely
+          // missing key may still be repaired while the exact durable
+          // attachment projection proves which blob the reference belongs to.
+          for (final snapshot in snapshots.reversed) {
+            if (snapshot.overwroteDifferentExistingValue) {
+              await snapshot.restore();
+            }
+          }
+        }
+        final exactAuthority =
+            result.outcome.authorizesTransport &&
+            result.messageRow != null &&
+            result.attachmentRows.isNotEmpty &&
+            result.custodyRows.length == targetBindings.length;
+        if (!exactAuthority) await restoreSnapshots();
+        return result;
+      } catch (_) {
+        await restoreSnapshots();
+        rethrow;
+      }
+    });
+
+    if (!dbResult.outcome.authorizesTransport ||
+        dbResult.messageRow == null ||
+        dbResult.attachmentRows.isEmpty ||
+        dbResult.custodyRows.length != targetBindings.length) {
+      return DirectMediaFanoutInboxCustodyStageResult(
+        outcome: dbResult.outcome,
+        message: null,
+      );
+    }
+
+    var committedMedia = const <MediaAttachment>[];
+    try {
+      committedMedia = await _attachmentsFromRows(dbResult.attachmentRows);
+    } catch (error) {
+      // Hydration is post-commit publication work. Preserve the exact DB
+      // projection (including stable secure-store references) if
+      // secure-store observation itself fails after custody committed.
+      committedMedia = dbResult.attachmentRows
+          .map(MediaAttachment.fromMap)
+          .toList(growable: false);
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_MEDIA_FANOUT_CUSTODY_HYDRATION_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+    final committedMessage = ConversationMessage.fromMap(
+      dbResult.messageRow!,
+    ).copyWith(media: committedMedia);
+
+    // The transaction is already committed. Cache/stream publication is best
+    // effort and can neither compensate keys nor revoke exact custody.
+    try {
+      await publishOutgoingOrdinaryMutation!(
+        messageId: committedMessage.id,
+        outcome: dbResult.outcome,
+        committedMedia: committedMedia,
+      );
+      for (final attachment in committedMedia) {
+        _emitAuthorizationChange(
+          owner: MediaOwnerLane.direct,
+          messageId: committedMessage.id,
+          attachmentId: attachment.id,
+          kind: MediaAttachmentAuthorizationMutation.saved,
+        );
+      }
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_MEDIA_FANOUT_CUSTODY_PUBLICATION_ERROR',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+    return DirectMediaFanoutInboxCustodyStageResult(
+      outcome: dbResult.outcome,
+      message: committedMessage,
+      attachments: committedMedia,
+      custodyRows: dbResult.custodyRows,
     );
   }
 

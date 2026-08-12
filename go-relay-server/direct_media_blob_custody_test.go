@@ -195,6 +195,28 @@ func directMediaCustodyFileCount(t *testing.T, root string) int {
 	return count
 }
 
+// Keying-agnostic internal probes: they range over map VALUES so they hold
+// under both the historical ID-only maps and the Plan-362 composite
+// (recipient, id) maps. Callers probe only quiescent stores, matching the
+// direct map peeks the incumbent tests already perform.
+func directMediaCustodyFindEntry(store *MediaStore, to, id string) *directMediaBlobCustodyMeta {
+	for _, meta := range store.custody.entries {
+		if meta.ID == id && meta.To == to {
+			return meta
+		}
+	}
+	return nil
+}
+
+func directMediaCustodyFindBlocked(store *MediaStore, to, id string) *directMediaBlobCustodyMeta {
+	for _, meta := range store.custody.blocked {
+		if meta.ID == id && meta.To == to {
+			return meta
+		}
+	}
+	return nil
+}
+
 // TC-346-01: the raw framed handler recognizes only the additive exact action,
 // gates a new store before READY by default, and emits literal typed outcomes.
 func TestRelayNotificationClosure_DirectMediaBlobCustodyActionProofAndAdmissionContract(t *testing.T) {
@@ -308,11 +330,13 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyIdentityPathAndCrossLane
 		t.Fatalf("duplicate metric delta = %v, want 1", delta)
 	}
 
+	// 362: identity is per exact (To, ID) target. Tuple drift under the SAME
+	// recipient stays refused; a DIFFERENT valid recipient is a sibling
+	// custody row of the same canonical blob, not a conflict.
 	mutations := []struct {
 		name string
 		edit func(*mediaRequest)
 	}{
-		{name: "recipient", edit: func(r *mediaRequest) { r.To = env.intruder.ID().String() }},
 		{name: "mime", edit: func(r *mediaRequest) { r.Mime = "image/png" }},
 		{name: "size", edit: func(r *mediaRequest) { r.Size++ }},
 		{name: "hash", edit: func(r *mediaRequest) { r.ContentHash = strings.Repeat("a", 64) }},
@@ -327,6 +351,21 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyIdentityPathAndCrossLane
 			}
 		})
 	}
+	t.Run("sibling recipient is allowed", func(t *testing.T) {
+		sibling := req
+		sibling.To = env.intruder.ID().String()
+		resp, sawReady := directMediaCustodyUpload(t, env, env.sender, sibling, body)
+		if !sawReady {
+			t.Fatalf("sibling-recipient upload refused: %#v", resp)
+		}
+		requireDirectMediaCustodyProof(t, resp, sibling, mediaCustodyStoreStored, "")
+		if meta := directMediaCustodyFindEntry(env.media, req.To, req.ID); meta == nil {
+			t.Fatal("sibling admission displaced the original recipient row")
+		}
+		if meta := directMediaCustodyFindEntry(env.media, sibling.To, sibling.ID); meta == nil {
+			t.Fatal("sibling admission did not persist its own recipient row")
+		}
+	})
 
 	filesBefore := directMediaCustodyFileCount(t, env.media.dataDir)
 	for _, id := range []string{"..", "../escape", "a/b", `a\b`, "/absolute", strings.Repeat("a", 129)} {
@@ -363,7 +402,10 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyIdentityPathAndCrossLane
 		t.Fatalf("invalid legacy paths mutated filesystem file count: %d -> %d", filesBefore, got)
 	}
 
-	meta := env.media.custody.entries[req.ID]
+	meta := directMediaCustodyFindEntry(env.media, req.To, req.ID)
+	if meta == nil {
+		t.Fatal("stored identity row missing")
+	}
 	marker, err := env.media.custody.markerPath(meta)
 	if err != nil {
 		t.Fatalf("resolve marker: %v", err)
@@ -475,7 +517,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyRejectsCapacityWithoutEv
 			if !ready || newProof.Status != "OK" || newProof.StoreStatus != mediaCustodyStoreStored {
 				t.Fatalf("new store after different expired row = %#v ready=%v", newProof, ready)
 			}
-			if env.media.custody.entries[oldReq.ID] != nil || env.media.custody.entries[newReq.ID] == nil {
+			if env.media.custody.entries[custodyKeyOf(oldReq.To, oldReq.ID)] != nil || env.media.custody.entries[custodyKeyOf(newReq.To, newReq.ID)] == nil {
 				t.Fatalf("capacity normalization entries = %#v", env.media.custody.entries)
 			}
 			if delta := testutil.ToFloat64(mediaCustodyOutcomesCounter.WithLabelValues(mediaCustodyMetricExpired)) - expiredBefore; delta != 1 {
@@ -750,7 +792,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		if !ready || resp.Status != "ERROR" || resp.ErrorCode != mediaCustodyErrorStorage {
 			t.Fatalf("ambiguous final-sync response = %#v ready=%v", resp, ready)
 		}
-		if blocked := env.media.custody.blocked[req.ID]; blocked == nil || blocked.To != req.To || blocked.Size != req.Size {
+		if blocked := env.media.custody.blocked[custodyKeyOf(req.To, req.ID)]; blocked == nil || blocked.To != req.To || blocked.Size != req.Size {
 			t.Fatalf("post-marker ambiguity did not retain exact blocked capacity: %#v", blocked)
 		}
 		if got := testutil.ToFloat64(mediaCustodyBlobsPendingGauge); got != 1 {
@@ -767,7 +809,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		if otherReady || other.ErrorCode != mediaCustodyErrorFull || other.StoreStatus != mediaCustodyStoreRejectedFull {
 			t.Fatalf("distinct upload over blocked last slot = %#v ready=%v", other, otherReady)
 		}
-		if env.media.custody.blocked[req.ID] != nil || env.media.custody.entries[req.ID] == nil {
+		if env.media.custody.blocked[custodyKeyOf(req.To, req.ID)] != nil || env.media.custody.entries[custodyKeyOf(req.To, req.ID)] == nil {
 			t.Fatalf("distinct peer upload did not reconcile blocked commit before capacity: blocked=%#v entries=%#v", env.media.custody.blocked, env.media.custody.entries)
 		}
 		probe, ready := directMediaCustodyUpload(t, env, env.sender, req, body)
@@ -798,7 +840,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		body := []byte("corrupt marker bytes")
 		req := directMediaCustodyUploadRequest("corrupt-marker", env.recipient.ID().String(), "application/octet-stream", body)
 		proof, _ := directMediaCustodyUpload(t, env, env.sender, req, body)
-		marker, _ := env.media.custody.markerPath(env.media.custody.entries[req.ID])
+		marker, _ := env.media.custody.markerPath(env.media.custody.entries[custodyKeyOf(req.To, req.ID)])
 		if err := os.WriteFile(marker, []byte("{corrupt"), 0644); err != nil {
 			t.Fatal(err)
 		}
@@ -816,7 +858,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		body := []byte("missing blob")
 		req := directMediaCustodyUploadRequest("missing-blob", env.recipient.ID().String(), "application/octet-stream", body)
 		_, _ = directMediaCustodyUpload(t, env, env.sender, req, body)
-		meta := env.media.custody.entries[req.ID]
+		meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 		blob, _ := env.media.custody.blobPath(meta)
 		marker, _ := env.media.custody.markerPath(meta)
 		if err := os.Remove(blob); err != nil {
@@ -836,7 +878,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		body := []byte("restart ACK cleanup")
 		req := directMediaCustodyUploadRequest("restart-acked-leftover", env.recipient.ID().String(), "application/octet-stream", body)
 		proof, _ := directMediaCustodyUpload(t, env, env.sender, req, body)
-		meta := env.media.custody.entries[req.ID]
+		meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 		blobPath, _ := env.media.custody.blobPath(meta)
 		realRemove := env.media.custody.remove
 		env.media.custody.remove = func(path string) error {
@@ -853,7 +895,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		if err != nil {
 			t.Fatalf("reconcile ACK marker plus leftover: %v", err)
 		}
-		if got := reopened.custody.entries[req.ID]; got == nil || got.State != mediaCustodyStateAcked {
+		if got := reopened.custody.entries[custodyKeyOf(req.To, req.ID)]; got == nil || got.State != mediaCustodyStateAcked {
 			t.Fatalf("reconstructed ACK tombstone = %#v", got)
 		}
 		if _, err := os.Stat(blobPath); !os.IsNotExist(err) {
@@ -867,7 +909,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		body := []byte("expired restart bytes")
 		req := directMediaCustodyUploadRequest("restart-expired", env.recipient.ID().String(), "application/octet-stream", body)
 		_, _ = directMediaCustodyUpload(t, env, env.sender, req, body)
-		meta := cloneDirectMediaBlobCustodyMeta(env.media.custody.entries[req.ID])
+		meta := cloneDirectMediaBlobCustodyMeta(env.media.custody.entries[custodyKeyOf(req.To, req.ID)])
 		meta.CreatedAtMs = time.Now().Add(-mediaTTL - time.Hour).UnixMilli()
 		meta.ExpiresAtMs = meta.CreatedAtMs + mediaTTL.Milliseconds()
 		markerPath, _ := env.media.custody.markerPath(meta)
@@ -880,7 +922,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		if err != nil {
 			t.Fatalf("reconcile expired committed pair: %v", err)
 		}
-		if reopened.custody.entries[req.ID] != nil {
+		if reopened.custody.entries[custodyKeyOf(req.To, req.ID)] != nil {
 			t.Fatal("expired committed pair remained indexed after restart")
 		}
 		for _, path := range []string{markerPath, blobPath} {
@@ -897,7 +939,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		body := []byte("expired cleanup must fail closed")
 		req := directMediaCustodyUploadRequest("restart-remove-failure", env.recipient.ID().String(), "application/octet-stream", body)
 		proof, _ := directMediaCustodyUpload(t, env, env.sender, req, body)
-		meta := env.media.custody.entries[req.ID]
+		meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 		blobPath, _ := env.media.custody.blobPath(meta)
 		markerPath, _ := env.media.custody.markerPath(meta)
 
@@ -933,7 +975,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 		body := []byte("ACK cleanup barrier ambiguity")
 		req := directMediaCustodyUploadRequest("restart-sync-failure", env.recipient.ID().String(), "application/octet-stream", body)
 		proof, _ := directMediaCustodyUpload(t, env, env.sender, req, body)
-		meta := env.media.custody.entries[req.ID]
+		meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 		blobPath, _ := env.media.custody.blobPath(meta)
 		markerPath, _ := env.media.custody.markerPath(meta)
 		recipientDir := filepath.Dir(blobPath)
@@ -1005,7 +1047,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyAtomicCommitRecovery(t *
 			body := []byte("same-size-good")
 			req := directMediaCustodyUploadRequest("duplicate-integrity", env.recipient.ID().String(), "application/octet-stream", body)
 			_, _ = directMediaCustodyUpload(t, env, env.sender, req, body)
-			meta := env.media.custody.entries[req.ID]
+			meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 			blobPath, _ := env.media.custody.blobPath(meta)
 			tc.mutate(t, blobPath)
 			resp, ready := directMediaCustodyUpload(t, env, env.sender, req, body)
@@ -1145,7 +1187,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 		body := []byte("cleanup retry bytes")
 		req := directMediaCustodyUploadRequest("cleanup-retry", env.recipient.ID().String(), "application/octet-stream", body)
 		proof, _ := directMediaCustodyUpload(t, env, env.sender, req, body)
-		meta := env.media.custody.entries[req.ID]
+		meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 		blobPath, _ := env.media.custody.blobPath(meta)
 		realRemove := env.media.custody.remove
 		env.media.custody.remove = func(path string) error {
@@ -1163,7 +1205,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 		if delta := testutil.ToFloat64(mediaCustodyOutcomesCounter.WithLabelValues(mediaCustodyMetricCleanupPending)) - cleanupBefore; delta != 1 {
 			t.Fatalf("cleanup-pending metric delta = %v, want 1", delta)
 		}
-		if env.media.custody.entries[req.ID].State != mediaCustodyStateAcked {
+		if env.media.custody.entries[custodyKeyOf(req.To, req.ID)].State != mediaCustodyStateAcked {
 			t.Fatal("cleanup failure did not retain authoritative tombstone")
 		}
 		if resp, _ := directMediaCustodyDownload(t, env, env.recipient, directMediaCustodyExactRequest(proof, "download")); resp.ErrorCode != mediaCustodyErrorCleanupPending {
@@ -1175,7 +1217,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 		if pastExpiry.Status != "ERROR" || pastExpiry.ErrorCode != mediaCustodyErrorCleanupPending {
 			t.Fatalf("leftover tombstone was not suppressed past expiry: %#v", pastExpiry)
 		}
-		if got := env.media.custody.entries[req.ID]; got == nil || got.State != mediaCustodyStateAcked {
+		if got := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]; got == nil || got.State != mediaCustodyStateAcked {
 			t.Fatalf("past-expiry cleanup failure removed tombstone: %#v", got)
 		}
 
@@ -1196,7 +1238,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 			body := []byte("123456789012345678")
 			req := directMediaCustodyUploadRequest("ack-capacity", env.recipient.ID().String(), "application/octet-stream", body)
 			proof, _ := directMediaCustodyUpload(t, env, env.sender, req, body)
-			meta := env.media.custody.entries[req.ID]
+			meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 			blobPath, _ := env.media.custody.blobPath(meta)
 			recipientDir, _ := env.media.custody.recipientDir(meta)
 			realSync := env.media.custody.syncDir
@@ -1243,7 +1285,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 			if _, err := os.Stat(blobPath); !os.IsNotExist(err) {
 				t.Fatalf("reopen reconstructed old pending bytes: %v", err)
 			}
-			if got := reopened.custody.entries[otherReq.ID]; got == nil || got.State != mediaCustodyStatePending {
+			if got := reopened.custody.entries[custodyKeyOf(otherReq.To, otherReq.ID)]; got == nil || got.State != mediaCustodyStatePending {
 				t.Fatalf("reopen lost safely admitted replacement: %#v", got)
 			}
 		})
@@ -1266,7 +1308,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 		if delta := testutil.ToFloat64(mediaCustodyOutcomesCounter.WithLabelValues(mediaCustodyMetricExpired)) - expiredBefore; delta != 1 {
 			t.Fatalf("expired metric delta = %v, want 1", delta)
 		}
-		if env.media.custody.entries[req.ID] != nil {
+		if env.media.custody.entries[custodyKeyOf(req.To, req.ID)] != nil {
 			t.Fatal("expired authority remains indexed")
 		}
 	})
@@ -1285,7 +1327,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 				acked := directMediaCustodyRequest(t, env, env.recipient, ackReq)
 				requireDirectMediaCustodyProof(t, acked, req, "", mediaCustodyAckAcked)
 			}
-			meta := env.media.custody.entries[req.ID]
+			meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 			blobPath, _ := env.media.custody.blobPath(meta)
 			markerPath, _ := env.media.custody.markerPath(meta)
 			if err := os.Remove(blobPath); err != nil && !os.IsNotExist(err) {
@@ -1301,7 +1343,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyExactAckOrExpiry(t *test
 			if failed.Status != "ERROR" || failed.ErrorCode != mediaCustodyErrorCleanupPending {
 				t.Fatalf("nonregular blob expiry response = %#v", failed)
 			}
-			if got := env.media.custody.entries[req.ID]; got == nil || got.State != state {
+			if got := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]; got == nil || got.State != state {
 				t.Fatalf("nonregular blob expiry removed index: %#v", got)
 			}
 			if _, err := os.Stat(markerPath); err != nil {
@@ -1359,7 +1401,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyConcurrentStoreDownloadA
 		}
 	}
 
-	meta := env.media.custody.entries[req.ID]
+	meta := env.media.custody.entries[custodyKeyOf(req.To, req.ID)]
 	if meta == nil || meta.State != mediaCustodyStateAcked {
 		t.Fatalf("final convergence state = %#v, want tombstone", meta)
 	}
@@ -1620,5 +1662,322 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyLegacyRollbackPreservati
 		if readErr != nil || meta.To != newRecipient || !bytes.Equal(got, newBody) {
 			t.Fatalf("replacement after stale delete = meta %#v body %q err=%v", meta, got, readErr)
 		}
+	})
+}
+
+// TC-362-01b: one canonical blob ID owns independent exact (recipient, id)
+// custody per physical target. Sibling recipients coexist and converge
+// independently across ACK, expiry, blocked/ACK-cleanup ambiguity and
+// restart; per-recipient quotas and the GLOBAL legacy/protected ID fence are
+// unchanged.
+func TestRelayNotificationClosure_DirectMediaBlobCustodyRecipientFanoutIsolation(t *testing.T) {
+	t.Run("same blob to two recipients coexists and converges independently", func(t *testing.T) {
+		env := setupTestEnv(t)
+		env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		body := []byte("fanout blob bytes")
+		recipientA := env.recipient.ID().String()
+		recipientB := env.intruder.ID().String()
+		reqA := directMediaCustodyUploadRequest("fanout-blob", recipientA, "application/octet-stream", body)
+		reqB := directMediaCustodyUploadRequest("fanout-blob", recipientB, "application/octet-stream", body)
+
+		storedA, ready := directMediaCustodyUpload(t, env, env.sender, reqA, body)
+		if !ready {
+			t.Fatalf("target A upload = %#v", storedA)
+		}
+		requireDirectMediaCustodyProof(t, storedA, reqA, mediaCustodyStoreStored, "")
+		storedB, ready := directMediaCustodyUpload(t, env, env.sender, reqB, body)
+		if !ready {
+			t.Fatalf("sibling target B upload = %#v", storedB)
+		}
+		requireDirectMediaCustodyProof(t, storedB, reqB, mediaCustodyStoreStored, "")
+		if got := testutil.ToFloat64(mediaCustodyBlobsPendingGauge); got != 2 {
+			t.Fatalf("aggregate pending gauge = %v, want both sibling rows", got)
+		}
+		if got := testutil.ToFloat64(mediaCustodyBytesPendingGauge); got != float64(2*len(body)) {
+			t.Fatalf("aggregate byte gauge = %v, want %d", got, 2*len(body))
+		}
+
+		// Exact duplicates stay per-target idempotent.
+		dupA, ready := directMediaCustodyUpload(t, env, env.sender, reqA, body)
+		if ready {
+			t.Fatal("duplicate A requested body transfer")
+		}
+		requireDirectMediaCustodyProof(t, dupA, reqA, mediaCustodyStoreDuplicate, "")
+		dupB, ready := directMediaCustodyUpload(t, env, env.sender, reqB, body)
+		if ready {
+			t.Fatal("duplicate B requested body transfer")
+		}
+		requireDirectMediaCustodyProof(t, dupB, reqB, mediaCustodyStoreDuplicate, "")
+
+		// Tuple drift under the SAME (To, ID) remains refused.
+		for _, tc := range []struct {
+			name string
+			edit func(*mediaRequest)
+		}{
+			{name: "mime", edit: func(r *mediaRequest) { r.Mime = "image/png" }},
+			{name: "size", edit: func(r *mediaRequest) { r.Size++ }},
+			{name: "hash", edit: func(r *mediaRequest) { r.ContentHash = strings.Repeat("b", 64) }},
+		} {
+			mutated := reqA
+			tc.edit(&mutated)
+			resp, sawReady := directMediaCustodyUpload(t, env, env.sender, mutated, body)
+			if sawReady || resp.ErrorCode != mediaCustodyErrorIdentityConflict {
+				t.Fatalf("same-pair drift %s accepted: %#v ready=%v", tc.name, resp, sawReady)
+			}
+		}
+
+		// Cross-target access refuses: a stream authenticated as B cannot name
+		// A's custody row.
+		crossed := directMediaCustodyExactRequest(storedA, "download")
+		crossed.To = recipientA
+		if resp := directMediaCustodyRequest(t, env, env.intruder, crossed); resp.ErrorCode != mediaCustodyErrorNotAuthorized {
+			t.Fatalf("cross-recipient download authorization = %#v", resp)
+		}
+		crossedAck := directMediaCustodyExactRequest(storedA, mediaCustodyAckAction)
+		crossedAck.To = recipientA
+		if resp := directMediaCustodyRequest(t, env, env.intruder, crossedAck); resp.ErrorCode != mediaCustodyErrorNotAuthorized {
+			t.Fatalf("cross-recipient ACK authorization = %#v", resp)
+		}
+
+		// A's ACK releases only A's charged state; B stays downloadable
+		// before and after restart.
+		ackA := directMediaCustodyExactRequest(storedA, mediaCustodyAckAction)
+		acked := directMediaCustodyRequest(t, env, env.recipient, ackA)
+		requireDirectMediaCustodyProof(t, acked, ackA, "", mediaCustodyAckAcked)
+		if resp, _ := directMediaCustodyDownload(t, env, env.recipient, directMediaCustodyExactRequest(storedA, "download")); resp.ErrorCode != mediaCustodyErrorNotFound {
+			t.Fatalf("A download after ACK = %#v, want not-found tombstone", resp)
+		}
+		if resp, gotBody := directMediaCustodyDownload(t, env, env.intruder, directMediaCustodyExactRequest(storedB, "download")); resp.Status != "OK" || !bytes.Equal(gotBody, body) {
+			t.Fatalf("B download after A ACK = %#v body=%q", resp, gotBody)
+		}
+		if got := testutil.ToFloat64(mediaCustodyBytesPendingGauge); got != float64(len(body)) {
+			t.Fatalf("A ACK released sibling bytes: gauge = %v, want %d", got, len(body))
+		}
+
+		reopened, err := NewMediaStore(env.media.dataDir)
+		if err != nil {
+			t.Fatalf("restart with sibling custody rows: %v", err)
+		}
+		reopened.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		reopened.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		installDirectMediaCustodyStore(t, env, reopened)
+		if resp, gotBody := directMediaCustodyDownload(t, env, env.intruder, directMediaCustodyExactRequest(storedB, "download")); resp.Status != "OK" || !bytes.Equal(gotBody, body) {
+			t.Fatalf("B download after restart = %#v body=%q", resp, gotBody)
+		}
+		if resp, _ := directMediaCustodyDownload(t, env, env.recipient, directMediaCustodyExactRequest(storedA, "download")); resp.ErrorCode != mediaCustodyErrorNotFound {
+			t.Fatalf("A tombstone lost across restart: %#v", resp)
+		}
+	})
+
+	t.Run("per-recipient count quota admits each sibling target once", func(t *testing.T) {
+		env := setupTestEnv(t)
+		env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		env.media.custody.maxCount = 1
+		body := []byte("quota bytes")
+		recipientA := env.recipient.ID().String()
+		recipientB := env.intruder.ID().String()
+
+		first, ready := directMediaCustodyUpload(t, env, env.sender, directMediaCustodyUploadRequest("quota-blob", recipientA, "application/octet-stream", body), body)
+		if !ready || first.StoreStatus != mediaCustodyStoreStored {
+			t.Fatalf("A quota admission = %#v", first)
+		}
+		sibling, ready := directMediaCustodyUpload(t, env, env.sender, directMediaCustodyUploadRequest("quota-blob", recipientB, "application/octet-stream", body), body)
+		if !ready || sibling.StoreStatus != mediaCustodyStoreStored {
+			t.Fatalf("B sibling admission under A's full quota = %#v", sibling)
+		}
+		overA, ready := directMediaCustodyUpload(t, env, env.sender, directMediaCustodyUploadRequest("quota-blob-2", recipientA, "application/octet-stream", body), body)
+		if ready || overA.ErrorCode != mediaCustodyErrorFull {
+			t.Fatalf("A second row over quota = %#v ready=%v", overA, ready)
+		}
+		overB, ready := directMediaCustodyUpload(t, env, env.sender, directMediaCustodyUploadRequest("quota-blob-2", recipientB, "application/octet-stream", body), body)
+		if ready || overB.ErrorCode != mediaCustodyErrorFull {
+			t.Fatalf("B second row over quota = %#v ready=%v", overB, ready)
+		}
+	})
+
+	t.Run("concurrent sibling preparations both commit", func(t *testing.T) {
+		env := setupTestEnv(t)
+		env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		body := []byte("concurrent sibling bytes")
+		recipients := []string{env.recipient.ID().String(), env.intruder.ID().String()}
+		responses := make([]mediaResponse, len(recipients))
+		readiness := make([]bool, len(recipients))
+		var wg sync.WaitGroup
+		for index, recipient := range recipients {
+			wg.Add(1)
+			go func(slot int, to string) {
+				defer wg.Done()
+				req := directMediaCustodyUploadRequest("concurrent-sibling", to, "application/octet-stream", body)
+				responses[slot], readiness[slot] = directMediaCustodyUpload(t, env, env.sender, req, body)
+			}(index, recipient)
+		}
+		wg.Wait()
+		for index, recipient := range recipients {
+			if !readiness[index] || responses[index].StoreStatus != mediaCustodyStoreStored {
+				t.Fatalf("concurrent sibling %s = %#v ready=%v", recipient, responses[index], readiness[index])
+			}
+			if directMediaCustodyFindEntry(env.media, recipient, "concurrent-sibling") == nil {
+				t.Fatalf("concurrent sibling %s missing from entries", recipient)
+			}
+		}
+	})
+
+	t.Run("A blocked ambiguity never blocks or mutates B and both converge", func(t *testing.T) {
+		env := setupTestEnv(t)
+		env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		body := []byte("blocked isolation bytes")
+		recipientA := env.recipient.ID().String()
+		recipientB := env.intruder.ID().String()
+		reqA := directMediaCustodyUploadRequest("blocked-isolation", recipientA, "application/octet-stream", body)
+		reqB := directMediaCustodyUploadRequest("blocked-isolation", recipientB, "application/octet-stream", body)
+
+		realSync := env.media.custody.syncDir
+		failedFinalBarrier := false
+		markerPath := filepath.Join(env.media.custody.rootDir, recipientA, reqA.ID+".custody")
+		env.media.custody.syncDir = func(path string) error {
+			if !failedFinalBarrier && fileExists(markerPath) {
+				failedFinalBarrier = true
+				return errors.New("lost A final directory barrier")
+			}
+			return realSync(path)
+		}
+		ambiguous, ready := directMediaCustodyUpload(t, env, env.sender, reqA, body)
+		if !ready || ambiguous.ErrorCode != mediaCustodyErrorStorage {
+			t.Fatalf("A post-rename ambiguity = %#v ready=%v", ambiguous, ready)
+		}
+		env.media.custody.syncDir = realSync
+		if directMediaCustodyFindBlocked(env.media, recipientA, reqA.ID) == nil {
+			t.Fatal("A ambiguity did not retain blocked capacity")
+		}
+
+		// While A is blocked, the global legacy fence still owns the ID...
+		if resp := directMediaCustodyRequest(t, env, env.sender, mediaRequest{Action: "upload", ID: reqA.ID, To: recipientA, Size: 1, Mime: "image/jpeg"}); resp.Status != "ERROR" {
+			t.Fatalf("legacy upload during A blocked = %#v", resp)
+		}
+		// ...but sibling B's same-ID strict admission proceeds untouched.
+		storedB, ready := directMediaCustodyUpload(t, env, env.sender, reqB, body)
+		if !ready || storedB.StoreStatus != mediaCustodyStoreStored {
+			t.Fatalf("B admission during A blocked = %#v ready=%v", storedB, ready)
+		}
+
+		// A's exact retry reconciles its blocked commit into a duplicate
+		// proof; B remains byte-identical and downloadable.
+		recoveredA, ready := directMediaCustodyUpload(t, env, env.sender, reqA, body)
+		if ready {
+			t.Fatal("A recovery requested a second body")
+		}
+		requireDirectMediaCustodyProof(t, recoveredA, reqA, mediaCustodyStoreDuplicate, "")
+		if resp, gotBody := directMediaCustodyDownload(t, env, env.intruder, directMediaCustodyExactRequest(storedB, "download")); resp.Status != "OK" || !bytes.Equal(gotBody, body) {
+			t.Fatalf("B after A blocked recovery = %#v body=%q", resp, gotBody)
+		}
+		if resp, gotBody := directMediaCustodyDownload(t, env, env.recipient, directMediaCustodyExactRequest(recoveredA, "download")); resp.Status != "OK" || !bytes.Equal(gotBody, body) {
+			t.Fatalf("A after blocked recovery = %#v body=%q", resp, gotBody)
+		}
+	})
+
+	t.Run("A ACK-cleanup ambiguity leaves B independent before and after restart", func(t *testing.T) {
+		env := setupTestEnv(t)
+		env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		body := []byte("ack cleanup isolation bytes")
+		recipientA := env.recipient.ID().String()
+		recipientB := env.intruder.ID().String()
+		reqA := directMediaCustodyUploadRequest("ack-isolation", recipientA, "application/octet-stream", body)
+		reqB := directMediaCustodyUploadRequest("ack-isolation", recipientB, "application/octet-stream", body)
+		storedA, _ := directMediaCustodyUpload(t, env, env.sender, reqA, body)
+		storedB, _ := directMediaCustodyUpload(t, env, env.sender, reqB, body)
+
+		metaA := directMediaCustodyFindEntry(env.media, recipientA, reqA.ID)
+		if metaA == nil {
+			t.Fatal("A row missing before ACK ambiguity")
+		}
+		blobPathA, err := env.media.custody.blobPath(metaA)
+		if err != nil {
+			t.Fatalf("resolve A blob path: %v", err)
+		}
+		realRemove := env.media.custody.remove
+		env.media.custody.remove = func(path string) error {
+			if path == blobPathA {
+				return errors.New("injected A unlink failure")
+			}
+			return realRemove(path)
+		}
+		ackA := directMediaCustodyExactRequest(storedA, mediaCustodyAckAction)
+		failed := directMediaCustodyRequest(t, env, env.recipient, ackA)
+		if failed.ErrorCode != mediaCustodyErrorCleanupPending {
+			t.Fatalf("A ACK ambiguity = %#v", failed)
+		}
+
+		// While A's cleanup is ambiguous the global fence still owns the ID,
+		// and B is never blocked, mutated, uncharged or deleted.
+		if resp := directMediaCustodyRequest(t, env, env.sender, mediaRequest{Action: "upload", ID: reqA.ID, To: recipientA, Size: 1, Mime: "image/jpeg"}); resp.Status != "ERROR" {
+			t.Fatalf("legacy upload during A ACK ambiguity = %#v", resp)
+		}
+		if resp, gotBody := directMediaCustodyDownload(t, env, env.intruder, directMediaCustodyExactRequest(storedB, "download")); resp.Status != "OK" || !bytes.Equal(gotBody, body) {
+			t.Fatalf("B download during A ACK ambiguity = %#v body=%q", resp, gotBody)
+		}
+		ackB := directMediaCustodyExactRequest(storedB, mediaCustodyAckAction)
+		ackedB := directMediaCustodyRequest(t, env, env.intruder, ackB)
+		requireDirectMediaCustodyProof(t, ackedB, ackB, "", mediaCustodyAckAcked)
+
+		// A converges independently once its barrier heals.
+		env.media.custody.remove = realRemove
+		retriedA := directMediaCustodyRequest(t, env, env.recipient, ackA)
+		requireDirectMediaCustodyProof(t, retriedA, ackA, "", mediaCustodyAckAlreadyAcked)
+		if _, err := os.Stat(blobPathA); !os.IsNotExist(err) {
+			t.Fatalf("A cleanup retry left bytes behind: %v", err)
+		}
+
+		reopened, err := NewMediaStore(env.media.dataDir)
+		if err != nil {
+			t.Fatalf("restart after independent sibling convergence: %v", err)
+		}
+		reopened.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		reopened.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		installDirectMediaCustodyStore(t, env, reopened)
+		if resp, _ := directMediaCustodyDownload(t, env, env.recipient, directMediaCustodyExactRequest(storedA, "download")); resp.ErrorCode != mediaCustodyErrorNotFound {
+			t.Fatalf("A resurrection after restart: %#v", resp)
+		}
+		if resp, _ := directMediaCustodyDownload(t, env, env.intruder, directMediaCustodyExactRequest(storedB, "download")); resp.ErrorCode != mediaCustodyErrorNotFound {
+			t.Fatalf("B resurrection after restart: %#v", resp)
+		}
+	})
+
+	t.Run("global legacy fence spans reservation and sibling state", func(t *testing.T) {
+		env := setupTestEnv(t)
+		env.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
+		env.media.SetDirectMediaBlobCustodyNowForTest(func() time.Time { return directMediaCustodyTestNow })
+		body := []byte("fence bytes")
+		recipientA := env.recipient.ID().String()
+		recipientB := env.intruder.ID().String()
+
+		// Legacy-first: the bare ID blocks strict admission for EVERY
+		// recipient, not only the legacy row's own.
+		env.upload(t, env.sender, "legacy-owned", recipientA, "image/jpeg", body)
+		strictOther := directMediaCustodyUploadRequest("legacy-owned", recipientB, "application/octet-stream", body)
+		resp, sawReady := directMediaCustodyUpload(t, env, env.sender, strictOther, body)
+		if sawReady || resp.ErrorCode != mediaCustodyErrorIdentityConflict {
+			t.Fatalf("strict sibling admitted under legacy-owned ID: %#v ready=%v", resp, sawReady)
+		}
+
+		// Strict reservation (pre-publication) already owns the fence.
+		reserveReq := directMediaCustodyUploadRequest("reserved-fence", recipientA, "application/octet-stream", body)
+		prepared, failure := env.media.custody.prepareUpload(&reserveReq)
+		if failure != nil || prepared == nil || prepared.reservation == nil {
+			t.Fatalf("hold strict reservation = (%#v, %v)", prepared, failure)
+		}
+		if err := env.media.reserveLegacyMediaID("reserved-fence"); err == nil {
+			env.media.releaseLegacyMediaID("reserved-fence")
+			t.Fatal("legacy lane reserved an ID owned by a strict reservation")
+		}
+		env.media.custody.abortReservation(prepared.reservation)
+		if err := env.media.reserveLegacyMediaID("reserved-fence"); err != nil {
+			t.Fatalf("aborted strict reservation still fenced the legacy lane: %v", err)
+		}
+		env.media.releaseLegacyMediaID("reserved-fence")
 	})
 }

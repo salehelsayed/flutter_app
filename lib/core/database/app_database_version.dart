@@ -50,4 +50,14 @@
 // v108/v109 outboxes, with generation-first lookup indexes. All four columns
 // are nullable and historical rows are never promoted; v113 remains a one-way
 // schema floor.
-const int currentIdentityDatabaseVersion = 113;
+// 362: DB v114 rebuilds only direct_media_blob_custody: attachment_id loses
+// its PRIMARY KEY, the natural exact identity becomes (attachment_id,
+// direction, recipient_peer_id) under two partial unique indexes, and the
+// nullable linked columns contact_account_peer_id /
+// recipient_ml_kem_public_key are added (historical rows keep both NULL).
+// media_attachments gains the nullable
+// direct_media_blob_custody_fingerprint_version discriminator (NULL = exact
+// target-specific digest; 2 = sender-local target-independent generation
+// digest). Historical rows are never promoted; v114 remains a one-way schema
+// floor.
+const int currentIdentityDatabaseVersion = 114;

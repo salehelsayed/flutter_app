@@ -231,9 +231,31 @@ class _ExistingDirectMediaBlobRetryRepository
   }
 
   @override
-  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
-    String attachmentId,
-  ) async => attachmentId == row.attachmentId ? row : null;
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId) async =>
+      attachmentId == row.attachmentId
+      ? <DirectMediaBlobCustodyRow>[row]
+      : const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId) async =>
+      attachmentId == row.attachmentId &&
+          row.direction == DirectMediaBlobCustodyDirection.incoming
+      ? row
+      : null;
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) async =>
+      attachmentId == row.attachmentId &&
+          row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+          row.recipientPeerId == recipientPeerId
+      ? row
+      : null;
 
   @override
   Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(

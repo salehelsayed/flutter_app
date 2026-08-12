@@ -70,8 +70,8 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 113);
-    expect(await _userVersion(db), 113);
+    expect(currentIdentityDatabaseVersion, 114);
+    expect(await _userVersion(db), 114);
 
     // Registered exactly once in both registries, immediately after v111.
     for (final registry in <List<ProductionMigrationEntry>>[
@@ -124,7 +124,7 @@ void main() {
     await runDirectLinkedDeviceAddressingMigration(db);
     await runDirectLinkedDeviceAddressingMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 113);
+    expect(await _userVersion(db), 114);
 
     // Stage one real binding, then prove reopen preserves it and that v112
     // is a one-way floor.
@@ -158,7 +158,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 113);
+    expect(await _userVersion(db), 114);
     expect(
       await db.query('direct_contact_device_bindings', orderBy: 'device_id'),
       snapshot,
@@ -189,7 +189,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 113);
+    expect(await _userVersion(db), 114);
     expect(
       await db.query('direct_contact_device_bindings', orderBy: 'device_id'),
       snapshot,

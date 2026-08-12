@@ -472,6 +472,11 @@ bool _isExactUnackedTransportCandidate({
     !fresh.isIncoming &&
     fresh.status == 'sent' &&
     fresh.directMediaCustodyIntentId == null &&
+    // 361/362: a fanout-marked generation (blob-free OR linked media) is
+    // owned by its exact surviving v108 siblings or is terminal. The loaded
+    // batch already skipped marked rows; a marker acquired between list load
+    // and egress must equally never enter this singular resend.
+    fresh.directEventFanoutGenerationId == null &&
     fresh.id == loaded.id &&
     fresh.contactPeerId == loaded.contactPeerId &&
     fresh.senderPeerId == loaded.senderPeerId &&

@@ -2,6 +2,10 @@ import 'dart:async';
 
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/media/direct_media_blob_custody.dart'
+    show
+        DirectMediaBlobCustodyCommitment,
+        computeDirectMediaBlobCommitmentFingerprint;
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -198,6 +202,162 @@ void main() {
       expect(
         (await messageRepo.getMessage('linked-deletion-target'))!.isDeleted,
         isTrue,
+      );
+    });
+
+    test('TC-362-04a linked DFE keeps physical receipt routing after '
+        'in-transaction reauthorization', () async {
+      const linkedTransport = '12D3KooWLinkedDevice1';
+      const author = 'peer-alice';
+      const messageId = 'tc362-linked-media-dfe-target';
+      const attachmentId = '$messageId-blob';
+      const eventId = 'tc362-linked-media-dfe-event-1';
+      const t0 = '2026-08-12T09:00:00.000Z';
+      const t1 = '2026-08-12T09:00:01.000Z';
+      final contentHash = 'cd' * 32;
+
+      // Strict incoming MEDIA parent + its v114 ACK obligation live in the
+      // REAL fixture database; the exact incoming fingerprint stays the v1
+      // target-specific digest with a NULL version.
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      await fixture.db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': author,
+        'sender_peer_id': author,
+        'text': '',
+        'timestamp': t0,
+        'status': 'delivered',
+        'is_incoming': 1,
+        'created_at': t0,
+      });
+      await fixture.db.insert('media_attachments', <String, Object?>{
+        'id': attachmentId,
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 13,
+        'media_type': 'image',
+        'download_status': 'pending',
+        'created_at': t0,
+        'content_hash': contentHash,
+        'encryption_nonce': 'nonce-$attachmentId',
+        'encryption_scheme': 'blob_aes_256_gcm_v1',
+        'direct_media_blob_custody_fingerprint':
+            computeDirectMediaBlobCommitmentFingerprint(
+              attachmentId: attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: contentHash,
+                ciphertextSize: 64,
+                expiresAtMs: 1900003000000,
+              ),
+            ),
+      });
+      final ackObligation = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingAckPending,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        contactAccountPeerId: author,
+        ciphertextRelativePath: null,
+        contentHash: contentHash,
+        ciphertextSize: 64,
+        expiresAtMs: 1900003000000,
+        custodyRelayPeerId: 'relay-tc362-source',
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: t0,
+        updatedAt: t0,
+      );
+      await fixture.db.insert(
+        kDirectMediaBlobCustodyTable,
+        ackObligation.toMap(),
+      );
+      final obligationBefore = (await fixture.db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+
+      contactRepo.seed([makeContact(author)]);
+      messageRepo.seed([
+        makeMessage(
+          id: messageId,
+          contactPeerId: author,
+          senderPeerId: author,
+          text: '',
+        ),
+      ]);
+      final inner = MessageDeletionPayload(
+        messageId: messageId,
+        senderPeerId: author,
+        timestamp: t1,
+        eventId: eventId,
+      );
+      final receipts = <String>[];
+
+      final (result, tombstone) = await handleIncomingMessageDeletion(
+        message: ChatMessage(
+          from: linkedTransport,
+          to: 'peer-bob',
+          content: MessageDeletionPayload.buildEncryptedEnvelope(
+            senderPeerId: linkedTransport,
+            eventId: eventId,
+            kem: 'kem',
+            ciphertext: inner.toInnerJson(),
+            nonce: 'nonce',
+          ),
+          timestamp: t1,
+          isIncoming: true,
+          transport: 'inbox',
+        ),
+        messageRepo: messageRepo,
+        contactRepo: contactRepo,
+        reactionRepo: reactionRepo,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: mediaFileManager,
+        bridge: PassthroughCryptoBridge(),
+        ownMlKemSecretKey: 'secret',
+        stagedEntryId: 'relay-uuid-tc362-linked-dfe',
+        sendMutationDeliveryReceipt: (id, {required mutationEventId}) async =>
+            receipts.add('$id/$mutationEventId'),
+        transportAuthority: _FakeTransportAuthority({
+          linkedTransport: const DirectTransportAuthorityResolution.authorized(
+            kind: DirectTransportAuthorityKind.linked,
+            contactAccountPeerId: author,
+            contactIsBlocked: false,
+          ),
+        }),
+      );
+
+      expect(result, HandleMessageDeletionResult.success);
+      expect(tombstone, isNotNull);
+      expect(tombstone!.isDeleted, isTrue, reason: 'the tombstone is durable');
+      expect((await messageRepo.getMessage(messageId))!.isDeleted, isTrue);
+      expect(
+        messageRepo.linkedApplyTransports,
+        [linkedTransport],
+        reason:
+            'the reauthorizing apply keeps the PHYSICAL transport as the '
+            'authenticated route',
+      );
+      expect(
+        receipts,
+        <String>['$messageId/$eventId'],
+        reason: 'the mutation receipt fires exactly once after durable apply',
+      );
+      expect(
+        (await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single,
+        obligationBefore,
+        reason:
+            'the incoming v114 ACK obligation survives the tombstone '
+            'byte-identical and converges by its own ACK or expiry',
       );
     });
 

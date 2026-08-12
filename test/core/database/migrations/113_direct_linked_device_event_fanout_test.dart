@@ -99,10 +99,11 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 113);
-    expect(await _userVersion(db), 113);
+    expect(currentIdentityDatabaseVersion, 114);
+    expect(await _userVersion(db), 114);
 
     // Registered exactly once in both registries, immediately after v112.
+    // 362: v114 now follows v113, so the ledger claim is positional.
     for (final registry in <List<ProductionMigrationEntry>>[
       productionCreateMigrations,
       productionUpgradeMigrations,
@@ -114,9 +115,9 @@ void main() {
         entries.single.run,
         same(runDirectLinkedDeviceEventFanoutMigration),
       );
-      expect(registry.last, same(entries.single));
       final index112 = registry.indexWhere((entry) => entry.version == 112);
       expect(registry.indexOf(entries.single), index112 + 1);
+      expect(registry[index112 + 2].version, 114);
     }
 
     // Additive only: exactly the four new nullable columns, appended, with
@@ -137,7 +138,13 @@ void main() {
     // Every durable row survives byte-identically: old columns untouched and
     // every new column NULL — historical rows are never promoted or guessed.
     expect(await db.query('contacts'), v112Contacts);
-    expect(await db.query('direct_media_blob_custody'), v112Blobs);
+    // 362: the v114 rebuild appends its two nullable linked columns to v111
+    // rows; everything else stays byte-identical with no promotion.
+    _expectPreservedWithNullNewColumns(
+      await db.query('direct_media_blob_custody'),
+      v112Blobs,
+      const <String>['contact_account_peer_id', 'recipient_ml_kem_public_key'],
+    );
     expect(await db.query('direct_contact_device_bindings'), v112Bindings);
     expect(await db.query('direct_contact_device_roster_metadata'), v112Roster);
     _expectPreservedWithNullNewColumns(
@@ -173,7 +180,7 @@ void main() {
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 113);
+    expect(await _userVersion(db), 114);
 
     // Author one real fanout-marked row set, then prove reopen preserves it
     // and that v113 is a one-way floor.
@@ -218,7 +225,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 113);
+    expect(await _userVersion(db), 114);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -258,13 +265,13 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 113);
+    expect(await _userVersion(db), 114);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
     );
 
-    // Fresh v113 create produces the same schema through the same registry.
+    // Fresh create produces the same schema through the same registry.
     final freshPath = '${tempDirectory.path}/fresh.db';
     final fresh = await databaseFactoryFfi.openDatabase(
       freshPath,
@@ -279,7 +286,7 @@ void main() {
     addTearDown(() async {
       if (fresh.isOpen) await fresh.close();
     });
-    expect(await _userVersion(fresh), 113);
+    expect(await _userVersion(fresh), 114);
     expect(
       await _columnNames(fresh, 'messages'),
       containsAll(_newMessageColumns),

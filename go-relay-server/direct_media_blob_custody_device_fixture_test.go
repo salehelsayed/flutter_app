@@ -273,14 +273,18 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 			return
 		}
 		attachmentID := request.URL.Query().Get("attachmentId")
-		if !validDirectMediaFixtureProbeID(attachmentID) {
+		// 362: an optional recipientPeerId selects one exact composite
+		// (recipient, id) record; an absent recipient keeps the legacy
+		// aggregate-by-ID probe, which now counts every sibling target row.
+		recipientPeerID := request.URL.Query().Get("recipientPeerId")
+		if !validDirectMediaFixtureProbeID(attachmentID) ||
+			(recipientPeerID != "" && !validDirectMediaFixtureProbeID(recipientPeerID)) {
 			http.Error(writer, "attachment rejected", http.StatusBadRequest)
 			return
 		}
-		count := 0
-		if directMediaFixturePendingProtectedCount(fixture.media, attachmentID) == 1 {
-			count = 1
-		}
+		count := directMediaFixturePendingProtectedCount(
+			fixture.media, recipientPeerID, attachmentID,
+		)
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{
 			"schema":                   "mknoon.plan347.direct-media-probe.v1",
@@ -298,7 +302,9 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 	return fmt.Sprintf("http://%s:%d%s", advertisedHost, port, path), nil
 }
 
-func directMediaFixturePendingProtectedCount(media *MediaStore, attachmentID string) int {
+func directMediaFixturePendingProtectedCount(
+	media *MediaStore, recipientPeerID, attachmentID string,
+) int {
 	if media == nil || media.custody == nil {
 		return 0
 	}
@@ -306,15 +312,35 @@ func directMediaFixturePendingProtectedCount(media *MediaStore, attachmentID str
 	defer media.laneMu.Unlock()
 	media.custody.mu.Lock()
 	defer media.custody.mu.Unlock()
-	if meta := media.custody.entries[attachmentID]; meta != nil &&
-		meta.State == mediaCustodyStatePending {
-		return 1
+	if recipientPeerID != "" {
+		key := custodyKeyOf(recipientPeerID, attachmentID)
+		if meta := media.custody.entries[key]; meta != nil &&
+			meta.State == mediaCustodyStatePending {
+			return 1
+		}
+		if media.custody.reservations[key] != nil ||
+			media.custody.blocked[key] != nil {
+			return 1
+		}
+		return 0
 	}
-	if media.custody.reservations[attachmentID] != nil ||
-		media.custody.blocked[attachmentID] != nil {
-		return 1
+	count := 0
+	for key, meta := range media.custody.entries {
+		if key.id == attachmentID && meta.State == mediaCustodyStatePending {
+			count++
+		}
 	}
-	return 0
+	for key := range media.custody.reservations {
+		if key.id == attachmentID {
+			count++
+		}
+	}
+	for key := range media.custody.blocked {
+		if key.id == attachmentID {
+			count++
+		}
+	}
+	return count
 }
 
 func validDirectMediaFixtureProbeID(value string) bool {

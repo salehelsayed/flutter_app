@@ -77,6 +77,28 @@ class _TokenAfterUnackedListMessageRepository extends FakeMessageRepository {
   }
 }
 
+/// 362: stamps the durable fanout no-remint marker onto the row AFTER the
+/// unacked batch was loaded, modeling a linked-media generation acquired
+/// between list load and egress.
+class _MarkerAfterUnackedListMessageRepository extends FakeMessageRepository {
+  bool crossedAfterListLoad = false;
+
+  @override
+  Future<List<ConversationMessage>> getUnackedOutgoingMessages({
+    required Duration olderThan,
+  }) async {
+    final loaded = await super.getUnackedOutgoingMessages(olderThan: olderThan);
+    if (!crossedAfterListLoad && loaded.isNotEmpty) {
+      crossedAfterListLoad = true;
+      final current = await getMessage(loaded.single.id);
+      await saveMessage(
+        current!.copyWith(directEventFanoutGenerationId: current.id),
+      );
+    }
+    return loaded;
+  }
+}
+
 void main() {
   group('retryUnackedMessages', () {
     late FakeMessageRepository messageRepo;
@@ -126,6 +148,93 @@ void main() {
         final untouched = await messageRepo.getMessage('msg-fanout-marked');
         expect(untouched!.status, 'sent');
         expect(untouched.wireEnvelope, isNotNull);
+      },
+    );
+
+    test(
+      'TC-362-02b unacked resend refuses a marker-bearing media parent',
+      () async {
+        const attachment = MediaAttachment(
+          id: 'att-362-unacked',
+          messageId: 'msg-362-media-marked',
+          mime: 'image/jpeg',
+          size: 2048,
+          mediaType: 'image',
+          localPath: 'media/peer/att-362-unacked.jpg',
+          downloadStatus: 'done',
+          createdAt: '2026-01-01T00:00:00.000Z',
+        );
+
+        // Leg 1: the LOADED batch row already carries the linked-media
+        // fanout marker (v110 token consumed, v108 siblings absent): the
+        // singular unacked resend must refuse it before any legacy network.
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+        final loadedMarked = _makeSentMessage(id: 'msg-362-media-marked')
+            .copyWith(
+              media: const <MediaAttachment>[attachment],
+              directEventFanoutGenerationId: 'msg-362-media-marked',
+            );
+        messageRepo.seed(<ConversationMessage>[loadedMarked]);
+
+        final count = await retryUnackedMessages(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+        );
+        expect(count, 0);
+        expect(
+          p2pService.storeInInboxCallCount,
+          0,
+          reason:
+              'a marker-bearing media parent is owned by its exact v108 '
+              'siblings (or terminal) — never this singular resend',
+        );
+        expect(
+          messageRepo.saveMessageCallCount,
+          0,
+          reason: 'no writer touches the marked row',
+        );
+        final untouched = await messageRepo.getMessage('msg-362-media-marked');
+        expect(untouched!.status, 'sent');
+        expect(untouched.wireEnvelope, isNotNull);
+        expect(untouched.directEventFanoutGenerationId, 'msg-362-media-marked');
+
+        // Leg 2: the marker lands BETWEEN list load and egress. The freshly
+        // reloaded parent carries it, so the exact-candidate recheck must
+        // refuse the resend even though the loaded snapshot was unmarked.
+        final crossingRepo = _MarkerAfterUnackedListMessageRepository();
+        final crossedService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+        final unmarked = _makeSentMessage(
+          id: 'msg-362-marker-crossed',
+        ).copyWith(media: const <MediaAttachment>[attachment]);
+        crossingRepo.seed(<ConversationMessage>[unmarked]);
+
+        final crossedCount = await retryUnackedMessages(
+          messageRepo: crossingRepo,
+          p2pService: crossedService,
+        );
+        expect(
+          crossingRepo.crossedAfterListLoad,
+          isTrue,
+          reason: 'the marker was stamped after the batch load',
+        );
+        expect(crossedCount, 0);
+        expect(
+          crossedService.storeInInboxCallCount,
+          0,
+          reason:
+              'a marker acquired between list load and egress must '
+              'equally never enter this singular resend',
+        );
+        final crossed = await crossingRepo.getMessage('msg-362-marker-crossed');
+        expect(crossed!.status, 'sent');
+        expect(crossed.wireEnvelope, isNotNull);
+        expect(crossed.directEventFanoutGenerationId, 'msg-362-marker-crossed');
       },
     );
 

@@ -5,11 +5,13 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 import '../../media/private_media_policy.dart';
 import '../db_write_transaction.dart';
 import '../direct_event_fanout_contract.dart';
+import '../direct_media_blob_custody.dart';
 import '../direct_inbox_event_envelope.dart';
 import '../direct_reaction_inbox_custody_outbox_contract.dart';
 import '../outgoing_transport_mutation.dart';
 import 'direct_contact_device_bindings_db_helpers.dart';
 import 'direct_inbox_custody_outbox_db_helpers.dart';
+import 'direct_media_blob_custody_db_helpers.dart';
 import 'messages_db_helpers.dart';
 
 /// The one physical v109 outbox shared by direct reaction and mutation events.
@@ -1126,19 +1128,23 @@ dbStageOutgoingDirectTextMutationFanoutInboxCustody(
       return const DbDirectEventFanoutStageResult.refused();
     }
 
+    // 362: an ORDINARY direct-media parent now fans its caption EDIT and
+    // delete-for-everyone through this same blob-free v109 authority — the
+    // event batch carries zero blob bytes and performs zero re-encryption.
+    // The v109 event itself never uploads; only a DELETION additionally
+    // terminalizes the parent's still-unbound v114 target rows below.
     final hasMediaTable = (await txn.rawQuery(
       "SELECT 1 FROM sqlite_master WHERE type = 'table' "
       "AND name = 'media_attachments' LIMIT 1",
     )).isNotEmpty;
+    var hasDirectMediaParent = false;
     if (hasMediaTable) {
       final directMedia = await txn.rawQuery(
         'SELECT 1 FROM media_attachments '
         'WHERE message_id = ? AND owner_lane = ? LIMIT 1',
         <Object?>[parentMessageId, 'direct'],
       );
-      if (directMedia.isNotEmpty) {
-        return const DbDirectEventFanoutStageResult.refused();
-      }
+      hasDirectMediaParent = directMedia.isNotEmpty;
     }
 
     final messageOutcome =
@@ -1147,9 +1153,60 @@ dbStageOutgoingDirectTextMutationFanoutInboxCustody(
           expectedRow: expectedRow,
           stagedRow: stagedRow,
           kind: kind,
+          allowDirectAttachments: hasDirectMediaParent,
         );
     if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
       return const DbDirectEventFanoutStageResult.refused();
+    }
+
+    // A media DELETION terminalizes every still-unbound ACTIVE outgoing v114
+    // target row of this parent atomically with the tombstone: it may not
+    // retire target A and stage only surviving B. Rows already bound to an
+    // exact v108 sibling keep converging through their own drains, and the
+    // durable generation marker survives as the no-remint fact.
+    if (isDeletion && hasDirectMediaParent) {
+      final rawBlobRows = await txn.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ? AND direction = ?',
+        whereArgs: <Object?>[parentMessageId, 'outgoing'],
+        orderBy: 'attachment_id ASC, recipient_peer_id ASC',
+      );
+      if (rawBlobRows.isNotEmpty) {
+        List<DirectMediaBlobCustodyRow> blobRows;
+        try {
+          blobRows = rawBlobRows
+              .map(DirectMediaBlobCustodyRow.fromMap)
+              .toList(growable: false);
+        } on FormatException {
+          return const DbDirectEventFanoutStageResult.refused();
+        }
+        final unboundActive = blobRows
+            .where(
+              (row) =>
+                  row.inboxCustodyIncarnationId == null &&
+                  (row.state == DirectMediaBlobCustodyState.outgoingPrepared ||
+                      row.state == DirectMediaBlobCustodyState.outgoingStored),
+            )
+            .toList(growable: false);
+        final terminalizedAt = createdAt;
+        for (final row in unboundActive) {
+          final cleanup = row.copyWith(
+            state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+            updatedAt: terminalizedAt,
+          );
+          final changed =
+              await dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
+                txn,
+                expected: row,
+                next: cleanup,
+              );
+          if (!changed) {
+            throw StateError(
+              'media deletion fanout lost its unbound v114 terminalization',
+            );
+          }
+        }
+      }
     }
     // Atomically replace the parent's current generation: the older event is
     // superseded and can never project or remint from now on.

@@ -179,12 +179,26 @@ class MigrationFileManifestBuilder {
       return;
     }
     if (includedPaths.contains(relativePath)) {
+      // 362: v114 sibling target rows deliberately share one canonical
+      // encrypted artifact. An exact duplicate (path, hash, size) travels
+      // once — every sibling row still arrives in the database snapshot — but
+      // a crossed path or proof is corruption and refuses the bundle.
+      final exactSharedArtifact = items.any(
+        (item) =>
+            item.kind == MigrationFileManifestItemKind.directMediaBlobCustody &&
+            item.relativePath == relativePath &&
+            item.sha256 == custody.contentHash &&
+            item.sizeBytes == custody.ciphertextSize,
+      );
+      if (exactSharedArtifact) {
+        return;
+      }
       _addDirectMediaBlobCustodyIssue(
         issues: issues,
         code: MigrationFileManifestIssueCode.invalidCustodyArtifact,
         sourceId: sourceId,
         relativePath: relativePath,
-        reason: 'duplicate_custody_path',
+        reason: 'crossed_duplicate_custody_proof',
       );
       return;
     }

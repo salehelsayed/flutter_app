@@ -1,11 +1,25 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
+import 'package:flutter_app/core/bridge/bridge.dart' show Bridge;
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
+import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -24,6 +38,7 @@ import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_app/features/p2p/domain/models/send_message_result.dart'
     as p2p;
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
+import '../../../features/conversation/domain/repositories/fake_media_attachment_repository.dart';
 import '../../../features/conversation/domain/repositories/fake_message_repository.dart';
 import '../../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../../core/services/fake_p2p_service.dart';
@@ -328,6 +343,150 @@ class _R3RetryDeadlineP2PService extends FakeP2PService {
   }
 }
 
+/// Plan 362 linked-fanout blob repository fake.
+///
+/// Publishes a PLURAL linked (fanout) v114 row set and records every
+/// consultation — lifecycle-lease runs, per-message loads, singular reopen
+/// stages, plural stages, roster snapshot reads — so a failed-message retry
+/// can be proved to route ONLY through the shared fanout owner (or fail
+/// closed) without a roster resolution, a re-encryption, or a singular
+/// reopen.
+class _LinkedFanoutDirectMediaBlobRepository
+    extends FakeMediaAttachmentRepository
+    implements
+        DirectMediaBlobCustodyRepository,
+        OutgoingDirectLinkedMediaBlobFanoutRepository {
+  final List<DirectMediaBlobCustodyRow> rows = <DirectMediaBlobCustodyRow>[];
+  int lifecycleRuns = 0;
+  int blobLoads = 0;
+  final List<String> loadedMessageIds = <String>[];
+  int ordinaryStageCalls = 0;
+  int fanoutGenerationStageCalls = 0;
+  int fanoutInboxStageCalls = 0;
+  int snapshotReads = 0;
+
+  @override
+  bool get supportsDirectMediaBlobCustody => true;
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<T> runDirectMediaBlobCustodyLifecycle<T>(Future<T> Function() action) {
+    lifecycleRuns++;
+    return action();
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    ordinaryStageCalls++;
+    return const DirectMediaBlobGenerationStageResult.refused();
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId) async => rows
+      .where((row) => row.attachmentId == attachmentId)
+      .toList(growable: false);
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId) async =>
+      null;
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) async => rows
+      .where(
+        (row) =>
+            row.attachmentId == attachmentId &&
+            row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+            row.recipientPeerId == recipientPeerId,
+      )
+      .firstOrNull;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async {
+    blobLoads++;
+    loadedMessageIds.add(messageId);
+    return rows
+        .where((row) => row.messageId == messageId)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => const <DirectMediaBlobCustodyRow>[];
+
+  @override
+  Future<bool> transitionDirectMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    for (var index = 0; index < rows.length; index++) {
+      if (rows[index].exactDatabaseProjectionMatches(expected)) {
+        rows[index] = next;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  @override
+  Future<bool> deleteDirectMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async {
+    snapshotReads++;
+    return null;
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  }) async {
+    fanoutGenerationStageCalls++;
+    return const DirectMediaBlobGenerationStageResult.refused();
+  }
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) async {
+    fanoutInboxStageCalls++;
+    return const DirectMediaFanoutInboxCustodyStageResult.refused();
+  }
+}
+
 void main() {
   group('retryFailedMessages', () {
     late FakeIdentityRepository identityRepo;
@@ -417,6 +576,275 @@ void main() {
       expect(p2pService.sendMessageWithReplyCallCount, 0);
       expect((await messageRepo.getMessage(marked.id))!.status, 'failed');
     });
+
+    test(
+      'TC-362-02b failed and incomplete retries replay exact persisted fanout rows without resolver or re-encryption',
+      () async {
+        const contactPeerId = 'peer-target';
+        const authoredAt = '2026-08-11T08:30:00.000Z';
+        const contentHash =
+            'fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa';
+        identityRepo.seed(makeIdentity());
+        contactRepo.seed(<ContactModel>[makeContact()]);
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        );
+
+        ({ConversationMessage message, MediaAttachment published})
+        publishedFixture(String messageId, String attachmentId) {
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: <String>[attachmentId],
+          );
+          final pendingPath =
+              MediaFilePathConvention.relativePathForPendingUpload(
+                messageId: messageId,
+                attachmentId: attachmentId,
+                mime: 'image/jpeg',
+              );
+          final message = ConversationMessage(
+            id: messageId,
+            contactPeerId: contactPeerId,
+            senderPeerId: 'my-peer-id',
+            text: '',
+            timestamp: authoredAt,
+            status: 'failed',
+            isIncoming: false,
+            createdAt: authoredAt,
+            directMediaCustodyIntentId: intent,
+          ).copyWith(directEventFanoutGenerationId: messageId);
+          final published = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: 'image/jpeg',
+            size: 2048,
+            mediaType: 'image',
+            localPath: pendingPath,
+            downloadStatus: 'upload_pending',
+            createdAt: authoredAt,
+            ownerLane: MediaOwnerLane.direct,
+            contentHash: contentHash,
+            encryptionKeyBase64: 'tc362-raw-key',
+            encryptionNonce: 'tc362-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          );
+          return (message: message, published: published);
+        }
+
+        DirectMediaBlobCustodyRow linkedStoredRow({
+          required String messageId,
+          required String attachmentId,
+          required String recipientPeerId,
+          required String recipientMlKemPublicKey,
+          required int expiresAtMs,
+        }) => DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.outgoing,
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: recipientPeerId,
+          contactAccountPeerId: contactPeerId,
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+          ciphertextRelativePath:
+              'direct_media_blob_custody_v1/$contentHash/$attachmentId.blob',
+          contentHash: contentHash,
+          ciphertextSize: 4096,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: 'peer-relay',
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: authoredAt,
+          updatedAt: authoredAt,
+        );
+
+        PreparedDirectMediaBlobCustodyCoordinator recordingCoordinator(
+          _LinkedFanoutDirectMediaBlobRepository repository,
+          void Function() onPrepareArtifact,
+          void Function() onStrictUpload,
+        ) => PreparedDirectMediaBlobCustodyCoordinator(
+          repository: repository,
+          artifactStore: DirectMediaBlobArtifactStore(
+            documentsDirectoryProvider: () async =>
+                Directory.systemTemp.createTempSync('tc362_02b_failed_'),
+          ),
+          prepareArtifact:
+              ({required Bridge bridge, required String localFilePath}) async {
+                onPrepareArtifact();
+                throw StateError(
+                  'a persisted fanout generation must never re-encrypt',
+                );
+              },
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                onStrictUpload();
+                return const <String, dynamic>{'ok': false};
+              },
+        );
+
+        // Leg 1: a durable fanout marker with ZERO v114 rows is TERMINAL —
+        // the failed lane skips silently with no coordinator call at all.
+        final terminal = publishedFixture(
+          'msg-362-failed-terminal',
+          'att-362-failed-terminal',
+        );
+        final terminalRepo = _LinkedFanoutDirectMediaBlobRepository()
+          ..seed(<MediaAttachment>[terminal.published]);
+        messageRepo.seed(<ConversationMessage>[terminal.message]);
+        var terminalPrepares = 0;
+        var terminalUploads = 0;
+        final terminalCount = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          mediaAttachmentRepo: terminalRepo,
+          directMediaBlobCustodyCoordinator: recordingCoordinator(
+            terminalRepo,
+            () => terminalPrepares++,
+            () => terminalUploads++,
+          ),
+        );
+        expect(terminalCount, 0);
+        expect(
+          terminalRepo.lifecycleRuns,
+          0,
+          reason: 'terminal skip: no coordinator call at all',
+        );
+        expect(terminalPrepares, 0);
+        expect(terminalUploads, 0);
+        expect(terminalRepo.ordinaryStageCalls, 0);
+        expect(terminalRepo.snapshotReads, 0);
+        expect(bridge.sendCallCount, 0, reason: 'zero re-encryption');
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(
+          (await messageRepo.getMessage(terminal.message.id))!.status,
+          'failed',
+        );
+
+        // Leg 2: persisted LINKED rows are the exclusive survivor-first
+        // retry authority: the shared fanout owner replays THEM —
+        // reopenAndUpload is never invoked, nothing re-encrypts, and no
+        // roster resolution substitutes for the persisted rows.
+        final linked = publishedFixture(
+          'msg-362-failed-linked',
+          'att-362-failed-linked',
+        );
+        final expiresAtMs = DateTime.now()
+            .toUtc()
+            .add(const Duration(days: 7))
+            .millisecondsSinceEpoch;
+        final linkedRepo = _LinkedFanoutDirectMediaBlobRepository()
+          ..seed(<MediaAttachment>[linked.published])
+          ..rows.addAll(<DirectMediaBlobCustodyRow>[
+            linkedStoredRow(
+              messageId: linked.message.id,
+              attachmentId: 'att-362-failed-linked',
+              recipientPeerId: contactPeerId,
+              recipientMlKemPublicKey: 'mlkem-legacy-account',
+              expiresAtMs: expiresAtMs,
+            ),
+            linkedStoredRow(
+              messageId: linked.message.id,
+              attachmentId: 'att-362-failed-linked',
+              recipientPeerId: 'peer-target-device-a',
+              recipientMlKemPublicKey: 'mlkem-device-a',
+              expiresAtMs: expiresAtMs + 60000,
+            ),
+          ]);
+        final rowsBefore = linkedRepo.rows
+            .map((row) => row.toMap())
+            .toList(growable: false);
+        final linkedMessages = FakeMessageRepository()
+          ..seed(<ConversationMessage>[linked.message]);
+        var linkedPrepares = 0;
+        var linkedUploads = 0;
+        final linkedCount = await retryFailedMessages(
+          messageRepo: linkedMessages,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          mediaAttachmentRepo: linkedRepo,
+          directMediaBlobCustodyCoordinator: recordingCoordinator(
+            linkedRepo,
+            () => linkedPrepares++,
+            () => linkedUploads++,
+          ),
+        );
+
+        expect(linkedCount, 0);
+        if (kDirectMediaBlobCustodyClientEnabled) {
+          expect(
+            linkedRepo.lifecycleRuns,
+            1,
+            reason:
+                'retryPersistedFanoutGeneration ran once under the '
+                'coordinator lifecycle lease',
+          );
+          expect(
+            linkedRepo.blobLoads,
+            2,
+            reason:
+                'the lane and the fanout retry owner both read the '
+                'EXACT persisted rows for this parent',
+          );
+          expect(linkedRepo.loadedMessageIds.toSet(), <String>{
+            linked.message.id,
+          });
+          expect(
+            linkedRepo.snapshotReads,
+            0,
+            reason:
+                'the live roster snapshot is consulted only AFTER a '
+                'complete replay — never as retry authority',
+          );
+        } else {
+          expect(
+            linkedRepo.lifecycleRuns,
+            0,
+            reason:
+                'selector-off compilations fail closed without any '
+                'coordinator work',
+          );
+          expect(linkedRepo.blobLoads, 0);
+        }
+        expect(linkedPrepares, 0, reason: 'no re-encryption');
+        expect(linkedUploads, 0);
+        expect(
+          linkedRepo.ordinaryStageCalls,
+          0,
+          reason:
+              'reopenAndUpload (the singular reopen CAS) is NOT invoked '
+              'over a linked generation',
+        );
+        expect(linkedRepo.fanoutGenerationStageCalls, 0);
+        expect(linkedRepo.fanoutInboxStageCalls, 0);
+        expect(bridge.sendCallCount, 0, reason: 'zero re-encryption');
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(
+          linkedRepo.rows.map((row) => row.toMap()).toList(growable: false),
+          rowsBefore,
+          reason: 'every exact persisted fanout row is byte-identical',
+        );
+        expect(
+          (await linkedMessages.getMessage(linked.message.id))!.status,
+          'failed',
+          reason: 'the durable parent is retained for the next attempt',
+        );
+      },
+    );
 
     test(
       'Plan 344 pending v108 retry cannot wrap bool success as protected receipt',

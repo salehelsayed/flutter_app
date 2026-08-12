@@ -130,6 +130,8 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/database/migrations/112_direct_linked_device_addressing_test.dart"
   # 361: the v113 direct linked-device blob-free event fanout migration.
   "test/core/database/migrations/113_direct_linked_device_event_fanout_test.dart"
+  # 362: the v114 direct linked-device media blob fanout rebuild migration.
+  "test/core/database/migrations/114_direct_linked_device_media_blob_fanout_test.dart"
   "test/features/contacts/integration/direct_linked_device_addressing_foundation_test.dart"
   "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart"
   "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"

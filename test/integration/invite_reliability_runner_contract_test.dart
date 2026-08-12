@@ -1448,6 +1448,112 @@ void main() {
       ),
     );
   });
+
+  test('TC-362-05b registered aggregate event+blob wave scenario requires a '
+      'distinct physical-first Android pair before any build', () {
+    // ── Registered exactly once in the exhaustive allow-set. ──
+    expect(
+      inviteReliabilityRunnerScenarios,
+      contains(directLinkedDeviceEventBlobFanoutScenario),
+    );
+    expect(
+      directLinkedDeviceEventBlobFanoutScenario,
+      'direct_linked_device_event_blob_fanout',
+    );
+
+    // ── The exact valid pair parses: physical first, emulator second. ──
+    final parsed = InviteReliabilityRunnerArguments.parse(
+      const <String>[
+        '--scenario',
+        'direct_linked_device_event_blob_fanout',
+        '-d',
+        'R58M123ABC,emulator-5554',
+      ],
+      defaultDeviceIds: const <String>['sim-a', 'sim-b'],
+    );
+    expect(parsed.scenario, directLinkedDeviceEventBlobFanoutScenario);
+    expect(parsed.mode, isNull);
+    expect(parsed.deviceIds, const <String>['R58M123ABC', 'emulator-5554']);
+
+    // ── Duplicate, reversed, non-Android, mode-bearing and default-inherited
+    // pairs are refused BEFORE any build. ──
+    void expectRefused(List<String> arguments, String reason) {
+      expect(
+        () => InviteReliabilityRunnerArguments.parse(
+          arguments,
+          defaultDeviceIds: const <String>['sim-a', 'sim-b'],
+        ),
+        throwsArgumentError,
+        reason: reason,
+      );
+    }
+
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+    ], 'a default device list is not a proof');
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+      '-d',
+      'emulator-5554,emulator-5554',
+    ], 'duplicate pair refused');
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+      '-d',
+      'emulator-5554,R58M123ABC',
+    ], 'reversed emulator-first order refused');
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+      '-d',
+      'R58M123ABC,R58M456DEF',
+    ], 'a pair without a live emulator second is refused');
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+      '-d',
+      '00008120-001A2B3C4D5E6F70,emulator-5554',
+    ], 'a non-Android (iOS hardware UDID) member is refused');
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+      '-d',
+      'AAAA1111-BBBB-CCCC-DDDD-EEEE22223333,emulator-5554',
+    ], 'a non-Android (iOS simulator UUID) member is refused');
+    expectRefused(const <String>[
+      '--scenario',
+      'direct_linked_device_event_blob_fanout',
+      '--mode',
+      'baseline',
+      '-d',
+      'R58M123ABC,emulator-5554',
+    ], 'the wave scenario is mode-free');
+
+    // ── ONLY this scenario compiles the full linked-media authoring triple;
+    // group multi-device stays off. ──
+    final runner = File(
+      'integration_test/scripts/run_invite_reliability_multi_device.dart',
+    ).readAsStringSync();
+    expect(
+      runner,
+      contains('directLinkedDeviceEventBlobFanoutScenario) ...const ['),
+    );
+    for (final define in const <String>[
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true',
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_EVENT_FANOUT=true',
+      '--dart-define=MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED=true',
+      '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_MEDIA_FANOUT=true',
+    ]) {
+      expect(runner, contains(define));
+    }
+    expect(
+      runner,
+      isNot(contains('--dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC')),
+      reason: 'group same-user convergence stays off behind this scenario',
+    );
+  });
 }
 
 const String _primaryLatencyArtifactPath = '/tmp/tc341-primary.json';

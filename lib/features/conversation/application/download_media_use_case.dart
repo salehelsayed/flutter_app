@@ -858,9 +858,8 @@ Future<MediaAttachment?> downloadMedia({
     final custodyRepository =
         mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
     final custody = custodyRepository.supportsDirectMediaBlobCustody
-        ? await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
-            attachment.id,
-          )
+        ? await custodyRepository
+              .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id)
         : null;
     if (custody != null &&
         custody.direction == DirectMediaBlobCustodyDirection.incoming &&
@@ -1036,7 +1035,7 @@ Future<MediaAttachment?> downloadMedia({
       mediaAttachmentRepo is IncomingDirectMediaBlobCustodyRepository) {
     final custody =
         await (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
-            .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+            .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
     if (custody != null &&
         custody.direction == DirectMediaBlobCustodyDirection.incoming) {
       return StrictDirectMediaBlobDownloadAckOwner(

@@ -2386,6 +2386,238 @@ void main() {
       );
     });
   });
+
+  group('TC-362-02b media fanout exact-target v108 completion', () {
+    test('TC-362-02b exact-target completion converges one target and only '
+        'the final sibling projects', () async {
+      const messageId = 'tc362-media-fanout-completion';
+      const attachmentId = '$messageId-a';
+      const contentHash =
+          '3333333333333333333333333333333333333333333333333333333333333333';
+      const ciphertextSize = 96;
+      const targets = <String>[_deviceTransportA, _deviceTransportB];
+      const expiryByTarget = <String, int>{
+        _deviceTransportA: 1900000060000,
+        _deviceTransportB: 1900000120000,
+      };
+      String envelopeFor(String target) =>
+          _envelope(messageId, 'cipher-for-$target');
+      String incarnationFor(String target) =>
+          computeDirectEventFanoutIncarnation(
+            messageId: messageId,
+            recipientPeerId: target,
+          );
+
+      // Canonical parent: generation marker + the FIRST target's envelope as
+      // the correlation-only witness (raw seed, mirroring the Plan-361 fanout
+      // completion fixtures).
+      await db.insert(
+        'messages',
+        _fanoutStagedRow(
+          messageId,
+          witnessEnvelope: envelopeFor(_deviceTransportA),
+        ),
+      );
+      // One shared canonical attachment (fingerprint target of the stamp).
+      await dbInsertMediaAttachment(db, <String, Object?>{
+        'id': attachmentId,
+        'message_id': messageId,
+        'owner_lane': 'direct',
+        'mime': 'image/jpeg',
+        'size': 900,
+        'media_type': 'image',
+        'created_at': _t0,
+        'download_status': 'done',
+        'local_path': 'media/direct/$attachmentId.jpg',
+        'content_hash': contentHash,
+        'encryption_key_base64': secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        'encryption_nonce': 'nonce-$attachmentId',
+        'encryption_scheme': 'blob_aes_256_gcm_v1',
+      });
+      // Per-target v114 rows: stored + bound to that target's OWN exact v108
+      // incarnation, with a per-target expiry.
+      for (final target in targets) {
+        await db.insert(
+          kDirectMediaBlobCustodyTable,
+          DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            inboxCustodyIncarnationId: incarnationFor(target),
+            recipientPeerId: target,
+            contactAccountPeerId: _contactAccount,
+            recipientMlKemPublicKey: 'mlkem-for-$target',
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/$contentHash/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            expiresAtMs: expiryByTarget[target],
+            custodyRelayPeerId: 'peer-relay',
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: _t0,
+            updatedAt: _t0,
+          ).toMap(),
+        );
+        // The v108 sibling binds ONLY this target's manifest/expiry.
+        final manifest = <DirectMediaBlobManifestProjection>[
+          DirectMediaBlobManifestProjection(
+            attachmentId: attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              expiresAtMs: expiryByTarget[target]!,
+            ),
+          ),
+        ];
+        await db.insert(_fanoutTable, <String, Object?>{
+          'recipient_peer_id': target,
+          'message_id': messageId,
+          'incarnation_id': incarnationFor(target),
+          'wire_envelope': envelopeFor(target),
+          'retry_count': 0,
+          'last_attempt_at': null,
+          'last_error_code': null,
+          'media_blob_manifest_hash': computeDirectMediaBlobManifestHash(
+            manifest,
+          ),
+          'media_blob_expires_at_ms': earliestDirectMediaBlobExpiryMs(manifest),
+          'contact_account_peer_id': _contactAccount,
+          'created_at': _t0,
+          'updated_at': _t0,
+        });
+      }
+
+      Future<Map<String, Object?>> attachmentRow() async => (await db.query(
+        'media_attachments',
+        where: 'id = ?',
+        whereArgs: const <Object?>[attachmentId],
+      )).single;
+      Future<List<Map<String, Object?>>> v114RowsFor(String target) => db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ? AND recipient_peer_id = ?',
+        whereArgs: <Object?>[messageId, target],
+        orderBy: 'attachment_id ASC',
+      );
+
+      final expectedFingerprint = computeDirectMediaBlobGenerationFingerprintV2(
+        attachmentId: attachmentId,
+        contentHash: contentHash,
+        ciphertextSize: ciphertextSize,
+      );
+      final siblingBRowsBefore = await v114RowsFor(_deviceTransportB);
+
+      // Target A converges first: nonfinal, so the canonical message is
+      // preserved untouched while A's exact rows retire.
+      final completionA = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: _deviceTransportA,
+        messageId: messageId,
+        expectedIncarnationId: incarnationFor(_deviceTransportA),
+        expectedWireEnvelope: envelopeFor(_deviceTransportA),
+        relayExpiresAt: expiryByTarget[_deviceTransportA]! - 1,
+      );
+      expect(
+        completionA,
+        DirectInboxCustodyCompletionOutcome.messagePreserved,
+        reason: 'a surviving sibling forbids the canonical projection',
+      );
+      final afterA = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(afterA['status'], 'sending');
+      expect(afterA['direct_event_fanout_generation_id'], messageId);
+      expect(
+        (await v114RowsFor(
+          _deviceTransportA,
+        )).map((row) => row['state']).toList(),
+        const <String>['outgoing_cleanup_pending'],
+        reason: "only A's OWN v111 rows transition to cleanup",
+      );
+      expect(
+        await v114RowsFor(_deviceTransportB),
+        siblingBRowsBefore,
+        reason: "B's v111 rows are byte-identical after A's completion",
+      );
+      final stampedAfterA = await attachmentRow();
+      expect(
+        stampedAfterA['direct_media_blob_custody_fingerprint'],
+        expectedFingerprint,
+        reason:
+            'the first accepted target stamps the target-INDEPENDENT '
+            'v2 generation digest',
+      );
+      expect(
+        (stampedAfterA['direct_media_blob_custody_fingerprint_version'] as num)
+            .toInt(),
+        kDirectMediaBlobFingerprintVersionGeneration,
+      );
+      expect(
+        (await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+          db,
+          messageId: messageId,
+        )).map((row) => row['recipient_peer_id']),
+        const <String>[_deviceTransportB],
+        reason: 'exactly the exact A sibling retired',
+      );
+
+      // Target B is the FINAL surviving sibling: the canonical transition
+      // projects and the persisted lineage must agree byte-for-byte.
+      final completionB = await dbCompleteAcceptedDirectInboxCustodyIfExact(
+        db,
+        recipientPeerId: _deviceTransportB,
+        messageId: messageId,
+        expectedIncarnationId: incarnationFor(_deviceTransportB),
+        expectedWireEnvelope: envelopeFor(_deviceTransportB),
+        relayExpiresAt: expiryByTarget[_deviceTransportB]! - 1,
+      );
+      expect(completionB, DirectInboxCustodyCompletionOutcome.messageAdvanced);
+      final afterB = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(afterB['status'], 'inboxed');
+      expect(afterB['transport'], 'inbox');
+      expect(
+        afterB['relay_expires_at'],
+        expiryByTarget[_deviceTransportB]! - 1,
+      );
+      expect(afterB['direct_event_fanout_generation_id'], messageId);
+      final stampedAfterB = await attachmentRow();
+      expect(
+        stampedAfterB['direct_media_blob_custody_fingerprint'],
+        expectedFingerprint,
+        reason:
+            'the later target must AGREE with the stamped generation '
+            'digest, never rewrite it',
+      );
+      expect(
+        (stampedAfterB['direct_media_blob_custody_fingerprint_version'] as num)
+            .toInt(),
+        kDirectMediaBlobFingerprintVersionGeneration,
+      );
+      expect(
+        (await v114RowsFor(
+          _deviceTransportB,
+        )).map((row) => row['state']).toList(),
+        const <String>['outgoing_cleanup_pending'],
+      );
+      expect(
+        await dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+          db,
+          messageId: messageId,
+        ),
+        isEmpty,
+        reason: 'zero surviving siblings after the final completion',
+      );
+    });
+  });
 }
 
 const String _fanoutTable = 'direct_inbox_custody_outbox';

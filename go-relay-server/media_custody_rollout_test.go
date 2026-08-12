@@ -226,7 +226,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyMetrics(t *testing.T) {
 		if err != nil {
 			t.Fatalf("reopen metric fixture: %v", err)
 		}
-		if meta := reopened.custody.entries[req.ID]; meta == nil || meta.State != mediaCustodyStateAcked {
+		if meta := reopened.custody.entries[custodyKeyOf(req.To, req.ID)]; meta == nil || meta.State != mediaCustodyStateAcked {
 			t.Fatalf("reconstructed metric fixture state = %#v, want ACK tombstone", meta)
 		}
 		if got := testutil.ToFloat64(mediaCustodyBlobsPendingGauge); got != 0 {
@@ -243,7 +243,7 @@ func TestRelayNotificationClosure_DirectMediaBlobCustodyMetrics(t *testing.T) {
 		cleanupEnv.media.SetDirectMediaBlobCustodyAdmissionEnabled(true)
 		cleanupReq := directMediaCustodyUploadRequest("metric-cleanup", cleanupEnv.recipient.ID().String(), req.Mime, body)
 		cleanupProof, _ := directMediaCustodyUpload(t, cleanupEnv, cleanupEnv.sender, cleanupReq, body)
-		cleanupMeta := cleanupEnv.media.custody.entries[cleanupReq.ID]
+		cleanupMeta := cleanupEnv.media.custody.entries[custodyKeyOf(cleanupReq.To, cleanupReq.ID)]
 		cleanupBlob, _ := cleanupEnv.media.custody.blobPath(cleanupMeta)
 		realRemove := cleanupEnv.media.custody.remove
 		cleanupEnv.media.custody.remove = func(path string) error {

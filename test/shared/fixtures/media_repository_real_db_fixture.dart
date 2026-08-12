@@ -1,6 +1,7 @@
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
@@ -247,11 +248,13 @@ class MediaRepositoryRealDbFixture {
             required messageRow,
             required attachmentRow,
             required custodyRow,
+            authenticatedTransportPeerId,
           }) => dbStageIncomingDirectPrivateMediaBlobCustody(
             db,
             messageRow: messageRow,
             attachmentRow: attachmentRow,
             custodyRow: custodyRow,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
           ),
       dbStageFreshOutgoingDirectMediaBlobGeneration:
           wireFreshOutgoingDirectMediaBlobGeneration
@@ -283,11 +286,63 @@ class MediaRepositoryRealDbFixture {
                     ),
                   )
           : null,
-      dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
-          dbLoadDirectMediaBlobCustodyForAttachment(
+      // 362: the three linked-media fanout authorities ride the same shared
+      // production helpers, so the fixture repository is fanout-capable
+      // exactly like main.dart wiring.
+      dbReadDirectContactFanoutSnapshotForMedia:
+          ({required contactAccountPeerId}) =>
+              dbReadDirectContactFanoutSnapshot(
+                db,
+                contactAccountPeerId: contactAccountPeerId,
+              ),
+      dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRows,
+            required preparedAttachmentRows,
+            required custodyRows,
+            required contactAccountPeerId,
+            required expectedSnapshot,
+          }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
             db,
-            attachmentId: attachmentId,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            preparedAttachmentRows: preparedAttachmentRows,
+            custodyRows: custodyRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: expectedSnapshot,
           ),
+      dbStageOutgoingDirectMediaFanoutInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required contactAccountPeerId,
+            required expectedSnapshot,
+            required targetBindings,
+          }) => dbStageOutgoingDirectMediaFanoutInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: expectedSnapshot,
+            targetBindings: targetBindings,
+          ),
+      dbLoadDirectMediaBlobCustodyRowsForAttachment:
+          ({required attachmentId}) =>
+              dbLoadDirectMediaBlobCustodyRowsForAttachment(
+                db,
+                attachmentId: attachmentId,
+              ),
+      dbLoadDirectMediaBlobCustodyForTarget:
+          ({required attachmentId, required direction, recipientPeerId}) =>
+              dbLoadDirectMediaBlobCustodyForTarget(
+                db,
+                attachmentId: attachmentId,
+                direction: direction,
+                recipientPeerId: recipientPeerId,
+              ),
       dbLoadDirectMediaBlobCustodyForMessage: ({required messageId}) =>
           dbLoadDirectMediaBlobCustodyForMessage(db, messageId: messageId),
       dbLoadDirectMediaBlobCustodyByStates:
@@ -319,11 +374,13 @@ class MediaRepositoryRealDbFixture {
             required messageRow,
             required attachmentRows,
             required custodyRows,
+            authenticatedTransportPeerId,
           }) => dbStageIncomingDirectMediaBlobCustody(
             db,
             messageRow: messageRow,
             attachmentRows: attachmentRows,
             custodyRows: custodyRows,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
           ),
       dbCommitIncomingDirectMediaBlobLocalPath:
           ({

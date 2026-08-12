@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/app/bootstrap/direct_blob_free_linked_services.dart';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_blob_free_linked_event_fanout_use_case.dart';
@@ -583,6 +584,96 @@ void main() {
               'their tuples stay byte-identical',
         );
         expect(reactionRepo.failureEventIds, isEmpty);
+      },
+    );
+
+    test(
+      'TC-362-04a linked resume drains only the exact strict-media convergers',
+      () async {
+        // 362: the restricted linked runtime (the same composition the app
+        // root's linked resume branch drains) gains ONLY the target-qualified
+        // strict-media custody convergers, AWAITED after the exact blob-free
+        // outbox drain. Every recorder suspends on a real timer first, so a
+        // dropped `await` would resolve start() before the hook appended and
+        // the exhaustive ordering assertion below would catch it.
+        final callOrder = <String>[];
+        Future<void> recordAwaited(String name) async {
+          await Future<void>.delayed(Duration.zero);
+          callOrder.add(name);
+        }
+
+        final services = DirectBlobFreeLinkedServices(
+          initializeBridge: () => recordAwaited('initializeBridge'),
+          startMessageRouter: () => callOrder.add('startMessageRouter'),
+          startChatMessageListener: () =>
+              callOrder.add('startChatMessageListener'),
+          startReactionListener: () => callOrder.add('startReactionListener'),
+          startMessageDeletionListener: () =>
+              callOrder.add('startMessageDeletionListener'),
+          startDeliveryReceiptListener: () =>
+              callOrder.add('startDeliveryReceiptListener'),
+          drainOfflineInbox: () => recordAwaited('drainOfflineInbox'),
+          drainExactBlobFreeFanoutOutboxes: () async {
+            await Future<void>.delayed(Duration.zero);
+            callOrder.add('drainDirectBlobFreeLinkedOutboxes');
+            return 2;
+          },
+          cleanupLinkedDirectMediaBlobCustodyLocally: () =>
+              recordAwaited('cleanupLinkedDirectMediaBlobCustodyLocally'),
+          drainLinkedDirectMediaBlobCustody: () =>
+              recordAwaited('drainLinkedDirectMediaBlobCustody'),
+        );
+
+        expect(await services.start(), isTrue);
+        expect(
+          callOrder,
+          <String>[
+            'initializeBridge',
+            'startMessageRouter',
+            'startChatMessageListener',
+            'startReactionListener',
+            'startMessageDeletionListener',
+            'startDeliveryReceiptListener',
+            'drainOfflineInbox',
+            'drainDirectBlobFreeLinkedOutboxes',
+            'cleanupLinkedDirectMediaBlobCustodyLocally',
+            'drainLinkedDirectMediaBlobCustody',
+          ],
+          reason:
+              'the strict-media convergers run LAST and are awaited after '
+              'drainDirectBlobFreeLinkedOutboxes; the exhaustive owner list '
+              'proves NO broad retry family (recoverStuckSendingMessages, '
+              'retryIncompleteUploads, retryFailedMessages, '
+              'retryUnackedMessages, private-media recovery or generic '
+              'push/upload owners) has any seat in the restricted call shape',
+        );
+
+        // Absent 362 hooks keep the Plan-361 blob-free composition
+        // byte-identical: nothing extra runs and nothing awaits a null hook.
+        final baselineOrder = <String>[];
+        final baseline = DirectBlobFreeLinkedServices(
+          initializeBridge: () async => baselineOrder.add('initializeBridge'),
+          startMessageRouter: () => baselineOrder.add('startMessageRouter'),
+          startChatMessageListener: () =>
+              baselineOrder.add('startChatMessageListener'),
+          startReactionListener: () =>
+              baselineOrder.add('startReactionListener'),
+          startMessageDeletionListener: () =>
+              baselineOrder.add('startMessageDeletionListener'),
+          startDeliveryReceiptListener: () =>
+              baselineOrder.add('startDeliveryReceiptListener'),
+          drainOfflineInbox: () async => baselineOrder.add('drainOfflineInbox'),
+          drainExactBlobFreeFanoutOutboxes: () async {
+            baselineOrder.add('drainDirectBlobFreeLinkedOutboxes');
+            return 0;
+          },
+        );
+        expect(await baseline.start(), isTrue);
+        expect(
+          baselineOrder.last,
+          'drainDirectBlobFreeLinkedOutboxes',
+          reason: 'without the 362 convergers the 361 drain stays terminal',
+        );
       },
     );
   });

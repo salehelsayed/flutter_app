@@ -280,14 +280,13 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
     if ((mediaBlobManifestHash == null) != (mediaBlobExpiresAtMs == null)) {
       return DirectInboxCustodyCompletionOutcome.stale;
     }
-    // 361: a fanout sibling belongs to its LOGICAL contact and is blob-free
-    // by contract. Whether this row is the last surviving sibling decides
-    // whether the canonical transition may project.
+    // 361: a fanout sibling belongs to its LOGICAL contact. 362: a MEDIA
+    // fanout sibling additionally carries its own exact per-target blob
+    // binding, validated below against only THIS recipient's v114 target
+    // rows. Whether this row is the last surviving sibling decides whether
+    // the canonical transition may project.
     final fanoutContact = custody['contact_account_peer_id'] as String?;
     final isFanoutSibling = fanoutContact != null;
-    if (isFanoutSibling && hasStrictBlobBinding) {
-      return DirectInboxCustodyCompletionOutcome.stale;
-    }
     final ownerContactPeerId = fanoutContact ?? recipientPeerId;
     var isFinalSurvivingSibling = true;
     if (isFanoutSibling) {
@@ -305,12 +304,16 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
           relayExpiresAt > mediaBlobExpiresAtMs) {
         return DirectInboxCustodyCompletionOutcome.stale;
       }
+      // 362: exact-target authority — only THIS recipient's v114 rows own
+      // this v108 binding; sibling targets converge through their own exact
+      // incarnations and are never selected or transitioned here.
       final rawMessageBlobRows = await txn.query(
         kDirectMediaBlobCustodyTable,
-        where: 'message_id = ? AND direction = ?',
+        where: 'message_id = ? AND direction = ? AND recipient_peer_id = ?',
         whereArgs: <Object?>[
           messageId,
           DirectMediaBlobCustodyDirection.outgoing.dbValue,
+          recipientPeerId,
         ],
         orderBy: 'attachment_id ASC',
       );
@@ -436,6 +439,13 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
             txn,
             messageId: messageId,
             strictBlobRows: strictBlobRows,
+            // 362: a fanout target completion stamps the target-INDEPENDENT
+            // v2 generation digest — first accepted target stamps, later
+            // targets must agree; legacy single-target completions keep the
+            // incumbent exact target-specific digest with a NULL version.
+            fingerprintVersion: isFanoutSibling
+                ? kDirectMediaBlobFingerprintVersionGeneration
+                : null,
           )) {
         return DirectInboxCustodyCompletionOutcome.stale;
       }
@@ -545,15 +555,29 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
 /// Each digest commits to that row's own full public commitment. The v108
 /// manifest hash, the generation's earliest expiry and the accepted relay
 /// expiry are all generation-level values and can never stand in for it.
+///
+/// 362: [fingerprintVersion] selects the persisted lineage meaning. NULL is
+/// the incumbent exact target-specific commitment digest (expiry included,
+/// version column stays NULL). [kDirectMediaBlobFingerprintVersionGeneration]
+/// is the sender-local target-INDEPENDENT generation digest of a fanout
+/// completion: the first accepted target stamps digest+version together and
+/// every later target completion must agree exactly. Null/value/version
+/// contradictions refuse.
 Future<bool> dbStampExactStrictOutgoingLineageWithinTransaction(
   DatabaseExecutor txn, {
   required String messageId,
   required List<DirectMediaBlobCustodyRow> strictBlobRows,
+  int? fingerprintVersion,
 }) async {
+  if (fingerprintVersion != null &&
+      fingerprintVersion != kDirectMediaBlobFingerprintVersionGeneration) {
+    return false;
+  }
   const columns = <String>[
     'id',
     'content_hash',
     'direct_media_blob_custody_fingerprint',
+    'direct_media_blob_custody_fingerprint_version',
   ];
   const where = 'message_id = ? AND owner_lane = ?';
   final whereArgs = <Object?>[messageId, MediaOwnerLane.direct.dbValue];
@@ -581,31 +605,60 @@ Future<bool> dbStampExactStrictOutgoingLineageWithinTransaction(
     if (attachment == null || attachment['content_hash'] != row.contentHash) {
       return false;
     }
-    final commitment = DirectMediaBlobCustodyCommitment(
-      kind: row.custodyKind,
-      contract: row.custodyContract,
-      contentHash: row.contentHash,
-      ciphertextSize: row.ciphertextSize,
-      transportMime: row.transportMime,
-      expiresAtMs: row.expiresAtMs!,
-    );
-    if (!commitment.isValid) return false;
-    final exact = computeDirectMediaBlobCommitmentFingerprint(
-      attachmentId: row.attachmentId,
-      commitment: commitment,
-    );
+    final String exact;
+    if (fingerprintVersion == null) {
+      final commitment = DirectMediaBlobCustodyCommitment(
+        kind: row.custodyKind,
+        contract: row.custodyContract,
+        contentHash: row.contentHash,
+        ciphertextSize: row.ciphertextSize,
+        transportMime: row.transportMime,
+        expiresAtMs: row.expiresAtMs!,
+      );
+      if (!commitment.isValid) return false;
+      exact = computeDirectMediaBlobCommitmentFingerprint(
+        attachmentId: row.attachmentId,
+        commitment: commitment,
+      );
+    } else {
+      try {
+        exact = computeDirectMediaBlobGenerationFingerprintV2(
+          attachmentId: row.attachmentId,
+          custodyKind: row.custodyKind,
+          custodyContract: row.custodyContract,
+          contentHash: row.contentHash,
+          ciphertextSize: row.ciphertextSize,
+          transportMime: row.transportMime,
+        );
+      } on FormatException {
+        return false;
+      }
+    }
     // A well-formed digest that is not this row's own is crossed proof, never
-    // lineage to overwrite or adopt.
+    // lineage to overwrite or adopt — and a digest whose persisted VERSION
+    // marks the other meaning is equally crossed.
     final current = attachment['direct_media_blob_custody_fingerprint'];
-    if (current != null && current != exact) return false;
+    final currentVersion =
+        (attachment['direct_media_blob_custody_fingerprint_version'] as num?)
+            ?.toInt();
+    if (current == null) {
+      if (currentVersion != null) return false;
+      unstamped[row.attachmentId] = exact;
+    } else {
+      if (current != exact || currentVersion != fingerprintVersion) {
+        return false;
+      }
+    }
     exactLineage[row.attachmentId] = exact;
-    if (current == null) unstamped[row.attachmentId] = exact;
   }
 
   for (final entry in unstamped.entries) {
     final changed = await txn.update(
       'media_attachments',
-      <String, Object?>{'direct_media_blob_custody_fingerprint': entry.value},
+      <String, Object?>{
+        'direct_media_blob_custody_fingerprint': entry.value,
+        'direct_media_blob_custody_fingerprint_version': fingerprintVersion,
+      },
       where:
           '$where AND id = ? '
           'AND direct_media_blob_custody_fingerprint IS NULL',
@@ -629,7 +682,11 @@ Future<bool> dbStampExactStrictOutgoingLineageWithinTransaction(
       committed.any(
         (attachment) =>
             attachment['direct_media_blob_custody_fingerprint'] !=
-            exactLineage[attachment['id']],
+                exactLineage[attachment['id']] ||
+            (attachment['direct_media_blob_custody_fingerprint_version']
+                        as num?)
+                    ?.toInt() !=
+                fingerprintVersion,
       )) {
     throw StateError(
       'direct inbox custody completion lost its exact attachment lineage',

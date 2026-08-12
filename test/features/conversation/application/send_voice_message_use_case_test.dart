@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -543,9 +544,37 @@ class _StrictPreparedVoiceCustodyRepository
   }
 
   @override
-  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
-    String attachmentId,
-  ) async => blobState.rows[attachmentId];
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId) async {
+    final row = blobState.rows[attachmentId];
+    return row == null
+        ? const <DirectMediaBlobCustodyRow>[]
+        : <DirectMediaBlobCustodyRow>[row];
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId) async {
+    final row = blobState.rows[attachmentId];
+    return row != null &&
+            row.direction == DirectMediaBlobCustodyDirection.incoming
+        ? row
+        : null;
+  }
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) async {
+    final row = blobState.rows[attachmentId];
+    return row != null &&
+            row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+            row.recipientPeerId == recipientPeerId
+        ? row
+        : null;
+  }
 
   @override
   Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
@@ -590,6 +619,38 @@ class _StrictPreparedVoiceCustodyRepository
     }
     blobState.rows.remove(expected.attachmentId);
     return true;
+  }
+}
+
+/// 362: publishes a PLURAL linked (fanout) v114 row set for the prepared
+/// voice parent and records every singular reopen-stage consultation, so the
+/// test can prove the single-target voice lane fails closed instead of
+/// demoting the plural generation.
+class _LinkedFanoutVoiceCustodyRepository
+    extends _StrictPreparedVoiceCustodyRepository {
+  _LinkedFanoutVoiceCustodyRepository(super.messageRepository, super.blobState);
+
+  final List<DirectMediaBlobCustodyRow> linkedRows =
+      <DirectMediaBlobCustodyRow>[];
+  int singularReopenStageCalls = 0;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
+    String messageId,
+  ) async => linkedRows
+      .where((row) => row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectMediaBlobGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+  }) async {
+    singularReopenStageCalls++;
+    return const DirectMediaBlobGenerationStageResult.refused();
   }
 }
 
@@ -1021,6 +1082,203 @@ void main() {
           );
         },
         skip: !kDirectMediaBlobCustodyClientEnabled,
+      );
+
+      test(
+        'TC-362-02a prepared voice delegates to the shared fanout owner when linked authority is marked',
+        () async {
+          // The voice send lane owns NO plural fanout branch of its own —
+          // linked-generation uploads ride the shared fanout owner through
+          // the retry/coordinator lanes. What THIS lane must guarantee is
+          // fail-closed: persisted LINKED rows are plural authority that the
+          // singular prepare/reopen/upload paths may never demote to one
+          // single-target attempt.
+          const messageId = 'voice-362-linked-marked';
+          const attachmentId = 'voice-362-linked-marked-attachment';
+          const authoredAt = '2026-08-10T11:00:00.000Z';
+          const contentHash =
+              'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+          final intent = computeDirectMediaCustodyIntentId(
+            messageId: messageId,
+            attachmentIds: const <String>[attachmentId],
+          );
+          final recording = createRecording(
+            filePath: '${tempDir.path}/voice_362_linked_marked.m4a',
+          );
+          final preparedParent = ConversationMessage(
+            id: messageId,
+            contactPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            text: '',
+            timestamp: authoredAt,
+            status: 'sending',
+            isIncoming: false,
+            createdAt: authoredAt,
+            directMediaCustodyIntentId: intent,
+          ).copyWith(directEventFanoutGenerationId: messageId);
+          final preparedAttachment = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: recording.mime,
+            size: recording.sizeBytes,
+            mediaType: 'audio',
+            durationMs: recording.durationMs,
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: recording.mime,
+            ),
+            downloadStatus: 'upload_pending',
+            createdAt: authoredAt,
+            ownerLane: MediaOwnerLane.direct,
+            contentHash: contentHash,
+            encryptionKeyBase64: 'voice-362-raw-key',
+            encryptionNonce: 'voice-362-nonce',
+            encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          );
+          DirectMediaBlobCustodyRow linkedRow(
+            String recipientPeerId,
+            String recipientMlKemPublicKey,
+          ) => DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingPrepared,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: recipientPeerId,
+            contactAccountPeerId: 'target-peer',
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/$contentHash/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: 4096,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: authoredAt,
+            updatedAt: authoredAt,
+          );
+          final messages = FakeMessageRepository()
+            ..existingMessages[messageId] = preparedParent;
+          final media =
+              _LinkedFanoutVoiceCustodyRepository(
+                  messages,
+                  _TestDirectMediaBlobState(),
+                )
+                ..saved.add(preparedAttachment)
+                ..linkedRows.addAll(<DirectMediaBlobCustodyRow>[
+                  linkedRow('target-peer', 'mlkem-legacy-account'),
+                  linkedRow('peer-device-a', 'mlkem-device-a'),
+                ]);
+          final linkedRowsBefore = media.linkedRows
+              .map((row) => row.toMap())
+              .toList(growable: false);
+          var prepareArtifactCalls = 0;
+          var strictUploadCalls = 0;
+          final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+            repository: media,
+            artifactStore: DirectMediaBlobArtifactStore(
+              documentsDirectoryProvider: () async =>
+                  Directory('${tempDir.path}/tc362_voice_store'),
+            ),
+            prepareArtifact:
+                ({
+                  required Bridge bridge,
+                  required String localFilePath,
+                }) async {
+                  prepareArtifactCalls++;
+                  throw StateError('a linked generation must never re-encrypt');
+                },
+            strictUpload:
+                ({
+                  required bridge,
+                  required attachmentId,
+                  required recipientPeerId,
+                  required ciphertextPath,
+                  required contentHash,
+                  required ciphertextSize,
+                }) async {
+                  strictUploadCalls++;
+                  return const <String, dynamic>{'ok': false};
+                },
+          );
+          Future<UploadMediaOutcome> forbiddenUpload({
+            required Bridge bridge,
+            required String localFilePath,
+            required String mime,
+            required String recipientPeerId,
+            MediaFileManager? mediaFileManager,
+            int? width,
+            int? height,
+            int? durationMs,
+            List<double>? waveform,
+            List<String>? allowedPeers,
+            String? blobId,
+            bool deleteSourceWhenDone = false,
+            EncryptedMediaArtifact? preparedArtifact,
+          }) async {
+            fail('a linked generation must never reach the legacy upload lane');
+          }
+
+          final (result, message) = await sendVoiceMessage(
+            p2pService: FakeP2PService(),
+            messageRepo: messages,
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: recording,
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: media,
+            mediaFileManager: FakeMediaFileManager(),
+            messageId: messageId,
+            timestamp: authoredAt,
+            blobId: attachmentId,
+            uploadMediaFn: forbiddenUpload,
+            directMediaBlobCustodyCoordinator: coordinator,
+          );
+
+          expect(
+            result,
+            SendVoiceMessageResult.sendFailed,
+            reason: 'plural linked authority refuses the singular voice lane',
+          );
+          expect(message, isNull);
+          expect(
+            prepareArtifactCalls,
+            0,
+            reason: 'no re-encryption of the shared canonical artifact',
+          );
+          expect(
+            strictUploadCalls,
+            0,
+            reason:
+                'NO singular demotion: the single-target strict upload '
+                'owner is never invoked over a plural linked generation',
+          );
+          expect(
+            media.singularReopenStageCalls,
+            0,
+            reason: 'the singular reopen CAS is never consulted either',
+          );
+          expect(media.directMediaCustodyStageCalls, 0);
+          expect(bridge.commandLog, isNot(contains('media:upload')));
+          expect(bridge.commandLog, isNot(contains('message.encrypt')));
+          expect(
+            media.linkedRows.map((row) => row.toMap()).toList(growable: false),
+            linkedRowsBefore,
+            reason: 'every persisted linked row is byte-identical',
+          );
+          expect(
+            (await messages.getMessage(messageId))!.status,
+            'sending',
+            reason: 'the durable prepared parent is retained untouched',
+          );
+        },
+        // Deliberately NOT gated on kDirectMediaBlobCustodyClientEnabled:
+        // the no-singular-demotion invariant must hold in BOTH compilations
+        // (selector off refuses even earlier).
       );
 
       test(

@@ -44,6 +44,9 @@ const _currentDirectIndexes = <String>{
   'idx_direct_media_blob_custody_inbox_incarnation',
   'idx_direct_media_blob_custody_message',
   'idx_direct_media_blob_custody_state_retry',
+  // 362: the v114 rebuild's natural-identity partial unique indexes.
+  'idx_direct_media_blob_custody_outgoing_target',
+  'idx_direct_media_blob_custody_incoming_attachment',
   // 360: DB v112 adds the remote-contact linked-device roster indexes.
   'idx_direct_contact_device_bindings_contact_state',
   'idx_direct_contact_device_bindings_transport_owner',
@@ -115,8 +118,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 113);
-      expect(await _userVersion(db), 113);
+      expect(currentIdentityDatabaseVersion, 114);
+      expect(await _userVersion(db), 114);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -128,9 +131,12 @@ void main() {
           entries.single.run,
           same(runDirectNotificationDurabilityMigration),
         );
-        expect(registry.last.version, 113);
-        expect(registry.last.name, '113_direct_linked_device_event_fanout');
-        expect(registry[registry.length - 2].version, 112);
+        expect(registry.last.version, 114);
+        expect(
+          registry.last.name,
+          '114_direct_linked_device_media_blob_fanout',
+        );
+        expect(registry[registry.length - 3].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
@@ -472,7 +478,7 @@ void main() {
       addTearDown(() async {
         if (db.isOpen) await db.close();
       });
-      expect(await _userVersion(db), 113);
+      expect(await _userVersion(db), 114);
       expect(
         await dbLoadDirectNotificationReactionTerminalEvent(
           db,

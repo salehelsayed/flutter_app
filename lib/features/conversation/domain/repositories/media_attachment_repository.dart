@@ -1,8 +1,10 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
     show
+        DirectMediaFanoutTargetBinding,
         IncomingDirectMediaCaptionEditOutcome,
         OutgoingDirectDeletionLane,
         OutgoingDirectMediaCaptionEditLane;
@@ -124,9 +126,24 @@ abstract interface class DirectMediaBlobCustodyRepository {
     required List<DirectMediaBlobCustodyRow> custodyRows,
   });
 
-  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
-    String attachmentId,
-  );
+  /// Generic canonical-attachment lookup. Under DB v114 one attachment may
+  /// own several exact `(attachment, direction, recipient)` rows, so the
+  /// generic form returns the complete list and never selects an arbitrary
+  /// sibling.
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId);
+
+  /// Exact incoming natural identity: `(attachmentId, incoming, NULL)`.
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId);
+
+  /// Exact outgoing natural identity: `(attachmentId, outgoing,
+  /// recipientPeerId)`.
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  });
 
   Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(
     String messageId,
@@ -185,11 +202,16 @@ abstract interface class FreshOutgoingDirectMediaBlobGenerationRepository {
 abstract interface class IncomingDirectPrivateMediaBlobCustodyRepository {
   bool get supportsIncomingDirectPrivateMediaBlobCustody;
 
+  /// 362: [authenticatedTransportPeerId] names the raw PHYSICAL stream peer.
+  /// When it differs from the message's logical contact (a linked origin),
+  /// the reverse transport authorization is re-run INSIDE the durable stage
+  /// transaction; null/equal keeps the incumbent legacy path byte-identical.
   Future<IncomingDirectMediaBlobCustodyStageResult>
   stageIncomingDirectPrivateMediaBlobCustody({
     required ConversationMessage message,
     required MediaAttachment attachment,
     required DirectMediaBlobCustodyRow custodyRow,
+    String? authenticatedTransportPeerId,
   });
 }
 
@@ -402,11 +424,15 @@ abstract interface class OutgoingDirectMediaBlobTerminalizationRepository {
 abstract interface class IncomingDirectMediaBlobCustodyRepository {
   bool get supportsIncomingDirectMediaBlobCustody;
 
+  /// 362: [authenticatedTransportPeerId] names the raw PHYSICAL stream peer.
+  /// A linked origin (transport != logical contact) re-runs the reverse
+  /// transport authorization INSIDE the durable stage transaction.
   Future<IncomingDirectMediaBlobCustodyStageResult>
   stageIncomingDirectMediaBlobCustody({
     required ConversationMessage message,
     required List<MediaAttachment> attachments,
     required List<DirectMediaBlobCustodyRow> custodyRows,
+    String? authenticatedTransportPeerId,
   });
 
   /// Commits an already-durable plaintext file and the exact ACK obligation in
@@ -468,6 +494,88 @@ abstract interface class OutgoingDirectMediaInboxCustodyStagingRepository {
     required String wireEnvelope,
     String? wireMediaBlobManifestHash,
     int? wireMediaBlobExpiresAtMs,
+  });
+}
+
+/// Exact repository result of one atomic v114 media fanout v108 stage.
+///
+/// Mirrors [OutgoingDirectMediaCustodyStageResult] for the plural batch: the
+/// message/attachments are the committing transaction's exact projection, and
+/// [custodyRows] carries one immutable v108 sibling map per physical target
+/// (survivors on an idempotent complete replay). Callers never reconstruct
+/// either authority from their attempted bytes.
+final class DirectMediaFanoutInboxCustodyStageResult {
+  const DirectMediaFanoutInboxCustodyStageResult({
+    required this.outcome,
+    required this.message,
+    this.attachments = const <MediaAttachment>[],
+    this.custodyRows = const <Map<String, Object?>>[],
+  });
+
+  const DirectMediaFanoutInboxCustodyStageResult.refused()
+    : outcome = OutgoingOrdinaryMutationOutcome.refused,
+      message = null,
+      attachments = const <MediaAttachment>[],
+      custodyRows = const <Map<String, Object?>>[];
+
+  final OutgoingOrdinaryMutationOutcome outcome;
+  final ConversationMessage? message;
+  final List<MediaAttachment> attachments;
+  final List<Map<String, Object?>> custodyRows;
+
+  bool get authorizesTransport =>
+      outcome.authorizesTransport && custodyRows.isNotEmpty;
+}
+
+/// Plan 362 sender entry into the v114 linked-media blob fanout (GAP-N01).
+///
+/// One canonical encrypted artifact per attachment fans out to every
+/// authorized physical target: the generation stage publishes ALL
+/// `targets x attachments` prepared rows plus the durable no-remint marker
+/// atomically, and the v108 stage later binds one complete per-target batch
+/// (per-target incarnation/manifest/expiry/envelope) or nothing. Keeping this
+/// separate from [DirectMediaBlobCustodyRepository] prevents single-target
+/// coordinators and their fakes from acquiring plural authority.
+abstract interface class OutgoingDirectLinkedMediaBlobFanoutRepository {
+  bool get supportsDirectLinkedMediaBlobFanout;
+
+  /// Reads the persisted nonblocked contact's Plan-361 addressing snapshot.
+  /// Null means missing/blocked contact — callers fail closed rather than
+  /// reinterpreting the state as an uninitialized legacy contact.
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  );
+
+  /// Atomically publishes one complete v114 linked-media initial generation:
+  /// every `targets x attachments` prepared custody row AND the durable
+  /// generation marker, requalifying [expectedSnapshot] in-transaction.
+  /// [custodyRows] must contain one `outgoing_prepared` LINKED row per
+  /// (attachment, snapshot target) whose persisted recipient key is that
+  /// target's exact ML-KEM key.
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  });
+
+  /// Atomically binds the complete per-target v108 batch: one distinct
+  /// sibling per persisted physical target (that target's own manifest hash,
+  /// earliest expiry and envelope) plus the canonical parent commit and v110
+  /// token consumption — all or none. [targetBindings] must ride the
+  /// snapshot's exact target order; the canonical witness is the FIRST
+  /// target's envelope.
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
   });
 }
 

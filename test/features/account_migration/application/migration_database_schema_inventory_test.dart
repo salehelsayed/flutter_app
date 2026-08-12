@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 113);
+        expect(currentIdentityDatabaseVersion, 114);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -169,11 +169,13 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 113);
+        expect(currentIdentityDatabaseVersion, 114);
+        // 362: v114 adds the two nullable linked-fanout columns.
         expect(inventory.tables['direct_media_blob_custody'], <String>[
           'attachment_id',
           'ciphertext_relative_path',
           'ciphertext_size',
+          'contact_account_peer_id',
           'content_hash',
           'created_at',
           'custody_contract',
@@ -185,6 +187,7 @@ void main() {
           'last_attempt_at',
           'message_id',
           'next_attempt_at',
+          'recipient_ml_kem_public_key',
           'recipient_peer_id',
           'retry_count',
           'state',

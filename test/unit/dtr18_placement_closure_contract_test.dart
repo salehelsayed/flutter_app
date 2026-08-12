@@ -43,7 +43,12 @@ const _relocations = <String, List<String>>{
     // strict owner's own sampled clock through the incoming local-path commit
     // so a disappearing deadline is requalified inside that transaction; the
     // adapter still owns exactly the same responsibilities in the same place.
-    '027226d27e60c205cbdc8caa19a31728a879e5a9396d5cd3e2a5556537ea530b',
+    // Plan 362 makes the v111 authority direction/target-explicit (natural
+    // (attachment, direction, recipient) lookups), adds the linked-media
+    // fanout generation + per-target v108 batch stages and the in-transaction
+    // reverse-transport recheck seam on the incoming stages; nothing
+    // relocates.
+    'c6ca0d68178cdfc0914754c5d4555276425f66bc99117704bdd8c7dd96cadd48',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

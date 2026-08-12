@@ -2,6 +2,12 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart'
+    show dbPurgeDirectContactConversationAndContact;
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
+    show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -326,6 +332,34 @@ class FakePurgeContactRepository extends FakeContactRepository
   }
 }
 
+/// 362: a purge-capable contact repository whose final owner is the REAL
+/// serialized DB purge over the fixture database, so v114 blob-custody
+/// convergence is proven against production SQL rather than a stub.
+class RealDbPurgeContactRepository extends FakeContactRepository
+    implements DirectContactConversationPurgeCapability {
+  RealDbPurgeContactRepository(this.db);
+
+  final Database db;
+  final List<String> purgedPeerIds = [];
+
+  @override
+  bool get supportsDirectContactConversationPurge => true;
+
+  @override
+  Future<DirectContactConversationPurgeSummary>
+  purgeDirectContactConversationAndContact(String peerId) async {
+    purgedPeerIds.add(peerId);
+    final result = await dbPurgeDirectContactConversationAndContact(db, peerId);
+    return DirectContactConversationPurgeSummary(
+      deletedTextCustodyRows: result.deletedTextCustodyRows,
+      deletedEventCustodyRows: result.deletedEventCustodyRows,
+      deletedReactions: result.deletedReactions,
+      deletedMessages: result.deletedMessages,
+      deletedContact: result.deletedContact,
+    );
+  }
+}
+
 /// 361: a message repository that reconciles from the committed purge.
 class ReconcilingFakeMessageRepository extends FakeMessageRepository
     implements DirectContactPurgeReconciliation {
@@ -643,6 +677,140 @@ void main() {
         reason:
             'the final transaction still sees and sweeps the '
             'post-cleanup reaction; nothing survives it',
+      );
+    });
+
+    test('TC-362-03a deletion converges plural custody without orphaning '
+        'shared artifacts', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const peerId = 'peer-plural-custody';
+      const messageId = 'plural-custody-m1';
+      const attachmentId = '$messageId-att';
+      const t0 = '2026-08-12T09:00:00.000Z';
+      final contentHash = 'f9' * 32;
+      await fixture.db.insert('contacts', <String, Object?>{
+        'peer_id': peerId,
+        'public_key': 'pk-$peerId',
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'Plural Custody',
+        'signature': 'sig-$peerId',
+        'scanned_at': t0,
+      });
+      await fixture.seedDirectParent(messageId, contactPeerId: peerId);
+      DirectMediaBlobCustodyRow blobRow({
+        required String attachmentId,
+        required DirectMediaBlobCustodyState state,
+        String? recipientPeerId,
+        String? contactAccountPeerId,
+        String? recipientMlKemPublicKey,
+        int? expiresAtMs,
+        String? custodyRelayPeerId,
+      }) => DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: state.direction,
+        state: state,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: recipientPeerId,
+        contactAccountPeerId: contactAccountPeerId,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        ciphertextRelativePath: recipientPeerId == null
+            ? null
+            : 'direct_media_blob_custody_v1/${'a' * 64}/$attachmentId.blob',
+        contentHash: contentHash,
+        ciphertextSize: 4096,
+        expiresAtMs: expiresAtMs,
+        custodyRelayPeerId: custodyRelayPeerId,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: t0,
+        updatedAt: t0,
+      );
+      // Plural outgoing custody: two exact linked target rows sharing ONE
+      // encrypted artifact, plus one incoming ACK obligation.
+      await fixture.db.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: attachmentId,
+          state: DirectMediaBlobCustodyState.outgoingPrepared,
+          recipientPeerId: 'plural-custody-transport-a',
+          contactAccountPeerId: peerId,
+          recipientMlKemPublicKey: 'mlkem-plural-a',
+        ).toMap(),
+      );
+      await fixture.db.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: attachmentId,
+          state: DirectMediaBlobCustodyState.outgoingStored,
+          recipientPeerId: 'plural-custody-transport-b',
+          contactAccountPeerId: peerId,
+          recipientMlKemPublicKey: 'mlkem-plural-b',
+          expiresAtMs: 1900000600000,
+          custodyRelayPeerId: 'relay-plural',
+        ).toMap(),
+      );
+      await fixture.db.insert(
+        kDirectMediaBlobCustodyTable,
+        blobRow(
+          attachmentId: 'plural-custody-incoming',
+          state: DirectMediaBlobCustodyState.incomingAckPending,
+          expiresAtMs: 1900000700000,
+          custodyRelayPeerId: 'relay-plural-source',
+        ).toMap(),
+      );
+      final incomingBefore = (await fixture.db.query(
+        kDirectMediaBlobCustodyTable,
+        where: "direction = 'incoming'",
+      )).single;
+      final contactRepo = RealDbPurgeContactRepository(fixture.db);
+
+      await deleteContactAndMessages(
+        contactRepo: contactRepo,
+        messageRepo: fixture.messageRepo,
+        peerId: peerId,
+        mediaAttachmentRepo: fixture.repo,
+      );
+
+      // The purge capability path ran (never the split delete fallback) …
+      expect(contactRepo.purgedPeerIds, <String>[peerId]);
+      expect(contactRepo.deletedPeerIds, isEmpty);
+      // … and the real DB owner transitioned every outgoing linked v114 row
+      // before the conversation purge, retaining the shared artifact for the
+      // incumbent last-reference cleanup instead of orphaning it.
+      final outgoingAfter = await fixture.db.query(
+        kDirectMediaBlobCustodyTable,
+        where: "direction = 'outgoing'",
+        orderBy: 'recipient_peer_id ASC',
+      );
+      expect(outgoingAfter, hasLength(2));
+      for (final row in outgoingAfter) {
+        expect(row['state'], 'outgoing_cleanup_pending');
+      }
+      expect(
+        (await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: "direction = 'incoming'",
+        )).single,
+        incomingBefore,
+        reason: 'the incoming ACK obligation survives contact deletion',
+      );
+      expect(
+        await fixture.db.query(
+          'messages',
+          where: 'contact_peer_id = ?',
+          whereArgs: const <Object?>[peerId],
+        ),
+        isEmpty,
+      );
+      expect(
+        await fixture.db.query(
+          'contacts',
+          where: 'peer_id = ?',
+          whereArgs: const <Object?>[peerId],
+        ),
+        isEmpty,
       );
     });
 

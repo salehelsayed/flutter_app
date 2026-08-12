@@ -867,7 +867,10 @@ void main() {
         );
         final custody =
             await (reopened.repo as DirectMediaBlobCustodyRepository)
-                .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+                .loadOutgoingDirectMediaBlobCustodyForTarget(
+                  attachmentId: attachmentId,
+                  recipientPeerId: 'peer-bob',
+                );
         expect(
           custody?.state,
           cut,
@@ -1111,7 +1114,7 @@ void main() {
       expect(row['local_path'], isNull);
       // v111 survives the crash and the recovery untouched.
       final retained = await (fixture.repo as DirectMediaBlobCustodyRepository)
-          .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+          .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
       expect(retained, isNotNull);
       expect(retained!.state, DirectMediaBlobCustodyState.incomingCommitted);
       expect(retained.contentHash, contentHash);
@@ -1262,7 +1265,7 @@ void main() {
           reason: 'content expiry never rewrites its own deadline',
         );
         final lease = await (fixture.repo as DirectMediaBlobCustodyRepository)
-            .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+            .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
         expect(
           lease,
           isNotNull,
@@ -1296,7 +1299,7 @@ void main() {
         final incoming =
             fixture.repo as IncomingDirectMediaBlobCustodyRepository;
         final lease = await (fixture.repo as DirectMediaBlobCustodyRepository)
-            .loadDirectMediaBlobCustodyForAttachment(attachmentId);
+            .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
         expect(
           await incoming.deleteIncomingDirectMediaBlobIfExpired(
             expected: lease!,
@@ -1306,7 +1309,7 @@ void main() {
         );
         expect(
           await (fixture.repo as DirectMediaBlobCustodyRepository)
-              .loadDirectMediaBlobCustodyForAttachment(attachmentId),
+              .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId),
           isNull,
         );
 

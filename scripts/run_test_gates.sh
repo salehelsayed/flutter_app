@@ -241,6 +241,8 @@ readonly ONE_TO_ONE_TESTS=(
   "test/core/database/migrations/112_direct_linked_device_addressing_test.dart"
   # 361: the v113 direct linked-device blob-free event fanout migration.
   "test/core/database/migrations/113_direct_linked_device_event_fanout_test.dart"
+  # 362: the v114 direct linked-device media blob fanout rebuild migration.
+  "test/core/database/migrations/114_direct_linked_device_media_blob_fanout_test.dart"
   "test/features/contacts/integration/direct_linked_device_addressing_foundation_test.dart"
   "test/features/conversation/integration/android_direct_media_blob_custody_campaign_test.dart"
   "test/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers_test.dart"
@@ -1244,17 +1246,19 @@ run_ack_custody_go_gate() {
 run_media_custody_go_gate() {
   echo "=== Direct Media Blob ACK-or-Expiry Custody Go Gate ==="
 
+  # 362: the recipient-fanout isolation test raises the curated prefix count
+  # from 11 to 12.
   (cd go-relay-server && \
     GOTOOLCHAIN=go1.25.0 go test . \
       -list '^TestRelayNotificationClosure_DirectMediaBlobCustody' | \
       rg '^TestRelayNotificationClosure_DirectMediaBlobCustody' | \
-      awk 'END { exit NR == 11 ? 0 : 1 }')
+      awk 'END { exit NR == 12 ? 0 : 1 }')
   (cd go-relay-server && \
     GOTOOLCHAIN=go1.25.0 go test -race . \
       -run '^TestRelayNotificationClosure_DirectMediaBlobCustody' \
       -count=1 -v | \
       rg '^--- PASS: TestRelayNotificationClosure_DirectMediaBlobCustody' | \
-      awk 'END { exit NR == 11 ? 0 : 1 }')
+      awk 'END { exit NR == 12 ? 0 : 1 }')
 
   (cd go-relay-server && \
     GOTOOLCHAIN=go1.25.0 go test -tags integration ./... \

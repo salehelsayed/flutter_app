@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
+    show DirectMediaBlobCustodyRow;
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
@@ -546,6 +548,7 @@ Future<int> retryIncompleteUploads({
       );
       final directMediaIntent = msg.directMediaCustodyIntentId;
       DirectMediaBlobCustodyRepository? directMediaBlobRepository;
+      var directMediaBlobRows = const <DirectMediaBlobCustodyRow>[];
       var hasDirectMediaBlobGeneration = false;
       if (kDirectMediaBlobCustodyClientEnabled &&
           directMediaIntent != null &&
@@ -554,11 +557,29 @@ Future<int> retryIncompleteUploads({
             mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
         if (candidateRepository.supportsDirectMediaBlobCustody) {
           directMediaBlobRepository = candidateRepository;
-          hasDirectMediaBlobGeneration =
-              (await candidateRepository.loadDirectMediaBlobCustodyForMessage(
-                messageId,
-              )).isNotEmpty;
+          directMediaBlobRows = await candidateRepository
+              .loadDirectMediaBlobCustodyForMessage(messageId);
+          hasDirectMediaBlobGeneration = directMediaBlobRows.isNotEmpty;
         }
+      }
+      // 362: a linked (fanout) generation is owned by its exact persisted
+      // sibling rows. A durable fanout marker WITHOUT linked rows is terminal
+      // (or an unreadable/unlinked contradiction) — skip silently, never
+      // remint and never fall through to the single-target lanes.
+      final hasLinkedFanoutRows = directMediaBlobRows.any(
+        (row) => row.isLinkedFanoutRow,
+      );
+      if (msg.directEventFanoutGenerationId == msg.id && !hasLinkedFanoutRows) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_UPLOAD_SKIPPED_FANOUT_GENERATION',
+          details: {
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
+          },
+        );
+        continue;
       }
       var retryPendingAttachments = pendingAttsForMessage;
       if (directMediaIntent != null) {
@@ -701,6 +722,7 @@ Future<int> retryIncompleteUploads({
       final carriedPrivateCompletions = <String, MediaAttachment>{};
       final carriedDirectMediaCustodyCompletions = <String, MediaAttachment>{};
       var directMediaPreparationRefused = false;
+      DirectLinkedMediaFanoutContext? linkedMediaFanout;
 
       if (kDirectMediaBlobCustodyClientEnabled &&
           directMediaIntent != null &&
@@ -714,25 +736,85 @@ Future<int> retryIncompleteUploads({
                   directMediaBlobArtifactStore ??
                   DirectMediaBlobArtifactStore(),
             );
-        final strictResult = await coordinator.reopenAndUpload(
-          bridge: bridge,
-          identityPeerId: identity.peerId,
-          recipientPeerId: msg.contactPeerId,
-          expectedParent: msg,
-          expectedAttachments: allAttachments,
-        );
-        if (!strictResult.isComplete) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'RETRY_INCOMPLETE_STRICT_BLOB_RETAINED',
-            details: const <String, Object?>{},
+        if (hasLinkedFanoutRows) {
+          // 362: the persisted linked rows are survivor-first retry
+          // authority. Replay the exact per-target uploads without a roster
+          // read; the live snapshot is consulted only to author the atomic
+          // per-target v108 batch through the send below.
+          final fanoutRepository =
+              mediaAttachmentRepo
+                  is OutgoingDirectLinkedMediaBlobFanoutRepository
+              ? mediaAttachmentRepo
+                    as OutgoingDirectLinkedMediaBlobFanoutRepository
+              : null;
+          final rowContactAccountPeerId = directMediaBlobRows
+              .firstWhere((row) => row.isLinkedFanoutRow)
+              .contactAccountPeerId;
+          if (fanoutRepository == null ||
+              !fanoutRepository.supportsDirectLinkedMediaBlobFanout ||
+              rowContactAccountPeerId == null ||
+              rowContactAccountPeerId != msg.contactPeerId) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_LINKED_FANOUT_RETAINED',
+              details: {'messageId': messageId, 'reason': 'authority'},
+            );
+            continue;
+          }
+          final strictResult = await coordinator.retryPersistedFanoutGeneration(
+            bridge: bridge,
+            identityPeerId: identity.peerId,
+            expectedParent: msg,
+            expectedAttachments: allAttachments,
           );
-          continue;
+          if (!strictResult.isComplete) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_LINKED_FANOUT_RETAINED',
+              details: {'messageId': messageId, 'reason': 'upload'},
+            );
+            continue;
+          }
+          final snapshot = await fanoutRepository
+              .readDirectContactFanoutSnapshotForMedia(rowContactAccountPeerId);
+          if (snapshot == null || snapshot.targets.isEmpty) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_LINKED_FANOUT_RETAINED',
+              details: {'messageId': messageId, 'reason': 'snapshot'},
+            );
+            continue;
+          }
+          linkedMediaFanout = DirectLinkedMediaFanoutContext(
+            contactAccountPeerId: rowContactAccountPeerId,
+            snapshot: snapshot,
+            targetRows: strictResult.targetRows,
+          );
+          for (final attachment in strictResult.attachments) {
+            carriedDirectMediaCustodyCompletions[attachment.id] = attachment;
+          }
+          retryPendingAttachments = const <MediaAttachment>[];
+        } else {
+          final strictResult = await coordinator.reopenAndUpload(
+            bridge: bridge,
+            identityPeerId: identity.peerId,
+            recipientPeerId: msg.contactPeerId,
+            expectedParent: msg,
+            expectedAttachments: allAttachments,
+          );
+          if (!strictResult.isComplete) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_STRICT_BLOB_RETAINED',
+              details: const <String, Object?>{},
+            );
+            continue;
+          }
+          for (final attachment in strictResult.attachments) {
+            carriedDirectMediaCustodyCompletions[attachment.id] = attachment;
+          }
+          retryPendingAttachments = const <MediaAttachment>[];
         }
-        for (final attachment in strictResult.attachments) {
-          carriedDirectMediaCustodyCompletions[attachment.id] = attachment;
-        }
-        retryPendingAttachments = const <MediaAttachment>[];
       }
 
       // 354: an already-published protected/View-Once generation is reopened
@@ -1283,6 +1365,7 @@ Future<int> retryIncompleteUploads({
         privateMediaPolicy: refreshedMsg.privateMediaPolicy,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
+        directLinkedMediaFanout: linkedMediaFanout,
       );
 
       if (result == SendChatMessageResult.success) {

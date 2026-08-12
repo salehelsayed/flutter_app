@@ -1,5 +1,8 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
@@ -385,6 +388,10 @@ class MyApp extends StatefulWidget {
   /// 361: the restricted linked outbox drain (exact v113 rows only).
   final Future<int> Function()? drainDirectBlobFreeLinkedOutboxes;
 
+  /// 362: the restricted linked strict-media custody converger (exact
+  /// target-qualified v114/v108 drain-and-download); absent keeps 361 exact.
+  final Future<void> Function()? drainLinkedDirectMediaBlobCustody;
+
   final GroupMediaDeleteForMeCoordinator groupMediaDeleteForMeCoordinator;
 
   /// 235: one bounded deletion-journal reconciliation pass; runs on resume
@@ -522,6 +529,7 @@ class MyApp extends StatefulWidget {
     this.directEventFanoutResolver,
     this.isLinkedBlobFreeRuntime,
     this.drainDirectBlobFreeLinkedOutboxes,
+    this.drainLinkedDirectMediaBlobCustody,
     required this.groupMediaDeletionCleanup,
     this.privateMediaLifecycleRecovery,
     this.directMediaBlobLocalCleanup,
@@ -1856,8 +1864,15 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           contact: contact,
           directDeviceTrust: widget.directDeviceTrust,
           directEventFanout: widget.directEventFanoutResolver?.call(),
+          // 362: a linked secondary regains the media/voice/private composer
+          // capability ONLY when the full linked-media authoring triple is
+          // compiled on; otherwise the 361 blob-free gate stays byte-exact.
           modalityGate: (widget.isLinkedBlobFreeRuntime?.call() ?? false)
-              ? const DirectConversationModalityGate.linkedBlobFree()
+              ? ((kDirectLinkedMediaFanoutEnabled &&
+                        kDirectMediaBlobCustodyClientEnabled &&
+                        kDirectLinkedEventFanoutEnabled)
+                    ? const DirectConversationModalityGate()
+                    : const DirectConversationModalityGate.linkedBlobFree())
               : const DirectConversationModalityGate(),
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
@@ -2250,11 +2265,13 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   Future<void> _onResumed() async {
     // 361: the restricted linked role resumes ONLY the exact direct blob-free
     // drains — no private-media recovery, no broad retry families, no group,
-    // post, upload or push owners.
+    // post, upload or push owners. 362 adds only the target-qualified
+    // strict-media custody convergers when they are wired.
     if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
       widget.p2pService.markResumeStarted();
       final drained =
           await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;
+      await widget.drainLinkedDirectMediaBlobCustody?.call();
       emitFlowEvent(
         layer: 'FL',
         event: 'APP_LIFECYCLE_LINKED_RESUME_COMPLETE',

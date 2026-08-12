@@ -163,8 +163,11 @@ const _privacySha256 =
 // blob-free modality gate at the SAME ConversationWired construction site,
 // and the linked-role resume/pause filters ahead of the incumbent owners.
 // Nothing relocates and no core shim returns.
+// Plan 362 makes the linked modality gate selector-triple aware, adds the
+// optional restricted strict-media resume converger hook, and nothing
+// relocates.
 const _applicationRootNormalizedSha256 =
-    '2854e087fa3d8c7bb392c601dce5dcd7d2b807fe02aeae8df72ee8d636a22f4a';
+    '91fe0426f0d34df6f19b8de36e2f6416e8f5ed8aececd59a2a745311040ba7c3';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -182,8 +185,11 @@ const _applicationRootNormalizedSha256 =
 // DirectBlobFreeLinkedServices behind the SAME deferred linked callback,
 // and the exact linked drain plus route-push resolver seams to MyApp.
 // Nothing moved and no core shim returned.
+// Plan 362 injects the v114 linked-media fanout snapshot/generation/v108
+// delegates and the incoming reverse-recheck transport pass-through on the
+// SAME media repository construction. Nothing moved.
 const _productionBootstrapNormalizedSha256 =
-    'b416e1270bd012fc2e9505eeb28d455fd1223c72f6eed6bff9f9e276ae1d2256';
+    'e1f09c2b279cc8e04209b8af0bd5db02999a7b271c7a3cf75ec91d3747d022a5';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

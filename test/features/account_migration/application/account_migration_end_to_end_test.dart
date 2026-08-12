@@ -34,6 +34,8 @@ import 'package:flutter_app/features/account_migration/application/migration_dat
 import 'package:flutter_app/features/account_migration/application/migration_database_import_staging.dart';
 import 'package:flutter_app/features/account_migration/application/migration_database_snapshot_exporter.dart';
 import 'package:flutter_app/features/account_migration/application/migration_export_authorization.dart';
+import 'package:flutter_app/features/account_migration/application/migration_file_manifest_builder.dart';
+import 'package:flutter_app/features/account_migration/domain/models/migration_file_manifest.dart';
 import 'package:flutter_app/features/account_migration/application/migration_qr_payload_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_registry.dart';
 import 'package:flutter_app/features/account_migration/application/migration_secure_storage_staging.dart';
@@ -185,6 +187,8 @@ void main() {
           'state': 'outgoing_stored',
           'inbox_custody_incarnation_id': custodyIncarnation,
           'recipient_peer_id': 'peer-bob',
+          'contact_account_peer_id': null,
+          'recipient_ml_kem_public_key': null,
           'ciphertext_relative_path': custodyRelativePath,
           'custody_kind': 'direct_media_blob_v1',
           'custody_contract': 'ack_or_expiry_v1',
@@ -563,6 +567,110 @@ void main() {
         );
       },
     );
+
+    test('TC-362-01a Move preserves plural v114 target rows behind one shared '
+        'blob and refuses a crossed duplicate proof', () async {
+      // Two exact sibling target rows of one canonical attachment share
+      // one encrypted artifact. The manifest must export that file exactly
+      // once (both rows still travel in the database snapshot), and a
+      // second row claiming the same path with a different immutable proof
+      // is corruption that refuses the bundle.
+      const identityScope = 'old-peer';
+      const custodyCiphertext = 'shared-plural-target-ciphertext-362';
+      final custodyContentHash = migrationTransferSha256Hex(
+        utf8.encode(custodyCiphertext),
+      );
+      final scopeHash = migrationTransferSha256Hex(utf8.encode(identityScope));
+      final sharedRelativePath = p.posix.join(
+        kDirectMediaBlobArtifactRootDirectory,
+        scopeHash,
+        'attachment-362.blob',
+      );
+      await _writeRelative(tempDir, sharedRelativePath, custodyCiphertext);
+
+      Map<String, Object?> targetRow(String recipientPeerId) =>
+          <String, Object?>{
+            'attachment_id': 'attachment-362',
+            'message_id': 'message-362',
+            'direction': 'outgoing',
+            'state': 'outgoing_stored',
+            'inbox_custody_incarnation_id': null,
+            'recipient_peer_id': recipientPeerId,
+            'contact_account_peer_id': 'peer-bob',
+            'recipient_ml_kem_public_key': 'mlkem-$recipientPeerId',
+            'ciphertext_relative_path': sharedRelativePath,
+            'custody_kind': 'direct_media_blob_v1',
+            'custody_contract': 'ack_or_expiry_v1',
+            'content_hash': custodyContentHash,
+            'ciphertext_size': utf8.encode(custodyCiphertext).length,
+            'transport_mime': 'application/octet-stream',
+            'expires_at_ms': 4102444800000,
+            'custody_relay_peer_id': 'relay-362',
+            'retry_count': 0,
+            'last_attempt_at': null,
+            'next_attempt_at': null,
+            'created_at': '2026-08-12T08:00:00.000Z',
+            'updated_at': '2026-08-12T08:01:00.000Z',
+          };
+      final legacyPrimaryRow = targetRow('peer-bob');
+      final linkedTargetRow = targetRow('peer-bob-linked-device');
+
+      final builder = MigrationFileManifestBuilder(
+        documentsRootPath: tempDir.path,
+      );
+      final identityRows = <Map<String, Object?>>[
+        <String, Object?>{'peer_id': identityScope},
+      ];
+
+      final shared = await builder.build(
+        identityRows: identityRows,
+        directMediaBlobCustodyRows: <Map<String, Object?>>[
+          legacyPrimaryRow,
+          linkedTargetRow,
+        ],
+        scanDocumentsForCacheAndTransients: false,
+      );
+      expect(shared.issues, isEmpty);
+      final sharedItems = shared.items.where(
+        (item) =>
+            item.kind == MigrationFileManifestItemKind.directMediaBlobCustody,
+      );
+      expect(
+        sharedItems,
+        hasLength(1),
+        reason: 'both target rows export one shared encrypted artifact',
+      );
+      expect(sharedItems.single.relativePath, sharedRelativePath);
+      expect(sharedItems.single.sha256, custodyContentHash);
+      expect(
+        sharedItems.single.sizeBytes,
+        utf8.encode(custodyCiphertext).length,
+      );
+
+      // Crossed proof: the same path claimed with a different immutable
+      // content hash refuses instead of silently exporting either byte
+      // stream.
+      final crossedRow = Map<String, Object?>.from(
+        targetRow('peer-bob-crossed-device'),
+      )..['content_hash'] = 'f' * 64;
+      final crossed = await builder.build(
+        identityRows: identityRows,
+        directMediaBlobCustodyRows: <Map<String, Object?>>[
+          legacyPrimaryRow,
+          crossedRow,
+        ],
+        scanDocumentsForCacheAndTransients: false,
+      );
+      expect(
+        crossed.issues.where(
+          (issue) =>
+              issue.blocking &&
+              issue.diagnostics['reason'] == 'crossed_duplicate_custody_proof',
+        ),
+        hasLength(1),
+        reason: 'a crossed shared-path proof is corruption and refuses',
+      );
+    });
 
     test(
       'moves a realistic ~12 MB media account across many segments',
@@ -1325,14 +1433,19 @@ CREATE TABLE direct_inbox_custody_outbox (
   PRIMARY KEY (recipient_peer_id, message_id)
 )
 ''');
+  // 362: DB v114 shape — attachment_id is no longer a PRIMARY KEY; the
+  // natural identity is (attachment_id, direction, recipient_peer_id) under
+  // two partial unique indexes, plus the nullable linked-fanout columns.
   await db.execute('''
 CREATE TABLE direct_media_blob_custody (
-  attachment_id TEXT PRIMARY KEY,
+  attachment_id TEXT NOT NULL,
   message_id TEXT NOT NULL,
   direction TEXT NOT NULL,
   state TEXT NOT NULL,
   inbox_custody_incarnation_id TEXT,
   recipient_peer_id TEXT,
+  contact_account_peer_id TEXT,
+  recipient_ml_kem_public_key TEXT,
   ciphertext_relative_path TEXT,
   custody_kind TEXT NOT NULL,
   custody_contract TEXT NOT NULL,
@@ -1347,6 +1460,16 @@ CREATE TABLE direct_media_blob_custody (
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 )
+''');
+  await db.execute('''
+CREATE UNIQUE INDEX idx_direct_media_blob_custody_outgoing_target
+ON direct_media_blob_custody(attachment_id, recipient_peer_id)
+WHERE direction = 'outgoing'
+''');
+  await db.execute('''
+CREATE UNIQUE INDEX idx_direct_media_blob_custody_incoming_attachment
+ON direct_media_blob_custody(attachment_id)
+WHERE direction = 'incoming'
 ''');
 }
 

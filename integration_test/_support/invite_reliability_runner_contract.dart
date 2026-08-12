@@ -25,6 +25,18 @@ const String inviteSendLatencyScenario = 'invite_send_latency';
 const String directLinkedDeviceAddressingScenario =
     'direct_linked_device_addressing';
 
+/// 362 / TC-362-05b: the aggregate Plan-360/361/362 event+blob wave scenario.
+///
+/// Two live Androids in PHYSICAL-first, EMULATOR-second order: the physical
+/// device runs account A's linked secondary, the emulator runs upgraded
+/// account B whose exact persisted targets are live legacy-primary B plus one
+/// inert offline linked-B identity fixture. One blob-free event and one tiny
+/// image prove outer A-transport != inner A-account, two B target envelopes
+/// sharing one blob ID/hash, emulator decrypt/apply/download/ACK, receipt to
+/// the physical A transport, and byte-exact offline linked-B siblings.
+const String directLinkedDeviceEventBlobFanoutScenario =
+    'direct_linked_device_event_blob_fanout';
+
 /// The complete set of scenarios this runner may execute.
 ///
 /// Exhaustive on purpose. An unregistered scenario must be a TERMINAL error in
@@ -35,7 +47,31 @@ const Set<String> inviteReliabilityRunnerScenarios = <String>{
   inviteReliabilityScenario,
   inviteSendLatencyScenario,
   directLinkedDeviceAddressingScenario,
+  directLinkedDeviceEventBlobFanoutScenario,
 };
+
+/// True for an Android emulator/AVD device ID (`emulator-<port>`).
+bool isAndroidEmulatorDeviceId(String deviceId) =>
+    RegExp(r'^emulator-\d+$').hasMatch(deviceId);
+
+/// True for a plausible LIVE Android device ID this runner may drive: a
+/// physical adb serial or an emulator ID — never an iOS simulator UUID, an
+/// iOS hardware UDID, or a `flutter devices` desktop/web identifier.
+bool isPlausibleAndroidDeviceId(String deviceId) {
+  if (isAndroidEmulatorDeviceId(deviceId)) return true;
+  final iosSimulatorShape = RegExp(
+    r'^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-[0-9A-Fa-f]{4}-'
+    r'[0-9A-Fa-f]{12}$',
+  );
+  final iosHardwareShape = RegExp(r'^[0-9A-Fa-f]{8}-[0-9A-Fa-f]{16}$');
+  if (iosSimulatorShape.hasMatch(deviceId) ||
+      iosHardwareShape.hasMatch(deviceId)) {
+    return false;
+  }
+  return RegExp(r'^[A-Za-z0-9._:-]{4,64}$').hasMatch(deviceId) &&
+      !deviceId.contains('macos') &&
+      !deviceId.contains('chrome');
+}
 
 /// Name of the scenario-specific ready artifact both roles converge on.
 String directLinkedDeviceAddressingReadyFileName(String runId, String role) =>
@@ -453,6 +489,50 @@ final class InviteReliabilityRunnerArguments {
       if (parsedDeviceIds.length != 2) {
         throw ArgumentError(
           'Device list must contain exactly two non-empty IDs',
+        );
+      }
+      return InviteReliabilityRunnerArguments(
+        scenario: scenario,
+        mode: null,
+        deviceIds: parsedDeviceIds,
+      );
+    }
+
+    // 362: the aggregate event+blob wave scenario requires two DISTINCT live
+    // Android IDs in physical-first/emulator-second order, refused BEFORE any
+    // build: a duplicate, reversed, or non-Android pair is not a proof.
+    if (scenario == directLinkedDeviceEventBlobFanoutScenario) {
+      if (modeValue != null) {
+        throw ArgumentError(
+          '--mode is not supported for '
+          '$directLinkedDeviceEventBlobFanoutScenario',
+        );
+      }
+      if (parsedDeviceIds == null) {
+        throw ArgumentError(
+          'Missing explicit two-device IDs for '
+          '$directLinkedDeviceEventBlobFanoutScenario',
+        );
+      }
+      if (parsedDeviceIds.length != 2 ||
+          parsedDeviceIds[0] == parsedDeviceIds[1]) {
+        throw ArgumentError(
+          'Device list must contain exactly two distinct non-empty IDs',
+        );
+      }
+      final physical = parsedDeviceIds[0];
+      final emulator = parsedDeviceIds[1];
+      if (!isPlausibleAndroidDeviceId(physical) ||
+          !isPlausibleAndroidDeviceId(emulator)) {
+        throw ArgumentError(
+          'Both scenario targets must be live Android device IDs',
+        );
+      }
+      if (isAndroidEmulatorDeviceId(physical) ||
+          !isAndroidEmulatorDeviceId(emulator)) {
+        throw ArgumentError(
+          'Device order must be physical-Android first, Android-emulator '
+          'second',
         );
       }
       return InviteReliabilityRunnerArguments(

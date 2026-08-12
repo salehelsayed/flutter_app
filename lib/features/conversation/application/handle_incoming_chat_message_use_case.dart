@@ -434,13 +434,19 @@ handleIncomingChatMessage({
     return (HandleChatMessageResult.unknownSender, null, null);
   }
 
-  // 361: the restricted linked role supports blob-free ordinary text events
-  // ONLY. Any authenticated linked media/private payload is terminally
-  // rejected before any v111, private-lifecycle, apply, receipt, publication
-  // or notification work exists.
+  // 361: the restricted linked role supported blob-free ordinary text events
+  // only. 362: an authenticated linked transport now carries STRICT direct
+  // media (ordinary and the supported private/disappearing shapes) through
+  // the same exact-custody stage paths as a legacy origin — the raw physical
+  // transport stays the authenticated sender/receipt route while the
+  // decrypted logical account becomes the canonical contact. Everything
+  // outside the strict projection (legacy media transport, crossed private
+  // shapes without strict custody) remains terminally rejected before any
+  // v111, private-lifecycle, apply, receipt, publication or notification
+  // work exists.
   if (isLinkedTransportOrigin &&
-      (strictMediaProjection.selected ||
-          (payload.media != null && payload.media!.isNotEmpty) ||
+      !strictMediaProjection.selected &&
+      ((payload.media != null && payload.media!.isNotEmpty) ||
           payload.privateMediaPolicy.version != 0 ||
           payload.privateMediaPolicy.mode != PrivateMediaMode.ordinary)) {
     emitFlowEvent(
@@ -949,6 +955,7 @@ handleIncomingChatMessage({
     // Capture the promoted payload identity before entering closures. Dart
     // cannot retain promotion of the nullable parse result across callbacks.
     final strictMessageId = payload.id;
+    final strictSenderPeerId = payload.senderPeerId;
     final strictAttachments = strictMediaProjection.attachments
         .map(
           (attachment) => attachment.copyWith(
@@ -967,6 +974,12 @@ handleIncomingChatMessage({
             state: DirectMediaBlobCustodyState.incomingCommitted,
             inboxCustodyIncarnationId: null,
             recipientPeerId: null,
+            // 362: a LINKED origin persists the logical contact as the
+            // durable discriminator on newly authored incoming v114 rows;
+            // legacy origins keep the incumbent NULL marker byte-identically.
+            contactAccountPeerId: isLinkedTransportOrigin
+                ? strictSenderPeerId
+                : null,
             ciphertextRelativePath: null,
             custodyKind: commitment.kind,
             custodyContract: commitment.contract,
@@ -1056,7 +1069,7 @@ handleIncomingChatMessage({
             // and a survivor whose public commitment or state disagrees is
             // crossed authority that fails closed with no receipt.
             final durableCustody = await custodyReader
-                ?.loadDirectMediaBlobCustodyForAttachment(
+                ?.loadIncomingDirectMediaBlobCustodyForAttachment(
                   strictAttachments.single.id,
                 );
             if (durableCustody == null ||
@@ -1095,6 +1108,9 @@ handleIncomingChatMessage({
                       message: stageMessage,
                       attachment: stageAttachment,
                       custodyRow: stageCustody,
+                      authenticatedTransportPeerId: isLinkedTransportOrigin
+                          ? message.from
+                          : null,
                     );
           if (!result.outcome.isDurable) {
             return (staged: result, decision: null);
@@ -1199,6 +1215,9 @@ handleIncomingChatMessage({
         message: conversationMessage,
         attachments: strictAttachments,
         custodyRows: custodyRows,
+        authenticatedTransportPeerId: isLinkedTransportOrigin
+            ? message.from
+            : null,
       );
     }
     if (staged.outcome ==

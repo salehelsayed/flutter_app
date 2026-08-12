@@ -5,6 +5,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
@@ -22,6 +23,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart'
         kMediaDownloadStatusDownloading,
         kMediaDownloadStatusPending;
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
@@ -8329,6 +8331,746 @@ void main() {
           reason: 'ordinary replay stays attachment-independent',
         );
       }
+    });
+  });
+
+  group('Plan 362 direct linked-device media blob fanout custody', () {
+    const t0 = '2026-08-12T09:00:00.000Z';
+    const t1 = '2026-08-12T09:00:01.000Z';
+    const nowMs = 1900000000000;
+
+    String blobPath(String attachmentId) =>
+        'direct_media_blob_custody_v1/${'e' * 64}/$attachmentId.blob';
+
+    DirectMediaBlobCustodyRow outgoingRow({
+      required String attachmentId,
+      required String messageId,
+      required String recipientPeerId,
+      required String contentHash,
+      DirectMediaBlobCustodyState state =
+          DirectMediaBlobCustodyState.outgoingStored,
+      String? contactAccountPeerId,
+      String? recipientMlKemPublicKey,
+      String? inboxCustodyIncarnationId,
+      int ciphertextSize = 5120,
+      int? expiresAtMs = nowMs + 600000,
+      String? custodyRelayPeerId = 'relay-tc362',
+    }) => DirectMediaBlobCustodyRow(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      state: state,
+      inboxCustodyIncarnationId: inboxCustodyIncarnationId,
+      recipientPeerId: recipientPeerId,
+      contactAccountPeerId: contactAccountPeerId,
+      recipientMlKemPublicKey: recipientMlKemPublicKey,
+      ciphertextRelativePath: blobPath(attachmentId),
+      contentHash: contentHash,
+      ciphertextSize: ciphertextSize,
+      expiresAtMs: expiresAtMs,
+      custodyRelayPeerId: custodyRelayPeerId,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: t0,
+      updatedAt: t0,
+    );
+
+    Future<Map<String, Object?>> attachmentRowOf(String attachmentId) async =>
+        (await db.query(
+          'media_attachments',
+          where: 'id = ?',
+          whereArgs: <Object?>[attachmentId],
+        )).single;
+
+    test('TC-362-01a fingerprint v2 lineage stamps once and later targets '
+        'must agree', () async {
+      const messageId = 'tc362-01a-m1';
+      const attachmentId = '$messageId-a';
+      const contactAccount = 'tc362-01a-contact';
+      final contentHash = 'a1' * 32;
+      await db.insert(
+        'messages',
+        makeMessageRow(
+          id: messageId,
+          contactPeerId: contactAccount,
+          senderPeerId: 'peer-local',
+          status: 'sending',
+          isIncoming: 0,
+        ),
+      );
+      await dbInsertMediaAttachment(
+        db,
+        makeAttachmentRow(
+          id: attachmentId,
+          messageId: messageId,
+          contentHash: contentHash,
+        ),
+      );
+      final targetRowA = outgoingRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        recipientPeerId: 'tc362-01a-transport-a',
+        contactAccountPeerId: contactAccount,
+        recipientMlKemPublicKey: 'mlkem-tc362-01a-a',
+        contentHash: contentHash,
+      );
+      final targetRowB = outgoingRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        recipientPeerId: 'tc362-01a-transport-b',
+        contactAccountPeerId: contactAccount,
+        recipientMlKemPublicKey: 'mlkem-tc362-01a-b',
+        contentHash: contentHash,
+      );
+      await db.insert(kDirectMediaBlobCustodyTable, targetRowA.toMap());
+      await db.insert(kDirectMediaBlobCustodyTable, targetRowB.toMap());
+
+      Future<bool> stamp(
+        List<DirectMediaBlobCustodyRow> strictBlobRows, {
+        required int? fingerprintVersion,
+        String stampMessageId = messageId,
+      }) => db.transaction(
+        (txn) => dbStampExactStrictOutgoingLineageWithinTransaction(
+          txn,
+          messageId: stampMessageId,
+          strictBlobRows: strictBlobRows,
+          fingerprintVersion: fingerprintVersion,
+        ),
+      );
+
+      // 1. The first accepted fanout target stamps digest+version together.
+      expect(
+        await stamp(<DirectMediaBlobCustodyRow>[
+          targetRowA,
+        ], fingerprintVersion: kDirectMediaBlobFingerprintVersionGeneration),
+        isTrue,
+      );
+      final expectedV2 = computeDirectMediaBlobGenerationFingerprintV2(
+        attachmentId: attachmentId,
+        contentHash: contentHash,
+        ciphertextSize: targetRowA.ciphertextSize,
+      );
+      var attachment = await attachmentRowOf(attachmentId);
+      expect(attachment['direct_media_blob_custody_fingerprint'], expectedV2);
+      expect(
+        attachment['direct_media_blob_custody_fingerprint_version'],
+        kDirectMediaBlobFingerprintVersionGeneration,
+      );
+
+      // 2. A later target of the SAME generation agrees: true, value
+      //    unchanged (the digest is target-independent by construction).
+      expect(
+        await stamp(<DirectMediaBlobCustodyRow>[
+          targetRowB,
+        ], fingerprintVersion: kDirectMediaBlobFingerprintVersionGeneration),
+        isTrue,
+      );
+      attachment = await attachmentRowOf(attachmentId);
+      expect(attachment['direct_media_blob_custody_fingerprint'], expectedV2);
+      expect(
+        attachment['direct_media_blob_custody_fingerprint_version'],
+        kDirectMediaBlobFingerprintVersionGeneration,
+      );
+
+      // 3. A crossed legacy (version-null) stamp against the v2-stamped row
+      //    refuses and rewrites nothing.
+      expect(
+        await stamp(<DirectMediaBlobCustodyRow>[
+          targetRowB,
+        ], fingerprintVersion: null),
+        isFalse,
+      );
+      attachment = await attachmentRowOf(attachmentId);
+      expect(attachment['direct_media_blob_custody_fingerprint'], expectedV2);
+      expect(
+        attachment['direct_media_blob_custody_fingerprint_version'],
+        kDirectMediaBlobFingerprintVersionGeneration,
+      );
+
+      // 4. A legacy single-target completion on a FRESH attachment keeps the
+      //    incumbent exact target-specific digest with a NULL version.
+      const legacyMessageId = 'tc362-01a-m2';
+      const legacyAttachmentId = '$legacyMessageId-a';
+      final legacyContentHash = 'b2' * 32;
+      const legacyExpiresAtMs = nowMs + 660000;
+      await db.insert(
+        'messages',
+        makeMessageRow(
+          id: legacyMessageId,
+          contactPeerId: 'tc362-01a-legacy-peer',
+          senderPeerId: 'peer-local',
+          status: 'sending',
+          isIncoming: 0,
+        ),
+      );
+      await dbInsertMediaAttachment(
+        db,
+        makeAttachmentRow(
+          id: legacyAttachmentId,
+          messageId: legacyMessageId,
+          contentHash: legacyContentHash,
+        ),
+      );
+      final legacyRow = outgoingRow(
+        attachmentId: legacyAttachmentId,
+        messageId: legacyMessageId,
+        recipientPeerId: 'tc362-01a-legacy-peer',
+        contentHash: legacyContentHash,
+        expiresAtMs: legacyExpiresAtMs,
+      );
+      await db.insert(kDirectMediaBlobCustodyTable, legacyRow.toMap());
+      expect(
+        await stamp(
+          <DirectMediaBlobCustodyRow>[legacyRow],
+          fingerprintVersion: null,
+          stampMessageId: legacyMessageId,
+        ),
+        isTrue,
+      );
+      final legacyAttachment = await attachmentRowOf(legacyAttachmentId);
+      expect(
+        legacyAttachment['direct_media_blob_custody_fingerprint'],
+        computeDirectMediaBlobCommitmentFingerprint(
+          attachmentId: legacyAttachmentId,
+          commitment: DirectMediaBlobCustodyCommitment(
+            contentHash: legacyContentHash,
+            ciphertextSize: legacyRow.ciphertextSize,
+            expiresAtMs: legacyExpiresAtMs,
+          ),
+        ),
+      );
+      expect(
+        legacyAttachment['direct_media_blob_custody_fingerprint_version'],
+        isNull,
+      );
+    });
+
+    test('TC-362-02a linked media fanout generation stages all targets with '
+        'the durable marker or none', () async {
+      const contactAccount = 'tc362-02a-contact';
+      const transportA = 'tc362-02a-transport-a';
+      const transportB = 'tc362-02a-transport-b';
+      await db.insert('contacts', <String, Object?>{
+        'peer_id': contactAccount,
+        'public_key': 'tc362-02a-signing-key',
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'TC362 Contact',
+        'signature': 'sig-base64',
+        'scanned_at': t0,
+        'ml_kem_public_key': 'legacy-mlkem',
+      });
+      await db
+          .insert('direct_contact_device_roster_metadata', <String, Object?>{
+            'contact_account_peer_id': contactAccount,
+            'roster_initialized': 1,
+            'legacy_target_state': 'revoked',
+            'initialized_at': t0,
+            'legacy_revoked_at': t0,
+            'updated_at': t0,
+          });
+      for (final device in const <(String, String)>[
+        ('tc362-device-a', transportA),
+        ('tc362-device-b', transportB),
+      ]) {
+        await db.insert('direct_contact_device_bindings', <String, Object?>{
+          'contact_account_peer_id': contactAccount,
+          'device_id': device.$1,
+          'verified_account_signing_public_key': 'tc362-02a-signing-key',
+          'transport_peer_id': device.$2,
+          'transport_public_key': 'transport-key-${device.$1}',
+          'device_ml_kem_public_key': 'mlkem-${device.$1}',
+          'binding_fingerprint': 'f' * 64,
+          'state': 'active',
+          'staged_at': t0,
+          'decided_at': t0,
+        });
+      }
+      final snapshot = (await dbReadDirectContactFanoutSnapshot(
+        db,
+        contactAccountPeerId: contactAccount,
+      ))!;
+      expect(
+        snapshot.targets.map((target) => target.peerId).toList(),
+        const <String>[transportA, transportB],
+      );
+
+      const messageId = 'tc362-02a-m1';
+      final attachmentIds = <String>['$messageId-a1', '$messageId-a2'];
+      final contentHash = 'c3' * 32;
+      final intentId = computeDirectMediaCustodyIntentId(
+        messageId: messageId,
+        attachmentIds: attachmentIds,
+      );
+      await db.insert('messages', <String, Object?>{
+        'id': messageId,
+        'contact_peer_id': contactAccount,
+        'sender_peer_id': 'peer-local',
+        'text': '',
+        'timestamp': t0,
+        'status': 'sending',
+        'is_incoming': 0,
+        'created_at': t0,
+        'dedup_key': messageId,
+        'direct_media_custody_intent_id': intentId,
+        'private_media_policy_version': 0,
+        'private_media_mode': 'ordinary',
+        'private_media_state': 'none',
+      });
+      for (final attachmentId in attachmentIds) {
+        await dbInsertMediaAttachment(
+          db,
+          makeAttachmentRow(
+            id: attachmentId,
+            messageId: messageId,
+            size: 4096,
+            width: 100,
+            height: 200,
+            localPath: MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            ),
+            downloadStatus: 'upload_pending',
+          ),
+        );
+      }
+      final durableParent = (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      final durablePending = await db.query(
+        'media_attachments',
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+        orderBy: 'id ASC',
+      );
+      final prepared = durablePending
+          .map(
+            (pending) => <String, Object?>{
+              ...pending,
+              'content_hash': contentHash,
+              'encryption_key_base64': secureStoreReferenceForKey(
+                mediaAttachmentEncryptionKeyStoreName(pending['id']! as String),
+              ),
+              'encryption_nonce': 'nonce-tc362-${pending['id']}',
+              'encryption_scheme': 'blob_aes_256_gcm_v1',
+            },
+          )
+          .toList(growable: false);
+      final custodyRows = <DirectMediaBlobCustodyRow>[
+        for (final attachmentId in attachmentIds)
+          for (final target in snapshot.targets)
+            outgoingRow(
+              attachmentId: attachmentId,
+              messageId: messageId,
+              state: DirectMediaBlobCustodyState.outgoingPrepared,
+              recipientPeerId: target.peerId,
+              contactAccountPeerId: contactAccount,
+              recipientMlKemPublicKey: target.mlKemPublicKey,
+              contentHash: contentHash,
+              expiresAtMs: null,
+              custodyRelayPeerId: null,
+            ),
+      ];
+
+      Future<DirectMediaBlobGenerationDbStageResult> stage({
+        Map<String, Object?>? expectedParentOverride,
+      }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
+        db,
+        expectedParentRow: expectedParentOverride ?? durableParent,
+        expectedAttachmentRows: durablePending,
+        preparedAttachmentRows: prepared,
+        custodyRows: custodyRows,
+        contactAccountPeerId: contactAccount,
+        expectedSnapshot: snapshot,
+      );
+
+      Future<List<Map<String, Object?>>> custodyTable() => db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+        orderBy: 'attachment_id ASC, recipient_peer_id ASC',
+      );
+
+      Future<Object?> marker() async => (await db.query(
+        'messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single['direct_event_fanout_generation_id'];
+
+      // 1. Applied: every (attachment x target) prepared row AND the durable
+      //    Plan-361 generation marker commit together.
+      final staged = await stage();
+      expect(staged.outcome, DirectMediaBlobGenerationDbStageOutcome.applied);
+      final committed = await custodyTable();
+      expect(committed, hasLength(4));
+      for (final row in committed) {
+        expect(row['state'], 'outgoing_prepared');
+        expect(row['contact_account_peer_id'], contactAccount);
+        expect(row['recipient_ml_kem_public_key'], isNotNull);
+        expect(row['inbox_custody_incarnation_id'], isNull);
+      }
+      expect(
+        committed.map((row) => row['recipient_peer_id']).toSet(),
+        const <String>{transportA, transportB},
+      );
+      expect(await marker(), messageId);
+
+      // 2. Exact whole-generation replay is idempotent.
+      final replay = await stage(
+        expectedParentOverride: <String, Object?>{
+          ...durableParent,
+          'direct_event_fanout_generation_id': messageId,
+        },
+      );
+      expect(
+        replay.outcome,
+        DirectMediaBlobGenerationDbStageOutcome.idempotent,
+      );
+      expect(await custodyTable(), committed);
+
+      // 3. Snapshot drift after capture refuses all-zero.
+      await db.insert('direct_contact_device_bindings', <String, Object?>{
+        'contact_account_peer_id': contactAccount,
+        'device_id': 'tc362-device-c',
+        'verified_account_signing_public_key': 'tc362-02a-signing-key',
+        'transport_peer_id': 'tc362-02a-transport-c',
+        'transport_public_key': 'transport-key-tc362-device-c',
+        'device_ml_kem_public_key': 'mlkem-tc362-device-c',
+        'binding_fingerprint': 'f' * 64,
+        'state': 'active',
+        'staged_at': t1,
+        'decided_at': t1,
+      });
+      final drifted = await stage(
+        expectedParentOverride: <String, Object?>{
+          ...durableParent,
+          'direct_event_fanout_generation_id': messageId,
+        },
+      );
+      expect(drifted.outcome, DirectMediaBlobGenerationDbStageOutcome.refused);
+      expect(await custodyTable(), committed, reason: 'drift must be all-zero');
+      await db.delete(
+        'direct_contact_device_bindings',
+        where: 'device_id = ?',
+        whereArgs: const <Object?>['tc362-device-c'],
+      );
+
+      // 4. Zero survivors + the durable marker is TERMINAL: cleanup already
+      //    converged this generation and it may never remint.
+      await db.delete(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+      );
+      final reminted = await stage(
+        expectedParentOverride: <String, Object?>{
+          ...durableParent,
+          'direct_event_fanout_generation_id': messageId,
+        },
+      );
+      expect(reminted.outcome, DirectMediaBlobGenerationDbStageOutcome.refused);
+      expect(
+        await custodyTable(),
+        isEmpty,
+        reason: 'a terminal generation never reminted a single row',
+      );
+      expect(
+        await marker(),
+        messageId,
+        reason: 'the no-remint marker survives',
+      );
+    });
+
+    test('TC-362-02b unbound generation terminalizes whole and exact-target '
+        'completion preserves siblings', () async {
+      const messageId = 'tc362-02b-m1';
+      const attachmentId = '$messageId-a';
+      const contactAccount = 'tc362-02b-contact';
+      final contentHash = 'd4' * 32;
+      await db.insert(
+        'messages',
+        makeMessageRow(
+          id: messageId,
+          contactPeerId: contactAccount,
+          senderPeerId: 'peer-local',
+          status: 'sending',
+          isIncoming: 0,
+        ),
+      );
+      await dbInsertMediaAttachment(
+        db,
+        makeAttachmentRow(
+          id: attachmentId,
+          messageId: messageId,
+          contentHash: contentHash,
+        ),
+      );
+      // The durable Plan-361 generation marker precedes terminalization and
+      // must survive it as the no-remint fact.
+      await db.rawUpdate(
+        'UPDATE messages SET direct_event_fanout_generation_id = ? '
+        'WHERE id = ?',
+        const <Object?>[messageId, messageId],
+      );
+      final rowA = outgoingRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        recipientPeerId: 'tc362-02b-transport-a',
+        contactAccountPeerId: contactAccount,
+        recipientMlKemPublicKey: 'mlkem-tc362-02b-a',
+        contentHash: contentHash,
+      );
+      final rowB = outgoingRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        recipientPeerId: 'tc362-02b-transport-b',
+        contactAccountPeerId: contactAccount,
+        recipientMlKemPublicKey: 'mlkem-tc362-02b-b',
+        contentHash: contentHash,
+      );
+      await db.insert(kDirectMediaBlobCustodyTable, rowA.toMap());
+      await db.insert(kDirectMediaBlobCustodyTable, rowB.toMap());
+
+      // 1. A PARTIAL expected set may never retire target A while staging
+      //    only surviving B.
+      expect(
+        await dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
+          db,
+          expectedRows: <DirectMediaBlobCustodyRow>[rowA],
+          reason: DirectMediaBlobTerminalizationReason.explicitCancellation,
+          nowMs: nowMs,
+        ),
+        DirectMediaBlobTerminalizationOutcome.refused,
+      );
+      expect(
+        (await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).map((row) => row['state']).toSet(),
+        const <String>{'outgoing_stored'},
+      );
+
+      // 2. The COMPLETE unbound generation terminalizes atomically.
+      expect(
+        await dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
+          db,
+          expectedRows: <DirectMediaBlobCustodyRow>[rowA, rowB],
+          reason: DirectMediaBlobTerminalizationReason.explicitCancellation,
+          nowMs: nowMs,
+        ),
+        DirectMediaBlobTerminalizationOutcome.applied,
+      );
+      final terminalized = await db.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+        orderBy: 'recipient_peer_id ASC',
+      );
+      expect(terminalized, hasLength(2));
+      for (final row in terminalized) {
+        expect(row['state'], 'outgoing_cleanup_pending');
+        expect(row['contact_account_peer_id'], contactAccount);
+      }
+      expect(
+        (await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single['direct_event_fanout_generation_id'],
+        messageId,
+        reason: 'terminalization retains the durable no-remint marker',
+      );
+    });
+
+    test('TC-362-02b last sibling alone authorizes artifact unlink', () async {
+      const messageId = 'tc362-02b-m2';
+      const attachmentId = '$messageId-a';
+      final contentHash = 'e5' * 32;
+      final sharedPath = blobPath(attachmentId);
+      await db.insert(
+        'messages',
+        makeMessageRow(
+          id: messageId,
+          contactPeerId: 'tc362-02b-contact-2',
+          senderPeerId: 'peer-local',
+          status: 'sending',
+          isIncoming: 0,
+        ),
+      );
+      final cleanupA = outgoingRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        recipientPeerId: 'tc362-02b-transport-a',
+        contactAccountPeerId: 'tc362-02b-contact-2',
+        recipientMlKemPublicKey: 'mlkem-tc362-02b-m2-a',
+        contentHash: contentHash,
+      );
+      final cleanupB = outgoingRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        recipientPeerId: 'tc362-02b-transport-b',
+        contactAccountPeerId: 'tc362-02b-contact-2',
+        recipientMlKemPublicKey: 'mlkem-tc362-02b-m2-b',
+        contentHash: contentHash,
+      );
+      await db.insert(kDirectMediaBlobCustodyTable, cleanupA.toMap());
+      await db.insert(kDirectMediaBlobCustodyTable, cleanupB.toMap());
+
+      Future<int> othersExcluding(DirectMediaBlobCustodyRow row) =>
+          dbCountOtherDirectMediaBlobCustodyRowsReferencingArtifact(
+            db,
+            ciphertextRelativePath: sharedPath,
+            contentHash: contentHash,
+            ciphertextSize: row.ciphertextSize,
+            excluding: DirectMediaBlobCustodyNaturalKey.ofRow(row),
+          );
+
+      // 1. While the sibling target still references the shared artifact,
+      //    the excluded row is never the last reference.
+      expect(await othersExcluding(cleanupA), 1);
+
+      // 2. Retiring the exact sibling makes the survivor the LAST reference:
+      //    only then may the shared encrypted artifact be unlinked.
+      expect(
+        await dbDeleteDirectMediaBlobCleanupPendingIfExact(
+          db,
+          expected: cleanupA,
+        ),
+        isTrue,
+      );
+      expect(await othersExcluding(cleanupB), 0);
+    });
+
+    test('TC-362-04a the incoming stage re-runs reverse authorization inside '
+        'its transaction', () async {
+      const contactAccount = 'tc362-04a-reauth-contact';
+      const linkedTransport = 'tc362-04a-reauth-transport';
+      await db.insert('contacts', <String, Object?>{
+        'peer_id': contactAccount,
+        'public_key': 'tc362-04a-signing-key',
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'TC362 Reauth Contact',
+        'signature': 'sig-base64',
+        'scanned_at': t0,
+        'ml_kem_public_key': 'legacy-mlkem',
+      });
+      await db
+          .insert('direct_contact_device_roster_metadata', <String, Object?>{
+            'contact_account_peer_id': contactAccount,
+            'roster_initialized': 1,
+            'legacy_target_state': 'active',
+            'initialized_at': t0,
+            'legacy_revoked_at': null,
+            'updated_at': t0,
+          });
+      await db.insert('direct_contact_device_bindings', <String, Object?>{
+        'contact_account_peer_id': contactAccount,
+        'device_id': 'tc362-04a-device',
+        'verified_account_signing_public_key': 'tc362-04a-signing-key',
+        'transport_peer_id': linkedTransport,
+        'transport_public_key': 'transport-key-04a',
+        'device_ml_kem_public_key': 'mlkem-04a',
+        'binding_fingerprint': 'f' * 64,
+        'state': 'active',
+        'staged_at': t0,
+        'decided_at': t0,
+      });
+
+      final contentHash = 'd4' * 32;
+      const expiresAtMs = nowMs + 600000;
+      Future<IncomingDirectMediaBlobDbStageResult> stage(String messageId) {
+        final attachmentId = '$messageId-a';
+        final custody = DirectMediaBlobCustodyRow(
+          attachmentId: attachmentId,
+          messageId: messageId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+          state: DirectMediaBlobCustodyState.incomingCommitted,
+          inboxCustodyIncarnationId: null,
+          recipientPeerId: null,
+          contactAccountPeerId: contactAccount,
+          ciphertextRelativePath: null,
+          contentHash: contentHash,
+          ciphertextSize: 4096,
+          expiresAtMs: expiresAtMs,
+          custodyRelayPeerId: null,
+          lastAttemptAt: null,
+          nextAttemptAt: null,
+          createdAt: t1,
+          updatedAt: t1,
+        );
+        return dbStageIncomingDirectMediaBlobCustody(
+          db,
+          messageRow: <String, Object?>{
+            ...makeMessageRow(
+              id: messageId,
+              contactPeerId: contactAccount,
+              senderPeerId: contactAccount,
+            ),
+            'private_media_mode': 'ordinary',
+            'direct_media_custody_intent_id': null,
+          },
+          attachmentRows: <Map<String, Object?>>[
+            <String, Object?>{
+              ...makeAttachmentRow(
+                id: attachmentId,
+                messageId: messageId,
+                contentHash: contentHash,
+                encryptionKeyBase64: 'key-04a',
+                encryptionNonce: 'nonce-04a',
+                encryptionScheme: 'blob_aes_256_gcm_v1',
+              ),
+              'direct_media_blob_custody_fingerprint':
+                  computeDirectMediaBlobCommitmentFingerprint(
+                    attachmentId: attachmentId,
+                    commitment: DirectMediaBlobCustodyCommitment(
+                      contentHash: contentHash,
+                      ciphertextSize: 4096,
+                      expiresAtMs: expiresAtMs,
+                    ),
+                  ),
+            },
+          ],
+          custodyRows: <DirectMediaBlobCustodyRow>[custody],
+          authenticatedTransportPeerId: linkedTransport,
+        );
+      }
+
+      // A live ACTIVE binding authorizes the linked stage inside the durable
+      // transaction.
+      final applied = await stage('tc362-04a-reauth-m1');
+      expect(applied.outcome, IncomingDirectMediaBlobDbStageOutcome.applied);
+
+      // Revocation that wins the race refuses the NEXT stage inside its own
+      // transaction: no message, attachment or custody row may exist.
+      await db.update(
+        'direct_contact_device_bindings',
+        const <String, Object?>{'state': 'revoked'},
+        where: 'transport_peer_id = ?',
+        whereArgs: const <Object?>[linkedTransport],
+      );
+      final refused = await stage('tc362-04a-reauth-m2');
+      expect(refused.outcome, IncomingDirectMediaBlobDbStageOutcome.refused);
+      expect(
+        await db.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>['tc362-04a-reauth-m2'],
+        ),
+        isEmpty,
+      );
+      expect(
+        await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>['tc362-04a-reauth-m2'],
+        ),
+        isEmpty,
+      );
     });
   });
 }

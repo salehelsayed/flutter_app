@@ -6,10 +6,12 @@ import 'package:clock/clock.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
+    show DirectMediaBlobCustodyRow, DirectMediaBlobCustodyState;
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
     show isExactV2DirectChatInitialEnvelope;
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show OutgoingDirectMediaCaptionEditLane;
+    show DirectMediaFanoutTargetBinding, OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
@@ -556,6 +558,27 @@ PrivateMediaEligibility _privateMediaEligibilityForSend({
   );
 }
 
+/// 362: the caller-proven authority for one direct linked-media v108 fanout.
+///
+/// Provided ONLY by a producer/retry lane that already owns a complete STORED
+/// v114 linked generation (every snapshot target's rows in [targetRows]). Once
+/// supplied, the send may settle exclusively through the plural fanout stage —
+/// any shape/authority mismatch fails closed and never demotes to the
+/// single-target v108 stage.
+final class DirectLinkedMediaFanoutContext {
+  const DirectLinkedMediaFanoutContext({
+    required this.contactAccountPeerId,
+    required this.snapshot,
+    required this.targetRows,
+  });
+
+  final String contactAccountPeerId;
+  final DirectContactFanoutSnapshot snapshot;
+
+  /// recipientPeerId -> that target's exact STORED v114 rows.
+  final Map<String, List<DirectMediaBlobCustodyRow>> targetRows;
+}
+
 /// Sends a chat message to a contact via P2P and persists it locally.
 ///
 /// 1. Validates text is non-empty
@@ -609,6 +632,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   storeInMediaExpiryBoundedInboxDetailed,
   void Function(String messageId)? onDirectTextCustodyStaged,
   DirectEventFanoutAuthoring? directEventFanout,
+  DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
 }) async {
   final sendStopwatch = clock.stopwatch()..start();
   final liveDeadline = OutgoingLiveDeadline(() => sendStopwatch.elapsed);
@@ -1518,6 +1542,40 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   // complete direct-owned projection before encryption; the combined SQL
   // transaction repeats these checks after serialization to close the race.
   if (ownsDirectMediaInboxCustody && replayedDirectMediaCustody == null) {
+    // 362 plural-authority-first: a marked linked generation may settle ONLY
+    // through the plural fanout stage. Without the caller-proven fanout
+    // context, any persisted linked row refuses this singular path before
+    // encryption or network — an unreadable authority likewise fails closed.
+    if (directLinkedMediaFanout == null &&
+        mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
+        (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
+            .supportsDirectMediaBlobCustody) {
+      try {
+        final persistedBlobRows =
+            await (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
+                .loadDirectMediaBlobCustodyForMessage(resolvedMessageId);
+        if (persistedBlobRows.any((row) => row.isLinkedFanoutRow)) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CHAT_MSG_SEND_MEDIA_FANOUT_SINGULAR_REFUSED',
+            details: {'id': shortenMessageId(resolvedMessageId)},
+          );
+          emitSendTiming(outcome: 'media_fanout_singular_refused');
+          return (SendChatMessageResult.sendFailed, null);
+        }
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CHAT_MSG_SEND_MEDIA_FANOUT_AUTHORITY_READ_ERROR',
+          details: {
+            'id': shortenMessageId(resolvedMessageId),
+            'errorType': error.runtimeType.toString(),
+          },
+        );
+        emitSendTiming(outcome: 'media_fanout_authority_read_error');
+        return (SendChatMessageResult.sendFailed, null);
+      }
+    }
     final candidates = normalizedAttachments ?? const <MediaAttachment>[];
     final candidateIds = candidates.map((attachment) => attachment.id).toSet();
     final allowPreparedPendingPath =
@@ -1667,6 +1725,53 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     status: 'queued',
     text: sanitizedText,
   );
+
+  // 362: a caller-proven linked-media fanout settles exclusively through the
+  // plural v108 stage. Every mismatch fails closed here — after fanout
+  // context was provided this send may NEVER demote to the singular stage.
+  if (directLinkedMediaFanout != null) {
+    if (!ownsDirectMediaInboxCustody ||
+        replayedDirectMediaCustody != null ||
+        isOutgoingPrivateOneMoreLook ||
+        action != MessagePayload.actionSend ||
+        !effectiveHasCompleteStrictBlobManifest ||
+        normalizedAttachments == null ||
+        normalizedAttachments.isEmpty ||
+        existingOutgoing == null ||
+        bridge == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_MEDIA_FANOUT_REFUSED',
+        details: {
+          'id': shortenMessageId(resolvedMessageId),
+          'reason': 'ineligible_shape',
+        },
+      );
+      emitSendTiming(outcome: 'media_fanout_shape_refused');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    return _authorDirectLinkedMediaFanout(
+      fanout: directLinkedMediaFanout,
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo!,
+      directTextCustodyRepo: directTextCustodyRepo,
+      storeInAckCustodyInboxDetailed: effectiveStoreInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          effectiveStoreInMediaExpiryBoundedInboxDetailed,
+      bridge: bridge,
+      targetPeerId: targetPeerId,
+      senderPeerId: senderPeerId,
+      senderUsername: senderUsername,
+      payload: payload,
+      expectedParent: existingOutgoing,
+      normalizedAttachments: normalizedAttachments,
+      resolvedMessageId: resolvedMessageId,
+      onDirectTextCustodyStaged: onDirectTextCustodyStaged,
+      emitSendTiming: emitSendTiming,
+      recordMetrics: recordMetrics,
+    );
+  }
 
   // 4. Serialize as v2 encrypted envelope.
   String jsonString;
@@ -4182,5 +4287,296 @@ _authorDirectBlobFreeTextFanout({
   return (
     SendChatMessageResult.success,
     await messageRepo.getMessage(resolvedMessageId),
+  );
+}
+
+/// 362: the blob-bearing fanout authoring tail for one strict-media initial.
+/// The inner payload is ONE logical event encrypted independently per
+/// persisted target; the complete per-target v108 batch commits atomically
+/// (per-target manifest/expiry/envelope, canonical witness = FIRST target),
+/// and each committed row rides the incumbent per-row strict-STORE owner
+/// independently — one outcome never cancels a sibling.
+Future<(SendChatMessageResult, ConversationMessage?)>
+_authorDirectLinkedMediaFanout({
+  required DirectLinkedMediaFanoutContext fanout,
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required OutgoingDirectTextInboxCustodyRepository? directTextCustodyRepo,
+  required StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  required StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
+  required Bridge bridge,
+  required String targetPeerId,
+  required String senderPeerId,
+  required String senderUsername,
+  required MessagePayload payload,
+  required ConversationMessage expectedParent,
+  required List<MediaAttachment> normalizedAttachments,
+  required String resolvedMessageId,
+  required void Function(String messageId)? onDirectTextCustodyStaged,
+  required void Function({
+    required String outcome,
+    Map<String, dynamic> details,
+  })
+  emitSendTiming,
+  required void Function({required String? transport, required String rung})
+  recordMetrics,
+}) async {
+  (SendChatMessageResult, ConversationMessage?) refuse(String reason) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_MEDIA_FANOUT_REFUSED',
+      details: {'id': shortenMessageId(resolvedMessageId), 'reason': reason},
+    );
+    emitSendTiming(outcome: 'media_fanout_stage_refused', details: const {});
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
+  final fanoutRepository =
+      mediaAttachmentRepo is OutgoingDirectLinkedMediaBlobFanoutRepository
+      ? mediaAttachmentRepo as OutgoingDirectLinkedMediaBlobFanoutRepository
+      : null;
+  final snapshot = fanout.snapshot;
+  final targetPeerIds = snapshot.targets.map((target) => target.peerId).toSet();
+  if (fanoutRepository == null ||
+      !fanoutRepository.supportsDirectLinkedMediaBlobFanout ||
+      fanout.contactAccountPeerId != targetPeerId ||
+      snapshot.contactAccountPeerId != targetPeerId ||
+      snapshot.targets.isEmpty ||
+      targetPeerIds.length != snapshot.targets.length ||
+      expectedParent.id != resolvedMessageId ||
+      expectedParent.contactPeerId != targetPeerId ||
+      expectedParent.directMediaCustodyIntentId == null) {
+    return refuse('missing_fanout_authority');
+  }
+
+  // The durable no-remint marker was committed WITH the v114 generation. A
+  // caller snapshot that predates it threads the live row once, like the
+  // blob-free TEXT fanout does; a live row without the marker fails closed.
+  var markedParent = expectedParent;
+  if (markedParent.directEventFanoutGenerationId != resolvedMessageId) {
+    final ConversationMessage? liveParent;
+    try {
+      liveParent = await messageRepo.getMessage(resolvedMessageId);
+    } catch (_) {
+      return refuse('marker_read_error');
+    }
+    if (liveParent == null ||
+        liveParent.directEventFanoutGenerationId != resolvedMessageId ||
+        liveParent.contactPeerId != targetPeerId ||
+        liveParent.directMediaCustodyIntentId !=
+            expectedParent.directMediaCustodyIntentId) {
+      return refuse('missing_generation_marker');
+    }
+    markedParent = liveParent;
+  }
+
+  // Per-target bindings ride the snapshot's exact target order. Each target's
+  // manifest/expiry come from ONLY that target's persisted STORED rows, and
+  // each envelope is encrypted with that row's exact persisted recipient key.
+  final innerJson = payload.toInnerJson();
+  final expectedAttachmentIds = normalizedAttachments
+      .map((attachment) => attachment.id)
+      .toSet();
+  final targetBindings = <DirectMediaFanoutTargetBinding>[];
+  for (final target in snapshot.targets) {
+    final rows = fanout.targetRows[target.peerId];
+    if (rows == null ||
+        rows.length != normalizedAttachments.length ||
+        rows.any(
+          (row) =>
+              row.messageId != resolvedMessageId ||
+              row.recipientPeerId != target.peerId ||
+              row.contactAccountPeerId != targetPeerId ||
+              // The persisted target key IS the encryption authority; it must
+              // still be the snapshot target's exact key.
+              row.recipientMlKemPublicKey != target.mlKemPublicKey ||
+              row.state != DirectMediaBlobCustodyState.outgoingStored ||
+              row.expiresAtMs == null ||
+              !expectedAttachmentIds.contains(row.attachmentId),
+        )) {
+      return refuse('target_rows_incomplete');
+    }
+    final String manifestHash;
+    final int expiresAtMs;
+    try {
+      final manifest = rows
+          .map(
+            (row) => DirectMediaBlobManifestProjection(
+              attachmentId: row.attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: row.contentHash,
+                ciphertextSize: row.ciphertextSize,
+                expiresAtMs: row.expiresAtMs!,
+              ),
+            ),
+          )
+          .toList(growable: false);
+      manifestHash = computeDirectMediaBlobManifestHash(manifest);
+      expiresAtMs = earliestDirectMediaBlobExpiryMs(manifest);
+    } on FormatException {
+      return refuse('target_manifest_invalid');
+    }
+    final Map<String, dynamic> encryptResult;
+    try {
+      encryptResult = await callEncryptMessage(
+        bridge: bridge,
+        recipientMlKemPublicKey: rows.first.recipientMlKemPublicKey!,
+        plaintext: innerJson,
+      );
+    } catch (_) {
+      emitSendTiming(outcome: 'media_fanout_encrypt_error', details: const {});
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    if (encryptResult['ok'] != true) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_MEDIA_FANOUT_ENCRYPT_FAILED',
+        details: {
+          'id': shortenMessageId(resolvedMessageId),
+          'errorCode': encryptResult['errorCode'],
+        },
+      );
+      emitSendTiming(outcome: 'media_fanout_encrypt_failed', details: const {});
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    targetBindings.add(
+      DirectMediaFanoutTargetBinding(
+        recipientPeerId: target.peerId,
+        wireEnvelope: MessagePayload.buildEncryptedEnvelope(
+          id: resolvedMessageId,
+          senderPeerId: senderPeerId,
+          senderUsername: senderUsername,
+          kem: encryptResult['kem'] as String,
+          ciphertext: encryptResult['ciphertext'] as String,
+          nonce: encryptResult['nonce'] as String,
+        ),
+        wireMediaBlobManifestHash: manifestHash,
+        wireMediaBlobExpiresAtMs: expiresAtMs,
+      ),
+    );
+  }
+
+  // The canonical staged row keeps the FIRST target's envelope and carries
+  // the durable generation marker; runtime-only lifecycle fields preserve the
+  // exact observed values so the staging CAS detects crossed work.
+  final stagedAttempt = payload
+      .toConversationMessage(
+        contactPeerId: targetPeerId,
+        isIncoming: false,
+        status: 'sending',
+        createdAt: markedParent.createdAt,
+        wireEnvelope: targetBindings.first.wireEnvelope,
+      )
+      .copyWith(
+        readAt: markedParent.readAt,
+        privateMediaState: markedParent.privateMediaState,
+        privateMediaReceivedAtMs: markedParent.privateMediaReceivedAtMs,
+        privateMediaExpiresAtMs: markedParent.privateMediaExpiresAtMs,
+        privateMediaRevealedAtMs: markedParent.privateMediaRevealedAtMs,
+        privateMediaTerminalAtMs: markedParent.privateMediaTerminalAtMs,
+        privateMediaClockHighWaterMs: markedParent.privateMediaClockHighWaterMs,
+        directEventFanoutGenerationId: resolvedMessageId,
+        media: normalizedAttachments,
+      );
+
+  DirectMediaFanoutInboxCustodyStageResult staged;
+  try {
+    staged = await fanoutRepository.stageOutgoingDirectMediaFanoutInboxCustody(
+      expected: markedParent,
+      staged: stagedAttempt,
+      attachments: normalizedAttachments,
+      contactAccountPeerId: targetPeerId,
+      expectedSnapshot: snapshot,
+      targetBindings: targetBindings,
+    );
+  } catch (error) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_ERROR',
+      details: {
+        'id': shortenMessageId(resolvedMessageId),
+        'errorType': error.runtimeType.toString(),
+      },
+    );
+    emitSendTiming(outcome: 'attempt_stage_error', details: const {});
+    return (SendChatMessageResult.sendFailed, null);
+  }
+  if (!staged.authorizesTransport) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_ATTEMPT_STAGE_REFUSED',
+      details: {
+        'id': shortenMessageId(resolvedMessageId),
+        'reason': staged.outcome.name,
+      },
+    );
+    emitSendTiming(
+      outcome: 'attempt_stage_refused',
+      details: {'reason': staged.outcome.name},
+    );
+    return (SendChatMessageResult.sendFailed, null);
+  }
+  if (staged.outcome == OutgoingOrdinaryMutationOutcome.applied) {
+    try {
+      onDirectTextCustodyStaged?.call(resolvedMessageId);
+    } catch (error) {
+      // The atomic stage is already committed transport authority; an
+      // observer failure can never revoke custody.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_DIRECT_INBOX_CUSTODY_STAGE_OBSERVER_ERROR',
+        details: {
+          'id': shortenMessageId(resolvedMessageId),
+          'errorType': error.runtimeType.toString(),
+        },
+      );
+    }
+  }
+
+  // Network begins only after the whole batch exists durably. Each row rides
+  // the incumbent per-row strict media-expiry-bounded owner; a missing store
+  // or capability leaves rows to the global custody retrier.
+  var completedRows = 0;
+  for (final row in staged.custodyRows) {
+    unawaited(
+      p2pService
+          .sendMessage(
+            row['recipient_peer_id'] as String,
+            row['wire_envelope'] as String,
+          )
+          .catchError((_) => false),
+    );
+    if (storeInAckCustodyInboxDetailed == null ||
+        directTextCustodyRepo == null) {
+      continue;
+    }
+    final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+      entry: DirectInboxCustodyOutboxEntry.fromMap(row),
+      custodyRepository: directTextCustodyRepo,
+      storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          storeInMediaExpiryBoundedInboxDetailed,
+    );
+    if (attempt.completed) completedRows++;
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'DIRECT_MEDIA_FANOUT_AUTHORED',
+    details: <String, Object?>{
+      'id': shortenMessageId(resolvedMessageId),
+      'targets': staged.custodyRows.length,
+      'completed': completedRows,
+      'replayedSurvivors':
+          staged.outcome == OutgoingOrdinaryMutationOutcome.idempotent,
+    },
+  );
+  recordMetrics(transport: 'inbox', rung: 'inbox');
+  emitSendTiming(outcome: 'success', details: const {});
+  return (
+    SendChatMessageResult.success,
+    staged.message ?? await messageRepo.getMessage(resolvedMessageId),
   );
 }

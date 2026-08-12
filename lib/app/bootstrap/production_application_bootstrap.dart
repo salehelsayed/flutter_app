@@ -2081,11 +2081,60 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             preparedAttachmentRow: preparedAttachmentRow,
             custodyRow: custodyRow,
           ),
-      dbLoadDirectMediaBlobCustodyForAttachment: ({required attachmentId}) =>
-          dbLoadDirectMediaBlobCustodyForAttachment(
+      dbReadDirectContactFanoutSnapshotForMedia:
+          ({required contactAccountPeerId}) =>
+              dbReadDirectContactFanoutSnapshot(
+                db,
+                contactAccountPeerId: contactAccountPeerId,
+              ),
+      dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRows,
+            required preparedAttachmentRows,
+            required custodyRows,
+            required contactAccountPeerId,
+            required expectedSnapshot,
+          }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
             db,
-            attachmentId: attachmentId,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRows: expectedAttachmentRows,
+            preparedAttachmentRows: preparedAttachmentRows,
+            custodyRows: custodyRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: expectedSnapshot,
           ),
+      dbStageOutgoingDirectMediaFanoutInboxCustody:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required attachmentRows,
+            required contactAccountPeerId,
+            required expectedSnapshot,
+            required targetBindings,
+          }) => dbStageOutgoingDirectMediaFanoutInboxCustody(
+            db,
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            attachmentRows: attachmentRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: expectedSnapshot,
+            targetBindings: targetBindings,
+          ),
+      dbLoadDirectMediaBlobCustodyRowsForAttachment:
+          ({required attachmentId}) =>
+              dbLoadDirectMediaBlobCustodyRowsForAttachment(
+                db,
+                attachmentId: attachmentId,
+              ),
+      dbLoadDirectMediaBlobCustodyForTarget:
+          ({required attachmentId, required direction, recipientPeerId}) =>
+              dbLoadDirectMediaBlobCustodyForTarget(
+                db,
+                attachmentId: attachmentId,
+                direction: direction,
+                recipientPeerId: recipientPeerId,
+              ),
       dbLoadDirectMediaBlobCustodyForMessage: ({required messageId}) =>
           dbLoadDirectMediaBlobCustodyForMessage(db, messageId: messageId),
       dbLoadDirectMediaBlobCustodyByStates:
@@ -2117,22 +2166,26 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required messageRow,
             required attachmentRows,
             required custodyRows,
+            authenticatedTransportPeerId,
           }) => dbStageIncomingDirectMediaBlobCustody(
             db,
             messageRow: messageRow,
             attachmentRows: attachmentRows,
             custodyRows: custodyRows,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
           ),
       dbStageIncomingDirectPrivateMediaBlobCustody:
           ({
             required messageRow,
             required attachmentRow,
             required custodyRow,
+            authenticatedTransportPeerId,
           }) => dbStageIncomingDirectPrivateMediaBlobCustody(
             db,
             messageRow: messageRow,
             attachmentRow: attachmentRow,
             custodyRow: custodyRow,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
           ),
       dbCommitIncomingDirectMediaBlobLocalPath:
           ({

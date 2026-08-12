@@ -1,7 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 
+import '../../features/conversation/domain/repositories/fake_media_attachment_repository.dart';
 import '../../shared/fakes/in_memory_message_repository.dart';
 import '../bridge/fake_bridge.dart';
 import '../services/fake_p2p_service.dart';
@@ -293,6 +296,77 @@ void main() {
           0,
           reason: 'the linked pause is local-DB-only',
         );
+      },
+    );
+
+    test(
+      'TC-362-04a linked pause keeps every generic media pause owner zero',
+      () async {
+        final messageRepo = InMemoryMessageRepository();
+        await messageRepo.saveMessage(makeSendingMessage(id: 'linked-p-362'));
+        final p2pService = FakeP2PService();
+        addTearDown(p2pService.dispose);
+        final bridge = FakeBridge();
+        // A generic (full) pause would consult the media repository for the
+        // pending-upload sweep; the restricted linked call shape omits the
+        // media/group repositories entirely, so every generic media pause
+        // owner must stay at zero while the local sweep still runs.
+        final mediaRepo = FakeMediaAttachmentRepository()
+          ..seed(<MediaAttachment>[
+            MediaAttachment(
+              id: 'linked-p-362-att',
+              messageId: 'linked-p-362',
+              mime: 'image/jpeg',
+              size: 2048,
+              mediaType: 'image',
+              localPath: 'pending_uploads/linked-p-362/linked-p-362-att.jpg',
+              downloadStatus: 'upload_pending',
+              createdAt: '2026-08-12T09:00:00.000Z',
+              ownerLane: MediaOwnerLane.direct,
+            ),
+          ]);
+
+        // The exact argument shape the application root uses for the
+        // restricted linked role (_onPaused linked branch): no
+        // mediaAttachmentRepo, no groupMsgRepo, flush parked.
+        final result = await handleAppPaused(
+          messageRepo: messageRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          enablePauseFlush: false,
+        );
+
+        expect(result.transitionedCount, 1);
+        expect(
+          result.groupTransitionedCount,
+          0,
+          reason: 'the group pause owner has no seat in the linked call shape',
+        );
+        expect(result.flushDepositedCount, 0);
+        expect(
+          (await messageRepo.getMessagesForContact('peer-a')).single.status,
+          'failed',
+          reason: 'the local-only sweep itself still runs',
+        );
+        expect(
+          mediaRepo.getAttachmentsForMessageCallCount,
+          0,
+          reason: 'no media pause owner may consult attachments',
+        );
+        final untouched = await mediaRepo.getAttachmentsForMessage(
+          'linked-p-362',
+          owner: MediaOwnerLane.direct,
+        );
+        expect(
+          untouched.single.downloadStatus,
+          'upload_pending',
+          reason:
+              'the pending upload is byte-untouched — the generic '
+              'pending-upload sweep never ran on the linked pause',
+        );
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(bridge.sendCallCount, 0);
       },
     );
   });

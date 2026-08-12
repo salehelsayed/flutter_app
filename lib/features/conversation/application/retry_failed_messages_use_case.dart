@@ -6,6 +6,8 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
+    show DirectMediaBlobCustodyRow;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_private_media_transfer_registry.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
@@ -541,11 +543,14 @@ Future<bool> _retryFailedMessageCandidate({
       );
       return false;
     }
-    if (fresh.directEventFanoutGenerationId != null) {
+    if (fresh.directEventFanoutGenerationId != null &&
+        fresh.directMediaCustodyIntentId == null) {
       // 361: zero surviving siblings with a nonnull generation marker is a
       // terminal no-remint fact. Re-encrypting or re-sending here would
       // manufacture a single logical-account target the fanout batch never
-      // authorized.
+      // authorized. (362: a marker WITH a live v110 intent is a pre-v108
+      // linked MEDIA generation — its persisted v114 rows are validated as
+      // the exclusive retry authority below.)
       emitFlowEvent(
         layer: 'FL',
         event: 'RETRY_FAILED_SKIPPED_FANOUT_GENERATION',
@@ -574,12 +579,14 @@ Future<bool> _retryFailedMessageCandidate({
     // rotate keys, encrypt an event, or fall through to generic storage.
     final directMediaIntent = msg.directMediaCustodyIntentId;
     _RetryAttachmentResolution? strictBlobResolution;
+    DirectLinkedMediaFanoutContext? linkedMediaFanout;
     if (directMediaIntent != null) {
       if (mediaAttachmentRepo == null) return false;
       try {
         final currentAttachments = await mediaAttachmentRepo
             .getAttachmentsForMessage(msg.id, owner: MediaOwnerLane.direct);
         DirectMediaBlobCustodyRepository? blobRepository;
+        var blobCustodyRows = const <DirectMediaBlobCustodyRow>[];
         var hasDirectMediaBlobGeneration = false;
         if (kDirectMediaBlobCustodyClientEnabled &&
             mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
@@ -587,11 +594,24 @@ Future<bool> _retryFailedMessageCandidate({
               mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
           if (candidateRepository.supportsDirectMediaBlobCustody) {
             blobRepository = candidateRepository;
-            hasDirectMediaBlobGeneration =
-                (await candidateRepository.loadDirectMediaBlobCustodyForMessage(
-                  msg.id,
-                )).isNotEmpty;
+            blobCustodyRows = await candidateRepository
+                .loadDirectMediaBlobCustodyForMessage(msg.id);
+            hasDirectMediaBlobGeneration = blobCustodyRows.isNotEmpty;
           }
+        }
+        // 362: a fanout-marked media parent is owned by its persisted linked
+        // rows. Marker without linked rows (terminal, unlinked contradiction,
+        // or unreadable authority) skips — never the single-target lanes.
+        final hasLinkedFanoutRows = blobCustodyRows.any(
+          (row) => row.isLinkedFanoutRow,
+        );
+        if (msg.directEventFanoutGenerationId != null && !hasLinkedFanoutRows) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_FAILED_SKIPPED_FANOUT_GENERATION',
+            details: {'id': _messageIdPreview(msg.id)},
+          );
+          return false;
         }
         if (!_isExactDirectMediaCustodyProjectionBeforeFailedRetry(
           message: msg,
@@ -611,19 +631,64 @@ Future<bool> _retryFailedMessageCandidate({
                     directMediaBlobArtifactStore ??
                     DirectMediaBlobArtifactStore(),
               );
-          final strictResult = await coordinator.reopenAndUpload(
-            bridge: bridge,
-            identityPeerId: identity.peerId,
-            recipientPeerId: msg.contactPeerId,
-            expectedParent: msg,
-            expectedAttachments: currentAttachments,
-          );
-          if (!strictResult.isComplete) return false;
-          strictBlobResolution = _RetryAttachmentResolution(
-            attachments: strictResult.attachments,
-            skipReason: _RetryFailedMessageSkipReason.none,
-            didUpload: true,
-          );
+          if (hasLinkedFanoutRows) {
+            // 362: survivors are retry authority — replay the exact
+            // persisted per-target uploads without a roster read, then let
+            // the send below author the atomic per-target v108 batch against
+            // the live snapshot.
+            final fanoutRepository =
+                mediaAttachmentRepo
+                    is OutgoingDirectLinkedMediaBlobFanoutRepository
+                ? mediaAttachmentRepo
+                      as OutgoingDirectLinkedMediaBlobFanoutRepository
+                : null;
+            final rowContactAccountPeerId = blobCustodyRows
+                .firstWhere((row) => row.isLinkedFanoutRow)
+                .contactAccountPeerId;
+            if (fanoutRepository == null ||
+                !fanoutRepository.supportsDirectLinkedMediaBlobFanout ||
+                rowContactAccountPeerId == null ||
+                rowContactAccountPeerId != msg.contactPeerId) {
+              return false;
+            }
+            final strictResult = await coordinator
+                .retryPersistedFanoutGeneration(
+                  bridge: bridge,
+                  identityPeerId: identity.peerId,
+                  expectedParent: msg,
+                  expectedAttachments: currentAttachments,
+                );
+            if (!strictResult.isComplete) return false;
+            final snapshot = await fanoutRepository
+                .readDirectContactFanoutSnapshotForMedia(
+                  rowContactAccountPeerId,
+                );
+            if (snapshot == null || snapshot.targets.isEmpty) return false;
+            linkedMediaFanout = DirectLinkedMediaFanoutContext(
+              contactAccountPeerId: rowContactAccountPeerId,
+              snapshot: snapshot,
+              targetRows: strictResult.targetRows,
+            );
+            strictBlobResolution = _RetryAttachmentResolution(
+              attachments: strictResult.attachments,
+              skipReason: _RetryFailedMessageSkipReason.none,
+              didUpload: true,
+            );
+          } else {
+            final strictResult = await coordinator.reopenAndUpload(
+              bridge: bridge,
+              identityPeerId: identity.peerId,
+              recipientPeerId: msg.contactPeerId,
+              expectedParent: msg,
+              expectedAttachments: currentAttachments,
+            );
+            if (!strictResult.isComplete) return false;
+            strictBlobResolution = _RetryAttachmentResolution(
+              attachments: strictResult.attachments,
+              skipReason: _RetryFailedMessageSkipReason.none,
+              didUpload: true,
+            );
+          }
         }
       } catch (_) {
         return false;
@@ -950,6 +1015,7 @@ Future<bool> _retryFailedMessageCandidate({
       privateMediaPolicy: msg.privateMediaPolicy,
       mediaAttachmentRepo: mediaAttachmentRepo,
       emitTimingEvent: false,
+      directLinkedMediaFanout: linkedMediaFanout,
     );
 
     if (result == SendChatMessageResult.success) {

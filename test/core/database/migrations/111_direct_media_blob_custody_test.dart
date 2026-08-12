@@ -72,8 +72,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 113);
-      expect(await _userVersion(db), 113);
+      expect(currentIdentityDatabaseVersion, 114);
+      expect(await _userVersion(db), 114);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -124,7 +124,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 113);
+      expect(await _userVersion(db), 114);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,
@@ -154,7 +154,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 113);
+      expect(await _userVersion(db), 114);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,
@@ -167,6 +167,8 @@ Future<void> _expectExactSchema(Database db) async {
   final columns = await db.rawQuery(
     'PRAGMA table_info(direct_media_blob_custody)',
   );
+  // 362: the v114 rebuild appends the two nullable linked columns after
+  // recipient_peer_id; everything else keeps its v111 declaration order.
   expect(columns.map((column) => column['name']), const <String>[
     'attachment_id',
     'message_id',
@@ -174,6 +176,8 @@ Future<void> _expectExactSchema(Database db) async {
     'state',
     'inbox_custody_incarnation_id',
     'recipient_peer_id',
+    'contact_account_peer_id',
+    'recipient_ml_kem_public_key',
     'ciphertext_relative_path',
     'custody_kind',
     'custody_contract',
@@ -443,11 +447,11 @@ Future<void> _expectTypedExactStateHelpers(Database db) async {
     isTrue,
   );
   expect(
-    await dbLoadDirectMediaBlobCustodyForAttachment(
+    await dbLoadDirectMediaBlobCustodyRowsForAttachment(
       db,
       attachmentId: cleanup.attachmentId,
     ),
-    isNull,
+    isEmpty,
   );
 
   final incoming = DirectMediaBlobCustodyRow.fromMap(

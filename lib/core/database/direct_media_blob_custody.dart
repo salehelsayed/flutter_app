@@ -65,12 +65,20 @@ enum DirectMediaBlobCustodyState {
       );
 }
 
-/// One independent v111 authority row for an exact encrypted media blob.
+/// One independent v111/v114 authority row for an exact encrypted media blob.
 ///
 /// The model mirrors the migration's cross-field constraints. Construction and
 /// row parsing fail closed so application owners cannot accidentally publish a
 /// half-proof, mix outgoing and incoming state, or assign an ACK source before
 /// the local commit that moves a row to [DirectMediaBlobCustodyState.incomingAckPending].
+///
+/// Since DB v114 the natural exact row identity is `(attachmentId, direction,
+/// recipientPeerId)` — one canonical attachment may own one outgoing row per
+/// physical target plus at most one incoming row. A LINKED row additionally
+/// carries the logical [contactAccountPeerId]; an outgoing linked row must
+/// also persist the exact [recipientMlKemPublicKey] its target envelope will
+/// be encrypted with. Historical/single-target rows keep both columns null
+/// and gain no inferred fanout authority.
 class DirectMediaBlobCustodyRow {
   factory DirectMediaBlobCustodyRow({
     required String attachmentId,
@@ -79,6 +87,8 @@ class DirectMediaBlobCustodyRow {
     required DirectMediaBlobCustodyState state,
     required String? inboxCustodyIncarnationId,
     required String? recipientPeerId,
+    String? contactAccountPeerId,
+    String? recipientMlKemPublicKey,
     required String? ciphertextRelativePath,
     String custodyKind = kDirectMediaBlobCustodyKind,
     String custodyContract = kDirectMediaBlobCustodyContract,
@@ -100,6 +110,8 @@ class DirectMediaBlobCustodyRow {
       state: state,
       inboxCustodyIncarnationId: inboxCustodyIncarnationId,
       recipientPeerId: recipientPeerId,
+      contactAccountPeerId: contactAccountPeerId,
+      recipientMlKemPublicKey: recipientMlKemPublicKey,
       ciphertextRelativePath: ciphertextRelativePath,
       custodyKind: custodyKind,
       custodyContract: custodyContract,
@@ -126,6 +138,8 @@ class DirectMediaBlobCustodyRow {
     required this.state,
     required this.inboxCustodyIncarnationId,
     required this.recipientPeerId,
+    required this.contactAccountPeerId,
+    required this.recipientMlKemPublicKey,
     required this.ciphertextRelativePath,
     required this.custodyKind,
     required this.custodyContract,
@@ -153,6 +167,8 @@ class DirectMediaBlobCustodyRow {
         inboxCustodyIncarnationId:
             map['inbox_custody_incarnation_id'] as String?,
         recipientPeerId: map['recipient_peer_id'] as String?,
+        contactAccountPeerId: map['contact_account_peer_id'] as String?,
+        recipientMlKemPublicKey: map['recipient_ml_kem_public_key'] as String?,
         ciphertextRelativePath: map['ciphertext_relative_path'] as String?,
         custodyKind: map['custody_kind'] as String,
         custodyContract: map['custody_contract'] as String,
@@ -178,6 +194,8 @@ class DirectMediaBlobCustodyRow {
   final DirectMediaBlobCustodyState state;
   final String? inboxCustodyIncarnationId;
   final String? recipientPeerId;
+  final String? contactAccountPeerId;
+  final String? recipientMlKemPublicKey;
   final String? ciphertextRelativePath;
   final String custodyKind;
   final String custodyContract;
@@ -192,6 +210,9 @@ class DirectMediaBlobCustodyRow {
   final String createdAt;
   final String updatedAt;
 
+  /// True only for a row authored by the Plan-362 linked fanout adopter.
+  bool get isLinkedFanoutRow => contactAccountPeerId != null;
+
   Map<String, Object?> toMap() => <String, Object?>{
     'attachment_id': attachmentId,
     'message_id': messageId,
@@ -199,6 +220,8 @@ class DirectMediaBlobCustodyRow {
     'state': state.dbValue,
     'inbox_custody_incarnation_id': inboxCustodyIncarnationId,
     'recipient_peer_id': recipientPeerId,
+    'contact_account_peer_id': contactAccountPeerId,
+    'recipient_ml_kem_public_key': recipientMlKemPublicKey,
     'ciphertext_relative_path': ciphertextRelativePath,
     'custody_kind': custodyKind,
     'custody_contract': custodyContract,
@@ -243,6 +266,12 @@ class DirectMediaBlobCustodyRow {
         _isBlankNullable(nextAttemptAt)) {
       return 'optional relay and retry timestamps must be non-blank';
     }
+    if (_isBlankNullable(contactAccountPeerId) ||
+        contactAccountPeerId != contactAccountPeerId?.trim() ||
+        _isBlankNullable(recipientMlKemPublicKey) ||
+        recipientMlKemPublicKey != recipientMlKemPublicKey?.trim()) {
+      return 'linked fanout columns must be null or non-blank trimmed';
+    }
 
     if (direction == DirectMediaBlobCustodyDirection.outgoing) {
       if (_isBlank(recipientPeerId) ||
@@ -252,10 +281,24 @@ class DirectMediaBlobCustodyRow {
           nextAttemptAt != null) {
         return 'invalid outgoing-only fields';
       }
-    } else if (recipientPeerId != null ||
-        ciphertextRelativePath != null ||
-        inboxCustodyIncarnationId != null) {
-      return 'incoming rows cannot own outgoing-only fields';
+      // v114 linked shape: a LINKED outgoing row persists the logical contact
+      // AND the exact target ML-KEM key together; a historical/single-target
+      // row carries neither and gains no inferred fanout authority.
+      if ((contactAccountPeerId == null) != (recipientMlKemPublicKey == null)) {
+        return 'outgoing linked rows require logical contact and target key '
+            'together';
+      }
+    } else {
+      if (recipientPeerId != null ||
+          ciphertextRelativePath != null ||
+          inboxCustodyIncarnationId != null) {
+        return 'incoming rows cannot own outgoing-only fields';
+      }
+      // Linked incoming keeps the physical transport out of the row: only the
+      // logical contact marker is durable and no recipient key is persisted.
+      if (recipientMlKemPublicKey != null) {
+        return 'incoming rows cannot persist a recipient ML-KEM key';
+      }
     }
 
     switch (state) {
@@ -385,6 +428,8 @@ class DirectMediaBlobCustodyRow {
         ? this.inboxCustodyIncarnationId
         : inboxCustodyIncarnationId as String?,
     recipientPeerId: recipientPeerId,
+    contactAccountPeerId: contactAccountPeerId,
+    recipientMlKemPublicKey: recipientMlKemPublicKey,
     ciphertextRelativePath: ciphertextRelativePath,
     custodyKind: custodyKind,
     custodyContract: custodyContract,
@@ -413,6 +458,8 @@ class DirectMediaBlobCustodyRow {
       messageId == other.messageId &&
       direction == other.direction &&
       recipientPeerId == other.recipientPeerId &&
+      contactAccountPeerId == other.contactAccountPeerId &&
+      recipientMlKemPublicKey == other.recipientMlKemPublicKey &&
       ciphertextRelativePath == other.ciphertextRelativePath &&
       custodyKind == other.custodyKind &&
       custodyContract == other.custodyContract &&

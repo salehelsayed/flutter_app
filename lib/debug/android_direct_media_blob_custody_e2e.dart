@@ -981,7 +981,7 @@ Future<Map<String, Object?>> _reopenReceiver({
     throw StateError('receiver durable bytes did not survive process restart');
   }
   final plaintextSha256 = await directMediaBlobCustodyE2EFileSha256(file);
-  if (await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
+  if (await custodyRepository.loadIncomingDirectMediaBlobCustodyForAttachment(
         request.attachmentId,
       ) !=
       null) {
@@ -1011,9 +1011,8 @@ _loadReceiverAuthorityEvidence({
     request.messageId,
     owner: MediaOwnerLane.direct,
   );
-  final row = await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
-    request.attachmentId,
-  );
+  final row = await custodyRepository
+      .loadIncomingDirectMediaBlobCustodyForAttachment(request.attachmentId);
   return verifyAndroidDirectMediaBlobCustodyReceiverAuthority(
     request: request,
     authoritativeParent: parent,
@@ -1078,9 +1077,24 @@ final class _PauseAfterStoredRepository
   );
 
   @override
-  Future<DirectMediaBlobCustodyRow?> loadDirectMediaBlobCustodyForAttachment(
-    String attachmentId,
-  ) => delegate.loadDirectMediaBlobCustodyForAttachment(attachmentId);
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadDirectMediaBlobCustodyRowsForAttachment(String attachmentId) =>
+      delegate.loadDirectMediaBlobCustodyRowsForAttachment(attachmentId);
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadIncomingDirectMediaBlobCustodyForAttachment(String attachmentId) =>
+      delegate.loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
+
+  @override
+  Future<DirectMediaBlobCustodyRow?>
+  loadOutgoingDirectMediaBlobCustodyForTarget({
+    required String attachmentId,
+    required String recipientPeerId,
+  }) => delegate.loadOutgoingDirectMediaBlobCustodyForTarget(
+    attachmentId: attachmentId,
+    recipientPeerId: recipientPeerId,
+  );
 
   @override
   Future<List<DirectMediaBlobCustodyRow>> loadDirectMediaBlobCustodyForMessage(

@@ -96,19 +96,38 @@ type mediaCustodyPrepareResult struct {
 	storeStatus string
 }
 
+// directMediaBlobCustodyKey is the internal comparable identity of one
+// protected custody row: the exact (recipient, attachment id) target. Disk
+// layout has always been recipient-scoped; since Plan 362 the in-memory maps
+// share that identity so sibling recipients of one canonical blob ID own
+// independent reservation, publication, blocked and ACK-cleanup state. The
+// wire grammar, actions and marker schema are unchanged.
+type directMediaBlobCustodyKey struct {
+	recipient string
+	id        string
+}
+
+func custodyKeyOf(to, id string) directMediaBlobCustodyKey {
+	return directMediaBlobCustodyKey{recipient: to, id: id}
+}
+
+func (m *directMediaBlobCustodyMeta) custodyKey() directMediaBlobCustodyKey {
+	return directMediaBlobCustodyKey{recipient: m.To, id: m.ID}
+}
+
 type directMediaBlobCustodyStore struct {
 	mu sync.Mutex
 
 	owner        *MediaStore
 	rootDir      string
-	entries      map[string]*directMediaBlobCustodyMeta
-	reservations map[string]*mediaCustodyReservation
-	blocked      map[string]*directMediaBlobCustodyMeta
+	entries      map[directMediaBlobCustodyKey]*directMediaBlobCustodyMeta
+	reservations map[directMediaBlobCustodyKey]*mediaCustodyReservation
+	blocked      map[directMediaBlobCustodyKey]*directMediaBlobCustodyMeta
 	// ackCleanupPending keeps ACKed authority suppressed while a tombstone or
 	// blob-unlink directory barrier is indeterminate. Its bytes remain charged
 	// conservatively until a later access/sweep establishes a durable tombstone
 	// with no blob.
-	ackCleanupPending map[string]bool
+	ackCleanupPending map[directMediaBlobCustodyKey]bool
 	maxCount          int
 	maxBytes          int64
 	maxBlobSize       int64
@@ -153,10 +172,10 @@ func newDirectMediaBlobCustodyStoreWithConfig(
 	cs := &directMediaBlobCustodyStore{
 		owner:             owner,
 		rootDir:           rootDir,
-		entries:           make(map[string]*directMediaBlobCustodyMeta),
-		reservations:      make(map[string]*mediaCustodyReservation),
-		blocked:           make(map[string]*directMediaBlobCustodyMeta),
-		ackCleanupPending: make(map[string]bool),
+		entries:           make(map[directMediaBlobCustodyKey]*directMediaBlobCustodyMeta),
+		reservations:      make(map[directMediaBlobCustodyKey]*mediaCustodyReservation),
+		blocked:           make(map[directMediaBlobCustodyKey]*directMediaBlobCustodyMeta),
+		ackCleanupPending: make(map[directMediaBlobCustodyKey]bool),
 		maxCount:          maxMediaPerPeer,
 		maxBytes:          maxMediaBytesPerPeer,
 		maxBlobSize:       maxMediaSize,
@@ -414,8 +433,11 @@ func (cs *directMediaBlobCustodyStore) reconcile() error {
 		if err := cs.validateMarkerLocation(meta, pair.marker); err != nil {
 			return err
 		}
-		if _, exists := cs.entries[meta.ID]; exists {
-			return fmt.Errorf("duplicate protected media custody id %q", meta.ID)
+		if _, exists := cs.entries[meta.custodyKey()]; exists {
+			return fmt.Errorf(
+				"duplicate protected media custody row %q for recipient %q",
+				meta.ID, meta.To,
+			)
 		}
 		cs.owner.mu.RLock()
 		legacyCollision := cs.owner.index[meta.ID] != nil
@@ -440,7 +462,7 @@ func (cs *directMediaBlobCustodyStore) reconcile() error {
 				recordMediaCustodyOutcome(mediaCustodyMetricExpired)
 				continue
 			}
-			cs.entries[meta.ID] = meta
+			cs.entries[meta.custodyKey()] = meta
 		case mediaCustodyStateAcked:
 			if pair.blob != "" {
 				if err := cs.remove(pair.blob); err != nil && !os.IsNotExist(err) {
@@ -460,7 +482,7 @@ func (cs *directMediaBlobCustodyStore) reconcile() error {
 				recordMediaCustodyOutcome(mediaCustodyMetricExpired)
 				continue
 			}
-			cs.entries[meta.ID] = meta
+			cs.entries[meta.custodyKey()] = meta
 		default:
 			return fmt.Errorf("invalid media custody state %q", meta.State)
 		}
@@ -564,14 +586,14 @@ func (cs *directMediaBlobCustodyStore) refreshGaugesLocked() {
 	var pending int
 	var pendingBytes int64
 	var tombstones int
-	for id, meta := range cs.entries {
+	for key, meta := range cs.entries {
 		switch meta.State {
 		case mediaCustodyStatePending:
 			pending++
 			pendingBytes += meta.Size
 		case mediaCustodyStateAcked:
 			tombstones++
-			if cs.ackCleanupPending[id] {
+			if cs.ackCleanupPending[key] {
 				pending++
 				pendingBytes += meta.Size
 			}
@@ -590,15 +612,27 @@ func (cs *directMediaBlobCustodyStore) refreshGaugesLocked() {
 	setMediaCustodyStateGauges(pending, pendingBytes, tombstones)
 }
 
+// protectedIDLocked answers the GLOBAL legacy/protected ID fence: the bare
+// blob ID is owned by the protected lane while ANY recipient holds an entry,
+// reservation or blocked row for it. A bounded scan of the composite keys is
+// sufficient at the store's per-peer scale; no second index is kept.
 func (cs *directMediaBlobCustodyStore) protectedIDLocked(id string) bool {
-	if _, ok := cs.entries[id]; ok {
-		return true
+	for key := range cs.entries {
+		if key.id == id {
+			return true
+		}
 	}
-	if _, ok := cs.reservations[id]; ok {
-		return true
+	for key := range cs.reservations {
+		if key.id == id {
+			return true
+		}
 	}
-	_, ok := cs.blocked[id]
-	return ok
+	for key := range cs.blocked {
+		if key.id == id {
+			return true
+		}
+	}
+	return false
 }
 
 func (ms *MediaStore) hasProtectedMediaID(id string) bool {
@@ -648,28 +682,29 @@ func (cs *directMediaBlobCustodyStore) prepareUpload(req *mediaRequest) (*mediaC
 	}
 
 	for {
+		key := custodyKeyOf(req.To, req.ID)
 		cs.owner.laneMu.Lock()
 		cs.mu.Lock()
-		if reservation := cs.reservations[req.ID]; reservation != nil {
+		if reservation := cs.reservations[key]; reservation != nil {
 			done := reservation.done
 			cs.mu.Unlock()
 			cs.owner.laneMu.Unlock()
 			<-done
 			continue
 		}
-		if blocked := cs.blocked[req.ID]; blocked != nil {
+		if blocked := cs.blocked[key]; blocked != nil {
 			if failure := cs.retryBlockedLocked(blocked); failure != nil {
 				cs.mu.Unlock()
 				cs.owner.laneMu.Unlock()
 				return nil, failure
 			}
 		}
-		if failure := cs.normalizeExpiredIDLocked(req.ID); failure != nil {
+		if failure := cs.normalizeExpiredKeyLocked(key); failure != nil {
 			cs.mu.Unlock()
 			cs.owner.laneMu.Unlock()
 			return nil, failure
 		}
-		if existing := cs.entries[req.ID]; existing != nil {
+		if existing := cs.entries[key]; existing != nil {
 			if !existing.matchesIdentity(req) {
 				recordMediaCustodyOutcome(mediaCustodyMetricIdentityConflict)
 				cs.mu.Unlock()
@@ -765,7 +800,7 @@ func (cs *directMediaBlobCustodyStore) prepareUpload(req *mediaRequest) (*mediaC
 			ExpiresAtMs: 0,
 		}
 		reservation := &mediaCustodyReservation{meta: meta, done: make(chan struct{})}
-		cs.reservations[req.ID] = reservation
+		cs.reservations[key] = reservation
 		cs.mu.Unlock()
 		cs.owner.laneMu.Unlock()
 
@@ -795,12 +830,12 @@ func (cs *directMediaBlobCustodyStore) prepareUpload(req *mediaRequest) (*mediaC
 func (cs *directMediaBlobCustodyStore) hasCapacityLocked(to string, size int64) bool {
 	count := 0
 	var bytes int64
-	for id, meta := range cs.entries {
+	for key, meta := range cs.entries {
 		if meta.To != to {
 			continue
 		}
 		count++
-		if meta.State == mediaCustodyStatePending || cs.ackCleanupPending[id] {
+		if meta.State == mediaCustodyStatePending || cs.ackCleanupPending[key] {
 			bytes += meta.Size
 		}
 	}
@@ -825,23 +860,25 @@ func (cs *directMediaBlobCustodyStore) abortReservation(reservation *mediaCustod
 	}
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if cs.reservations[reservation.meta.ID] != reservation {
+	key := reservation.meta.custodyKey()
+	if cs.reservations[key] != reservation {
 		return
 	}
-	delete(cs.reservations, reservation.meta.ID)
+	delete(cs.reservations, key)
 	close(reservation.done)
 }
 
 func (cs *directMediaBlobCustodyStore) finishReservation(reservation *mediaCustodyReservation, publish bool) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if cs.reservations[reservation.meta.ID] != reservation {
+	key := reservation.meta.custodyKey()
+	if cs.reservations[key] != reservation {
 		return
 	}
 	if publish {
-		cs.entries[reservation.meta.ID] = cloneDirectMediaBlobCustodyMeta(reservation.meta)
+		cs.entries[key] = cloneDirectMediaBlobCustodyMeta(reservation.meta)
 	}
-	delete(cs.reservations, reservation.meta.ID)
+	delete(cs.reservations, key)
 	close(reservation.done)
 	cs.refreshGaugesLocked()
 }
@@ -954,9 +991,10 @@ func (cs *directMediaBlobCustodyStore) commitUpload(reservation *mediaCustodyRes
 func (cs *directMediaBlobCustodyStore) blockReservation(reservation *mediaCustodyReservation) {
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if cs.reservations[reservation.meta.ID] == reservation {
-		delete(cs.reservations, reservation.meta.ID)
-		cs.blocked[reservation.meta.ID] = cloneDirectMediaBlobCustodyMeta(reservation.meta)
+	key := reservation.meta.custodyKey()
+	if cs.reservations[key] == reservation {
+		delete(cs.reservations, key)
+		cs.blocked[key] = cloneDirectMediaBlobCustodyMeta(reservation.meta)
 		close(reservation.done)
 		cs.refreshGaugesLocked()
 		recordMediaCustodyOutcome(mediaCustodyMetricCleanupPending)
@@ -1037,8 +1075,8 @@ func (cs *directMediaBlobCustodyStore) retryBlockedLocked(blocked *directMediaBl
 		if syncErr := cs.syncDir(dir); syncErr != nil {
 			return cs.cleanupPendingFailure(syncErr)
 		}
-		cs.entries[committed.ID] = committed
-		delete(cs.blocked, committed.ID)
+		cs.entries[committed.custodyKey()] = committed
+		delete(cs.blocked, committed.custodyKey())
 		cs.refreshGaugesLocked()
 		return nil
 	}
@@ -1053,7 +1091,7 @@ func (cs *directMediaBlobCustodyStore) retryBlockedLocked(blocked *directMediaBl
 	if syncErr := cs.syncDir(dir); syncErr != nil {
 		return cs.cleanupPendingFailure(syncErr)
 	}
-	delete(cs.blocked, blocked.ID)
+	delete(cs.blocked, blocked.custodyKey())
 	cs.refreshGaugesLocked()
 	return nil
 }
@@ -1068,7 +1106,7 @@ func (cs *directMediaBlobCustodyStore) cleanupPendingFailure(err error) *mediaCu
 // bytes stay capacity-accounted until this method verifies that marker, removes
 // any leftover blob, and durably syncs the directory.
 func (cs *directMediaBlobCustodyStore) retryAckCleanupLocked(meta *directMediaBlobCustodyMeta) *mediaCustodyFailure {
-	if meta == nil || !cs.ackCleanupPending[meta.ID] {
+	if meta == nil || !cs.ackCleanupPending[meta.custodyKey()] {
 		return nil
 	}
 	dir, err := cs.recipientDir(meta)
@@ -1114,7 +1152,7 @@ func (cs *directMediaBlobCustodyStore) retryAckCleanupLocked(meta *directMediaBl
 	if err := cs.syncDir(dir); err != nil {
 		return cs.cleanupPendingFailure(err)
 	}
-	delete(cs.ackCleanupPending, meta.ID)
+	delete(cs.ackCleanupPending, meta.custodyKey())
 	cs.refreshGaugesLocked()
 	return nil
 }
@@ -1126,19 +1164,20 @@ func (cs *directMediaBlobCustodyStore) openDownload(req *mediaRequest, remotePee
 	if req.To != remotePeer {
 		return nil, nil, &mediaCustodyFailure{code: mediaCustodyErrorNotAuthorized}
 	}
+	key := custodyKeyOf(req.To, req.ID)
 	cs.owner.laneMu.Lock()
 	defer cs.owner.laneMu.Unlock()
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if blocked := cs.blocked[req.ID]; blocked != nil {
+	if blocked := cs.blocked[key]; blocked != nil {
 		if failure := cs.retryBlockedLocked(blocked); failure != nil {
 			return nil, nil, failure
 		}
 	}
-	if failure := cs.normalizeExpiredIDLocked(req.ID); failure != nil {
+	if failure := cs.normalizeExpiredKeyLocked(key); failure != nil {
 		return nil, nil, failure
 	}
-	meta := cs.entries[req.ID]
+	meta := cs.entries[key]
 	if meta != nil && meta.State == mediaCustodyStateAcked {
 		if failure := cs.retryAckCleanupLocked(meta); failure != nil {
 			return nil, nil, failure
@@ -1177,19 +1216,20 @@ func (cs *directMediaBlobCustodyStore) ack(req *mediaRequest, remotePeer string)
 	if req.To != remotePeer {
 		return nil, "", &mediaCustodyFailure{code: mediaCustodyErrorNotAuthorized}
 	}
+	key := custodyKeyOf(req.To, req.ID)
 	cs.owner.laneMu.Lock()
 	defer cs.owner.laneMu.Unlock()
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	if blocked := cs.blocked[req.ID]; blocked != nil {
+	if blocked := cs.blocked[key]; blocked != nil {
 		if failure := cs.retryBlockedLocked(blocked); failure != nil {
 			return nil, "", failure
 		}
 	}
-	if failure := cs.normalizeExpiredIDLocked(req.ID); failure != nil {
+	if failure := cs.normalizeExpiredKeyLocked(key); failure != nil {
 		return nil, "", failure
 	}
-	meta := cs.entries[req.ID]
+	meta := cs.entries[key]
 	if meta == nil {
 		return nil, "", &mediaCustodyFailure{code: mediaCustodyErrorNotFound}
 	}
@@ -1221,14 +1261,14 @@ func (cs *directMediaBlobCustodyStore) ack(req *mediaRequest, remotePeer string)
 			return nil, "", &mediaCustodyFailure{code: mediaCustodyErrorStorage, cause: err}
 		}
 		if err := cs.syncDir(dir); err != nil {
-			cs.entries[acked.ID] = acked
-			cs.ackCleanupPending[acked.ID] = true
+			cs.entries[acked.custodyKey()] = acked
+			cs.ackCleanupPending[acked.custodyKey()] = true
 			cs.refreshGaugesLocked()
 			recordMediaCustodyOutcome(mediaCustodyMetricCleanupPending)
 			return nil, "", &mediaCustodyFailure{code: mediaCustodyErrorCleanupPending, cause: err}
 		}
-		cs.entries[acked.ID] = acked
-		cs.ackCleanupPending[acked.ID] = true
+		cs.entries[acked.custodyKey()] = acked
+		cs.ackCleanupPending[acked.custodyKey()] = true
 		meta = acked
 		ackStatus = mediaCustodyAckAcked
 		cs.refreshGaugesLocked()
@@ -1236,7 +1276,7 @@ func (cs *directMediaBlobCustodyStore) ack(req *mediaRequest, remotePeer string)
 
 	blobPath, _ := cs.blobPath(meta)
 	dir, _ := cs.recipientDir(meta)
-	cs.ackCleanupPending[meta.ID] = true
+	cs.ackCleanupPending[meta.custodyKey()] = true
 	cs.refreshGaugesLocked()
 	if err := cs.remove(blobPath); err != nil && !os.IsNotExist(err) {
 		recordMediaCustodyOutcome(mediaCustodyMetricCleanupPending)
@@ -1246,7 +1286,7 @@ func (cs *directMediaBlobCustodyStore) ack(req *mediaRequest, remotePeer string)
 		recordMediaCustodyOutcome(mediaCustodyMetricCleanupPending)
 		return nil, "", &mediaCustodyFailure{code: mediaCustodyErrorCleanupPending, cause: err}
 	}
-	delete(cs.ackCleanupPending, meta.ID)
+	delete(cs.ackCleanupPending, meta.custodyKey())
 	cs.refreshGaugesLocked()
 	if ackStatus == mediaCustodyAckAcked {
 		recordMediaCustodyOutcome(mediaCustodyMetricAcked)
@@ -1256,8 +1296,8 @@ func (cs *directMediaBlobCustodyStore) ack(req *mediaRequest, remotePeer string)
 	return cloneDirectMediaBlobCustodyMeta(meta), ackStatus, nil
 }
 
-func (cs *directMediaBlobCustodyStore) normalizeExpiredIDLocked(id string) *mediaCustodyFailure {
-	meta := cs.entries[id]
+func (cs *directMediaBlobCustodyStore) normalizeExpiredKeyLocked(key directMediaBlobCustodyKey) *mediaCustodyFailure {
+	meta := cs.entries[key]
 	if meta == nil || cs.now().UnixMilli() < meta.ExpiresAtMs {
 		return nil
 	}
@@ -1276,8 +1316,8 @@ func (cs *directMediaBlobCustodyStore) normalizeExpiredIDLocked(id string) *medi
 		recordMediaCustodyOutcome(mediaCustodyMetricCleanupPending)
 		return &mediaCustodyFailure{code: mediaCustodyErrorCleanupPending, cause: err}
 	}
-	delete(cs.entries, id)
-	delete(cs.ackCleanupPending, id)
+	delete(cs.entries, key)
+	delete(cs.ackCleanupPending, key)
 	cs.refreshGaugesLocked()
 	recordMediaCustodyOutcome(mediaCustodyMetricExpired)
 	return nil
@@ -1287,27 +1327,27 @@ func (cs *directMediaBlobCustodyStore) normalizeExpiredPeerLocked(to string) *me
 	// A previous post-rename failure still consumes identity, count, and bytes.
 	// Resolve it before deciding that the peer is full; otherwise a recoverable
 	// ambiguous commit can strand capacity until the periodic sweep or restart.
-	blockedIDs := make([]string, 0)
-	for id, meta := range cs.blocked {
+	blockedKeys := make([]directMediaBlobCustodyKey, 0)
+	for key, meta := range cs.blocked {
 		if meta != nil && meta.To == to {
-			blockedIDs = append(blockedIDs, id)
+			blockedKeys = append(blockedKeys, key)
 		}
 	}
-	for _, id := range blockedIDs {
-		if blocked := cs.blocked[id]; blocked != nil {
+	for _, key := range blockedKeys {
+		if blocked := cs.blocked[key]; blocked != nil {
 			if failure := cs.retryBlockedLocked(blocked); failure != nil {
 				return failure
 			}
 		}
 	}
-	ackCleanupIDs := make([]string, 0)
-	for id := range cs.ackCleanupPending {
-		if meta := cs.entries[id]; meta != nil && meta.To == to {
-			ackCleanupIDs = append(ackCleanupIDs, id)
+	ackCleanupKeys := make([]directMediaBlobCustodyKey, 0)
+	for key := range cs.ackCleanupPending {
+		if meta := cs.entries[key]; meta != nil && meta.To == to {
+			ackCleanupKeys = append(ackCleanupKeys, key)
 		}
 	}
-	for _, id := range ackCleanupIDs {
-		if meta := cs.entries[id]; meta != nil {
+	for _, key := range ackCleanupKeys {
+		if meta := cs.entries[key]; meta != nil {
 			if failure := cs.retryAckCleanupLocked(meta); failure != nil {
 				return failure
 			}
@@ -1315,14 +1355,14 @@ func (cs *directMediaBlobCustodyStore) normalizeExpiredPeerLocked(to string) *me
 	}
 
 	nowMs := cs.now().UnixMilli()
-	ids := make([]string, 0)
-	for id, meta := range cs.entries {
+	keys := make([]directMediaBlobCustodyKey, 0)
+	for key, meta := range cs.entries {
 		if meta != nil && meta.To == to && nowMs >= meta.ExpiresAtMs {
-			ids = append(ids, id)
+			keys = append(keys, key)
 		}
 	}
-	for _, id := range ids {
-		if failure := cs.normalizeExpiredIDLocked(id); failure != nil {
+	for _, key := range keys {
+		if failure := cs.normalizeExpiredKeyLocked(key); failure != nil {
 			return failure
 		}
 	}
@@ -1385,30 +1425,30 @@ func (cs *directMediaBlobCustodyStore) cleanupExpired() {
 	defer cs.owner.laneMu.Unlock()
 	cs.mu.Lock()
 	defer cs.mu.Unlock()
-	blockedIDs := make([]string, 0, len(cs.blocked))
-	for id := range cs.blocked {
-		blockedIDs = append(blockedIDs, id)
+	blockedKeys := make([]directMediaBlobCustodyKey, 0, len(cs.blocked))
+	for key := range cs.blocked {
+		blockedKeys = append(blockedKeys, key)
 	}
-	for _, id := range blockedIDs {
-		if blocked := cs.blocked[id]; blocked != nil {
+	for _, key := range blockedKeys {
+		if blocked := cs.blocked[key]; blocked != nil {
 			_ = cs.retryBlockedLocked(blocked)
 		}
 	}
-	ackCleanupIDs := make([]string, 0, len(cs.ackCleanupPending))
-	for id := range cs.ackCleanupPending {
-		ackCleanupIDs = append(ackCleanupIDs, id)
+	ackCleanupKeys := make([]directMediaBlobCustodyKey, 0, len(cs.ackCleanupPending))
+	for key := range cs.ackCleanupPending {
+		ackCleanupKeys = append(ackCleanupKeys, key)
 	}
-	for _, id := range ackCleanupIDs {
-		if meta := cs.entries[id]; meta != nil {
+	for _, key := range ackCleanupKeys {
+		if meta := cs.entries[key]; meta != nil {
 			_ = cs.retryAckCleanupLocked(meta)
 		}
 	}
-	ids := make([]string, 0, len(cs.entries))
-	for id := range cs.entries {
-		ids = append(ids, id)
+	keys := make([]directMediaBlobCustodyKey, 0, len(cs.entries))
+	for key := range cs.entries {
+		keys = append(keys, key)
 	}
-	for _, id := range ids {
-		_ = cs.normalizeExpiredIDLocked(id)
+	for _, key := range keys {
+		_ = cs.normalizeExpiredKeyLocked(key)
 	}
 }
 

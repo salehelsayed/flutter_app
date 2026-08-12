@@ -188,7 +188,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       return null;
     }
     var custody = await custodyRepository
-        .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+        .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
     if (custody == null ||
         custody.messageId != attachment.messageId ||
         custody.direction != DirectMediaBlobCustodyDirection.incoming ||
@@ -315,7 +315,7 @@ final class StrictDirectMediaBlobDownloadAckOwner {
       final committed = await custodyRepository
           .runDirectMediaBlobCustodyLifecycle(() async {
             final current = await custodyRepository
-                .loadDirectMediaBlobCustodyForAttachment(attachment.id);
+                .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
             if (current == null ||
                 !current.exactDatabaseProjectionMatches(custody!)) {
               return false;
@@ -402,9 +402,8 @@ final class StrictDirectMediaBlobDownloadAckOwner {
     }
 
     if (sourceRelayPeerId != null) {
-      custody = await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
-        attachment.id,
-      );
+      custody = await custodyRepository
+          .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id);
       if (custody != null &&
           custody.state == DirectMediaBlobCustodyState.incomingAckPending) {
         await _acknowledgeReloadedPending(custody);

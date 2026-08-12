@@ -1,4 +1,6 @@
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
+    show DirectMediaBlobCustodyNaturalKey;
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -49,6 +51,7 @@ final class DirectMediaBlobCustodyDrain {
     required this.identityPeerId,
     required this.strictDownloadAckOwner,
     this.retryIncomingDownload,
+    this.countOtherArtifactReferences,
     DateTime Function()? now,
   }) : now = now ?? DateTime.now;
 
@@ -58,6 +61,20 @@ final class DirectMediaBlobCustodyDrain {
   final Future<String?> Function() identityPeerId;
   final StrictDirectMediaBlobDownloadAckOwner strictDownloadAckOwner;
   final RetryIncomingDirectMediaBlob? retryIncomingDownload;
+
+  /// 362 (v114): counts sibling rows still referencing the exact shared
+  /// `(path, contentHash, ciphertextSize)` artifact, excluding one natural
+  /// row. When injected, cleanup unlinks the file only with the LAST
+  /// reference while still retiring each exact row; when absent, incumbent
+  /// single-target behavior (always unlink first) is preserved.
+  final Future<int> Function({
+    required String ciphertextRelativePath,
+    required String contentHash,
+    required int ciphertextSize,
+    required DirectMediaBlobCustodyNaturalKey excluding,
+  })?
+  countOtherArtifactReferences;
+
   final DateTime Function() now;
 
   /// Local-only cleanup runs before account-migration network gating.
@@ -144,7 +161,23 @@ final class DirectMediaBlobCustodyDrain {
         final removed = await repository.runDirectMediaBlobCustodyLifecycle(
           () async {
             final path = row.ciphertextRelativePath;
-            if (path == null ||
+            if (path == null) return false;
+            // v114: sibling target rows may share this exact artifact. Skip
+            // the file unlink while another reference survives — the exact
+            // row still retires and the LAST sibling unlinks the file.
+            final countOthers = countOtherArtifactReferences;
+            var unlinkArtifact = true;
+            if (countOthers != null) {
+              unlinkArtifact =
+                  await countOthers(
+                    ciphertextRelativePath: path,
+                    contentHash: row.contentHash,
+                    ciphertextSize: row.ciphertextSize,
+                    excluding: DirectMediaBlobCustodyNaturalKey.ofRow(row),
+                  ) ==
+                  0;
+            }
+            if (unlinkArtifact &&
                 !await artifactStore.deleteOwnedArtifact(
                   identityPeerId: identity,
                   relativePath: path,

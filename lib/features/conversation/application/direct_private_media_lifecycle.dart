@@ -933,9 +933,8 @@ class DirectPrivateMediaLifecycle
       final incomingCustody =
           custodyRepository != null &&
               custodyRepository.supportsDirectMediaBlobCustody
-          ? await custodyRepository.loadDirectMediaBlobCustodyForAttachment(
-              attachment.id,
-            )
+          ? await custodyRepository
+                .loadIncomingDirectMediaBlobCustodyForAttachment(attachment.id)
           : null;
       await _deleteExactAppOwnedArtifacts(
         messageId: current.messageId,
