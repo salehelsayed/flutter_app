@@ -1,8 +1,8 @@
 # 362 - GAP-N01 Direct Linked-Device Media, Voice, And Blob Fanout
 
-Status: PREREQUISITE_BLOCKED / CONTRACT_READY / independently reviewed / default-off authoring / not release-eligible
+Status: EXECUTION_READY / independently reviewed and revalidated / default-off authoring / not release-eligible
 Type: Modification
-Planning baseline: `<PLAN_361_POST_EXECUTION_AUDIT_SHA>` (replace only after Plan 361 is fully implemented, committed, post-execution audited, Graphify-refreshed, and revalidated)
+Planning baseline: `c78c465a027da7ff8586712ce0c9e6f7162f3ab8` (clean Plan-361 post-execution audit-hygiene closure; implementation `be897336d60f94c742fa04cb9933d90886489265`, receipt closure `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; immediate consumer of Plan 361's linked-device blob-free event fanout
 Classification: DB-v114 direct one-to-one media/voice/blob fanout adopter plus a bounded relay internal-key repair; no group/announcement, activation, release, or GAP-N01 closure claim
 Closure tier: focused concurrent host behavior, v114 migration and Move preservation, two exact Go relay tests, one existing Android SQLCipher proof, one aggregate physical-Android + Android-emulator event/blob scenario, and the single delegated Plan-360-to-362 dependency-wave `host-all`
@@ -18,12 +18,14 @@ Closure tier: focused concurrent host behavior, v114 migration and Move preserva
 | 2026-08-11 | Test / gate review | Existing TC-345/347/348/350/351/353/354/358/359 sentinels; migration/SQLCipher/Move owners; Android pair runner; relay shell contracts; project wave cadence | One new host test path, six compact behavioral rows, four mutations, two exact Go tests, one SQLCipher leg and one aggregate Android pair are sufficient. Plan 361 deliberately delegated the wave device composition and one full `host-all` here. | Run independent multi-file Flutter tests concurrently at `--concurrency=4` whenever supported; serialize only worktree mutations, script-owned `1to1`, SQLCipher and shared-device scenarios. |
 | 2026-08-11 | Independent TDD review | Storage counterexamples, relay cross-recipient restart, fingerprint ambiguity, retry/remint, shared-file unlink, Move duplication, mixed-version/runtime paths and literal commands | Plan 361's selector is expressly blob-free and the existing media-custody flag may already govern single-target cohorts; shipping the new adopter behind only their intersection could activate linked media on upgrade. One separate default-off linked-media authoring selector is necessary, while a second ledger, accepted state, target-set hash, per-target media encryption, linked LAN path, modality matrix and extra device campaign are not. | `PREREQUISITE_BLOCKED / CONTRACT_READY`; retain the one narrow new selector and only the bounded production/proof surface below. |
 | 2026-08-11 | Final formal re-review | Natural v111 row identity, linked incoming discriminator, P/VO null-lineage controls, unbound whole-generation terminalization, all four relay maps/transient fences, linked-origin device topology, 170-row ceiling, non-vacuous selectors and wave parity | Storage/relay, product/runtime and gate-economy reviewers independently returned READY after bounded amendments. No extra test ID, table, state machine, device or family gate was needed. | Keep `PREREQUISITE_BLOCKED / CONTRACT_READY`; only Plan 361's clean audit SHA/API/Graph pin remains. |
+| 2026-08-12 | Final Plan-361 closure and successor revalidation | Plan-361 implementation `be897336d60f94c742fa04cb9933d90886489265`, receipts `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`, audit-hygiene closure `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`; current anchored Graphify review `488091ffcb7bae21` (71,897 nodes / 105,515 links); live gate inventories and every Plan-362 path/sentinel | v113 generation authority, deterministic persisted-contact target snapshots, reverse transport authorization, serialized contact purge, restricted runtime, and plural survivor/retry guards match this contract. Current inventories are 123 one-to-one, 406 core Dart, 842 feature Dart, and 1,342 host-all Dart plus 8 Go. No executable prerequisite defect or test expansion was found. | Prerequisite satisfied. Mark `EXECUTION_READY`, pin the audit-hygiene SHA, and retain the reviewed necessary-only concurrent cadence. |
 
 ## Execution Progress
 
 | Time | Step | Evidence | Result / next action |
 |---|---|---|---|
 | 2026-08-11 | Planning and independent review | Anchored Graphify planning query plus direct source verification; current Plan-361 worktree and generated graph are dirty by design | Contract ready for its blocked state. After Plan 361 closes, pin its already-refreshed committed graph/audit SHA, query/review once without refreshing, revalidate exact APIs/counts, and only then author compile-clean semantic REDs. |
+| 2026-08-12 | Prerequisite unblock | Plan-361 audit-hygiene closure `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`; Graphify `488091ffcb7bae21`; source/API, path, sentinel and dry-run inventory review | `EXECUTION_READY`. First action is the literal clean-tree/ancestry preflight, then the four concurrent host RED bundles plus the exact Go RED. |
 
 ## Problem And Source-Backed Evidence
 
@@ -37,7 +39,7 @@ Closure tier: focused concurrent host behavior, v114 migration and Move preserva
 - Account Move copies v111 and builds a file manifest from custody attachment IDs. Two target rows sharing one canonical file must preserve both rows while exporting/importing that file exactly once; crossed path/proof duplicates must refuse.
 - Incoming linked media keeps physical transport identity as authentication/receipt route while persisting the logical account as canonical conversation identity. Plan 361's reverse authority must be requalified inside the message + attachment + incoming-v111 transaction.
 
-Expected production surface, subject to the post-Plan-361 revalidation:
+Revalidated expected production surface:
 
 - `app_database_version.dart`, `production_migration_registry.dart`, one `114_direct_linked_device_media_blob_fanout.dart` migration, one default-off direct-linked-media authoring flag, the incumbent v111 model/helper and the media-attachment fingerprint model/helper
 - the incumbent v108/v109 generation/completion helpers and Plan-361 target snapshot/reverse-authority APIs; no new roster or event outbox
@@ -54,14 +56,15 @@ Stop and re-review before adding a parallel blob table, per-target attachment id
 ## Graph Grounding Snapshot
 
 - Graph: `graphify-arch`; the planning query was anchored. An incremental refresh occurred while Plan 361 was actively dirty, producing diagnostic fingerprint `21e26ca138e6146e`; it is not a committed-tree closure pin and must not be copied into the baseline.
+- Final prerequisite review: current anchored fingerprint `488091ffcb7bae21` (71,897 nodes / 105,515 links) over Plan-361 implementation `be897336d60f94c742fa04cb9933d90886489265`, receipts `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`, and docs-only audit-hygiene closure `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`.
 - Planning query: `python3 graphify-arch/tdd_context.py query "Plan 362 GAP-N01 direct linked-device media voice v111 blob fanout after Plan 361 v113 event fanout; direct_media_blob_custody, direct_inbox_custody_outbox v108, media attachments, send media voice protected view-once disappearing, retry download receive cleanup, per-device target roster, relay ACK and Android pair gates" --profile tdd --budget 700`.
-- Final unblock: after Plan 361 is committed and audited, use and pin its already-refreshed committed graph, run one focused review query against it without refreshing, record its SHA/fingerprint, and revalidate the v113 target snapshot, reverse authority, contact purge and restricted-runtime APIs before changing this plan to `EXECUTION_READY`.
+- Final unblock completed: the focused review query returned current/anchored, and the v113 target snapshot, reverse authority, contact purge and restricted-runtime APIs were revalidated without another code-graph refresh. No source or gate amendment was required.
 
 ## Scope Contract
 
 ### Prerequisite and rollout authority
 
-- Author no RED until `<PLAN_361_POST_EXECUTION_AUDIT_SHA>` is replaced by the literal clean Plan-361 audit closure, that commit is an ancestor of the execution tree, the only intervening files are this plan/index/status documentation, and the final Plan-361 API/Graphify review returns READY.
+- Author RED only from `c78c465a027da7ff8586712ce0c9e6f7162f3ab8` or a descendant whose only intervening files are this plan/index/status documentation, after the literal clean-tree/ancestry preflight below. The final Plan-361 API/Graphify review returned READY.
 - Add one default-off `MKNOON_ENABLE_DIRECT_LINKED_MEDIA_FANOUT` injectable authoring selector. New linked blob authoring requires it together with Plan 361's `MKNOON_ENABLE_DIRECT_LINKED_EVENT_FANOUT` and `MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED`. The Plan-361 switch explicitly owns blob-free batches, while the incumbent media flag may already be on for single-target strict custody; neither may silently activate this new adopter.
 - Primary + uninitialized roster preserves the incumbent single-target path, including its LAN acceleration. Initialized roster + any required selector OFF refuses before media crypto, file write, upload, target-envelope crypto or message network and never demotes to one target.
 - Already-committed v114/v108 rows, incoming strict custody and cleanup/download/ACK drain regardless of later selector rollback. Flags gate new authoring only.
@@ -127,7 +130,7 @@ Stop and re-review before adding a parallel blob table, per-target attachment id
 Test notes:
 
 - Add only the v114 migration host path. Register it in both `ONE_TO_ONE_HOST_TESTS` and `ONE_TO_ONE_TESTS`; keep every other TC in existing paths.
-- Conditional on Plan 361 closing at the planned 123/406/842/1342 host path counts, the single new path yields 124/407/842/1343. Recount the live committed Plan-361 baseline instead of trusting these forecasts.
+- Live Plan-361 inventories are 123 one-to-one, 406 core Dart, 842 feature Dart, and 1,342 host-all Dart plus 8 Go (1,350 total). Registering only the new v114 path should yield 124/407/842/1,343 Dart and 1,351 host-all total including the unchanged 8 Go tails. Recount at execution instead of trusting the forecast.
 - Add the permanent Go test under the existing direct-media closure prefix and update both curated prefix-count assertions from 11 to 12; the already-required relay shell contract statically pins both literals. Do not broaden the Go selection.
 - Preserve only one sentinel per incumbent seam in the final concurrent batch: TC-345-03 ordinary media, TC-345-06 voice, TC-354-02b private initial, TC-358-02a disappearing initial, TC-351-03 media deletion, TC-353-04 caption EDIT, TC-347-06a incoming strict stage/auth, TC-347-06b strict download, TC-348-01 external share, TC-350-01a received-media forward, and TC-359-01b private EDIT refusal.
 - Rewrite the existing relay identity test's different-recipient expectation: different valid `To` is now allowed, while tuple drift under the same `(To,ID)`, cross-recipient authorization and legacy collision remain refused.
@@ -136,7 +139,7 @@ Test notes:
 
 ## Implementation Steps
 
-1. Close Plan 361, pin its clean post-execution audit SHA and current Graphify fingerprint, revalidate the exact target snapshot/reverse-auth/contact-delete/runtime APIs and recount gate inventories. Change this plan/index/status to `EXECUTION_READY` only after that review.
+1. **Satisfied before RED:** Plan 361 is audit-closed at `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`; Graphify `488091ffcb7bae21`, the exact target snapshot/reverse-auth/contact-delete/runtime APIs and live gate inventories were revalidated, and plan/index/status are `EXECUTION_READY`.
 2. Add only inert type/interface/migration registration scaffolding needed for the new tests to compile, then record compile-clean semantic RED for TC-362-01a/02a/02b/03a/04a/05b and the exact Go RED. The physical TC-362-05a/05b legs remain acceptance-only; a missing symbol or absent test is not a RED receipt.
 3. Add the narrow default-off linked-media selector, then implement v114's real transactional v111 rebuild, natural target identity, conditional uniqueness/shape, fingerprint version, models/helpers and exact legacy rollback/preservation.
 4. Repair relay internal map identity to `(recipient,id)`, retain the global legacy fence and compatible fixture probe, and author the exact cross-recipient reservation/blocked/ACK-cleanup/restart race test.
@@ -163,8 +166,7 @@ Test notes:
 Run this preflight only after Plan 361 is audit-closed and Plan-362 planning docs are committed:
 
 ```bash
-PLAN362_ACCEPTED_BASE='<PLAN_361_POST_EXECUTION_AUDIT_SHA>'
-test "$PLAN362_ACCEPTED_BASE" != '<PLAN_361_POST_EXECUTION_AUDIT_SHA>'
+PLAN362_ACCEPTED_BASE='c78c465a027da7ff8586712ce0c9e6f7162f3ab8'
 test "$(git rev-parse "$PLAN362_ACCEPTED_BASE^{commit}")" = "$PLAN362_ACCEPTED_BASE"
 git merge-base --is-ancestor "$PLAN362_ACCEPTED_BASE" HEAD
 test -z "$(git status --porcelain)"
@@ -394,7 +396,7 @@ git status --short
 
 ## Done Criteria
 
-- [ ] Plan 361 is cleanly implemented and post-execution audited; its literal closure SHA/fresh Graphify fingerprint replace the placeholders, exact shared APIs/counts are revalidated, and plan/index/status move to `EXECUTION_READY` before RED.
+- [x] Plan 361 is cleanly implemented and post-execution audited; its literal closure SHA/current Graphify fingerprint replace the placeholders, exact shared APIs/counts are revalidated, and plan/index/status move to `EXECUTION_READY` before RED.
 - [ ] DB v114 pluralizes only incumbent v111, preserves legacy/incoming authority without promotion, versions sender lineage explicitly, rolls back atomically and refuses downgrade.
 - [ ] One encrypted artifact per attachment backs every exact persisted target; all v114 rows precede network, every target envelope is independently staged, and retries never re-resolve/re-encrypt/remint.
 - [ ] Relay `(recipient,id)` state, restart, ACK/expiry isolation, per-recipient quota and global legacy collision pass with no wire/native change.
@@ -436,20 +438,19 @@ git status --short
 
 ## Arbiter Decision
 
-`PREREQUISITE_BLOCKED / CONTRACT_READY / INDEPENDENTLY REVIEWED.` The smallest
+`EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED.` The smallest
 coherent design is DB v114 over the incumbent v111 owner, one target-independent
 lineage version, one shared encrypted artifact, existing v108/v109 event
 custody, one narrow linked-media authoring selector, and a bounded relay
 `(recipient,id)` internal-key repair. No second blob ledger, accepted state,
 target hash, refcount table, further selector, linked LAN,
-new wire/native surface or broader device matrix is justified. Execution remains
-blocked until Plan 361 has a clean post-execution audit SHA and final API/Graph
-revalidation.
+new wire/native surface or broader device matrix is justified. Plan 361 is
+audit-closed at the pinned baseline, its shared APIs and gate inventories are
+revalidated, and no prerequisite blocker remains.
 
 ## Handoff
 
-- Current state: `PREREQUISITE_BLOCKED / CONTRACT_READY`; current Plan-361 work and diagnostic Graphify output are intentionally not accepted baselines.
-- Unblock action: finish/audit Plan 361, commit its closure, use/pin its already-refreshed graph and query it without another refresh, recount gates and perform one targeted API review. Then update plan/index/status to `EXECUTION_READY`.
-- First execution action after unblock: clean-tree/ancestry preflight, inert compile scaffolding only if needed, then the four concurrent host semantic RED bundles plus exact Go RED.
+- Current state: `EXECUTION_READY`; accepted Plan-361 audit-hygiene baseline `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`, implementation `be897336d60f94c742fa04cb9933d90886489265`, receipts `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`, Graphify `488091ffcb7bae21`.
+- First execution action: run the literal clean-tree/ancestry preflight, add inert compile scaffolding only if needed, then record the four concurrent host semantic RED bundles plus exact Go RED.
 - Runtime economy: run independent tests concurrently at 4 whenever supported to speed feedback; keep only worktree mutations, curated `1to1` and device scenarios serial.
 - Successor work: group/announcement fanout, historical/no-intent disposition, activation/operations, mixed-version capability rollout and final GAP-N01/release closure remain later plans.
