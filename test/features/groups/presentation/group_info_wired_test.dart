@@ -11,6 +11,7 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_safety_number.dart';
@@ -26,6 +27,8 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
@@ -36,7 +39,9 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_wired.dart';
@@ -150,6 +155,58 @@ class _RotateKeyOnMetadataTimelineSaveRepository
         createdAt: DateTime.utc(2026, 7, 22, 15, 40),
       ),
     );
+  }
+}
+
+class _AtomicMetadataGroupRepository extends InMemoryGroupRepository
+    implements AtomicProtectedGroupMetadataAuthorityRepository {
+  final pendingProtectedRows = <GroupPendingBroadcast>[];
+  final authorityFacts = <String, GroupPendingBroadcastAuthorityFact>{};
+  bool failBeforeCommit = false;
+  Future<void> Function()? driftBeforeCompare;
+  var commitCalls = 0;
+
+  @override
+  Future<void> commitProtectedGroupMetadataAuthority({
+    required GroupModel expectedGroup,
+    required List<GroupMember> expectedMembers,
+    required int expectedLatestKeyGeneration,
+    required GroupModel group,
+    required List<GroupPendingBroadcast> pendingBroadcasts,
+    required GroupPendingBroadcastAuthorityFact authorityPrepared,
+  }) async {
+    commitCalls += 1;
+    if (failBeforeCommit) {
+      throw StateError('simulated pre-projection crash');
+    }
+    await driftBeforeCompare?.call();
+    final current = await getGroup(expectedGroup.id);
+    final currentMembers = await getMembers(expectedGroup.id);
+    final latestKey = await getLatestKey(expectedGroup.id);
+    if (current == null ||
+        jsonEncode(current.toMap()) != jsonEncode(expectedGroup.toMap()) ||
+        !_sameMembers(currentMembers, expectedMembers) ||
+        latestKey?.keyGeneration != expectedLatestKeyGeneration) {
+      throw StateError('protected metadata authority changed');
+    }
+    await super.updateGroup(group);
+    pendingProtectedRows.addAll(pendingBroadcasts);
+    authorityFacts[authorityPrepared.sourceEventId] = authorityPrepared;
+  }
+
+  bool _sameMembers(List<GroupMember> left, List<GroupMember> right) {
+    if (left.length != right.length) return false;
+    final sortedLeft = left.toList(growable: false)
+      ..sort((a, b) => a.peerId.compareTo(b.peerId));
+    final sortedRight = right.toList(growable: false)
+      ..sort((a, b) => a.peerId.compareTo(b.peerId));
+    for (var index = 0; index < sortedLeft.length; index += 1) {
+      if (jsonEncode(sortedLeft[index].toMap()) !=
+          jsonEncode(sortedRight[index].toMap())) {
+        return false;
+      }
+    }
+    return true;
   }
 }
 
@@ -521,6 +578,89 @@ Future<void> _seedEditableGroup(
       mlKemPublicKey: testIdentity.mlKemPublicKey,
       joinedAt: DateTime.now().toUtc(),
     ),
+  );
+}
+
+Future<void> _seedProtectedMetadataGroup(
+  _AtomicMetadataGroupRepository groupRepo, {
+  required GroupModel group,
+}) async {
+  await _seedEditableGroup(groupRepo, group: group);
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: testIdentity.peerId,
+      username: testIdentity.username,
+      role: MemberRole.admin,
+      publicKey: testIdentity.publicKey,
+      mlKemPublicKey: testIdentity.mlKemPublicKey,
+    ).copyWith(
+      devices: const <GroupMemberDeviceIdentity>[
+        GroupMemberDeviceIdentity(
+          deviceId: 'device-admin-primary',
+          transportPeerId: 'transport-admin-primary',
+          deviceSigningPublicKey: 'pk-admin',
+          mlKemPublicKey: 'mlkem-pk-admin',
+          keyPackageId: 'package-admin-primary',
+        ),
+      ],
+    ),
+  );
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-linked',
+      username: 'Linked peer',
+      publicKey: 'pk-linked',
+      mlKemPublicKey: 'mlkem-pk-linked',
+    ).copyWith(
+      devices: const <GroupMemberDeviceIdentity>[
+        GroupMemberDeviceIdentity(
+          deviceId: 'device-linked',
+          transportPeerId: 'transport-linked',
+          deviceSigningPublicKey: 'pk-linked',
+          mlKemPublicKey: 'mlkem-pk-linked',
+          keyPackageId: 'package-linked',
+        ),
+      ],
+    ),
+  );
+}
+
+ProtectedGroupAuthorityPreparation _buildMetadataPreparation(
+  ProtectedGroupAuthorityPrepareRequest request,
+) {
+  final eventAt = DateTime.parse(
+    request.replayData['timestamp'] as String,
+  ).toUtc();
+  final proof = AuthenticatedGroupAuthorityProof(
+    eventId: request.transitionId,
+    groupId: request.groupId,
+    eventAt: eventAt,
+    keyEpoch: 1,
+    control: request.control.wireValue,
+    actorAccountPeerId: request.actorAccountPeerId,
+    actorAccountPublicKey: request.actorAccountPublicKey,
+    senderTransportPeerId: request.senderDevice.transportPeerId,
+    senderTransportPublicKey: request.senderDevice.deviceSigningPublicKey,
+    authorityData: const <String, Object?>{'test': 'metadata'},
+    signature: 'signed-metadata-authority',
+  );
+  final row = GroupPendingBroadcast(
+    id: 'protected-authority:${request.transitionId}',
+    groupId: request.groupId,
+    kind: groupPendingBroadcastKindProtectedAuthority,
+    sysText: 'immutable-protected-metadata-envelope',
+    recipientPeerIds: const <String>['transport-linked'],
+    eventAt: eventAt,
+    sourceMessageId: request.transitionId,
+    createdAt: eventAt,
+    updatedAt: eventAt,
+  );
+  return ProtectedGroupAuthorityPreparation(
+    groupId: request.groupId,
+    rows: <GroupPendingBroadcast>[row],
+    authorityProof: proof,
+    control: request.control,
+    replayData: request.replayData,
   );
 }
 
@@ -968,6 +1108,57 @@ Future<void> _removeAliceFromGroupInfo(WidgetTester tester) async {
   await tester.tap(removeButton, warnIfMissed: false);
   await pumpFrames(tester);
   await confirmRemoveMemberDialog(tester);
+}
+
+Future<
+  ({
+    InMemoryGroupRepository groupRepo,
+    InMemoryGroupMessageRepository msgRepo,
+    GroupModel group,
+  })
+>
+_seedProtectedRemovalAuthorityFixture() async {
+  final groupRepo = InMemoryGroupRepository();
+  final msgRepo = InMemoryGroupMessageRepository();
+  final group = makeAdminGroup();
+  await groupRepo.saveGroup(group);
+  await _saveGroupReplayKey(groupRepo);
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-admin',
+      username: 'Admin',
+      role: MemberRole.admin,
+      publicKey: 'pk-admin',
+      mlKemPublicKey: 'mlkem-pk-admin',
+    ).copyWith(
+      devices: const <GroupMemberDeviceIdentity>[
+        GroupMemberDeviceIdentity(
+          deviceId: 'device-admin-primary',
+          transportPeerId: 'transport-admin-primary',
+          deviceSigningPublicKey: 'pk-admin',
+          mlKemPublicKey: 'mlkem-pk-admin',
+          keyPackageId: 'package-admin-primary',
+        ),
+      ],
+    ),
+  );
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-alice',
+      username: 'Alice',
+      publicKey: 'pk-alice',
+      mlKemPublicKey: 'mlkem-pk-alice',
+    ),
+  );
+  await groupRepo.saveMember(
+    makeMember(
+      peerId: 'peer-bob',
+      username: 'Bob',
+      publicKey: 'pk-bob',
+      mlKemPublicKey: 'mlkem-pk-bob',
+    ),
+  );
+  return (groupRepo: groupRepo, msgRepo: msgRepo, group: group);
 }
 
 List<String> _lastUpdateConfigMemberPeerIds(FakeBridge bridge) {
@@ -3702,6 +3893,345 @@ void main() {
           findsOneWidget,
         );
         expect(find.text('Group details updated'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'Plan 363 protected metadata syncs native before COMPLETE and egress',
+      (tester) async {
+        final groupRepo = _AtomicMetadataGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final original = makeAdminGroup().copyWith(name: 'Original Name');
+        await _seedProtectedMetadataGroup(groupRepo, group: original);
+
+        ProtectedGroupAuthorityPrepareRequest? capturedRequest;
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        late final FakeBridge bridge;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            capturedRequest = request;
+            expect(request.deferPersistenceUntilAtomicProjection, isTrue);
+            expect(
+              (await groupRepo.getGroup(request.groupId))?.name,
+              'Original Name',
+              reason: 'build-only prepare must precede metadata projection',
+            );
+            expect(groupRepo.pendingProtectedRows, isEmpty);
+            expect(
+              groupRepo.authorityFacts,
+              isEmpty,
+              reason: 'prepare must expose neither SQL row nor PREPARED fact',
+            );
+            expect(
+              await protectedGroupAuthorityReplayConverged(
+                control: request.control,
+                replayData: request.replayData,
+                groupRepository: groupRepo,
+              ),
+              isFalse,
+              reason: 'PREPARED cannot claim an uncommitted metadata version',
+            );
+            return _buildMetadataPreparation(request);
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            expect(requireAllCustody, isFalse);
+            expect(
+              (await groupRepo.getGroup(preparation.groupId))?.name,
+              'Protected Rename',
+              reason: 'activation must follow the committed projection',
+            );
+            expect(groupRepo.pendingProtectedRows, hasLength(1));
+            expect(
+              groupRepo.authorityFacts.keys.where(
+                (id) => id.startsWith('pga1:p:'),
+              ),
+              hasLength(1),
+            );
+            expect(
+              groupRepo.authorityFacts.keys.where(
+                (id) => id.startsWith('pga1:c:'),
+              ),
+              isEmpty,
+              reason: 'atomic SQL commit must stop at PREPARED',
+            );
+            final projected = await groupRepo.getGroup(preparation.groupId);
+            final members = await groupRepo.getMembers(preparation.groupId);
+            await callGroupUpdateConfig(
+              bridge,
+              groupId: preparation.groupId,
+              groupConfig: buildGroupConfigPayload(projected!, members),
+            );
+            final proof = preparation.authorityProof!;
+            final complete = GroupPendingBroadcastAuthorityFact(
+              sourcePeerId: proof.actorAccountPeerId,
+              sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                AuthenticatedGroupAuthorityPhase.complete,
+                proof.eventId,
+              ),
+              sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+              payload: authenticatedGroupAuthorityFactPayload(proof),
+            );
+            groupRepo.authorityFacts[complete.sourceEventId] = complete;
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+
+        bridge = FakeBridge(
+          initialResponses: {
+            'group:updateConfig': {'ok': true},
+            'group:publish': {'ok': true, 'messageId': 'metadata-live'},
+            'group:inboxStore': {'ok': true},
+          },
+        );
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: original,
+          bridge: bridge,
+          msgRepo: msgRepo,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Protected Rename');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        final request = capturedRequest;
+        expect(request, isNotNull);
+        expect(request!.control, ProtectedGroupAuthorityControl.memberConfig);
+        expect(request.control.wireValue, 'group_metadata_updated');
+        expect(request.transitionId, request.replayData['messageId']);
+        final protectedSystemPayload =
+            jsonDecode(request.replayData['text'] as String)
+                as Map<String, dynamic>;
+        expect(protectedSystemPayload['__sys'], 'group_metadata_updated');
+        expect(
+          (protectedSystemPayload['groupConfig']
+              as Map<String, dynamic>)['name'],
+          'Protected Rename',
+        );
+        expect(
+          request.frozenRecipients.map((device) => device.transportPeerId),
+          containsAll(<String>['transport-admin-primary', 'transport-linked']),
+        );
+        expect(activationCalls, 1);
+        expect(cancelCalls, 0);
+        expect(groupRepo.commitCalls, 1);
+        expect(groupRepo.pendingProtectedRows, hasLength(1));
+        expect(
+          groupRepo.pendingProtectedRows.single.kind,
+          groupPendingBroadcastKindProtectedAuthority,
+        );
+        expect(groupRepo.authorityFacts, hasLength(2));
+        expect(
+          (await groupRepo.getGroup(original.id))?.name,
+          'Protected Rename',
+          reason: 'a transport deferral cannot roll back protected history',
+        );
+        expect(
+          await protectedGroupAuthorityReplayConverged(
+            control: request.control,
+            replayData: request.replayData,
+            groupRepository: groupRepo,
+          ),
+          isTrue,
+          reason: 'the committed metadata projection can advance COMPLETE',
+        );
+        final nativeIndex = bridge.commandLog.indexOf('group:updateConfig');
+        final publishIndex = bridge.commandLog.indexOf('group:publish');
+        expect(nativeIndex, isNonNegative);
+        expect(publishIndex, greaterThan(nativeIndex));
+        expect(bridge.commandLog, contains('group:publish'));
+        expect(bridge.commandLog, contains('group:inboxStore'));
+      },
+    );
+
+    testWidgets(
+      'Plan 363 protected metadata native failure retains PREPARED and blocks every egress lane',
+      (tester) async {
+        final groupRepo = _AtomicMetadataGroupRepository();
+        final original = makeAdminGroup().copyWith(name: 'Original Name');
+        await _seedProtectedMetadataGroup(groupRepo, group: original);
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async => _buildMetadataPreparation(request),
+          activate: (preparation, {required requireAllCustody}) async => false,
+          cancel: (preparation) async => true,
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final genericRows = <GroupPendingBroadcast>[];
+        setGroupPendingBroadcastEnqueueSink((row) async {
+          genericRows.add(row);
+        });
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+            'group:inboxStore': {'ok': true},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: original,
+          bridge: bridge,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Prepared Rename');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(
+          (await groupRepo.getGroup(original.id))?.name,
+          'Prepared Rename',
+        );
+        expect(groupRepo.pendingProtectedRows, hasLength(1));
+        expect(
+          groupRepo.authorityFacts.keys.where((id) => id.startsWith('pga1:p:')),
+          hasLength(1),
+        );
+        expect(
+          groupRepo.authorityFacts.keys.where((id) => id.startsWith('pga1:c:')),
+          isEmpty,
+        );
+        expect(genericRows, isEmpty);
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+      },
+    );
+
+    testWidgets(
+      'Plan 363 protected metadata pre-projection crash leaves restart truth with no row or authority fact',
+      (tester) async {
+        final groupRepo = _AtomicMetadataGroupRepository()
+          ..failBeforeCommit = true;
+        final original = makeAdminGroup().copyWith(name: 'Original Name');
+        await _seedProtectedMetadataGroup(groupRepo, group: original);
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            expect(request.deferPersistenceUntilAtomicProjection, isTrue);
+            expect(groupRepo.pendingProtectedRows, isEmpty);
+            expect(groupRepo.authorityFacts, isEmpty);
+            return _buildMetadataPreparation(request);
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+            'group:inboxStore': {'ok': true},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: original,
+          bridge: bridge,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Stranded Rename');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(groupRepo.commitCalls, 1);
+        expect((await groupRepo.getGroup(original.id))?.name, 'Original Name');
+        expect(groupRepo.pendingProtectedRows, isEmpty);
+        expect(
+          groupRepo.authorityFacts,
+          isEmpty,
+          reason: 'restart discovery cannot observe a rowless PREPARED fact',
+        );
+        expect(activationCalls, 0);
+        expect(cancelCalls, 1);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
+      },
+    );
+
+    testWidgets(
+      'Plan 363 protected metadata CAS drift preserves winner and exposes no losing authority history',
+      (tester) async {
+        final groupRepo = _AtomicMetadataGroupRepository();
+        final original = makeAdminGroup().copyWith(name: 'Original Name');
+        await _seedProtectedMetadataGroup(groupRepo, group: original);
+        groupRepo.driftBeforeCompare = () async {
+          final current = await groupRepo.getGroup(original.id);
+          await groupRepo.updateGroup(
+            current!.copyWith(
+              name: 'Newer Remote Name',
+              lastMetadataEventAt: DateTime.utc(2026, 8, 13, 20),
+            ),
+          );
+        };
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            expect(request.deferPersistenceUntilAtomicProjection, isTrue);
+            expect(groupRepo.pendingProtectedRows, isEmpty);
+            expect(groupRepo.authorityFacts, isEmpty);
+            return _buildMetadataPreparation(request);
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+            'group:inboxStore': {'ok': true},
+          },
+        );
+
+        await _pumpEditableGroupInfo(
+          tester,
+          groupRepo: groupRepo,
+          group: original,
+          bridge: bridge,
+        );
+        await _openGroupDetailsEditor(tester);
+        await tester.enterText(_groupEditNameField(), 'Losing Rename');
+        await _tapGroupEditSave(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(groupRepo.commitCalls, 1);
+        expect(
+          (await groupRepo.getGroup(original.id))?.name,
+          'Newer Remote Name',
+        );
+        expect(groupRepo.pendingProtectedRows, isEmpty);
+        expect(groupRepo.authorityFacts, isEmpty);
+        expect(activationCalls, 0);
+        expect(cancelCalls, 1);
+        expect(
+          bridge.commandLog.where((command) => command == 'group:publish'),
+          isEmpty,
+        );
       },
     );
 
@@ -7197,6 +7727,370 @@ void main() {
             );
           }
         }
+      },
+    );
+
+    testWidgets(
+      'protected member removal activation false retains PREPARED projection '
+      'and blocks ordinary egress',
+      (tester) async {
+        final fixture = await _seedProtectedRemovalAuthorityFixture();
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async => _buildMetadataPreparation(request),
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            expect(requireAllCustody, isFalse);
+            expect(
+              await fixture.groupRepo.getMember('group-1', 'peer-alice'),
+              isNull,
+              reason: 'activation follows the local/native removal commit',
+            );
+            return false;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+          },
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: fixture.group,
+              groupRepo: fixture.groupRepo,
+              msgRepo: fixture.msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        await _removeAliceFromGroupInfo(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(activationCalls, 1);
+        expect(cancelCalls, 0);
+        expect(
+          await fixture.groupRepo.getMember('group-1', 'peer-alice'),
+          isNull,
+          reason: 'PREPARED restart recovery owns the committed absence',
+        );
+        expect(
+          _lastUpdateConfigMemberPeerIds(bridge),
+          isNot(contains('peer-alice')),
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          find.text(
+            'Member removed. Some members will receive the new key '
+            'when they reconnect.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'protected member removal durable abort refusal remains ambiguous and '
+      'blocks ordinary egress',
+      (tester) async {
+        final fixture = await _seedProtectedRemovalAuthorityFixture();
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async => _buildMetadataPreparation(request),
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return false;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:updateConfig': {
+              'ok': false,
+              'errorCode': 'CONFIG_REJECTED',
+              'errorMessage': 'definite native rejection',
+            },
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+          },
+        );
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: fixture.group,
+              groupRepo: fixture.groupRepo,
+              msgRepo: fixture.msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        await _removeAliceFromGroupInfo(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(activationCalls, 0);
+        expect(cancelCalls, 1);
+        expect(
+          await fixture.groupRepo.getMember('group-1', 'peer-alice'),
+          isNotNull,
+          reason: 'the local rollback completed before durable abort refused',
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(
+          find.text(
+            'Member removed. Some members will receive the new key '
+            'when they reconnect.',
+          ),
+          findsOneWidget,
+        );
+      },
+    );
+
+    testWidgets(
+      'physical removal refuses unauthenticated protected preparation before '
+      'member projection',
+      (tester) async {
+        final fixture = await _seedProtectedRemovalAuthorityFixture();
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            final prepared = _buildMetadataPreparation(request);
+            return ProtectedGroupAuthorityPreparation(
+              groupId: prepared.groupId,
+              rows: prepared.rows,
+              control: prepared.control,
+              replayData: prepared.replayData,
+            );
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: fixture.group,
+              groupRepo: fixture.groupRepo,
+              msgRepo: fixture.msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        await _removeAliceFromGroupInfo(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(activationCalls, 0);
+        expect(cancelCalls, 1);
+        expect(
+          await fixture.groupRepo.getMember('group-1', 'peer-alice'),
+          isNotNull,
+        );
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'physical removal refuses a missing local identity before member '
+      'projection',
+      (tester) async {
+        final fixture = await _seedProtectedRemovalAuthorityFixture();
+        var prepareCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            prepareCalls += 1;
+            return _buildMetadataPreparation(request);
+          },
+          activate: (preparation, {required requireAllCustody}) async => true,
+          cancel: (preparation) async => true,
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: fixture.group,
+              groupRepo: fixture.groupRepo,
+              msgRepo: fixture.msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: null),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+        await _removeAliceFromGroupInfo(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(prepareCalls, 0);
+        expect(
+          await fixture.groupRepo.getMember('group-1', 'peer-alice'),
+          isNotNull,
+        );
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+      },
+    );
+
+    testWidgets(
+      'protected member removal remains recovery-owned when live publish fails '
+      'before broadcast',
+      (tester) async {
+        setGroupPendingBroadcastEnqueueSink(null);
+        addTearDown(() => setGroupPendingBroadcastEnqueueSink(null));
+
+        final groupRepo = InMemoryGroupRepository();
+        final msgRepo = InMemoryGroupMessageRepository();
+        final group = makeAdminGroup();
+        await groupRepo.saveGroup(group);
+        await _saveGroupReplayKey(groupRepo);
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-admin',
+            username: 'Admin',
+            role: MemberRole.admin,
+            publicKey: 'pk-admin',
+            mlKemPublicKey: 'mlkem-pk-admin',
+          ).copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-admin-primary',
+                transportPeerId: 'transport-admin-primary',
+                deviceSigningPublicKey: 'pk-admin',
+                mlKemPublicKey: 'mlkem-pk-admin',
+                keyPackageId: 'package-admin-primary',
+              ),
+            ],
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-alice',
+            username: 'Alice',
+            publicKey: 'pk-alice',
+            mlKemPublicKey: 'mlkem-pk-alice',
+          ),
+        );
+        await groupRepo.saveMember(
+          makeMember(
+            peerId: 'peer-bob',
+            username: 'Bob',
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-pk-bob',
+          ),
+        );
+
+        ProtectedGroupAuthorityPrepareRequest? capturedRequest;
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            capturedRequest = request;
+            return _buildMetadataPreparation(request);
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls += 1;
+            expect(requireAllCustody, isFalse);
+            expect(
+              await groupRepo.getMember('group-1', 'peer-alice'),
+              isNull,
+              reason: 'activation follows the local/native removal commit',
+            );
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls += 1;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {
+              'ok': false,
+              'errorMessage': 'simulated pre-broadcast publish failure',
+            },
+          },
+        );
+        await tester.pumpWidget(
+          _localizedMaterialApp(
+            home: GroupInfoWired(
+              group: group,
+              groupRepo: groupRepo,
+              msgRepo: msgRepo,
+              contactRepo: InMemoryContactRepository(),
+              bridge: bridge,
+              identityRepo: FakeIdentityRepository(identity: testIdentity),
+              p2pService: FakeP2PService(),
+            ),
+          ),
+        );
+        await pumpFrames(tester);
+
+        expect(find.text('Alice'), findsOneWidget);
+        await _removeAliceFromGroupInfo(tester);
+        await pumpFrames(tester, count: 30);
+
+        expect(capturedRequest, isNotNull);
+        expect(
+          capturedRequest!.control,
+          ProtectedGroupAuthorityControl.memberRemove,
+        );
+        expect(activationCalls, 1);
+        expect(cancelCalls, 0);
+        expect(
+          await groupRepo.getMember('group-1', 'peer-alice'),
+          isNull,
+          reason:
+              'the screen must not re-add behind durable protected PREPARED',
+        );
+        expect(find.text('Alice'), findsNothing);
+        expect(
+          find.text(
+            'Member removed. Some members will receive the new key '
+            'when they reconnect.',
+          ),
+          findsOneWidget,
+        );
+        expect(
+          _lastUpdateConfigMemberPeerIds(bridge),
+          isNot(contains('peer-alice')),
+        );
       },
     );
 

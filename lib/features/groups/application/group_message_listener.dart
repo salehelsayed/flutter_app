@@ -35,6 +35,7 @@ import 'package:flutter_app/features/groups/application/group_pending_key_distri
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_notification_display_retry_coordinator.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_role_update_authorization.dart';
 import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
@@ -1471,6 +1472,40 @@ class GroupMessageListener {
     );
   }
 
+  /// Replays one exact system transition under a capability minted only after
+  /// its protected authority proof and durable PREPARED fact were verified.
+  /// Mutable current-member authorization must not invalidate that historical
+  /// authority while an interrupted projection is being repaired.
+  Future<void> handleAuthenticatedAuthorityReplayEnvelope(
+    Map<String, dynamic> data, {
+    required VerifiedProtectedGroupAuthorityReplay authority,
+    GroupMessageRepository? msgRepoOverride,
+    bool rethrowOnError = false,
+    bool membershipPhaseHeld = false,
+  }) async {
+    final replayData = Map<String, dynamic>.unmodifiable(
+      Map<String, dynamic>.from(data),
+    );
+    if (!authority.authorizesSystemReplay(replayData)) {
+      throw StateError('protected authority replay capability mismatch');
+    }
+    if (!await _allowsInboundAccountSideEffects(
+      operation: 'group_replay_message',
+      data: replayData,
+    )) {
+      throw StateError('protected authority replay account gate closed');
+    }
+    return _handleQueuedUserMessage(
+      replayData,
+      msgRepoOverride: msgRepoOverride,
+      rethrowOnError: rethrowOnError,
+      allowMembershipBuffer: false,
+      deliverySource: 'protectedAuthorityReplay',
+      membershipPhaseHeld: membershipPhaseHeld,
+      protectedAuthorityReplay: authority,
+    );
+  }
+
   /// Replays one verified offline reaction through the same persistence,
   /// stream, notification-policy, and durable notification-claim path as live
   /// reaction ingress.
@@ -1773,6 +1808,7 @@ class GroupMessageListener {
     bool requestRecoveryOnError = false,
     String deliverySource = 'listener',
     bool membershipPhaseHeld = false,
+    VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
   }) {
     final queueKey = _userMessageWorkKey(data);
     if (queueKey == null) {
@@ -1785,6 +1821,7 @@ class GroupMessageListener {
         deliverySource: deliverySource,
         membershipPhaseHeld: membershipPhaseHeld,
         deferKeyRepairRequest: membershipPhaseHeld,
+        protectedAuthorityReplay: protectedAuthorityReplay,
       );
     }
 
@@ -1802,6 +1839,7 @@ class GroupMessageListener {
             deliverySource: deliverySource,
             membershipPhaseHeld: membershipPhaseHeld,
             deferKeyRepairRequest: membershipPhaseHeld,
+            protectedAuthorityReplay: protectedAuthorityReplay,
           ),
         )
         .whenComplete(() {
@@ -2060,6 +2098,7 @@ class GroupMessageListener {
     String deliverySource = 'listener',
     bool membershipPhaseHeld = false,
     bool deferKeyRepairRequest = false,
+    VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
   }) async {
     try {
       final schemaRejectReason = _groupMessageEventSchemaRejectReason(data);
@@ -2141,6 +2180,11 @@ class GroupMessageListener {
         }
         final bridge = _bridge;
         if (bridge == null) {
+          if (protectedAuthorityReplay != null) {
+            throw StateError(
+              'protected authority replay requires the signature bridge',
+            );
+          }
           emitFlowEvent(
             layer: 'FL',
             event: 'GROUP_MESSAGE_LISTENER_SYSTEM_NO_BRIDGE_REJECTED',
@@ -2165,6 +2209,7 @@ class GroupMessageListener {
           msgRepo: msgRepo,
           rethrowOnError: rethrowOnError,
           authorityPhaseHeld: membershipPhaseHeld,
+          protectedAuthorityReplay: protectedAuthorityReplay,
         );
         return;
       }

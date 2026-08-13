@@ -29,6 +29,28 @@ class PreparedGroupMemberRemovalAuthority {
   final Future<void> Function() rollback;
 }
 
+/// The protected member-removal projection may have committed even though a
+/// repository projection, native config response, or local watermark write
+/// failed. The durable PREPARED transition remains the restart repair owner.
+class GroupMemberRemovalCommitAmbiguous implements Exception {
+  const GroupMemberRemovalCommitAmbiguous({
+    required this.cause,
+    this.rollbackError,
+  });
+
+  final Object cause;
+  final Object? rollbackError;
+
+  @override
+  String toString() {
+    final rollback = rollbackError;
+    return rollback == null
+        ? 'Group member removal commit outcome is ambiguous: $cause'
+        : 'Group member removal commit outcome is ambiguous: $cause; '
+              'local rollback or durable abort also failed: $rollback';
+  }
+}
+
 typedef PrepareGroupMemberRemovalAuthority =
     Future<PreparedGroupMemberRemovalAuthority?> Function({
       required GroupModel group,
@@ -269,30 +291,69 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
           eventAt: normalizedEventAt,
           eventId: mintedEventId,
         );
-      } catch (e) {
-        await preparedAuthority?.rollback();
-        await groupRepo.saveMember(removedMember);
-        if (removalCutoffMessage != null) {
-          await msgRepo?.deleteMessage(removalCutoffMessage.id);
+      } catch (e, stackTrace) {
+        // GroupRepositoryImpl deletes SQL before its fallible external
+        // projection. An error from removeMember itself is therefore just as
+        // ambiguous as timeout/transport loss or a post-native watermark
+        // failure. The sole definite native rejection is BridgeCommandException.
+        if (preparedAuthority != null && e is! BridgeCommandException) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_REMOVE_MEMBER_USE_CASE_COMMIT_AMBIGUOUS',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'memberPeerId': memberPeerId.length > 8
+                  ? memberPeerId.substring(0, 8)
+                  : memberPeerId,
+            },
+          );
+          Error.throwWithStackTrace(
+            GroupMemberRemovalCommitAmbiguous(cause: e),
+            stackTrace,
+          );
+        }
+
+        Object? rollbackError;
+        try {
+          await groupRepo.saveMember(removedMember);
+          if (removalCutoffMessage != null) {
+            await msgRepo?.deleteMessage(removalCutoffMessage.id);
+          }
+          // Abort only after the exact pre-removal local shape is restored.
+          await preparedAuthority?.rollback();
+        } catch (rollbackFailure) {
+          rollbackError = rollbackFailure;
         }
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_REMOVE_MEMBER_USE_CASE_REVERTED',
+          event: rollbackError == null
+              ? 'GROUP_REMOVE_MEMBER_USE_CASE_REVERTED'
+              : 'GROUP_REMOVE_MEMBER_USE_CASE_COMMIT_AMBIGUOUS',
           details: {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
             'memberPeerId': memberPeerId.length > 8
                 ? memberPeerId.substring(0, 8)
                 : memberPeerId,
+            'rollbackFailed': rollbackError != null,
           },
         );
-        rethrow;
+        if (rollbackError != null && preparedAuthority != null) {
+          Error.throwWithStackTrace(
+            GroupMemberRemovalCommitAmbiguous(
+              cause: e,
+              rollbackError: rollbackError,
+            ),
+            stackTrace,
+          );
+        }
+        Error.throwWithStackTrace(e, stackTrace);
       }
       try {
         await preparedAuthority?.activate();
-      } catch (error) {
-        // The durable protected row remains the retry owner. Once the local
-        // removal and native ACL update commit, a transport failure must not
-        // surface as a reversible membership failure to the caller.
+      } catch (error, stackTrace) {
+        // The durable protected row remains the retry owner. Surface the
+        // unresolved COMPLETE boundary so callers stop ordinary publish/fanout;
+        // the local removal and native ACL commit are never rolled back.
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_REMOVE_MEMBER_PROTECTED_ACTIVATION_DEFERRED',
@@ -303,6 +364,10 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
                 : memberPeerId,
             'error': error.toString(),
           },
+        );
+        Error.throwWithStackTrace(
+          GroupMemberRemovalCommitAmbiguous(cause: error),
+          stackTrace,
         );
       }
 

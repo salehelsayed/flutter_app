@@ -13,6 +13,8 @@ import 'package:flutter_app/features/groups/application/signed_group_transition_
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_payload.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
@@ -460,6 +462,40 @@ Widget buildDirectWiredTestWidget({
   );
 }
 
+ProtectedGroupAuthorityPreparation _pickerProtectedPreparation(
+  ProtectedGroupAuthorityPrepareRequest request, {
+  bool authenticated = true,
+}) {
+  final eventAt = DateTime.parse(
+    request.replayData['timestamp'] as String,
+  ).toUtc();
+  return ProtectedGroupAuthorityPreparation(
+    groupId: request.groupId,
+    rows: const <GroupPendingBroadcast>[],
+    authorityProof: authenticated
+        ? AuthenticatedGroupAuthorityProof(
+            eventId: request.transitionId,
+            groupId: request.groupId,
+            eventAt: eventAt,
+            keyEpoch: 1,
+            control: request.control.wireValue,
+            actorAccountPeerId: request.actorAccountPeerId,
+            actorAccountPublicKey: request.actorAccountPublicKey,
+            senderTransportPeerId: request.senderDevice.transportPeerId,
+            senderTransportPublicKey:
+                request.senderDevice.deviceSigningPublicKey,
+            authorityData: <String, Object?>{
+              ...request.replayData,
+              'recipientTransportPeerIds': const <String>[],
+            },
+            signature: 'signed-picker-protected-authority',
+          )
+        : null,
+    control: request.control,
+    replayData: request.replayData,
+  );
+}
+
 void main() {
   group('ContactPickerWired', () {
     testWidgets(
@@ -674,6 +710,207 @@ void main() {
         expect(aliceRows, hasLength(1));
         expect(aliceRows.single.username, 'Alice');
         expect(aliceRows.single.role, MemberRole.writer);
+      },
+    );
+
+    testWidgets(
+      'protected add activation false retains PREPARED projection and blocks '
+      'ordinary picker egress',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository()
+          ..addTestContact(contactAlice);
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(
+          memberAdmin.copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'picker-admin-device',
+                transportPeerId: 'picker-admin-transport',
+                deviceSigningPublicKey: 'pk-admin',
+                mlKemPublicKey: 'mlkem-pk-admin',
+              ),
+            ],
+          ),
+        );
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async => _pickerProtectedPreparation(request),
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls++;
+            return false;
+          },
+          cancel: (preparation) async {
+            cancelCalls++;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:publish': {'ok': true, 'messageId': 'must-not-publish'},
+          },
+        );
+        final p2pService = FakeP2PService();
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+            p2pService: p2pService,
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 25);
+
+        expect(activationCalls, 1);
+        expect(cancelCalls, 0);
+        expect(
+          await groupRepo.getMember('group-1', contactAlice.peerId),
+          isNotNull,
+          reason: 'PREPARED restart recovery owns the committed projection',
+        );
+        expect(
+          bridge.commandLog.where((command) => command == 'group:updateConfig'),
+          hasLength(1),
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(find.text('Failed to invite members'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'protected add durable abort refusal remains ambiguous and blocks picker '
+      'egress',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository()
+          ..addTestContact(contactAlice);
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(
+          memberAdmin.copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'picker-admin-device',
+                transportPeerId: 'picker-admin-transport',
+                deviceSigningPublicKey: 'pk-admin',
+                mlKemPublicKey: 'mlkem-pk-admin',
+              ),
+            ],
+          ),
+        );
+        var activationCalls = 0;
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async => _pickerProtectedPreparation(request),
+          activate: (preparation, {required requireAllCustody}) async {
+            activationCalls++;
+            return true;
+          },
+          cancel: (preparation) async {
+            cancelCalls++;
+            return false;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge(
+          initialResponses: {
+            'group:updateConfig': {
+              'ok': false,
+              'errorCode': 'CONFIG_REJECTED',
+              'errorMessage': 'definite native rejection',
+            },
+          },
+        );
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 25);
+
+        expect(activationCalls, 0);
+        expect(cancelCalls, 1);
+        expect(
+          await groupRepo.getMember('group-1', contactAlice.peerId),
+          isNull,
+          reason: 'the local rollback completed before durable abort refused',
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(find.text('Failed to invite members'), findsOneWidget);
+      },
+    );
+
+    testWidgets(
+      'physical picker refuses unauthenticated protected preparation before '
+      'member projection',
+      (tester) async {
+        final contactRepo = InMemoryContactRepository()
+          ..addTestContact(contactAlice);
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(testGroup);
+        await groupRepo.saveMember(
+          memberAdmin.copyWith(
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'picker-admin-device',
+                transportPeerId: 'picker-admin-transport',
+                deviceSigningPublicKey: 'pk-admin',
+                mlKemPublicKey: 'mlkem-pk-admin',
+              ),
+            ],
+          ),
+        );
+        var cancelCalls = 0;
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async =>
+              _pickerProtectedPreparation(request, authenticated: false),
+          activate: (preparation, {required requireAllCustody}) async => true,
+          cancel: (preparation) async {
+            cancelCalls++;
+            return true;
+          },
+        );
+        addTearDown(setProtectedGroupAuthorityAdapter);
+        final bridge = FakeBridge();
+
+        await tester.pumpWidget(
+          buildDirectWiredTestWidget(
+            groupRepo: groupRepo,
+            contactRepo: contactRepo,
+            bridge: bridge,
+          ),
+        );
+        await pumpFrames(tester);
+        await tester.tap(find.text('Alice'));
+        await tester.pump();
+        await tester.tap(find.text('Send Invites'));
+        await pumpFrames(tester, count: 25);
+
+        expect(
+          cancelCalls,
+          0,
+          reason: 'an empty unauthenticated build has no owner',
+        );
+        expect(
+          await groupRepo.getMember('group-1', contactAlice.peerId),
+          isNull,
+        );
+        expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+        expect(bridge.commandLog, isNot(contains('group:publish')));
       },
     );
 

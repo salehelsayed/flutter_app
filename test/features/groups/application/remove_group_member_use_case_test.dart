@@ -1,14 +1,24 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 void main() {
@@ -120,7 +130,7 @@ void main() {
       expect(
         minted.eventId,
         'member_removed:group-1:peer-admin:'
-            '${minted.eventAt.microsecondsSinceEpoch}',
+        '${minted.eventAt.microsecondsSinceEpoch}',
       );
       // The same pair is what the group's watermark now carries (so the wired
       // site can read it back / publish it consistently).
@@ -938,4 +948,848 @@ void main() {
     final updatedGroup = await groupRepo.getGroup('group-1');
     expect(updatedGroup?.lastMembershipEventAt, isNull);
   });
+
+  test(
+    'protected remove activates only after native config and exact watermark',
+    () async {
+      final eventAt = DateTime.utc(2026, 8, 13, 11);
+      var activated = 0;
+      var rolledBack = 0;
+      var activationSawExactCommit = false;
+
+      final minted = await removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+        eventAt: eventAt,
+        prepareAuthority:
+            ({
+              required group,
+              required members,
+              required removedMember,
+              required eventAt,
+              required eventId,
+            }) async => PreparedGroupMemberRemovalAuthority(
+              activate: () async {
+                activated++;
+                final committedGroup = await groupRepo.getGroup('group-1');
+                activationSawExactCommit =
+                    bridge.commandLog.contains('group:updateConfig') &&
+                    await groupRepo.getMember('group-1', 'peer-to-remove') ==
+                        null &&
+                    committedGroup?.lastMembershipEventAt?.toUtc() ==
+                        eventAt.toUtc() &&
+                    committedGroup?.lastMembershipEventId == eventId;
+              },
+              rollback: () async {
+                rolledBack++;
+              },
+            ),
+      );
+
+      expect(minted.eventAt, eventAt);
+      expect(
+        minted.eventId,
+        canonicalMembershipEventId(
+          transitionType: 'member_removed',
+          groupId: 'group-1',
+          actorPeerId: 'peer-admin',
+          eventAt: eventAt,
+        ),
+      );
+      expect(activated, 1);
+      expect(rolledBack, 0);
+      expect(activationSawExactCommit, isTrue);
+    },
+  );
+
+  test(
+    'protected remove timeout preserves PREPARED owner and absent projection',
+    () async {
+      final timeoutBridge = _TimeoutRemoveUpdateConfigBridge();
+      var activated = 0;
+      var rolledBack = 0;
+
+      await expectLater(
+        removeGroupMember(
+          bridge: timeoutBridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-to-remove',
+          selfPeerId: 'peer-admin',
+          eventAt: DateTime.utc(2026, 8, 13, 11, 1),
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required removedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberRemovalAuthority(
+                activate: () async {
+                  activated++;
+                },
+                rollback: () async {
+                  rolledBack++;
+                },
+              ),
+        ),
+        throwsA(
+          isA<GroupMemberRemovalCommitAmbiguous>().having(
+            (error) => error.cause,
+            'cause',
+            isA<TimeoutException>(),
+          ),
+        ),
+      );
+
+      expect(timeoutBridge.updateConfigIssued, isTrue);
+      expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNull);
+      expect(
+        (await groupRepo.getGroup('group-1'))?.lastMembershipEventAt,
+        isNull,
+      );
+      expect(activated, 0);
+      expect(rolledBack, 0);
+    },
+  );
+
+  test('protected remove definite native rejection restores member then aborts '
+      'PREPARED', () async {
+    bridge.responses['group:updateConfig'] = {
+      'ok': false,
+      'errorCode': 'CONFIG_REJECTED',
+      'errorMessage': 'exact config rejected',
+    };
+    var activated = 0;
+    var rolledBack = 0;
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+        eventAt: DateTime.utc(2026, 8, 13, 11, 2),
+        prepareAuthority:
+            ({
+              required group,
+              required members,
+              required removedMember,
+              required eventAt,
+              required eventId,
+            }) async => PreparedGroupMemberRemovalAuthority(
+              activate: () async {
+                activated++;
+              },
+              rollback: () async {
+                rolledBack++;
+                expect(
+                  await groupRepo.getMember('group-1', 'peer-to-remove'),
+                  isNotNull,
+                );
+              },
+            ),
+      ),
+      throwsA(
+        isA<BridgeCommandException>().having(
+          (error) => error.errorCode,
+          'errorCode',
+          'CONFIG_REJECTED',
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNotNull);
+    expect(activated, 0);
+    expect(rolledBack, 1);
+  });
+
+  test('protected remove activation failure stops egress and retains committed '
+      'absence for recovery', () async {
+    final eventAt = DateTime.utc(2026, 8, 13, 11, 2, 30);
+    var rolledBack = 0;
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+        eventAt: eventAt,
+        prepareAuthority:
+            ({
+              required group,
+              required members,
+              required removedMember,
+              required eventAt,
+              required eventId,
+            }) async => PreparedGroupMemberRemovalAuthority(
+              activate: () async {
+                throw StateError('COMPLETE still pending');
+              },
+              rollback: () async {
+                rolledBack++;
+              },
+            ),
+      ),
+      throwsA(
+        isA<GroupMemberRemovalCommitAmbiguous>().having(
+          (error) => error.cause.toString(),
+          'cause',
+          contains('COMPLETE still pending'),
+        ),
+      ),
+    );
+
+    expect(await groupRepo.getMember('group-1', 'peer-to-remove'), isNull);
+    final committedGroup = await groupRepo.getGroup('group-1');
+    expect(committedGroup?.lastMembershipEventAt, eventAt);
+    expect(committedGroup?.lastMembershipEventId, isNotNull);
+    expect(rolledBack, 0);
+    expect(
+      bridge.commandLog.where((command) => command == 'group:updateConfig'),
+      hasLength(1),
+    );
+  });
+
+  test('protected remove abort refusal is ambiguous after definite native '
+      'rejection', () async {
+    bridge.responses['group:updateConfig'] = {
+      'ok': false,
+      'errorCode': 'CONFIG_REJECTED',
+      'errorMessage': 'exact config rejected',
+    };
+
+    await expectLater(
+      removeGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        memberPeerId: 'peer-to-remove',
+        selfPeerId: 'peer-admin',
+        eventAt: DateTime.utc(2026, 8, 13, 11, 2, 45),
+        prepareAuthority:
+            ({
+              required group,
+              required members,
+              required removedMember,
+              required eventAt,
+              required eventId,
+            }) async => PreparedGroupMemberRemovalAuthority(
+              activate: () async {},
+              rollback: () async {
+                throw StateError('durable ABORT refused');
+              },
+            ),
+      ),
+      throwsA(
+        isA<GroupMemberRemovalCommitAmbiguous>()
+            .having(
+              (error) => error.cause,
+              'cause',
+              isA<BridgeCommandException>(),
+            )
+            .having(
+              (error) => error.rollbackError.toString(),
+              'rollbackError',
+              contains('durable ABORT refused'),
+            ),
+      ),
+    );
+
+    expect(
+      await groupRepo.getMember('group-1', 'peer-to-remove'),
+      isNotNull,
+      reason: 'local restore precedes the refused durable abort',
+    );
+  });
+
+  test(
+    'protected remove post-delete repository crash retains PREPARED owner',
+    () async {
+      final crashRepo = _CrashAfterMemberRemoveRepository(
+        crashPeerId: 'peer-to-remove',
+      );
+      await crashRepo.saveGroup(testGroup);
+      for (final member in await groupRepo.getMembers('group-1')) {
+        await crashRepo.saveMember(member);
+      }
+      var rolledBack = 0;
+
+      await expectLater(
+        removeGroupMember(
+          bridge: bridge,
+          groupRepo: crashRepo,
+          groupId: 'group-1',
+          memberPeerId: 'peer-to-remove',
+          selfPeerId: 'peer-admin',
+          eventAt: DateTime.utc(2026, 8, 13, 11, 3),
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required removedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberRemovalAuthority(
+                activate: () async {},
+                rollback: () async {
+                  rolledBack++;
+                },
+              ),
+        ),
+        throwsA(isA<GroupMemberRemovalCommitAmbiguous>()),
+      );
+
+      expect(await crashRepo.getMember('group-1', 'peer-to-remove'), isNull);
+      expect(rolledBack, 0);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test(
+    'protected remove PREPARED repairs pre/post projection after restart and '
+    'completes evidence exactly once',
+    () async {
+      Future<void> proveShape({required bool memberAlreadyRemoved}) async {
+        const groupId = 'group-protected-remove-restart';
+        const actorPeerId = 'peer-protected-remove-admin';
+        const removedPeerId = 'peer-protected-remove-target';
+        final suffix = memberAlreadyRemoved ? 'post' : 'pre';
+        final eventAt = DateTime.utc(2026, 8, 13, 15);
+        final eventId = 'member-removed-restart-$suffix';
+        final createdAt = eventAt.subtract(const Duration(days: 2));
+        const actorDevice = GroupMemberDeviceIdentity(
+          deviceId: 'protected-remove-admin-device',
+          transportPeerId: 'protected-remove-admin-transport',
+          deviceSigningPublicKey: 'protected-remove-admin-public-key',
+          mlKemPublicKey: 'protected-remove-admin-mlkem',
+        );
+        const removedDevice = GroupMemberDeviceIdentity(
+          deviceId: 'protected-remove-target-device',
+          transportPeerId: 'protected-remove-target-transport',
+          deviceSigningPublicKey: 'protected-remove-target-public-key',
+          mlKemPublicKey: 'protected-remove-target-mlkem',
+        );
+        const survivorDevice = GroupMemberDeviceIdentity(
+          deviceId: 'protected-remove-survivor-device',
+          transportPeerId: 'protected-remove-survivor-transport',
+          deviceSigningPublicKey: 'protected-remove-survivor-public-key',
+          mlKemPublicKey: 'protected-remove-survivor-mlkem',
+        );
+        final repository = InMemoryGroupRepository();
+        final messageRepository = InMemoryGroupMessageRepository();
+        final recoveryBridge = PassthroughCryptoBridge();
+        final history = _RemoveAuthenticatedAuthorityHistory();
+        final evidenceByEventId = <String, Map<String, Object?>>{};
+        final group = GroupModel(
+          id: groupId,
+          name: 'Protected remove restart',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: createdAt,
+          createdBy: actorPeerId,
+          myRole: GroupRole.admin,
+        );
+        final actor = GroupMember(
+          groupId: groupId,
+          peerId: actorPeerId,
+          username: 'Protected remove admin',
+          role: MemberRole.admin,
+          publicKey: actorDevice.deviceSigningPublicKey,
+          mlKemPublicKey: actorDevice.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[actorDevice],
+          joinedAt: createdAt.add(const Duration(hours: 1)),
+        );
+        final removed = GroupMember(
+          groupId: groupId,
+          peerId: removedPeerId,
+          username: 'Protected remove target',
+          role: MemberRole.writer,
+          publicKey: removedDevice.deviceSigningPublicKey,
+          mlKemPublicKey: removedDevice.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[removedDevice],
+          joinedAt: createdAt.add(const Duration(hours: 2)),
+        );
+        final survivor = GroupMember(
+          groupId: groupId,
+          peerId: 'peer-protected-remove-survivor',
+          username: 'Protected survivor',
+          role: MemberRole.writer,
+          publicKey: survivorDevice.deviceSigningPublicKey,
+          mlKemPublicKey: survivorDevice.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[survivorDevice],
+          joinedAt: createdAt.add(const Duration(hours: 3)),
+        );
+        await repository.saveGroup(group);
+        await repository.saveMember(actor);
+        await repository.saveMember(removed);
+        await repository.saveMember(survivor);
+        await repository.saveRemovedMemberSnapshot(removed, removedAt: eventAt);
+        await repository.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'protected-remove-key-v1',
+            createdAt: createdAt.add(const Duration(hours: 4)),
+          ),
+        );
+
+        final remainingMembers = <GroupMember>[actor, survivor];
+        final signedPayload = await signGroupSystemTransitionPayload(
+          bridge: recoveryBridge,
+          groupRepo: repository,
+          groupId: groupId,
+          transitionType: 'member_removed',
+          sourceEventId: eventId,
+          eventAt: eventAt,
+          actorPeerId: actorPeerId,
+          actorUsername: actor.username!,
+          actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+          actorPrivateKey: 'protected-remove-admin-private-key',
+          actorDeviceId: actorDevice.deviceId,
+          actorTransportPeerId: actorDevice.transportPeerId,
+          systemPayload: <String, dynamic>{
+            '__sys': 'member_removed',
+            'member': <String, dynamic>{
+              'peerId': removed.peerId,
+              'username': removed.username,
+            },
+            'removedAt': eventAt.toIso8601String(),
+            'groupConfig': buildGroupConfigPayload(
+              group.copyWith(lastMembershipEventAt: eventAt),
+              remainingMembers,
+              configVersionOverride: eventAt,
+            ),
+          },
+        );
+        final replayData = <String, dynamic>{
+          'groupId': groupId,
+          'senderId': actorPeerId,
+          'senderUsername': actor.username,
+          'senderDeviceId': actorDevice.deviceId,
+          'transportPeerId': actorDevice.transportPeerId,
+          'keyEpoch': 1,
+          'text': jsonEncode(signedPayload),
+          'timestamp': eventAt.toIso8601String(),
+          'messageId': eventId,
+        };
+        final preparation = await buildProtectedGroupAuthorityRows(
+          groupId: groupId,
+          transitionId: eventId,
+          control: ProtectedGroupAuthorityControl.memberRemove,
+          replayData: replayData,
+          keyEpoch: 1,
+          actorAccountPeerId: actorPeerId,
+          actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+          actorAccountPrivateKey: 'protected-remove-admin-private-key',
+          senderDevice: actorDevice,
+          frozenRecipients: const <GroupMemberDeviceIdentity>[
+            actorDevice,
+            removedDevice,
+            survivorDevice,
+          ],
+          callSign: (data, privateKey) async => <String, dynamic>{
+            'ok': true,
+            'signature': 'protected-remove-authority-$suffix',
+          },
+          callEncrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async =>
+                  <String, dynamic>{
+                    'ok': true,
+                    'kem': 'kem-$recipientMlKemPublicKey',
+                    'ciphertext': 'ciphertext-$recipientMlKemPublicKey',
+                    'nonce': 'nonce-$recipientMlKemPublicKey',
+                  },
+          now: () => eventAt,
+        );
+        final proof = preparation.authorityProof!;
+        await history.append(
+          phase: AuthenticatedGroupAuthorityPhase.prepared,
+          proof: proof,
+        );
+        if (memberAlreadyRemoved) {
+          // Crash shape after the producer's SQL removal but before exact
+          // watermark/COMPLETE persistence.
+          await repository.removeMember(groupId, removedPeerId);
+        }
+        recoveryBridge.commandLog.clear();
+        recoveryBridge.sentMessages.clear();
+
+        final restartedListener = GroupMessageListener(
+          groupRepo: repository,
+          msgRepo: messageRepository,
+          bridge: recoveryBridge,
+          getSelfPeerId: () async => actorPeerId,
+          appendGroupEventLogEntry:
+              ({
+                required groupId,
+                required eventType,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required payload,
+                createdAt,
+              }) async {
+                final row = <String, Object?>{
+                  'groupId': groupId,
+                  'eventType': eventType,
+                  'sourcePeerId': sourcePeerId,
+                  'sourceEventId': sourceEventId,
+                  'sourceTimestamp': sourceTimestamp,
+                  'payload': payload,
+                };
+                evidenceByEventId.putIfAbsent(sourceEventId, () => row);
+                return evidenceByEventId[sourceEventId]!;
+              },
+        );
+        addTearDown(restartedListener.dispose);
+        var replayAttempts = 0;
+
+        Future<bool> recover() => recoverLocalPreparedProtectedSystemAuthority(
+          proof: proof,
+          groupRepository: repository,
+          verifyAuthorityProof:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof: history.load,
+          appendAuthorityProof: history.append,
+          applyReplay: (control, protectedReplayData, authority) async {
+            replayAttempts++;
+            try {
+              await restartedListener
+                  .handleAuthenticatedAuthorityReplayEnvelope(
+                    protectedReplayData,
+                    authority: authority,
+                    rethrowOnError: true,
+                    membershipPhaseHeld: true,
+                  );
+              final converged = await protectedGroupAuthorityReplayConverged(
+                control: control,
+                replayData: protectedReplayData,
+                groupRepository: repository,
+                requireMembershipVersion: true,
+                allowDominatingMembershipVersion: true,
+              );
+              return converged == true
+                  ? ProtectedGroupAuthorityApplyResult.applied
+                  : ProtectedGroupAuthorityApplyResult.retryable;
+            } catch (_) {
+              return ProtectedGroupAuthorityApplyResult.retryable;
+            }
+          },
+        );
+
+        expect(await recover(), isTrue, reason: '$suffix-projection restart');
+        expect(await repository.getMember(groupId, removedPeerId), isNull);
+        final recoveredGroup = await repository.getGroup(groupId);
+        expect(recoveredGroup?.lastMembershipEventAt, eventAt);
+        expect(recoveredGroup?.lastMembershipEventId, eventId);
+        expect(
+          recoveryBridge.commandLog.where(
+            (command) => command == 'group:updateConfig',
+          ),
+          hasLength(1),
+        );
+        expect(
+          evidenceByEventId.keys.where((id) => id == eventId),
+          hasLength(1),
+        );
+        expect(history.count(AuthenticatedGroupAuthorityPhase.prepared), 1);
+        expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+        expect(replayAttempts, 1);
+
+        expect(
+          await recover(),
+          isTrue,
+          reason: 'COMPLETE is restart-idempotent',
+        );
+        expect(replayAttempts, 1, reason: 'COMPLETE prevents a second replay');
+        expect(
+          evidenceByEventId.keys.where((id) => id == eventId),
+          hasLength(1),
+        );
+        expect(
+          recoveryBridge.commandLog.where(
+            (command) => command == 'group:updateConfig',
+          ),
+          hasLength(1),
+        );
+      }
+
+      await proveShape(memberAlreadyRemoved: false);
+      await proveShape(memberAlreadyRemoved: true);
+    },
+  );
+
+  test(
+    'protected older remove completes as superseded after later same-subject '
+    'remove',
+    () async {
+      const groupId = 'group-protected-remove-superseded';
+      const actorPeerId = 'peer-remove-superseded-admin';
+      const targetPeerId = 'peer-remove-superseded-target';
+      final createdAt = DateTime.utc(2026, 8, 13, 8);
+      final olderRemoveAt = DateTime.utc(2026, 8, 13, 9);
+      final laterRemoveAt = DateTime.utc(2026, 8, 13, 11);
+      const olderEventId = 'member-remove-before-later-remove';
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'remove-superseded-admin-device',
+        transportPeerId: 'remove-superseded-admin-transport',
+        deviceSigningPublicKey: 'remove-superseded-admin-public-key',
+        mlKemPublicKey: 'remove-superseded-admin-mlkem',
+      );
+      final repository = InMemoryGroupRepository();
+      final messageRepository = InMemoryGroupMessageRepository();
+      final recoveryBridge = PassthroughCryptoBridge();
+      final history = _RemoveAuthenticatedAuthorityHistory();
+      final evidenceByEventId = <String>{};
+      final group = GroupModel(
+        id: groupId,
+        name: 'Superseded protected removal',
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: createdAt,
+        createdBy: actorPeerId,
+        myRole: GroupRole.admin,
+        lastMembershipEventAt: laterRemoveAt,
+        lastMembershipEventId: 'later-remove-event',
+      );
+      final actor = GroupMember(
+        groupId: groupId,
+        peerId: actorPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: actorDevice.deviceSigningPublicKey,
+        mlKemPublicKey: actorDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[actorDevice],
+        joinedAt: createdAt,
+      );
+      final historicalTarget = GroupMember(
+        groupId: groupId,
+        peerId: targetPeerId,
+        username: 'Target',
+        role: MemberRole.writer,
+        publicKey: 'remove-superseded-target-public-key',
+        mlKemPublicKey: 'remove-superseded-target-mlkem',
+        joinedAt: createdAt.add(const Duration(minutes: 30)),
+      );
+      await repository.saveGroup(group);
+      await repository.saveMember(actor);
+      await repository.saveRemovedMemberSnapshot(
+        historicalTarget,
+        removedAt: laterRemoveAt,
+      );
+      await repository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'remove-superseded-key-v1',
+          createdAt: createdAt,
+        ),
+      );
+      await messageRepository.saveMessage(
+        buildMemberRemovedTimelineMessage(
+          groupId: groupId,
+          removedPeerId: targetPeerId,
+          removedUsername: 'Target',
+          senderId: actorPeerId,
+          senderUsername: 'Admin',
+          eventAt: laterRemoveAt,
+        ),
+      );
+
+      final signedPayload = await signGroupSystemTransitionPayload(
+        bridge: recoveryBridge,
+        groupRepo: repository,
+        groupId: groupId,
+        transitionType: 'member_removed',
+        sourceEventId: olderEventId,
+        eventAt: olderRemoveAt,
+        actorPeerId: actorPeerId,
+        actorUsername: 'Admin',
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        actorPrivateKey: 'remove-superseded-admin-private-key',
+        actorDeviceId: actorDevice.deviceId,
+        actorTransportPeerId: actorDevice.transportPeerId,
+        systemPayload: <String, dynamic>{
+          '__sys': 'member_removed',
+          'member': <String, dynamic>{
+            'peerId': targetPeerId,
+            'username': 'Target',
+          },
+          'removedAt': olderRemoveAt.toIso8601String(),
+          'groupConfig': buildGroupConfigPayload(
+            group.copyWith(
+              lastMembershipEventAt: olderRemoveAt,
+              lastMembershipEventId: olderEventId,
+            ),
+            <GroupMember>[actor],
+            configVersionOverride: olderRemoveAt,
+          ),
+        },
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'senderId': actorPeerId,
+        'senderUsername': 'Admin',
+        'senderDeviceId': actorDevice.deviceId,
+        'transportPeerId': actorDevice.transportPeerId,
+        'keyEpoch': 1,
+        'text': jsonEncode(signedPayload),
+        'timestamp': olderRemoveAt.toIso8601String(),
+        'messageId': olderEventId,
+      };
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: olderEventId,
+        control: ProtectedGroupAuthorityControl.memberRemove,
+        replayData: replayData,
+        keyEpoch: 1,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        actorAccountPrivateKey: 'remove-superseded-admin-private-key',
+        senderDevice: actorDevice,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[actorDevice],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'signed-remove-superseded',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                <String, dynamic>{'ok': true},
+        now: () => olderRemoveAt,
+      );
+      final proof = preparation.authorityProof!;
+      await history.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: proof,
+      );
+      final listener = GroupMessageListener(
+        groupRepo: repository,
+        msgRepo: messageRepository,
+        bridge: recoveryBridge,
+        getSelfPeerId: () async => actorPeerId,
+        appendGroupEventLogEntry:
+            ({
+              required groupId,
+              required eventType,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required payload,
+              createdAt,
+            }) async {
+              evidenceByEventId.add(sourceEventId);
+              return <String, Object?>{'sourceEventId': sourceEventId};
+            },
+      );
+      addTearDown(listener.dispose);
+      var replayAttempts = 0;
+
+      final recovered = await recoverLocalPreparedProtectedSystemAuthority(
+        proof: proof,
+        groupRepository: repository,
+        verifyAuthorityProof:
+            ({required publicKey, required data, required signature}) async =>
+                true,
+        loadAuthorityProof: history.load,
+        appendAuthorityProof: history.append,
+        applyReplay: (control, protectedReplayData, authority) async {
+          replayAttempts++;
+          try {
+            await listener.handleAuthenticatedAuthorityReplayEnvelope(
+              protectedReplayData,
+              authority: authority,
+              rethrowOnError: true,
+              membershipPhaseHeld: true,
+            );
+            return ProtectedGroupAuthorityApplyResult.applied;
+          } on ProtectedGroupAuthorityReplaySuperseded {
+            return ProtectedGroupAuthorityApplyResult.superseded;
+          } catch (_) {
+            return ProtectedGroupAuthorityApplyResult.retryable;
+          }
+        },
+      );
+
+      expect(recovered, isTrue);
+      expect(replayAttempts, 1);
+      expect(await repository.getMember(groupId, targetPeerId), isNull);
+      expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+      expect(evidenceByEventId, isNot(contains(olderEventId)));
+      expect(
+        recoveryBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        isEmpty,
+      );
+    },
+  );
+}
+
+class _TimeoutRemoveUpdateConfigBridge extends FakeBridge {
+  bool updateConfigIssued = false;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:updateConfig') {
+      updateConfigIssued = true;
+      throw TimeoutException('simulated lost group:updateConfig response');
+    }
+    return super.send(message);
+  }
+}
+
+class _CrashAfterMemberRemoveRepository extends InMemoryGroupRepository {
+  _CrashAfterMemberRemoveRepository({required this.crashPeerId});
+
+  final String crashPeerId;
+
+  @override
+  Future<void> removeMember(String groupId, String peerId) async {
+    await super.removeMember(groupId, peerId);
+    if (peerId == crashPeerId) {
+      throw StateError('simulated crash after durable member delete');
+    }
+  }
+}
+
+final class _RemoveAuthenticatedAuthorityHistory {
+  final _proofs =
+      <
+        (AuthenticatedGroupAuthorityPhase, String),
+        AuthenticatedGroupAuthorityProof
+      >{};
+
+  Future<AuthenticatedGroupAuthorityProof?> load({
+    required String groupId,
+    required AuthenticatedGroupAuthorityPhase phase,
+    required String eventId,
+  }) async {
+    final proof = _proofs[(phase, eventId)];
+    return proof?.groupId == groupId ? proof : null;
+  }
+
+  Future<void> append({
+    required AuthenticatedGroupAuthorityPhase phase,
+    required AuthenticatedGroupAuthorityProof proof,
+  }) async {
+    final key = (phase, proof.eventId);
+    final existing = _proofs[key];
+    if (existing != null &&
+        !sameAuthenticatedGroupAuthorityProof(existing, proof)) {
+      throw StateError('conflicting remove authority history');
+    }
+    _proofs[key] = proof;
+  }
+
+  int count(AuthenticatedGroupAuthorityPhase phase) =>
+      _proofs.keys.where((key) => key.$1 == phase).length;
 }

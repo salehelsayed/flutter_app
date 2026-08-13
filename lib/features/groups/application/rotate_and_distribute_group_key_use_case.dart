@@ -1,15 +1,16 @@
-import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 String _diagnosticPrefix(String value) =>
@@ -198,618 +199,742 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
     },
   );
 
-  return _withSerializedGroupRotation<RotateGroupKeyOutcome>(groupId, () async {
-    final group = await groupRepo.getGroup(groupId);
-    if (group == null) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_GROUP_NOT_FOUND',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        },
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    final selfMember = await groupRepo.getMember(groupId, selfPeerId);
-    final canRotate = selfMember != null
-        ? selfMember.permissions.allows(
-            GroupMemberPermission.rotateKeys,
-            selfMember.role,
-          )
-        : false;
-    if (!canRotate) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        },
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    if (group.createdBy != selfPeerId) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        },
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    final sourceDevice = _resolveSourceDevice(
-      selfMember: selfMember,
-      senderPublicKey: senderPublicKey,
-      sourceDeviceId: sourceDeviceId,
-    );
-    if (selfMember.devices.isNotEmpty && sourceDevice == null) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_UNBOUND_SOURCE_DEVICE',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        },
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    GroupKeyInfo? persistedKey;
-    try {
-      persistedKey = await groupRepo.getLatestKey(groupId);
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
-        details: {'error': e.toString()},
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    if (persistedKey == null) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
-        details: {
-          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        },
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    try {
-      await callGroupUpdateKey(
-        bridge,
-        groupId: groupId,
-        groupKey: persistedKey.encryptedKey,
-        keyEpoch: persistedKey.keyGeneration,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_RESYNC_ERROR',
-        details: {'error': e.toString()},
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    final members = await groupRepo.getMembers(groupId);
-    // Promote-then-defer: a remaining member with no deliverable device (keyless
-    // at rotation time) no longer ABORTS the rotation. Forward secrecy for the
-    // *boundary* (the removed member) outranks synchronous convergence for an
-    // already-broken insider. Keyless members are recorded as deferred; the
-    // epoch is still generated and promoted, so the removed member loses the
-    // live key unconditionally. Deferred members converge later (Slice 2 / a
-    // future rotation / the receiver decrypt-retry runner).
-    final keylessRemainingMembers = _undeliverableActiveMembers(
-      members: members,
-      selfPeerId: selfPeerId,
-    );
-    if (keylessRemainingMembers.isNotEmpty) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_KEYLESS_MEMBERS_DEFERRED',
-        details: {
-          'groupId': _diagnosticPrefix(groupId),
-          'keylessCount': keylessRemainingMembers.length,
-          'peerIds': keylessRemainingMembers
-              .map((member) => _diagnosticPrefix(member.peerId))
-              .toList(growable: false),
-        },
-      );
-    }
-
-    final distributionTargets = members
-        .expand(
-          (member) => _deliverableDevicesForRotation(member)
-              .where(
-                (device) =>
-                    member.peerId != selfPeerId ||
-                    sourceDevice == null ||
-                    device.deviceId != sourceDevice.deviceId,
-              )
-              .map((device) => (member: member, device: device)),
-        )
-        .toList(growable: false);
-
-    if (distributionTargets.isNotEmpty && sendP2PMessage == null) {
-      // No transport available: every reachable member is treated as deferred
-      // rather than aborting. The epoch is still generated and promoted below so
-      // the removed member loses the live key. (Production removal always
-      // supplies a transport via group_info_wired; this guards test/edge calls.)
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_TRANSPORT_UNAVAILABLE',
-        details: {
-          'groupId': _diagnosticPrefix(groupId),
-          'targetCount': distributionTargets.length,
-        },
-      );
-    }
-
-    final preTransitionStateHash = await buildGroupTransitionStateHash(
-      groupRepo,
-      groupId,
-    );
-    final draftRepo = groupRepo is GroupKeyRotationDraftRepository
-        ? groupRepo as GroupKeyRotationDraftRepository
-        : null;
-    final expectedEpoch = persistedKey.keyGeneration + 1;
-
-    final pendingDraftResult = await _loadUsablePendingRotationDraft(
-      draftRepo: draftRepo,
-      groupId: groupId,
-      persistedEpoch: persistedKey.keyGeneration,
-      expectedEpoch: expectedEpoch,
-    );
-    if (pendingDraftResult.failedClosed) {
-      return RotateGroupKeyOutcome.notRotated;
-    }
-    final pendingDraft = pendingDraftResult.draft;
-
-    late final int newEpoch;
-    late final String newKey;
-    late final DateTime generatedAt;
-
-    if (pendingDraft != null) {
-      newEpoch = pendingDraft.keyGeneration;
-      newKey = pendingDraft.encryptedKey;
-      generatedAt = pendingDraft.createdAt;
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_REUSED',
-        details: {'newEpoch': newEpoch},
-      );
-    } else {
-      // 1. Generate the next key without updating Go state yet.
-      final generateResult = await callGroupGenerateNextKey(bridge, groupId);
-      if (generateResult['ok'] != true) {
+  return runGroupAuthorityPhaseIfNeeded<RotateGroupKeyOutcome>(
+    groupId: groupId,
+    authorityPhaseHeld: isGroupAuthorityPhaseHeld(groupId),
+    action: () async {
+      final group = await groupRepo.getGroup(groupId);
+      if (group == null) {
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
+          event: 'GROUP_ROTATE_KEY_GROUP_NOT_FOUND',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      final selfMember = await groupRepo.getMember(groupId, selfPeerId);
+      final canRotate = selfMember != null
+          ? selfMember.permissions.allows(
+              GroupMemberPermission.rotateKeys,
+              selfMember.role,
+            )
+          : false;
+      if (!canRotate) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      if (group.createdBy != selfPeerId) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_PERMISSION_DENIED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      final sourceDevice = _resolveSourceDevice(
+        selfMember: selfMember,
+        senderPublicKey: senderPublicKey,
+        sourceDeviceId: sourceDeviceId,
+      );
+      if (selfMember.devices.isNotEmpty && sourceDevice == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_UNBOUND_SOURCE_DEVICE',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      GroupKeyInfo? persistedKey;
+      try {
+        persistedKey = await groupRepo.getLatestKey(groupId);
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
+          details: {'error': e.toString()},
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      if (persistedKey == null) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_NO_PERSISTED_KEY',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          },
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      try {
+        await callGroupUpdateKey(
+          bridge,
+          groupId: groupId,
+          groupKey: persistedKey.encryptedKey,
+          keyEpoch: persistedKey.keyGeneration,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_RESYNC_ERROR',
+          details: {'error': e.toString()},
+        );
+        return RotateGroupKeyOutcome.notRotated;
+      }
+
+      final members = await groupRepo.getMembers(groupId);
+      // Promote-then-defer: a remaining member with no deliverable device (keyless
+      // at rotation time) no longer ABORTS the rotation. Forward secrecy for the
+      // *boundary* (the removed member) outranks synchronous convergence for an
+      // already-broken insider. Keyless members are recorded as deferred; the
+      // epoch is still generated and promoted, so the removed member loses the
+      // live key unconditionally. Deferred members converge later (Slice 2 / a
+      // future rotation / the receiver decrypt-retry runner).
+      final keylessRemainingMembers = _undeliverableActiveMembers(
+        members: members,
+        selfPeerId: selfPeerId,
+      );
+      if (keylessRemainingMembers.isNotEmpty) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_KEYLESS_MEMBERS_DEFERRED',
           details: {
             'groupId': _diagnosticPrefix(groupId),
-            'keyEpoch': expectedEpoch,
-            'membershipOperationId': _rotationOperationId(groupId, selfPeerId),
-            'errorCode': generateResult['errorCode'],
+            'keylessCount': keylessRemainingMembers.length,
+            'peerIds': keylessRemainingMembers
+                .map((member) => _diagnosticPrefix(member.peerId))
+                .toList(growable: false),
           },
         );
-        return RotateGroupKeyOutcome.notRotated;
       }
 
-      newEpoch = generateResult['keyEpoch'] as int;
-      if (newEpoch != expectedEpoch) {
+      final distributionTargets = members
+          .expand(
+            (member) => _deliverableDevicesForRotation(member)
+                .where(
+                  (device) =>
+                      member.peerId != selfPeerId ||
+                      sourceDevice == null ||
+                      device.deviceId != sourceDevice.deviceId,
+                )
+                .map((device) => (member: member, device: device)),
+          )
+          .toList(growable: false);
+
+      if (distributionTargets.isNotEmpty && sendP2PMessage == null) {
+        // No transport available: every reachable member is treated as deferred
+        // rather than aborting. The epoch is still generated and promoted below so
+        // the removed member loses the live key. (Production removal always
+        // supplies a transport via group_info_wired; this guards test/edge calls.)
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_ROTATE_KEY_EPOCH_MISMATCH',
+          event: 'GROUP_ROTATE_KEY_TRANSPORT_UNAVAILABLE',
           details: {
-            'persistedEpoch': persistedKey.keyGeneration,
-            'generatedEpoch': newEpoch,
+            'groupId': _diagnosticPrefix(groupId),
+            'targetCount': distributionTargets.length,
           },
+        );
+      }
+
+      final preTransitionStateHash = await buildGroupTransitionStateHash(
+        groupRepo,
+        groupId,
+      );
+      final draftRepo = groupRepo is GroupKeyRotationDraftRepository
+          ? groupRepo as GroupKeyRotationDraftRepository
+          : null;
+      final expectedEpoch = persistedKey.keyGeneration + 1;
+
+      final pendingDraftResult = await _loadUsablePendingRotationDraft(
+        draftRepo: draftRepo,
+        groupId: groupId,
+        persistedEpoch: persistedKey.keyGeneration,
+        expectedEpoch: expectedEpoch,
+      );
+      if (pendingDraftResult.failedClosed) {
+        return RotateGroupKeyOutcome.notRotated;
+      }
+      final pendingDraft = pendingDraftResult.draft;
+
+      late final int newEpoch;
+      late final String newKey;
+      late final DateTime generatedAt;
+
+      if (pendingDraft != null) {
+        newEpoch = pendingDraft.keyGeneration;
+        newKey = pendingDraft.encryptedKey;
+        generatedAt = pendingDraft.createdAt;
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_PENDING_DRAFT_REUSED',
+          details: {'newEpoch': newEpoch},
+        );
+      } else {
+        // 1. Generate the next key without updating Go state yet.
+        final generateResult = await callGroupGenerateNextKey(bridge, groupId);
+        if (generateResult['ok'] != true) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ROTATE_KEY_BRIDGE_ERROR',
+            details: {
+              'groupId': _diagnosticPrefix(groupId),
+              'keyEpoch': expectedEpoch,
+              'membershipOperationId': _rotationOperationId(
+                groupId,
+                selfPeerId,
+              ),
+              'errorCode': generateResult['errorCode'],
+            },
+          );
+          return RotateGroupKeyOutcome.notRotated;
+        }
+
+        newEpoch = generateResult['keyEpoch'] as int;
+        if (newEpoch != expectedEpoch) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ROTATE_KEY_EPOCH_MISMATCH',
+            details: {
+              'persistedEpoch': persistedKey.keyGeneration,
+              'generatedEpoch': newEpoch,
+            },
+          );
+          return RotateGroupKeyOutcome.notRotated;
+        }
+        newKey = generateResult['groupKey'] as String;
+        generatedAt = DateTime.now().toUtc();
+
+        final savedDraft = await _savePendingRotationDraft(
+          draftRepo: draftRepo,
+          groupId: groupId,
+          keyGeneration: newEpoch,
+          encryptedKey: newKey,
+          createdAt: generatedAt,
+        );
+        if (!savedDraft) {
+          return RotateGroupKeyOutcome.notRotated;
+        }
+      }
+      // The current pending-draft schema only persists epoch, key, and createdAt.
+      // Reusing createdAt stabilizes direct eventAt and signed audit on retry;
+      // preTransitionStateHash is recomputed until the schema can persist it.
+      final directKeyUpdateEventAt = generatedAt.toUtc();
+      final maxDistributionAttempts = distributionAttemptCount < 1
+          ? 1
+          : distributionAttemptCount;
+
+      // 2. Prepare one common signed key-authority version before promoting the
+      // local epoch. Only the outer delivery tuple and encrypted replay are
+      // target-qualified; every recipient resolves the same event ID and proof.
+      final protectedPreparations = <int, ProtectedGroupAuthorityPreparation>{};
+      ProtectedGroupAuthorityPreparation? authorityOnlyPreparation;
+      AuthenticatedGroupAuthorityProof? sharedAuthorityProof;
+      if (hasProtectedGroupAuthorityAdapter &&
+          hasProtectedGroupPhysicalAuthority(members)) {
+        if (sourceDevice == null) {
+          return RotateGroupKeyOutcome.notRotated;
+        }
+        final frozenRecipients = freezeProtectedGroupPhysicalRecipients(
+          members,
+        );
+        final protectedTransitionId =
+            'group_key_update:$groupId:$selfPeerId:$newEpoch:'
+            '${directKeyUpdateEventAt.microsecondsSinceEpoch}';
+        if (distributionTargets.isEmpty) {
+          authorityOnlyPreparation = await prepareProtectedGroupAuthority(
+            ProtectedGroupAuthorityPrepareRequest(
+              groupId: groupId,
+              transitionId: protectedTransitionId,
+              control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+              replayData: <String, dynamic>{
+                'groupId': groupId,
+                'keyGeneration': newEpoch,
+                'encryptedKey': newKey,
+                'from': sourceDevice.transportPeerId,
+                'timestamp': directKeyUpdateEventAt.toIso8601String(),
+              },
+              actorAccountPeerId: selfPeerId,
+              actorAccountPublicKey: senderPublicKey,
+              actorAccountPrivateKey: senderPrivateKey,
+              senderDevice: sourceDevice,
+              frozenRecipients: frozenRecipients,
+              deliveryRecipients: const <GroupMemberDeviceIdentity>[],
+            ),
+          );
+          if (authorityOnlyPreparation == null ||
+              !authorityOnlyPreparation.hasAuthenticatedAuthority) {
+            return RotateGroupKeyOutcome.notRotated;
+          }
+          sharedAuthorityProof = authorityOnlyPreparation.authorityProof;
+        }
+        if (distributionTargets.isNotEmpty) {
+          // Build every target-qualified encrypted replay before exposing any
+          // durable authority. One adapter call then commits PREPARED and the
+          // complete immutable row set in its protected-batch transaction.
+          // A build failure therefore leaves no partial owner, while a crash
+          // after that transaction leaves the exact all-target batch for the
+          // deterministic pending-draft retry to recover.
+          final deliveryRecipients = <GroupMemberDeviceIdentity>[];
+          final deliveryReplayData = <String, Map<String, dynamic>>{};
+          for (final target in distributionTargets) {
+            final built = await _buildRotatedKeyDeviceEnvelope(
+              bridge: bridge,
+              groupRepo: groupRepo,
+              groupId: groupId,
+              sourcePeerId: selfPeerId,
+              sourceDevice: sourceDevice,
+              senderPublicKey: senderPublicKey,
+              senderPrivateKey: senderPrivateKey,
+              senderUsername: senderUsername,
+              member: target.member,
+              device: target.device,
+              newEpoch: newEpoch,
+              newKey: newKey,
+              eventAt: directKeyUpdateEventAt,
+              preTransitionStateHash: preTransitionStateHash,
+            );
+            final recipient = target.device.transportPeerId;
+            if (built == null ||
+                recipient.isEmpty ||
+                deliveryReplayData.containsKey(recipient)) {
+              return RotateGroupKeyOutcome.notRotated;
+            }
+            deliveryRecipients.add(target.device);
+            deliveryReplayData[recipient] = <String, dynamic>{
+              'groupId': groupId,
+              'keyGeneration': newEpoch,
+              'encryptedKey': newKey,
+              'from': sourceDevice.transportPeerId,
+              'to': recipient,
+              'content': built.envelope,
+              'timestamp': directKeyUpdateEventAt.toIso8601String(),
+            };
+          }
+
+          final batchPreparation = await prepareProtectedGroupAuthority(
+            ProtectedGroupAuthorityPrepareRequest(
+              groupId: groupId,
+              transitionId: protectedTransitionId,
+              control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+              replayData: <String, dynamic>{
+                'groupId': groupId,
+                'keyGeneration': newEpoch,
+                'encryptedKey': newKey,
+                'from': sourceDevice.transportPeerId,
+                'timestamp': directKeyUpdateEventAt.toIso8601String(),
+              },
+              actorAccountPeerId: selfPeerId,
+              actorAccountPublicKey: senderPublicKey,
+              actorAccountPrivateKey: senderPrivateKey,
+              senderDevice: sourceDevice,
+              frozenRecipients: frozenRecipients,
+              deliveryRecipients: deliveryRecipients,
+              deliveryReplayDataByTransportPeerId: deliveryReplayData,
+            ),
+          );
+          final proof = batchPreparation?.authorityProof;
+          final rows =
+              batchPreparation?.rows ?? const <GroupPendingBroadcast>[];
+          final rowsByRecipient = <String, GroupPendingBroadcast>{};
+          var exactBatch =
+              batchPreparation != null &&
+              batchPreparation.hasAuthenticatedAuthority &&
+              batchPreparation.control ==
+                  ProtectedGroupAuthorityControl.groupKeyUpdate &&
+              proof != null &&
+              rows.length == distributionTargets.length;
+          for (final row in rows) {
+            if (row.recipientPeerIds.length != 1 ||
+                rowsByRecipient.containsKey(row.recipientPeerIds.single)) {
+              exactBatch = false;
+              continue;
+            }
+            rowsByRecipient[row.recipientPeerIds.single] = row;
+          }
+          exactBatch =
+              exactBatch &&
+              deliveryReplayData.keys.every(rowsByRecipient.containsKey);
+          if (!exactBatch) {
+            final aborted = await cancelProtectedGroupAuthority(
+              batchPreparation,
+            );
+            if (batchPreparation != null &&
+                (batchPreparation.hasAuthenticatedAuthority ||
+                    batchPreparation.hasRecipients) &&
+                !aborted) {
+              throw StateError('common protected key authority abort refused');
+            }
+            return RotateGroupKeyOutcome.notRotated;
+          }
+          final exactPreparation = batchPreparation!;
+          sharedAuthorityProof = proof;
+          for (var index = 0; index < distributionTargets.length; index++) {
+            final recipient = distributionTargets[index].device.transportPeerId;
+            protectedPreparations[index] = ProtectedGroupAuthorityPreparation(
+              groupId: exactPreparation.groupId,
+              rows: <GroupPendingBroadcast>[rowsByRecipient[recipient]!],
+              authorityProof: proof,
+              control: exactPreparation.control,
+              replayData: deliveryReplayData[recipient],
+            );
+          }
+        }
+      }
+
+      // Incumbent ordinary delivery is preserved only when the protected adapter
+      // is absent. A protected target never races the live/generic inbox path.
+      final distributionResults = <bool>[];
+      for (var index = 0; index < distributionTargets.length; index++) {
+        final target = distributionTargets[index];
+        if (protectedPreparations.containsKey(index)) {
+          distributionResults.add(false);
+          continue;
+        }
+        try {
+          final sent = await _distributeRotatedKeyToDeviceWithRetry(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            sourcePeerId: selfPeerId,
+            sourceDevice: sourceDevice,
+            senderPublicKey: senderPublicKey,
+            senderPrivateKey: senderPrivateKey,
+            senderUsername: senderUsername,
+            member: target.member,
+            device: target.device,
+            newEpoch: newEpoch,
+            newKey: newKey,
+            eventAt: directKeyUpdateEventAt,
+            preTransitionStateHash: preTransitionStateHash,
+            sendP2PMessage: sendP2PMessage,
+            storeP2PMessageInInbox: storeP2PMessageInInbox,
+            perRecipientTimeout: perRecipientTimeout,
+            attemptCount: maxDistributionAttempts,
+            retryDelay: distributionRetryDelay,
+          );
+          distributionResults.add(sent);
+        } on Exception catch (e) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
+            details: {'error': e.toString()},
+          );
+          distributionResults.add(false);
+        }
+      }
+
+      // 3. Promote the admin's own validator and local key. Prepared protected
+      // bytes already exist, so a crash after this point cannot lose authority.
+      try {
+        await callGroupUpdateKey(
+          bridge,
+          groupId: groupId,
+          groupKey: newKey,
+          keyEpoch: newEpoch,
+        );
+      } catch (e) {
+        final rowsAborted = await _cancelCommonProtectedKeyAuthority(
+          protectedPreparations.values,
+        );
+        final authorityOnlyAborted = await cancelProtectedGroupAuthority(
+          authorityOnlyPreparation,
+        );
+        if ((!rowsAborted && protectedPreparations.isNotEmpty) ||
+            !authorityOnlyAborted) {
+          throw StateError(
+            'key promotion failed ($e) and protected authority abort was refused',
+          );
+        }
+        if (protectedPreparations.isNotEmpty ||
+            authorityOnlyPreparation != null) {
+          // ABORTED permanently fences this proof/event address. Retaining its
+          // deterministic draft would cause every restart to request the same
+          // now-unusable authority version, so only a proven durable abort may
+          // retire the draft and let the next attempt mint fresh bytes.
+          await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
+          details: {'error': e.toString()},
         );
         return RotateGroupKeyOutcome.notRotated;
       }
-      newKey = generateResult['groupKey'] as String;
-      generatedAt = DateTime.now().toUtc();
 
-      final savedDraft = await _savePendingRotationDraft(
-        draftRepo: draftRepo,
+      final keyInfo = GroupKeyInfo(
         groupId: groupId,
         keyGeneration: newEpoch,
         encryptedKey: newKey,
         createdAt: generatedAt,
       );
-      if (!savedDraft) {
-        return RotateGroupKeyOutcome.notRotated;
-      }
-    }
-    // The current pending-draft schema only persists epoch, key, and createdAt.
-    // Reusing createdAt stabilizes direct eventAt and signed audit on retry;
-    // preTransitionStateHash is recomputed until the schema can persist it.
-    final directKeyUpdateEventAt = generatedAt.toUtc();
-    final maxDistributionAttempts = distributionAttemptCount < 1
-        ? 1
-        : distributionAttemptCount;
-
-    // 2. Prepare one common signed key-authority version before promoting the
-    // local epoch. Only the outer delivery tuple and encrypted replay are
-    // target-qualified; every recipient resolves the same event ID and proof.
-    final protectedPreparations = <int, ProtectedGroupAuthorityPreparation>{};
-    ProtectedGroupAuthorityPreparation? authorityOnlyPreparation;
-    AuthenticatedGroupAuthorityProof? sharedAuthorityProof;
-    if (hasProtectedGroupAuthorityAdapter &&
-        hasProtectedGroupPhysicalAuthority(members)) {
-      if (sourceDevice == null) {
-        return RotateGroupKeyOutcome.notRotated;
-      }
-      final frozenRecipients = freezeProtectedGroupPhysicalRecipients(members);
-      final protectedTransitionId =
-          'group_key_update:$groupId:$selfPeerId:$newEpoch:'
-          '${directKeyUpdateEventAt.microsecondsSinceEpoch}';
-      if (distributionTargets.isEmpty) {
-        authorityOnlyPreparation = await prepareProtectedGroupAuthority(
-          ProtectedGroupAuthorityPrepareRequest(
-            groupId: groupId,
-            transitionId: protectedTransitionId,
-            control: ProtectedGroupAuthorityControl.groupKeyUpdate,
-            replayData: <String, dynamic>{
-              'groupId': groupId,
-              'keyGeneration': newEpoch,
-              'encryptedKey': newKey,
-              'from': sourceDevice.transportPeerId,
-              'timestamp': directKeyUpdateEventAt.toIso8601String(),
-            },
-            actorAccountPeerId: selfPeerId,
-            actorAccountPublicKey: senderPublicKey,
-            actorAccountPrivateKey: senderPrivateKey,
-            senderDevice: sourceDevice,
-            frozenRecipients: frozenRecipients,
-            deliveryRecipients: const <GroupMemberDeviceIdentity>[],
+      final proof = sharedAuthorityProof;
+      if (proof != null &&
+          groupRepo is AtomicProtectedGroupKeyAuthorityRepository) {
+        final atomicKeyRepository =
+            groupRepo as AtomicProtectedGroupKeyAuthorityRepository;
+        await atomicKeyRepository.commitProtectedGroupKeyAuthority(
+          key: keyInfo,
+          authorityComplete: ProtectedGroupAuthorityCompleteFact(
+            sourcePeerId: proof.actorAccountPeerId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.complete,
+              proof.eventId,
+            ),
+            sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+            payload: authenticatedGroupAuthorityFactPayload(proof),
           ),
         );
-        if (authorityOnlyPreparation == null ||
-            !authorityOnlyPreparation.hasAuthenticatedAuthority) {
-          return RotateGroupKeyOutcome.notRotated;
-        }
-        sharedAuthorityProof = authorityOnlyPreparation.authorityProof;
+      } else {
+        // Lightweight repositories keep the incumbent projection write; their
+        // injected authority adapter completes immediately after this point.
+        await groupRepo.saveKey(keyInfo);
       }
-      for (var index = 0; index < distributionTargets.length; index++) {
-        final target = distributionTargets[index];
-        final built = await _buildRotatedKeyDeviceEnvelope(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          groupId: groupId,
-          sourcePeerId: selfPeerId,
-          sourceDevice: sourceDevice,
-          senderPublicKey: senderPublicKey,
-          senderPrivateKey: senderPrivateKey,
-          senderUsername: senderUsername,
-          member: target.member,
-          device: target.device,
-          newEpoch: newEpoch,
-          newKey: newKey,
-          eventAt: directKeyUpdateEventAt,
-          preTransitionStateHash: preTransitionStateHash,
-        );
-        if (built == null) {
-          for (final preparation in protectedPreparations.values) {
-            await cancelProtectedGroupAuthority(preparation);
-          }
-          return RotateGroupKeyOutcome.notRotated;
-        }
-        final preparation = await prepareProtectedGroupAuthority(
-          ProtectedGroupAuthorityPrepareRequest(
-            groupId: groupId,
-            transitionId: protectedTransitionId,
-            control: ProtectedGroupAuthorityControl.groupKeyUpdate,
-            replayData: <String, dynamic>{
-              'groupId': groupId,
-              'keyGeneration': newEpoch,
-              'encryptedKey': newKey,
-              'from': sourceDevice.transportPeerId,
-              'to': target.device.transportPeerId,
-              'content': built.envelope,
-              'timestamp': directKeyUpdateEventAt.toIso8601String(),
-            },
-            actorAccountPeerId: selfPeerId,
-            actorAccountPublicKey: senderPublicKey,
-            actorAccountPrivateKey: senderPrivateKey,
-            senderDevice: sourceDevice,
-            frozenRecipients: frozenRecipients,
-            deliveryRecipients: <GroupMemberDeviceIdentity>[target.device],
-            sharedAuthorityProof: sharedAuthorityProof,
-          ),
-        );
-        if (preparation == null ||
-            !preparation.hasRecipients ||
-            !preparation.hasAuthenticatedAuthority) {
-          for (final prepared in protectedPreparations.values) {
-            await cancelProtectedGroupAuthority(prepared);
-          }
-          return RotateGroupKeyOutcome.notRotated;
-        }
-        sharedAuthorityProof ??= preparation.authorityProof;
-        if (!sameAuthenticatedGroupAuthorityProof(
-          sharedAuthorityProof!,
-          preparation.authorityProof!,
-        )) {
-          for (final prepared in protectedPreparations.values) {
-            await cancelProtectedGroupAuthority(prepared);
-          }
-          await cancelProtectedGroupAuthority(preparation);
-          return RotateGroupKeyOutcome.notRotated;
-        }
-        protectedPreparations[index] = preparation;
-      }
-    }
+      await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
 
-    // Incumbent ordinary delivery is preserved only when the protected adapter
-    // is absent. A protected target never races the live/generic inbox path.
-    final distributionResults = <bool>[];
-    for (var index = 0; index < distributionTargets.length; index++) {
-      final target = distributionTargets[index];
-      if (protectedPreparations.containsKey(index)) {
-        distributionResults.add(false);
-        continue;
-      }
-      try {
-        final sent = await _distributeRotatedKeyToDeviceWithRetry(
-          bridge: bridge,
-          groupRepo: groupRepo,
-          groupId: groupId,
-          sourcePeerId: selfPeerId,
-          sourceDevice: sourceDevice,
-          senderPublicKey: senderPublicKey,
-          senderPrivateKey: senderPrivateKey,
-          senderUsername: senderUsername,
-          member: target.member,
-          device: target.device,
-          newEpoch: newEpoch,
-          newKey: newKey,
-          eventAt: directKeyUpdateEventAt,
-          preTransitionStateHash: preTransitionStateHash,
-          sendP2PMessage: sendP2PMessage,
-          storeP2PMessageInInbox: storeP2PMessageInInbox,
-          perRecipientTimeout: perRecipientTimeout,
-          attemptCount: maxDistributionAttempts,
-          retryDelay: distributionRetryDelay,
-        );
-        distributionResults.add(sent);
-      } on Exception catch (e) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_ROTATE_KEY_DISTRIBUTE_ERROR',
-          details: {'error': e.toString()},
-        );
-        distributionResults.add(false);
-      }
-    }
-
-    // 3. Promote the admin's own validator and local key. Prepared protected
-    // bytes already exist, so a crash after this point cannot lose authority.
-    try {
-      await callGroupUpdateKey(
-        bridge,
-        groupId: groupId,
-        groupKey: newKey,
-        keyEpoch: newEpoch,
-      );
-    } catch (e) {
-      for (final preparation in protectedPreparations.values) {
-        await cancelProtectedGroupAuthority(preparation);
-      }
-      await cancelProtectedGroupAuthority(authorityOnlyPreparation);
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
-        details: {'error': e.toString()},
+        event: 'GROUP_ROTATE_KEY_SAVED',
+        details: {'newEpoch': newEpoch},
       );
-      return RotateGroupKeyOutcome.notRotated;
-    }
 
-    final keyInfo = GroupKeyInfo(
-      groupId: groupId,
-      keyGeneration: newEpoch,
-      encryptedKey: newKey,
-      createdAt: generatedAt,
-    );
-    final proof = sharedAuthorityProof;
-    if (proof != null &&
-        groupRepo is AtomicProtectedGroupKeyAuthorityRepository) {
-      final atomicKeyRepository =
-          groupRepo as AtomicProtectedGroupKeyAuthorityRepository;
-      await atomicKeyRepository.commitProtectedGroupKeyAuthority(
-        key: keyInfo,
-        authorityComplete: ProtectedGroupAuthorityCompleteFact(
-          sourcePeerId: proof.actorAccountPeerId,
-          sourceEventId: authenticatedGroupAuthoritySourceEventId(
-            AuthenticatedGroupAuthorityPhase.complete,
-            proof.eventId,
-          ),
-          sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
-          payload: authenticatedGroupAuthorityFactPayload(proof),
-        ),
-      );
-    } else {
-      // Lightweight repositories keep the incumbent projection write; their
-      // injected authority adapter completes immediately after this point.
-      await groupRepo.saveKey(keyInfo);
-    }
-    await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_SAVED',
-      details: {'newEpoch': newEpoch},
-    );
-
-    if (authorityOnlyPreparation != null) {
-      await activateProtectedGroupAuthority(
-        authorityOnlyPreparation,
-        requireAllCustody: true,
-      );
-    }
-
-    for (final entry in protectedPreparations.entries) {
-      try {
-        distributionResults[entry.key] = await activateProtectedGroupAuthority(
-          entry.value,
+      if (authorityOnlyPreparation != null) {
+        await activateProtectedGroupAuthority(
+          authorityOnlyPreparation,
           requireAllCustody: true,
         );
-      } catch (_) {
-        // The exact prepared row remains the durable retry owner.
-        distributionResults[entry.key] = false;
       }
-    }
 
-    final distributedDeviceCount = distributionResults.where((ok) => ok).length;
-    final failedDistributionCount =
-        distributionResults.length - distributedDeviceCount;
-
-    // A remaining member is "delivered" when at least one of its device targets
-    // has exact custody. All other current members retain the existing durable
-    // pending-key-distribution owner.
-    final memberDelivered = <String, bool>{};
-    for (var i = 0; i < distributionTargets.length; i++) {
-      final peerId = distributionTargets[i].member.peerId;
-      memberDelivered[peerId] =
-          (memberDelivered[peerId] ?? false) || distributionResults[i];
-    }
-    final deferredPeers = <String>[];
-    for (final member in members) {
-      if (member.peerId == selfPeerId) {
-        continue;
+      for (final entry in protectedPreparations.entries) {
+        try {
+          distributionResults[entry.key] =
+              await activateProtectedGroupAuthority(
+                entry.value,
+                requireAllCustody: true,
+              );
+        } catch (_) {
+          // The exact prepared row remains the durable retry owner.
+          distributionResults[entry.key] = false;
+        }
       }
-      if (!(memberDelivered[member.peerId] ?? false)) {
-        deferredPeers.add(member.peerId);
-      }
-    }
 
-    if (failedDistributionCount > 0) {
+      final distributedDeviceCount = distributionResults
+          .where((ok) => ok)
+          .length;
+      final failedDistributionCount =
+          distributionResults.length - distributedDeviceCount;
+
+      // A remaining member is "delivered" when at least one of its device targets
+      // has exact custody. All other current members retain the existing durable
+      // pending-key-distribution owner.
+      final memberDelivered = <String, bool>{};
+      for (var i = 0; i < distributionTargets.length; i++) {
+        final peerId = distributionTargets[i].member.peerId;
+        memberDelivered[peerId] =
+            (memberDelivered[peerId] ?? false) || distributionResults[i];
+      }
+      final deferredPeers = <String>[];
+      for (final member in members) {
+        if (member.peerId == selfPeerId) {
+          continue;
+        }
+        if (!(memberDelivered[member.peerId] ?? false)) {
+          deferredPeers.add(member.peerId);
+        }
+      }
+
+      if (failedDistributionCount > 0) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_DISTRIBUTION_INCOMPLETE',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'newEpoch': newEpoch,
+            'targetCount': distributionTargets.length,
+            'failedCount': failedDistributionCount,
+          },
+        );
+      }
+
+      // 3b. Enqueue deferred members for later distribution. The epoch is already
+      // promoted, so these members are temporarily on the old epoch (a degraded
+      // read for an already-broken member, NOT a security hole — the removed
+      // member is durably excluded). Slice 2 supplies the durable drain; the
+      // injected seam defaults to a no-op in Slice 1.
+      final deferredSink =
+          enqueueDeferredDistribution ?? _deferredGroupKeyDistributionSink;
+      if (deferredPeers.isNotEmpty) {
+        for (final peerId in deferredPeers) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ROTATE_KEY_DEFERRED_REPAIR_QUEUED',
+            details: {
+              'groupId': _diagnosticPrefix(groupId),
+              'peerId': _diagnosticPrefix(peerId),
+              'newEpoch': newEpoch,
+            },
+          );
+          if (deferredSink != null) {
+            try {
+              await deferredSink(
+                groupId: groupId,
+                peerId: peerId,
+                keyEpoch: newEpoch,
+              );
+            } catch (e) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR',
+                details: {
+                  'peerId': _diagnosticPrefix(peerId),
+                  'error': e.toString(),
+                },
+              );
+            }
+          }
+        }
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_PARTIAL_DISTRIBUTION',
+          details: {
+            'groupId': _diagnosticPrefix(groupId),
+            'newEpoch': newEpoch,
+            'deferredCount': deferredPeers.length,
+            'distributedDeviceCount': distributedDeviceCount,
+          },
+        );
+      }
+
+      // 4. Broadcast key_rotated system message after admin promotion.
+      try {
+        final rotatedAt = keyInfo.createdAt.toUtc();
+        final sourceEventId =
+            'key_rotated:$groupId:$selfPeerId:${rotatedAt.microsecondsSinceEpoch}:$newEpoch';
+        final sysPayload = await signGroupSystemTransitionPayload(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          transitionType: 'key_rotated',
+          sourceEventId: sourceEventId,
+          eventAt: rotatedAt,
+          actorPeerId: selfPeerId,
+          actorUsername: senderUsername,
+          actorSigningPublicKey: senderPublicKey,
+          actorPrivateKey: senderPrivateKey,
+          actorDeviceId: sourceDevice?.deviceId,
+          actorTransportPeerId: sourceDevice?.transportPeerId,
+          preTransitionStateHash: preTransitionStateHash,
+          systemPayload: {'__sys': 'key_rotated', 'newKeyEpoch': newEpoch},
+        );
+        final sysMessage = jsonEncode(sysPayload);
+
+        await callGroupPublish(
+          bridge,
+          groupId: groupId,
+          text: sysMessage,
+          senderPeerId: selfPeerId,
+          senderPublicKey: senderPublicKey,
+          senderPrivateKey: senderPrivateKey,
+          senderUsername: senderUsername,
+          senderDeviceId: sourceDevice?.deviceId,
+          senderTransportPeerId: sourceDevice?.transportPeerId,
+          senderDevicePublicKey: sourceDevice?.deviceSigningPublicKey,
+          senderKeyPackageId: sourceDevice?.keyPackageId,
+          messageId: sourceEventId,
+        );
+      } catch (e) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROTATE_KEY_BROADCAST_ERROR',
+          details: {'error': e.toString()},
+        );
+      }
+
       emitFlowEvent(
         layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_DISTRIBUTION_INCOMPLETE',
+        event: 'GROUP_ROTATE_KEY_DONE',
         details: {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           'newEpoch': newEpoch,
-          'targetCount': distributionTargets.length,
-          'failedCount': failedDistributionCount,
+          'distributedTo': distributionTargets.length,
         },
       );
-    }
 
-    // 3b. Enqueue deferred members for later distribution. The epoch is already
-    // promoted, so these members are temporarily on the old epoch (a degraded
-    // read for an already-broken member, NOT a security hole — the removed
-    // member is durably excluded). Slice 2 supplies the durable drain; the
-    // injected seam defaults to a no-op in Slice 1.
-    final deferredSink =
-        enqueueDeferredDistribution ?? _deferredGroupKeyDistributionSink;
-    if (deferredPeers.isNotEmpty) {
-      for (final peerId in deferredPeers) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_ROTATE_KEY_DEFERRED_REPAIR_QUEUED',
-          details: {
-            'groupId': _diagnosticPrefix(groupId),
-            'peerId': _diagnosticPrefix(peerId),
-            'newEpoch': newEpoch,
-          },
-        );
-        if (deferredSink != null) {
-          try {
-            await deferredSink(
-              groupId: groupId,
-              peerId: peerId,
-              keyEpoch: newEpoch,
-            );
-          } catch (e) {
-            emitFlowEvent(
-              layer: 'FL',
-              event: 'GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR',
-              details: {
-                'peerId': _diagnosticPrefix(peerId),
-                'error': e.toString(),
-              },
-            );
-          }
-        }
+      return RotateGroupKeyOutcome(
+        key: keyInfo,
+        distributedDeviceCount: distributedDeviceCount,
+        deferredPeerIds: deferredPeers,
+      );
+    },
+  );
+}
+
+/// A common key authority proof can own one immutable row per physical target.
+/// Cancellation must classify that single PREPARED fact once while retiring
+/// every exact target owner in the same ABORTED transaction; aborting target
+/// preparations one-by-one would fence the proof after the first row and leave
+/// the remaining rows permanently stranded.
+Future<bool> _cancelCommonProtectedKeyAuthority(
+  Iterable<ProtectedGroupAuthorityPreparation> preparations,
+) async {
+  final items = preparations.toList(growable: false);
+  if (items.isEmpty) return true;
+  final first = items.first;
+  final proof = first.authorityProof;
+  final control = first.control;
+  if (proof == null || control == null || !first.hasAuthenticatedAuthority) {
+    return false;
+  }
+  final rows = <String, GroupPendingBroadcast>{};
+  final abortRows = <String, GroupPendingBroadcast>{};
+  for (final item in items) {
+    if (item.groupId != first.groupId ||
+        item.control != control ||
+        item.authorityProof == null ||
+        !sameAuthenticatedGroupAuthorityProof(item.authorityProof!, proof)) {
+      return false;
+    }
+    for (final row in item.rows) {
+      final existing = rows[row.id];
+      if (existing != null && !sameExactGroupPendingBroadcast(existing, row)) {
+        return false;
       }
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_PARTIAL_DISTRIBUTION',
-        details: {
-          'groupId': _diagnosticPrefix(groupId),
-          'newEpoch': newEpoch,
-          'deferredCount': deferredPeers.length,
-          'distributedDeviceCount': distributedDeviceCount,
-        },
-      );
+      rows[row.id] = row;
     }
-
-    // 4. Broadcast key_rotated system message after admin promotion.
-    try {
-      final rotatedAt = keyInfo.createdAt.toUtc();
-      final sourceEventId =
-          'key_rotated:$groupId:$selfPeerId:${rotatedAt.microsecondsSinceEpoch}:$newEpoch';
-      final sysPayload = await signGroupSystemTransitionPayload(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        groupId: groupId,
-        transitionType: 'key_rotated',
-        sourceEventId: sourceEventId,
-        eventAt: rotatedAt,
-        actorPeerId: selfPeerId,
-        actorUsername: senderUsername,
-        actorSigningPublicKey: senderPublicKey,
-        actorPrivateKey: senderPrivateKey,
-        actorDeviceId: sourceDevice?.deviceId,
-        actorTransportPeerId: sourceDevice?.transportPeerId,
-        preTransitionStateHash: preTransitionStateHash,
-        systemPayload: {'__sys': 'key_rotated', 'newKeyEpoch': newEpoch},
-      );
-      final sysMessage = jsonEncode(sysPayload);
-
-      await callGroupPublish(
-        bridge,
-        groupId: groupId,
-        text: sysMessage,
-        senderPeerId: selfPeerId,
-        senderPublicKey: senderPublicKey,
-        senderPrivateKey: senderPrivateKey,
-        senderUsername: senderUsername,
-        senderDeviceId: sourceDevice?.deviceId,
-        senderTransportPeerId: sourceDevice?.transportPeerId,
-        senderDevicePublicKey: sourceDevice?.deviceSigningPublicKey,
-        senderKeyPackageId: sourceDevice?.keyPackageId,
-        messageId: sourceEventId,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_BROADCAST_ERROR',
-        details: {'error': e.toString()},
-      );
+    for (final row in item.abortRows) {
+      final existing = abortRows[row.id];
+      if (existing != null && !sameExactGroupPendingBroadcast(existing, row)) {
+        return false;
+      }
+      abortRows[row.id] = row;
     }
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_DONE',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'newEpoch': newEpoch,
-        'distributedTo': distributionTargets.length,
-      },
-    );
-
-    return RotateGroupKeyOutcome(
-      key: keyInfo,
-      distributedDeviceCount: distributedDeviceCount,
-      deferredPeerIds: deferredPeers,
-    );
-  });
+  }
+  return cancelProtectedGroupAuthority(
+    ProtectedGroupAuthorityPreparation(
+      groupId: first.groupId,
+      rows: rows.values.toList(growable: false),
+      authorityProof: proof,
+      control: control,
+      replayData: first.replayData,
+      abortRows: abortRows.values.toList(growable: false),
+    ),
+  );
 }
 
 /// Slice 2 drainer entry: re-distributes the **current** persisted group key to
@@ -1106,8 +1231,6 @@ Future<int> distributeGroupKeyAtEpochToPeer({
   return delivered;
 }
 
-final Map<String, Future<void>> _groupRotationQueues = <String, Future<void>>{};
-
 Future<({GroupKeyInfo? draft, bool failedClosed})>
 _loadUsablePendingRotationDraft({
   required GroupKeyRotationDraftRepository? draftRepo,
@@ -1190,28 +1313,6 @@ Future<bool> _savePendingRotationDraft({
       details: {'error': e.toString()},
     );
     return false;
-  }
-}
-
-Future<T> _withSerializedGroupRotation<T>(
-  String groupId,
-  Future<T> Function() body,
-) async {
-  final previous = _groupRotationQueues[groupId];
-  final gate = Completer<void>();
-  _groupRotationQueues[groupId] = gate.future;
-
-  if (previous != null) {
-    await previous;
-  }
-
-  try {
-    return await body();
-  } finally {
-    gate.complete();
-    if (identical(_groupRotationQueues[groupId], gate.future)) {
-      _groupRotationQueues.remove(groupId);
-    }
   }
 }
 

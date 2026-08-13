@@ -9,6 +9,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_retention_policy.dart';
@@ -91,10 +92,27 @@ class GroupKeyUpdateListener {
     bool authorityPhaseHeld = false,
   }) => _handleMessage(message, authorityPhaseHeld: authorityPhaseHeld);
 
+  /// Applies a key envelope whose exact replay bytes are owned by an
+  /// authenticated protected-authority PREPARED fact. Historical sender and
+  /// device material comes from that verified proof so a crash retry remains
+  /// repairable after the actor is removed or its live permissions change.
+  Future<void> handleAuthenticatedAuthorityEnvelope(
+    ChatMessage message, {
+    required VerifiedProtectedGroupAuthorityReplay authority,
+    bool authorityPhaseHeld = false,
+  }) {
+    return _handleMessage(
+      message,
+      authorityPhaseHeld: authorityPhaseHeld,
+      protectedAuthorityReplay: authority,
+    );
+  }
+
   Future<void> _handleMessage(
     ChatMessage message, {
     bool authorityPhaseHeld = false,
     Map<String, dynamic>? decodedKeyData,
+    VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
   }) async {
     try {
       late final Map<String, dynamic> keyData;
@@ -142,6 +160,7 @@ class GroupKeyUpdateListener {
             message,
             authorityPhaseHeld: true,
             decodedKeyData: keyData,
+            protectedAuthorityReplay: protectedAuthorityReplay,
           ),
         );
         return;
@@ -223,13 +242,31 @@ class GroupKeyUpdateListener {
         return;
       }
 
-      final senderMember = await _groupRepo.getMember(groupId, sourcePeerId);
+      if (protectedAuthorityReplay != null &&
+          !protectedAuthorityReplay.authorizesDecryptedKeyUpdate(
+            message: message,
+            keyData: keyData,
+          )) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_UPDATE_LISTENER_AUTHORITY_REPLAY_MISMATCH',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'keyGeneration': keyGeneration,
+          },
+        );
+        return;
+      }
+      final senderMember = protectedAuthorityReplay == null
+          ? await _groupRepo.getMember(groupId, sourcePeerId)
+          : null;
       final senderCanRotateKeys =
-          senderMember?.permissions.allows(
-            GroupMemberPermission.rotateKeys,
-            senderMember.role,
-          ) ??
-          false;
+          protectedAuthorityReplay != null ||
+          (senderMember?.permissions.allows(
+                GroupMemberPermission.rotateKeys,
+                senderMember.role,
+              ) ??
+              false);
       if (!senderCanRotateKeys) {
         emitFlowEvent(
           layer: 'FL',
@@ -245,13 +282,23 @@ class GroupKeyUpdateListener {
         return;
       }
 
-      final sourceDevice = _resolveSourceDevice(
-        senderMember: senderMember!,
-        sourcePeerId: sourcePeerId,
-        sourceDeviceId: sourceDeviceId,
-        sourceTransportPeerId: sourceTransportPeerId,
-        transportPeerId: message.from,
-      );
+      final sourceDevice = protectedAuthorityReplay == null
+          ? _resolveSourceDevice(
+              senderMember: senderMember!,
+              sourcePeerId: sourcePeerId,
+              sourceDeviceId: sourceDeviceId,
+              sourceTransportPeerId: sourceTransportPeerId,
+              transportPeerId: message.from,
+            )
+          : GroupMemberDeviceIdentity(
+              deviceId:
+                  sourceDeviceId ??
+                  protectedAuthorityReplay.proof.senderTransportPeerId,
+              transportPeerId:
+                  protectedAuthorityReplay.proof.senderTransportPeerId,
+              deviceSigningPublicKey:
+                  protectedAuthorityReplay.proof.senderTransportPublicKey,
+            );
       if (sourceDevice == null) {
         emitFlowEvent(
           layer: 'FL',
@@ -404,7 +451,9 @@ class GroupKeyUpdateListener {
           sourceEventId: resolvedSourceEventId,
           eventAt: resolvedEventAt,
           actorPeerId: sourcePeerId,
-          actorUsername: senderMember.username ?? sourcePeerId,
+          actorUsername: protectedAuthorityReplay == null
+              ? senderMember!.username ?? sourcePeerId
+              : _signedAuditActorUsername(keyData) ?? sourcePeerId,
           actorSigningPublicKey: verifiedSenderPublicKey,
           actorDeviceId: sourceDeviceId,
           actorTransportPeerId: sourceTransportPeerId,
@@ -777,6 +826,19 @@ class GroupKeyUpdateListener {
   DateTime? _parseUtcTimestamp(Object? value) {
     final text = _readNonEmptyString(value);
     return text == null ? null : DateTime.tryParse(text)?.toUtc();
+  }
+
+  String? _signedAuditActorUsername(Map<String, dynamic> keyData) {
+    try {
+      final audit = keyData[signedGroupTransitionAuditField];
+      if (audit is! Map || audit['signedPayload'] is! String) return null;
+      final decoded = jsonDecode(audit['signedPayload'] as String);
+      if (decoded is! Map || decoded['actor'] is! Map) return null;
+      final username = (decoded['actor'] as Map)['username'];
+      return username is String ? username : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   String? _signatureEnvelopeFailureReason({

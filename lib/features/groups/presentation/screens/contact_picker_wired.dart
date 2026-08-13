@@ -357,6 +357,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
 
       // 1. Add all members locally (continue on individual errors)
       final addedMembers = <GroupMember>[];
+      final protectedAddedMemberPeerIds = <String>{};
       for (final contact in selectedContacts) {
         try {
           final newMember = GroupMember(
@@ -480,18 +481,38 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
                     );
                     if (preparation == null) {
                       throw StateError(
-                        'Member-add protected preparation failed',
+                        'Member-add authenticated protected preparation failed',
                       );
                     }
+                    if (!preparation.hasAuthenticatedAuthority) {
+                      if (!await cancelProtectedGroupAuthority(preparation)) {
+                        throw StateError(
+                          'Member-add unauthenticated preparation cleanup refused',
+                        );
+                      }
+                      throw StateError(
+                        'Member-add authenticated protected preparation failed',
+                      );
+                    }
+                    protectedAddedMemberPeerIds.add(addedMember.peerId);
                     return PreparedGroupMemberAddAuthority(
                       activate: () async {
-                        await activateProtectedGroupAuthority(
+                        final activated = await activateProtectedGroupAuthority(
                           preparation,
                           requireAllCustody: false,
                         );
+                        if (!activated) {
+                          throw StateError(
+                            'Member-add protected authority remains PREPARED',
+                          );
+                        }
                       },
                       rollback: () async {
-                        await cancelProtectedGroupAuthority(preparation);
+                        if (!await cancelProtectedGroupAuthority(preparation)) {
+                          throw StateError(
+                            'Member-add durable protected abort refused',
+                          );
+                        }
                       },
                     );
                   },
@@ -503,6 +524,10 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
             event: 'CONTACT_PICKER_FL_ADD_MEMBER_ERROR',
             details: {'peerId': contact.peerId, 'error': e.toString()},
           );
+          // This exact protected PREPARED transition owns an unresolved local
+          // or native commit. Stop the batch so later contacts and the legacy
+          // aggregate config cannot race restart reconciliation.
+          if (e is GroupMemberAddCommitAmbiguous) rethrow;
         }
       }
       if (addedMembers.isEmpty) throw StateError('No members could be added');
@@ -539,9 +564,20 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
                 members: allMembers,
                 latestKeyGeneration: latestKey?.keyGeneration,
               );
+              // Protected per-member adds intentionally advance the exact
+              // membership watermark before this aggregate avatar phase. Keep
+              // every other live group field, but compare the original roster
+              // against its original watermark when checking for unrelated
+              // concurrent authority changes.
+              final comparablePreTransitionGroup = currentGroup.copyWith(
+                lastMembershipEventAt:
+                    preTransitionAuthority.group.lastMembershipEventAt,
+                lastMembershipEventId:
+                    preTransitionAuthority.group.lastMembershipEventId,
+              );
               final currentPreTransitionAuthority =
                   GroupMembershipEffectAuthority(
-                    group: currentGroup,
+                    group: comparablePreTransitionGroup,
                     members: preTransitionAuthority.members,
                     latestKeyGeneration: latestKey?.keyGeneration,
                   );
@@ -550,7 +586,7 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
                   ) ||
                   buildGroupTransitionStateHashFromSnapshot(
                         groupId: widget.groupId,
-                        group: currentGroup,
+                        group: comparablePreTransitionGroup,
                         members: preTransitionAuthority.members,
                         latestKeyGeneration: latestKey?.keyGeneration,
                       ) !=
@@ -651,6 +687,13 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
             return true;
           } catch (e) {
             for (final member in addedMembers) {
+              // Each protected add already owns an exact native config,
+              // watermark, and durable authority transition. The later batch
+              // config is redundant (apart from avatar metadata) and must not
+              // erase committed membership when its response is lost/rejected.
+              if (protectedAddedMemberPeerIds.contains(member.peerId)) {
+                continue;
+              }
               await widget.groupRepo.removeMember(
                 widget.groupId,
                 member.peerId,

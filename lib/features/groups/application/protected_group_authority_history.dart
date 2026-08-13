@@ -12,11 +12,13 @@ const authenticatedGroupAuthoritySigningDomain =
 const protectedGroupAuthorityGenesisEventType = 'protected_authority_genesis';
 const protectedGroupAuthorityPreparedEventType = 'protected_authority_prepared';
 const protectedGroupAuthorityCompleteEventType = 'protected_authority_complete';
+const protectedGroupAuthorityAbortedEventType = 'protected_authority_aborted';
 
 enum AuthenticatedGroupAuthorityPhase {
   genesis('g', protectedGroupAuthorityGenesisEventType),
   prepared('p', protectedGroupAuthorityPreparedEventType),
-  complete('c', protectedGroupAuthorityCompleteEventType);
+  complete('c', protectedGroupAuthorityCompleteEventType),
+  aborted('a', protectedGroupAuthorityAbortedEventType);
 
   const AuthenticatedGroupAuthorityPhase(this.sourcePrefix, this.eventType);
 
@@ -375,8 +377,12 @@ loadAuthenticatedGroupAuthorityProofPage({
   final result = <AuthenticatedGroupAuthorityProof>[];
   for (final row in rows) {
     final proof = proofFromGroupAuthorityEventLogRow(row);
-    if (proof == null ||
+    if (row['group_id'] != groupId ||
+        row['event_type'] != phase.eventType ||
+        proof == null ||
         proof.groupId != groupId ||
+        row['source_event_id'] !=
+            authenticatedGroupAuthoritySourceEventId(phase, proof.eventId) ||
         row['source_peer_id'] != proof.actorAccountPeerId ||
         row['source_timestamp'] != fixedGroupAuthorityUtc(proof.eventAt) ||
         !await verify(
@@ -411,7 +417,7 @@ Future<AuthenticatedGroupAuthorityProof?> loadAuthenticatedAuthorityVersion({
         proof.eventId != eventId ||
         proof.keyEpoch != keyEpoch ||
         proof.eventAt.toUtc() != eventAt.toUtc()) {
-      return null;
+      continue;
     }
     if (await verify(
       publicKey: proof.actorAccountPublicKey,
@@ -420,7 +426,7 @@ Future<AuthenticatedGroupAuthorityProof?> loadAuthenticatedAuthorityVersion({
     )) {
       return proof;
     }
-    return null;
+    continue;
   }
   return null;
 }

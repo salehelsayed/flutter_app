@@ -185,6 +185,69 @@ Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
   );
 }
 
+/// Loads authenticated PREPARED facts that have no terminal COMPLETE/ABORTED
+/// fact, directly at the durable event-log boundary.
+///
+/// Filtering terminal rows and the authenticated local author in SQL keeps
+/// restart discovery bounded without starving an old interrupted transition
+/// behind newer completed work or receiver-authored PREPARED history.
+Future<List<Map<String, Object?>>> dbLoadUnfinishedProtectedAuthorityPage(
+  Database db, {
+  required String groupId,
+  required String sourcePeerId,
+  String? afterSourceTimestamp,
+  String? afterSourceEventId,
+  int limit = 100,
+}) {
+  if (sourcePeerId.isEmpty) {
+    throw ArgumentError.value(sourcePeerId, 'sourcePeerId');
+  }
+  if (limit < 1 || limit > 200) {
+    throw RangeError.range(limit, 1, 200, 'limit');
+  }
+  final where = <String>[
+    'prepared.group_id = ?',
+    'prepared.source_peer_id = ?',
+    "prepared.event_type = 'protected_authority_prepared'",
+    "prepared.source_event_id LIKE 'pga1:p:%'",
+    '''NOT EXISTS (
+      SELECT 1
+      FROM group_event_log AS terminal
+      WHERE terminal.group_id = prepared.group_id
+        AND terminal.event_type IN (
+          'protected_authority_complete',
+          'protected_authority_aborted'
+        )
+        AND terminal.source_event_id IN (
+          'pga1:c:' || substr(prepared.source_event_id, 8),
+          'pga1:a:' || substr(prepared.source_event_id, 8)
+        )
+    )''',
+  ];
+  final args = <Object?>[groupId, sourcePeerId];
+  if (afterSourceTimestamp != null) {
+    where.add(
+      '(prepared.source_timestamp < ? OR '
+      '(prepared.source_timestamp = ? AND prepared.source_event_id < ?))',
+    );
+    args.addAll(<Object?>[
+      afterSourceTimestamp,
+      afterSourceTimestamp,
+      afterSourceEventId ?? '',
+    ]);
+  }
+  return db.rawQuery(
+    '''
+      SELECT prepared.*
+      FROM group_event_log AS prepared
+      WHERE ${where.join(' AND ')}
+      ORDER BY prepared.source_timestamp DESC, prepared.source_event_id DESC
+      LIMIT ?
+    ''',
+    <Object?>[...args, limit],
+  );
+}
+
 Future<List<GroupEventLogChainViolation>> dbVerifyGroupEventLogChain(
   Database db,
 ) async {

@@ -215,9 +215,13 @@ const _applicationRootNormalizedSha256 =
 // captured P2P service before that drain closure; this changes wiring/order
 // only and introduces no adapter or core shim.
 // Plan 363 composes protected bootstrap/authority persistence, replay and
-// read-only refresh through this same production root; no adapter relocates.
+// read-only refresh through this same production root; its audit closures add
+// sender history, common proof recovery, durable survivor progress, exact
+// PREPARED recovery/abort, bounded terminal-free restart discovery, strict
+// native metadata completion, and exact row-owned key-draft restart recovery
+// without relocating an adapter or core shim.
 const _productionBootstrapNormalizedSha256 =
-    '05d897d673483d26e5956c1903e8243178ea37407d24b5091aa97fdca376f83d';
+    'cab0c53afcfe6885d17b2c87e198b7276ba231985393725ebe0f24001ebceb0a';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

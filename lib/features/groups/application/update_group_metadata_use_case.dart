@@ -12,6 +12,8 @@ typedef BeforePersistGroupMetadataUpdate =
 typedef CurrentGroupMetadataAuthorityCheck =
     Future<bool> Function(GroupModel current);
 
+typedef PersistGroupMetadataUpdate = Future<void> Function(GroupModel updated);
+
 Future<GroupModel> updateGroupMetadata({
   required GroupRepository groupRepo,
   required String groupId,
@@ -23,6 +25,7 @@ Future<GroupModel> updateGroupMetadata({
   DateTime? eventAt,
   BeforePersistGroupMetadataUpdate? beforePersist,
   CurrentGroupMetadataAuthorityCheck? currentAuthorityCheck,
+  PersistGroupMetadataUpdate? persistUpdate,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -109,7 +112,12 @@ Future<GroupModel> updateGroupMetadata({
         avatarPath: avatarPath,
         lastMetadataEventAt: resolvedEventAt,
       );
-      await groupRepo.updateGroup(exactUpdate);
+      final persist = persistUpdate;
+      if (persist == null) {
+        await groupRepo.updateGroup(exactUpdate);
+      } else {
+        await persist(exactUpdate);
+      }
       return exactUpdate;
     },
   );

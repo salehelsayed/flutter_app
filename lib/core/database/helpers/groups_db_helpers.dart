@@ -155,6 +155,154 @@ Future<void> dbUpdateGroup(Database db, Map<String, Object?> row) async {
   }
 }
 
+/// Atomically authors one protected group-metadata transition.
+///
+/// The caller's pre-edit group, complete roster, and latest key epoch are
+/// requalified in this transaction. Only an exact match may advance the group
+/// row and expose its immutable recipient rows plus authenticated PREPARED
+/// history. COMPLETE is deliberately excluded: strict native group-config sync
+/// must succeed after this transaction before authenticated recovery appends it.
+Future<void> dbCommitProtectedGroupMetadataAuthority(
+  Database db, {
+  required Map<String, Object?> expectedGroupRow,
+  required List<Map<String, Object?>> expectedMemberRows,
+  required int expectedLatestKeyGeneration,
+  required Map<String, Object?> groupRow,
+  required List<Map<String, Object?>> pendingBroadcastRows,
+  required String authorityPreparedSourcePeerId,
+  required String authorityPreparedSourceEventId,
+  required String authorityPreparedSourceTimestamp,
+  required Map<String, Object?> authorityPreparedPayload,
+}) async {
+  final groupId = expectedGroupRow['id'];
+  if (groupId is! String ||
+      groupId.isEmpty ||
+      groupRow['id'] != groupId ||
+      expectedLatestKeyGeneration <= 0 ||
+      expectedMemberRows.any((row) => row['group_id'] != groupId) ||
+      pendingBroadcastRows.any((row) => row['group_id'] != groupId) ||
+      !_isMetadataOnlyGroupTransition(expectedGroupRow, groupRow) ||
+      authorityPreparedSourcePeerId.isEmpty ||
+      authorityPreparedSourceEventId.isEmpty ||
+      authorityPreparedSourceTimestamp.isEmpty ||
+      authorityPreparedPayload.isEmpty) {
+    throw ArgumentError('invalid protected metadata authority transaction');
+  }
+
+  await dbWriteTransaction(db, (transaction) async {
+    final storedGroups = await transaction.query(
+      'groups',
+      where: 'id = ?',
+      whereArgs: <Object?>[groupId],
+      limit: 1,
+    );
+    if (storedGroups.length != 1 ||
+        !_sameExpectedRow(storedGroups.single, expectedGroupRow)) {
+      throw StateError('protected metadata group authority changed');
+    }
+
+    final storedMembers = await transaction.query(
+      'group_members',
+      where: 'group_id = ?',
+      whereArgs: <Object?>[groupId],
+      orderBy: 'peer_id ASC',
+    );
+    final expectedMembers = expectedMemberRows.toList(growable: false)
+      ..sort(
+        (left, right) =>
+            (left['peer_id'] as String).compareTo(right['peer_id'] as String),
+      );
+    if (!_sameExpectedRows(storedMembers, expectedMembers)) {
+      throw StateError('protected metadata roster authority changed');
+    }
+
+    final latestKeys = await transaction.query(
+      'group_keys',
+      columns: const <String>['key_generation'],
+      where: 'group_id = ?',
+      whereArgs: <Object?>[groupId],
+      orderBy: 'key_generation DESC',
+      limit: 1,
+    );
+    if (latestKeys.length != 1 ||
+        latestKeys.single['key_generation'] != expectedLatestKeyGeneration) {
+      throw StateError('protected metadata key authority changed');
+    }
+
+    if (!await _updateGroupRowPreservingAuthority(transaction, groupRow)) {
+      throw StateError('protected metadata parent disappeared');
+    }
+    for (final row in pendingBroadcastRows) {
+      await dbInsertPendingGroupBroadcastWithExecutor(transaction, row);
+      final stored = await transaction.query(
+        'pending_group_broadcasts',
+        where: 'group_id = ? AND source_message_id = ?',
+        whereArgs: <Object?>[row['group_id'], row['source_message_id']],
+        limit: 1,
+      );
+      if (stored.length != 1 || !_sameExpectedRow(stored.single, row)) {
+        throw StateError('protected metadata broadcast conflict');
+      }
+    }
+    await dbAppendGroupEventLogEntryInTransaction(
+      transaction,
+      groupId: groupId,
+      eventType: 'protected_authority_prepared',
+      sourcePeerId: authorityPreparedSourcePeerId,
+      sourceEventId: authorityPreparedSourceEventId,
+      sourceTimestamp: authorityPreparedSourceTimestamp,
+      payload: authorityPreparedPayload,
+    );
+  });
+}
+
+const _protectedMetadataFields = <String>{
+  'name',
+  'description',
+  'avatar_blob_id',
+  'avatar_mime',
+  'avatar_path',
+  'last_metadata_event_at',
+};
+
+bool _isMetadataOnlyGroupTransition(
+  Map<String, Object?> expected,
+  Map<String, Object?> updated,
+) {
+  final fields = <String>{...expected.keys, ...updated.keys};
+  for (final field in fields) {
+    if (_protectedMetadataFields.contains(field)) continue;
+    if (!expected.containsKey(field) || !updated.containsKey(field)) {
+      return false;
+    }
+    if (expected[field] != updated[field]) return false;
+  }
+  return true;
+}
+
+bool _sameExpectedRows(
+  List<Map<String, Object?>> stored,
+  List<Map<String, Object?>> expected,
+) {
+  if (stored.length != expected.length) return false;
+  for (var index = 0; index < stored.length; index++) {
+    if (!_sameExpectedRow(stored[index], expected[index])) return false;
+  }
+  return true;
+}
+
+bool _sameExpectedRow(
+  Map<String, Object?> stored,
+  Map<String, Object?> expected,
+) {
+  for (final entry in expected.entries) {
+    if (!stored.containsKey(entry.key) || stored[entry.key] != entry.value) {
+      return false;
+    }
+  }
+  return true;
+}
+
 /// Atomically commits a terminal dissolved-group row and retires every
 /// notification-display marker owned by that exact group.
 ///

@@ -16,6 +16,7 @@ import '../../domain/models/group_pending_broadcast.dart';
 import '../../domain/models/pending_sibling_device.dart';
 import '../../domain/repositories/pending_sibling_device_repository.dart';
 import '../../domain/models/group_model.dart';
+import '../../domain/repositories/group_pending_broadcast_repository.dart';
 import '../../domain/repositories/group_repository.dart';
 import '../../domain/repositories/linked_group_bootstrap_repository.dart';
 
@@ -78,6 +79,7 @@ class GroupRepositoryImpl
         AtomicGroupDissolveRepository,
         AtomicProtectedGroupDissolveRepository,
         AtomicProtectedGroupKeyAuthorityRepository,
+        AtomicProtectedGroupMetadataAuthorityRepository,
         GroupExitCleanupRepository,
         SelfRemovedGroupShellRepository,
         FreshJoinProjectionAtomicity,
@@ -88,6 +90,18 @@ class GroupRepositoryImpl
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroup;
   final Future<void> Function(Map<String, Object?> row) dbUpdateGroup;
+  final Future<void> Function({
+    required Map<String, Object?> expectedGroupRow,
+    required List<Map<String, Object?>> expectedMemberRows,
+    required int expectedLatestKeyGeneration,
+    required Map<String, Object?> groupRow,
+    required List<Map<String, Object?>> pendingBroadcastRows,
+    required String authorityPreparedSourcePeerId,
+    required String authorityPreparedSourceEventId,
+    required String authorityPreparedSourceTimestamp,
+    required Map<String, Object?> authorityPreparedPayload,
+  })?
+  dbCommitProtectedGroupMetadataAuthorityFn;
   final Future<void> Function(Map<String, Object?> row)? dbCommitDissolvedGroup;
   final Future<void> Function({
     required Map<String, Object?> groupRow,
@@ -355,6 +369,7 @@ class GroupRepositoryImpl
     required this.dbLoadAllGroups,
     required this.dbLoadGroup,
     required this.dbUpdateGroup,
+    this.dbCommitProtectedGroupMetadataAuthorityFn,
     this.dbCommitDissolvedGroup,
     this.dbCommitProtectedDissolvedGroup,
     required this.dbDeleteGroup,
@@ -479,6 +494,64 @@ class GroupRepositoryImpl
         // 04-P0 SI-1 NSE: keep the shared-Keychain mute projection in sync so
         // the iOS NSE honors mute.
         await _mirrorGroupMutedForPush(authoritative.id, authoritative.isMuted);
+      }
+    });
+    emitGroupNotificationReconciliationSignal(group.id);
+  }
+
+  @override
+  Future<void> commitProtectedGroupMetadataAuthority({
+    required GroupModel expectedGroup,
+    required List<GroupMember> expectedMembers,
+    required int expectedLatestKeyGeneration,
+    required GroupModel group,
+    required List<GroupPendingBroadcast> pendingBroadcasts,
+    required GroupPendingBroadcastAuthorityFact authorityPrepared,
+  }) async {
+    final commit = dbCommitProtectedGroupMetadataAuthorityFn;
+    if (commit == null) {
+      throw StateError('protected metadata atomic persistence is unavailable');
+    }
+    if (expectedGroup.id != group.id ||
+        expectedMembers.any((member) => member.groupId != group.id) ||
+        pendingBroadcasts.any((broadcast) => broadcast.groupId != group.id)) {
+      throw ArgumentError('invalid protected metadata authority');
+    }
+    await _runGroupMutation(group.id, () async {
+      await commit(
+        expectedGroupRow: expectedGroup.toMap(),
+        expectedMemberRows: expectedMembers
+            .map((member) => member.toMap())
+            .toList(growable: false),
+        expectedLatestKeyGeneration: expectedLatestKeyGeneration,
+        groupRow: group.toMap(),
+        pendingBroadcastRows: pendingBroadcasts
+            .map((broadcast) => broadcast.toMap())
+            .toList(growable: false),
+        authorityPreparedSourcePeerId: authorityPrepared.sourcePeerId,
+        authorityPreparedSourceEventId: authorityPrepared.sourceEventId,
+        authorityPreparedSourceTimestamp: authorityPrepared.sourceTimestamp,
+        authorityPreparedPayload: authorityPrepared.payload,
+      );
+
+      // Durable authority is now PREPARED. Projection mirrors are derived state
+      // and must not turn the committed transaction into a false authoring
+      // failure; authenticated recovery still owns strict native sync and
+      // COMPLETE.
+      try {
+        final authoritative = await _projectAuthoritativeGroup(group.id);
+        if (authoritative != null && authoritative.selfRemovedAt == null) {
+          await _mirrorGroupMutedForPush(
+            authoritative.id,
+            authoritative.isMuted,
+          );
+        }
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REPO_PROTECTED_METADATA_PROJECTION_DEFERRED',
+          details: {'groupId': group.id, 'error': error.toString()},
+        );
       }
     });
     emitGroupNotificationReconciliationSignal(group.id);

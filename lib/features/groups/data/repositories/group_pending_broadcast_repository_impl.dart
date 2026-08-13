@@ -6,7 +6,8 @@ class GroupPendingBroadcastRepositoryImpl
         GroupPendingBroadcastRepository,
         GroupPendingBroadcastExactRepository,
         GroupPendingBroadcastProtectedRecipientRepository,
-        GroupPendingBroadcastProtectedBatchRepository {
+        GroupPendingBroadcastProtectedBatchRepository,
+        GroupPendingBroadcastProtectedAbortRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsert;
   final Future<List<Map<String, Object?>>> Function(String groupId)
   dbLoadForGroup;
@@ -30,6 +31,20 @@ class GroupPendingBroadcastRepositoryImpl
     required Map<String, Object?> authorityPreparedPayload,
   })?
   dbInsertProtectedBatch;
+  final Future<ProtectedGroupAuthorityAbortResult> Function({
+    required String groupId,
+    required List<Map<String, Object?>> expectedRows,
+    required String authorityPreparedSourcePeerId,
+    required String authorityPreparedSourceEventId,
+    required String authorityPreparedSourceTimestamp,
+    required Map<String, Object?> authorityPreparedPayload,
+    required String authorityAbortedSourcePeerId,
+    required String authorityAbortedSourceEventId,
+    required String authorityAbortedSourceTimestamp,
+    required Map<String, Object?> authorityAbortedPayload,
+    required String authorityCompleteSourceEventId,
+  })?
+  dbAbortProtectedBatch;
 
   GroupPendingBroadcastRepositoryImpl({
     required this.dbInsert,
@@ -41,6 +56,7 @@ class GroupPendingBroadcastRepositoryImpl
     this.dbDeleteForGroup,
     this.dbRemoveRecipientIfExact,
     this.dbInsertProtectedBatch,
+    this.dbAbortProtectedBatch,
   });
 
   @override
@@ -126,6 +142,35 @@ class GroupPendingBroadcastRepositoryImpl
       authorityPreparedSourceEventId: authorityPrepared.sourceEventId,
       authorityPreparedSourceTimestamp: authorityPrepared.sourceTimestamp,
       authorityPreparedPayload: authorityPrepared.payload,
+    );
+  }
+
+  @override
+  Future<ProtectedGroupAuthorityAbortResult> abortProtectedBatch(
+    List<GroupPendingBroadcast> expectedRows, {
+    required String groupId,
+    required GroupPendingBroadcastAuthorityFact authorityPrepared,
+    required GroupPendingBroadcastAuthorityFact authorityAborted,
+    required String authorityCompleteSourceEventId,
+  }) async {
+    final abort = dbAbortProtectedBatch;
+    if (abort == null || groupId.isEmpty) {
+      return ProtectedGroupAuthorityAbortResult.conflict;
+    }
+    return abort(
+      groupId: groupId,
+      expectedRows: expectedRows
+          .map((row) => row.toMap())
+          .toList(growable: false),
+      authorityPreparedSourcePeerId: authorityPrepared.sourcePeerId,
+      authorityPreparedSourceEventId: authorityPrepared.sourceEventId,
+      authorityPreparedSourceTimestamp: authorityPrepared.sourceTimestamp,
+      authorityPreparedPayload: authorityPrepared.payload,
+      authorityAbortedSourcePeerId: authorityAborted.sourcePeerId,
+      authorityAbortedSourceEventId: authorityAborted.sourceEventId,
+      authorityAbortedSourceTimestamp: authorityAborted.sourceTimestamp,
+      authorityAbortedPayload: authorityAborted.payload,
+      authorityCompleteSourceEventId: authorityCompleteSourceEventId,
     );
   }
 }

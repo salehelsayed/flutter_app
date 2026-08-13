@@ -38,6 +38,30 @@ class PreparedGroupMemberAddAuthority {
   final Future<void> Function() rollback;
 }
 
+/// The protected member-add projection may have committed even though a
+/// repository projection, native config response, or local watermark write
+/// failed. Callers must retain the exact durable PREPARED authority and let
+/// restart recovery reconcile it; treating this as a proven rejection could
+/// strand or publish an authority transition with a different projection.
+class GroupMemberAddCommitAmbiguous implements Exception {
+  const GroupMemberAddCommitAmbiguous({
+    required this.cause,
+    this.rollbackError,
+  });
+
+  final Object cause;
+  final Object? rollbackError;
+
+  @override
+  String toString() {
+    final rollback = rollbackError;
+    return rollback == null
+        ? 'Group member add commit outcome is ambiguous: $cause'
+        : 'Group member add commit outcome is ambiguous: $cause; '
+              'local rollback or durable abort also failed: $rollback';
+  }
+}
+
 typedef PrepareGroupMemberAddAuthority =
     Future<PreparedGroupMemberAddAuthority?> Function({
       required GroupModel group,
@@ -355,12 +379,26 @@ Future<void> addGroupMember({
         eventId: sourceEventId,
       );
 
+      // A protected PREPARED fact owns a signed config and may egress from the
+      // restart runner. It therefore cannot use the contact picker's legacy
+      // "save now, batch native sync later" path: exact native config and the
+      // exact event watermark must converge before activation can COMPLETE it.
+      final mustSyncBridgeConfig =
+          syncBridgeConfig || preparedAuthority != null;
+
       // 2. Save member to repo
       try {
         await groupRepo.saveMember(memberToAdd);
-      } catch (_) {
-        await preparedAuthority?.rollback();
-        rethrow;
+      } catch (error, stackTrace) {
+        if (preparedAuthority != null) {
+          // GroupRepositoryImpl writes SQL before its fallible external
+          // projection. Once issued, a throw cannot prove the member is absent.
+          Error.throwWithStackTrace(
+            GroupMemberAddCommitAmbiguous(cause: error),
+            stackTrace,
+          );
+        }
+        Error.throwWithStackTrace(error, stackTrace);
       }
 
       // Slice 2 (Finding 03): a (re-)added member with valid key material may be
@@ -373,7 +411,7 @@ Future<void> addGroupMember({
         peerId: memberToAdd.peerId,
       );
 
-      if (!syncBridgeConfig) {
+      if (!mustSyncBridgeConfig) {
         await _activatePreparedAddAuthority(
           preparedAuthority,
           groupId: groupId,
@@ -398,14 +436,16 @@ Future<void> addGroupMember({
         return;
       }
 
-      final allMembers = await groupRepo.getMembers(groupId);
-      final groupConfig = buildGroupConfigPayload(
-        group.copyWith(lastMembershipEventAt: membershipEventAt),
-        allMembers,
-        configVersionOverride: membershipEventAt,
-      );
-
       try {
+        // Every fallible read/build after the local write is inside the same
+        // ambiguous boundary. A repository may have committed the member even
+        // when a subsequent projection-backed roster load fails.
+        final allMembers = await groupRepo.getMembers(groupId);
+        final groupConfig = buildGroupConfigPayload(
+          group.copyWith(lastMembershipEventAt: membershipEventAt),
+          allMembers,
+          configVersionOverride: membershipEventAt,
+        );
         await callGroupUpdateConfig(
           bridge,
           groupId: groupId,
@@ -415,6 +455,7 @@ Future<void> addGroupMember({
           groupRepo: groupRepo,
           groupId: groupId,
           eventAt: membershipEventAt,
+          eventId: sourceEventId,
         );
 
         emitFlowEvent(
@@ -426,13 +467,40 @@ Future<void> addGroupMember({
                 : memberToAdd.peerId,
           },
         );
-      } catch (e) {
-        await groupRepo.removeMember(groupId, memberToAdd.peerId);
-        await preparedAuthority?.rollback();
+      } catch (e, stackTrace) {
+        // An explicit `{ok:false}` response proves the native command rejected
+        // this exact config. Only that outcome permits local rollback followed
+        // by durable authority abort. Timeout/transport loss, projection
+        // failure, and post-native watermark failure remain restart-repairable.
+        if (preparedAuthority != null && e is! BridgeCommandException) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ADD_MEMBER_USE_CASE_COMMIT_AMBIGUOUS',
+            details: {
+              'groupId': _diagnosticPrefix(groupId),
+              'peerId': _diagnosticPrefix(memberToAdd.peerId),
+            },
+          );
+          Error.throwWithStackTrace(
+            GroupMemberAddCommitAmbiguous(cause: e),
+            stackTrace,
+          );
+        }
+
+        Object? rollbackError;
+        try {
+          await groupRepo.removeMember(groupId, memberToAdd.peerId);
+          // Abort only after the local rollback is known to have completed.
+          await preparedAuthority?.rollback();
+        } catch (rollbackFailure) {
+          rollbackError = rollbackFailure;
+        }
         final errorCode = _bridgeErrorCode(e);
         emitFlowEvent(
           layer: 'FL',
-          event: 'GROUP_ADD_MEMBER_USE_CASE_REVERTED',
+          event: rollbackError == null
+              ? 'GROUP_ADD_MEMBER_USE_CASE_REVERTED'
+              : 'GROUP_ADD_MEMBER_USE_CASE_COMMIT_AMBIGUOUS',
           details: {
             'groupId': _diagnosticPrefix(groupId),
             'peerId': _diagnosticPrefix(memberToAdd.peerId),
@@ -442,9 +510,19 @@ Future<void> addGroupMember({
             ),
             'errorCode': ?errorCode,
             'error': e.toString(),
+            'rollbackFailed': rollbackError != null,
           },
         );
-        rethrow;
+        if (rollbackError != null && preparedAuthority != null) {
+          Error.throwWithStackTrace(
+            GroupMemberAddCommitAmbiguous(
+              cause: e,
+              rollbackError: rollbackError,
+            ),
+            stackTrace,
+          );
+        }
+        Error.throwWithStackTrace(e, stackTrace);
       }
 
       await _activatePreparedAddAuthority(
@@ -507,9 +585,10 @@ Future<void> _activatePreparedAddAuthority(
   if (prepared == null) return;
   try {
     await prepared.activate();
-  } catch (error) {
-    // The prepared outbox remains the retry owner. A post-commit transport
-    // failure must never roll back a locally committed membership transition.
+  } catch (error, stackTrace) {
+    // The prepared outbox remains the retry owner. Surface the unresolved
+    // COMPLETE boundary so callers stop ordinary publish/fanout; never roll
+    // back a locally/native-committed membership transition.
     emitFlowEvent(
       layer: 'FL',
       event: 'GROUP_ADD_MEMBER_PROTECTED_ACTIVATION_DEFERRED',
@@ -518,6 +597,10 @@ Future<void> _activatePreparedAddAuthority(
         'peerId': _diagnosticPrefix(memberPeerId),
         'error': error.toString(),
       },
+    );
+    Error.throwWithStackTrace(
+      GroupMemberAddCommitAmbiguous(cause: error),
+      stackTrace,
     );
   }
 }

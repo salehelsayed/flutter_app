@@ -14,6 +14,13 @@ class _SignedTransitionAuditActorBinding {
       (transportPeerId != null && transportPeerId!.isNotEmpty);
 }
 
+enum _ProtectedMembershipSubjectTimelineState {
+  absent,
+  exact,
+  superseded,
+  ambiguous,
+}
+
 final class _GroupMessageSystemTransitionProcessor {
   _GroupMessageSystemTransitionProcessor({
     required GroupRepository groupRepo,
@@ -168,6 +175,7 @@ final class _GroupMessageSystemTransitionProcessor {
     required GroupMessageRepository msgRepo,
     bool rethrowOnError = false,
     bool authorityPhaseHeld = false,
+    VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
   }) async {
     try {
       final parsed = jsonDecode(text) as Map<String, dynamic>;
@@ -221,14 +229,15 @@ final class _GroupMessageSystemTransitionProcessor {
         fallbackEventAt: eventAt,
       );
 
-      if (!await _isBoundSystemEventSenderDevice(
-        groupId: groupId,
-        senderId: senderId,
-        senderDeviceId: senderDeviceId,
-        transportPeerId: transportPeerId,
-        sysType: sysType,
-        parsed: parsed,
-      )) {
+      if (protectedAuthorityReplay == null &&
+          !await _isBoundSystemEventSenderDevice(
+            groupId: groupId,
+            senderId: senderId,
+            senderDeviceId: senderDeviceId,
+            transportPeerId: transportPeerId,
+            sysType: sysType,
+            parsed: parsed,
+          )) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_MESSAGE_LISTENER_UNBOUND_SYSTEM_DEVICE',
@@ -258,7 +267,8 @@ final class _GroupMessageSystemTransitionProcessor {
         return;
       }
 
-      if (_requiresMembershipEventAuthorization(sysType) &&
+      if (protectedAuthorityReplay == null &&
+          _requiresMembershipEventAuthorization(sysType) &&
           !await _isAuthorizedMembershipEventSender(
             groupId,
             senderId,
@@ -291,6 +301,17 @@ final class _GroupMessageSystemTransitionProcessor {
           (sourceEventId != null && sourceEventId.isNotEmpty
               ? sourceEventId
               : 'system:$groupId:$senderId:$sysType:$timestamp:${jsonEncode(parsed)}');
+      if (protectedAuthorityReplay != null &&
+          (transitionSourceEventId != protectedAuthorityReplay.proof.eventId ||
+              eventAt?.toUtc() !=
+                  protectedAuthorityReplay.proof.eventAt.toUtc())) {
+        _emitSignedTransitionAuditRejected(
+          groupId,
+          sysType: sysType,
+          reason: 'protected_authority_version_mismatch',
+        );
+        return;
+      }
       SignedGroupTransitionAuditVerification? signedTransitionAudit;
       if (_shouldRequireSignedTransitionAudit(sysType, parsed)) {
         final signedAuditHash = signedGroupTransitionAuditHashFromPayload(
@@ -300,7 +321,19 @@ final class _GroupMessageSystemTransitionProcessor {
             _acceptedSignedTransitionAuditHashesBySourceId[transitionSourceEventId];
         if (acceptedHash != null) {
           if (signedAuditHash != null && acceptedHash == signedAuditHash) {
-            if (sysType == 'group_metadata_updated' &&
+            if (protectedAuthorityReplay != null) {
+              emitFlowEvent(
+                layer: 'FL',
+                event:
+                    'GROUP_MESSAGE_LISTENER_PROTECTED_AUTHORITY_PROJECTION_RETRYING',
+                details: {
+                  'groupId': groupId.length > 8
+                      ? groupId.substring(0, 8)
+                      : groupId,
+                  'type': sysType ?? 'null',
+                },
+              );
+            } else if (sysType == 'group_metadata_updated' &&
                 await _shouldRetryAcceptedSignedMetadataAvatarRecovery(
                   groupId,
                   eventAt: eventAt,
@@ -340,22 +373,29 @@ final class _GroupMessageSystemTransitionProcessor {
           }
         }
 
-        final actorPublicKey = await _resolveActorSigningPublicKey(
-          groupId: groupId,
-          senderId: senderId,
-          senderDeviceId: senderDeviceId,
-          transportPeerId: transportPeerId,
-          sysType: sysType,
-        );
-        final expectedAuditActorBinding =
-            await _expectedSignedAuditActorBindingForSystemEvent(
+        final actorPublicKey =
+            protectedAuthorityReplay?.proof.actorAccountPublicKey ??
+            await _resolveActorSigningPublicKey(
               groupId: groupId,
               senderId: senderId,
               senderDeviceId: senderDeviceId,
               transportPeerId: transportPeerId,
               sysType: sysType,
-              parsed: parsed,
             );
+        final expectedAuditActorBinding = protectedAuthorityReplay == null
+            ? await _expectedSignedAuditActorBindingForSystemEvent(
+                groupId: groupId,
+                senderId: senderId,
+                senderDeviceId: senderDeviceId,
+                transportPeerId: transportPeerId,
+                sysType: sysType,
+                parsed: parsed,
+              )
+            : _SignedTransitionAuditActorBinding(
+                deviceId: _trimToNull(senderDeviceId),
+                transportPeerId:
+                    protectedAuthorityReplay.proof.senderTransportPeerId,
+              );
         final relaxSnapshotBackedPreTransitionHash =
             await _shouldRelaxSnapshotBackedPreTransitionHash(
               groupId: groupId,
@@ -383,7 +423,8 @@ final class _GroupMessageSystemTransitionProcessor {
         final relaxTerminalDissolvePreTransitionHash =
             sysType == 'group_dissolved';
         final preTransitionStateHash =
-            relaxSnapshotBackedPreTransitionHash ||
+            protectedAuthorityReplay != null ||
+                relaxSnapshotBackedPreTransitionHash ||
                 relaxTerminalDissolvePreTransitionHash
             ? null
             : await buildGroupTransitionStateHash(_groupRepo, groupId);
@@ -471,20 +512,25 @@ final class _GroupMessageSystemTransitionProcessor {
             sysType: sysType,
             eventAt: membershipVersion.eventAt,
             allowEqualVersionReplay: true,
+            allowProtectedMembershipProjectionRepair:
+                protectedAuthorityReplay?.control ==
+                ProtectedGroupAuthorityControl.memberAdd,
+            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
             parsed: parsed,
             msgRepo: msgRepo,
           )) {
             return;
           }
-          if (await _isDuplicateMembersAddedReplayAlreadyApplied(
-            groupId,
-            parsed,
-            sysType: sysType,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            msgRepo: msgRepo,
-          )) {
+          if (protectedAuthorityReplay == null &&
+              await _isDuplicateMembersAddedReplayAlreadyApplied(
+                groupId,
+                parsed,
+                sysType: sysType,
+                senderId: senderId,
+                senderUsername: senderUsername,
+                eventAt: membershipVersion.eventAt,
+                msgRepo: msgRepo,
+              )) {
             await _recordMembershipEventWatermark(
               groupId,
               membershipVersion.eventAt,
@@ -509,7 +555,10 @@ final class _GroupMessageSystemTransitionProcessor {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: membershipVersion.eventAt,
+            eventId: auditSourceEventId,
             msgRepo: msgRepo,
+            requireNativeConfigSync: protectedAuthorityReplay != null,
+            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
           );
         });
       } else if (sysType == 'members_added') {
@@ -519,20 +568,25 @@ final class _GroupMessageSystemTransitionProcessor {
             sysType: sysType,
             eventAt: membershipVersion.eventAt,
             allowEqualVersionReplay: true,
+            allowProtectedMembershipProjectionRepair:
+                protectedAuthorityReplay?.control ==
+                ProtectedGroupAuthorityControl.memberAdd,
+            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
             parsed: parsed,
             msgRepo: msgRepo,
           )) {
             return;
           }
-          if (await _isDuplicateMembersAddedReplayAlreadyApplied(
-            groupId,
-            parsed,
-            sysType: sysType,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            msgRepo: msgRepo,
-          )) {
+          if (protectedAuthorityReplay == null &&
+              await _isDuplicateMembersAddedReplayAlreadyApplied(
+                groupId,
+                parsed,
+                sysType: sysType,
+                senderId: senderId,
+                senderUsername: senderUsername,
+                eventAt: membershipVersion.eventAt,
+                msgRepo: msgRepo,
+              )) {
             await _recordMembershipEventWatermark(
               groupId,
               membershipVersion.eventAt,
@@ -557,7 +611,10 @@ final class _GroupMessageSystemTransitionProcessor {
             senderId: senderId,
             senderUsername: senderUsername,
             eventAt: membershipVersion.eventAt,
+            eventId: auditSourceEventId,
             msgRepo: msgRepo,
+            requireNativeConfigSync: protectedAuthorityReplay != null,
+            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
           );
         });
       } else if (sysType == 'member_removed') {
@@ -569,6 +626,10 @@ final class _GroupMessageSystemTransitionProcessor {
             eventAt: membershipVersion.eventAt,
             hasExplicitConfigVersion: membershipVersion.hasConfigVersion,
             msgRepo: msgRepo,
+            allowProtectedProjectionRepair:
+                protectedAuthorityReplay?.control ==
+                ProtectedGroupAuthorityControl.memberRemove,
+            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
           )) {
             return;
           }
@@ -587,6 +648,8 @@ final class _GroupMessageSystemTransitionProcessor {
             msgRepo: msgRepo,
             appendSystemEventLog: appendSystemEventLog,
             authorityPhaseHeld: authorityPhaseHeld,
+            requireNativeConfigSync: protectedAuthorityReplay != null,
+            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
           );
         });
       } else if (sysType == 'member_banned') {
@@ -637,6 +700,12 @@ final class _GroupMessageSystemTransitionProcessor {
             sysType: sysType,
             eventAt: membershipVersion.eventAt,
             eventId: auditSourceEventId,
+            allowProtectedRoleProjectionRepair:
+                protectedAuthorityReplay?.control ==
+                ProtectedGroupAuthorityControl.memberRole,
+            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
+            parsed: parsed,
+            msgRepo: msgRepo,
           )) {
             return;
           }
@@ -649,6 +718,8 @@ final class _GroupMessageSystemTransitionProcessor {
             eventAt: membershipVersion.eventAt,
             eventId: auditSourceEventId,
             msgRepo: msgRepo,
+            requireNativeConfigSync: protectedAuthorityReplay != null,
+            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
           );
         });
       } else if (sysType == 'group_dissolved') {
@@ -660,6 +731,10 @@ final class _GroupMessageSystemTransitionProcessor {
             eventAt: membershipVersion.eventAt,
             msgRepo: msgRepo,
             appendSystemEventLog: appendSystemEventLog,
+            authorityPhaseHeld:
+                protectedAuthorityReplay != null &&
+                authorityPhaseHeld &&
+                isGroupAuthorityPhaseHeld(groupId),
           );
         });
       } else if (sysType == 'group_metadata_updated') {
@@ -669,6 +744,9 @@ final class _GroupMessageSystemTransitionProcessor {
             sysType: sysType,
             eventAt: eventAt,
             parsed: parsed,
+            requireExactProtectedProjection:
+                protectedAuthorityReplay?.control ==
+                ProtectedGroupAuthorityControl.memberConfig,
           )) {
             return;
           }
@@ -677,6 +755,8 @@ final class _GroupMessageSystemTransitionProcessor {
             parsed,
             senderId: senderId,
             senderUsername: senderUsername,
+            trustedActorPublicKey:
+                protectedAuthorityReplay?.proof.actorAccountPublicKey,
           )) {
             return;
           }
@@ -688,6 +768,9 @@ final class _GroupMessageSystemTransitionProcessor {
             senderUsername: senderUsername,
             eventAt: eventAt,
             msgRepo: msgRepo,
+            requireNativeConfigSync:
+                protectedAuthorityReplay?.control ==
+                ProtectedGroupAuthorityControl.memberConfig,
           );
         });
       } else if (sysType == 'member_joined') {
@@ -716,6 +799,8 @@ final class _GroupMessageSystemTransitionProcessor {
           transportPeerId: transportPeerId,
           parsed: parsed,
           hasVerifiedSignedAudit: signedTransitionAudit != null,
+          verifiedAccountSigningPublicKey:
+              protectedAuthorityReplay?.proof.actorAccountPublicKey,
         );
       } else {
         emitFlowEvent(
@@ -748,6 +833,7 @@ final class _GroupMessageSystemTransitionProcessor {
     String? transportPeerId,
     required Map<String, dynamic> parsed,
     required bool hasVerifiedSignedAudit,
+    String? verifiedAccountSigningPublicKey,
   }) async {
     if (!hasVerifiedSignedAudit) {
       _emitSignedTransitionAuditRejected(
@@ -757,13 +843,15 @@ final class _GroupMessageSystemTransitionProcessor {
       );
       return;
     }
-    final accountKey = await _resolveActorSigningPublicKey(
-      groupId: groupId,
-      senderId: senderId,
-      senderDeviceId: senderDeviceId,
-      transportPeerId: transportPeerId,
-      sysType: 'device_announce',
-    );
+    final accountKey =
+        verifiedAccountSigningPublicKey ??
+        await _resolveActorSigningPublicKey(
+          groupId: groupId,
+          senderId: senderId,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
+          sysType: 'device_announce',
+        );
     if (accountKey == null || accountKey.isEmpty) {
       return;
     }
@@ -1457,7 +1545,10 @@ final class _GroupMessageSystemTransitionProcessor {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    String? eventId,
     required GroupMessageRepository msgRepo,
+    bool requireNativeConfigSync = false,
+    bool mergeHistoricalMembershipSnapshot = false,
   }) async {
     // Save new member to local DB
     final rawMemberData = parsed['member'];
@@ -1472,6 +1563,9 @@ final class _GroupMessageSystemTransitionProcessor {
     final addedPeerId = validMemberData?['peerId'] as String?;
     final addedUsername = validMemberData?['username'] as String?;
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (requireNativeConfigSync && groupConfig == null) {
+      throw StateError('protected member add config is missing');
+    }
     final keyMaterialRejectReason =
         (memberData == null
             ? null
@@ -1527,9 +1621,15 @@ final class _GroupMessageSystemTransitionProcessor {
 
     // Update Go topic validator config
     if (groupConfig != null) {
+      final projectionGroupConfig =
+          await _mergeHistoricalMembershipConfigWithLocalRoster(
+            groupId,
+            groupConfig,
+            enabled: mergeHistoricalMembershipSnapshot,
+          );
       await _applyAuthoritativeGroupConfigSnapshot(
         groupId,
-        groupConfig,
+        projectionGroupConfig,
         eventAt: eventAt,
         eventMemberPeerIds: {
           if (addedPeerId != null && addedPeerId.isNotEmpty) addedPeerId,
@@ -1539,7 +1639,7 @@ final class _GroupMessageSystemTransitionProcessor {
       );
       final synced = await _syncGroupConfig(
         groupId,
-        await _buildLocalGroupConfigSnapshot(groupId) ?? groupConfig,
+        await _buildLocalGroupConfigSnapshot(groupId) ?? projectionGroupConfig,
         emitFailureEvent: true,
       );
       if (!synced) {
@@ -1550,6 +1650,9 @@ final class _GroupMessageSystemTransitionProcessor {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           },
         );
+        if (requireNativeConfigSync) {
+          throw StateError('protected member add native config retry required');
+        }
       }
     }
 
@@ -1569,7 +1672,7 @@ final class _GroupMessageSystemTransitionProcessor {
       _emitGroupMessageIfActive(savedTimelineMessage);
     }
 
-    await _recordMembershipEventWatermark(groupId, eventAt);
+    await _recordMembershipEventWatermark(groupId, eventAt, eventId: eventId);
     if (addedPeerId != null && addedPeerId.isNotEmpty) {
       await _flushMembershipDependentMessages(
         groupId: groupId,
@@ -1598,10 +1701,16 @@ final class _GroupMessageSystemTransitionProcessor {
     required String senderId,
     required String senderUsername,
     DateTime? eventAt,
+    String? eventId,
     required GroupMessageRepository msgRepo,
+    bool requireNativeConfigSync = false,
+    bool mergeHistoricalMembershipSnapshot = false,
   }) async {
     final membersList = parsed['members'] as List<dynamic>?;
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (requireNativeConfigSync && groupConfig == null) {
+      throw StateError('protected members add config is missing');
+    }
     String? directMembersRejectReason;
     if (membersList != null) {
       for (final memberData in membersList) {
@@ -1689,9 +1798,15 @@ final class _GroupMessageSystemTransitionProcessor {
       final addedPeerIds = validAddedMembers
           .map((member) => member.peerId)
           .toSet();
+      final projectionGroupConfig =
+          await _mergeHistoricalMembershipConfigWithLocalRoster(
+            groupId,
+            groupConfig,
+            enabled: mergeHistoricalMembershipSnapshot,
+          );
       await _applyAuthoritativeGroupConfigSnapshot(
         groupId,
-        groupConfig,
+        projectionGroupConfig,
         eventAt: eventAt,
         eventMemberPeerIds: addedPeerIds,
         msgRepo: msgRepo,
@@ -1699,7 +1814,7 @@ final class _GroupMessageSystemTransitionProcessor {
       );
       final synced = await _syncGroupConfig(
         groupId,
-        await _buildLocalGroupConfigSnapshot(groupId) ?? groupConfig,
+        await _buildLocalGroupConfigSnapshot(groupId) ?? projectionGroupConfig,
         emitFailureEvent: true,
       );
       if (!synced) {
@@ -1710,6 +1825,11 @@ final class _GroupMessageSystemTransitionProcessor {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           },
         );
+        if (requireNativeConfigSync) {
+          throw StateError(
+            'protected members add native config retry required',
+          );
+        }
       }
     }
 
@@ -1730,7 +1850,7 @@ final class _GroupMessageSystemTransitionProcessor {
       _emitGroupMessageIfActive(savedTimelineMessage);
     }
 
-    await _recordMembershipEventWatermark(groupId, eventAt);
+    await _recordMembershipEventWatermark(groupId, eventAt, eventId: eventId);
     await _flushMembershipDependentMessages(
       groupId: groupId,
       memberPeerIds: addedMembers.map((member) => member.peerId),
@@ -1841,6 +1961,8 @@ final class _GroupMessageSystemTransitionProcessor {
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
     bool authorityPhaseHeld = false,
+    bool requireNativeConfigSync = false,
+    bool mergeHistoricalMembershipSnapshot = false,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
@@ -1942,13 +2064,22 @@ final class _GroupMessageSystemTransitionProcessor {
 
     // Update Go topic validator config
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (requireNativeConfigSync && groupConfig == null) {
+      throw StateError('protected member removal config is missing');
+    }
     var snapshotHasNoActiveMembers = false;
     if (groupConfig != null) {
-      final rawMembers = groupConfig['members'];
+      final projectionGroupConfig =
+          await _mergeHistoricalMembershipConfigWithLocalRoster(
+            groupId,
+            groupConfig,
+            enabled: mergeHistoricalMembershipSnapshot,
+          );
+      final rawMembers = projectionGroupConfig['members'];
       snapshotHasNoActiveMembers = rawMembers is List && rawMembers.isEmpty;
       final normalizedGroupConfig = normalizeGroupConfigPayload(
         groupId: groupId,
-        groupConfig: groupConfig,
+        groupConfig: projectionGroupConfig,
       );
       await _applyAuthoritativeGroupConfigSnapshot(
         groupId,
@@ -1973,6 +2104,11 @@ final class _GroupMessageSystemTransitionProcessor {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           },
         );
+        if (requireNativeConfigSync) {
+          throw StateError(
+            'protected member removal native config retry required',
+          );
+        }
       }
     }
 
@@ -1990,7 +2126,11 @@ final class _GroupMessageSystemTransitionProcessor {
     );
     _emitGroupMessageIfActive(savedTimelineMessage);
 
-    await _recordMembershipEventWatermark(groupId, resolvedEventAt);
+    await _recordMembershipEventWatermark(
+      groupId,
+      resolvedEventAt,
+      eventId: removalEventId,
+    );
     await _deleteContentMessagesAtOrAfterRemoval(
       groupId: groupId,
       removedPeerId: removedPeerId ?? '',
@@ -2598,6 +2738,8 @@ final class _GroupMessageSystemTransitionProcessor {
     DateTime? eventAt,
     String? eventId,
     required GroupMessageRepository msgRepo,
+    bool requireNativeConfigSync = false,
+    bool mergeHistoricalMembershipSnapshot = false,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final updatedPeerId = memberData?['peerId'] as String?;
@@ -2644,10 +2786,19 @@ final class _GroupMessageSystemTransitionProcessor {
     }
 
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
+    if (requireNativeConfigSync && groupConfig == null) {
+      throw StateError('protected member role config is missing');
+    }
     if (groupConfig != null) {
+      final projectionGroupConfig =
+          await _mergeHistoricalMembershipConfigWithLocalRoster(
+            groupId,
+            groupConfig,
+            enabled: mergeHistoricalMembershipSnapshot,
+          );
       await _applyAuthoritativeGroupConfigSnapshot(
         groupId,
-        groupConfig,
+        projectionGroupConfig,
         eventAt: eventAt,
         // Plan 326 S1: the guard needs BOTH; without msgRepo it is inert
         // and this snapshot resurrects an already-removed member.
@@ -2662,7 +2813,7 @@ final class _GroupMessageSystemTransitionProcessor {
       // author's.
       final syncGroupConfig = _withLocalRoster(
         groupId,
-        groupConfig,
+        projectionGroupConfig,
         await _buildLocalGroupConfigSnapshot(groupId),
       );
       final synced = await _syncGroupConfig(
@@ -2678,6 +2829,11 @@ final class _GroupMessageSystemTransitionProcessor {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
           },
         );
+        if (requireNativeConfigSync) {
+          throw StateError(
+            'protected member role native config retry required',
+          );
+        }
       }
     }
 
@@ -2720,6 +2876,7 @@ final class _GroupMessageSystemTransitionProcessor {
     required String senderUsername,
     DateTime? eventAt,
     required GroupMessageRepository msgRepo,
+    bool requireNativeConfigSync = false,
   }) async {
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig == null) {
@@ -2771,6 +2928,9 @@ final class _GroupMessageSystemTransitionProcessor {
           'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
         },
       );
+      if (requireNativeConfigSync) {
+        throw StateError('protected metadata native config sync failed');
+      }
     }
 
     final timelineMessage = GroupMessage(
@@ -2806,6 +2966,7 @@ final class _GroupMessageSystemTransitionProcessor {
     Map<String, dynamic> parsed, {
     required String senderId,
     required String senderUsername,
+    String? trustedActorPublicKey,
   }) async {
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig == null) {
@@ -2831,14 +2992,17 @@ final class _GroupMessageSystemTransitionProcessor {
       return false;
     }
 
-    final senderMember = await _groupRepo.getMember(groupId, senderId);
-    final trustedActorPublicKey = senderMember?.publicKey?.trim() ?? '';
+    final senderMember = trustedActorPublicKey == null
+        ? await _groupRepo.getMember(groupId, senderId)
+        : null;
+    final resolvedActorPublicKey =
+        trustedActorPublicKey?.trim() ?? senderMember?.publicKey?.trim() ?? '';
     final verificationData = extractGroupMetadataActorEventVerificationData(
       systemPayload: parsed,
       groupId: groupId,
       senderId: senderId,
       senderUsername: senderUsername,
-      trustedActorPublicKey: trustedActorPublicKey,
+      trustedActorPublicKey: resolvedActorPublicKey,
     );
     if (verificationData == null) {
       _emitMetadataSignatureRejected(groupId, reason: 'envelope_invalid');
@@ -2887,10 +3051,12 @@ final class _GroupMessageSystemTransitionProcessor {
     DateTime? eventAt,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
+    required bool authorityPhaseHeld,
   }) async {
     final guarded = await runSelfRemovedGroupLifecycleLeaf<GroupMessage?>(
       groupRepo: _groupRepo,
       groupId: groupId,
+      authorityPhaseHeld: authorityPhaseHeld,
       action: (group) async {
         // A terminal dissolve owns one phase from the fresh unmarked check
         // through native leave. B3-first skips every effect; dissolve-first
@@ -3213,6 +3379,9 @@ final class _GroupMessageSystemTransitionProcessor {
     required DateTime? eventAt,
     String? eventId,
     bool allowEqualVersionReplay = false,
+    bool allowProtectedRoleProjectionRepair = false,
+    bool allowProtectedMembershipProjectionRepair = false,
+    String? protectedAuthorityEventId,
     Map<String, dynamic>? parsed,
     GroupMessageRepository? msgRepo,
   }) async {
@@ -3220,8 +3389,68 @@ final class _GroupMessageSystemTransitionProcessor {
       return false;
     }
 
+    if ((allowProtectedMembershipProjectionRepair ||
+            allowProtectedRoleProjectionRepair) &&
+        parsed != null &&
+        msgRepo != null) {
+      await _rejectSupersededProtectedMembershipReplay(
+        groupId,
+        sysType: sysType,
+        parsed: parsed,
+        eventAt: eventAt,
+        protectedAuthorityEventId: protectedAuthorityEventId,
+        msgRepo: msgRepo,
+      );
+    }
+
     final watermark = await _resolveMembershipEventWatermark(groupId);
     if (watermark == null || eventAt.isAfter(watermark)) {
+      return false;
+    }
+
+    if (allowProtectedMembershipProjectionRepair &&
+        parsed != null &&
+        msgRepo != null &&
+        await _canRepairProtectedHistoricalMemberAdd(
+          groupId,
+          parsed: parsed,
+          eventAt: eventAt,
+          msgRepo: msgRepo,
+        )) {
+      return false;
+    }
+
+    // A protected PREPARED fact may be older than the group's single global
+    // membership watermark solely because a later transition changed another
+    // member (for example, the original actor was removed after this audit was
+    // durably appended but before its role projection committed). The exact
+    // verified capability is the authority to repair that interrupted
+    // projection; ordinary/live envelopes never enter this branch.
+    //
+    // Keep the exception subject-aware. A later role/removal projection for
+    // this same member, or a later rejoin epoch, still wins and must not be
+    // rolled back by the historical repair.
+    if (allowProtectedRoleProjectionRepair &&
+        sysType == 'member_role_updated' &&
+        eventAt.isBefore(watermark) &&
+        parsed != null &&
+        msgRepo != null &&
+        await _canRepairProtectedHistoricalRoleProjection(
+          groupId,
+          parsed: parsed,
+          eventAt: eventAt,
+          msgRepo: msgRepo,
+        )) {
+      emitFlowEvent(
+        layer: 'FL',
+        event:
+            'GROUP_MESSAGE_LISTENER_PROTECTED_ROLE_GLOBAL_WATERMARK_BYPASSED',
+        details: {
+          'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+          'eventAt': eventAt.toIso8601String(),
+          'watermark': watermark.toIso8601String(),
+        },
+      );
       return false;
     }
 
@@ -3268,6 +3497,329 @@ final class _GroupMessageSystemTransitionProcessor {
         'watermark': watermark.toIso8601String(),
       },
     );
+    return true;
+  }
+
+  Future<void> _rejectSupersededProtectedMembershipReplay(
+    String groupId, {
+    required String? sysType,
+    required Map<String, dynamic> parsed,
+    required DateTime eventAt,
+    required String? protectedAuthorityEventId,
+    required GroupMessageRepository msgRepo,
+  }) async {
+    final timelineState = await _classifyProtectedMembershipSubjectTimeline(
+      groupId,
+      sysType: sysType,
+      parsed: parsed,
+      eventAt: eventAt,
+      protectedAuthorityEventId: protectedAuthorityEventId,
+      msgRepo: msgRepo,
+    );
+    if (timelineState == _ProtectedMembershipSubjectTimelineState.ambiguous) {
+      throw StateError(
+        'protected membership same-subject ordering is unresolved',
+      );
+    }
+    if (timelineState != _ProtectedMembershipSubjectTimelineState.superseded) {
+      return;
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_MESSAGE_LISTENER_PROTECTED_MEMBERSHIP_SUBJECT_SUPERSEDED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'type': sysType ?? 'null',
+        'eventAt': eventAt.toUtc().toIso8601String(),
+      },
+    );
+    throw const ProtectedGroupAuthorityReplaySuperseded();
+  }
+
+  Future<_ProtectedMembershipSubjectTimelineState>
+  _classifyProtectedMembershipSubjectTimeline(
+    String groupId, {
+    required String? sysType,
+    required Map<String, dynamic> parsed,
+    required DateTime eventAt,
+    required String? protectedAuthorityEventId,
+    required GroupMessageRepository msgRepo,
+  }) async {
+    final targetPeerIds = <String>{};
+    if (sysType == 'member_added' ||
+        sysType == 'member_role_updated' ||
+        sysType == 'member_removed') {
+      final member = parsed['member'];
+      if (member is Map) {
+        final peerId = (member['peerId'] as String?)?.trim();
+        if (peerId != null && peerId.isNotEmpty) targetPeerIds.add(peerId);
+      }
+    } else if (sysType == 'members_added') {
+      final members = parsed['members'];
+      if (members is List) {
+        for (final member in members.whereType<Map>()) {
+          final peerId = (member['peerId'] as String?)?.trim();
+          if (peerId != null && peerId.isNotEmpty) targetPeerIds.add(peerId);
+        }
+      }
+    }
+    if (targetPeerIds.isEmpty) {
+      return _ProtectedMembershipSubjectTimelineState.absent;
+    }
+
+    final expectedTimelineType = switch (sysType) {
+      'member_added' || 'members_added' => 'members_added',
+      'member_role_updated' => 'member_role_updated',
+      'member_removed' => 'member_removed',
+      _ => null,
+    };
+    if (expectedTimelineType == null) {
+      return _ProtectedMembershipSubjectTimelineState.absent;
+    }
+
+    final normalizedEventAt = eventAt.toUtc();
+    if (protectedAuthorityEventId == null ||
+        protectedAuthorityEventId.isEmpty) {
+      return _ProtectedMembershipSubjectTimelineState.ambiguous;
+    }
+    final group = await _groupRepo.getGroup(groupId);
+    final storedEventAt = group?.lastMembershipEventAt?.toUtc();
+    final storedEventId = group?.lastMembershipEventId;
+    final storedPairIdentifiesEqualContender =
+        storedEventAt != null &&
+        storedEventAt.isAtSameMomentAs(normalizedEventAt) &&
+        storedEventId != null;
+    if (storedPairIdentifiesEqualContender &&
+        storedEventId.compareTo(protectedAuthorityEventId) > 0) {
+      return _ProtectedMembershipSubjectTimelineState.superseded;
+    }
+    var everySubjectHasExactEvidence = true;
+    for (final targetPeerId in targetPeerIds) {
+      var subjectHasExactEvidence = false;
+      final timeline = await _loadBoundedMembershipSubjectTimeline(
+        msgRepo,
+        groupId: groupId,
+        targetPeerId: targetPeerId,
+      );
+      if (!timeline.complete) {
+        return _ProtectedMembershipSubjectTimelineState.ambiguous;
+      }
+      for (final row in timeline.rows) {
+        final rowAt = row.timestamp.toUtc();
+        if (rowAt.isAfter(normalizedEventAt)) {
+          return _ProtectedMembershipSubjectTimelineState.superseded;
+        }
+        if (!rowAt.isAtSameMomentAs(normalizedEventAt)) continue;
+        final candidateEventId = _canonicalMembershipEventIdForTimelineRow(
+          row,
+          groupId: groupId,
+          targetPeerId: targetPeerId,
+        );
+        if (candidateEventId == protectedAuthorityEventId) {
+          subjectHasExactEvidence = true;
+          continue;
+        }
+        // A timeline timestamp is not an authority tie-break. Once another
+        // transition advances the global watermark, only an exact canonical
+        // row or the still-current global (eventAt,eventId) pair can order an
+        // equal-time contender. Otherwise fail closed without projection.
+        if (!storedPairIdentifiesEqualContender) {
+          return _ProtectedMembershipSubjectTimelineState.ambiguous;
+        }
+      }
+      everySubjectHasExactEvidence &= subjectHasExactEvidence;
+    }
+    return everySubjectHasExactEvidence
+        ? _ProtectedMembershipSubjectTimelineState.exact
+        : _ProtectedMembershipSubjectTimelineState.absent;
+  }
+
+  Future<({List<GroupMessage> rows, bool complete})>
+  _loadBoundedMembershipSubjectTimeline(
+    GroupMessageRepository msgRepo, {
+    required String groupId,
+    required String targetPeerId,
+  }) async {
+    const pageSize = 250;
+    const maxPages = 8;
+    final rows = <GroupMessage>[];
+    for (var pageIndex = 0; pageIndex < maxPages; pageIndex++) {
+      final page = await msgRepo.getMessagesPage(
+        groupId,
+        limit: pageSize,
+        offset: pageIndex * pageSize,
+      );
+      rows.addAll(
+        page.where(
+          (message) => _membershipTimelineTargetsPeer(
+            message.id,
+            groupId: groupId,
+            targetPeerId: targetPeerId,
+          ),
+        ),
+      );
+      if (page.length < pageSize) return (rows: rows, complete: true);
+    }
+    return (rows: rows, complete: false);
+  }
+
+  bool _membershipTimelineTargetsPeer(
+    String messageId, {
+    required String groupId,
+    required String targetPeerId,
+  }) {
+    if (messageId.startsWith(
+          'sys-member_role_updated:$groupId:$targetPeerId:',
+        ) ||
+        messageId.startsWith('sys-member_removed:$groupId:$targetPeerId:')) {
+      return true;
+    }
+    final addPrefix = 'sys-members_added:$groupId:';
+    if (!messageId.startsWith(addPrefix)) return false;
+    final body = messageId.substring(addPrefix.length);
+    final memberKeyEnd = body.indexOf(':');
+    if (memberKeyEnd <= 0) return false;
+    return body.substring(0, memberKeyEnd).split(',').contains(targetPeerId);
+  }
+
+  String? _canonicalMembershipEventIdForTimelineRow(
+    GroupMessage row, {
+    required String groupId,
+    required String targetPeerId,
+  }) {
+    final micros = row.timestamp.toUtc().microsecondsSinceEpoch;
+    String? transitionType;
+    String? senderId;
+    final rolePrefix = 'sys-member_role_updated:$groupId:$targetPeerId:';
+    final removePrefix = 'sys-member_removed:$groupId:$targetPeerId:';
+    final addPrefix = 'sys-members_added:$groupId:';
+    if (row.id.startsWith(rolePrefix)) {
+      transitionType = 'member_role_updated';
+      senderId = _timelineSenderId(row.id, prefix: rolePrefix, micros: micros);
+    } else if (row.id.startsWith(removePrefix)) {
+      transitionType = 'member_removed';
+      senderId = _timelineSenderId(
+        row.id,
+        prefix: removePrefix,
+        micros: micros,
+      );
+    } else if (row.id.startsWith(addPrefix)) {
+      final suffix = ':$micros';
+      if (!row.id.endsWith(suffix)) return null;
+      final body = row.id.substring(
+        addPrefix.length,
+        row.id.length - suffix.length,
+      );
+      final senderSeparator = body.lastIndexOf(':');
+      if (senderSeparator <= 0) return null;
+      final memberKey = body.substring(0, senderSeparator);
+      senderId = body.substring(senderSeparator + 1);
+      transitionType = memberKey.contains(',')
+          ? 'members_added'
+          : 'member_added';
+    }
+    if (transitionType == null || senderId == null || senderId.isEmpty) {
+      return null;
+    }
+    return canonicalMembershipEventId(
+      transitionType: transitionType,
+      groupId: groupId,
+      actorPeerId: senderId,
+      eventAt: row.timestamp,
+    );
+  }
+
+  String? _timelineSenderId(
+    String messageId, {
+    required String prefix,
+    required int micros,
+  }) {
+    final suffix = ':$micros';
+    if (!messageId.startsWith(prefix) || !messageId.endsWith(suffix)) {
+      return null;
+    }
+    final senderId = messageId.substring(
+      prefix.length,
+      messageId.length - suffix.length,
+    );
+    return senderId.isEmpty ? null : senderId;
+  }
+
+  Future<bool> _canRepairProtectedHistoricalRoleProjection(
+    String groupId, {
+    required Map<String, dynamic> parsed,
+    required DateTime eventAt,
+    required GroupMessageRepository msgRepo,
+  }) async {
+    final memberData = parsed['member'];
+    if (memberData is! Map) {
+      return false;
+    }
+    final targetPeerId = (memberData['peerId'] as String?)?.trim();
+    if (targetPeerId == null || targetPeerId.isEmpty) {
+      return false;
+    }
+
+    final normalizedEventAt = eventAt.toUtc();
+    final target = await _groupRepo.getMember(groupId, targetPeerId);
+    if (target == null ||
+        !target.joinedAt.toUtc().isBefore(normalizedEventAt)) {
+      return false;
+    }
+
+    for (final eventType in const <String>[
+      'member_role_updated',
+      'member_removed',
+    ]) {
+      final latestTargetEventAt = await msgRepo
+          .getLatestSystemEventTimestampForTarget(
+            groupId,
+            eventType: eventType,
+            targetId: targetPeerId,
+          );
+      if (latestTargetEventAt != null &&
+          !latestTargetEventAt.toUtc().isBefore(normalizedEventAt)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  Future<bool> _canRepairProtectedHistoricalMemberAdd(
+    String groupId, {
+    required Map<String, dynamic> parsed,
+    required DateTime eventAt,
+    required GroupMessageRepository msgRepo,
+  }) async {
+    final normalizedEventAt = eventAt.toUtc();
+    final candidates = <Map<String, dynamic>>[];
+    final member = parsed['member'];
+    if (member is Map) candidates.add(Map<String, dynamic>.from(member));
+    final members = parsed['members'];
+    if (members is List) {
+      candidates.addAll(
+        members.whereType<Map>().map(Map<String, dynamic>.from),
+      );
+    }
+    if (candidates.isEmpty) return false;
+    for (final candidate in candidates) {
+      final peerId = (candidate['peerId'] as String?)?.trim();
+      if (peerId == null || peerId.isEmpty) return false;
+      final current = await _groupRepo.getMember(groupId, peerId);
+      if (current != null &&
+          current.joinedAt.toUtc().isAfter(normalizedEventAt)) {
+        return false;
+      }
+      final laterRemoval = await msgRepo.getLatestSystemEventTimestampForTarget(
+        groupId,
+        eventType: 'member_removed',
+        targetId: peerId,
+      );
+      if (laterRemoval != null &&
+          !laterRemoval.toUtc().isBefore(normalizedEventAt)) {
+        return false;
+      }
+    }
     return true;
   }
 
@@ -3417,9 +3969,22 @@ final class _GroupMessageSystemTransitionProcessor {
     required DateTime? eventAt,
     bool hasExplicitConfigVersion = false,
     required GroupMessageRepository msgRepo,
+    bool allowProtectedProjectionRepair = false,
+    String? protectedAuthorityEventId,
   }) async {
     if (eventAt == null) {
       return false;
+    }
+
+    if (allowProtectedProjectionRepair) {
+      await _rejectSupersededProtectedMembershipReplay(
+        groupId,
+        sysType: sysType,
+        parsed: parsed,
+        eventAt: eventAt,
+        protectedAuthorityEventId: protectedAuthorityEventId,
+        msgRepo: msgRepo,
+      );
     }
 
     final watermark = await _resolveMembershipEventWatermark(groupId);
@@ -3429,6 +3994,22 @@ final class _GroupMessageSystemTransitionProcessor {
 
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
+    if (allowProtectedProjectionRepair &&
+        removedPeerId != null &&
+        removedPeerId.isNotEmpty) {
+      final existingMember = await _groupRepo.getMember(groupId, removedPeerId);
+      if (existingMember == null ||
+          !existingMember.joinedAt.toUtc().isAfter(eventAt.toUtc())) {
+        final laterAdd = await msgRepo.getLatestSystemEventTimestampForTarget(
+          groupId,
+          eventType: 'members_added',
+          targetId: removedPeerId,
+        );
+        if (laterAdd == null || laterAdd.toUtc().isBefore(eventAt.toUtc())) {
+          return false;
+        }
+      }
+    }
     if (removedPeerId != null && removedPeerId.isNotEmpty) {
       final existingMember = await _groupRepo.getMember(groupId, removedPeerId);
       final joinedAt = existingMember?.joinedAt.toUtc();
@@ -3546,6 +4127,7 @@ final class _GroupMessageSystemTransitionProcessor {
     required String? sysType,
     required DateTime? eventAt,
     Map<String, dynamic>? parsed,
+    bool requireExactProtectedProjection = false,
   }) async {
     if (eventAt == null) {
       return false;
@@ -3555,6 +4137,17 @@ final class _GroupMessageSystemTransitionProcessor {
     final watermark = group?.lastMetadataEventAt?.toUtc();
     if (watermark == null || eventAt.isAfter(watermark)) {
       return false;
+    }
+
+    if (requireExactProtectedProjection &&
+        eventAt.isAtSameMomentAs(watermark)) {
+      if (_metadataReplayMatchesProtectedProjection(group!, parsed)) {
+        // Sender restart recovery reaches this equal version after the atomic
+        // SQL projection+PREPARED commit. Re-enter only to repair native config;
+        // a different equal-version snapshot must never roll the winner back.
+        return false;
+      }
+      return true;
     }
 
     if (group != null &&
@@ -3624,6 +4217,36 @@ final class _GroupMessageSystemTransitionProcessor {
         : group.description;
     return (snapshotName != null && snapshotName != group.name) ||
         snapshotDescription != group.description;
+  }
+
+  bool _metadataReplayMatchesProtectedProjection(
+    GroupModel group,
+    Map<String, dynamic>? parsed,
+  ) {
+    final groupConfig = parsed?['groupConfig'];
+    if (groupConfig is! Map) return false;
+    final normalized = normalizeGroupConfigPayload(
+      groupId: group.id,
+      groupConfig: Map<String, dynamic>.from(groupConfig),
+    );
+    final name = normalized['name'];
+    final description = normalized['description'];
+    final avatarBlobId = normalized['avatarBlobId'];
+    final avatarMime = normalized['avatarMime'];
+    final metadataUpdatedAt = DateTime.tryParse(
+      normalized['metadataUpdatedAt'] as String? ?? '',
+    )?.toUtc();
+    return name is String &&
+        name.isNotEmpty &&
+        (description == null || description is String) &&
+        (avatarBlobId == null || avatarBlobId is String) &&
+        (avatarMime == null || avatarMime is String) &&
+        metadataUpdatedAt != null &&
+        group.name == name &&
+        group.description == description &&
+        group.avatarBlobId == avatarBlobId &&
+        group.avatarMime == avatarMime &&
+        group.lastMetadataEventAt?.toUtc() == metadataUpdatedAt;
   }
 
   Future<bool> _shouldRetryAcceptedSignedMetadataAvatarRecovery(
@@ -3896,6 +4519,26 @@ final class _GroupMessageSystemTransitionProcessor {
     final localMembers = localSnapshot?['members'];
     if (localMembers is! List) return authorConfig;
     return <String, dynamic>{...authorConfig, 'members': localMembers};
+  }
+
+  /// A protected PREPARED replay is an exact authority for its membership
+  /// subject, not a license to restore every unrelated member from the old
+  /// signed config snapshot. The handler has already projected that exact
+  /// add/role/remove before this merge, so the current local roster contains
+  /// both the intended subject state and every later unrelated membership fact.
+  /// Keep the author's version/metadata fields while using that merged roster
+  /// for SQL projection and the native validator config.
+  Future<Map<String, dynamic>> _mergeHistoricalMembershipConfigWithLocalRoster(
+    String groupId,
+    Map<String, dynamic> authorConfig, {
+    required bool enabled,
+  }) async {
+    if (!enabled) return authorConfig;
+    final localSnapshot = await _buildLocalGroupConfigSnapshot(groupId);
+    if (localSnapshot == null || localSnapshot['members'] is! List) {
+      throw StateError('protected historical membership roster is unavailable');
+    }
+    return _withLocalRoster(groupId, authorConfig, localSnapshot);
   }
 
   Future<Map<String, dynamic>?> _buildLocalGroupConfigSnapshot(

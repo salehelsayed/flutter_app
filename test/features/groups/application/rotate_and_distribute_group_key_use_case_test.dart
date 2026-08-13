@@ -291,6 +291,8 @@ void main() {
             senderDevice: request.senderDevice,
             frozenRecipients: request.frozenRecipients,
             deliveryRecipients: request.deliveryRecipients,
+            deliveryReplayDataByTransportPeerId:
+                request.deliveryReplayDataByTransportPeerId,
             sharedAuthorityProof: request.sharedAuthorityProof,
             callSign: (data, _) async => <String, dynamic>{
               'ok': true,
@@ -345,10 +347,20 @@ void main() {
         sendP2PMessage: _sendOk,
       );
       expect(rotated.rotated, isTrue);
-      expect(requests, hasLength(2));
+      expect(requests, hasLength(1));
       expect(
         requests.map((request) => request.transitionId).toSet(),
         hasLength(1),
+      );
+      expect(
+        requests.single.deliveryRecipients
+            ?.map((device) => device.transportPeerId)
+            .toSet(),
+        <String>{physicalA.transportPeerId, physicalB.transportPeerId},
+      );
+      expect(
+        requests.single.deliveryReplayDataByTransportPeerId?.keys.toSet(),
+        <String>{physicalA.transportPeerId, physicalB.transportPeerId},
       );
       final proofA = ProtectedGroupAuthorityPayload.tryParse(
         plaintextByRecipient['physical-a']!,
@@ -434,7 +446,7 @@ void main() {
           appendAuthorityProof: ({required phase, required proof}) async {
             receiverHistory['${phase.name}:${proof.eventId}'] = proof;
           },
-          applyReplay: (control, replayData) async {
+          applyReplay: (control, replayData, _) async {
             await receiver.saveKey(
               GroupKeyInfo(
                 groupId: groupId,
@@ -478,7 +490,7 @@ void main() {
                   receiverHistory['${phase.name}:$eventId'],
           appendAuthorityProof: ({required phase, required proof}) async =>
               fail('completed restart must not append authority'),
-          applyReplay: (_, _) async =>
+          applyReplay: (_, _, _) async =>
               fail('completed restart must not replay the key'),
           now: () => proofA.eventAt,
         );
@@ -549,6 +561,253 @@ void main() {
         isEmpty,
       );
       expect(durablePrepared[zeroProof.eventId], isNotNull);
+    },
+  );
+
+  test(
+    'fresh protected rotation persists one atomic all-target batch across rollback and crash restart',
+    () async {
+      const source = GroupMemberDeviceIdentity(
+        deviceId: 'atomic-source-device',
+        transportPeerId: 'atomic-source-transport',
+        deviceSigningPublicKey: 'selfPubKey',
+        mlKemPublicKey: 'atomic-source-mlkem',
+      );
+      const physicalA = GroupMemberDeviceIdentity(
+        deviceId: 'atomic-device-a',
+        transportPeerId: 'atomic-physical-a',
+        deviceSigningPublicKey: 'atomic-public-a',
+        mlKemPublicKey: 'atomic-mlkem-a',
+      );
+      const physicalB = GroupMemberDeviceIdentity(
+        deviceId: 'atomic-device-b',
+        transportPeerId: 'atomic-physical-b',
+        deviceSigningPublicKey: 'atomic-public-b',
+        mlKemPublicKey: 'atomic-mlkem-b',
+      );
+      await groupRepo.removeMember(groupId, 'peer-bob');
+      await groupRepo.removeMember(groupId, 'peer-carol');
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: source.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[source],
+          joinedAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      for (final entry in const <(String, GroupMemberDeviceIdentity)>[
+        ('atomic-peer-a', physicalA),
+        ('atomic-peer-b', physicalB),
+      ]) {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: entry.$1,
+            username: entry.$1,
+            role: MemberRole.writer,
+            publicKey: 'account-${entry.$1}',
+            mlKemPublicKey: entry.$2.mlKemPublicKey,
+            devices: <GroupMemberDeviceIdentity>[entry.$2],
+            joinedAt: DateTime.utc(2026, 8, 13),
+          ),
+        );
+      }
+
+      final requests = <ProtectedGroupAuthorityPrepareRequest>[];
+      final durableRows = <String, GroupPendingBroadcast>{};
+      final durableBatchSizes = <int>[];
+      ProtectedGroupAuthorityPreparation? durablePreparation;
+      AuthenticatedGroupAuthorityProof? durableComplete;
+      var attempt = 0;
+      var cancelCalls = 0;
+
+      Future<ProtectedGroupAuthorityPreparation> buildBatch(
+        ProtectedGroupAuthorityPrepareRequest request,
+      ) {
+        final recipientByKey = <String, String>{
+          for (final device in request.frozenRecipients)
+            if (device.mlKemPublicKey != null)
+              device.mlKemPublicKey!: device.transportPeerId,
+        };
+        return buildProtectedGroupAuthorityRows(
+          groupId: request.groupId,
+          transitionId: request.transitionId,
+          control: request.control,
+          replayData: request.replayData,
+          keyEpoch: request.replayData['keyGeneration'] as int,
+          actorAccountPeerId: request.actorAccountPeerId,
+          actorAccountPublicKey: request.actorAccountPublicKey,
+          actorAccountPrivateKey: request.actorAccountPrivateKey,
+          senderDevice: request.senderDevice,
+          frozenRecipients: request.frozenRecipients,
+          deliveryRecipients: request.deliveryRecipients,
+          deliveryReplayDataByTransportPeerId:
+              request.deliveryReplayDataByTransportPeerId,
+          callSign: (data, _) async => <String, dynamic>{
+            'ok': true,
+            'signature': 'atomic-signature:${data.hashCode}',
+          },
+          callEncrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async {
+                final recipient = recipientByKey[recipientMlKemPublicKey]!;
+                return <String, dynamic>{
+                  'ok': true,
+                  'kem': 'atomic-kem-$recipient',
+                  'ciphertext': 'atomic-ciphertext-$recipient',
+                  'nonce': 'atomic-nonce-$recipient',
+                };
+              },
+          now: () =>
+              DateTime.parse(request.replayData['timestamp'] as String).toUtc(),
+        );
+      }
+
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          requests.add(request);
+          final built = await buildBatch(request);
+          expect(built.hasAuthenticatedAuthority, isTrue);
+          expect(built.rows, hasLength(2));
+          expect(
+            built.rows.map((row) => row.recipientPeerIds.single).toSet(),
+            <String>{physicalA.transportPeerId, physicalB.transportPeerId},
+          );
+
+          attempt++;
+          if (attempt == 1) {
+            // Simulate the protected-batch transaction rejecting and rolling
+            // back. Neither PREPARED nor one target row may escape.
+            return null;
+          }
+          if (attempt == 2) {
+            // Simulate process death immediately after the atomic transaction
+            // commits, before its result reaches the rotation producer.
+            durablePreparation = built;
+            durableBatchSizes.add(built.rows.length);
+            for (final row in built.rows) {
+              durableRows[row.id] = row;
+            }
+            throw StateError('simulated post-batch-commit crash');
+          }
+
+          final persisted = durablePreparation!;
+          expect(
+            sameAuthenticatedGroupAuthorityProof(
+              persisted.authorityProof!,
+              built.authorityProof!,
+            ),
+            isTrue,
+          );
+          expect(
+            built.rows.map((row) => row.id).toSet(),
+            persisted.rows.map((row) => row.id).toSet(),
+          );
+          return persisted;
+        },
+        activate: (preparation, {required requireAllCustody}) async {
+          expect(requireAllCustody, isTrue);
+          durableComplete = preparation.authorityProof;
+          for (final row in preparation.rows) {
+            durableRows.remove(row.id);
+          }
+          return true;
+        },
+        cancel: (_) async {
+          cancelCalls++;
+          return true;
+        },
+      );
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+
+      final rolledBack = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: source.deviceSigningPublicKey,
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: _sendOk,
+      );
+      expect(rolledBack.rotated, isFalse);
+      expect(durablePreparation, isNull);
+      expect(durableRows, isEmpty);
+      expect(durableBatchSizes, isEmpty);
+      expect(cancelCalls, 0);
+      expect((await groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+      expect(_bridgeCommandIndex(bridge, 'group:updateKey', keyEpoch: 2), -1);
+      expect(await groupRepo.getPendingKeyRotation(groupId), isNotNull);
+
+      await expectLater(
+        rotateAndDistributeGroupKey(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          selfPeerId: selfPeerId,
+          senderPublicKey: source.deviceSigningPublicKey,
+          senderPrivateKey: 'selfPrivKey',
+          senderUsername: 'Self',
+          sourceDeviceId: source.deviceId,
+          sendP2PMessage: _sendOk,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated post-batch-commit crash',
+          ),
+        ),
+      );
+      expect(durablePreparation, isNotNull);
+      expect(durableRows, hasLength(2));
+      expect(durableBatchSizes, <int>[2]);
+      expect(cancelCalls, 0);
+      expect((await groupRepo.getLatestKey(groupId))!.keyGeneration, 1);
+      expect(_bridgeCommandIndex(bridge, 'group:updateKey', keyEpoch: 2), -1);
+
+      final restarted = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: source.deviceSigningPublicKey,
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: _sendOk,
+      );
+      expect(restarted.rotated, isTrue);
+      expect(durableRows, isEmpty);
+      expect(durableComplete, same(durablePreparation!.authorityProof));
+      expect(cancelCalls, 0);
+      expect((await groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
+      expect(await groupRepo.getPendingKeyRotation(groupId), isNull);
+      expect(requests, hasLength(3));
+      expect(
+        requests.map((request) => request.transitionId).toSet(),
+        hasLength(1),
+      );
+      expect(
+        requests.map((request) => request.replayData['timestamp']).toSet(),
+        hasLength(1),
+      );
+      for (final request in requests) {
+        expect(
+          request.deliveryRecipients
+              ?.map((device) => device.transportPeerId)
+              .toSet(),
+          <String>{physicalA.transportPeerId, physicalB.transportPeerId},
+        );
+        expect(
+          request.deliveryReplayDataByTransportPeerId?.keys.toSet(),
+          <String>{physicalA.transportPeerId, physicalB.transportPeerId},
+        );
+      }
     },
   );
 
@@ -752,6 +1011,154 @@ void main() {
         physicalA.transportPeerId,
         physicalB.transportPeerId,
       });
+    },
+  );
+
+  test(
+    'common key PREPARED abort retires every physical target in one classification',
+    () async {
+      const source = GroupMemberDeviceIdentity(
+        deviceId: 'source-device',
+        transportPeerId: 'source-transport',
+        deviceSigningPublicKey: 'selfPubKey',
+        mlKemPublicKey: 'source-mlkem',
+      );
+      const physicalA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'physical-a',
+        deviceSigningPublicKey: 'public-a',
+        mlKemPublicKey: 'mlkem-a',
+      );
+      const physicalB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'physical-b',
+        deviceSigningPublicKey: 'public-b',
+        mlKemPublicKey: 'mlkem-b',
+      );
+      final joinedAt = DateTime.utc(2026, 8, 13);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: source.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[source],
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'bob-account-key',
+          mlKemPublicKey: physicalA.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[physicalA],
+          joinedAt: joinedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-carol',
+          username: 'Carol',
+          role: MemberRole.writer,
+          publicKey: 'carol-account-key',
+          mlKemPublicKey: physicalB.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[physicalB],
+          joinedAt: joinedAt,
+        ),
+      );
+
+      var cancelCalls = 0;
+      ProtectedGroupAuthorityPreparation? aborted;
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) => buildProtectedGroupAuthorityRows(
+          groupId: request.groupId,
+          transitionId: request.transitionId,
+          control: request.control,
+          replayData: request.replayData,
+          keyEpoch: request.replayData['keyGeneration'] as int,
+          actorAccountPeerId: request.actorAccountPeerId,
+          actorAccountPublicKey: request.actorAccountPublicKey,
+          actorAccountPrivateKey: request.actorAccountPrivateKey,
+          senderDevice: request.senderDevice,
+          frozenRecipients: request.frozenRecipients,
+          deliveryRecipients: request.deliveryRecipients,
+          deliveryReplayDataByTransportPeerId:
+              request.deliveryReplayDataByTransportPeerId,
+          sharedAuthorityProof: request.sharedAuthorityProof,
+          callSign: (data, _) async => <String, dynamic>{
+            'ok': true,
+            'signature': 'sig:${data.hashCode}',
+          },
+          callEncrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async =>
+                  <String, dynamic>{
+                    'ok': true,
+                    'kem': 'kem-$recipientMlKemPublicKey',
+                    'ciphertext': 'cipher-$recipientMlKemPublicKey',
+                    'nonce': 'nonce-$recipientMlKemPublicKey',
+                  },
+          now: () => joinedAt,
+        ),
+        activate: (_, {required requireAllCustody}) async =>
+            fail('failed promotion must not activate authority'),
+        cancel: (preparation) async {
+          cancelCalls++;
+          aborted = preparation;
+          return true;
+        },
+      );
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      final failingBridge = _PromoteFailBridge(failEpoch: 2);
+      failingBridge.responses['group:generateNextKey'] = <String, dynamic>{
+        'ok': true,
+        'groupKey': 'common-abort-key',
+        'keyEpoch': 2,
+      };
+      failingBridge.responses['group:publish'] = <String, dynamic>{
+        'ok': true,
+        'messageId': 'common-abort-publish',
+      };
+
+      final outcome = await rotateAndDistributeGroupKey(
+        bridge: failingBridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: source.deviceSigningPublicKey,
+        senderPrivateKey: 'self-private-key',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: _sendOk,
+      );
+
+      expect(outcome.rotated, isFalse);
+      expect(cancelCalls, 1);
+      expect(
+        await groupRepo.getPendingKeyRotation(groupId),
+        isNull,
+        reason: 'ABORTED event addresses cannot reuse their pending draft',
+      );
+      expect(
+        aborted!.rows.map((row) => row.recipientPeerIds.single).toSet(),
+        <String>{physicalA.transportPeerId, physicalB.transportPeerId},
+      );
+      expect(
+        aborted!.rows
+            .map(
+              (row) => parseProtectedGroupAuthorityDeliveryId(
+                row.sourceMessageId!,
+              )!.transitionId,
+            )
+            .toSet(),
+        <String>{aborted!.authorityProof!.eventId},
+      );
     },
   );
 

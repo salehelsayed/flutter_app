@@ -18,6 +18,19 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_br
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
+enum ProtectedPreparedAuthorityGate {
+  notProtected,
+  complete,
+  aborted,
+  retryable,
+}
+
+typedef ResolveProtectedPreparedAuthorityGate =
+    Future<ProtectedPreparedAuthorityGate> Function({
+      required String groupId,
+      required String eventId,
+    });
+
 /// Builds the [GroupPendingBroadcastRunner] re-push function: re-publishes a
 /// stored (already-signed) broadcast verbatim and re-stores it to the relay
 /// inbox for its recipients. Returns `true` only when both legs succeed, so a
@@ -29,6 +42,7 @@ buildGroupPendingBroadcastRePush({
   required GroupRepository groupRepo,
   required Future<IdentityModel?> Function() loadIdentity,
   GroupPendingBroadcastRepository? pendingRepository,
+  ResolveProtectedPreparedAuthorityGate? resolveProtectedPreparedAuthority,
 }) {
   return (broadcast) async {
     if (broadcast.kind == groupPendingBroadcastKindExitLeaveNotice) {
@@ -101,6 +115,24 @@ buildGroupPendingBroadcastRePush({
           );
           var currentGroup = await groupRepo.getGroup(broadcast.groupId);
           final sourceEventId = broadcast.sourceMessageId;
+          var protectedAuthorityComplete = false;
+          if (sourceEventId != null &&
+              resolveProtectedPreparedAuthority != null) {
+            final gate = await resolveProtectedPreparedAuthority(
+              groupId: broadcast.groupId,
+              eventId: sourceEventId,
+            );
+            switch (gate) {
+              case ProtectedPreparedAuthorityGate.aborted:
+                return finishExact();
+              case ProtectedPreparedAuthorityGate.retryable:
+                return false;
+              case ProtectedPreparedAuthorityGate.complete:
+                protectedAuthorityComplete = true;
+              case ProtectedPreparedAuthorityGate.notProtected:
+                break;
+            }
+          }
           var hasExactCommitProof =
               sourceEventId != null &&
               currentGroup?.lastMembershipEventId == sourceEventId &&
@@ -108,7 +140,11 @@ buildGroupPendingBroadcastRePush({
               currentGroup!.lastMembershipEventAt!.toUtc().isAtSameMomentAs(
                 broadcast.eventAt.toUtc(),
               );
-          if (!hasExactCommitProof ||
+          if (protectedAuthorityComplete) {
+            if (currentMember?.role.toValue() != preparedMember.role) {
+              return false;
+            }
+          } else if (!hasExactCommitProof ||
               currentMember?.role.toValue() != preparedMember.role) {
             final watermarkAt = currentGroup?.lastMembershipEventAt?.toUtc();
             final watermarkId = currentGroup?.lastMembershipEventId;

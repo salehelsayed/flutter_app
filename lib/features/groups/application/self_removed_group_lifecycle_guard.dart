@@ -28,13 +28,18 @@ class SelfRemovedGroupLifecycleResult<T> {
 /// and the single external leaf stay in the same per-group membership phase.
 /// Batch loops, page loops, listener callbacks, and follow-on drains must stay
 /// outside. An absent or durably self-removed shell has no lifecycle authority.
+/// [authorityPhaseHeld] is an explicit capability for a caller that already
+/// owns this group's non-reentrant authority phase; ordinary callers acquire
+/// the phase here as before.
 Future<SelfRemovedGroupLifecycleResult<T>> runSelfRemovedGroupLifecycleLeaf<T>({
   required GroupRepository groupRepo,
   required String groupId,
   required Future<T> Function(GroupModel group) action,
+  bool authorityPhaseHeld = false,
 }) {
-  return runGroupMembershipMutationLocked(
+  return runGroupAuthorityPhaseIfNeeded(
     groupId: groupId,
+    authorityPhaseHeld: authorityPhaseHeld,
     action: () async {
       final group = await groupRepo.getGroup(groupId);
       if (group == null) {

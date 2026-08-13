@@ -60,6 +60,30 @@ abstract interface class GroupPendingBroadcastProtectedBatchRepository {
   });
 }
 
+enum ProtectedGroupAuthorityAbortResult {
+  aborted,
+  alreadyAborted,
+  refusedComplete,
+  conflict,
+}
+
+/// Atomically classifies one authenticated PREPARED transition as aborted and
+/// retires only its exact protected delivery owners.
+///
+/// Append-only PREPARED history cannot be deleted. This capability supplies
+/// the durable negative fact that prevents an intentionally rolled-back local
+/// mutation from being rediscovered and completed after an unrelated future
+/// projection happens to match it.
+abstract interface class GroupPendingBroadcastProtectedAbortRepository {
+  Future<ProtectedGroupAuthorityAbortResult> abortProtectedBatch(
+    List<GroupPendingBroadcast> expectedRows, {
+    required String groupId,
+    required GroupPendingBroadcastAuthorityFact authorityPrepared,
+    required GroupPendingBroadcastAuthorityFact authorityAborted,
+    required String authorityCompleteSourceEventId,
+  });
+}
+
 Future<bool> removeGroupPendingBroadcastIfExact(
   GroupPendingBroadcastRepository repository,
   GroupPendingBroadcast expected,

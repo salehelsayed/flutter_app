@@ -27,6 +27,7 @@ import 'package:flutter_app/features/groups/application/group_exit_terminal_diag
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
@@ -63,6 +64,7 @@ import 'package:flutter_app/features/groups/presentation/widgets/pending_sibling
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
 import 'package:flutter_app/features/groups/presentation/group_invite_status_presentation.dart';
@@ -1234,12 +1236,19 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     GroupMember? preRemovalMember;
     String? removalTimelineMessageId;
     var localRemovalAccepted = false;
+    // Once exact protected PREPARED authority exists, it exclusively owns
+    // crash/retry reconciliation. A later UI-layer publish/inbox failure must
+    // never re-add the member behind that append-only authority history.
+    var protectedRemovalRecoveryOwned = false;
     // Once the member_removed broadcast is committed, a later failure must NOT
     // roll back / re-add the member (re-granting the key violates INV-R2).
     var removalBroadcast = false;
 
     try {
       final identity = await widget.identityRepo.loadIdentity();
+      if (identity == null) {
+        throw StateError('Current group identity is unavailable.');
+      }
       preRemovalGroup = await widget.groupRepo.getGroup(widget.group.id);
       preRemovalMember = await widget.groupRepo.getMember(
         widget.group.id,
@@ -1263,10 +1272,10 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         groupRepo: widget.groupRepo,
         groupId: widget.group.id,
         memberPeerId: member.peerId,
-        selfPeerId: identity?.peerId,
-        actorUsername: identity?.username,
+        selfPeerId: identity.peerId,
+        actorUsername: identity.username,
         msgRepo: widget.msgRepo,
-        prepareAuthority: identity == null || !hasProtectedGroupAuthorityAdapter
+        prepareAuthority: !hasProtectedGroupAuthorityAdapter
             ? null
             : ({
                 required group,
@@ -1370,17 +1379,39 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                   ),
                 );
                 if (preparation == null) {
-                  throw StateError('Member removal preparation failed');
+                  throw StateError(
+                    'Member removal authenticated preparation failed',
+                  );
                 }
+                if (!preparation.hasAuthenticatedAuthority) {
+                  if (!await cancelProtectedGroupAuthority(preparation)) {
+                    throw StateError(
+                      'Member removal unauthenticated preparation cleanup refused',
+                    );
+                  }
+                  throw StateError(
+                    'Member removal authenticated preparation failed',
+                  );
+                }
+                protectedRemovalRecoveryOwned = true;
                 return PreparedGroupMemberRemovalAuthority(
                   activate: () async {
-                    await activateProtectedGroupAuthority(
+                    final activated = await activateProtectedGroupAuthority(
                       preparation,
                       requireAllCustody: false,
                     );
+                    if (!activated) {
+                      throw StateError(
+                        'Member removal protected authority remains PREPARED',
+                      );
+                    }
                   },
                   rollback: () async {
-                    await cancelProtectedGroupAuthority(preparation);
+                    if (!await cancelProtectedGroupAuthority(preparation)) {
+                      throw StateError(
+                        'Member removal durable protected abort refused',
+                      );
+                    }
                   },
                 );
               },
@@ -1388,19 +1419,17 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       localRemovalAccepted = true;
       final eventAt = minted.eventAt;
       final sourceEventId = minted.eventId;
-      if (identity != null) {
-        removalTimelineMessageId = buildMemberRemovedTimelineMessage(
-          groupId: widget.group.id,
-          removedPeerId: member.peerId,
-          removedUsername: member.username,
-          senderId: identity.peerId,
-          senderUsername: identity.username,
-          eventAt: eventAt,
-        ).id;
-      }
+      removalTimelineMessageId = buildMemberRemovedTimelineMessage(
+        groupId: widget.group.id,
+        removedPeerId: member.peerId,
+        removedUsername: member.username,
+        senderId: identity.peerId,
+        senderUsername: identity.username,
+        eventAt: eventAt,
+      ).id;
 
       // 2. Broadcast member_removed system message to remaining members
-      if (identity != null) {
+      {
         final group = await widget.groupRepo.getGroup(widget.group.id);
         final allMembers = await widget.groupRepo.getMembers(widget.group.id);
 
@@ -1659,10 +1688,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       _didMutateGroup = true;
       await _loadGroupInfo();
     } catch (e) {
-      // Roll back ONLY when the removal was never broadcast (pre-broadcast
-      // failure). After the broadcast, re-adding the member would re-grant the
-      // rotated-away key (INV-R2), so the catch falls through to a warning only.
+      // Roll back ONLY an ordinary, pre-broadcast removal. A protected
+      // PREPARED transition remains the durable retry owner even before live
+      // publish; re-adding here would contradict its exact signed projection.
+      // After live broadcast, re-adding would also re-grant the rotated-away
+      // key (INV-R2), so both cases fall through to a warning only.
       if (localRemovalAccepted &&
+          !protectedRemovalRecoveryOwned &&
           !removalBroadcast &&
           preRemovalGroup != null &&
           preRemovalMember != null) {
@@ -1695,7 +1727,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       // a later sync step (inbox replay, etc.) must NOT be surfaced as "failed
       // to remove" — that would imply the member is still present. Show the
       // honest "removed, some sync deferred" notice instead.
-      final message = removalBroadcast
+      final message = removalBroadcast || protectedRemovalRecoveryOwned
           ? AppLocalizations.of(
               context,
             )!.group_info_remove_member_partial_distribution
@@ -1932,6 +1964,9 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     String? committedSysText;
     var committedRecipientPeerIds = const <String>[];
     String? committedSourceMessageId;
+    ProtectedGroupAuthorityPreparation? protectedPreparation;
+    AtomicProtectedGroupMetadataAuthorityRepository?
+    protectedMetadataRepository;
     final l10n = AppLocalizations.of(context)!;
     final noIdentityMessage = l10n.group_info_no_identity;
     final uploadPhotoFailedMessage = l10n.group_info_upload_photo_failed;
@@ -2154,8 +2189,110 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
 
           refreshedMembers = membersForConfig;
           sysText = jsonEncode(signedPayload);
+          if (hasProtectedGroupAuthorityAdapter &&
+              hasProtectedGroupPhysicalAuthority(membersForConfig)) {
+            final atomicRepository = widget.groupRepo;
+            if (atomicRepository
+                is! AtomicProtectedGroupMetadataAuthorityRepository) {
+              throw StateError(
+                'Protected metadata requires atomic authority persistence',
+              );
+            }
+            protectedMetadataRepository =
+                atomicRepository
+                    as AtomicProtectedGroupMetadataAuthorityRepository;
+            final actorMatches = membersForConfig
+                .where((member) => member.peerId == identity.peerId)
+                .toList(growable: false);
+            final senderDevice = actorMatches.length == 1
+                ? resolveProtectedGroupSenderDevice(
+                    actor: actorMatches.single,
+                    senderPublicKey:
+                        senderBinding.devicePublicKey ?? identity.publicKey,
+                    senderDeviceId: senderBinding.deviceId,
+                    senderTransportPeerId:
+                        senderBinding.transportPeerId ?? identity.peerId,
+                  )
+                : null;
+            if (senderDevice == null) {
+              throw StateError(
+                'Metadata transition sender device is not authoritative',
+              );
+            }
+            final replayData = <String, dynamic>{
+              'groupId': groupId,
+              'senderId': identity.peerId,
+              'senderUsername': identity.username,
+              if (senderBinding.deviceId != null)
+                'senderDeviceId': senderBinding.deviceId,
+              if (senderBinding.transportPeerId != null)
+                'transportPeerId': senderBinding.transportPeerId,
+              'text': sysText!,
+              'timestamp': changedAt.toUtc().toIso8601String(),
+              'messageId': sourceEventId,
+            };
+            final prepared = await prepareProtectedGroupAuthority(
+              ProtectedGroupAuthorityPrepareRequest(
+                groupId: groupId,
+                transitionId: sourceEventId,
+                control: ProtectedGroupAuthorityControl.memberConfig,
+                replayData: replayData,
+                actorAccountPeerId: identity.peerId,
+                actorAccountPublicKey: identity.publicKey,
+                actorAccountPrivateKey: identity.privateKey,
+                senderDevice: senderDevice,
+                frozenRecipients: freezeProtectedGroupPhysicalRecipients(
+                  membersForConfig,
+                ),
+                deferPersistenceUntilAtomicProjection: true,
+              ),
+            );
+            if (prepared == null || !prepared.hasAuthenticatedAuthority) {
+              await cancelProtectedGroupAuthority(prepared);
+              throw StateError(
+                'Metadata transition protected preparation failed',
+              );
+            }
+            protectedPreparation = prepared;
+          }
         },
         currentAuthorityCheck: currentEditAuthorityMatches,
+        persistUpdate: (updatedGroup) async {
+          final preparation = protectedPreparation;
+          if (preparation == null) {
+            await widget.groupRepo.updateGroup(updatedGroup);
+            return;
+          }
+          final repository = protectedMetadataRepository;
+          final proof = preparation.authorityProof;
+          final keyGeneration = editAuthority.latestKeyGeneration;
+          if (repository == null ||
+              proof == null ||
+              keyGeneration == null ||
+              keyGeneration <= 0 ||
+              preparation.control !=
+                  ProtectedGroupAuthorityControl.memberConfig) {
+            throw StateError('Protected metadata authority is incomplete');
+          }
+          final factPayload = authenticatedGroupAuthorityFactPayload(proof);
+          final preparedFact = GroupPendingBroadcastAuthorityFact(
+            sourcePeerId: proof.actorAccountPeerId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.prepared,
+              proof.eventId,
+            ),
+            sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+            payload: factPayload,
+          );
+          await repository.commitProtectedGroupMetadataAuthority(
+            expectedGroup: editAuthority.group,
+            expectedMembers: editAuthority.members,
+            expectedLatestKeyGeneration: keyGeneration,
+            group: updatedGroup,
+            pendingBroadcasts: preparation.rows,
+            authorityPrepared: preparedFact,
+          );
+        },
       );
       committedGroupForRecovery = committedGroup;
 
@@ -2167,6 +2304,17 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       final signedMembers = refreshedMembers;
       if (signedSysText == null || signedMembers == null) {
         throw StateError(signMetadataFailedMessage);
+      }
+      if (protectedPreparation != null) {
+        final activated = await activateProtectedGroupAuthority(
+          protectedPreparation,
+          requireAllCustody: false,
+        );
+        if (!activated) {
+          throw StateError(
+            'Protected metadata native synchronization remains pending',
+          );
+        }
       }
       final metadataTimelineMessage = buildGroupMetadataUpdatedTimelineMessage(
         groupId: groupId,
@@ -2327,6 +2475,22 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       // or roll the optimistic edit back (S2a fallback) — never report success
       // while peers received nothing.
       var enqueuedForRetry = false;
+      if (!metadataPersisted && protectedPreparation != null) {
+        try {
+          await cancelProtectedGroupAuthority(protectedPreparation);
+        } catch (cancelError) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_METADATA_PROTECTED_CANCEL_ERROR',
+            details: {
+              'groupId': _group.id.length > 8
+                  ? _group.id.substring(0, 8)
+                  : _group.id,
+              'error': cancelError.toString(),
+            },
+          );
+        }
+      }
       if (metadataPersisted) {
         await runGroupMembershipMutationLocked<void>(
           groupId: _group.id,
@@ -2366,7 +2530,8 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
             }
 
             final signedBroadcast = committedSysText;
-            if (signedBroadcast != null &&
+            if (protectedPreparation == null &&
+                signedBroadcast != null &&
                 hasGroupPendingBroadcastEnqueueSink) {
               final now = DateTime.now().toUtc();
               await enqueueGroupPendingBroadcast(
@@ -2382,6 +2547,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                   updatedAt: now,
                 ),
               );
+              enqueuedForRetry = true;
+              return;
+            }
+            if (protectedPreparation?.hasAuthenticatedAuthority == true) {
+              // Protected rows and PREPARED history exclusively own retry.
+              // Generic group publish/re-push is not COMPLETE-fenced and must
+              // never bypass a failed strict native synchronization.
               enqueuedForRetry = true;
               return;
             }

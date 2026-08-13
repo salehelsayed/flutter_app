@@ -2,6 +2,7 @@ import '../models/group_key_info.dart';
 import '../models/group_member.dart';
 import '../models/group_model.dart';
 import '../models/group_pending_broadcast.dart';
+import 'group_pending_broadcast_repository.dart';
 
 /// Finding 05 Phase 3: per-group rejoin-retry state. A value exists only for a
 /// group that has failed to rejoin its topic and is being backed off.
@@ -146,6 +147,24 @@ abstract interface class AtomicProtectedGroupKeyAuthorityRepository {
   Future<void> commitProtectedGroupKeyAuthority({
     required GroupKeyInfo key,
     required ProtectedGroupAuthorityCompleteFact authorityComplete,
+  });
+}
+
+/// Production capability for atomically authoring protected group metadata.
+///
+/// The exact pre-edit group, roster, and key epoch are requalified inside the
+/// database transaction. Only then may the new metadata row, immutable physical
+/// deliveries, and authenticated PREPARED fact become visible. COMPLETE remains
+/// fenced behind strict native group-config synchronization and is appended by
+/// authenticated recovery after this transaction commits.
+abstract interface class AtomicProtectedGroupMetadataAuthorityRepository {
+  Future<void> commitProtectedGroupMetadataAuthority({
+    required GroupModel expectedGroup,
+    required List<GroupMember> expectedMembers,
+    required int expectedLatestKeyGeneration,
+    required GroupModel group,
+    required List<GroupPendingBroadcast> pendingBroadcasts,
+    required GroupPendingBroadcastAuthorityFact authorityPrepared,
   });
 }
 

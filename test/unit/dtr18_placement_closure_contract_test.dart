@@ -120,9 +120,10 @@ const _relocations = <String, List<String>>{
       'group_pending_broadcast_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/'
         'group_pending_broadcast_repository_impl.dart',
-    // Plan 363 adds exact protected-recipient removal and atomic protected
-    // batch persistence capabilities to this already-relocated adapter.
-    'a6020d3c64ce8cba0a21e56c0e38eecddb8f893c6880244450748eed56f75804',
+    // Plan 363 couples protected persistence with authenticated PREPARED facts,
+    // exact recipient retirement and durable exact ABORTED classification in
+    // this relocated adapter; placement/stale-import checks remain unchanged.
+    '42cd12a9c4ebbd0070e7c57f857e7b1291be0962d332e1d66e39cca08bba749f',
   ],
   'lib/features/groups/domain/repositories/'
       'group_pending_key_distribution_repository_impl.dart': <String>[
@@ -157,9 +158,11 @@ const _relocations = <String, List<String>>{
   'lib/features/groups/domain/repositories/'
       'group_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/group_repository_impl.dart',
-    // Plan 363 adds the group-scoped bootstrap transaction and exact
-    // authoritative read-back to this already-relocated adapter.
-    '36f07c40ee3cde94c52ed458553729de80bd30ca422ab0f9651b00444bd6bcd2',
+    // Plan 363 adds sender/receiver genesis, atomic key/dissolve completion,
+    // metadata PREPARED projection, and exact restart repair to this already-
+    // relocated adapter; its placement and stale-import checks remain
+    // unchanged.
+    'd5bb80905cde0eb02e3a6c3f9f71d7ace44e5d176d5b1f0b246754c252c0f522',
   ],
   'lib/features/groups/domain/repositories/'
       'pending_group_invite_repository_impl.dart': <String>[

@@ -85,10 +85,9 @@ Future<({DateTime eventAt, String eventId})?> updateGroupMemberRole({
   // membership lock so concurrent add/remove/role mutations cannot lose
   // updates on the admin-count math or the watermark. The recovery gate stays
   // outside the lock, mirroring add/remove.
-  return runGroupMembershipMutationLocked<
-    ({DateTime eventAt, String eventId})?
-  >(
+  return runGroupAuthorityPhaseIfNeeded<({DateTime eventAt, String eventId})?>(
     groupId: groupId,
+    authorityPhaseHeld: isGroupAuthorityPhaseHeld(groupId),
     action: () async {
       final group = await groupRepo.getGroup(groupId);
       if (group == null) {

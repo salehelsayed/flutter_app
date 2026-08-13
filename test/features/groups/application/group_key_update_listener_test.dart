@@ -6,9 +6,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
+import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -20,6 +25,59 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+
+final class _FailOnceRoleProjectionRepository extends InMemoryGroupRepository {
+  _FailOnceRoleProjectionRepository({required this.targetPeerId});
+
+  final String targetPeerId;
+  var failNextRoleProjection = false;
+  var roleProjectionAttempts = 0;
+
+  @override
+  Future<void> saveMember(GroupMember member) async {
+    if (member.peerId == targetPeerId && member.role == MemberRole.reader) {
+      roleProjectionAttempts++;
+      if (failNextRoleProjection) {
+        failNextRoleProjection = false;
+        throw StateError('forced role projection failure after audit append');
+      }
+    }
+    await super.saveMember(member);
+  }
+}
+
+final class _AuthenticatedAuthorityHistory {
+  final proofs =
+      <
+        (AuthenticatedGroupAuthorityPhase, String),
+        AuthenticatedGroupAuthorityProof
+      >{};
+
+  Future<AuthenticatedGroupAuthorityProof?> load({
+    required String groupId,
+    required AuthenticatedGroupAuthorityPhase phase,
+    required String eventId,
+  }) async {
+    final proof = proofs[(phase, eventId)];
+    return proof?.groupId == groupId ? proof : null;
+  }
+
+  Future<void> append({
+    required AuthenticatedGroupAuthorityPhase phase,
+    required AuthenticatedGroupAuthorityProof proof,
+  }) async {
+    final key = (phase, proof.eventId);
+    final existing = proofs[key];
+    if (existing != null &&
+        !sameAuthenticatedGroupAuthorityProof(existing, proof)) {
+      throw StateError('conflicting authenticated authority history');
+    }
+    proofs[key] = proof;
+  }
+
+  int count(AuthenticatedGroupAuthorityPhase phase) =>
+      proofs.keys.where((key) => key.$1 == phase).length;
+}
 
 void main() {
   late InMemoryGroupRepository groupRepo;
@@ -2713,6 +2771,878 @@ void main() {
         failOnceBridge.commandLog.where((cmd) => cmd == 'group:updateKey'),
         hasLength(2),
       );
+    },
+  );
+
+  test(
+    'protected PREPARED retries the real listener projection after actor removal',
+    () async {
+      const groupId = 'group-production-replay';
+      const actorPeerId = 'peer-admin';
+      const targetPeerId = 'peer-target';
+      const transitionId = 'protected-role-repair-1';
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'admin-device',
+        transportPeerId: 'admin-transport',
+        deviceSigningPublicKey: 'admin-public-key',
+        mlKemPublicKey: 'admin-mlkem',
+      );
+      const recipientDevice = GroupMemberDeviceIdentity(
+        deviceId: 'recipient-device',
+        transportPeerId: 'recipient-transport',
+        deviceSigningPublicKey: 'recipient-public-key',
+        mlKemPublicKey: 'recipient-mlkem',
+      );
+      final eventAt = DateTime.utc(2026, 8, 13, 17);
+      final joinedAt = eventAt.subtract(const Duration(days: 1));
+      final repository = _FailOnceRoleProjectionRepository(
+        targetPeerId: targetPeerId,
+      );
+      final messageRepository = InMemoryGroupMessageRepository();
+      final roleBridge = PassthroughCryptoBridge();
+      final eventLog = _FakeEventLog();
+      final authorityHistory = _AuthenticatedAuthorityHistory();
+
+      await repository.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Production replay group',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: joinedAt.subtract(const Duration(days: 1)),
+          createdBy: actorPeerId,
+          myRole: GroupRole.member,
+        ),
+      );
+      await repository.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: actorPeerId,
+          username: 'Admin',
+          role: MemberRole.admin,
+          publicKey: actorDevice.deviceSigningPublicKey,
+          mlKemPublicKey: actorDevice.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[actorDevice],
+          joinedAt: joinedAt,
+        ),
+      );
+      final targetBefore = GroupMember(
+        groupId: groupId,
+        peerId: targetPeerId,
+        username: 'Target',
+        role: MemberRole.writer,
+        publicKey: 'target-public-key',
+        mlKemPublicKey: recipientDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[recipientDevice],
+        joinedAt: joinedAt,
+      );
+      await repository.saveMember(targetBefore);
+      await repository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'group-key-v1',
+          createdAt: joinedAt,
+        ),
+      );
+
+      final targetAfter = targetBefore.copyWith(role: MemberRole.reader);
+      final signedRoleGroupConfig = buildGroupConfigPayload(
+        (await repository.getGroup(
+          groupId,
+        ))!.copyWith(lastMembershipEventAt: eventAt),
+        <GroupMember>[
+          (await repository.getMember(groupId, actorPeerId))!,
+          targetAfter,
+        ],
+        configVersionOverride: eventAt,
+      );
+      final signedSystemPayload = await signGroupSystemTransitionPayload(
+        bridge: roleBridge,
+        groupRepo: repository,
+        groupId: groupId,
+        transitionType: 'member_role_updated',
+        sourceEventId: transitionId,
+        eventAt: eventAt,
+        actorPeerId: actorPeerId,
+        actorUsername: 'Admin',
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        actorPrivateKey: 'admin-private-key',
+        actorDeviceId: actorDevice.deviceId,
+        actorTransportPeerId: actorDevice.transportPeerId,
+        systemPayload: <String, dynamic>{
+          '__sys': 'member_role_updated',
+          'eventAt': eventAt.toIso8601String(),
+          'previousRole': targetBefore.role.toValue(),
+          'member': targetAfter.toConfigJson(),
+          'groupConfig': signedRoleGroupConfig,
+        },
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'senderId': actorPeerId,
+        'senderUsername': 'Admin',
+        'senderDeviceId': actorDevice.deviceId,
+        'transportPeerId': actorDevice.transportPeerId,
+        'text': jsonEncode(signedSystemPayload),
+        'timestamp': eventAt.toIso8601String(),
+        'messageId': transitionId,
+      };
+
+      late String protectedPlaintext;
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: transitionId,
+        control: ProtectedGroupAuthorityControl.memberRole,
+        replayData: replayData,
+        keyEpoch: 1,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        actorAccountPrivateKey: 'admin-private-key',
+        senderDevice: actorDevice,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[
+          actorDevice,
+          recipientDevice,
+        ],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'signature:${data.hashCode}',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              protectedPlaintext = plaintext;
+              return <String, dynamic>{
+                'ok': true,
+                'kem': 'kem-recipient',
+                'ciphertext': 'ciphertext-recipient',
+                'nonce': 'nonce-recipient',
+              };
+            },
+        now: () => eventAt,
+      );
+      final authorityProof = preparation.authorityProof!;
+      await authorityHistory.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: authorityProof,
+      );
+
+      final roleListener = GroupMessageListener(
+        groupRepo: repository,
+        msgRepo: messageRepository,
+        bridge: roleBridge,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      addTearDown(roleListener.dispose);
+      final protectedMessage = ChatMessage(
+        from: actorDevice.transportPeerId,
+        to: recipientDevice.transportPeerId,
+        content: preparation.rows.single.sysText,
+        timestamp: eventAt.toIso8601String(),
+        isIncoming: true,
+      );
+
+      Future<ProtectedGroupAuthorityHandleResult> receive() {
+        return handleProtectedGroupAuthority(
+          message: protectedMessage,
+          ownTransportPeerId: recipientDevice.transportPeerId,
+          ownMlKemSecretKey: 'recipient-mlkem-secret',
+          groupRepository: repository,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) async => <String, dynamic>{
+                'ok': true,
+                'plaintext': protectedPlaintext,
+              },
+          callVerify:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof: authorityHistory.load,
+          appendAuthorityProof: authorityHistory.append,
+          applyReplay: (control, protectedReplayData, authority) async {
+            try {
+              final before = await protectedGroupAuthorityReplayConverged(
+                control: control,
+                replayData: protectedReplayData,
+                groupRepository: repository,
+              );
+              if (before == null) {
+                return ProtectedGroupAuthorityApplyResult.rejected;
+              }
+              if (before) {
+                return ProtectedGroupAuthorityApplyResult.duplicate;
+              }
+              await roleListener.handleAuthenticatedAuthorityReplayEnvelope(
+                protectedReplayData,
+                authority: authority,
+                rethrowOnError: true,
+                membershipPhaseHeld: true,
+              );
+              final after = await protectedGroupAuthorityReplayConverged(
+                control: control,
+                replayData: protectedReplayData,
+                groupRepository: repository,
+              );
+              return after == true
+                  ? ProtectedGroupAuthorityApplyResult.applied
+                  : ProtectedGroupAuthorityApplyResult.retryable;
+            } catch (_) {
+              return ProtectedGroupAuthorityApplyResult.retryable;
+            }
+          },
+          now: () => eventAt,
+        );
+      }
+
+      repository.failNextRoleProjection = true;
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.retryable);
+      expect(repository.roleProjectionAttempts, 1);
+      expect(
+        roleBridge.commandLog.where((command) => command == 'payload.verify'),
+        hasLength(1),
+      );
+      expect(
+        (await repository.getMember(groupId, targetPeerId))?.role,
+        MemberRole.writer,
+      );
+      expect(
+        eventLog.entries.where(
+          (entry) =>
+              entry['sourceEventId'] == transitionId &&
+              entry['eventType'] == 'member_role_updated',
+        ),
+        hasLength(1),
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.complete),
+        0,
+      );
+
+      await repository.removeMember(groupId, actorPeerId);
+      expect(await repository.getMember(groupId, actorPeerId), isNull);
+
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.applied);
+      expect(repository.roleProjectionAttempts, 3);
+      expect(
+        (await repository.getMember(groupId, targetPeerId))?.role,
+        MemberRole.reader,
+      );
+      expect(
+        eventLog.entries.where(
+          (entry) => entry['sourceEventId'] == transitionId,
+        ),
+        hasLength(1),
+        reason: 'projection repair must not duplicate signed evidence',
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.prepared),
+        1,
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.complete),
+        1,
+      );
+      expect(
+        sameAuthenticatedGroupAuthorityProof(
+          authorityHistory.proofs[(
+            AuthenticatedGroupAuthorityPhase.complete,
+            transitionId,
+          )]!,
+          authorityProof,
+        ),
+        isTrue,
+      );
+
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.duplicate);
+      expect(repository.roleProjectionAttempts, 3);
+      expect(
+        eventLog.entries.where(
+          (entry) => entry['sourceEventId'] == transitionId,
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'protected key PREPARED repairs the real key listener after actor removal',
+    () async {
+      const groupId = 'group-production-key-replay';
+      const actorPeerId = 'sender-peer';
+      const recipientPeerId = 'peer-recipient';
+      const transitionId = 'protected-key-repair-1';
+      const rotatedKey = 'group-key-v2';
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'sender-device',
+        transportPeerId: 'sender-transport',
+        deviceSigningPublicKey: 'pk-sender-device',
+        mlKemPublicKey: 'mlkem-sender-device',
+      );
+      const recipientDevice = GroupMemberDeviceIdentity(
+        deviceId: 'recipient-device',
+        transportPeerId: 'recipient-transport',
+        deviceSigningPublicKey: 'pk-recipient-device',
+        mlKemPublicKey: 'mlkem-recipient-device',
+      );
+      final eventAt = DateTime.utc(2026, 8, 13, 18);
+      final joinedAt = eventAt.subtract(const Duration(days: 1));
+      final eventLog = _FakeEventLog();
+      final authorityHistory = _AuthenticatedAuthorityHistory();
+      final failOnceBridge = _FailOnceUpdateKeyBridge();
+
+      await saveActiveGroup(groupId);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: actorPeerId,
+          username: 'Sender Admin',
+          role: MemberRole.admin,
+          publicKey: actorDevice.deviceSigningPublicKey,
+          mlKemPublicKey: actorDevice.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[actorDevice],
+          joinedAt: joinedAt,
+        ),
+      );
+      await saveMember(
+        groupId: groupId,
+        peerId: recipientPeerId,
+        role: MemberRole.writer,
+        username: 'Recipient',
+        devices: const <GroupMemberDeviceIdentity>[recipientDevice],
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'group-key-v1',
+          createdAt: joinedAt,
+        ),
+      );
+
+      final signedAudit = await signDirectKeyUpdateAudit(
+        groupId: groupId,
+        sourceEventId: transitionId,
+        eventAt: eventAt,
+        keyGeneration: 2,
+        encryptedKey: rotatedKey,
+        sourcePeerId: actorPeerId,
+        actorUsername: 'Sender Admin',
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        sourceDeviceId: actorDevice.deviceId,
+        sourceTransportPeerId: actorDevice.transportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDevice.deviceId,
+        recipientTransportPeerId: recipientDevice.transportPeerId,
+      );
+      final keyEnvelope = validEnvelope(
+        groupId: groupId,
+        keyGeneration: 2,
+        encryptedKey: rotatedKey,
+        sourcePeerId: actorPeerId,
+        sourceDeviceId: actorDevice.deviceId,
+        sourceTransportPeerId: actorDevice.transportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDevice.deviceId,
+        recipientTransportPeerId: recipientDevice.transportPeerId,
+        sourceEventId: transitionId,
+        eventAt: eventAt,
+        signedTransitionAudit: signedAudit,
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'keyGeneration': 2,
+        'encryptedKey': rotatedKey,
+        'from': actorDevice.transportPeerId,
+        'to': recipientDevice.transportPeerId,
+        'content': keyEnvelope,
+        'timestamp': eventAt.toIso8601String(),
+      };
+
+      late String protectedPlaintext;
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: transitionId,
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+        replayData: replayData,
+        keyEpoch: 2,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        actorAccountPrivateKey: 'sender-private-key',
+        senderDevice: actorDevice,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[
+          actorDevice,
+          recipientDevice,
+        ],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'signature:${data.hashCode}',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              protectedPlaintext = plaintext;
+              return <String, dynamic>{
+                'ok': true,
+                'kem': 'authority-kem',
+                'ciphertext': 'authority-ciphertext',
+                'nonce': 'authority-nonce',
+              };
+            },
+        now: () => eventAt,
+      );
+      expect(preparation.hasAuthenticatedAuthority, isTrue);
+      expect(preparation.rows, hasLength(1));
+      final authorityProof = preparation.authorityProof!;
+
+      final repairListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: const Stream<ChatMessage>.empty(),
+        groupRepo: groupRepo,
+        bridge: failOnceBridge,
+        getOwnMlKemSecretKey: () async => 'recipient-mlkem-secret',
+        getOwnPeerId: () async => recipientPeerId,
+        getOwnDeviceId: () async => recipientDevice.deviceId,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      addTearDown(repairListener.dispose);
+      final protectedMessage = ChatMessage(
+        from: actorDevice.transportPeerId,
+        to: recipientDevice.transportPeerId,
+        content: preparation.rows.single.sysText,
+        timestamp: eventAt.toIso8601String(),
+        isIncoming: true,
+      );
+
+      Future<ProtectedGroupAuthorityHandleResult> receive() {
+        return handleProtectedGroupAuthority(
+          message: protectedMessage,
+          ownTransportPeerId: recipientDevice.transportPeerId,
+          ownMlKemSecretKey: 'recipient-mlkem-secret',
+          groupRepository: groupRepo,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) async => <String, dynamic>{
+                'ok': true,
+                'plaintext': protectedPlaintext,
+              },
+          callVerify:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof: authorityHistory.load,
+          appendAuthorityProof: authorityHistory.append,
+          applyReplay: (control, protectedReplayData, authority) async {
+            try {
+              final before = await protectedGroupAuthorityReplayConverged(
+                control: control,
+                replayData: protectedReplayData,
+                groupRepository: groupRepo,
+              );
+              if (before == null) {
+                return ProtectedGroupAuthorityApplyResult.rejected;
+              }
+              if (before) {
+                return ProtectedGroupAuthorityApplyResult.duplicate;
+              }
+              if (!authority.authorizesKeyReplay(protectedReplayData)) {
+                return ProtectedGroupAuthorityApplyResult.rejected;
+              }
+              await repairListener.handleAuthenticatedAuthorityEnvelope(
+                ChatMessage(
+                  from: protectedReplayData['from'] as String,
+                  to: protectedReplayData['to'] as String,
+                  content: protectedReplayData['content'] as String,
+                  timestamp: protectedReplayData['timestamp'] as String,
+                  isIncoming: true,
+                ),
+                authority: authority,
+                authorityPhaseHeld: true,
+              );
+              final after = await protectedGroupAuthorityReplayConverged(
+                control: control,
+                replayData: protectedReplayData,
+                groupRepository: groupRepo,
+              );
+              return after == true
+                  ? ProtectedGroupAuthorityApplyResult.applied
+                  : ProtectedGroupAuthorityApplyResult.retryable;
+            } catch (_) {
+              return ProtectedGroupAuthorityApplyResult.retryable;
+            }
+          },
+          now: () => eventAt,
+        );
+      }
+
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.retryable);
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.prepared),
+        1,
+        reason: 'current rotate authority must authorize and persist PREPARED',
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.complete),
+        0,
+      );
+      expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
+      expect(
+        eventLog.entries.where(
+          (entry) =>
+              entry['sourceEventId'] == transitionId &&
+              entry['eventType'] == 'group_key_update',
+        ),
+        hasLength(1),
+        reason: 'the signed key audit is durable before group:updateKey fails',
+      );
+      expect(
+        failOnceBridge.commandLog.where(
+          (command) => command == 'group:updateKey',
+        ),
+        hasLength(1),
+      );
+
+      await groupRepo.removeMember(groupId, actorPeerId);
+      expect(await groupRepo.getMember(groupId, actorPeerId), isNull);
+
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.applied);
+      expect(
+        (await groupRepo.getKeyByGeneration(groupId, 2))?.encryptedKey,
+        rotatedKey,
+      );
+      expect(
+        eventLog.entries.where(
+          (entry) => entry['sourceEventId'] == transitionId,
+        ),
+        hasLength(1),
+        reason: 'the crash repair must not duplicate signed key evidence',
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.prepared),
+        1,
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.complete),
+        1,
+      );
+      expect(
+        sameAuthenticatedGroupAuthorityProof(
+          authorityHistory.proofs[(
+            AuthenticatedGroupAuthorityPhase.complete,
+            transitionId,
+          )]!,
+          authorityProof,
+        ),
+        isTrue,
+      );
+      expect(
+        failOnceBridge.commandLog.where(
+          (command) => command == 'group:updateKey',
+        ),
+        hasLength(2),
+      );
+
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.duplicate);
+      expect(
+        eventLog.entries.where(
+          (entry) => entry['sourceEventId'] == transitionId,
+        ),
+        hasLength(1),
+      );
+      expect(
+        failOnceBridge.commandLog.where(
+          (command) => command == 'group:updateKey',
+        ),
+        hasLength(2),
+      );
+    },
+  );
+
+  test(
+    'legacy target-qualified PREPARED key authority completes after restart',
+    () async {
+      const groupId = 'group-legacy-key-restart';
+      const actorPeerId = 'legacy-admin';
+      const recipientPeerId = 'legacy-recipient';
+      const authorityEventId = 'legacy-protected-key-version';
+      const innerKeyEventId =
+          'group_key_update:legacy-admin:legacy-recipient:2';
+      const rotatedKey = 'legacy-rotated-key-v2';
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'legacy-admin-device',
+        transportPeerId: 'legacy-admin-transport',
+        deviceSigningPublicKey: 'legacy-admin-signing-key',
+        mlKemPublicKey: 'legacy-admin-mlkem',
+      );
+      const recipientDevice = GroupMemberDeviceIdentity(
+        deviceId: 'legacy-recipient-device',
+        transportPeerId: 'legacy-recipient-transport',
+        deviceSigningPublicKey: 'legacy-recipient-signing-key',
+        mlKemPublicKey: 'legacy-recipient-mlkem',
+      );
+      final eventAt = DateTime.utc(2026, 8, 13, 19);
+      final joinedAt = eventAt.subtract(const Duration(days: 1));
+      final group = GroupModel(
+        id: groupId,
+        name: 'Legacy protected key restart',
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: joinedAt.subtract(const Duration(days: 1)),
+        createdBy: actorPeerId,
+        myRole: GroupRole.member,
+      );
+      final actor = GroupMember(
+        groupId: groupId,
+        peerId: actorPeerId,
+        username: 'Legacy Admin',
+        role: MemberRole.admin,
+        publicKey: actorDevice.deviceSigningPublicKey,
+        mlKemPublicKey: actorDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[actorDevice],
+        joinedAt: joinedAt,
+      );
+      final recipient = GroupMember(
+        groupId: groupId,
+        peerId: recipientPeerId,
+        username: 'Legacy Recipient',
+        role: MemberRole.writer,
+        publicKey: recipientDevice.deviceSigningPublicKey,
+        mlKemPublicKey: recipientDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[recipientDevice],
+        joinedAt: joinedAt,
+      );
+      final oldKey = GroupKeyInfo(
+        groupId: groupId,
+        keyGeneration: 1,
+        encryptedKey: 'legacy-key-v1',
+        createdAt: joinedAt,
+      );
+      final preCrashRepository = InMemoryGroupRepository();
+      await preCrashRepository.saveGroup(group);
+      await preCrashRepository.saveMember(actor);
+      await preCrashRepository.saveMember(recipient);
+      await preCrashRepository.saveKey(oldKey);
+      final legacyBridge = PassthroughCryptoBridge();
+
+      final transitionSubject = buildGroupKeyUpdateTransitionSubject(
+        groupId: groupId,
+        sourcePeerId: actorPeerId,
+        sourceDeviceId: actorDevice.deviceId,
+        sourceTransportPeerId: actorDevice.transportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDevice.deviceId,
+        recipientTransportPeerId: recipientDevice.transportPeerId,
+        keyGeneration: 2,
+        encryptedKey: rotatedKey,
+      );
+      final signedAudit = await signGroupTransitionAudit(
+        bridge: legacyBridge,
+        groupRepo: preCrashRepository,
+        groupId: groupId,
+        transitionType: 'group_key_update',
+        sourceEventId: innerKeyEventId,
+        eventAt: eventAt,
+        actorPeerId: actorPeerId,
+        actorUsername: actor.username!,
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        actorPrivateKey: 'legacy-admin-private-key',
+        actorDeviceId: actorDevice.deviceId,
+        actorTransportPeerId: actorDevice.transportPeerId,
+        transitionSubject: transitionSubject,
+      );
+      final keyEnvelope = validEnvelope(
+        groupId: groupId,
+        keyGeneration: 2,
+        encryptedKey: rotatedKey,
+        sourcePeerId: actorPeerId,
+        sourceDeviceId: actorDevice.deviceId,
+        sourceTransportPeerId: actorDevice.transportPeerId,
+        recipientPeerId: recipientPeerId,
+        recipientDeviceId: recipientDevice.deviceId,
+        recipientTransportPeerId: recipientDevice.transportPeerId,
+        sourceEventId: innerKeyEventId,
+        eventAt: eventAt,
+        signedTransitionAudit: signedAudit,
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'keyGeneration': 2,
+        'encryptedKey': rotatedKey,
+        'from': actorDevice.transportPeerId,
+        'to': recipientDevice.transportPeerId,
+        'content': keyEnvelope,
+        'timestamp': eventAt.toIso8601String(),
+      };
+      final legacyProof = AuthenticatedGroupAuthorityProof(
+        eventId: authorityEventId,
+        groupId: groupId,
+        eventAt: eventAt,
+        keyEpoch: 2,
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        senderTransportPeerId: actorDevice.transportPeerId,
+        senderTransportPublicKey: actorDevice.deviceSigningPublicKey,
+        authorityData: legacyTargetQualifiedKeyAuthorityData(replayData),
+        signature: 'persisted-legacy-proof-signature',
+      );
+      final restoredProof =
+          proofFromGroupAuthorityEventLogRow(<String, Object?>{
+            'canonical_payload': canonicalizeGroupEventLogPayload(
+              authenticatedGroupAuthorityFactPayload(legacyProof),
+            ),
+          });
+      expect(restoredProof, isNotNull);
+      expect(
+        restoredProof!.authorityData['recipientTransportPeerIds'],
+        isNull,
+        reason: 'the persisted pre-common proof is target-qualified, not ACL',
+      );
+
+      final protectedPayload = ProtectedGroupAuthorityPayload(
+        transitionId: authorityEventId,
+        groupId: groupId,
+        issuedAt: eventAt,
+        expiresAt: eventAt.add(const Duration(days: 1)),
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        senderTransportPeerId: actorDevice.transportPeerId,
+        senderTransportPublicKey: actorDevice.deviceSigningPublicKey,
+        recipientTransportPeerId: recipientDevice.transportPeerId,
+        frozenRecipientPeerIds: <String>[recipientDevice.transportPeerId],
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+        replayData: replayData,
+        authorityProof: restoredProof,
+        signature: 'persisted-legacy-payload-signature',
+      );
+      final protectedMessage = ChatMessage(
+        from: actorDevice.transportPeerId,
+        to: recipientDevice.transportPeerId,
+        content: ProtectedGroupEnvelope(
+          type: protectedGroupAuthorityEnvelopeType,
+          id: protectedGroupAuthorityDeliveryId(
+            ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+            authorityEventId,
+            recipientDevice.transportPeerId,
+          ),
+          senderPeerId: actorDevice.transportPeerId,
+          recipientPeerId: recipientDevice.transportPeerId,
+          kem: 'persisted-legacy-kem',
+          ciphertext: 'persisted-legacy-ciphertext',
+          nonce: 'persisted-legacy-nonce',
+        ).toJson(),
+        timestamp: eventAt.toIso8601String(),
+        isIncoming: true,
+      );
+
+      // Simulate repository/process restart after PREPARED: only the recipient,
+      // old key projection, serialized proof, and immutable delivery survive.
+      final restartedRepository = InMemoryGroupRepository();
+      await restartedRepository.saveGroup(group);
+      await restartedRepository.saveMember(recipient);
+      await restartedRepository.saveKey(oldKey);
+      expect(await restartedRepository.getMember(groupId, actorPeerId), isNull);
+      final authorityHistory = _AuthenticatedAuthorityHistory();
+      await authorityHistory.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: restoredProof,
+      );
+      final eventLog = _FakeEventLog();
+      final restartedListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: const Stream<ChatMessage>.empty(),
+        groupRepo: restartedRepository,
+        bridge: legacyBridge,
+        getOwnMlKemSecretKey: () async => 'legacy-recipient-secret-key',
+        getOwnPeerId: () async => recipientPeerId,
+        getOwnDeviceId: () async => recipientDevice.deviceId,
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      addTearDown(restartedListener.dispose);
+
+      Future<ProtectedGroupAuthorityHandleResult> receive() {
+        return handleProtectedGroupAuthority(
+          message: protectedMessage,
+          ownTransportPeerId: recipientDevice.transportPeerId,
+          ownMlKemSecretKey: 'legacy-recipient-secret-key',
+          groupRepository: restartedRepository,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) async => <String, dynamic>{
+                'ok': true,
+                'plaintext': protectedPayload.toInnerJson(),
+              },
+          callVerify:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof: authorityHistory.load,
+          appendAuthorityProof: authorityHistory.append,
+          applyReplay: (control, protectedReplayData, authority) async {
+            if (!authority.authorizesKeyReplay(protectedReplayData)) {
+              return ProtectedGroupAuthorityApplyResult.rejected;
+            }
+            await restartedListener.handleAuthenticatedAuthorityEnvelope(
+              ChatMessage(
+                from: protectedReplayData['from'] as String,
+                to: protectedReplayData['to'] as String,
+                content: protectedReplayData['content'] as String,
+                timestamp: protectedReplayData['timestamp'] as String,
+                isIncoming: true,
+              ),
+              authority: authority,
+              authorityPhaseHeld: true,
+            );
+            final converged = await protectedGroupAuthorityReplayConverged(
+              control: control,
+              replayData: protectedReplayData,
+              groupRepository: restartedRepository,
+            );
+            return converged == true
+                ? ProtectedGroupAuthorityApplyResult.applied
+                : ProtectedGroupAuthorityApplyResult.retryable;
+          },
+          now: () => eventAt,
+        );
+      }
+
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.applied);
+      expect(
+        (await restartedRepository.getKeyByGeneration(
+          groupId,
+          2,
+        ))?.encryptedKey,
+        rotatedKey,
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.prepared),
+        1,
+      );
+      expect(
+        authorityHistory.count(AuthenticatedGroupAuthorityPhase.complete),
+        1,
+      );
+      expect(
+        eventLog.entries.where(
+          (entry) =>
+              entry['sourceEventId'] == innerKeyEventId &&
+              entry['eventType'] == 'group_key_update',
+        ),
+        hasLength(1),
+      );
+      expect(
+        legacyBridge.commandLog.where(
+          (command) => command == 'group:updateKey',
+        ),
+        hasLength(1),
+      );
+      expect(await receive(), ProtectedGroupAuthorityHandleResult.duplicate);
+      expect(eventLog.entries, hasLength(1));
     },
   );
 }

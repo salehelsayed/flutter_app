@@ -9,10 +9,13 @@ import 'package:flutter_app/features/groups/application/dissolve_group_use_case.
 import 'package:flutter_app/features/groups/application/group_exit_intent_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_exit_intent_runner.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/update_group_member_role_use_case.dart';
@@ -78,6 +81,80 @@ void main() {
       createdAt: now,
     ),
   );
+
+  GroupMember physicalMember({
+    required String peerId,
+    required MemberRole role,
+    required String signingPublicKey,
+    required String transportPeerId,
+  }) => GroupMember(
+    groupId: groupId,
+    peerId: peerId,
+    username: peerId,
+    role: role,
+    publicKey: signingPublicKey,
+    mlKemPublicKey: 'mlkem-$peerId',
+    devices: <GroupMemberDeviceIdentity>[
+      GroupMemberDeviceIdentity(
+        deviceId: 'device-$peerId',
+        transportPeerId: transportPeerId,
+        deviceSigningPublicKey: signingPublicKey,
+        mlKemPublicKey: 'mlkem-device-$peerId',
+      ),
+    ],
+    joinedAt: now,
+  );
+
+  ProtectedGroupAuthorityPreparation physicalRolePreparation(
+    ProtectedGroupAuthorityPrepareRequest request,
+  ) {
+    final recipient = request.frozenRecipients.singleWhere(
+      (device) =>
+          device.transportPeerId != request.senderDevice.transportPeerId,
+    );
+    final eventAt = DateTime.parse(request.replayData['timestamp'] as String);
+    final proof = AuthenticatedGroupAuthorityProof(
+      eventId: request.transitionId,
+      groupId: request.groupId,
+      eventAt: eventAt,
+      keyEpoch: 1,
+      control: request.control.wireValue,
+      actorAccountPeerId: request.actorAccountPeerId,
+      actorAccountPublicKey: request.actorAccountPublicKey,
+      senderTransportPeerId: request.senderDevice.transportPeerId,
+      senderTransportPublicKey: request.senderDevice.deviceSigningPublicKey,
+      authorityData: secretFreeProtectedAuthorityData(
+        control: request.control.wireValue,
+        replayData: request.replayData,
+        frozenRecipientPeerIds: <String>[recipient.transportPeerId],
+      ),
+      signature: 'signed-role-authority',
+    );
+    final deliveryId = protectedGroupAuthorityDeliveryId(
+      request.control.wireValue,
+      request.transitionId,
+      recipient.transportPeerId,
+    );
+    return ProtectedGroupAuthorityPreparation(
+      groupId: request.groupId,
+      rows: <GroupPendingBroadcast>[
+        GroupPendingBroadcast(
+          id: 'pending-protected:$deliveryId',
+          groupId: request.groupId,
+          kind: groupPendingBroadcastKindProtectedAuthority,
+          sysText: 'protected-role-envelope',
+          recipientPeerIds: <String>[recipient.transportPeerId],
+          eventAt: eventAt,
+          sourceMessageId: deliveryId,
+          createdAt: eventAt,
+          updatedAt: eventAt,
+        ),
+      ],
+      authorityProof: proof,
+      control: request.control,
+      replayData: Map<String, dynamic>.from(request.replayData),
+    );
+  }
 
   test('PB264-03 self-only role transition rejects empty recipients', () async {
     final groupRepo = InMemoryGroupRepository();
@@ -527,6 +604,763 @@ void main() {
         groupRepo: _WatermarkFailingGroupRepository(),
         bridge: FakeBridge(),
       );
+    },
+  );
+
+  test(
+    'protected role ambiguity retains protected PREPARED rows for authenticated recovery',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      final bridge = _CommitUnknownUpdateConfigBridge();
+      final pending = _DissolvePendingBroadcastRepository();
+      final protectedRows = <GroupPendingBroadcast>[];
+      var activationCalls = 0;
+      var cancellationCalls = 0;
+      await groupRepo.saveGroup(group());
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: selfPeerId,
+          role: MemberRole.admin,
+          signingPublicKey: 'pk-self',
+          transportPeerId: 'transport-self',
+        ),
+      );
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: otherPeerId,
+          role: MemberRole.writer,
+          signingPublicKey: 'pk-$otherPeerId',
+          transportPeerId: 'transport-other',
+        ),
+      );
+      await seedReplayKey(groupRepo);
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          final preparation = physicalRolePreparation(request);
+          protectedRows.addAll(preparation.rows);
+          return preparation;
+        },
+        activate: (preparation, {required requireAllCustody}) async {
+          activationCalls++;
+          return true;
+        },
+        cancel: (preparation) async {
+          cancellationCalls++;
+          protectedRows.removeWhere(
+            (row) => preparation.rows.any((expected) => expected.id == row.id),
+          );
+          return true;
+        },
+      );
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      await expectLater(
+        changeGroupMemberRoleAndBroadcast(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          identityRepo: identityRepository(),
+          groupId: groupId,
+          memberPeerId: otherPeerId,
+          role: MemberRole.reader,
+          enqueuePending: pending.enqueue,
+          loadPending: pending.forGroup,
+          removePending: pending.remove,
+        ),
+        throwsA(isA<GroupMemberRoleCommitAmbiguous>()),
+      );
+
+      expect(activationCalls, 0);
+      expect(
+        cancellationCalls,
+        0,
+        reason: 'an ambiguous write is not proof that PREPARED was aborted',
+      );
+      expect(protectedRows, hasLength(1));
+      expect(pending.rows, hasLength(1));
+      expect(
+        pending.rows.single.kind,
+        groupPendingBroadcastKindMemberRolePrepared,
+      );
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'protected role proven CAS abort atomically classifies and retires every PREPARED owner',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pending = _DissolvePendingBroadcastRepository();
+      final protectedRows = <GroupPendingBroadcast>[];
+      final abortedEventIds = <String>[];
+      final cleanupOrder = <String>[];
+      var separateOrdinaryRemoveCalls = 0;
+      final bridge = _AfterFirstSignBridge(() async {
+        final current = await groupRepo.getGroup(groupId);
+        await groupRepo.updateGroup(
+          current!.copyWith(name: 'Role CAS changed after signing'),
+        );
+      });
+      await groupRepo.saveGroup(group());
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: selfPeerId,
+          role: MemberRole.admin,
+          signingPublicKey: 'pk-self',
+          transportPeerId: 'transport-self',
+        ),
+      );
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: otherPeerId,
+          role: MemberRole.writer,
+          signingPublicKey: 'pk-$otherPeerId',
+          transportPeerId: 'transport-other',
+        ),
+      );
+      await seedReplayKey(groupRepo);
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          final preparation = physicalRolePreparation(request);
+          protectedRows.addAll(preparation.rows);
+          return preparation;
+        },
+        activate: (preparation, {required requireAllCustody}) async => true,
+        cancel: (preparation) async {
+          expect(
+            pending.rows.single.kind,
+            groupPendingBroadcastKindMemberRolePrepared,
+            reason: 'the ordinary owner must survive until ABORTED commits',
+          );
+          expect(preparation.abortRows, hasLength(1));
+          expect(
+            sameExactGroupPendingBroadcast(
+              preparation.abortRows.single,
+              pending.rows.single,
+            ),
+            isTrue,
+          );
+          cleanupOrder.add('atomic-aborted-and-retired');
+          abortedEventIds.add(preparation.authorityProof!.eventId);
+          protectedRows.removeWhere(
+            (row) => preparation.rows.any((expected) => expected.id == row.id),
+          );
+          for (final owner in preparation.abortRows) {
+            await pending.remove(owner.id);
+          }
+          return true;
+        },
+      );
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      await expectLater(
+        changeGroupMemberRoleAndBroadcast(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          identityRepo: identityRepository(),
+          groupId: groupId,
+          memberPeerId: otherPeerId,
+          role: MemberRole.reader,
+          enqueuePending: pending.enqueue,
+          loadPending: pending.forGroup,
+          removePending: (id) async {
+            separateOrdinaryRemoveCalls++;
+            await pending.remove(id);
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            groupRoleTransitionStateChangedMessage,
+          ),
+        ),
+      );
+
+      expect(cleanupOrder, <String>['atomic-aborted-and-retired']);
+      expect(separateOrdinaryRemoveCalls, 0);
+      expect(abortedEventIds, hasLength(1));
+      expect(protectedRows, isEmpty);
+      expect(pending.rows, isEmpty);
+      expect(
+        (await groupRepo.getMember(groupId, otherPeerId))?.role,
+        MemberRole.writer,
+      );
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'protected role abort refusal retains both PREPARED owners fail closed',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      final pending = _DissolvePendingBroadcastRepository();
+      final protectedRows = <GroupPendingBroadcast>[];
+      var ordinaryRemoveCalls = 0;
+      final bridge = _AfterFirstSignBridge(() async {
+        final current = await groupRepo.getGroup(groupId);
+        await groupRepo.updateGroup(
+          current!.copyWith(name: 'Role CAS changed after signing'),
+        );
+      });
+      await groupRepo.saveGroup(group());
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: selfPeerId,
+          role: MemberRole.admin,
+          signingPublicKey: 'pk-self',
+          transportPeerId: 'transport-self',
+        ),
+      );
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: otherPeerId,
+          role: MemberRole.writer,
+          signingPublicKey: 'pk-$otherPeerId',
+          transportPeerId: 'transport-other',
+        ),
+      );
+      await seedReplayKey(groupRepo);
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          final preparation = physicalRolePreparation(request);
+          protectedRows.addAll(preparation.rows);
+          return preparation;
+        },
+        activate: (preparation, {required requireAllCustody}) async => true,
+        cancel: (preparation) async {
+          expect(preparation.abortRows, hasLength(1));
+          expect(
+            sameExactGroupPendingBroadcast(
+              preparation.abortRows.single,
+              pending.rows.single,
+            ),
+            isTrue,
+          );
+          return false;
+        },
+      );
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      await expectLater(
+        changeGroupMemberRoleAndBroadcast(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          identityRepo: identityRepository(),
+          groupId: groupId,
+          memberPeerId: otherPeerId,
+          role: MemberRole.reader,
+          enqueuePending: pending.enqueue,
+          loadPending: pending.forGroup,
+          removePending: (id) async {
+            ordinaryRemoveCalls++;
+            await pending.remove(id);
+          },
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message.toString(),
+            'message',
+            contains('could not be durably aborted'),
+          ),
+        ),
+      );
+
+      expect(ordinaryRemoveCalls, 0);
+      expect(protectedRows, hasLength(1));
+      expect(pending.rows, hasLength(1));
+      expect(
+        pending.rows.single.kind,
+        groupPendingBroadcastKindMemberRolePrepared,
+      );
+      expect(
+        (await groupRepo.getMember(groupId, otherPeerId))?.role,
+        MemberRole.writer,
+      );
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'protected role activation refusal retains PREPARED and blocks ordinary egress',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      final bridge = FakeBridge();
+      final pending = _DissolvePendingBroadcastRepository();
+      final protectedRows = <GroupPendingBroadcast>[];
+      var activationCalls = 0;
+      var cancellationCalls = 0;
+      await groupRepo.saveGroup(group());
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: selfPeerId,
+          role: MemberRole.admin,
+          signingPublicKey: 'pk-self',
+          transportPeerId: 'transport-self',
+        ),
+      );
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: otherPeerId,
+          role: MemberRole.writer,
+          signingPublicKey: 'pk-$otherPeerId',
+          transportPeerId: 'transport-other',
+        ),
+      );
+      await seedReplayKey(groupRepo);
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          final preparation = physicalRolePreparation(request);
+          protectedRows.addAll(preparation.rows);
+          return preparation;
+        },
+        activate: (preparation, {required requireAllCustody}) async {
+          activationCalls++;
+          expect(requireAllCustody, isFalse);
+          return false;
+        },
+        cancel: (preparation) async {
+          cancellationCalls++;
+          protectedRows.removeWhere(
+            (row) => preparation.rows.any((expected) => expected.id == row.id),
+          );
+          return true;
+        },
+      );
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      final result = await changeGroupMemberRoleAndBroadcast(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        identityRepo: identityRepository(),
+        groupId: groupId,
+        memberPeerId: otherPeerId,
+        role: MemberRole.reader,
+        enqueuePending: pending.enqueue,
+        loadPending: pending.forGroup,
+        removePending: pending.remove,
+      );
+
+      expect(
+        result.outcome,
+        ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+      );
+      expect(activationCalls, 1);
+      expect(cancellationCalls, 0);
+      expect(protectedRows, hasLength(1));
+      expect(pending.rows, hasLength(1));
+      expect(
+        pending.rows.single.kind,
+        groupPendingBroadcastKindMemberRolePrepared,
+        reason: 'ordinary egress stays fenced until authenticated COMPLETE',
+      );
+      expect(
+        (await groupRepo.getMember(groupId, otherPeerId))?.role,
+        MemberRole.reader,
+      );
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'protected role producer keeps a queued recovery runner behind ordinary-row promotion',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      final bridge = FakeBridge();
+      bridge.responses['group:publish'] = <String, dynamic>{
+        'ok': false,
+        'errorCode': 'BRIDGE_TIMEOUT',
+      };
+      final pending = _DissolvePendingBroadcastRepository();
+      final preparedPersisted = Completer<void>();
+      final releasePrepare = Completer<void>();
+      final runnerRecoveryQueued = Completer<void>();
+      ProtectedGroupAuthorityPreparation? persistedPreparation;
+      var authorityComplete = false;
+      var activationCalls = 0;
+      var cancellationCalls = 0;
+      var recoveryEntered = false;
+      var recoverySawPromotedOrdinaryRow = false;
+      var recoverySawCommittedRole = false;
+      var protectedEgressCalls = 0;
+
+      addTearDown(() {
+        if (!releasePrepare.isCompleted) releasePrepare.complete();
+        setProtectedGroupAuthorityAdapter();
+      });
+      await groupRepo.saveGroup(group());
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: selfPeerId,
+          role: MemberRole.admin,
+          signingPublicKey: 'pk-self',
+          transportPeerId: 'transport-self',
+        ),
+      );
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: otherPeerId,
+          role: MemberRole.writer,
+          signingPublicKey: 'pk-$otherPeerId',
+          transportPeerId: 'transport-other',
+        ),
+      );
+      await seedReplayKey(groupRepo);
+
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) => runGroupAuthorityPhaseIfNeeded(
+          groupId: request.groupId,
+          authorityPhaseHeld: isGroupAuthorityPhaseHeld(request.groupId),
+          action: () async {
+            final preparation = physicalRolePreparation(request);
+            persistedPreparation = preparation;
+            for (final row in preparation.rows) {
+              await pending.enqueue(row);
+            }
+            if (!preparedPersisted.isCompleted) preparedPersisted.complete();
+            await releasePrepare.future;
+            return preparation;
+          },
+        ),
+        activate: (preparation, {required requireAllCustody}) async {
+          activationCalls++;
+          expect(isGroupAuthorityPhaseHeld(preparation.groupId), isTrue);
+          authorityComplete = true;
+          return true;
+        },
+        cancel: (_) async {
+          cancellationCalls++;
+          return !authorityComplete;
+        },
+      );
+
+      final runner = GroupPendingBroadcastRunner(
+        repository: pending,
+        rePush: (_) async => false,
+        discoverPreparedAuthorities: (onlyGroupId) async {
+          final preparation = persistedPreparation;
+          if (preparation == null ||
+              (onlyGroupId != null && preparation.groupId != onlyGroupId)) {
+            return const <ProtectedGroupAuthorityPreparation>[];
+          }
+          return <ProtectedGroupAuthorityPreparation>[preparation];
+        },
+        recoverPreparedAuthority: (preparation) {
+          if (!runnerRecoveryQueued.isCompleted) {
+            runnerRecoveryQueued.complete();
+          }
+          return runGroupAuthorityPhaseIfNeeded(
+            groupId: preparation.groupId,
+            authorityPhaseHeld: isGroupAuthorityPhaseHeld(preparation.groupId),
+            action: () async {
+              recoveryEntered = true;
+              final rows = await pending.forGroup(preparation.groupId);
+              recoverySawPromotedOrdinaryRow = rows.any(
+                (row) =>
+                    row.sourceMessageId ==
+                        preparation.authorityProof!.eventId &&
+                    row.kind == groupPendingBroadcastKindMemberRoleUpdated,
+              );
+              recoverySawCommittedRole =
+                  (await groupRepo.getMember(groupId, otherPeerId))?.role ==
+                  MemberRole.reader;
+              if (!authorityComplete) {
+                await updateGroupMemberRole(
+                  bridge: bridge,
+                  groupRepo: groupRepo,
+                  groupId: groupId,
+                  memberPeerId: otherPeerId,
+                  role: MemberRole.reader,
+                  selfPeerId: selfPeerId,
+                  eventAt: preparation.authorityProof!.eventAt,
+                );
+                authorityComplete = true;
+              }
+              protectedEgressCalls++;
+              return true;
+            },
+          );
+        },
+      );
+
+      final producer = changeGroupMemberRoleAndBroadcast(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        identityRepo: identityRepository(),
+        groupId: groupId,
+        memberPeerId: otherPeerId,
+        role: MemberRole.reader,
+        enqueuePending: pending.enqueue,
+        loadPending: pending.forGroup,
+        removePending: pending.remove,
+      );
+      await preparedPersisted.future.timeout(const Duration(seconds: 2));
+
+      final runnerDrain = runner.drainForGroup(groupId);
+      await runnerRecoveryQueued.future.timeout(const Duration(seconds: 2));
+      expect(
+        recoveryEntered,
+        isFalse,
+        reason: 'recovery must queue behind the live producer authority phase',
+      );
+      releasePrepare.complete();
+
+      final result = await producer.timeout(const Duration(seconds: 2));
+      expect(
+        result.outcome,
+        ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+      );
+      expect(await runnerDrain.timeout(const Duration(seconds: 2)), 1);
+      expect(activationCalls, 1);
+      expect(cancellationCalls, 0);
+      expect(recoveryEntered, isTrue);
+      expect(recoverySawPromotedOrdinaryRow, isTrue);
+      expect(recoverySawCommittedRole, isTrue);
+      expect(protectedEgressCalls, 1);
+      expect(
+        (await groupRepo.getMember(groupId, otherPeerId))?.role,
+        MemberRole.reader,
+      );
+      expect(
+        pending.rows.where(
+          (row) => row.kind == groupPendingBroadcastKindMemberRoleUpdated,
+        ),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where((command) => command == 'group:publish'),
+        hasLength(1),
+      );
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+    },
+  );
+
+  test(
+    'protected role ordinary PREPARED gate permits COMPLETE only and retires ABORTED without egress',
+    () async {
+      Future<
+        ({
+          InMemoryGroupRepository groupRepo,
+          FakeBridge bridge,
+          _DissolvePendingBroadcastRepository pending,
+          GroupPendingBroadcast prepared,
+        })
+      >
+      seedPrepared() async {
+        final groupRepo = InMemoryGroupRepository();
+        final bridge = FakeBridge();
+        final pending = _DissolvePendingBroadcastRepository();
+        await groupRepo.saveGroup(group());
+        await groupRepo.saveMember(
+          physicalMember(
+            peerId: selfPeerId,
+            role: MemberRole.admin,
+            signingPublicKey: 'pk-self',
+            transportPeerId: 'transport-self',
+          ),
+        );
+        await groupRepo.saveMember(
+          physicalMember(
+            peerId: otherPeerId,
+            role: MemberRole.writer,
+            signingPublicKey: 'pk-$otherPeerId',
+            transportPeerId: 'transport-other',
+          ),
+        );
+        await seedReplayKey(groupRepo);
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async => physicalRolePreparation(request),
+          activate: (preparation, {required requireAllCustody}) async => false,
+          cancel: (_) async => true,
+        );
+        final result = await changeGroupMemberRoleAndBroadcast(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          identityRepo: identityRepository(),
+          groupId: groupId,
+          memberPeerId: otherPeerId,
+          role: MemberRole.reader,
+          enqueuePending: pending.enqueue,
+          loadPending: pending.forGroup,
+          removePending: pending.remove,
+        );
+        expect(
+          result.outcome,
+          ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+        );
+        expect(pending.rows, hasLength(1));
+        expect(
+          pending.rows.single.kind,
+          groupPendingBroadcastKindMemberRolePrepared,
+        );
+        expect(bridge.commandLog, isNot(contains('group:publish')));
+        expect(bridge.commandLog, isNot(contains('group:inboxStore')));
+        return (
+          groupRepo: groupRepo,
+          bridge: bridge,
+          pending: pending,
+          prepared: pending.rows.single,
+        );
+      }
+
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      final retryable = await seedPrepared();
+      var retryableGateCalls = 0;
+      final retryableRePush = buildGroupPendingBroadcastRePush(
+        bridge: retryable.bridge,
+        groupRepo: retryable.groupRepo,
+        loadIdentity: identityRepository().loadIdentity,
+        pendingRepository: retryable.pending,
+        resolveProtectedPreparedAuthority:
+            ({required groupId, required eventId}) async {
+              retryableGateCalls++;
+              expect(groupId, retryable.prepared.groupId);
+              expect(eventId, retryable.prepared.sourceMessageId);
+              return ProtectedPreparedAuthorityGate.retryable;
+            },
+      );
+      expect(await retryableRePush(retryable.prepared), isFalse);
+      expect(retryableGateCalls, 1);
+      expect(retryable.pending.rows, hasLength(1));
+      expect(retryable.bridge.commandLog, isNot(contains('group:publish')));
+      expect(retryable.bridge.commandLog, isNot(contains('group:inboxStore')));
+
+      final aborted = await seedPrepared();
+      var abortedGateCalls = 0;
+      final abortedRePush = buildGroupPendingBroadcastRePush(
+        bridge: aborted.bridge,
+        groupRepo: aborted.groupRepo,
+        loadIdentity: identityRepository().loadIdentity,
+        pendingRepository: aborted.pending,
+        resolveProtectedPreparedAuthority:
+            ({required groupId, required eventId}) async {
+              abortedGateCalls++;
+              expect(groupId, aborted.prepared.groupId);
+              expect(eventId, aborted.prepared.sourceMessageId);
+              return ProtectedPreparedAuthorityGate.aborted;
+            },
+      );
+      expect(await abortedRePush(aborted.prepared), isTrue);
+      expect(abortedGateCalls, 1);
+      expect(aborted.pending.rows, isEmpty);
+      expect(aborted.bridge.commandLog, isNot(contains('group:publish')));
+      expect(aborted.bridge.commandLog, isNot(contains('group:inboxStore')));
+
+      final complete = await seedPrepared();
+      final laterWatermarkAt = complete.prepared.eventAt.add(
+        const Duration(minutes: 1),
+      );
+      final currentGroup = await complete.groupRepo.getGroup(groupId);
+      await complete.groupRepo.updateGroup(
+        currentGroup!.copyWith(
+          lastMembershipEventAt: laterWatermarkAt,
+          lastMembershipEventId: 'unrelated-later-membership-event',
+        ),
+      );
+      var completeGateCalls = 0;
+      final completeRePush = buildGroupPendingBroadcastRePush(
+        bridge: complete.bridge,
+        groupRepo: complete.groupRepo,
+        loadIdentity: identityRepository().loadIdentity,
+        pendingRepository: complete.pending,
+        resolveProtectedPreparedAuthority:
+            ({required groupId, required eventId}) async {
+              completeGateCalls++;
+              expect(groupId, complete.prepared.groupId);
+              expect(eventId, complete.prepared.sourceMessageId);
+              return ProtectedPreparedAuthorityGate.complete;
+            },
+      );
+      expect(await completeRePush(complete.prepared), isTrue);
+      expect(completeGateCalls, 1);
+      expect(complete.pending.rows, isEmpty);
+      expect(complete.bridge.commandLog, contains('group:publish'));
+      expect(complete.bridge.commandLog, contains('group:inboxStore'));
+      expect(
+        (await complete.groupRepo.getGroup(groupId))?.lastMembershipEventAt,
+        laterWatermarkAt,
+        reason: 'ordinary egress must not roll back a later unrelated event',
+      );
+      expect(
+        (await complete.groupRepo.getMember(groupId, otherPeerId))?.role,
+        MemberRole.reader,
+      );
+    },
+  );
+
+  test(
+    'physical role transition refuses an unauthenticated protected preparation',
+    () async {
+      final groupRepo = InMemoryGroupRepository();
+      final bridge = FakeBridge();
+      var activationCalls = 0;
+      await groupRepo.saveGroup(group());
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: selfPeerId,
+          role: MemberRole.admin,
+          signingPublicKey: 'pk-self',
+          transportPeerId: 'transport-self',
+        ),
+      );
+      await groupRepo.saveMember(
+        physicalMember(
+          peerId: otherPeerId,
+          role: MemberRole.writer,
+          signingPublicKey: 'pk-$otherPeerId',
+          transportPeerId: 'transport-other',
+        ),
+      );
+      await seedReplayKey(groupRepo);
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async => ProtectedGroupAuthorityPreparation(
+          groupId: request.groupId,
+          rows: const <GroupPendingBroadcast>[],
+        ),
+        activate: (preparation, {required requireAllCustody}) async {
+          activationCalls++;
+          return true;
+        },
+        cancel: (_) async => true,
+      );
+      addTearDown(setProtectedGroupAuthorityAdapter);
+
+      await expectLater(
+        changeGroupMemberRoleAndBroadcast(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          identityRepo: identityRepository(),
+          groupId: groupId,
+          memberPeerId: otherPeerId,
+          role: MemberRole.reader,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'Role transition protected preparation failed',
+          ),
+        ),
+      );
+
+      expect(activationCalls, 0);
+      expect(
+        (await groupRepo.getMember(groupId, otherPeerId))?.role,
+        MemberRole.writer,
+      );
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+      expect(bridge.commandLog, isNot(contains('group:inboxStore')));
     },
   );
 

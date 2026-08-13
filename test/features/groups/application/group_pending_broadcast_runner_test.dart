@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
@@ -15,6 +16,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -116,6 +118,37 @@ class _StrictCustodyStore implements AckOrExpiryInboxStore {
   }) async {
     calls.add((toPeerId, message, custodyKind));
     return outcomes.removeAt(0);
+  }
+}
+
+class _AtomicRestartKeyRepository extends InMemoryGroupRepository
+    implements AtomicProtectedGroupKeyAuthorityRepository {
+  final Map<String, AuthenticatedGroupAuthorityProof> authorityHistory = {};
+  AuthenticatedGroupAuthorityProof? expectedProof;
+  final List<ProtectedGroupAuthorityCompleteFact> completeFacts = [];
+  bool commitHeldAuthorityPhase = false;
+
+  @override
+  Future<void> commitProtectedGroupKeyAuthority({
+    required GroupKeyInfo key,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+  }) async {
+    final proof = expectedProof;
+    if (proof == null ||
+        authorityComplete.sourcePeerId != proof.actorAccountPeerId ||
+        authorityComplete.sourceEventId !=
+            authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.complete,
+              proof.eventId,
+            ) ||
+        authorityComplete.sourceTimestamp !=
+            fixedGroupAuthorityUtc(proof.eventAt)) {
+      throw StateError('unexpected protected key COMPLETE fact');
+    }
+    commitHeldAuthorityPhase = isGroupAuthorityPhaseHeld(key.groupId);
+    await saveKey(key);
+    completeFacts.add(authorityComplete);
+    authorityHistory['complete:${proof.eventId}'] = proof;
   }
 }
 
@@ -228,16 +261,32 @@ void main() {
         mlKemPublicKey: 'mlkem-b',
       );
       late String protectedPlaintext;
+      final transitionId =
+          'member_removed:${List<String>.filled(8, 'transition-segment-').join()}';
       final targetQualified = await buildProtectedGroupAuthorityRows(
         groupId: 'group-363',
-        transitionId:
-            'member_removed:${List<String>.filled(8, 'transition-segment-').join()}',
+        transitionId: transitionId,
         control: ProtectedGroupAuthorityControl.memberRemove,
         keyEpoch: 1,
         replayData: <String, dynamic>{
           'groupId': 'group-363',
-          'text': '{"__sys":"member_removed"}',
+          'senderId': 'logical-account',
+          'senderUsername': 'Actor',
+          'senderDeviceId': sender.deviceId,
+          'transportPeerId': sender.transportPeerId,
+          'text': jsonEncode(<String, Object?>{
+            '__sys': 'member_removed',
+            'member': const <String, Object?>{'peerId': 'logical-account'},
+            'groupConfig': const <String, Object?>{'members': <Object?>[]},
+            'signedTransitionAudit': <String, Object?>{
+              'transitionType': 'member_removed',
+              'groupId': 'group-363',
+              'sourceEventId': transitionId,
+              'eventAt': instant.toIso8601String(),
+            },
+          }),
           'timestamp': instant.toIso8601String(),
+          'messageId': transitionId,
         },
         actorAccountPeerId: 'logical-account',
         actorAccountPublicKey: 'account-public-key',
@@ -365,7 +414,7 @@ void main() {
           }
           authorityHistory[key] = proof;
         },
-        applyReplay: (control, replayData) async {
+        applyReplay: (control, replayData, _) async {
           applied++;
           if (failAfterPrepared) {
             failAfterPrepared = false;
@@ -452,6 +501,264 @@ void main() {
       expect(store.calls, isEmpty, reason: 'prepared-only state cannot egress');
       complete = true;
       expect(await runner.drainForGroup(row.groupId), 1);
+      expect(repo.rows, isEmpty);
+    },
+  );
+
+  test(
+    'fresh protected key startup repairs PREPARED rows and draft before runner drain',
+    () async {
+      const groupId = 'group-key-restart';
+      const transitionId = 'group_key_update:group-key-restart:self:3:restart';
+      const newKey = 'encrypted-group-key-v3';
+      final eventAt = DateTime.utc(2026, 8, 13, 13, 30);
+      final preparedAt = eventAt.add(const Duration(seconds: 1));
+      const sender = GroupMemberDeviceIdentity(
+        deviceId: 'sender-device',
+        transportPeerId: 'physical-sender',
+        deviceSigningPublicKey: 'sender-device-public-key',
+        mlKemPublicKey: 'sender-mlkem',
+      );
+      const recipientA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'physical-a',
+        deviceSigningPublicKey: 'public-a',
+        mlKemPublicKey: 'mlkem-a',
+      );
+      const recipientB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'physical-b',
+        deviceSigningPublicKey: 'public-b',
+        mlKemPublicKey: 'mlkem-b',
+      );
+      final commonReplay = <String, dynamic>{
+        'groupId': groupId,
+        'keyGeneration': 3,
+        'encryptedKey': newKey,
+        'from': sender.transportPeerId,
+        'timestamp': eventAt.toIso8601String(),
+      };
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: transitionId,
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+        replayData: commonReplay,
+        keyEpoch: 3,
+        actorAccountPeerId: 'self',
+        actorAccountPublicKey: 'self-public-key',
+        actorAccountPrivateKey: 'self-private-key',
+        senderDevice: sender,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[
+          sender,
+          recipientB,
+          recipientA,
+        ],
+        deliveryReplayDataByTransportPeerId: <String, Map<String, dynamic>>{
+          recipientA.transportPeerId: <String, dynamic>{
+            ...commonReplay,
+            'to': recipientA.transportPeerId,
+            'content': 'signed-direct-key-envelope-a',
+          },
+          recipientB.transportPeerId: <String, dynamic>{
+            ...commonReplay,
+            'to': recipientB.transportPeerId,
+            'content': 'signed-direct-key-envelope-b',
+          },
+        },
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'signature:${data.hashCode}',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                <String, dynamic>{
+                  'ok': true,
+                  'kem': 'kem:$recipientMlKemPublicKey',
+                  'ciphertext': 'ciphertext:${plaintext.hashCode}',
+                  'nonce': 'nonce:$recipientMlKemPublicKey',
+                },
+        now: () => preparedAt,
+      );
+      final proof = preparation.authorityProof!;
+      expect(preparation.rows, hasLength(2));
+      expect(proof.authorityData['recipientTransportPeerIds'], <String>[
+        recipientA.transportPeerId,
+        recipientB.transportPeerId,
+      ]);
+
+      final groupRepository = _AtomicRestartKeyRepository();
+      groupRepository.expectedProof = proof;
+      groupRepository.authorityHistory['prepared:$transitionId'] = proof;
+      await groupRepository.saveGroup(
+        GroupModel(
+          id: groupId,
+          name: 'Restart group',
+          type: GroupType.chat,
+          topicName: 'topic-$groupId',
+          createdAt: eventAt.subtract(const Duration(days: 1)),
+          createdBy: 'self',
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'encrypted-group-key-v1',
+          createdAt: eventAt.subtract(const Duration(days: 1)),
+        ),
+      );
+      await groupRepository.savePendingKeyRotation(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 3,
+          encryptedKey: newKey,
+          createdAt: eventAt,
+        ),
+      );
+      for (final row in preparation.rows) {
+        await repo.enqueue(row);
+      }
+
+      var nativePromotions = 0;
+      var promotionHeldAuthorityPhase = false;
+      var completeFastPathComparisons = 0;
+      Future<AuthenticatedGroupAuthorityProof?> loadAuthorityProof({
+        required String groupId,
+        required AuthenticatedGroupAuthorityPhase phase,
+        required String eventId,
+      }) async => groupRepository.authorityHistory['${phase.name}:$eventId'];
+      Future<bool> productionEnsureComplete(
+        GroupPendingBroadcast broadcast,
+      ) async {
+        if (broadcast.recipientPeerIds.length != 1) return false;
+        final identity = parseProtectedGroupAuthorityDeliveryId(
+          broadcast.sourceMessageId ?? '',
+        );
+        if (identity == null ||
+            identity.control != ProtectedGroupAuthorityControl.groupKeyUpdate ||
+            identity.recipientTransportPeerId !=
+                broadcast.recipientPeerIds.single) {
+          return false;
+        }
+        final prepared = await loadAuthorityProof(
+          groupId: broadcast.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.prepared,
+          eventId: identity.transitionId,
+        );
+        if (prepared == null) return false;
+        final envelope = ProtectedGroupEnvelope.tryParse(
+          broadcast.sysText,
+          expectedType: protectedGroupAuthorityEnvelopeType,
+        );
+        if (envelope == null ||
+            envelope.id != broadcast.sourceMessageId ||
+            envelope.senderPeerId != prepared.senderTransportPeerId ||
+            envelope.recipientPeerId != broadcast.recipientPeerIds.single) {
+          return false;
+        }
+        final complete = await loadAuthorityProof(
+          groupId: broadcast.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.complete,
+          eventId: identity.transitionId,
+        );
+        if (complete != null) {
+          completeFastPathComparisons++;
+          return sameAuthenticatedGroupAuthorityProof(complete, prepared);
+        }
+        return recoverRowOwnedPreparedProtectedGroupKey(
+          proof: prepared,
+          triggerRow: broadcast,
+          groupRepository: groupRepository,
+          pendingRepository: repo,
+          loadAuthorityProof: loadAuthorityProof,
+          promoteKey: (key) async {
+            nativePromotions++;
+            promotionHeldAuthorityPhase = isGroupAuthorityPhaseHeld(
+              key.groupId,
+            );
+          },
+        );
+      }
+
+      final custody = _StrictCustodyStore(<InboxStoreOutcome>[
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        ),
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        ),
+      ]);
+      final gappedStartupRunner = GroupPendingBroadcastRunner(
+        repository: repo,
+        rePush: (_) async => false,
+        protectedInboxStore: custody,
+        ensureProtectedAuthorityComplete: productionEnsureComplete,
+      );
+
+      expect(await gappedStartupRunner.drainForGroup(groupId), 0);
+      expect(nativePromotions, 0, reason: 'a skipped predecessor fails closed');
+      expect(groupRepository.completeFacts, isEmpty);
+      expect(custody.calls, isEmpty);
+      expect(repo.rows, hasLength(2));
+      expect(await groupRepository.getPendingKeyRotation(groupId), isNotNull);
+
+      await groupRepository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 2,
+          encryptedKey: 'encrypted-group-key-v2',
+          createdAt: eventAt.subtract(const Duration(hours: 1)),
+        ),
+      );
+      final withheldOwner = preparation.rows.last;
+      repo.rows.remove(withheldOwner.id);
+      final incompleteStartupRunner = GroupPendingBroadcastRunner(
+        repository: repo,
+        rePush: (_) async => false,
+        protectedInboxStore: custody,
+        ensureProtectedAuthorityComplete: productionEnsureComplete,
+      );
+
+      expect(await incompleteStartupRunner.drainForGroup(groupId), 0);
+      expect(nativePromotions, 0, reason: 'partial owner closure fails closed');
+      expect(groupRepository.completeFacts, isEmpty);
+      expect(custody.calls, isEmpty);
+      expect(repo.rows, hasLength(1));
+      expect(await groupRepository.getPendingKeyRotation(groupId), isNotNull);
+
+      await repo.enqueue(withheldOwner);
+      // A newly constructed runner models the next process restart. The rotate
+      // use case is deliberately absent: PREPARED + rows + draft own recovery.
+      final restartedRunner = GroupPendingBroadcastRunner(
+        repository: repo,
+        rePush: (_) async => false,
+        protectedInboxStore: custody,
+        ensureProtectedAuthorityComplete: productionEnsureComplete,
+      );
+
+      expect(await restartedRunner.drainForGroup(groupId), 2);
+      expect(nativePromotions, 1);
+      expect(promotionHeldAuthorityPhase, isTrue);
+      expect(groupRepository.commitHeldAuthorityPhase, isTrue);
+      expect(groupRepository.completeFacts, hasLength(1));
+      expect(completeFastPathComparisons, 1);
+      expect(
+        await groupRepository.getLatestKey(groupId),
+        isA<GroupKeyInfo>()
+            .having((key) => key.keyGeneration, 'generation', 3)
+            .having((key) => key.encryptedKey, 'encrypted key', newKey),
+      );
+      expect(await groupRepository.getPendingKeyRotation(groupId), isNull);
+      expect(
+        groupRepository.authorityHistory['complete:$transitionId'],
+        same(proof),
+      );
+      expect(custody.calls, hasLength(2));
       expect(repo.rows, isEmpty);
     },
   );

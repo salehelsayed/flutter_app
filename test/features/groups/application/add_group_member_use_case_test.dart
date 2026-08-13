@@ -7,13 +7,22 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
+import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
+import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 void main() {
@@ -165,29 +174,32 @@ void main() {
     joinedAt: DateTime.now().toUtc(),
   );
 
-  test('B5: forward rotation fires on add when opted in by the creator', () async {
-    await seedSelfAdminAndKey();
+  test(
+    'B5: forward rotation fires on add when opted in by the creator',
+    () async {
+      await seedSelfAdminAndKey();
 
-    await addGroupMember(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: 'group-1',
-      newMember: b5NewMember(),
-      selfPeerId: 'peer-admin',
-      rotateKeyOnAdd: true,
-      senderPublicKey: 'pk-peer-admin',
-      senderPrivateKey: 'sk-peer-admin',
-      senderUsername: 'Admin',
-      sendP2PMessage: (peerId, message) async => true,
-    );
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: b5NewMember(),
+        selfPeerId: 'peer-admin',
+        rotateKeyOnAdd: true,
+        senderPublicKey: 'pk-peer-admin',
+        senderPrivateKey: 'sk-peer-admin',
+        senderUsername: 'Admin',
+        sendP2PMessage: (peerId, message) async => true,
+      );
 
-    expect(
-      bridge.commandLog.where((c) => c == 'group:generateNextKey'),
-      isNotEmpty,
-      reason: 'rotateKeyOnAdd should advance the epoch after the add',
-    );
-    expect(await groupRepo.getMember('group-1', 'peer-b5'), isNotNull);
-  });
+      expect(
+        bridge.commandLog.where((c) => c == 'group:generateNextKey'),
+        isNotEmpty,
+        reason: 'rotateKeyOnAdd should advance the epoch after the add',
+      );
+      expect(await groupRepo.getMember('group-1', 'peer-b5'), isNotNull);
+    },
+  );
 
   test('B5: default add does NOT rotate (non-breaking)', () async {
     await seedSelfAdminAndKey();
@@ -1723,6 +1735,1298 @@ void main() {
       isEmpty,
     );
   });
+
+  test(
+    'protected add forces exact native config and watermark before activation '
+    'when aggregate sync is disabled',
+    () async {
+      final joinedAt = DateTime.utc(2026, 8, 13, 10);
+      final newMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-protected-add',
+        username: 'Protected Add',
+        role: MemberRole.writer,
+        publicKey: 'pk-protected-add',
+        joinedAt: joinedAt,
+      );
+      var activated = 0;
+      var rolledBack = 0;
+      var activationSawExactCommit = false;
+      String? preparedEventId;
+
+      await addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: newMember,
+        selfPeerId: 'peer-admin',
+        syncBridgeConfig: false,
+        prepareAuthority:
+            ({
+              required group,
+              required members,
+              required addedMember,
+              required eventAt,
+              required eventId,
+            }) async {
+              preparedEventId = eventId;
+              return PreparedGroupMemberAddAuthority(
+                activate: () async {
+                  activated++;
+                  final committedGroup = await groupRepo.getGroup('group-1');
+                  activationSawExactCommit =
+                      bridge.commandLog.contains('group:updateConfig') &&
+                      await groupRepo.getMember(
+                            'group-1',
+                            'peer-protected-add',
+                          ) !=
+                          null &&
+                      committedGroup?.lastMembershipEventAt?.toUtc() ==
+                          joinedAt &&
+                      committedGroup?.lastMembershipEventId == eventId;
+                },
+                rollback: () async {
+                  rolledBack++;
+                },
+              );
+            },
+      );
+
+      expect(
+        preparedEventId,
+        canonicalMembershipEventId(
+          transitionType: 'member_added',
+          groupId: 'group-1',
+          actorPeerId: 'peer-admin',
+          eventAt: joinedAt,
+        ),
+      );
+      expect(activated, 1);
+      expect(rolledBack, 0);
+      expect(activationSawExactCommit, isTrue);
+      expect(
+        bridge.commandLog.where((command) => command == 'group:updateConfig'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'protected add timeout preserves PREPARED owner and post-projection member',
+    () async {
+      final timeoutBridge = _TimeoutAddUpdateConfigBridge();
+      final newMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-protected-timeout',
+        username: 'Protected Timeout',
+        role: MemberRole.writer,
+        publicKey: 'pk-protected-timeout',
+        joinedAt: DateTime.utc(2026, 8, 13, 10, 1),
+      );
+      var activated = 0;
+      var rolledBack = 0;
+
+      await expectLater(
+        addGroupMember(
+          bridge: timeoutBridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: newMember,
+          selfPeerId: 'peer-admin',
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required addedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberAddAuthority(
+                activate: () async {
+                  activated++;
+                },
+                rollback: () async {
+                  rolledBack++;
+                },
+              ),
+        ),
+        throwsA(
+          isA<GroupMemberAddCommitAmbiguous>().having(
+            (error) => error.cause,
+            'cause',
+            isA<TimeoutException>(),
+          ),
+        ),
+      );
+
+      expect(timeoutBridge.updateConfigIssued, isTrue);
+      expect(
+        await groupRepo.getMember('group-1', 'peer-protected-timeout'),
+        isNotNull,
+      );
+      expect(
+        (await groupRepo.getGroup('group-1'))?.lastMembershipEventAt,
+        isNull,
+      );
+      expect(activated, 0);
+      expect(rolledBack, 0);
+    },
+  );
+
+  test(
+    'protected add definite native rejection restores projection then aborts '
+    'PREPARED',
+    () async {
+      bridge.responses['group:updateConfig'] = {
+        'ok': false,
+        'errorCode': 'CONFIG_REJECTED',
+        'errorMessage': 'exact config rejected',
+      };
+      final newMember = GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-protected-abort',
+        username: 'Protected Abort',
+        role: MemberRole.writer,
+        publicKey: 'pk-protected-abort',
+        joinedAt: DateTime.utc(2026, 8, 13, 10, 2),
+      );
+      var activated = 0;
+      var rolledBack = 0;
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: newMember,
+          selfPeerId: 'peer-admin',
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required addedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberAddAuthority(
+                activate: () async {
+                  activated++;
+                },
+                rollback: () async {
+                  rolledBack++;
+                  expect(
+                    await groupRepo.getMember(
+                      'group-1',
+                      'peer-protected-abort',
+                    ),
+                    isNull,
+                  );
+                },
+              ),
+        ),
+        throwsA(
+          isA<BridgeCommandException>().having(
+            (error) => error.errorCode,
+            'errorCode',
+            'CONFIG_REJECTED',
+          ),
+        ),
+      );
+
+      expect(
+        await groupRepo.getMember('group-1', 'peer-protected-abort'),
+        isNull,
+      );
+      expect(activated, 0);
+      expect(rolledBack, 1);
+    },
+  );
+
+  test('protected add activation failure stops egress and retains committed '
+      'projection for recovery', () async {
+    final joinedAt = DateTime.utc(2026, 8, 13, 10, 2, 30);
+    var rolledBack = 0;
+
+    await expectLater(
+      addGroupMember(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: 'group-1',
+        newMember: GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-protected-activation',
+          username: 'Protected Activation',
+          role: MemberRole.writer,
+          publicKey: 'pk-protected-activation',
+          joinedAt: joinedAt,
+        ),
+        selfPeerId: 'peer-admin',
+        prepareAuthority:
+            ({
+              required group,
+              required members,
+              required addedMember,
+              required eventAt,
+              required eventId,
+            }) async => PreparedGroupMemberAddAuthority(
+              activate: () async {
+                throw StateError('COMPLETE still pending');
+              },
+              rollback: () async {
+                rolledBack++;
+              },
+            ),
+      ),
+      throwsA(
+        isA<GroupMemberAddCommitAmbiguous>().having(
+          (error) => error.cause.toString(),
+          'cause',
+          contains('COMPLETE still pending'),
+        ),
+      ),
+    );
+
+    expect(
+      await groupRepo.getMember('group-1', 'peer-protected-activation'),
+      isNotNull,
+    );
+    final committedGroup = await groupRepo.getGroup('group-1');
+    expect(committedGroup?.lastMembershipEventAt, joinedAt);
+    expect(committedGroup?.lastMembershipEventId, isNotNull);
+    expect(rolledBack, 0);
+    expect(
+      bridge.commandLog.where((command) => command == 'group:updateConfig'),
+      hasLength(1),
+    );
+  });
+
+  test(
+    'protected add abort refusal is ambiguous after definite native rejection',
+    () async {
+      bridge.responses['group:updateConfig'] = {
+        'ok': false,
+        'errorCode': 'CONFIG_REJECTED',
+        'errorMessage': 'exact config rejected',
+      };
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          newMember: GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-protected-abort-refused',
+            username: 'Protected Abort Refused',
+            role: MemberRole.writer,
+            publicKey: 'pk-protected-abort-refused',
+            joinedAt: DateTime.utc(2026, 8, 13, 10, 2, 45),
+          ),
+          selfPeerId: 'peer-admin',
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required addedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberAddAuthority(
+                activate: () async {},
+                rollback: () async {
+                  throw StateError('durable ABORT refused');
+                },
+              ),
+        ),
+        throwsA(
+          isA<GroupMemberAddCommitAmbiguous>()
+              .having(
+                (error) => error.cause,
+                'cause',
+                isA<BridgeCommandException>(),
+              )
+              .having(
+                (error) => error.rollbackError.toString(),
+                'rollbackError',
+                contains('durable ABORT refused'),
+              ),
+        ),
+      );
+
+      expect(
+        await groupRepo.getMember('group-1', 'peer-protected-abort-refused'),
+        isNull,
+        reason: 'local rollback precedes the refused durable abort',
+      );
+    },
+  );
+
+  test(
+    'protected add post-write repository crash retains exact PREPARED owner',
+    () async {
+      final crashRepo = _CrashAfterMemberSaveRepository(
+        crashPeerId: 'peer-protected-save-crash',
+      );
+      await crashRepo.saveGroup(adminGroup);
+      var rolledBack = 0;
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: crashRepo,
+          groupId: 'group-1',
+          newMember: GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-protected-save-crash',
+            username: 'Protected Save Crash',
+            role: MemberRole.writer,
+            publicKey: 'pk-protected-save-crash',
+            joinedAt: DateTime.utc(2026, 8, 13, 10, 3),
+          ),
+          selfPeerId: 'peer-admin',
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required addedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberAddAuthority(
+                activate: () async {},
+                rollback: () async {
+                  rolledBack++;
+                },
+              ),
+        ),
+        throwsA(isA<GroupMemberAddCommitAmbiguous>()),
+      );
+
+      expect(
+        await crashRepo.getMember('group-1', 'peer-protected-save-crash'),
+        isNotNull,
+      );
+      expect(rolledBack, 0);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test(
+    'protected add post-insert roster read crash remains commit ambiguous',
+    () async {
+      final crashRepo = _CrashOnPostAddRosterReadRepository(
+        addedPeerId: 'peer-protected-roster-crash',
+      );
+      await crashRepo.saveGroup(adminGroup);
+      var rolledBack = 0;
+
+      await expectLater(
+        addGroupMember(
+          bridge: bridge,
+          groupRepo: crashRepo,
+          groupId: 'group-1',
+          newMember: GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-protected-roster-crash',
+            username: 'Protected Roster Crash',
+            role: MemberRole.writer,
+            publicKey: 'pk-protected-roster-crash',
+            joinedAt: DateTime.utc(2026, 8, 13, 10, 4),
+          ),
+          selfPeerId: 'peer-admin',
+          prepareAuthority:
+              ({
+                required group,
+                required members,
+                required addedMember,
+                required eventAt,
+                required eventId,
+              }) async => PreparedGroupMemberAddAuthority(
+                activate: () async {},
+                rollback: () async {
+                  rolledBack++;
+                },
+              ),
+        ),
+        throwsA(isA<GroupMemberAddCommitAmbiguous>()),
+      );
+
+      expect(
+        await crashRepo.getMember('group-1', 'peer-protected-roster-crash'),
+        isNotNull,
+      );
+      expect(rolledBack, 0);
+      expect(bridge.commandLog, isNot(contains('group:updateConfig')));
+    },
+  );
+
+  test('protected add PREPARED repairs pre/post projection after restart and '
+      'completes evidence exactly once', () async {
+    Future<void> proveShape({required bool memberAlreadyProjected}) async {
+      const groupId = 'group-protected-add-restart';
+      const actorPeerId = 'peer-protected-add-admin';
+      const addedPeerId = 'peer-protected-add-target';
+      final suffix = memberAlreadyProjected ? 'post' : 'pre';
+      final eventAt = DateTime.utc(2026, 8, 13, 13);
+      final eventId = 'member-added-restart-$suffix';
+      final createdAt = eventAt.subtract(const Duration(days: 2));
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'protected-add-admin-device',
+        transportPeerId: 'protected-add-admin-transport',
+        deviceSigningPublicKey: 'protected-add-admin-public-key',
+        mlKemPublicKey: 'protected-add-admin-mlkem',
+      );
+      const linkedDevice = GroupMemberDeviceIdentity(
+        deviceId: 'protected-add-linked-device',
+        transportPeerId: 'protected-add-linked-transport',
+        deviceSigningPublicKey: 'protected-add-linked-public-key',
+        mlKemPublicKey: 'protected-add-linked-mlkem',
+      );
+      final repository = InMemoryGroupRepository();
+      final messageRepository = InMemoryGroupMessageRepository();
+      final recoveryBridge = PassthroughCryptoBridge();
+      final history = _AddAuthenticatedAuthorityHistory();
+      final evidenceByEventId = <String, Map<String, Object?>>{};
+      final group = GroupModel(
+        id: groupId,
+        name: 'Protected add restart',
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: createdAt,
+        createdBy: actorPeerId,
+        myRole: GroupRole.admin,
+      );
+      final actor = GroupMember(
+        groupId: groupId,
+        peerId: actorPeerId,
+        username: 'Protected add admin',
+        role: MemberRole.admin,
+        publicKey: actorDevice.deviceSigningPublicKey,
+        mlKemPublicKey: actorDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[actorDevice],
+        joinedAt: createdAt.add(const Duration(hours: 1)),
+      );
+      final linked = GroupMember(
+        groupId: groupId,
+        peerId: 'peer-protected-add-linked',
+        username: 'Linked recipient',
+        role: MemberRole.writer,
+        publicKey: linkedDevice.deviceSigningPublicKey,
+        mlKemPublicKey: linkedDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[linkedDevice],
+        joinedAt: createdAt.add(const Duration(hours: 2)),
+      );
+      final added = GroupMember(
+        groupId: groupId,
+        peerId: addedPeerId,
+        username: 'Protected add target',
+        role: MemberRole.writer,
+        publicKey: 'protected-add-target-public-key',
+        mlKemPublicKey: 'protected-add-target-mlkem',
+        joinedAt: eventAt,
+      );
+      await repository.saveGroup(group);
+      await repository.saveMember(actor);
+      await repository.saveMember(linked);
+      await repository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'protected-add-key-v1',
+          createdAt: createdAt.add(const Duration(hours: 3)),
+        ),
+      );
+
+      final proposedMembers = <GroupMember>[actor, linked, added];
+      final signedPayload = await signGroupSystemTransitionPayload(
+        bridge: recoveryBridge,
+        groupRepo: repository,
+        groupId: groupId,
+        transitionType: 'member_added',
+        sourceEventId: eventId,
+        eventAt: eventAt,
+        actorPeerId: actorPeerId,
+        actorUsername: actor.username!,
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        actorPrivateKey: 'protected-add-admin-private-key',
+        actorDeviceId: actorDevice.deviceId,
+        actorTransportPeerId: actorDevice.transportPeerId,
+        systemPayload: <String, dynamic>{
+          '__sys': 'member_added',
+          'member': added.toConfigJson(),
+          'groupConfig': buildGroupConfigPayload(
+            group.copyWith(lastMembershipEventAt: eventAt),
+            proposedMembers,
+            configVersionOverride: eventAt,
+          ),
+        },
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'senderId': actorPeerId,
+        'senderUsername': actor.username,
+        'senderDeviceId': actorDevice.deviceId,
+        'transportPeerId': actorDevice.transportPeerId,
+        'keyEpoch': 1,
+        'text': jsonEncode(signedPayload),
+        'timestamp': eventAt.toIso8601String(),
+        'messageId': eventId,
+      };
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: eventId,
+        control: ProtectedGroupAuthorityControl.memberAdd,
+        replayData: replayData,
+        keyEpoch: 1,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        actorAccountPrivateKey: 'protected-add-admin-private-key',
+        senderDevice: actorDevice,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[
+          actorDevice,
+          linkedDevice,
+        ],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'protected-add-authority-$suffix',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                <String, dynamic>{
+                  'ok': true,
+                  'kem': 'kem-$recipientMlKemPublicKey',
+                  'ciphertext': 'ciphertext-$recipientMlKemPublicKey',
+                  'nonce': 'nonce-$recipientMlKemPublicKey',
+                },
+        now: () => eventAt,
+      );
+      final proof = preparation.authorityProof!;
+      await history.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: proof,
+      );
+      if (memberAlreadyProjected) {
+        // Crash shape after the producer's SQL member write but before the
+        // exact watermark/COMPLETE boundary.
+        await repository.saveMember(added);
+      }
+      recoveryBridge.commandLog.clear();
+      recoveryBridge.sentMessages.clear();
+
+      final restartedListener = GroupMessageListener(
+        groupRepo: repository,
+        msgRepo: messageRepository,
+        bridge: recoveryBridge,
+        appendGroupEventLogEntry:
+            ({
+              required groupId,
+              required eventType,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required payload,
+              createdAt,
+            }) async {
+              final row = <String, Object?>{
+                'groupId': groupId,
+                'eventType': eventType,
+                'sourcePeerId': sourcePeerId,
+                'sourceEventId': sourceEventId,
+                'sourceTimestamp': sourceTimestamp,
+                'payload': payload,
+              };
+              evidenceByEventId.putIfAbsent(sourceEventId, () => row);
+              return evidenceByEventId[sourceEventId]!;
+            },
+      );
+      addTearDown(restartedListener.dispose);
+      var replayAttempts = 0;
+
+      Future<bool> recover() => recoverLocalPreparedProtectedSystemAuthority(
+        proof: proof,
+        groupRepository: repository,
+        verifyAuthorityProof:
+            ({required publicKey, required data, required signature}) async =>
+                true,
+        loadAuthorityProof: history.load,
+        appendAuthorityProof: history.append,
+        applyReplay: (control, protectedReplayData, authority) async {
+          replayAttempts++;
+          try {
+            await restartedListener.handleAuthenticatedAuthorityReplayEnvelope(
+              protectedReplayData,
+              authority: authority,
+              rethrowOnError: true,
+              membershipPhaseHeld: true,
+            );
+            final converged = await protectedGroupAuthorityReplayConverged(
+              control: control,
+              replayData: protectedReplayData,
+              groupRepository: repository,
+              requireMembershipVersion: true,
+              allowDominatingMembershipVersion: true,
+            );
+            return converged == true
+                ? ProtectedGroupAuthorityApplyResult.applied
+                : ProtectedGroupAuthorityApplyResult.retryable;
+          } on ProtectedGroupAuthorityReplaySuperseded {
+            return ProtectedGroupAuthorityApplyResult.superseded;
+          } catch (_) {
+            return ProtectedGroupAuthorityApplyResult.retryable;
+          }
+        },
+      );
+
+      expect(await recover(), isTrue, reason: '$suffix-projection restart');
+      expect(await repository.getMember(groupId, addedPeerId), isNotNull);
+      final recoveredGroup = await repository.getGroup(groupId);
+      expect(recoveredGroup?.lastMembershipEventAt, eventAt);
+      expect(recoveredGroup?.lastMembershipEventId, eventId);
+      expect(
+        recoveryBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        hasLength(1),
+      );
+      expect(evidenceByEventId.keys.where((id) => id == eventId), hasLength(1));
+      expect(history.count(AuthenticatedGroupAuthorityPhase.prepared), 1);
+      expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+      expect(replayAttempts, 1);
+
+      expect(await recover(), isTrue, reason: 'COMPLETE is restart-idempotent');
+      expect(replayAttempts, 1, reason: 'COMPLETE prevents a second replay');
+      expect(evidenceByEventId.keys.where((id) => id == eventId), hasLength(1));
+      expect(
+        recoveryBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        hasLength(1),
+      );
+    }
+
+    await proveShape(memberAlreadyProjected: false);
+    await proveShape(memberAlreadyProjected: true);
+  });
+
+  test(
+    'protected add ABORTED history is never rediscovered as repairable',
+    () async {
+      final proof = AuthenticatedGroupAuthorityProof(
+        eventId: 'aborted-protected-add',
+        groupId: 'group-1',
+        eventAt: DateTime.utc(2026, 8, 13, 14),
+        keyEpoch: 1,
+        control: ProtectedGroupAuthorityControl.memberAdd.wireValue,
+        actorAccountPeerId: 'peer-admin',
+        actorAccountPublicKey: 'pk-admin',
+        senderTransportPeerId: 'peer-admin',
+        senderTransportPublicKey: 'pk-admin',
+        authorityData: <String, Object?>{
+          'groupId': 'group-1',
+          'recipientTransportPeerIds': const <String>[],
+        },
+        signature: 'signed-aborted-add',
+      );
+      final history = _AddAuthenticatedAuthorityHistory();
+      await history.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: proof,
+      );
+      await history.append(
+        phase: AuthenticatedGroupAuthorityPhase.aborted,
+        proof: proof,
+      );
+      var replayAttempts = 0;
+
+      expect(
+        await recoverLocalPreparedProtectedSystemAuthority(
+          proof: proof,
+          groupRepository: groupRepo,
+          verifyAuthorityProof:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof: history.load,
+          appendAuthorityProof: history.append,
+          applyReplay: (control, replayData, authority) async {
+            replayAttempts++;
+            return ProtectedGroupAuthorityApplyResult.applied;
+          },
+        ),
+        isFalse,
+      );
+      expect(replayAttempts, 0);
+      expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 0);
+    },
+  );
+
+  test('recipient superseded authority appends exact COMPLETE and retires as '
+      'duplicate', () async {
+    const groupId = 'group-recipient-superseded';
+    const eventId = 'member_added:group-recipient-superseded:actor:1';
+    const actorPeerId = 'actor';
+    const senderTransportPeerId = 'sender-transport';
+    const recipientTransportPeerId = 'recipient-transport';
+    final eventAt = DateTime.utc(2026, 8, 13, 9);
+    final issuedAt = eventAt.subtract(const Duration(minutes: 1));
+    final replayData = <String, dynamic>{
+      'groupId': groupId,
+      'senderId': actorPeerId,
+      'senderUsername': 'Admin',
+      'senderDeviceId': 'sender-device',
+      'transportPeerId': senderTransportPeerId,
+      'text': jsonEncode(<String, dynamic>{
+        '__sys': 'member_added',
+        'member': <String, dynamic>{
+          'peerId': 'target',
+          'username': 'Target',
+          'role': 'writer',
+          'publicKey': 'target-public-key',
+        },
+        'groupConfig': <String, dynamic>{
+          'groupId': groupId,
+          'members': const <Object?>[],
+        },
+        signedGroupTransitionAuditField: <String, dynamic>{
+          'transitionType': 'member_added',
+          'groupId': groupId,
+          'sourceEventId': eventId,
+          'eventAt': eventAt.toIso8601String(),
+        },
+      }),
+      'timestamp': eventAt.toIso8601String(),
+      'messageId': eventId,
+    };
+    final proof = AuthenticatedGroupAuthorityProof(
+      eventId: eventId,
+      groupId: groupId,
+      eventAt: eventAt,
+      keyEpoch: 1,
+      control: ProtectedGroupAuthorityControl.memberAdd.wireValue,
+      actorAccountPeerId: actorPeerId,
+      actorAccountPublicKey: 'actor-public-key',
+      senderTransportPeerId: senderTransportPeerId,
+      senderTransportPublicKey: 'sender-public-key',
+      authorityData: secretFreeProtectedAuthorityData(
+        control: ProtectedGroupAuthorityControl.memberAdd.wireValue,
+        replayData: replayData,
+        frozenRecipientPeerIds: const <String>[recipientTransportPeerId],
+      ),
+      signature: 'signed-authority-proof',
+    );
+    final payload = ProtectedGroupAuthorityPayload(
+      transitionId: eventId,
+      groupId: groupId,
+      issuedAt: issuedAt,
+      expiresAt: issuedAt.add(const Duration(hours: 1)),
+      actorAccountPeerId: actorPeerId,
+      actorAccountPublicKey: proof.actorAccountPublicKey,
+      senderTransportPeerId: senderTransportPeerId,
+      senderTransportPublicKey: proof.senderTransportPublicKey,
+      recipientTransportPeerId: recipientTransportPeerId,
+      frozenRecipientPeerIds: const <String>[recipientTransportPeerId],
+      control: ProtectedGroupAuthorityControl.memberAdd,
+      replayData: replayData,
+      authorityProof: proof,
+      signature: 'signed-delivery-payload',
+    );
+    final outer = ProtectedGroupEnvelope(
+      type: protectedGroupAuthorityEnvelopeType,
+      id: protectedGroupAuthorityDeliveryId(
+        ProtectedGroupAuthorityControl.memberAdd.wireValue,
+        eventId,
+        recipientTransportPeerId,
+      ),
+      senderPeerId: senderTransportPeerId,
+      recipientPeerId: recipientTransportPeerId,
+      kem: 'kem',
+      ciphertext: 'ciphertext',
+      nonce: 'nonce',
+    );
+    final message = ChatMessage(
+      from: senderTransportPeerId,
+      to: recipientTransportPeerId,
+      content: outer.toJson(),
+      timestamp: eventAt.toIso8601String(),
+      isIncoming: true,
+    );
+    final history = _AddAuthenticatedAuthorityHistory();
+    await history.append(
+      phase: AuthenticatedGroupAuthorityPhase.prepared,
+      proof: proof,
+    );
+    var applyCalls = 0;
+
+    Future<ProtectedGroupAuthorityHandleResult> handle() =>
+        handleProtectedGroupAuthority(
+          message: message,
+          ownTransportPeerId: recipientTransportPeerId,
+          ownMlKemSecretKey: 'recipient-secret-key',
+          groupRepository: groupRepo,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) async => <String, dynamic>{
+                'ok': true,
+                'plaintext': payload.toInnerJson(),
+              },
+          callVerify:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof: history.load,
+          appendAuthorityProof: history.append,
+          applyReplay: (control, data, authority) async {
+            applyCalls++;
+            return ProtectedGroupAuthorityApplyResult.superseded;
+          },
+          now: () => eventAt,
+        );
+
+    expect(await handle(), ProtectedGroupAuthorityHandleResult.duplicate);
+    expect(history.count(AuthenticatedGroupAuthorityPhase.prepared), 1);
+    expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+    expect(applyCalls, 1);
+    expect(await handle(), ProtectedGroupAuthorityHandleResult.duplicate);
+    expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+    expect(applyCalls, 1);
+  });
+
+  test(
+    'protected older add cannot terminalize after a later same-subject role',
+    () async {
+      const groupId = 'group-protected-add-superseded';
+      const actorPeerId = 'peer-add-superseded-admin';
+      const targetPeerId = 'peer-add-superseded-target';
+      final createdAt = DateTime.utc(2026, 8, 13, 8);
+      final addAt = DateTime.utc(2026, 8, 13, 9);
+      final roleAt = DateTime.utc(2026, 8, 13, 10);
+      const addEventId = 'member-add-before-later-role';
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'add-superseded-admin-device',
+        transportPeerId: 'add-superseded-admin-transport',
+        deviceSigningPublicKey: 'add-superseded-admin-public-key',
+        mlKemPublicKey: 'add-superseded-admin-mlkem',
+      );
+      final repository = InMemoryGroupRepository();
+      final messageRepository = InMemoryGroupMessageRepository();
+      final recoveryBridge = PassthroughCryptoBridge();
+      final history = _AddAuthenticatedAuthorityHistory();
+      final evidenceByEventId = <String>{};
+      final group = GroupModel(
+        id: groupId,
+        name: 'Superseded protected add',
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: createdAt,
+        createdBy: actorPeerId,
+        myRole: GroupRole.admin,
+        lastMembershipEventAt: roleAt,
+        lastMembershipEventId: 'later-role-event',
+      );
+      final actor = GroupMember(
+        groupId: groupId,
+        peerId: actorPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: actorDevice.deviceSigningPublicKey,
+        mlKemPublicKey: actorDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[actorDevice],
+        joinedAt: createdAt,
+      );
+      final targetAtLaterRole = GroupMember(
+        groupId: groupId,
+        peerId: targetPeerId,
+        username: 'Target',
+        role: MemberRole.reader,
+        publicKey: 'add-superseded-target-public-key',
+        mlKemPublicKey: 'add-superseded-target-mlkem',
+        joinedAt: addAt,
+      );
+      await repository.saveGroup(group);
+      await repository.saveMember(actor);
+      await repository.saveMember(targetAtLaterRole);
+      await repository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'add-superseded-key-v1',
+          createdAt: createdAt,
+        ),
+      );
+      await messageRepository.saveMessage(
+        buildMemberRoleUpdatedTimelineMessage(
+          groupId: groupId,
+          updatedPeerId: targetPeerId,
+          updatedUsername: 'Target',
+          previousRole: MemberRole.writer,
+          newRole: MemberRole.reader,
+          senderId: actorPeerId,
+          senderUsername: 'Admin',
+          eventAt: roleAt,
+        ),
+      );
+
+      final historicalTarget = targetAtLaterRole.copyWith(
+        role: MemberRole.writer,
+      );
+      final signedPayload = await signGroupSystemTransitionPayload(
+        bridge: recoveryBridge,
+        groupRepo: repository,
+        groupId: groupId,
+        transitionType: 'member_added',
+        sourceEventId: addEventId,
+        eventAt: addAt,
+        actorPeerId: actorPeerId,
+        actorUsername: 'Admin',
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        actorPrivateKey: 'add-superseded-admin-private-key',
+        actorDeviceId: actorDevice.deviceId,
+        actorTransportPeerId: actorDevice.transportPeerId,
+        systemPayload: <String, dynamic>{
+          '__sys': 'member_added',
+          'member': historicalTarget.toConfigJson(),
+          'groupConfig': buildGroupConfigPayload(
+            group.copyWith(
+              lastMembershipEventAt: addAt,
+              lastMembershipEventId: addEventId,
+            ),
+            <GroupMember>[actor, historicalTarget],
+            configVersionOverride: addAt,
+          ),
+        },
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'senderId': actorPeerId,
+        'senderUsername': 'Admin',
+        'senderDeviceId': actorDevice.deviceId,
+        'transportPeerId': actorDevice.transportPeerId,
+        'keyEpoch': 1,
+        'text': jsonEncode(signedPayload),
+        'timestamp': addAt.toIso8601String(),
+        'messageId': addEventId,
+      };
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: addEventId,
+        control: ProtectedGroupAuthorityControl.memberAdd,
+        replayData: replayData,
+        keyEpoch: 1,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        actorAccountPrivateKey: 'add-superseded-admin-private-key',
+        senderDevice: actorDevice,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[actorDevice],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'signed-add-superseded',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                <String, dynamic>{'ok': true},
+        now: () => addAt,
+      );
+      final proof = preparation.authorityProof!;
+      await history.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: proof,
+      );
+      final listener = GroupMessageListener(
+        groupRepo: repository,
+        msgRepo: messageRepository,
+        bridge: recoveryBridge,
+        appendGroupEventLogEntry:
+            ({
+              required groupId,
+              required eventType,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required payload,
+              createdAt,
+            }) async {
+              evidenceByEventId.add(sourceEventId);
+              return <String, Object?>{'sourceEventId': sourceEventId};
+            },
+      );
+      addTearDown(listener.dispose);
+      var replayAttempts = 0;
+
+      final recovered = await recoverLocalPreparedProtectedSystemAuthority(
+        proof: proof,
+        groupRepository: repository,
+        verifyAuthorityProof:
+            ({required publicKey, required data, required signature}) async =>
+                true,
+        loadAuthorityProof: history.load,
+        appendAuthorityProof: history.append,
+        applyReplay: (control, protectedReplayData, authority) async {
+          replayAttempts++;
+          try {
+            await listener.handleAuthenticatedAuthorityReplayEnvelope(
+              protectedReplayData,
+              authority: authority,
+              rethrowOnError: true,
+              membershipPhaseHeld: true,
+            );
+            return ProtectedGroupAuthorityApplyResult.applied;
+          } on ProtectedGroupAuthorityReplaySuperseded {
+            return ProtectedGroupAuthorityApplyResult.superseded;
+          } catch (_) {
+            return ProtectedGroupAuthorityApplyResult.retryable;
+          }
+        },
+      );
+
+      expect(recovered, isTrue);
+      expect(replayAttempts, 1);
+      expect(
+        (await repository.getMember(groupId, targetPeerId))?.role,
+        MemberRole.reader,
+      );
+      expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+      expect(evidenceByEventId, isNot(contains(addEventId)));
+      expect(
+        recoveryBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        isEmpty,
+      );
+    },
+  );
+
+  test(
+    'protected role matching after away then back replays exact evidence before '
+    'COMPLETE',
+    () async {
+      const groupId = 'group-protected-role-away-back';
+      const actorPeerId = 'peer-role-away-back-admin';
+      const targetPeerId = 'peer-role-away-back-target';
+      final createdAt = DateTime.utc(2026, 8, 13, 8);
+      final preparedRoleAt = DateTime.utc(2026, 8, 13, 9);
+      final laterGlobalAt = DateTime.utc(2026, 8, 13, 12);
+      const preparedEventId = 'member-role-before-away-back';
+      const actorDevice = GroupMemberDeviceIdentity(
+        deviceId: 'role-away-back-admin-device',
+        transportPeerId: 'role-away-back-admin-transport',
+        deviceSigningPublicKey: 'role-away-back-admin-public-key',
+        mlKemPublicKey: 'role-away-back-admin-mlkem',
+      );
+      final repository = InMemoryGroupRepository();
+      final messageRepository = InMemoryGroupMessageRepository();
+      final recoveryBridge = PassthroughCryptoBridge();
+      final history = _AddAuthenticatedAuthorityHistory();
+      final evidenceByEventId = <String>{};
+      final group = GroupModel(
+        id: groupId,
+        name: 'Protected role away then back',
+        type: GroupType.chat,
+        topicName: 'topic-$groupId',
+        createdAt: createdAt,
+        createdBy: actorPeerId,
+        myRole: GroupRole.admin,
+        lastMembershipEventAt: laterGlobalAt,
+        lastMembershipEventId: 'later-unrelated-event',
+      );
+      final actor = GroupMember(
+        groupId: groupId,
+        peerId: actorPeerId,
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: actorDevice.deviceSigningPublicKey,
+        mlKemPublicKey: actorDevice.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[actorDevice],
+        joinedAt: createdAt,
+      );
+      final target = GroupMember(
+        groupId: groupId,
+        peerId: targetPeerId,
+        username: 'Target',
+        role: MemberRole.writer,
+        publicKey: 'role-away-back-target-public-key',
+        mlKemPublicKey: 'role-away-back-target-mlkem',
+        joinedAt: createdAt.add(const Duration(minutes: 30)),
+      );
+      await repository.saveGroup(group);
+      await repository.saveMember(actor);
+      // The current projection happens to match the PREPARED writer role after
+      // an unrecorded away-to-reader/back-to-writer crash sequence. Projection
+      // equality alone must not be treated as evidence for this exact event.
+      await repository.saveMember(target.copyWith(role: MemberRole.reader));
+      await repository.saveMember(target);
+      await repository.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'role-away-back-key-v1',
+          createdAt: createdAt,
+        ),
+      );
+
+      final signedPayload = await signGroupSystemTransitionPayload(
+        bridge: recoveryBridge,
+        groupRepo: repository,
+        groupId: groupId,
+        transitionType: 'member_role_updated',
+        sourceEventId: preparedEventId,
+        eventAt: preparedRoleAt,
+        actorPeerId: actorPeerId,
+        actorUsername: 'Admin',
+        actorSigningPublicKey: actorDevice.deviceSigningPublicKey,
+        actorPrivateKey: 'role-away-back-admin-private-key',
+        actorDeviceId: actorDevice.deviceId,
+        actorTransportPeerId: actorDevice.transportPeerId,
+        systemPayload: <String, dynamic>{
+          '__sys': 'member_role_updated',
+          'member': target.toConfigJson(),
+          'groupConfig': buildGroupConfigPayload(
+            group.copyWith(
+              lastMembershipEventAt: preparedRoleAt,
+              lastMembershipEventId: preparedEventId,
+            ),
+            <GroupMember>[actor, target],
+            configVersionOverride: preparedRoleAt,
+          ),
+        },
+      );
+      final replayData = <String, dynamic>{
+        'groupId': groupId,
+        'senderId': actorPeerId,
+        'senderUsername': 'Admin',
+        'senderDeviceId': actorDevice.deviceId,
+        'transportPeerId': actorDevice.transportPeerId,
+        'keyEpoch': 1,
+        'text': jsonEncode(signedPayload),
+        'timestamp': preparedRoleAt.toIso8601String(),
+        'messageId': preparedEventId,
+      };
+      final preparation = await buildProtectedGroupAuthorityRows(
+        groupId: groupId,
+        transitionId: preparedEventId,
+        control: ProtectedGroupAuthorityControl.memberRole,
+        replayData: replayData,
+        keyEpoch: 1,
+        actorAccountPeerId: actorPeerId,
+        actorAccountPublicKey: actorDevice.deviceSigningPublicKey,
+        actorAccountPrivateKey: 'role-away-back-admin-private-key',
+        senderDevice: actorDevice,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[actorDevice],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'signed-role-away-back',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                <String, dynamic>{'ok': true},
+        now: () => preparedRoleAt,
+      );
+      final proof = preparation.authorityProof!;
+      await history.append(
+        phase: AuthenticatedGroupAuthorityPhase.prepared,
+        proof: proof,
+      );
+      final listener = GroupMessageListener(
+        groupRepo: repository,
+        msgRepo: messageRepository,
+        bridge: recoveryBridge,
+        appendGroupEventLogEntry:
+            ({
+              required groupId,
+              required eventType,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required payload,
+              createdAt,
+            }) async {
+              evidenceByEventId.add(sourceEventId);
+              return <String, Object?>{'sourceEventId': sourceEventId};
+            },
+      );
+      addTearDown(listener.dispose);
+      var replayAttempts = 0;
+
+      Future<bool> recover() => recoverLocalPreparedProtectedSystemAuthority(
+        proof: proof,
+        groupRepository: repository,
+        verifyAuthorityProof:
+            ({required publicKey, required data, required signature}) async =>
+                true,
+        loadAuthorityProof: history.load,
+        appendAuthorityProof: history.append,
+        applyReplay: (control, protectedReplayData, authority) async {
+          replayAttempts++;
+          try {
+            await listener.handleAuthenticatedAuthorityReplayEnvelope(
+              protectedReplayData,
+              authority: authority,
+              rethrowOnError: true,
+              membershipPhaseHeld: true,
+            );
+            final converged = await protectedGroupAuthorityReplayConverged(
+              control: control,
+              replayData: protectedReplayData,
+              groupRepository: repository,
+              requireMembershipVersion: true,
+              allowDominatingMembershipVersion: true,
+            );
+            return converged == true
+                ? ProtectedGroupAuthorityApplyResult.applied
+                : ProtectedGroupAuthorityApplyResult.retryable;
+          } on ProtectedGroupAuthorityReplaySuperseded {
+            return ProtectedGroupAuthorityApplyResult.superseded;
+          } catch (_) {
+            return ProtectedGroupAuthorityApplyResult.retryable;
+          }
+        },
+      );
+
+      final unresolvedEqualContender = buildMemberRoleUpdatedTimelineMessage(
+        groupId: groupId,
+        updatedPeerId: targetPeerId,
+        updatedUsername: 'Target',
+        previousRole: MemberRole.writer,
+        newRole: MemberRole.reader,
+        senderId: 'peer-equal-time-contender',
+        senderUsername: 'Other admin',
+        eventAt: preparedRoleAt,
+      );
+      await messageRepository.saveMessage(unresolvedEqualContender);
+
+      expect(
+        await recover(),
+        isFalse,
+        reason: 'timestamp-only equal contender must fail closed',
+      );
+      expect(replayAttempts, 1);
+      expect(evidenceByEventId, isNot(contains(preparedEventId)));
+      expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 0);
+      expect(
+        recoveryBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        isEmpty,
+      );
+      await messageRepository.deleteMessage(unresolvedEqualContender.id);
+
+      expect(await recover(), isTrue);
+      expect(replayAttempts, 2);
+      expect(evidenceByEventId, contains(preparedEventId));
+      expect(
+        await messageRepository.getLatestSystemEventTimestampForTarget(
+          groupId,
+          eventType: 'member_role_updated',
+          targetId: targetPeerId,
+        ),
+        preparedRoleAt,
+      );
+      expect(
+        recoveryBridge.commandLog.where(
+          (command) => command == 'group:updateConfig',
+        ),
+        hasLength(1),
+      );
+      expect(history.count(AuthenticatedGroupAuthorityPhase.complete), 1);
+    },
+  );
 }
 
 class _BlockingUpdateConfigBridge extends FakeBridge {
@@ -1742,4 +3046,89 @@ class _BlockingUpdateConfigBridge extends FakeBridge {
     }
     return super.send(message);
   }
+}
+
+class _TimeoutAddUpdateConfigBridge extends FakeBridge {
+  bool updateConfigIssued = false;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group:updateConfig') {
+      updateConfigIssued = true;
+      throw TimeoutException('simulated lost group:updateConfig response');
+    }
+    return super.send(message);
+  }
+}
+
+class _CrashAfterMemberSaveRepository extends InMemoryGroupRepository {
+  _CrashAfterMemberSaveRepository({required this.crashPeerId});
+
+  final String crashPeerId;
+
+  @override
+  Future<void> saveMember(GroupMember member) async {
+    await super.saveMember(member);
+    if (member.peerId == crashPeerId) {
+      throw StateError('simulated crash after durable member save');
+    }
+  }
+}
+
+class _CrashOnPostAddRosterReadRepository extends InMemoryGroupRepository {
+  _CrashOnPostAddRosterReadRepository({required this.addedPeerId});
+
+  final String addedPeerId;
+  var _crashNextRosterRead = false;
+
+  @override
+  Future<void> saveMember(GroupMember member) async {
+    await super.saveMember(member);
+    if (member.peerId == addedPeerId) {
+      _crashNextRosterRead = true;
+    }
+  }
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async {
+    if (_crashNextRosterRead) {
+      _crashNextRosterRead = false;
+      throw StateError('simulated crash loading post-add roster');
+    }
+    return super.getMembers(groupId);
+  }
+}
+
+final class _AddAuthenticatedAuthorityHistory {
+  final _proofs =
+      <
+        (AuthenticatedGroupAuthorityPhase, String),
+        AuthenticatedGroupAuthorityProof
+      >{};
+
+  Future<AuthenticatedGroupAuthorityProof?> load({
+    required String groupId,
+    required AuthenticatedGroupAuthorityPhase phase,
+    required String eventId,
+  }) async {
+    final proof = _proofs[(phase, eventId)];
+    return proof?.groupId == groupId ? proof : null;
+  }
+
+  Future<void> append({
+    required AuthenticatedGroupAuthorityPhase phase,
+    required AuthenticatedGroupAuthorityProof proof,
+  }) async {
+    final key = (phase, proof.eventId);
+    final existing = _proofs[key];
+    if (existing != null &&
+        !sameAuthenticatedGroupAuthorityProof(existing, proof)) {
+      throw StateError('conflicting add authority history');
+    }
+    _proofs[key] = proof;
+  }
+
+  int count(AuthenticatedGroupAuthorityPhase phase) =>
+      _proofs.keys.where((key) => key.$1 == phase).length;
 }

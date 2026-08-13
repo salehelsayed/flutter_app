@@ -124,6 +124,424 @@ Future<bool> dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
   }
 }
 
+enum DbProtectedGroupAuthorityAbortResult {
+  aborted,
+  alreadyAborted,
+  refusedComplete,
+  conflict,
+}
+
+/// Atomically fences one exact authenticated PREPARED transition as ABORTED
+/// and retires the exact outbox owners supplied by its producer.
+///
+/// PREPARED is append-only, so deleting outbox rows alone is not a durable
+/// cancellation. The ABORTED fact prevents rowless restart discovery from
+/// later completing the abandoned event against an unrelated projection.
+Future<DbProtectedGroupAuthorityAbortResult>
+dbAbortPendingGroupBroadcastsWithAuthorityAtomically(
+  Database db, {
+  required String groupId,
+  required List<Map<String, Object?>> expectedRows,
+  required String authorityPreparedSourcePeerId,
+  required String authorityPreparedSourceEventId,
+  required String authorityPreparedSourceTimestamp,
+  required Map<String, Object?> authorityPreparedPayload,
+  required String authorityAbortedSourcePeerId,
+  required String authorityAbortedSourceEventId,
+  required String authorityAbortedSourceTimestamp,
+  required Map<String, Object?> authorityAbortedPayload,
+  required String authorityCompleteSourceEventId,
+}) async {
+  final preparedSuffix = authorityPreparedSourceEventId.startsWith('pga1:p:')
+      ? authorityPreparedSourceEventId.substring('pga1:p:'.length)
+      : null;
+  final transitionId = preparedSuffix == null
+      ? null
+      : _decodeProtectedAuthorityTransitionId(preparedSuffix);
+  final authorityIdentity = _protectedAuthorityFactIdentity(
+    authorityPreparedPayload,
+  );
+  if (groupId.isEmpty ||
+      authorityPreparedSourcePeerId.isEmpty ||
+      authorityPreparedSourceEventId.isEmpty ||
+      authorityPreparedSourceTimestamp.isEmpty ||
+      authorityPreparedPayload.isEmpty ||
+      authorityAbortedSourcePeerId.isEmpty ||
+      authorityAbortedSourceEventId.isEmpty ||
+      authorityAbortedSourceTimestamp.isEmpty ||
+      authorityAbortedPayload.isEmpty ||
+      authorityCompleteSourceEventId.isEmpty ||
+      authorityPreparedSourcePeerId != authorityAbortedSourcePeerId ||
+      authorityPreparedSourceTimestamp != authorityAbortedSourceTimestamp ||
+      canonicalizeGroupEventLogPayload(authorityPreparedPayload) !=
+          canonicalizeGroupEventLogPayload(authorityAbortedPayload) ||
+      preparedSuffix == null ||
+      preparedSuffix.isEmpty ||
+      authorityAbortedSourceEventId != 'pga1:a:$preparedSuffix' ||
+      authorityCompleteSourceEventId != 'pga1:c:$preparedSuffix' ||
+      transitionId == null ||
+      authorityIdentity == null ||
+      authorityIdentity.groupId != groupId ||
+      authorityIdentity.eventId != transitionId ||
+      expectedRows.map((row) => row['id']).toSet().length !=
+          expectedRows.length ||
+      expectedRows.any(
+        (row) =>
+            row['group_id'] != groupId ||
+            !_isProtectedAuthorityAbortOwner(
+              row,
+              groupId: groupId,
+              transitionId: transitionId,
+              authorityControl: authorityIdentity.control,
+              allowedRecipientPeerIds: authorityIdentity.recipientPeerIds,
+              allowActivatedRoleOwner: false,
+            ),
+      )) {
+    return DbProtectedGroupAuthorityAbortResult.conflict;
+  }
+
+  try {
+    return await dbWriteTransaction(db, (transaction) async {
+      Future<Map<String, Object?>?> loadFact(String sourceEventId) async {
+        final rows = await transaction.query(
+          'group_event_log',
+          where: 'group_id = ? AND source_event_id = ?',
+          whereArgs: <Object?>[groupId, sourceEventId],
+          limit: 1,
+        );
+        return rows.isEmpty ? null : rows.single;
+      }
+
+      final complete = await loadFact(authorityCompleteSourceEventId);
+      if (complete != null) {
+        return DbProtectedGroupAuthorityAbortResult.refusedComplete;
+      }
+
+      final ownerClosure = await _loadProtectedAuthorityAbortOwnerClosure(
+        transaction,
+        groupId: groupId,
+        transitionId: transitionId,
+        authorityControl: authorityIdentity.control,
+        allowedRecipientPeerIds: authorityIdentity.recipientPeerIds,
+      );
+      if (ownerClosure == null) {
+        return DbProtectedGroupAuthorityAbortResult.conflict;
+      }
+
+      final aborted = await loadFact(authorityAbortedSourceEventId);
+      if (aborted != null) {
+        if (!_sameAuthorityFactRow(
+          aborted,
+          eventType: 'protected_authority_aborted',
+          sourcePeerId: authorityAbortedSourcePeerId,
+          sourceTimestamp: authorityAbortedSourceTimestamp,
+          payload: authorityAbortedPayload,
+        )) {
+          return DbProtectedGroupAuthorityAbortResult.conflict;
+        }
+        if (ownerClosure.isNotEmpty) {
+          // ABORTED is terminal only when no delivery/ordinary owner for the
+          // same transition survived (or was recreated) underneath it.
+          return DbProtectedGroupAuthorityAbortResult.conflict;
+        }
+        for (final expected in expectedRows) {
+          final idCollision = await transaction.query(
+            _table,
+            columns: const <String>['id'],
+            where: 'id = ?',
+            whereArgs: <Object?>[expected['id']],
+            limit: 1,
+          );
+          if (idCollision.isNotEmpty) {
+            return DbProtectedGroupAuthorityAbortResult.conflict;
+          }
+        }
+        return DbProtectedGroupAuthorityAbortResult.alreadyAborted;
+      }
+
+      final prepared = await loadFact(authorityPreparedSourceEventId);
+      if (prepared == null ||
+          !_sameAuthorityFactRow(
+            prepared,
+            eventType: 'protected_authority_prepared',
+            sourcePeerId: authorityPreparedSourcePeerId,
+            sourceTimestamp: authorityPreparedSourceTimestamp,
+            payload: authorityPreparedPayload,
+          )) {
+        return DbProtectedGroupAuthorityAbortResult.conflict;
+      }
+
+      if (authorityIdentity.recipientPeerIds.isNotEmpty &&
+          !ownerClosure.values.any(
+            (row) => row['kind'] == 'group_authority_v1',
+          )) {
+        // A nonempty signed ACL cannot legitimately produce a rowless
+        // PREPARED fact. Per-target preparation may expose only a prefix of the
+        // ACL, but at least one exact protected owner must accompany the fact.
+        return DbProtectedGroupAuthorityAbortResult.conflict;
+      }
+
+      final expectedOwnerIds = expectedRows
+          .map((row) => row['id'] as String)
+          .toSet();
+      if (ownerClosure.keys.toSet().length != expectedOwnerIds.length ||
+          !ownerClosure.keys.toSet().containsAll(expectedOwnerIds)) {
+        // Never append ABORTED beside an omitted owner. That combination would
+        // suppress restart recovery while leaving an undrainable outbox row.
+        return DbProtectedGroupAuthorityAbortResult.conflict;
+      }
+
+      for (final expected in expectedRows) {
+        final existing = ownerClosure[expected['id']];
+        if (existing == null || !_samePendingBroadcastRow(existing, expected)) {
+          return DbProtectedGroupAuthorityAbortResult.conflict;
+        }
+      }
+      for (final expected in expectedRows) {
+        final deleted = await transaction.delete(
+          _table,
+          where: _pendingBroadcastExactWhere,
+          whereArgs: _pendingBroadcastExactFields
+              .map((field) => expected[field])
+              .toList(growable: false),
+        );
+        if (deleted != 1) {
+          throw StateError('protected authority abort owner changed');
+        }
+      }
+
+      await dbAppendGroupEventLogEntryInTransaction(
+        transaction,
+        groupId: groupId,
+        eventType: 'protected_authority_aborted',
+        sourcePeerId: authorityAbortedSourcePeerId,
+        sourceEventId: authorityAbortedSourceEventId,
+        sourceTimestamp: authorityAbortedSourceTimestamp,
+        payload: authorityAbortedPayload,
+      );
+      return DbProtectedGroupAuthorityAbortResult.aborted;
+    });
+  } catch (_) {
+    return DbProtectedGroupAuthorityAbortResult.conflict;
+  }
+}
+
+typedef _ProtectedAuthorityFactIdentity = ({
+  String groupId,
+  String eventId,
+  String control,
+  Set<String> recipientPeerIds,
+});
+
+_ProtectedAuthorityFactIdentity? _protectedAuthorityFactIdentity(
+  Map<String, Object?> payload,
+) {
+  final proof = payload['proof'];
+  if (proof is! Map) return null;
+  final body = proof['body'];
+  if (body is! Map) return null;
+  final groupId = body['groupId'];
+  final eventId = body['eventId'];
+  final control = body['control'];
+  final authorityData = body['authorityData'];
+  final recipients = authorityData is Map
+      ? authorityData['recipientTransportPeerIds']
+      : null;
+  if (groupId is! String ||
+      groupId.isEmpty ||
+      eventId is! String ||
+      eventId.isEmpty ||
+      control is! String ||
+      control.isEmpty ||
+      recipients is! List ||
+      recipients.any(
+        (recipient) =>
+            recipient is! String ||
+            recipient.isEmpty ||
+            recipient.trim() != recipient,
+      ) ||
+      recipients.toSet().length != recipients.length) {
+    return null;
+  }
+  return (
+    groupId: groupId,
+    eventId: eventId,
+    control: control,
+    recipientPeerIds: recipients.cast<String>().toSet(),
+  );
+}
+
+String? _decodeProtectedAuthorityTransitionId(String encoded) {
+  try {
+    final bytes = base64Url.decode(base64Url.normalize(encoded));
+    final decoded = utf8.decode(bytes);
+    if (decoded.isEmpty ||
+        base64Url.encode(utf8.encode(decoded)).replaceAll('=', '') != encoded) {
+      return null;
+    }
+    return decoded;
+  } catch (_) {
+    return null;
+  }
+}
+
+typedef _ProtectedAuthorityDeliveryIdentity = ({
+  String control,
+  String transitionId,
+  String recipientPeerId,
+});
+
+_ProtectedAuthorityDeliveryIdentity? _parseProtectedAuthorityDeliveryId(
+  Object? raw,
+) {
+  if (raw is! String ||
+      raw.isEmpty ||
+      !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(raw)) {
+    return null;
+  }
+  var offset = 0;
+  String? readField() {
+    final colon = raw.indexOf(':', offset);
+    if (colon <= offset) return null;
+    final length = int.tryParse(raw.substring(offset, colon));
+    if (length == null || length <= 0) return null;
+    final start = colon + 1;
+    final end = start + length;
+    if (end > raw.length) return null;
+    final value = raw.substring(start, end);
+    offset = end;
+    return value;
+  }
+
+  final control = readField();
+  final transitionId = readField();
+  final recipientPeerId = readField();
+  if (control == null ||
+      transitionId == null ||
+      recipientPeerId == null ||
+      offset != raw.length) {
+    return null;
+  }
+  return (
+    control: control,
+    transitionId: transitionId,
+    recipientPeerId: recipientPeerId,
+  );
+}
+
+bool _isProtectedAuthorityAbortOwner(
+  Map<String, Object?> row, {
+  required String groupId,
+  required String transitionId,
+  required String authorityControl,
+  required Set<String> allowedRecipientPeerIds,
+  required bool allowActivatedRoleOwner,
+}) {
+  final id = row['id'];
+  final kind = row['kind'];
+  final sourceMessageId = row['source_message_id'];
+  if (id is! String || id.isEmpty || row['group_id'] != groupId) return false;
+
+  if (kind == 'group_authority_v1') {
+    final identity = _parseProtectedAuthorityDeliveryId(sourceMessageId);
+    if (identity == null ||
+        identity.control != authorityControl ||
+        identity.transitionId != transitionId ||
+        !allowedRecipientPeerIds.contains(identity.recipientPeerId) ||
+        id != 'protected-authority:$sourceMessageId') {
+      return false;
+    }
+    final encodedRecipients = row['recipient_peer_ids'];
+    if (encodedRecipients is! String) return false;
+    try {
+      final decoded = jsonDecode(encodedRecipients);
+      return decoded is List &&
+          decoded.length == 1 &&
+          decoded.single == identity.recipientPeerId;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  final isPreparedRole = kind == 'member_role_updated_prepared';
+  final isActivatedRole = kind == 'member_role_updated';
+  return authorityControl == 'member_role_updated' &&
+      (isPreparedRole || (allowActivatedRoleOwner && isActivatedRole)) &&
+      sourceMessageId == transitionId &&
+      id == 'pending_group_broadcast:$groupId:$transitionId';
+}
+
+Future<Map<String, Map<String, Object?>>?>
+_loadProtectedAuthorityAbortOwnerClosure(
+  DatabaseExecutor transaction, {
+  required String groupId,
+  required String transitionId,
+  required String authorityControl,
+  required Set<String> allowedRecipientPeerIds,
+}) async {
+  final rows = await transaction.query(
+    _table,
+    where: 'group_id = ?',
+    whereArgs: <Object?>[groupId],
+  );
+  final owners = <String, Map<String, Object?>>{};
+  for (final row in rows) {
+    final kind = row['kind'];
+    if (kind == 'group_authority_v1') {
+      final identity = _parseProtectedAuthorityDeliveryId(
+        row['source_message_id'],
+      );
+      // The same conservative rule is used by restart discovery: an
+      // unattributable protected row might own this transition, so cancellation
+      // cannot safely establish a terminal negative fact beside it.
+      if (identity == null) return null;
+      if (identity.transitionId != transitionId) continue;
+      if (!_isProtectedAuthorityAbortOwner(
+        row,
+        groupId: groupId,
+        transitionId: transitionId,
+        authorityControl: authorityControl,
+        allowedRecipientPeerIds: allowedRecipientPeerIds,
+        allowActivatedRoleOwner: false,
+      )) {
+        return null;
+      }
+    } else if ((kind == 'member_role_updated_prepared' ||
+            kind == 'member_role_updated') &&
+        row['source_message_id'] == transitionId) {
+      if (!_isProtectedAuthorityAbortOwner(
+        row,
+        groupId: groupId,
+        transitionId: transitionId,
+        authorityControl: authorityControl,
+        allowedRecipientPeerIds: allowedRecipientPeerIds,
+        allowActivatedRoleOwner: true,
+      )) {
+        return null;
+      }
+    } else {
+      continue;
+    }
+    final id = row['id'];
+    if (id is! String || owners.containsKey(id)) return null;
+    owners[id] = row;
+  }
+  return owners;
+}
+
+bool _sameAuthorityFactRow(
+  Map<String, Object?> row, {
+  required String eventType,
+  required String sourcePeerId,
+  required String sourceTimestamp,
+  required Map<String, Object?> payload,
+}) {
+  return row['event_type'] == eventType &&
+      row['source_peer_id'] == sourcePeerId &&
+      row['source_timestamp'] == sourceTimestamp &&
+      row['canonical_payload'] == canonicalizeGroupEventLogPayload(payload);
+}
+
 /// Retires one exact protected-authority row inside a caller-owned terminal
 /// transaction. This deliberately bypasses the ordinary live-parent predicate:
 /// the same transaction has already advanced (or is about to advance) the
