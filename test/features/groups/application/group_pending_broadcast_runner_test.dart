@@ -8,6 +8,7 @@ import 'package:flutter_app/features/groups/application/group_pending_broadcast_
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -232,9 +233,11 @@ void main() {
         transitionId:
             'member_removed:${List<String>.filled(8, 'transition-segment-').join()}',
         control: ProtectedGroupAuthorityControl.memberRemove,
-        replayData: const <String, dynamic>{
+        keyEpoch: 1,
+        replayData: <String, dynamic>{
           'groupId': 'group-363',
           'text': '{"__sys":"member_removed"}',
+          'timestamp': instant.toIso8601String(),
         },
         actorAccountPeerId: 'logical-account',
         actorAccountPublicKey: 'account-public-key',
@@ -311,6 +314,14 @@ void main() {
           joinedAt: instant,
         ),
       );
+      await receiverRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-363',
+          keyGeneration: 1,
+          encryptedKey: 'receiver-key-v1',
+          createdAt: instant,
+        ),
+      );
       final addressedMessage = ChatMessage(
         from: 'physical-sender',
         to: 'physical-b',
@@ -319,6 +330,8 @@ void main() {
         isIncoming: true,
       );
       var applied = 0;
+      final authorityHistory = <String, AuthenticatedGroupAuthorityProof>{};
+      var failAfterPrepared = true;
       Future<ProtectedGroupAuthorityHandleResult> receiveAs(
         String ownTransportPeerId,
       ) => handleProtectedGroupAuthority(
@@ -339,8 +352,23 @@ void main() {
         callVerify:
             ({required publicKey, required data, required signature}) async =>
                 true,
+        loadAuthorityProof:
+            ({required groupId, required phase, required eventId}) async =>
+                authorityHistory['${phase.name}:$eventId'],
+        appendAuthorityProof: ({required phase, required proof}) async {
+          final key = '${phase.name}:${proof.eventId}';
+          final existing = authorityHistory[key];
+          if (existing != null && !existing.sameUnsigned(proof)) {
+            throw StateError('conflicting authority history');
+          }
+          authorityHistory[key] = proof;
+        },
         applyReplay: (control, replayData) async {
           applied++;
+          if (failAfterPrepared) {
+            failAfterPrepared = false;
+            return ProtectedGroupAuthorityApplyResult.retryable;
+          }
           return ProtectedGroupAuthorityApplyResult.applied;
         },
         now: () => instant,
@@ -352,11 +380,24 @@ void main() {
       expect(applied, 0);
       expect(
         await receiveAs('physical-b'),
-        ProtectedGroupAuthorityHandleResult.applied,
-        reason:
-            'an addressed account-primary installation must not need linked-secondary authority',
+        ProtectedGroupAuthorityHandleResult.retryable,
+        reason: 'a crash after prepared evidence remains repairable',
       );
       expect(applied, 1);
+      expect(authorityHistory.keys, contains(startsWith('prepared:')));
+      await receiverRepo.removeMember('group-363', 'logical-account');
+      expect(
+        await receiveAs('physical-b'),
+        ProtectedGroupAuthorityHandleResult.applied,
+        reason: 'prepared authentication survives projection/roster drift',
+      );
+      expect(applied, 2);
+      expect(
+        await receiveAs('physical-b'),
+        ProtectedGroupAuthorityHandleResult.duplicate,
+        reason: 'completed historical authority wins over current projection',
+      );
+      expect(applied, 2, reason: 'completed history must not replay old state');
     },
   );
 

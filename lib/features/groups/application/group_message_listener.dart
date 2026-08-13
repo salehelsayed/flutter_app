@@ -2164,6 +2164,7 @@ class GroupMessageListener {
           sourceEventId: wireMessageId,
           msgRepo: msgRepo,
           rethrowOnError: rethrowOnError,
+          authorityPhaseHeld: membershipPhaseHeld,
         );
         return;
       }

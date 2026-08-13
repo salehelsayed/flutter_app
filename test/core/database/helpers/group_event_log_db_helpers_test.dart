@@ -207,4 +207,55 @@ void main() {
       );
     },
   );
+
+  test(
+    'Plan 363 audit exact and bounded authority loaders preserve microsecond order',
+    () async {
+      for (final (id, timestamp) in <(String, String)>[
+        ('pga1:c:a', '2026-08-13T12:00:00.000000Z'),
+        ('pga1:c:b', '2026-08-13T12:00:00.000001Z'),
+        ('pga1:c:c', '2026-08-13T12:00:00.001000Z'),
+      ]) {
+        await dbAppendGroupEventLogEntry(
+          db,
+          groupId: 'group-authority-history',
+          eventType: 'protected_authority_complete',
+          sourcePeerId: 'peer-admin',
+          sourceEventId: id,
+          sourceTimestamp: timestamp,
+          payload: <String, Object?>{'proof': id},
+        );
+      }
+
+      expect(
+        (await dbLoadGroupEventLogEntryExact(
+          db,
+          groupId: 'group-authority-history',
+          sourceEventId: 'pga1:c:b',
+        ))?['source_timestamp'],
+        '2026-08-13T12:00:00.000001Z',
+      );
+      final firstPage = await dbLoadGroupEventLogTypePage(
+        db,
+        groupId: 'group-authority-history',
+        eventType: 'protected_authority_complete',
+        limit: 2,
+      );
+      expect(firstPage.map((row) => row['source_event_id']), <Object?>[
+        'pga1:c:a',
+        'pga1:c:b',
+      ]);
+      final secondPage = await dbLoadGroupEventLogTypePage(
+        db,
+        groupId: 'group-authority-history',
+        eventType: 'protected_authority_complete',
+        afterSourceTimestamp: firstPage.last['source_timestamp'] as String,
+        afterSourceEventId: firstPage.last['source_event_id'] as String,
+        limit: 2,
+      );
+      expect(secondPage.map((row) => row['source_event_id']), <Object?>[
+        'pga1:c:c',
+      ]);
+    },
+  );
 }

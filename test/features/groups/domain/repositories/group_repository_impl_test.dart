@@ -171,6 +171,10 @@ void main() {
       required Map<String, Object?> groupRow,
       required List<Map<String, Object?>> memberRows,
       required Map<String, Object?> keyRow,
+      required String authorityGenesisSourcePeerId,
+      required String authorityGenesisSourceEventId,
+      required String authorityGenesisSourceTimestamp,
+      required Map<String, Object?> authorityGenesisPayload,
     })?
     commitLinkedBootstrapMaterializationOverride,
   }) {
@@ -224,13 +228,24 @@ void main() {
       groupKeyStore: groupKeyStore,
       dbCommitLinkedGroupBootstrapMaterializationFn:
           commitLinkedBootstrapMaterializationOverride ??
-          ({required groupRow, required memberRows, required keyRow}) =>
-              dbCommitLinkedGroupBootstrapMaterialization(
-                db,
-                groupRow: groupRow,
-                memberRows: memberRows,
-                keyRow: keyRow,
-              ),
+          ({
+            required groupRow,
+            required memberRows,
+            required keyRow,
+            required authorityGenesisSourcePeerId,
+            required authorityGenesisSourceEventId,
+            required authorityGenesisSourceTimestamp,
+            required authorityGenesisPayload,
+          }) => dbCommitLinkedGroupBootstrapMaterialization(
+            db,
+            groupRow: groupRow,
+            memberRows: memberRows,
+            keyRow: keyRow,
+            authorityGenesisSourcePeerId: authorityGenesisSourcePeerId,
+            authorityGenesisSourceEventId: authorityGenesisSourceEventId,
+            authorityGenesisSourceTimestamp: authorityGenesisSourceTimestamp,
+            authorityGenesisPayload: authorityGenesisPayload,
+          ),
       pushSharedKeyStore: pushStore,
       groupReactionProjection: projection,
       dbHasGroupExitCleanupPending: hasExitCleanupPending,
@@ -542,6 +557,17 @@ void main() {
           role: MemberRole.writer,
         );
         final key = makeKey(groupId: group.id, encryptedKey: 'raw-group-key');
+        const genesis = LinkedGroupBootstrapAuthorityGenesis(
+          sourcePeerId: 'account-self',
+          sourceEventId: 'pga1:g:bootstrap-one',
+          sourceTimestamp: '2026-08-13T10:00:00.000000Z',
+          payload: <String, Object?>{
+            'proof': <String, Object?>{
+              'signature': 'authenticated-bootstrap-signature',
+              'keyMaterialHash': 'safe-key-material-hash',
+            },
+          },
+        );
 
         expect(
           await capability.commitLinkedGroupBootstrapMaterialization(
@@ -549,6 +575,7 @@ void main() {
             group: group,
             members: <GroupMember>[self, witness],
             key: key,
+            authorityGenesis: genesis,
           ),
           LinkedGroupBootstrapMaterializationOutcome.committed,
         );
@@ -573,6 +600,19 @@ void main() {
         );
         expect(keyRow['encrypted_key'], secureStoreReferenceForKey(storeName));
         expect(await groupKeyStore.read(storeName), 'raw-group-key');
+        final genesisRows = await db.query(
+          'group_event_log',
+          where: 'group_id = ? AND event_type = ?',
+          whereArgs: <Object?>[group.id, 'protected_authority_genesis'],
+        );
+        expect(genesisRows, hasLength(1));
+        expect(
+          genesisRows.single['canonical_payload'],
+          allOf(
+            contains('authenticated-bootstrap-signature'),
+            isNot(contains('raw-group-key')),
+          ),
+        );
 
         expect(
           await capability.commitLinkedGroupBootstrapMaterialization(
@@ -580,6 +620,7 @@ void main() {
             group: group,
             members: <GroupMember>[self, witness],
             key: key,
+            authorityGenesis: genesis,
           ),
           LinkedGroupBootstrapMaterializationOutcome.duplicate,
         );
@@ -589,6 +630,7 @@ void main() {
             group: group.copyWith(myRole: GroupRole.member),
             members: <GroupMember>[self, witness],
             key: key,
+            authorityGenesis: genesis,
           ),
           LinkedGroupBootstrapMaterializationOutcome.refusedConflict,
           reason:
@@ -665,6 +707,10 @@ void main() {
                 required groupRow,
                 required memberRows,
                 required keyRow,
+                required authorityGenesisSourcePeerId,
+                required authorityGenesisSourceEventId,
+                required authorityGenesisSourceTimestamp,
+                required authorityGenesisPayload,
               }) async => LinkedGroupBootstrapMaterializationDbDisposition
                   .refusedConflict,
         );
@@ -682,6 +728,12 @@ void main() {
                   makeMember(groupId: secondGroup.id, peerId: 'account-self'),
                 ],
                 key: secondKey,
+                authorityGenesis: const LinkedGroupBootstrapAuthorityGenesis(
+                  sourcePeerId: 'account-self',
+                  sourceEventId: 'pga1:g:bootstrap-refused',
+                  sourceTimestamp: '2026-08-13T10:01:00.000000Z',
+                  payload: <String, Object?>{'proof': 'refused-proof'},
+                ),
               ),
           LinkedGroupBootstrapMaterializationOutcome.refusedConflict,
         );

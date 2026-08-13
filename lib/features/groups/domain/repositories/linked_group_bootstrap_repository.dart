@@ -17,6 +17,20 @@ enum LinkedGroupBootstrapMaterializationOutcome {
   refusedConflict,
 }
 
+class LinkedGroupBootstrapAuthorityGenesis {
+  const LinkedGroupBootstrapAuthorityGenesis({
+    required this.sourcePeerId,
+    required this.sourceEventId,
+    required this.sourceTimestamp,
+    required this.payload,
+  });
+
+  final String sourcePeerId;
+  final String sourceEventId;
+  final String sourceTimestamp;
+  final Map<String, Object?> payload;
+}
+
 /// Narrow optional capability for Plan-363 same-account group bootstrap.
 ///
 /// It intentionally does not expand [GroupRepository]: the application has a
@@ -52,6 +66,7 @@ abstract interface class LinkedGroupBootstrapRepository {
     required GroupModel group,
     required List<GroupMember> members,
     required GroupKeyInfo key,
+    required LinkedGroupBootstrapAuthorityGenesis authorityGenesis,
   });
 }
 

@@ -162,6 +162,10 @@ class GroupRepositoryImpl
     required Map<String, Object?> groupRow,
     required List<Map<String, Object?>> memberRows,
     required Map<String, Object?> keyRow,
+    required String authorityGenesisSourcePeerId,
+    required String authorityGenesisSourceEventId,
+    required String authorityGenesisSourceTimestamp,
+    required Map<String, Object?> authorityGenesisPayload,
   })?
   dbCommitLinkedGroupBootstrapMaterializationFn;
   final Future<bool> Function({
@@ -1516,6 +1520,7 @@ class GroupRepositoryImpl
     required GroupModel group,
     required List<GroupMember> members,
     required GroupKeyInfo key,
+    required LinkedGroupBootstrapAuthorityGenesis authorityGenesis,
   }) async {
     final commit = dbCommitLinkedGroupBootstrapMaterializationFn;
     final store = groupKeyStore;
@@ -1528,7 +1533,11 @@ class GroupRepositoryImpl
         group.id != key.groupId ||
         group.isDissolved ||
         members.isEmpty ||
-        members.any((member) => member.groupId != group.id)) {
+        members.any((member) => member.groupId != group.id) ||
+        authorityGenesis.sourcePeerId.trim().isEmpty ||
+        authorityGenesis.sourceEventId.trim().isEmpty ||
+        authorityGenesis.sourceTimestamp.trim().isEmpty ||
+        authorityGenesis.payload.isEmpty) {
       return LinkedGroupBootstrapMaterializationOutcome.refusedConflict;
     }
     return _runGroupMutation(group.id, () async {
@@ -1558,6 +1567,10 @@ class GroupRepositoryImpl
           groupRow: group.toMap(),
           memberRows: members.map((member) => member.toMap()).toList(),
           keyRow: stagedKey.toMap(),
+          authorityGenesisSourcePeerId: authorityGenesis.sourcePeerId,
+          authorityGenesisSourceEventId: authorityGenesis.sourceEventId,
+          authorityGenesisSourceTimestamp: authorityGenesis.sourceTimestamp,
+          authorityGenesisPayload: authorityGenesis.payload,
         );
       } catch (_) {
         if (wroteMaterial) {

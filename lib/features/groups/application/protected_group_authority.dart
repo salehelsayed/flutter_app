@@ -1,6 +1,8 @@
 import 'dart:convert';
 
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
@@ -212,6 +214,7 @@ class ProtectedGroupAuthorityPayload {
     required this.frozenRecipientPeerIds,
     required this.control,
     required this.replayData,
+    required this.authorityProof,
     required this.signature,
   });
 
@@ -227,6 +230,7 @@ class ProtectedGroupAuthorityPayload {
   final List<String> frozenRecipientPeerIds;
   final ProtectedGroupAuthorityControl control;
   final Map<String, dynamic> replayData;
+  final AuthenticatedGroupAuthorityProof authorityProof;
   final String signature;
 
   Map<String, Object?> unsignedBody() => <String, Object?>{
@@ -244,6 +248,7 @@ class ProtectedGroupAuthorityPayload {
     'frozenRecipientPeerIds': frozenRecipientPeerIds.toList()..sort(),
     'control': control.wireValue,
     'replayData': replayData,
+    'authorityProof': authorityProof.toMap(),
   };
 
   String canonicalSignedPayload() =>
@@ -269,6 +274,7 @@ class ProtectedGroupAuthorityPayload {
         frozenRecipientPeerIds: frozenRecipientPeerIds,
         control: control,
         replayData: replayData,
+        authorityProof: authorityProof,
         signature: value,
       );
 
@@ -305,6 +311,9 @@ class ProtectedGroupAuthorityPayload {
       final expiresAt = _utc(body['expiresAt']);
       final frozenRaw = body['frozenRecipientPeerIds'];
       final replayRaw = body['replayData'];
+      final authorityProof = AuthenticatedGroupAuthorityProof.tryParse(
+        body['authorityProof'],
+      );
       if (transitionId == null ||
           groupId == null ||
           actorPeerId == null ||
@@ -319,7 +328,8 @@ class ProtectedGroupAuthorityPayload {
           expiresAt.difference(issuedAt) > protectedGroupAuthorityLifetime ||
           frozenRaw is! List ||
           frozenRaw.isEmpty ||
-          replayRaw is! Map<String, dynamic>) {
+          replayRaw is! Map<String, dynamic> ||
+          authorityProof == null) {
         return null;
       }
       final frozen = <String>[];
@@ -345,6 +355,7 @@ class ProtectedGroupAuthorityPayload {
         frozenRecipientPeerIds: frozen,
         control: control,
         replayData: Map<String, dynamic>.from(replayRaw),
+        authorityProof: authorityProof,
         signature: signature,
       );
     } catch (_) {
@@ -368,6 +379,7 @@ const _authorityBodyKeys = <String>{
   'frozenRecipientPeerIds',
   'control',
   'replayData',
+  'authorityProof',
 };
 
 /// Builds one immutable target-qualified row per frozen physical recipient.
@@ -377,6 +389,7 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
   required String transitionId,
   required ProtectedGroupAuthorityControl control,
   required Map<String, dynamic> replayData,
+  required int keyEpoch,
   required String actorAccountPeerId,
   required String actorAccountPublicKey,
   required String actorAccountPrivateKey,
@@ -413,10 +426,36 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
       actorAccountPublicKey.trim().isEmpty ||
       actorAccountPrivateKey.trim().isEmpty ||
       senderDevice.transportPeerId.trim().isEmpty ||
-      senderDevice.deviceSigningPublicKey.trim().isEmpty) {
+      senderDevice.deviceSigningPublicKey.trim().isEmpty ||
+      keyEpoch <= 0) {
     return const [];
   }
   final instant = (now ?? DateTime.now)().toUtc();
+  final eventAt = _utc(replayData['timestamp']);
+  if (eventAt == null) return const [];
+  var authorityProof = AuthenticatedGroupAuthorityProof(
+    eventId: transitionId,
+    groupId: groupId,
+    eventAt: eventAt,
+    keyEpoch: keyEpoch,
+    control: control.wireValue,
+    actorAccountPeerId: actorAccountPeerId,
+    actorAccountPublicKey: actorAccountPublicKey,
+    senderTransportPeerId: senderDevice.transportPeerId,
+    senderTransportPublicKey: senderDevice.deviceSigningPublicKey,
+    authorityData: secretFreeProtectedAuthorityData(
+      control: control.wireValue,
+      replayData: replayData,
+    ),
+    signature: '',
+  );
+  final proofSign = await callSign(
+    authorityProof.canonicalSignedPayload(),
+    actorAccountPrivateKey,
+  );
+  final proofSignature = _strict(proofSign['signature']);
+  if (proofSign['ok'] != true || proofSignature == null) return const [];
+  authorityProof = authorityProof.withSignature(proofSignature);
   final rows = <GroupPendingBroadcast>[];
   for (final recipient in recipients) {
     final recipientKey = recipient.mlKemPublicKey!.trim();
@@ -433,6 +472,7 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
       frozenRecipientPeerIds: acl,
       control: control,
       replayData: replayData,
+      authorityProof: authorityProof,
       signature: '',
     );
     final signed = await callSign(
@@ -511,6 +551,8 @@ Future<ProtectedGroupAuthorityHandleResult> handleProtectedGroupAuthority({
   required GroupRepository groupRepository,
   required LinkedGroupDecrypt callDecrypt,
   required LinkedGroupVerify callVerify,
+  required LoadAuthenticatedGroupAuthorityProof loadAuthorityProof,
+  required AppendAuthenticatedGroupAuthorityProof appendAuthorityProof,
   required ApplyProtectedGroupAuthorityReplay applyReplay,
   DateTime Function()? now,
 }) async {
@@ -551,17 +593,26 @@ Future<ProtectedGroupAuthorityHandleResult> handleProtectedGroupAuthority({
             outer.id) {
       return ProtectedGroupAuthorityHandleResult.terminalRejected;
     }
-    final group = await groupRepository.getGroup(payload.groupId);
-    if (group == null) {
-      return ProtectedGroupAuthorityHandleResult.prerequisiteWaiting;
-    }
-    final actor = await groupRepository.getMember(
-      payload.groupId,
-      payload.actorAccountPeerId,
+    final proof = payload.authorityProof;
+    final expectedEventAt = _utc(payload.replayData['timestamp']);
+    final expectedAuthorityData = secretFreeProtectedAuthorityData(
+      control: payload.control.wireValue,
+      replayData: payload.replayData,
     );
-    if (actor == null ||
-        actor.publicKey?.trim() != payload.actorAccountPublicKey ||
-        !_authorizedSenderDevice(actor, payload)) {
+    final replayKeyEpoch = payload.replayData['keyGeneration'];
+    if (expectedEventAt == null ||
+        proof.eventId != payload.transitionId ||
+        proof.groupId != payload.groupId ||
+        proof.eventAt.toUtc() != expectedEventAt ||
+        proof.control != payload.control.wireValue ||
+        proof.actorAccountPeerId != payload.actorAccountPeerId ||
+        proof.actorAccountPublicKey != payload.actorAccountPublicKey ||
+        proof.senderTransportPeerId != payload.senderTransportPeerId ||
+        proof.senderTransportPublicKey != payload.senderTransportPublicKey ||
+        (payload.control == ProtectedGroupAuthorityControl.groupKeyUpdate &&
+            replayKeyEpoch != proof.keyEpoch) ||
+        canonicalLinkedGroupAuthorityJson(proof.authorityData) !=
+            canonicalLinkedGroupAuthorityJson(expectedAuthorityData)) {
       return ProtectedGroupAuthorityHandleResult.terminalRejected;
     }
     final instant = (now ?? DateTime.now)().toUtc();
@@ -571,23 +622,89 @@ Future<ProtectedGroupAuthorityHandleResult> handleProtectedGroupAuthority({
           publicKey: payload.actorAccountPublicKey,
           data: payload.canonicalSignedPayload(),
           signature: payload.signature,
+        ) ||
+        !await callVerify(
+          publicKey: proof.actorAccountPublicKey,
+          data: proof.canonicalSignedPayload(),
+          signature: proof.signature,
         )) {
       return ProtectedGroupAuthorityHandleResult.terminalRejected;
     }
-    return switch (await applyReplay(payload.control, payload.replayData)) {
-      ProtectedGroupAuthorityApplyResult.applied =>
-        ProtectedGroupAuthorityHandleResult.applied,
-      ProtectedGroupAuthorityApplyResult.duplicate =>
-        ProtectedGroupAuthorityHandleResult.duplicate,
-      ProtectedGroupAuthorityApplyResult.rejected =>
-        ProtectedGroupAuthorityHandleResult.terminalRejected,
-      ProtectedGroupAuthorityApplyResult.retryable =>
-        ProtectedGroupAuthorityHandleResult.retryable,
-    };
+    return await runGroupAuthorityPhase(
+      groupId: payload.groupId,
+      action: () async {
+        final complete = await loadAuthorityProof(
+          groupId: payload.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.complete,
+          eventId: payload.transitionId,
+        );
+        if (complete != null) {
+          return _sameAuthenticatedProof(complete, proof)
+              ? ProtectedGroupAuthorityHandleResult.duplicate
+              : ProtectedGroupAuthorityHandleResult.terminalRejected;
+        }
+
+        final prepared = await loadAuthorityProof(
+          groupId: payload.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.prepared,
+          eventId: payload.transitionId,
+        );
+        if (prepared != null && !_sameAuthenticatedProof(prepared, proof)) {
+          return ProtectedGroupAuthorityHandleResult.terminalRejected;
+        }
+        if (prepared == null) {
+          final group = await groupRepository.getGroup(payload.groupId);
+          if (group == null) {
+            return ProtectedGroupAuthorityHandleResult.prerequisiteWaiting;
+          }
+          final actor = await groupRepository.getMember(
+            payload.groupId,
+            payload.actorAccountPeerId,
+          );
+          if (actor == null ||
+              actor.publicKey?.trim() != payload.actorAccountPublicKey ||
+              !_authorizedSenderDevice(actor, payload)) {
+            return ProtectedGroupAuthorityHandleResult.terminalRejected;
+          }
+          final currentKey = await groupRepository.getLatestKey(
+            payload.groupId,
+          );
+          if (payload.control !=
+                  ProtectedGroupAuthorityControl.groupKeyUpdate &&
+              currentKey?.keyGeneration != proof.keyEpoch) {
+            return ProtectedGroupAuthorityHandleResult.prerequisiteWaiting;
+          }
+          await appendAuthorityProof(
+            phase: AuthenticatedGroupAuthorityPhase.prepared,
+            proof: proof,
+          );
+        }
+
+        final applied = await applyReplay(payload.control, payload.replayData);
+        if (applied == ProtectedGroupAuthorityApplyResult.rejected) {
+          return ProtectedGroupAuthorityHandleResult.terminalRejected;
+        }
+        if (applied == ProtectedGroupAuthorityApplyResult.retryable) {
+          return ProtectedGroupAuthorityHandleResult.retryable;
+        }
+        await appendAuthorityProof(
+          phase: AuthenticatedGroupAuthorityPhase.complete,
+          proof: proof,
+        );
+        return applied == ProtectedGroupAuthorityApplyResult.applied
+            ? ProtectedGroupAuthorityHandleResult.applied
+            : ProtectedGroupAuthorityHandleResult.duplicate;
+      },
+    );
   } catch (_) {
     return ProtectedGroupAuthorityHandleResult.retryable;
   }
 }
+
+bool _sameAuthenticatedProof(
+  AuthenticatedGroupAuthorityProof left,
+  AuthenticatedGroupAuthorityProof right,
+) => left.signature == right.signature && left.sameUnsigned(right);
 
 /// Returns whether the durable local projection already matches the protected
 /// replay's exact intended authority. `null` means the replay shape is not a

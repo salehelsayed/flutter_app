@@ -5,6 +5,8 @@ import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
@@ -83,6 +85,7 @@ class LinkedGroupBootstrapPayload {
     required this.group,
     required this.members,
     required this.key,
+    required this.authorityProof,
     required this.signature,
   });
 
@@ -98,6 +101,7 @@ class LinkedGroupBootstrapPayload {
   final GroupModel group;
   final List<GroupMember> members;
   final GroupKeyInfo key;
+  final AuthenticatedGroupAuthorityProof authorityProof;
   final String signature;
 
   Map<String, Object?> unsignedBody() => <String, Object?>{
@@ -117,6 +121,7 @@ class LinkedGroupBootstrapPayload {
         .map((member) => member.toMap())
         .toList(growable: false),
     'key': key.toMap(),
+    'authorityProof': authorityProof.toMap(),
   };
 
   String canonicalSignedPayload() =>
@@ -142,6 +147,7 @@ class LinkedGroupBootstrapPayload {
         group: group,
         members: members,
         key: key,
+        authorityProof: authorityProof,
         signature: value,
       );
 
@@ -193,10 +199,14 @@ class LinkedGroupBootstrapPayload {
       final groupRaw = body['group'];
       final membersRaw = body['members'];
       final keyRaw = body['key'];
+      final authorityProof = AuthenticatedGroupAuthorityProof.tryParse(
+        body['authorityProof'],
+      );
       if (groupRaw is! Map<String, dynamic> ||
           membersRaw is! List ||
           membersRaw.isEmpty ||
-          keyRaw is! Map<String, dynamic>) {
+          keyRaw is! Map<String, dynamic> ||
+          authorityProof == null) {
         return null;
       }
       final group = GroupModel.fromMap(groupRaw);
@@ -233,6 +243,7 @@ class LinkedGroupBootstrapPayload {
         group: group,
         members: members,
         key: key,
+        authorityProof: authorityProof,
         signature: signature,
       );
     } catch (_) {
@@ -256,6 +267,7 @@ const _bootstrapBodyKeys = <String>{
   'group',
   'members',
   'key',
+  'authorityProof',
 };
 
 /// Builds and atomically persists one selected-group self bootstrap.
@@ -376,22 +388,53 @@ Future<AuthorLinkedGroupBootstrapResult> authorLinkedGroupBootstrap({
   if (bootstrapId.isEmpty) {
     return AuthorLinkedGroupBootstrapResult.cryptoFailed;
   }
-  var payload = LinkedGroupBootstrapPayload(
-    bootstrapId: bootstrapId,
-    issuedAt: instant,
-    expiresAt: instant.add(linkedGroupBootstrapLifetime),
-    accountPeerId: accountPeerId,
-    accountPublicKey: accountPublicKey,
-    targetDeviceId: verifiedTarget.deviceId,
-    targetTransportPeerId: verifiedTarget.transportPeerId,
-    targetTransportPublicKey: verifiedTarget.transportPublicKey,
-    targetMlKemPublicKey: verifiedTarget.deviceMlKemPublicKey,
-    group: group,
-    members: snapshotMembers,
-    key: key,
-    signature: '',
-  );
   try {
+    var authorityProof = AuthenticatedGroupAuthorityProof(
+      eventId: bootstrapId,
+      groupId: group.id,
+      eventAt: instant,
+      keyEpoch: key.keyGeneration,
+      control: 'bootstrap_genesis',
+      actorAccountPeerId: accountPeerId,
+      actorAccountPublicKey: accountPublicKey,
+      senderTransportPeerId: accountPeerId,
+      senderTransportPublicKey: accountPublicKey,
+      authorityData: _linkedBootstrapAuthorityData(
+        group: group,
+        members: snapshotMembers,
+        key: key,
+        targetDeviceId: verifiedTarget.deviceId,
+        targetTransportPeerId: verifiedTarget.transportPeerId,
+        targetTransportPublicKey: verifiedTarget.transportPublicKey,
+        targetMlKemPublicKey: verifiedTarget.deviceMlKemPublicKey,
+      ),
+      signature: '',
+    );
+    final proofSign = await callSign(
+      authorityProof.canonicalSignedPayload(),
+      ownAccountPrivateKey.trim(),
+    );
+    final proofSignature = _strictString(proofSign['signature']);
+    if (proofSign['ok'] != true || proofSignature == null) {
+      return AuthorLinkedGroupBootstrapResult.cryptoFailed;
+    }
+    authorityProof = authorityProof.withSignature(proofSignature);
+    var payload = LinkedGroupBootstrapPayload(
+      bootstrapId: bootstrapId,
+      issuedAt: instant,
+      expiresAt: instant.add(linkedGroupBootstrapLifetime),
+      accountPeerId: accountPeerId,
+      accountPublicKey: accountPublicKey,
+      targetDeviceId: verifiedTarget.deviceId,
+      targetTransportPeerId: verifiedTarget.transportPeerId,
+      targetTransportPublicKey: verifiedTarget.transportPublicKey,
+      targetMlKemPublicKey: verifiedTarget.deviceMlKemPublicKey,
+      group: group,
+      members: snapshotMembers,
+      key: key,
+      authorityProof: authorityProof,
+      signature: '',
+    );
     final sign = await callSign(
       payload.canonicalSignedPayload(),
       ownAccountPrivateKey.trim(),
@@ -535,11 +578,41 @@ Future<HandleLinkedGroupBootstrapResult> handleLinkedGroupBootstrapEnvelope({
         !payload.expiresAt.isAfter(instant)) {
       return HandleLinkedGroupBootstrapResult.terminalRejected;
     }
+    final proof = payload.authorityProof;
+    final expectedProof = AuthenticatedGroupAuthorityProof(
+      eventId: payload.bootstrapId,
+      groupId: payload.group.id,
+      eventAt: payload.issuedAt,
+      keyEpoch: payload.key.keyGeneration,
+      control: 'bootstrap_genesis',
+      actorAccountPeerId: payload.accountPeerId,
+      actorAccountPublicKey: payload.accountPublicKey,
+      senderTransportPeerId: payload.accountPeerId,
+      senderTransportPublicKey: payload.accountPublicKey,
+      authorityData: _linkedBootstrapAuthorityData(
+        group: payload.group,
+        members: payload.members,
+        key: payload.key,
+        targetDeviceId: payload.targetDeviceId,
+        targetTransportPeerId: payload.targetTransportPeerId,
+        targetTransportPublicKey: payload.targetTransportPublicKey,
+        targetMlKemPublicKey: payload.targetMlKemPublicKey,
+      ),
+      signature: proof.signature,
+    );
+    if (!proof.sameUnsigned(expectedProof)) {
+      return HandleLinkedGroupBootstrapResult.terminalRejected;
+    }
     if (!await callVerify(
-      publicKey: payload.accountPublicKey,
-      data: payload.canonicalSignedPayload(),
-      signature: payload.signature,
-    )) {
+          publicKey: payload.accountPublicKey,
+          data: payload.canonicalSignedPayload(),
+          signature: payload.signature,
+        ) ||
+        !await callVerify(
+          publicKey: proof.actorAccountPublicKey,
+          data: proof.canonicalSignedPayload(),
+          signature: proof.signature,
+        )) {
       return HandleLinkedGroupBootstrapResult.terminalRejected;
     }
     final selfMembers = payload.members
@@ -561,13 +634,25 @@ Future<HandleLinkedGroupBootstrapResult> handleLinkedGroupBootstrapEnvelope({
         payload.key.groupId != payload.group.id) {
       return HandleLinkedGroupBootstrapResult.terminalRejected;
     }
-    final result = await bootstrapRepository
-        .commitLinkedGroupBootstrapMaterialization(
-          bootstrapId: payload.bootstrapId,
-          group: payload.group,
-          members: payload.members,
-          key: payload.key,
-        );
+    final result = await runGroupAuthorityPhase(
+      groupId: payload.group.id,
+      action: () =>
+          bootstrapRepository.commitLinkedGroupBootstrapMaterialization(
+            bootstrapId: payload.bootstrapId,
+            group: payload.group,
+            members: payload.members,
+            key: payload.key,
+            authorityGenesis: LinkedGroupBootstrapAuthorityGenesis(
+              sourcePeerId: proof.actorAccountPeerId,
+              sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                AuthenticatedGroupAuthorityPhase.genesis,
+                proof.eventId,
+              ),
+              sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+              payload: authenticatedGroupAuthorityFactPayload(proof),
+            ),
+          ),
+    );
     return switch (result) {
       LinkedGroupBootstrapMaterializationOutcome.committed =>
         HandleLinkedGroupBootstrapResult.applied,
@@ -580,6 +665,33 @@ Future<HandleLinkedGroupBootstrapResult> handleLinkedGroupBootstrapEnvelope({
     return HandleLinkedGroupBootstrapResult.retryable;
   }
 }
+
+Map<String, Object?> _linkedBootstrapAuthorityData({
+  required GroupModel group,
+  required List<GroupMember> members,
+  required GroupKeyInfo key,
+  required String targetDeviceId,
+  required String targetTransportPeerId,
+  required String targetTransportPublicKey,
+  required String targetMlKemPublicKey,
+}) => <String, Object?>{
+  'group': group.toMap(),
+  'members': (members.toList()..sort((a, b) => a.peerId.compareTo(b.peerId)))
+      .map((member) => member.toMap())
+      .toList(growable: false),
+  'key': <String, Object?>{
+    'groupId': key.groupId,
+    'keyGeneration': key.keyGeneration,
+    'keyMaterialHash': groupAuthoritySha256(key.encryptedKey),
+    'createdAt': fixedGroupAuthorityUtc(key.createdAt),
+  },
+  'target': <String, Object?>{
+    'deviceId': targetDeviceId,
+    'transportPeerId': targetTransportPeerId,
+    'transportPublicKey': targetTransportPublicKey,
+    'mlKemPublicKey': targetMlKemPublicKey,
+  },
+};
 
 String canonicalLinkedGroupAuthorityJson(Object? value) =>
     jsonEncode(_canonicalizeLinkedGroupValue(value));

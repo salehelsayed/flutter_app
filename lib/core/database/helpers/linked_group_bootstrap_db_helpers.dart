@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
+import 'group_event_log_db_helpers.dart';
 
 enum LinkedGroupBootstrapDbDisposition {
   committed,
@@ -227,13 +228,21 @@ dbCommitLinkedGroupBootstrapMaterialization(
   required Map<String, Object?> groupRow,
   required List<Map<String, Object?>> memberRows,
   required Map<String, Object?> keyRow,
+  required String authorityGenesisSourcePeerId,
+  required String authorityGenesisSourceEventId,
+  required String authorityGenesisSourceTimestamp,
+  required Map<String, Object?> authorityGenesisPayload,
 }) {
   return dbWriteTransaction(db, (transaction) async {
     final groupId = groupRow['id'] as String? ?? '';
     if (groupId.isEmpty ||
         memberRows.isEmpty ||
         memberRows.any((row) => row['group_id'] != groupId) ||
-        keyRow['group_id'] != groupId) {
+        keyRow['group_id'] != groupId ||
+        authorityGenesisSourcePeerId.isEmpty ||
+        authorityGenesisSourceEventId.isEmpty ||
+        authorityGenesisSourceTimestamp.isEmpty ||
+        authorityGenesisPayload.isEmpty) {
       return LinkedGroupBootstrapMaterializationDbDisposition.refusedConflict;
     }
     final peerIds = <String>{};
@@ -295,10 +304,6 @@ dbCommitLinkedGroupBootstrapMaterialization(
         existingGroups.isEmpty ||
         missingMembers.isNotEmpty ||
         existingKeys.isEmpty;
-    if (!changed) {
-      return LinkedGroupBootstrapMaterializationDbDisposition.duplicate;
-    }
-
     // All conflicts were rejected above. Only now expose any authoritative
     // rows, so an ordinary refused disposition cannot commit a partial group.
     if (existingGroups.isEmpty) {
@@ -323,7 +328,19 @@ dbCommitLinkedGroupBootstrapMaterialization(
       );
     }
 
-    return LinkedGroupBootstrapMaterializationDbDisposition.committed;
+    final genesis = await dbAppendGroupEventLogEntryInTransaction(
+      transaction,
+      groupId: groupId,
+      eventType: 'protected_authority_genesis',
+      sourcePeerId: authorityGenesisSourcePeerId,
+      sourceEventId: authorityGenesisSourceEventId,
+      sourceTimestamp: authorityGenesisSourceTimestamp,
+      payload: authorityGenesisPayload,
+    );
+
+    return changed || genesis.inserted
+        ? LinkedGroupBootstrapMaterializationDbDisposition.committed
+        : LinkedGroupBootstrapMaterializationDbDisposition.duplicate;
   });
 }
 

@@ -167,6 +167,7 @@ final class _GroupMessageSystemTransitionProcessor {
     String? sourceEventId,
     required GroupMessageRepository msgRepo,
     bool rethrowOnError = false,
+    bool authorityPhaseHeld = false,
   }) async {
     try {
       final parsed = jsonDecode(text) as Map<String, dynamic>;
@@ -585,6 +586,7 @@ final class _GroupMessageSystemTransitionProcessor {
                     : null),
             msgRepo: msgRepo,
             appendSystemEventLog: appendSystemEventLog,
+            authorityPhaseHeld: authorityPhaseHeld,
           );
         });
       } else if (sysType == 'member_banned') {
@@ -1838,6 +1840,7 @@ final class _GroupMessageSystemTransitionProcessor {
     String? removalEventId,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
+    bool authorityPhaseHeld = false,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
@@ -1901,6 +1904,7 @@ final class _GroupMessageSystemTransitionProcessor {
           removalEventId: removalEventId,
           msgRepo: msgRepo,
           appendSystemEventLog: appendSystemEventLog,
+          authorityPhaseHeld: authorityPhaseHeld,
         );
         if (selfRemovalCompleted) {
           // Soft "you were removed" signal — the group row is retained
@@ -2110,6 +2114,7 @@ final class _GroupMessageSystemTransitionProcessor {
     String? removalEventId,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
+    bool authorityPhaseHeld = false,
   }) async {
     final resolvedEventAt = eventAt?.toUtc();
     final stableEventId = removalEventId?.trim();
@@ -2133,8 +2138,9 @@ final class _GroupMessageSystemTransitionProcessor {
 
     final SelfRemovalAuthorityCommitOutcome commitOutcome;
     try {
-      commitOutcome = await runGroupMembershipMutationLocked(
+      commitOutcome = await runGroupAuthorityPhaseIfNeeded(
         groupId: groupId,
+        authorityPhaseHeld: authorityPhaseHeld,
         action: () async {
           final currentSelf = await _groupRepo.getMember(groupId, selfPeerId);
           if (currentSelf == null) {

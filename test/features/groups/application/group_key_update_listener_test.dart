@@ -2645,6 +2645,68 @@ void main() {
       timeoutListener.dispose();
     },
   );
+
+  test(
+    'Plan 363 audit replay repairs key projection in the same process after evidence-first failure',
+    () async {
+      const groupId = 'group-authority-key-repair';
+      const sourceEventId = 'authority-key-repair-2';
+      final eventAt = DateTime.utc(2026, 8, 13, 12, 0, 0, 1);
+      await saveActiveGroup(groupId);
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 1,
+          encryptedKey: 'old-key',
+          createdAt: eventAt.subtract(const Duration(minutes: 1)),
+        ),
+      );
+      final audit = await signDirectKeyUpdateAudit(
+        groupId: groupId,
+        sourceEventId: sourceEventId,
+        eventAt: eventAt,
+        keyGeneration: 2,
+        encryptedKey: 'repaired-key',
+      );
+      final eventLog = _FakeEventLog();
+      final failOnceBridge = _FailOnceUpdateKeyBridge();
+      listener.dispose();
+      final repairListener = GroupKeyUpdateListener(
+        groupKeyUpdateStream: const Stream<ChatMessage>.empty(),
+        groupRepo: groupRepo,
+        bridge: failOnceBridge,
+        getOwnMlKemSecretKey: () async => 'my-secret-key',
+        appendGroupEventLogEntry: eventLog.append,
+      );
+      final message = makeMessage(
+        validEnvelope(
+          groupId: groupId,
+          keyGeneration: 2,
+          encryptedKey: 'repaired-key',
+          sourceEventId: sourceEventId,
+          eventAt: eventAt,
+          signedTransitionAudit: audit,
+        ),
+        confirmNonce: sourceEventId,
+        timestamp: eventAt.toIso8601String(),
+      );
+
+      await repairListener.handleProtectedEnvelope(message);
+      expect(eventLog.entries, hasLength(1));
+      expect(await groupRepo.getKeyByGeneration(groupId, 2), isNull);
+
+      await repairListener.handleProtectedEnvelope(message);
+      expect(eventLog.entries, hasLength(1), reason: 'evidence is exact-once');
+      expect(
+        (await groupRepo.getKeyByGeneration(groupId, 2))?.encryptedKey,
+        'repaired-key',
+      );
+      expect(
+        failOnceBridge.commandLog.where((cmd) => cmd == 'group:updateKey'),
+        hasLength(2),
+      );
+    },
+  );
 }
 
 class _UpdateKeyTimeoutBridge extends PassthroughCryptoBridge {
@@ -2682,6 +2744,26 @@ class _UpdateKeyFailBridge extends PassthroughCryptoBridge {
       lastCommand = cmd;
       commandLog.add(cmd!);
       return jsonEncode({'ok': false, 'errorCode': errorCode});
+    }
+    return super.send(message);
+  }
+}
+
+class _FailOnceUpdateKeyBridge extends PassthroughCryptoBridge {
+  var _failed = false;
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    if (cmd == 'group:updateKey' && !_failed) {
+      _failed = true;
+      sendCallCount++;
+      lastSentMessage = message;
+      sentMessages.add(message);
+      lastCommand = cmd;
+      commandLog.add(cmd!);
+      return jsonEncode({'ok': false, 'errorCode': 'FAIL_ONCE'});
     }
     return super.send(message);
   }

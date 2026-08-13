@@ -2,18 +2,35 @@ import 'dart:async';
 
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-final Map<String, Future<void>> _groupMembershipMutationLocks = {};
+final Map<String, Future<void>> _groupAuthorityPhaseLocks = {};
+final Object _groupAuthorityPhaseZoneKey = Object();
 
-Future<T> runGroupMembershipMutationLocked<T>({
+/// Runs one mutation in the process-wide, per-group authority phase.
+///
+/// Membership, bootstrap receive, protected authority replay, and protected
+/// key application share this queue. Re-entering the same group is rejected
+/// explicitly instead of waiting on itself forever.
+Future<T> runGroupAuthorityPhase<T>({
   required String groupId,
   required Future<T> Function() action,
 }) async {
-  final previous = _groupMembershipMutationLocks[groupId];
+  final normalizedGroupId = groupId.trim();
+  if (normalizedGroupId.isEmpty) {
+    throw ArgumentError.value(groupId, 'groupId', 'must not be empty');
+  }
+  final held = Zone.current[_groupAuthorityPhaseZoneKey] as Set<String>?;
+  if (held?.contains(normalizedGroupId) ?? false) {
+    throw StateError(
+      'group authority phase is non-reentrant for $normalizedGroupId',
+    );
+  }
+
+  final previous = _groupAuthorityPhaseLocks[normalizedGroupId];
   final gate = Completer<void>();
   final current = (previous ?? Future<void>.value())
       .catchError((_) {})
       .then((_) => gate.future);
-  _groupMembershipMutationLocks[groupId] = current;
+  _groupAuthorityPhaseLocks[normalizedGroupId] = current;
 
   if (previous != null) {
     try {
@@ -24,15 +41,34 @@ Future<T> runGroupMembershipMutationLocked<T>({
   }
 
   try {
-    return await action();
+    return await runZoned(
+      action,
+      zoneValues: <Object, Object>{
+        _groupAuthorityPhaseZoneKey: <String>{...?held, normalizedGroupId},
+      },
+    );
   } finally {
     if (!gate.isCompleted) {
       gate.complete();
     }
-    if (identical(_groupMembershipMutationLocks[groupId], current)) {
-      _groupMembershipMutationLocks.remove(groupId);
+    if (identical(_groupAuthorityPhaseLocks[normalizedGroupId], current)) {
+      _groupAuthorityPhaseLocks.remove(normalizedGroupId);
     }
   }
+}
+
+Future<T> runGroupMembershipMutationLocked<T>({
+  required String groupId,
+  required Future<T> Function() action,
+}) => runGroupAuthorityPhase(groupId: groupId, action: action);
+
+Future<T> runGroupAuthorityPhaseIfNeeded<T>({
+  required String groupId,
+  required bool authorityPhaseHeld,
+  required Future<T> Function() action,
+}) {
+  if (authorityPhaseHeld) return action();
+  return runGroupAuthorityPhase(groupId: groupId, action: action);
 }
 
 /// Whether an incoming membership event is stale relative to the recorded

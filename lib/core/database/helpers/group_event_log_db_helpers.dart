@@ -126,6 +126,59 @@ Future<List<Map<String, Object?>>> dbLoadGroupEventLogEntries(
   );
 }
 
+Future<Map<String, Object?>?> dbLoadGroupEventLogEntryExact(
+  Database db, {
+  required String groupId,
+  required String sourceEventId,
+}) async {
+  final rows = await db.query(
+    'group_event_log',
+    where: 'group_id = ? AND source_event_id = ?',
+    whereArgs: <Object?>[groupId, sourceEventId],
+    limit: 1,
+  );
+  return rows.isEmpty ? null : rows.single;
+}
+
+/// Bounded history page in chronological index order.
+Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
+  Database db, {
+  required String groupId,
+  required String eventType,
+  String? afterSourceTimestamp,
+  String? afterSourceEventId,
+  String? throughSourceTimestamp,
+  int limit = 100,
+}) {
+  if (limit < 1 || limit > 200) {
+    throw RangeError.range(limit, 1, 200, 'limit');
+  }
+  final where = <String>['group_id = ?', 'event_type = ?'];
+  final args = <Object?>[groupId, eventType];
+  if (afterSourceTimestamp != null) {
+    where.add(
+      '(source_timestamp > ? OR '
+      '(source_timestamp = ? AND source_event_id > ?))',
+    );
+    args.addAll(<Object?>[
+      afterSourceTimestamp,
+      afterSourceTimestamp,
+      afterSourceEventId ?? '',
+    ]);
+  }
+  if (throughSourceTimestamp != null) {
+    where.add('source_timestamp <= ?');
+    args.add(throughSourceTimestamp);
+  }
+  return db.query(
+    'group_event_log',
+    where: where.join(' AND '),
+    whereArgs: args,
+    orderBy: 'source_timestamp ASC, source_event_id ASC',
+    limit: limit,
+  );
+}
+
 Future<List<GroupEventLogChainViolation>> dbVerifyGroupEventLogChain(
   Database db,
 ) async {

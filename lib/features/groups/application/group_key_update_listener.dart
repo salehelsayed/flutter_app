@@ -7,6 +7,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -85,49 +86,66 @@ class GroupKeyUpdateListener {
 
   /// Runs one protected authority envelope through the incumbent verified key
   /// update path without starting the generic group-topic listener.
-  Future<void> handleProtectedEnvelope(ChatMessage message) =>
-      _handleMessage(message);
+  Future<void> handleProtectedEnvelope(
+    ChatMessage message, {
+    bool authorityPhaseHeld = false,
+  }) => _handleMessage(message, authorityPhaseHeld: authorityPhaseHeld);
 
-  Future<void> _handleMessage(ChatMessage message) async {
+  Future<void> _handleMessage(
+    ChatMessage message, {
+    bool authorityPhaseHeld = false,
+    Map<String, dynamic>? decodedKeyData,
+  }) async {
     try {
-      final json = jsonDecode(message.content) as Map<String, dynamic>;
-      final encrypted = json['encrypted'] as Map<String, dynamic>?;
-      if (encrypted == null) return;
+      late final Map<String, dynamic> keyData;
+      if (decodedKeyData != null) {
+        keyData = decodedKeyData;
+      } else {
+        final json = jsonDecode(message.content) as Map<String, dynamic>;
+        final encrypted = json['encrypted'] as Map<String, dynamic>?;
+        if (encrypted == null) return;
 
-      final kem = encrypted['kem'] as String;
-      final ciphertext = encrypted['ciphertext'] as String;
-      final nonce = encrypted['nonce'] as String;
+        final secretKey = await _getOwnMlKemSecretKey();
+        if (secretKey == null) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_KEY_UPDATE_LISTENER_NO_SECRET_KEY',
+            details: {},
+          );
+          return;
+        }
 
-      final secretKey = await _getOwnMlKemSecretKey();
-      if (secretKey == null) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_KEY_UPDATE_LISTENER_NO_SECRET_KEY',
-          details: {},
+        final decryptResult = await callDecryptMessage(
+          bridge: _bridge,
+          ownMlKemSecretKey: secretKey,
+          kem: encrypted['kem'] as String,
+          ciphertext: encrypted['ciphertext'] as String,
+          nonce: encrypted['nonce'] as String,
         );
-        return;
+        if (decryptResult['ok'] != true) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_KEY_UPDATE_LISTENER_DECRYPT_FAILED',
+            details: {'errorCode': decryptResult['errorCode']},
+          );
+          return;
+        }
+        final plaintext = decryptResult['plaintext'] as String;
+        keyData = jsonDecode(plaintext) as Map<String, dynamic>;
       }
 
-      final decryptResult = await callDecryptMessage(
-        bridge: _bridge,
-        ownMlKemSecretKey: secretKey,
-        kem: kem,
-        ciphertext: ciphertext,
-        nonce: nonce,
-      );
-
-      if (decryptResult['ok'] != true) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_KEY_UPDATE_LISTENER_DECRYPT_FAILED',
-          details: {'errorCode': decryptResult['errorCode']},
-        );
-        return;
-      }
-
-      final plaintext = decryptResult['plaintext'] as String;
-      final keyData = jsonDecode(plaintext) as Map<String, dynamic>;
       final groupId = keyData['groupId'] as String;
+      if (!authorityPhaseHeld) {
+        await runGroupAuthorityPhase<void>(
+          groupId: groupId,
+          action: () => _handleMessage(
+            message,
+            authorityPhaseHeld: true,
+            decodedKeyData: keyData,
+          ),
+        );
+        return;
+      }
       final keyGeneration = keyData['keyGeneration'] as int;
       final encryptedKey = keyData['encryptedKey'] as String;
       final sourcePeerId = keyData['sourcePeerId'] as String?;
@@ -363,18 +381,19 @@ class GroupKeyUpdateListener {
         final acceptedHash =
             _acceptedSignedTransitionAuditHashesBySourceId[resolvedSourceEventId];
         if (acceptedHash != null) {
-          if (signedAuditHash != null && acceptedHash == signedAuditHash) {
+          if (signedAuditHash == null || acceptedHash != signedAuditHash) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_KEY_UPDATE_LISTENER_SIGNED_AUDIT_REJECTED',
+              details: {
+                'groupId': groupId.length > 8
+                    ? groupId.substring(0, 8)
+                    : groupId,
+                'reason': 'conflicting_replay',
+              },
+            );
             return;
           }
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'GROUP_KEY_UPDATE_LISTENER_SIGNED_AUDIT_REJECTED',
-            details: {
-              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-              'reason': 'conflicting_replay',
-            },
-          );
-          return;
         }
 
         final auditCheck = await verifyGroupTransitionAudit(

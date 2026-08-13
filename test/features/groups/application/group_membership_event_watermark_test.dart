@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
@@ -18,6 +20,41 @@ GroupModel _group({DateTime? lastAt, String? lastId}) => GroupModel(
 );
 
 void main() {
+  test(
+    'Plan 363 audit shared authority phase serializes and rejects same-group reentry',
+    () async {
+      final entered = Completer<void>();
+      final release = Completer<void>();
+      final order = <String>[];
+      final first = runGroupAuthorityPhase<void>(
+        groupId: 'group-authority-phase',
+        action: () async {
+          order.add('first-enter');
+          await expectLater(
+            runGroupAuthorityPhase<void>(
+              groupId: 'group-authority-phase',
+              action: () async {},
+            ),
+            throwsA(isA<StateError>()),
+          );
+          entered.complete();
+          await release.future;
+          order.add('first-exit');
+        },
+      );
+      await entered.future;
+      final second = runGroupAuthorityPhase<void>(
+        groupId: 'group-authority-phase',
+        action: () async => order.add('second'),
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(order, <String>['first-enter']);
+      release.complete();
+      await Future.wait(<Future<void>>[first, second]);
+      expect(order, <String>['first-enter', 'first-exit', 'second']);
+    },
+  );
+
   group('nextMembershipEventAt', () {
     final last = DateTime.utc(2026, 6, 16, 12);
 
@@ -177,18 +214,24 @@ void main() {
 
     setUp(() => repo = InMemoryGroupRepository());
 
-    test('persists both eventAt and eventId on a strictly-newer event', () async {
-      await repo.saveGroup(_group(lastAt: instant, lastId: 'a'));
-      await recordGroupMembershipEventWatermark(
-        groupRepo: repo,
-        groupId: 'group-1',
-        eventAt: instant.add(const Duration(seconds: 1)),
-        eventId: 'b',
-      );
-      final group = await repo.getGroup('group-1');
-      expect(group!.lastMembershipEventAt, instant.add(const Duration(seconds: 1)));
-      expect(group.lastMembershipEventId, 'b');
-    });
+    test(
+      'persists both eventAt and eventId on a strictly-newer event',
+      () async {
+        await repo.saveGroup(_group(lastAt: instant, lastId: 'a'));
+        await recordGroupMembershipEventWatermark(
+          groupRepo: repo,
+          groupId: 'group-1',
+          eventAt: instant.add(const Duration(seconds: 1)),
+          eventId: 'b',
+        );
+        final group = await repo.getGroup('group-1');
+        expect(
+          group!.lastMembershipEventAt,
+          instant.add(const Duration(seconds: 1)),
+        );
+        expect(group.lastMembershipEventId, 'b');
+      },
+    );
 
     test('advances on equal instant when the new id out-tiebreaks', () async {
       await repo.saveGroup(_group(lastAt: instant, lastId: 'a'));

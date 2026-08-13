@@ -178,6 +178,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
@@ -3316,13 +3317,24 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 expectedBroadcast: expectedBroadcast,
               ),
       dbCommitLinkedGroupBootstrapMaterializationFn:
-          ({required groupRow, required memberRows, required keyRow}) =>
-              dbCommitLinkedGroupBootstrapMaterialization(
-                db,
-                groupRow: groupRow,
-                memberRows: memberRows,
-                keyRow: keyRow,
-              ),
+          ({
+            required groupRow,
+            required memberRows,
+            required keyRow,
+            required authorityGenesisSourcePeerId,
+            required authorityGenesisSourceEventId,
+            required authorityGenesisSourceTimestamp,
+            required authorityGenesisPayload,
+          }) => dbCommitLinkedGroupBootstrapMaterialization(
+            db,
+            groupRow: groupRow,
+            memberRows: memberRows,
+            keyRow: keyRow,
+            authorityGenesisSourcePeerId: authorityGenesisSourcePeerId,
+            authorityGenesisSourceEventId: authorityGenesisSourceEventId,
+            authorityGenesisSourceTimestamp: authorityGenesisSourceTimestamp,
+            authorityGenesisPayload: authorityGenesisPayload,
+          ),
       dbHasLinkedGroupBootstrapIntentFn:
           ({required groupId, required transportPeerId}) =>
               dbHasLinkedGroupBootstrapIntent(
@@ -6257,11 +6269,26 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     );
     setProtectedGroupAuthorityAdapter(
       prepare: (request) async {
+        final replayKeyEpoch = request.replayData['keyGeneration'];
+        final authorityKeyEpoch =
+            request.control == ProtectedGroupAuthorityControl.groupKeyUpdate &&
+                replayKeyEpoch is int
+            ? replayKeyEpoch
+            : (await groupRepository.getLatestKey(
+                request.groupId,
+              ))?.keyGeneration;
+        if (authorityKeyEpoch == null || authorityKeyEpoch <= 0) {
+          return ProtectedGroupAuthorityPreparation(
+            groupId: request.groupId,
+            rows: const <GroupPendingBroadcast>[],
+          );
+        }
         final rows = await buildProtectedGroupAuthorityRows(
           groupId: request.groupId,
           transitionId: request.transitionId,
           control: request.control,
           replayData: request.replayData,
+          keyEpoch: authorityKeyEpoch,
           actorAccountPeerId: request.actorAccountPeerId,
           actorAccountPublicKey: request.actorAccountPublicKey,
           actorAccountPrivateKey: request.actorAccountPrivateKey,
@@ -6857,6 +6884,44 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               data: data,
               signature: signature,
             ),
+        loadAuthorityProof:
+            ({required groupId, required phase, required eventId}) =>
+                loadAuthenticatedGroupAuthorityProofFromEventLog(
+                  loadRow: ({required groupId, required sourceEventId}) =>
+                      dbLoadGroupEventLogEntryExact(
+                        db,
+                        groupId: groupId,
+                        sourceEventId: sourceEventId,
+                      ),
+                  groupId: groupId,
+                  phase: phase,
+                  eventId: eventId,
+                  verify:
+                      ({
+                        required publicKey,
+                        required data,
+                        required signature,
+                      }) => callVerifyPayload(
+                        bridge: bridge,
+                        publicKey: publicKey,
+                        data: data,
+                        signature: signature,
+                      ),
+                ),
+        appendAuthorityProof: ({required phase, required proof}) async {
+          await dbAppendGroupEventLogEntry(
+            db,
+            groupId: proof.groupId,
+            eventType: phase.eventType,
+            sourcePeerId: proof.actorAccountPeerId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              phase,
+              proof.eventId,
+            ),
+            sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+            payload: authenticatedGroupAuthorityFactPayload(proof),
+          );
+        },
         applyReplay: (control, replayData) async {
           try {
             final before = await protectedGroupAuthorityReplayConverged(
@@ -6889,12 +6954,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                   timestamp: timestamp,
                   isIncoming: true,
                 ),
+                authorityPhaseHeld: true,
               );
             } else {
               await groupMessageListener.handleReplayEnvelope(
                 replayData,
                 rethrowOnError: true,
                 allowMembershipBuffer: true,
+                membershipPhaseHeld: true,
               );
             }
             final after = await protectedGroupAuthorityReplayConverged(
