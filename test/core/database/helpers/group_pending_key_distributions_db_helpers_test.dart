@@ -29,6 +29,7 @@ void main() {
     int attempts = 0,
     String? transportPeerId = 'transport-carol',
     String? deviceId = 'device-carol',
+    String createdAt = '2026-06-16T12:00:00.000Z',
     String updatedAt = '2026-06-16T12:00:00.000Z',
     String? finalizedAt,
   }) {
@@ -42,7 +43,7 @@ void main() {
       'status': status,
       'attempts': attempts,
       'last_error': null,
-      'created_at': '2026-06-16T12:00:00.000Z',
+      'created_at': createdAt,
       'updated_at': updatedAt,
       'finalized_at': finalizedAt,
     };
@@ -55,7 +56,11 @@ void main() {
     );
     final duplicate = await dbUpsertGroupPendingKeyDistribution(
       db,
-      distributionRow(keyEpoch: 3, updatedAt: '2026-06-16T12:01:00.000Z'),
+      distributionRow(
+        keyEpoch: 3,
+        createdAt: '2026-06-16T12:01:00.000Z',
+        updatedAt: '2026-06-16T12:01:00.000Z',
+      ),
     );
 
     expect(created, isTrue);
@@ -67,6 +72,10 @@ void main() {
     );
     expect(loaded, isNotNull);
     expect(loaded!['key_epoch'], 3); // merged forward to the newer rotation
+    expect(
+      loaded['created_at'],
+      '2026-06-16T12:00:00.000Z',
+    ); // pending merge is still the same operation
     expect(loaded['updated_at'], '2026-06-16T12:01:00.000Z');
     expect(loaded['attempts'], 0); // attempts NOT reset
 
@@ -182,11 +191,107 @@ void main() {
       expect(loaded['attempts'], 0); // reset
       expect(loaded['last_error'], isNull);
       expect(loaded['finalized_at'], isNull);
+      expect(loaded['created_at'], '2026-06-16T12:00:00.000001Z');
+      expect(
+        GroupPendingKeyDistribution.fromMap(loaded).operationGeneration,
+        DateTime.parse('2026-06-16T12:00:00.000001Z').microsecondsSinceEpoch,
+      );
     },
   );
 
+  test(
+    'every reopen advances operation generation despite same or older clocks',
+    () async {
+      await dbUpsertGroupPendingKeyDistribution(db, distributionRow());
+
+      await dbReopenGroupPendingKeyDistributionForRedelivery(
+        db,
+        distributionRow(
+          createdAt: '2026-06-16T11:59:00.000Z',
+          updatedAt: '2026-06-16T12:01:00.000Z',
+        ),
+      );
+      var loaded = await dbLoadGroupPendingKeyDistribution(
+        db,
+        'gpkd:group-1:peer-carol',
+      );
+      expect(loaded!['created_at'], '2026-06-16T12:00:00.000001Z');
+
+      // The row is already pending and the caller repeats an older timestamp.
+      // This is an intentional same-device re-arm, not an idempotent enqueue.
+      await dbReopenGroupPendingKeyDistributionForRedelivery(
+        db,
+        distributionRow(
+          createdAt: '2026-06-16T11:59:00.000Z',
+          updatedAt: '2026-06-16T12:02:00.000Z',
+        ),
+      );
+      loaded = await dbLoadGroupPendingKeyDistribution(
+        db,
+        'gpkd:group-1:peer-carol',
+      );
+      expect(loaded!['created_at'], '2026-06-16T12:00:00.000002Z');
+
+      await dbReopenGroupPendingKeyDistributionForRedelivery(
+        db,
+        distributionRow(
+          createdAt: '2026-06-16T12:10:00.000Z',
+          updatedAt: '2026-06-16T12:10:00.000Z',
+        ),
+      );
+      loaded = await dbLoadGroupPendingKeyDistribution(
+        db,
+        'gpkd:group-1:peer-carol',
+      );
+      expect(loaded!['created_at'], '2026-06-16T12:10:00.000Z');
+    },
+  );
+
+  test('reopen generation fences a stale exact tuple', () async {
+    await dbUpsertGroupPendingKeyDistribution(db, distributionRow());
+    final stale = await dbLoadGroupPendingKeyDistribution(
+      db,
+      'gpkd:group-1:peer-carol',
+    );
+
+    // Keep every mutable field identical so `created_at` is the only changed
+    // exact-CAS component.
+    await dbReopenGroupPendingKeyDistributionForRedelivery(
+      db,
+      distributionRow(),
+    );
+
+    expect(
+      await dbRecordGroupPendingKeyDistributionAttemptIfExact(
+        db,
+        stale!,
+        lastError: 'stale owner',
+        updatedAt: '2026-06-16T12:01:00.000Z',
+      ),
+      isFalse,
+    );
+    final current = await dbLoadGroupPendingKeyDistribution(
+      db,
+      'gpkd:group-1:peer-carol',
+    );
+    expect(current!['attempts'], 0);
+    expect(current['created_at'], '2026-06-16T12:00:00.000001Z');
+    expect(
+      await dbRecordGroupPendingKeyDistributionAttemptIfExact(
+        db,
+        current,
+        lastError: null,
+        updatedAt: '2026-06-16T12:01:00.000Z',
+      ),
+      isTrue,
+    );
+  });
+
   test('reopenForRedelivery creates the row when none exists', () async {
-    await dbReopenGroupPendingKeyDistributionForRedelivery(db, distributionRow());
+    await dbReopenGroupPendingKeyDistributionForRedelivery(
+      db,
+      distributionRow(),
+    );
     final loaded = await dbLoadGroupPendingKeyDistribution(
       db,
       'gpkd:group-1:peer-carol',

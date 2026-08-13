@@ -347,6 +347,74 @@ import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 /// bootstrap preparation.
 Future<void>? keychainMirrorBackfill;
 
+/// Production's exact restart path for a persisted deferred-key PREPARED fact.
+///
+/// Kept as one testable seam because a deferred distribution may be reopened at
+/// the same key epoch after a sibling-device admission. The caller must address
+/// that new operation with a fresh transition ID; once addressed, this helper
+/// accepts only the proof-bound ACL and its exact surviving immutable rows.
+@visibleForTesting
+Future<ProtectedGroupAuthorityPreparation?>
+resumeProductionPreparedProtectedGroupKeyAuthority({
+  required AuthenticatedGroupAuthorityProof persistedProof,
+  required ProtectedGroupAuthorityPrepareRequest request,
+  required int keyEpoch,
+  required GroupPendingBroadcastRepository pendingRepository,
+}) async {
+  if (!request.resumePreparedSurvivors ||
+      request.control != ProtectedGroupAuthorityControl.groupKeyUpdate ||
+      persistedProof.groupId != request.groupId ||
+      persistedProof.eventId != request.transitionId) {
+    return null;
+  }
+  if (!protectedGroupAuthorityProofMatchesPrepareRequest(
+    proof: persistedProof,
+    request: request,
+    keyEpoch: keyEpoch,
+  )) {
+    return null;
+  }
+  final rawAcl = persistedProof.authorityData['recipientTransportPeerIds'];
+  if (rawAcl is! List || rawAcl.any((recipient) => recipient is! String)) {
+    return null;
+  }
+  final acl = rawAcl.cast<String>().toSet();
+  if (acl.length != rawAcl.length) return null;
+  final seen = <String>{};
+  final survivors = <GroupPendingBroadcast>[];
+  final pending = await pendingRepository.forGroup(request.groupId);
+  for (final row in pending) {
+    if (row.kind != groupPendingBroadcastKindProtectedAuthority) continue;
+    final identity = parseProtectedGroupAuthorityDeliveryId(
+      row.sourceMessageId ?? '',
+    );
+    if (identity == null) return null;
+    if (identity.transitionId != request.transitionId) continue;
+    if (identity.control != request.control ||
+        row.recipientPeerIds.length != 1) {
+      return null;
+    }
+    final recipient = row.recipientPeerIds.single;
+    if (identity.recipientTransportPeerId != recipient ||
+        !acl.contains(recipient) ||
+        !seen.add(recipient)) {
+      return null;
+    }
+    survivors.add(row);
+  }
+  survivors.sort(
+    (left, right) =>
+        left.recipientPeerIds.single.compareTo(right.recipientPeerIds.single),
+  );
+  return ProtectedGroupAuthorityPreparation(
+    groupId: request.groupId,
+    rows: survivors,
+    authorityProof: persistedProof,
+    control: request.control,
+    replayData: Map<String, dynamic>.from(request.replayData),
+  );
+}
+
 Stream<void> _mergeVoidStreams(Iterable<Stream<void>> inputs) {
   return Stream<void>.multi((controller) {
     final subscriptions = inputs
@@ -6969,58 +7037,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               eventId: request.transitionId,
             );
             if (persistedProof != null) {
-              if (!protectedGroupAuthorityProofMatchesPrepareRequest(
-                proof: persistedProof,
+              return resumeProductionPreparedProtectedGroupKeyAuthority(
+                persistedProof: persistedProof,
                 request: request,
                 keyEpoch: authorityKeyEpoch,
-              )) {
-                return null;
-              }
-              final rawAcl =
-                  persistedProof.authorityData['recipientTransportPeerIds'];
-              if (rawAcl is! List ||
-                  rawAcl.any((recipient) => recipient is! String)) {
-                return null;
-              }
-              final acl = rawAcl.cast<String>().toSet();
-              if (acl.length != rawAcl.length) return null;
-              final seen = <String>{};
-              final survivors = <GroupPendingBroadcast>[];
-              final pending = await groupPendingBroadcastRepository.forGroup(
-                request.groupId,
-              );
-              for (final row in pending) {
-                if (row.kind != groupPendingBroadcastKindProtectedAuthority) {
-                  continue;
-                }
-                final identity = parseProtectedGroupAuthorityDeliveryId(
-                  row.sourceMessageId ?? '',
-                );
-                if (identity == null) return null;
-                if (identity.transitionId != request.transitionId) continue;
-                if (identity.control != request.control ||
-                    row.recipientPeerIds.length != 1) {
-                  return null;
-                }
-                final recipient = row.recipientPeerIds.single;
-                if (identity.recipientTransportPeerId != recipient ||
-                    !acl.contains(recipient) ||
-                    !seen.add(recipient)) {
-                  return null;
-                }
-                survivors.add(row);
-              }
-              survivors.sort(
-                (left, right) => left.recipientPeerIds.single.compareTo(
-                  right.recipientPeerIds.single,
-                ),
-              );
-              return ProtectedGroupAuthorityPreparation(
-                groupId: request.groupId,
-                rows: survivors,
-                authorityProof: persistedProof,
-                control: request.control,
-                replayData: Map<String, dynamic>.from(request.replayData),
+                pendingRepository: groupPendingBroadcastRepository,
               );
             }
           }

@@ -129,7 +129,10 @@ const _relocations = <String, List<String>>{
       'group_pending_key_distribution_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/'
         'group_pending_key_distribution_repository_impl.dart',
-    '040432e247dd6dd2ea631e9b159554e487c5c344b3aef7fe852793cb0c1a578a',
+    // Same-epoch sibling rearm makes the existing DB reopen delegate required
+    // so every production reopen durably advances its exact-CAS generation;
+    // repository placement and stale-source checks remain unchanged.
+    '4bc7a0a27d1094b05b926abfc7187606fc2464a86ad0f50d4a37cd23f563cc22',
   ],
   'lib/features/groups/domain/repositories/'
       'group_pending_key_repair_repository_impl.dart': <String>[

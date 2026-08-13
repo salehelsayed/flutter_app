@@ -215,6 +215,7 @@ class GroupPendingKeyDistributionRunner {
         groupRepo: groupRepo,
         groupId: row.groupId,
         peerId: row.peerId,
+        operationGeneration: row.operationGeneration,
         selfPeerId: identity.peerId,
         senderPublicKey: identity.publicKey,
         senderPrivateKey: identity.privateKey,

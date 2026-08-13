@@ -266,6 +266,10 @@ Map<String, Object?> secretFreeProtectedAuthorityData({
         'encryptedKeyHash': groupAuthoritySha256(encryptedKey),
       'from': replayData['from'],
       'timestamp': replayData['timestamp'],
+      if (replayData['operationGeneration'] is int)
+        'operationGeneration': replayData['operationGeneration'],
+      if (replayData['deviceSetDigest'] is String)
+        'deviceSetDigest': replayData['deviceSetDigest'],
       'recipientTransportPeerIds': ?recipients,
     };
   }

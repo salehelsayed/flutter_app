@@ -1496,7 +1496,8 @@ void main() {
           allOf(
             contains('resumePreparedSurvivors'),
             contains('pendingDissolves.any('),
-            contains('newestFirst: true'),
+            contains('dbLoadUnfinishedProtectedAuthorityPage('),
+            contains('sourcePeerId: identity.peerId'),
             contains('activeDevicesWithLegacyFallback()'),
             contains('deliveryReplayDataByTransportPeerId'),
           ),

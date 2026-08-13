@@ -42945,6 +42945,7 @@ Future<void> _runKe015Alice(
         groupRepo: stack.groupRepo,
         groupId: groupId,
         peerId: charliePeerId,
+        operationGeneration: 1,
         selfPeerId: stack.identity.peerId,
         senderPublicKey: stack.identity.publicKey,
         senderPrivateKey: stack.identity.privateKey,

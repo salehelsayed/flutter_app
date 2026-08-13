@@ -39,9 +39,19 @@ class GroupPendingKeyDistribution {
   final String status;
   final int attempts;
   final String? lastError;
+
+  /// Durable start of this delivery operation.
+  ///
+  /// A deliberate re-open advances this value even when the key epoch and
+  /// device set are unchanged. Ordinary retries and pending-row merges retain
+  /// it, so it is safe to bind into the protected authority identity without a
+  /// schema change.
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? finalizedAt;
+
+  /// Stable identity for this specific enqueue/re-open operation.
+  int get operationGeneration => createdAt.toUtc().microsecondsSinceEpoch;
 
   const GroupPendingKeyDistribution({
     required this.id,

@@ -220,8 +220,11 @@ const _applicationRootNormalizedSha256 =
 // PREPARED recovery/abort, bounded terminal-free restart discovery, strict
 // native metadata completion, and exact row-owned key-draft restart recovery
 // without relocating an adapter or core shim.
+// The final same-epoch sibling rearm closure keeps that composition in this
+// root while exposing the exact persisted-PREPARED survivor matcher for a
+// production-path regression; no ownership boundary moved.
 const _productionBootstrapNormalizedSha256 =
-    'cab0c53afcfe6885d17b2c87e198b7276ba231985393725ebe0f24001ebceb0a';
+    '76be1b304ba1f40af75ef7b3bf76d84b9997a4c701c76d0909d15786ff98b885';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

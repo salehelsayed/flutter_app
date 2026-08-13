@@ -50,14 +50,24 @@ class InMemoryGroupPendingKeyDistributionRepository
       rows[distribution.id] = distribution;
       return;
     }
+    final requestedGeneration = distribution.createdAt.toUtc();
+    final minimumNextGeneration = existing.createdAt.toUtc().add(
+      const Duration(microseconds: 1),
+    );
+    final nextGeneration = requestedGeneration.isAfter(minimumNextGeneration)
+        ? requestedGeneration
+        : minimumNextGeneration;
     // Force back to pending for re-delivery, OVERRIDING a terminal status and
-    // resetting attempts/lastError/finalizedAt (the member's device set changed).
+    // resetting attempts/lastError/finalizedAt. `createdAt` is the durable
+    // operation generation and advances for every intentional re-arm,
+    // including an already-pending same-device re-announce.
     rows[distribution.id] = existing.copyWith(
       status: groupPendingKeyDistributionStatusPending,
       keyEpoch: distribution.keyEpoch,
       attempts: 0,
       lastError: null,
       finalizedAt: null,
+      createdAt: nextGeneration,
       updatedAt: distribution.updatedAt,
     );
   }

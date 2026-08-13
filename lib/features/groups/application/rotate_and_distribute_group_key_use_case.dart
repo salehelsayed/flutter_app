@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -86,6 +87,44 @@ void setDeferredGroupKeyDistributionReopenSink(
   EnqueueDeferredGroupKeyDistribution? sink,
 ) {
   _deferredGroupKeyDistributionReopenSink = sink;
+}
+
+/// Canonical SHA-256 identity for the exact physical-device set owned by one
+/// deferred group-key delivery operation.
+///
+/// Ordering is deliberately excluded from the identity, while every field
+/// that can change a deliverable target is retained. Null key-package fields
+/// remain distinct from empty strings, and [GroupMemberDeviceIdentity.isActive]
+/// binds revocation into the identity without embedding a wall-clock value.
+String canonicalDeferredDeviceSetDigest(
+  Iterable<GroupMemberDeviceIdentity> devices,
+) {
+  final deviceIds = <String>{};
+  final transportPeerIds = <String>{};
+  final tuples = <Map<String, Object?>>[];
+  for (final device in devices) {
+    if (!deviceIds.add(device.deviceId) ||
+        !transportPeerIds.add(device.transportPeerId)) {
+      throw const FormatException(
+        'Deferred device set contains a duplicate device identity.',
+      );
+    }
+    tuples.add(<String, Object?>{
+      'deviceId': device.deviceId,
+      'transportPeerId': device.transportPeerId,
+      'deviceSigningPublicKey': device.deviceSigningPublicKey,
+      'mlKemPublicKey': device.mlKemPublicKey,
+      'keyPackageId': device.keyPackageId,
+      'keyPackagePublicMaterial': device.keyPackagePublicMaterial,
+      'isActive': device.isActive,
+    });
+  }
+  tuples.sort(
+    (left, right) => canonicalLinkedGroupAuthorityJson(
+      left,
+    ).compareTo(canonicalLinkedGroupAuthorityJson(right)),
+  );
+  return groupAuthoritySha256(canonicalLinkedGroupAuthorityJson(tuples));
 }
 
 /// Process-wide trigger to (re)OPEN a deferred distribution row for [peerId] to
@@ -949,6 +988,7 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
   required GroupRepository groupRepo,
   required String groupId,
   required String peerId,
+  required int operationGeneration,
   required String selfPeerId,
   required String senderPublicKey,
   required String senderPrivateKey,
@@ -960,6 +1000,9 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
   int attemptCount = 3,
   Duration retryDelay = const Duration(milliseconds: 500),
 }) async {
+  if (operationGeneration <= 0) {
+    return 0;
+  }
   final members = await groupRepo.getMembers(groupId);
   final selfMatches = members.where((member) => member.peerId == selfPeerId);
   final selfMember = selfMatches.isEmpty ? null : selfMatches.first;
@@ -1005,9 +1048,15 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
     final frozenRecipients = List<GroupMemberDeviceIdentity>.unmodifiable(
       devices,
     );
+    late final String deviceSetDigest;
+    try {
+      deviceSetDigest = canonicalDeferredDeviceSetDigest(frozenRecipients);
+    } on FormatException {
+      return 0;
+    }
     final transitionId =
         'group_key_update_deferred:$groupId:$selfPeerId:$peerId:'
-        '${latestKey.keyGeneration}';
+        '${latestKey.keyGeneration}:$operationGeneration:$deviceSetDigest';
     final deliveryReplayData = <String, Map<String, dynamic>>{};
     for (final device in devices) {
       try {
@@ -1033,6 +1082,8 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
           'keyGeneration': latestKey.keyGeneration,
           'encryptedKey': latestKey.encryptedKey,
           'from': sourceDevice.transportPeerId,
+          'operationGeneration': operationGeneration,
+          'deviceSetDigest': deviceSetDigest,
           'to': device.transportPeerId,
           'content': built.envelope,
           'timestamp': eventAt.toIso8601String(),
@@ -1059,6 +1110,8 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
           'keyGeneration': latestKey.keyGeneration,
           'encryptedKey': latestKey.encryptedKey,
           'from': sourceDevice.transportPeerId,
+          'operationGeneration': operationGeneration,
+          'deviceSetDigest': deviceSetDigest,
           'timestamp': eventAt.toIso8601String(),
         },
         actorAccountPeerId: selfPeerId,

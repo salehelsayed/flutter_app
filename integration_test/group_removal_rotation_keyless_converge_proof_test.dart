@@ -698,11 +698,18 @@ class _InMemoryDistributionRepo
       rows[distribution.id] = distribution;
       return;
     }
+    final requestedCreatedAt = distribution.createdAt.toUtc();
+    final minimumNextCreatedAt = existing.createdAt.toUtc().add(
+      const Duration(microseconds: 1),
+    );
     rows[distribution.id] = existing.copyWith(
       status: groupPendingKeyDistributionStatusPending,
       keyEpoch: distribution.keyEpoch,
       attempts: 0,
       lastError: null,
+      createdAt: requestedCreatedAt.isAfter(minimumNextCreatedAt)
+          ? requestedCreatedAt
+          : minimumNextCreatedAt,
       finalizedAt: null,
       updatedAt: distribution.updatedAt,
     );

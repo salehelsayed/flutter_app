@@ -3,14 +3,18 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
+import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
@@ -130,9 +134,10 @@ void main() {
   });
 
   test(
-    'protected deferred distribution waits for every current physical target without burning attempts',
+    'production resume rejects old A proof, then B survivor converges across restart and same-device rearm gets a generation',
     () async {
       await seedGroup(daveMlKem: 'daveMlKem');
+      final authorityInstant = DateTime.utc(2026, 8, 13);
       final self = await groupRepo.getMember(groupId, selfPeerId);
       await groupRepo.saveMember(
         self!.copyWith(
@@ -162,54 +167,158 @@ void main() {
               deviceSigningPublicKey: 'dave-public-a',
               mlKemPublicKey: 'dave-mlkem-a',
             ),
-            GroupMemberDeviceIdentity(
-              deviceId: 'dave-b',
-              transportPeerId: 'dave-transport-b',
-              deviceSigningPublicKey: 'dave-public-b',
-              mlKemPublicKey: 'dave-mlkem-b',
-            ),
           ],
         ),
       );
       await pendingRepo.enqueue(daveRow());
-      final activationResults = <bool>[true, false, true, true];
-      var activationIndex = 0;
-      setProtectedGroupAuthorityAdapter(
-        prepare: (request) async {
-          final instant = DateTime.utc(2026, 8, 13);
-          final recipient = request.deliveryRecipients!.single.transportPeerId;
-          return ProtectedGroupAuthorityPreparation(
-            groupId: request.groupId,
-            rows: <GroupPendingBroadcast>[
-              GroupPendingBroadcast(
-                id: 'protected-$recipient',
-                groupId: request.groupId,
-                kind: groupPendingBroadcastKindProtectedAuthority,
-                sysText: '{}',
-                recipientPeerIds: <String>[recipient],
-                eventAt: instant,
-                sourceMessageId: 'source-$recipient',
-                createdAt: instant,
-                updatedAt: instant,
-              ),
-            ],
-          );
-        },
-        activate: (_, {required requireAllCustody}) async {
-          expect(requireAllCustody, isTrue);
-          return activationResults[activationIndex++];
-        },
-        cancel: (_) async => true,
-      );
+      final pendingAuthorities = _InMemoryPendingBroadcastRepository();
+      AuthenticatedGroupAuthorityProof? durablePrepared;
+      AuthenticatedGroupAuthorityProof? durableComplete;
+      ProtectedGroupAuthorityPrepareRequest? completedARequest;
+      final requests = <ProtectedGroupAuthorityPrepareRequest>[];
+      final accepted = <String, List<bool>>{
+        'dave-transport-a': <bool>[true, true, true],
+        'dave-transport-b': <bool>[false, true, true],
+      };
+      var productionResumeCalls = 0;
+      var admissionReopens = 0;
+
+      Future<void> reopenFromAdmission({
+        required String groupId,
+        required String peerId,
+        required int keyEpoch,
+      }) async {
+        expect(groupId, 'group-1');
+        expect(peerId, 'peer-dave');
+        final current = (await pendingRepo.getDistribution(daveRowId))!;
+        admissionReopens++;
+        await pendingRepo.reopenForRedelivery(
+          daveRow(keyEpoch: keyEpoch).copyWith(
+            createdAt: current.createdAt,
+            updatedAt: current.updatedAt,
+          ),
+        );
+      }
+
+      void installProductionShapedAdapter() {
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            requests.add(request);
+            final persisted = durablePrepared;
+            if (persisted != null) {
+              productionResumeCalls++;
+              final resumed =
+                  await resumeProductionPreparedProtectedGroupKeyAuthority(
+                    persistedProof: persisted,
+                    request: request,
+                    keyEpoch: 2,
+                    pendingRepository: pendingAuthorities,
+                  );
+              if (resumed != null) return resumed;
+            }
+            final preparation = await buildProtectedGroupAuthorityRows(
+              groupId: request.groupId,
+              transitionId: request.transitionId,
+              control: request.control,
+              replayData: request.replayData,
+              keyEpoch: 2,
+              actorAccountPeerId: request.actorAccountPeerId,
+              actorAccountPublicKey: request.actorAccountPublicKey,
+              actorAccountPrivateKey: request.actorAccountPrivateKey,
+              senderDevice: request.senderDevice,
+              frozenRecipients: request.frozenRecipients,
+              deliveryRecipients: request.deliveryRecipients,
+              deliveryReplayDataByTransportPeerId:
+                  request.deliveryReplayDataByTransportPeerId,
+              sharedAuthorityProof: request.sharedAuthorityProof,
+              callSign: (data, _) async => <String, dynamic>{
+                'ok': true,
+                'signature': 'sig:${data.hashCode}',
+              },
+              callEncrypt:
+                  ({
+                    required recipientMlKemPublicKey,
+                    required plaintext,
+                  }) async => <String, dynamic>{
+                    'ok': true,
+                    'kem': 'kem-$recipientMlKemPublicKey',
+                    'ciphertext': 'ciphertext-$recipientMlKemPublicKey',
+                    'nonce': 'nonce-$recipientMlKemPublicKey',
+                  },
+              now: () => authorityInstant,
+            );
+            durablePrepared = preparation.authorityProof;
+            await pendingAuthorities.replaceForTransition(preparation.rows);
+            return preparation;
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            expect(requireAllCustody, isTrue);
+            var allAccepted = true;
+            for (final row in preparation.rows) {
+              final recipient = row.recipientPeerIds.single;
+              final outcomes = accepted[recipient]!;
+              final didAccept = outcomes.isNotEmpty && outcomes.removeAt(0);
+              if (didAccept) {
+                await pendingAuthorities.remove(row.id);
+              } else {
+                allAccepted = false;
+              }
+            }
+            if (allAccepted) durableComplete = preparation.authorityProof;
+            return allAccepted;
+          },
+          cancel: (_) async => true,
+        );
+      }
+
+      installProductionShapedAdapter();
       addTearDown(() => setProtectedGroupAuthorityAdapter());
       var ordinarySends = 0;
-      final protectedRunner = runner(
+      var protectedRunner = runner(
         send: (_, _) async {
           ordinarySends++;
           return true;
         },
       );
 
+      // A is the terminal distribution for the original one-device roster.
+      expect(
+        await protectedRunner.drainPendingForPeer(
+          groupId: groupId,
+          peerId: 'peer-dave',
+        ),
+        1,
+      );
+      var row = await pendingRepo.getDistribution(daveRowId);
+      expect(row?.status, groupPendingKeyDistributionStatusDistributed);
+      completedARequest = requests.single;
+      final oldAProof = durableComplete!;
+      final oldGeneration = row!.operationGeneration;
+
+      // Same-epoch sibling B admission intentionally reopens the terminal row.
+      expect(
+        await admitSiblingDeviceIfTrusted(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: 'peer-dave',
+          announcedDeviceId: 'dave-b',
+          announcedTransportPeerId: 'dave-transport-b',
+          announcedDeviceSigningPublicKey: 'dave-public-b',
+          announcedMlKemPublicKey: 'dave-mlkem-b',
+          verifiedAccountSigningPublicKey: dave.publicKey!,
+          multiDeviceSyncEnabled: true,
+          reopenDeferredDistribution: reopenFromAdmission,
+          triggerDrain: ({required groupId, required peerId}) async {},
+        ),
+        SiblingDeviceAdmissionOutcome.admitted,
+      );
+      row = await pendingRepo.getDistribution(daveRowId);
+      expect(row!.operationGeneration, oldGeneration + 1);
+      expect(admissionReopens, 1);
+
+      // Model the stale production lookup directly: old {A} is not valid for
+      // the new-generation {A,B} request, so a fresh proof must be authored.
+      durablePrepared = oldAProof;
       expect(
         await protectedRunner.drainPendingForPeer(
           groupId: groupId,
@@ -217,10 +326,46 @@ void main() {
         ),
         0,
       );
-      var row = await pendingRepo.getDistribution(daveRowId);
-      expect(row?.status, groupPendingKeyDistributionStatusPending);
-      expect(row?.attempts, 0);
+      expect(productionResumeCalls, 1);
+      expect(
+        protectedGroupAuthorityProofMatchesPrepareRequest(
+          proof: oldAProof,
+          request: requests[1],
+          keyEpoch: 2,
+        ),
+        isFalse,
+      );
+      expect(requests[1].transitionId, isNot(completedARequest.transitionId));
+      final newABProof = durablePrepared!;
+      expect(newABProof.authorityData['recipientTransportPeerIds'], <String>[
+        'dave-transport-a',
+        'dave-transport-b',
+      ]);
+      expect(
+        newABProof.authorityData['operationGeneration'],
+        row.operationGeneration,
+      );
+      expect(
+        newABProof.authorityData['deviceSetDigest'],
+        requests[1].replayData['deviceSetDigest'],
+      );
+      expect(
+        (await pendingAuthorities.forGroup(
+          groupId,
+        )).map((pending) => pending.recipientPeerIds.single),
+        <String>['dave-transport-b'],
+      );
+      expect((await pendingRepo.getDistribution(daveRowId))?.attempts, 0);
 
+      // Reconstruct both adapter and runner over durable proof/row state.
+      setProtectedGroupAuthorityAdapter();
+      installProductionShapedAdapter();
+      protectedRunner = runner(
+        send: (_, _) async {
+          ordinarySends++;
+          return true;
+        },
+      );
       expect(
         await protectedRunner.drainPendingForPeer(
           groupId: groupId,
@@ -230,8 +375,56 @@ void main() {
       );
       row = await pendingRepo.getDistribution(daveRowId);
       expect(row?.status, groupPendingKeyDistributionStatusDistributed);
+      expect(durableComplete, same(newABProof));
+      expect(productionResumeCalls, 2);
       expect(ordinarySends, 0);
-      expect(activationIndex, 4);
+
+      // A same-device announcement is also an intentional delivery rearm.
+      final completedABGeneration = row!.operationGeneration;
+      expect(
+        await admitSiblingDeviceIfTrusted(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: 'peer-dave',
+          announcedDeviceId: 'dave-b',
+          announcedTransportPeerId: 'dave-transport-b',
+          announcedDeviceSigningPublicKey: 'dave-public-b',
+          announcedMlKemPublicKey: 'dave-mlkem-b',
+          verifiedAccountSigningPublicKey: dave.publicKey!,
+          multiDeviceSyncEnabled: true,
+          reopenDeferredDistribution: reopenFromAdmission,
+          triggerDrain: ({required groupId, required peerId}) async {},
+        ),
+        SiblingDeviceAdmissionOutcome.alreadyPresent,
+      );
+      row = await pendingRepo.getDistribution(daveRowId);
+      expect(row!.operationGeneration, completedABGeneration + 1);
+      final reannounceGeneration = row.operationGeneration;
+      expect(admissionReopens, 2);
+      expect(
+        await protectedRunner.drainPendingForPeer(
+          groupId: groupId,
+          peerId: 'peer-dave',
+        ),
+        1,
+      );
+      final reannounceRequest = requests.last;
+      expect(reannounceRequest.transitionId, isNot(requests[1].transitionId));
+      expect(
+        reannounceRequest.replayData['operationGeneration'],
+        reannounceGeneration,
+      );
+      expect(
+        reannounceRequest.replayData['deviceSetDigest'],
+        requests[1].replayData['deviceSetDigest'],
+      );
+      row = await pendingRepo.getDistribution(daveRowId);
+      expect(row?.status, groupPendingKeyDistributionStatusDistributed);
+      expect(row?.finalizedAt, isNotNull);
+      expect(row?.operationGeneration, reannounceGeneration);
+      expect(durableComplete?.eventId, reannounceRequest.transitionId);
+      expect(await pendingAuthorities.forGroup(groupId), isEmpty);
+      expect(oldAProof.eventId, completedARequest.transitionId);
     },
   );
 
@@ -546,12 +739,20 @@ class _InMemoryGroupPendingKeyDistributionRepository
       rows[distribution.id] = distribution;
       return;
     }
+    final requestedGeneration = distribution.createdAt.toUtc();
+    final minimumNextGeneration = existing.createdAt.toUtc().add(
+      const Duration(microseconds: 1),
+    );
+    final nextGeneration = requestedGeneration.isAfter(minimumNextGeneration)
+        ? requestedGeneration
+        : minimumNextGeneration;
     rows[distribution.id] = existing.copyWith(
       status: groupPendingKeyDistributionStatusPending,
       keyEpoch: distribution.keyEpoch,
       attempts: 0,
       lastError: null,
       finalizedAt: null,
+      createdAt: nextGeneration,
       updatedAt: distribution.updatedAt,
     );
   }
@@ -632,5 +833,60 @@ class _InMemoryGroupPendingKeyDistributionRepository
       updatedAt: now,
       finalizedAt: now,
     );
+  }
+}
+
+class _InMemoryPendingBroadcastRepository
+    implements GroupPendingBroadcastRepository {
+  final Map<String, GroupPendingBroadcast> rows =
+      <String, GroupPendingBroadcast>{};
+
+  Future<void> replaceForTransition(
+    Iterable<GroupPendingBroadcast> replacement,
+  ) async {
+    final replacementRows = replacement.toList(growable: false);
+    if (replacementRows.isEmpty) return;
+    final transition = parseProtectedGroupAuthorityDeliveryId(
+      replacementRows.first.sourceMessageId ?? '',
+    )?.transitionId;
+    if (transition == null) return;
+    rows.removeWhere((_, row) {
+      final identity = parseProtectedGroupAuthorityDeliveryId(
+        row.sourceMessageId ?? '',
+      );
+      return identity?.transitionId == transition;
+    });
+    for (final row in replacementRows) {
+      rows[row.id] = row;
+    }
+  }
+
+  @override
+  Future<void> enqueue(GroupPendingBroadcast broadcast) async {
+    rows[broadcast.id] = broadcast;
+  }
+
+  @override
+  Future<List<GroupPendingBroadcast>> forGroup(String groupId) async => rows
+      .values
+      .where((row) => row.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<List<GroupPendingBroadcast>> all() async =>
+      rows.values.toList(growable: false);
+
+  @override
+  Future<int> countForGroup(String groupId) async =>
+      rows.values.where((row) => row.groupId == groupId).length;
+
+  @override
+  Future<void> remove(String id) async {
+    rows.remove(id);
+  }
+
+  @override
+  Future<void> removeForGroup(String groupId) async {
+    rows.removeWhere((_, row) => row.groupId == groupId);
   }
 }

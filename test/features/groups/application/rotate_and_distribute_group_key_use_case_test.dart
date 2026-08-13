@@ -97,6 +97,103 @@ void main() {
   });
 
   test(
+    'deferred device-set digest is reorder-stable and binds every deliverable tuple field',
+    () {
+      const deviceA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'transport-a',
+        deviceSigningPublicKey: 'signing-a',
+        mlKemPublicKey: 'mlkem-a',
+        keyPackageId: 'package-a',
+        keyPackagePublicMaterial: 'package-material-a',
+      );
+      const deviceB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'transport-b',
+        deviceSigningPublicKey: 'signing-b',
+        mlKemPublicKey: 'mlkem-b',
+        keyPackageId: 'package-b',
+        keyPackagePublicMaterial: 'package-material-b',
+      );
+      final canonical = canonicalDeferredDeviceSetDigest(const [
+        deviceA,
+        deviceB,
+      ]);
+
+      expect(canonical, hasLength(64));
+      expect(
+        canonicalDeferredDeviceSetDigest(const [deviceB, deviceA]),
+        canonical,
+      );
+      expect(
+        <GroupMemberDeviceIdentity>[
+          deviceA.copyWith(deviceId: 'device-a-changed'),
+          deviceA.copyWith(transportPeerId: 'transport-a-changed'),
+          deviceA.copyWith(deviceSigningPublicKey: 'signing-a-changed'),
+          deviceA.copyWith(mlKemPublicKey: 'mlkem-a-changed'),
+          deviceA.copyWith(keyPackageId: 'package-a-changed'),
+          deviceA.copyWith(
+            keyPackagePublicMaterial: 'package-material-a-changed',
+          ),
+          deviceA.copyWith(status: GroupMemberDeviceStatus.revoked),
+        ].map(
+          (changed) => canonicalDeferredDeviceSetDigest([changed, deviceB]),
+        ),
+        everyElement(isNot(canonical)),
+      );
+      expect(
+        () => canonicalDeferredDeviceSetDigest([
+          deviceA,
+          deviceB.copyWith(deviceId: deviceA.deviceId),
+        ]),
+        throwsFormatException,
+      );
+      expect(
+        () => canonicalDeferredDeviceSetDigest([
+          deviceA,
+          deviceB.copyWith(transportPeerId: deviceA.transportPeerId),
+        ]),
+        throwsFormatException,
+      );
+    },
+  );
+
+  test(
+    'deferred distribution fails closed on a non-positive generation',
+    () async {
+      var prepares = 0;
+      setProtectedGroupAuthorityAdapter(
+        prepare: (_) async {
+          prepares++;
+          return null;
+        },
+        activate: (_, {required requireAllCustody}) async => true,
+        cancel: (_) async => true,
+      );
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+
+      for (final generation in <int>[0, -1]) {
+        expect(
+          await distributeCurrentGroupKeyToDeferredPeer(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            peerId: 'peer-bob',
+            operationGeneration: generation,
+            selfPeerId: selfPeerId,
+            senderPublicKey: 'selfPubKey',
+            senderPrivateKey: 'selfPrivKey',
+            senderUsername: 'Self',
+            sendP2PMessage: (_, _) async => true,
+          ),
+          0,
+        );
+      }
+      expect(prepares, 0);
+    },
+  );
+
+  test(
     'TC-363-02a protected group authority converges physical devices before content is enabled',
     () async {
       expect(
@@ -184,6 +281,7 @@ void main() {
         groupRepo: groupRepo,
         groupId: groupId,
         peerId: 'peer-bob',
+        operationGeneration: 1,
         selfPeerId: selfPeerId,
         senderPublicKey: 'selfPubKey',
         senderPrivateKey: 'selfPrivKey',
@@ -965,6 +1063,7 @@ void main() {
         groupRepo: groupRepo,
         groupId: groupId,
         peerId: 'peer-bob',
+        operationGeneration: 7,
         selfPeerId: selfPeerId,
         senderPublicKey: source.deviceSigningPublicKey,
         senderPrivateKey: 'self-private-key',
@@ -989,6 +1088,7 @@ void main() {
         groupRepo: groupRepo,
         groupId: groupId,
         peerId: 'peer-bob',
+        operationGeneration: 7,
         selfPeerId: selfPeerId,
         senderPublicKey: source.deviceSigningPublicKey,
         senderPrivateKey: 'self-private-key',
@@ -1011,6 +1111,128 @@ void main() {
         physicalA.transportPeerId,
         physicalB.transportPeerId,
       });
+    },
+  );
+
+  test(
+    'deferred transition identity is stable per generation and changes for a same-set rearm',
+    () async {
+      const source = GroupMemberDeviceIdentity(
+        deviceId: 'source-device',
+        transportPeerId: 'source-transport',
+        deviceSigningPublicKey: 'selfPubKey',
+        mlKemPublicKey: 'source-mlkem',
+      );
+      const physicalA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'physical-a',
+        deviceSigningPublicKey: 'public-a',
+        mlKemPublicKey: 'mlkem-a',
+        keyPackageId: 'package-a',
+        keyPackagePublicMaterial: 'package-material-a',
+      );
+      const physicalB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'physical-b',
+        deviceSigningPublicKey: 'public-b',
+        mlKemPublicKey: 'mlkem-b',
+        keyPackageId: 'package-b',
+        keyPackagePublicMaterial: 'package-material-b',
+      );
+      final eventAt = DateTime.utc(2026, 8, 13, 13);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: source.mlKemPublicKey,
+          devices: const [source],
+          joinedAt: eventAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'bob-account-key',
+          mlKemPublicKey: physicalA.mlKemPublicKey,
+          devices: const [physicalA, physicalB],
+          joinedAt: eventAt,
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 3,
+          encryptedKey: 'stable-current-key',
+          createdAt: eventAt,
+        ),
+      );
+
+      final requests = <ProtectedGroupAuthorityPrepareRequest>[];
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          requests.add(request);
+          return null;
+        },
+        activate: (_, {required requireAllCustody}) async => true,
+        cancel: (_) async => true,
+      );
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+
+      Future<void> attempt(int operationGeneration) async {
+        expect(
+          await distributeCurrentGroupKeyToDeferredPeer(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            groupId: groupId,
+            peerId: 'peer-bob',
+            operationGeneration: operationGeneration,
+            selfPeerId: selfPeerId,
+            senderPublicKey: source.deviceSigningPublicKey,
+            senderPrivateKey: 'self-private-key',
+            senderUsername: 'Self',
+            sourceDeviceId: source.deviceId,
+            sendP2PMessage: (_, _) async => true,
+          ),
+          0,
+        );
+      }
+
+      await attempt(41);
+      await attempt(41);
+      await attempt(42);
+
+      final digest = canonicalDeferredDeviceSetDigest(const [
+        physicalA,
+        physicalB,
+      ]);
+      expect(requests, hasLength(3));
+      expect(requests[1].transitionId, requests[0].transitionId);
+      expect(requests[2].transitionId, isNot(requests[0].transitionId));
+      expect(requests[0].transitionId, endsWith(':3:41:$digest'));
+      expect(requests[2].transitionId, endsWith(':3:42:$digest'));
+      for (final request in requests) {
+        expect(request.replayData['deviceSetDigest'], digest);
+        expect(
+          request.deliveryReplayDataByTransportPeerId?.values,
+          everyElement(
+            allOf(
+              containsPair('deviceSetDigest', digest),
+              containsPair(
+                'operationGeneration',
+                request.replayData['operationGeneration'],
+              ),
+            ),
+          ),
+        );
+      }
+      expect(requests[0].replayData['operationGeneration'], 41);
+      expect(requests[2].replayData['operationGeneration'], 42);
     },
   );
 

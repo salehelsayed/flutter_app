@@ -1,5 +1,6 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
 import 'group_parent_write_guard.dart';
 import '../../../features/groups/domain/models/group_pending_key_distribution.dart';
@@ -86,49 +87,70 @@ Future<bool> dbUpsertGroupPendingKeyDistribution(
 
 /// (Re)opens a distribution row to PENDING for re-delivery, OVERRIDING a terminal
 /// (distributed / unreachable) status and resetting attempts/last_error/
-/// finalized_at. Unlike [dbUpsertGroupPendingKeyDistribution] this deliberately
-/// re-arms an exhausted/finalized row — it is for when the member's DEVICE SET
-/// changed (a sibling device was admitted), so the prior exhaustion (which was
-/// for the OLD device set) must not block re-distributing the current key to the
-/// now-larger device set. NOT for stale rotation re-enqueues (those keep using
-/// the exhaustion-preserving upsert).
+/// finalized_at. Every call also advances `created_at`, which is the durable
+/// operation generation, to `max(requested, current + 1 microsecond)`. The
+/// read/advance/re-open is one write transaction so concurrent or same-clock
+/// sibling admissions and same-device re-announcements cannot reuse an old
+/// protected-authority address.
+///
+/// Unlike [dbUpsertGroupPendingKeyDistribution] this deliberately re-arms an
+/// exhausted/finalized or already-pending row. It is for device-set changes and
+/// intentional re-announcements, not stale rotation re-enqueues (those keep
+/// using the exhaustion- and generation-preserving upsert).
 Future<void> dbReopenGroupPendingKeyDistributionForRedelivery(
   Database db,
   Map<String, Object?> row,
 ) async {
-  final id = row['id'] as String;
-  final existing = await db.query(
-    'group_pending_key_distributions',
-    where: 'id = ?',
-    whereArgs: [id],
-    limit: 1,
-  );
-  if (existing.isEmpty) {
-    await dbInsertOrdinaryGroupOwnedRow(
-      db,
-      table: 'group_pending_key_distributions',
-      row: row,
+  await dbWriteTransaction<void>(db, (txn) async {
+    final id = row['id'] as String;
+    final existing = await txn.query(
+      'group_pending_key_distributions',
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
     );
-    return;
-  }
-  await dbUpdateOrdinaryGroupOwnedRows(
-    db,
-    table: 'group_pending_key_distributions',
-    groupId: row['group_id'] as String? ?? '',
-    values: {
-      'status': groupPendingKeyDistributionStatusPending,
-      'key_epoch': row['key_epoch'] ?? existing.single['key_epoch'],
-      'transport_peer_id':
-          row['transport_peer_id'] ?? existing.single['transport_peer_id'],
-      'device_id': row['device_id'] ?? existing.single['device_id'],
-      'attempts': 0,
-      'last_error': null,
-      'finalized_at': null,
-      'updated_at': row['updated_at'],
-    },
-    where: 'id = ?',
-    whereArgs: [id],
-  );
+    if (existing.isEmpty) {
+      await dbInsertOrdinaryGroupOwnedRow(
+        txn,
+        table: 'group_pending_key_distributions',
+        row: row,
+      );
+      return;
+    }
+
+    final requestedCreatedAt = DateTime.parse(
+      row['created_at'] as String,
+    ).toUtc();
+    final currentCreatedAt = DateTime.parse(
+      existing.single['created_at'] as String,
+    ).toUtc();
+    final minimumNextCreatedAt = currentCreatedAt.add(
+      const Duration(microseconds: 1),
+    );
+    final nextCreatedAt = requestedCreatedAt.isAfter(minimumNextCreatedAt)
+        ? requestedCreatedAt
+        : minimumNextCreatedAt;
+
+    await dbUpdateOrdinaryGroupOwnedRows(
+      txn,
+      table: 'group_pending_key_distributions',
+      groupId: row['group_id'] as String? ?? '',
+      values: {
+        'status': groupPendingKeyDistributionStatusPending,
+        'key_epoch': row['key_epoch'] ?? existing.single['key_epoch'],
+        'transport_peer_id':
+            row['transport_peer_id'] ?? existing.single['transport_peer_id'],
+        'device_id': row['device_id'] ?? existing.single['device_id'],
+        'attempts': 0,
+        'last_error': null,
+        'created_at': nextCreatedAt.toIso8601String(),
+        'finalized_at': null,
+        'updated_at': row['updated_at'],
+      },
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  });
 }
 
 Future<Map<String, Object?>?> dbLoadGroupPendingKeyDistribution(

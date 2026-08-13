@@ -19,9 +19,12 @@ abstract class GroupPendingKeyDistributionRepository {
 
   /// (Re)opens a row to PENDING for re-delivery, OVERRIDING a terminal
   /// (distributed / unreachable) status (resets attempts/last_error/
-  /// finalized_at). For when the member's device set changed (a sibling device
-  /// was admitted) so the current key must be re-distributed to the now-larger
-  /// device set — unlike [enqueue], it deliberately re-arms an exhausted row.
+  /// finalized_at) and atomically advancing its durable operation generation.
+  ///
+  /// This is used both when the member's device set changed (a sibling device
+  /// was admitted) and when an existing device re-announces to deliberately
+  /// re-arm delivery. Unlike [enqueue], every call creates a distinct operation
+  /// even if the row was already pending or the requested clock did not move.
   Future<void> reopenForRedelivery(GroupPendingKeyDistribution distribution);
 
   Future<GroupPendingKeyDistribution?> getDistribution(String id);
