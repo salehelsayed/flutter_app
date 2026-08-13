@@ -229,6 +229,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_exit_intent_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_exit_diagnostic_repository_impl.dart';
@@ -6375,6 +6376,192 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       );
     }
 
+    Future<List<ProtectedGroupAuthorityPreparation>>
+    discoverLocalPreparedAuthorities(String? onlyGroupId) async {
+      final identity = await repository.loadIdentity();
+      if (identity == null) return const <ProtectedGroupAuthorityPreparation>[];
+      final installation = await linkedInstallationAuthority.load(
+        expectedAccountPeerId: identity.peerId,
+      );
+      if (installation.refusesStartup) {
+        return const <ProtectedGroupAuthorityPreparation>[];
+      }
+      final localTransportPeerId = installation.isActiveLinkedSecondary
+          ? installation.credential?.transportPeerId
+          : identity.peerId;
+      if (localTransportPeerId == null || localTransportPeerId.isEmpty) {
+        return const <ProtectedGroupAuthorityPreparation>[];
+      }
+      final groups = onlyGroupId == null
+          ? await groupRepository.getAllGroups()
+          : <GroupModel>[?await groupRepository.getGroup(onlyGroupId)];
+      final discoveries = <ProtectedGroupAuthorityPreparation>[];
+      for (final group in groups) {
+        if (group.selfRemovedAt != null) continue;
+        final localAuthorTransports = <String, String>{
+          localTransportPeerId: installation.isActiveLinkedSecondary
+              ? installation.credential!.transportPublicKey
+              : identity.publicKey,
+        };
+        if (!installation.isActiveLinkedSecondary) {
+          final selfMember = await groupRepository.getMember(
+            group.id,
+            identity.peerId,
+          );
+          if (selfMember != null) {
+            for (final device in selfMember.activeDevicesWithLegacyFallback()) {
+              if (device.deviceSigningPublicKey == identity.publicKey) {
+                localAuthorTransports[device.transportPeerId] =
+                    device.deviceSigningPublicKey;
+              }
+            }
+          }
+        }
+        final pending = await groupPendingBroadcastRepository.forGroup(
+          group.id,
+        );
+        if (pending.any(
+          (row) =>
+              row.kind == groupPendingBroadcastKindProtectedAuthority &&
+              parseProtectedGroupAuthorityDeliveryId(
+                    row.sourceMessageId ?? '',
+                  ) ==
+                  null,
+        )) {
+          // An unparseable protected row might own any PREPARED transition in
+          // this group. Row absence is recovery evidence only when every
+          // protected owner is attributable, so fail this group's discovery
+          // closed and leave ordinary row draining to report the corruption.
+          continue;
+        }
+        final rowOwnedEventIds = <String>{
+          for (final row in pending)
+            if (row.kind == groupPendingBroadcastKindProtectedAuthority)
+              if (parseProtectedGroupAuthorityDeliveryId(
+                    row.sourceMessageId ?? '',
+                  )
+                  case final identity?)
+                identity.transitionId,
+        };
+        String? afterTimestamp;
+        String? afterEventId;
+        for (var pageIndex = 0; pageIndex < 4; pageIndex++) {
+          final page = await loadAuthenticatedGroupAuthorityProofPage(
+            loadRows:
+                ({
+                  required groupId,
+                  required eventType,
+                  afterSourceTimestamp,
+                  afterSourceEventId,
+                  throughSourceTimestamp,
+                  required limit,
+                }) => dbLoadGroupEventLogTypePage(
+                  db,
+                  groupId: groupId,
+                  eventType: eventType,
+                  afterSourceTimestamp: afterSourceTimestamp,
+                  afterSourceEventId: afterSourceEventId,
+                  throughSourceTimestamp: throughSourceTimestamp,
+                  newestFirst: true,
+                  limit: limit,
+                ),
+            groupId: group.id,
+            phase: AuthenticatedGroupAuthorityPhase.prepared,
+            verify: ({required publicKey, required data, required signature}) =>
+                callVerifyPayload(
+                  bridge: bridge,
+                  publicKey: publicKey,
+                  data: data,
+                  signature: signature,
+                ),
+            afterSourceTimestamp: afterTimestamp,
+            afterSourceEventId: afterEventId,
+            limit: 200,
+          );
+          for (final proof in page) {
+            if (proof.actorAccountPeerId != identity.peerId ||
+                proof.actorAccountPublicKey != identity.publicKey ||
+                localAuthorTransports[proof.senderTransportPeerId] !=
+                    proof.senderTransportPublicKey ||
+                rowOwnedEventIds.contains(proof.eventId)) {
+              continue;
+            }
+            final complete = await loadLocalAuthorityProof(
+              groupId: group.id,
+              phase: AuthenticatedGroupAuthorityPhase.complete,
+              eventId: proof.eventId,
+            );
+            if (complete != null) {
+              if (!sameAuthenticatedGroupAuthorityProof(complete, proof)) {
+                throw StateError('conflicting prepared/complete authority');
+              }
+              continue;
+            }
+            final control = ProtectedGroupAuthorityControl.fromWire(
+              proof.control,
+            );
+            if (control == null) continue;
+            if (control == ProtectedGroupAuthorityControl.groupKeyUpdate) {
+              final rawRecipients =
+                  proof.authorityData['recipientTransportPeerIds'];
+              if (rawRecipients is! List || rawRecipients.isNotEmpty) {
+                // A rowless nonempty ACL can be an aborted preparation; row
+                // absence alone is not a custody receipt. Key transitions with
+                // recipients complete before their rows may retire, so only a
+                // signed empty ACL belongs to prepared-only key recovery.
+                continue;
+              }
+            }
+            discoveries.add(
+              ProtectedGroupAuthorityPreparation(
+                groupId: group.id,
+                rows: const <GroupPendingBroadcast>[],
+                authorityProof: proof,
+                control: control,
+                replayData: Map<String, dynamic>.from(proof.authorityData),
+              ),
+            );
+          }
+          if (page.length < 200) break;
+          final last = page.last;
+          afterTimestamp = fixedGroupAuthorityUtc(last.eventAt);
+          afterEventId = authenticatedGroupAuthoritySourceEventId(
+            AuthenticatedGroupAuthorityPhase.prepared,
+            last.eventId,
+          );
+        }
+      }
+      discoveries.sort((left, right) {
+        final leftProof = left.authorityProof!;
+        final rightProof = right.authorityProof!;
+        final byTime = leftProof.eventAt.compareTo(rightProof.eventAt);
+        return byTime != 0
+            ? byTime
+            : leftProof.eventId.compareTo(rightProof.eventId);
+      });
+      return discoveries;
+    }
+
+    Future<bool> recoverLocalPreparedKeyAuthority(
+      AuthenticatedGroupAuthorityProof proof,
+    ) => recoverPreparedProtectedGroupKey(
+      proof: proof,
+      groupRepository: groupRepository,
+      promoteKey: (key) => callGroupUpdateKey(
+        bridge,
+        groupId: key.groupId,
+        groupKey: key.encryptedKey,
+        keyEpoch: key.keyGeneration,
+      ),
+      loadAuthorityProof:
+          ({required groupId, required phase, required eventId}) =>
+              loadLocalAuthorityProof(
+                groupId: groupId,
+                phase: phase,
+                eventId: eventId,
+              ),
+    );
+
     Future<bool> ensureProtectedAuthorityComplete(
       GroupPendingBroadcast broadcast,
     ) async {
@@ -6450,6 +6637,28 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           identity.transitionId,
         );
       },
+      discoverPreparedAuthorities: discoverLocalPreparedAuthorities,
+      recoverPreparedAuthority: (preparation) {
+        final proof = preparation.authorityProof;
+        final control = preparation.control;
+        if (proof == null || control == null) {
+          return Future<bool>.value(false);
+        }
+        if (control == ProtectedGroupAuthorityControl.groupDissolve) {
+          return finalizeLocalProtectedDissolve(
+            preparation.groupId,
+            proof.eventId,
+          );
+        }
+        if (control == ProtectedGroupAuthorityControl.groupKeyUpdate) {
+          return recoverLocalPreparedKeyAuthority(proof);
+        }
+        return runGroupAuthorityPhaseIfNeeded(
+          groupId: preparation.groupId,
+          authorityPhaseHeld: isGroupAuthorityPhaseHeld(preparation.groupId),
+          action: () => completeLocalProtectedAuthority(proof),
+        );
+      },
       rePushFinalizesSuccess: true,
       rePush: buildGroupPendingBroadcastRePush(
         bridge: bridge,
@@ -6499,6 +6708,72 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             rows: const <GroupPendingBroadcast>[],
           );
         }
+        if (request.resumePreparedSurvivors) {
+          if (request.control !=
+              ProtectedGroupAuthorityControl.groupKeyUpdate) {
+            return null;
+          }
+          final persistedProof = await loadLocalAuthorityProof(
+            groupId: request.groupId,
+            phase: AuthenticatedGroupAuthorityPhase.prepared,
+            eventId: request.transitionId,
+          );
+          if (persistedProof != null) {
+            if (!protectedGroupAuthorityProofMatchesPrepareRequest(
+              proof: persistedProof,
+              request: request,
+              keyEpoch: authorityKeyEpoch,
+            )) {
+              return null;
+            }
+            final rawAcl =
+                persistedProof.authorityData['recipientTransportPeerIds'];
+            if (rawAcl is! List ||
+                rawAcl.any((recipient) => recipient is! String)) {
+              return null;
+            }
+            final acl = rawAcl.cast<String>().toSet();
+            if (acl.length != rawAcl.length) return null;
+            final seen = <String>{};
+            final survivors = <GroupPendingBroadcast>[];
+            final pending = await groupPendingBroadcastRepository.forGroup(
+              request.groupId,
+            );
+            for (final row in pending) {
+              if (row.kind != groupPendingBroadcastKindProtectedAuthority) {
+                continue;
+              }
+              final identity = parseProtectedGroupAuthorityDeliveryId(
+                row.sourceMessageId ?? '',
+              );
+              if (identity == null) return null;
+              if (identity.transitionId != request.transitionId) continue;
+              if (identity.control != request.control ||
+                  row.recipientPeerIds.length != 1) {
+                return null;
+              }
+              final recipient = row.recipientPeerIds.single;
+              if (identity.recipientTransportPeerId != recipient ||
+                  !acl.contains(recipient) ||
+                  !seen.add(recipient)) {
+                return null;
+              }
+              survivors.add(row);
+            }
+            survivors.sort(
+              (left, right) => left.recipientPeerIds.single.compareTo(
+                right.recipientPeerIds.single,
+              ),
+            );
+            return ProtectedGroupAuthorityPreparation(
+              groupId: request.groupId,
+              rows: survivors,
+              authorityProof: persistedProof,
+              control: request.control,
+              replayData: Map<String, dynamic>.from(request.replayData),
+            );
+          }
+        }
         final preparation = await buildProtectedGroupAuthorityRows(
           groupId: request.groupId,
           transitionId: request.transitionId,
@@ -6511,6 +6786,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           senderDevice: request.senderDevice,
           frozenRecipients: request.frozenRecipients,
           deliveryRecipients: request.deliveryRecipients,
+          deliveryReplayDataByTransportPeerId:
+              request.deliveryReplayDataByTransportPeerId,
           sharedAuthorityProof: request.sharedAuthorityProof,
           callSign: (data, privateKey) => callSignPayload(
             bridge: bridge,

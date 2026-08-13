@@ -256,6 +256,29 @@ void main() {
       expect(secondPage.map((row) => row['source_event_id']), <Object?>[
         'pga1:c:c',
       ]);
+      final newestPage = await dbLoadGroupEventLogTypePage(
+        db,
+        groupId: 'group-authority-history',
+        eventType: 'protected_authority_complete',
+        newestFirst: true,
+        limit: 2,
+      );
+      expect(newestPage.map((row) => row['source_event_id']), <Object?>[
+        'pga1:c:c',
+        'pga1:c:b',
+      ]);
+      final olderPage = await dbLoadGroupEventLogTypePage(
+        db,
+        groupId: 'group-authority-history',
+        eventType: 'protected_authority_complete',
+        afterSourceTimestamp: newestPage.last['source_timestamp'] as String,
+        afterSourceEventId: newestPage.last['source_event_id'] as String,
+        newestFirst: true,
+        limit: 2,
+      );
+      expect(olderPage.map((row) => row['source_event_id']), <Object?>[
+        'pga1:c:a',
+      ]);
     },
   );
 }

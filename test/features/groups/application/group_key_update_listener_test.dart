@@ -1650,7 +1650,7 @@ void main() {
   );
 
   test(
-    'send during pending key update uses old epoch until local update commits',
+    'send waits behind pending key authority and uses the committed epoch',
     () async {
       await groupRepo.saveGroup(
         GroupModel(
@@ -1727,7 +1727,7 @@ void main() {
         isNull,
       );
 
-      final (duringResult, duringMessage) = await sendGroupMessage(
+      final pendingSend = sendGroupMessage(
         bridge: delayedBridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
@@ -1739,15 +1739,23 @@ void main() {
         senderUsername: 'Bob',
         messageId: 'msg-pending-update-during',
       );
+      var sendCompleted = false;
+      pendingSend.whenComplete(() => sendCompleted = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(sendCompleted, isFalse);
+      expect(
+        delayedBridge.commandLog,
+        isNot(contains('group:publish')),
+        reason: 'content authoring shares the key-authority phase',
+      );
+
+      updateCompleter.complete(jsonEncode({'ok': true}));
+      final (duringResult, duringMessage) = await pendingSend;
 
       expect(duringResult, SendGroupMessageResult.success);
       expect(duringMessage, isNotNull);
-      expect(duringMessage!.keyGeneration, 1);
-      expect(lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 1);
-
-      updateCompleter.complete(jsonEncode({'ok': true}));
-      await Future<void>.delayed(Duration.zero);
-      await Future<void>.delayed(Duration.zero);
+      expect(duringMessage!.keyGeneration, 2);
+      expect(lastGroupOfflineReplayEnvelope(delayedBridge)['keyEpoch'], 2);
 
       final latestAfterCommit = await groupRepo.getLatestKey(
         'group-pending-send',

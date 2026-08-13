@@ -863,7 +863,10 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
     groupRepo,
     groupId,
   );
-  final eventAt = DateTime.now().toUtc();
+  // Deferred retries must re-author the exact same logical authority version.
+  // The persisted key creation instant is stable across process restarts;
+  // wall-clock retry time is not.
+  final eventAt = latestKey.createdAt.toUtc();
 
   // Once this group owns a distinct physical-device roster, deferred key
   // repair stays on the same target-qualified protected authority lane as a
@@ -871,11 +874,16 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
   if (hasProtectedGroupAuthorityAdapter &&
       hasProtectedGroupPhysicalAuthority(members)) {
     if (sourceDevice == null) return 0;
-    final frozenRecipients = freezeProtectedGroupPhysicalRecipients(members);
+    // This authority version owns exactly this deferred member's currently
+    // deliverable physical devices. Build every encrypted target first, then
+    // persist the common proof plus all immutable rows in one batch.
+    final frozenRecipients = List<GroupMemberDeviceIdentity>.unmodifiable(
+      devices,
+    );
     final transitionId =
         'group_key_update_deferred:$groupId:$selfPeerId:$peerId:'
         '${latestKey.keyGeneration}';
-    var protectedDelivered = 0;
+    final deliveryReplayData = <String, Map<String, dynamic>>{};
     for (final device in devices) {
       try {
         final built = await _buildRotatedKeyDeviceEnvelope(
@@ -894,36 +902,16 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
           eventAt: eventAt,
           preTransitionStateHash: preTransitionStateHash,
         );
-        if (built == null) continue;
-        final preparation = await prepareProtectedGroupAuthority(
-          ProtectedGroupAuthorityPrepareRequest(
-            groupId: groupId,
-            transitionId: '$transitionId:${device.transportPeerId}',
-            control: ProtectedGroupAuthorityControl.groupKeyUpdate,
-            replayData: <String, dynamic>{
-              'groupId': groupId,
-              'keyGeneration': latestKey.keyGeneration,
-              'encryptedKey': latestKey.encryptedKey,
-              'from': sourceDevice.transportPeerId,
-              'to': device.transportPeerId,
-              'content': built.envelope,
-              'timestamp': eventAt.toIso8601String(),
-            },
-            actorAccountPeerId: selfPeerId,
-            actorAccountPublicKey: senderPublicKey,
-            actorAccountPrivateKey: senderPrivateKey,
-            senderDevice: sourceDevice,
-            frozenRecipients: frozenRecipients,
-            deliveryRecipients: <GroupMemberDeviceIdentity>[device],
-          ),
-        );
-        if (preparation == null || !preparation.hasRecipients) continue;
-        if (await activateProtectedGroupAuthority(
-          preparation,
-          requireAllCustody: true,
-        )) {
-          protectedDelivered++;
-        }
+        if (built == null) return 0;
+        deliveryReplayData[device.transportPeerId] = <String, dynamic>{
+          'groupId': groupId,
+          'keyGeneration': latestKey.keyGeneration,
+          'encryptedKey': latestKey.encryptedKey,
+          'from': sourceDevice.transportPeerId,
+          'to': device.transportPeerId,
+          'content': built.envelope,
+          'timestamp': eventAt.toIso8601String(),
+        };
       } catch (error) {
         emitFlowEvent(
           layer: 'FL',
@@ -933,9 +921,53 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
             'error': error.toString(),
           },
         );
+        return 0;
       }
     }
-    return protectedDelivered;
+    final preparation = await prepareProtectedGroupAuthority(
+      ProtectedGroupAuthorityPrepareRequest(
+        groupId: groupId,
+        transitionId: transitionId,
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+        replayData: <String, dynamic>{
+          'groupId': groupId,
+          'keyGeneration': latestKey.keyGeneration,
+          'encryptedKey': latestKey.encryptedKey,
+          'from': sourceDevice.transportPeerId,
+          'timestamp': eventAt.toIso8601String(),
+        },
+        actorAccountPeerId: selfPeerId,
+        actorAccountPublicKey: senderPublicKey,
+        actorAccountPrivateKey: senderPrivateKey,
+        senderDevice: sourceDevice,
+        frozenRecipients: frozenRecipients,
+        deliveryRecipients: frozenRecipients,
+        deliveryReplayDataByTransportPeerId: deliveryReplayData,
+        resumePreparedSurvivors: true,
+      ),
+    );
+    final proof = preparation?.authorityProof;
+    final rawRecipients = proof?.authorityData['recipientTransportPeerIds'];
+    if (preparation == null ||
+        !preparation.hasAuthenticatedAuthority ||
+        rawRecipients is! List ||
+        rawRecipients.any((recipient) => recipient is! String)) {
+      return 0;
+    }
+    final authorityRecipients = rawRecipients.cast<String>().toSet();
+    final expectedRecipients = devices
+        .map((device) => device.transportPeerId)
+        .toSet();
+    if (authorityRecipients.length != expectedRecipients.length ||
+        !authorityRecipients.containsAll(expectedRecipients)) {
+      return 0;
+    }
+    return await activateProtectedGroupAuthority(
+          preparation,
+          requireAllCustody: true,
+        )
+        ? authorityRecipients.length
+        : 0;
   }
 
   final maxAttempts = attemptCount < 1 ? 1 : attemptCount;

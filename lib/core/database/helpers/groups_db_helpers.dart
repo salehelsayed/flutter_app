@@ -210,9 +210,10 @@ Future<void> dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(
 /// Atomically closes a protected dissolve after every exact physical delivery
 /// has strict relay custody.
 ///
-/// The pending rows remain intact until this transaction commits, so a crash
-/// after relay acceptance replays as `duplicate` and can safely retry the same
-/// terminal projection plus authenticated COMPLETE fact.
+/// Modern callers retire each accepted target row as a durable custody receipt
+/// before entering this transaction; rowless PREPARED discovery owns the crash
+/// gap before terminal completion. [expectedBroadcastRows] remains available
+/// for exact retirement of legacy rows in the same terminal transaction.
 Future<void> dbCommitProtectedDissolvedGroup(
   Database db, {
   required Map<String, Object?> groupRow,

@@ -127,10 +127,11 @@ class ProtectedGroupAuthorityCompleteFact {
 
 /// Production capability for the final protected-dissolve transaction.
 ///
-/// Strict custody is proven first while the exact protected rows remain
-/// durable. This commit then advances the terminal group projection, appends
-/// authenticated COMPLETE history, retires those exact rows, and clears the
-/// exact-group notification display outbox atomically.
+/// Strict custody is proven first and each accepted target's exact row retires
+/// as its durable receipt. This commit then advances the terminal group
+/// projection, appends authenticated COMPLETE history, retires any legacy
+/// exact rows supplied by the caller, and clears the exact-group notification
+/// display outbox atomically.
 abstract interface class AtomicProtectedGroupDissolveRepository {
   Future<void> commitProtectedGroupDissolve({
     required GroupModel group,

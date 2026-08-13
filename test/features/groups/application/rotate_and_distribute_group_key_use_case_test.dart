@@ -136,21 +136,36 @@ void main() {
         prepare: (request) async {
           captured = request;
           final instant = DateTime.utc(2026, 8, 13);
-          return ProtectedGroupAuthorityPreparation(
+          return buildProtectedGroupAuthorityRows(
             groupId: request.groupId,
-            rows: <GroupPendingBroadcast>[
-              GroupPendingBroadcast(
-                id: 'protected-key-row',
-                groupId: request.groupId,
-                kind: groupPendingBroadcastKindProtectedAuthority,
-                sysText: '{}',
-                recipientPeerIds: const <String>['peer-bob'],
-                eventAt: instant,
-                sourceMessageId: 'protected-key-source',
-                createdAt: instant,
-                updatedAt: instant,
-              ),
-            ],
+            transitionId: request.transitionId,
+            control: request.control,
+            replayData: request.replayData,
+            keyEpoch: request.replayData['keyGeneration'] as int,
+            actorAccountPeerId: request.actorAccountPeerId,
+            actorAccountPublicKey: request.actorAccountPublicKey,
+            actorAccountPrivateKey: request.actorAccountPrivateKey,
+            senderDevice: request.senderDevice,
+            frozenRecipients: request.frozenRecipients,
+            deliveryRecipients: request.deliveryRecipients,
+            deliveryReplayDataByTransportPeerId:
+                request.deliveryReplayDataByTransportPeerId,
+            sharedAuthorityProof: request.sharedAuthorityProof,
+            callSign: (data, _) async => <String, dynamic>{
+              'ok': true,
+              'signature': 'sig:${data.hashCode}',
+            },
+            callEncrypt:
+                ({
+                  required recipientMlKemPublicKey,
+                  required plaintext,
+                }) async => <String, dynamic>{
+                  'ok': true,
+                  'kem': 'kem',
+                  'ciphertext': 'ciphertext',
+                  'nonce': 'nonce',
+                },
+            now: () => instant,
           );
         },
         activate: (preparation, {required requireAllCustody}) async {
@@ -190,7 +205,11 @@ void main() {
       expect(captured?.control, ProtectedGroupAuthorityControl.groupKeyUpdate);
       expect(captured?.deliveryRecipients?.single.transportPeerId, 'peer-bob');
       expect(captured?.replayData['keyGeneration'], 1);
-      expect(captured?.replayData['content'], contains('group_key_update'));
+      expect(captured?.replayData.containsKey('content'), isFalse);
+      expect(
+        captured?.deliveryReplayDataByTransportPeerId?['peer-bob']?['content'],
+        contains('group_key_update'),
+      );
     },
   );
 
@@ -530,6 +549,209 @@ void main() {
         isEmpty,
       );
       expect(durablePrepared[zeroProof.eventId], isNotNull);
+    },
+  );
+
+  test(
+    'TC-363-02g deferred key repair keeps one stable authority and resumes only survivors',
+    () async {
+      final keyCreatedAt = DateTime.utc(2026, 8, 13, 12, 34, 56, 789, 123);
+      const source = GroupMemberDeviceIdentity(
+        deviceId: 'source-device',
+        transportPeerId: 'source-transport',
+        deviceSigningPublicKey: 'selfPubKey',
+        mlKemPublicKey: 'source-mlkem',
+      );
+      const physicalA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'physical-a',
+        deviceSigningPublicKey: 'public-a',
+        mlKemPublicKey: 'mlkem-a',
+      );
+      const physicalB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'physical-b',
+        deviceSigningPublicKey: 'public-b',
+        mlKemPublicKey: 'mlkem-b',
+      );
+      await groupRepo.removeMember(groupId, 'peer-carol');
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: source.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[source],
+          joinedAt: keyCreatedAt,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: 'peer-bob',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'bob-account-key',
+          mlKemPublicKey: physicalA.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[physicalA, physicalB],
+          joinedAt: keyCreatedAt,
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: groupId,
+          keyGeneration: 3,
+          encryptedKey: 'stable-current-key',
+          createdAt: keyCreatedAt,
+        ),
+      );
+
+      AuthenticatedGroupAuthorityProof? durablePrepared;
+      AuthenticatedGroupAuthorityProof? durableComplete;
+      final durableRows = <String, GroupPendingBroadcast>{};
+      final requests = <ProtectedGroupAuthorityPrepareRequest>[];
+      final activatedProofs = <AuthenticatedGroupAuthorityProof>[];
+      final availability = <String, List<bool>>{
+        physicalA.transportPeerId: <bool>[true],
+        physicalB.transportPeerId: <bool>[false, true],
+      };
+
+      void installAdapter() {
+        setProtectedGroupAuthorityAdapter(
+          prepare: (request) async {
+            requests.add(request);
+            final persisted = durablePrepared;
+            if (request.resumePreparedSurvivors && persisted != null) {
+              expect(
+                protectedGroupAuthorityProofMatchesPrepareRequest(
+                  proof: persisted,
+                  request: request,
+                  keyEpoch: 3,
+                ),
+                isTrue,
+              );
+              return ProtectedGroupAuthorityPreparation(
+                groupId: request.groupId,
+                rows: durableRows.values.toList(growable: false),
+                authorityProof: persisted,
+                control: request.control,
+                replayData: Map<String, dynamic>.from(request.replayData),
+              );
+            }
+            final preparation = await buildProtectedGroupAuthorityRows(
+              groupId: request.groupId,
+              transitionId: request.transitionId,
+              control: request.control,
+              replayData: request.replayData,
+              keyEpoch: 3,
+              actorAccountPeerId: request.actorAccountPeerId,
+              actorAccountPublicKey: request.actorAccountPublicKey,
+              actorAccountPrivateKey: request.actorAccountPrivateKey,
+              senderDevice: request.senderDevice,
+              frozenRecipients: request.frozenRecipients,
+              deliveryRecipients: request.deliveryRecipients,
+              deliveryReplayDataByTransportPeerId:
+                  request.deliveryReplayDataByTransportPeerId,
+              sharedAuthorityProof: request.sharedAuthorityProof,
+              callSign: (data, _) async => <String, dynamic>{
+                'ok': true,
+                'signature': 'sig:${data.hashCode}',
+              },
+              callEncrypt:
+                  ({
+                    required recipientMlKemPublicKey,
+                    required plaintext,
+                  }) async => <String, dynamic>{
+                    'ok': true,
+                    'kem': 'kem-$recipientMlKemPublicKey',
+                    'ciphertext': 'ciphertext-$recipientMlKemPublicKey',
+                    'nonce': 'nonce-$recipientMlKemPublicKey',
+                  },
+              now: () => keyCreatedAt,
+            );
+            durablePrepared = preparation.authorityProof;
+            for (final row in preparation.rows) {
+              durableRows[row.recipientPeerIds.single] = row;
+            }
+            return preparation;
+          },
+          activate: (preparation, {required requireAllCustody}) async {
+            expect(requireAllCustody, isTrue);
+            final proof = preparation.authorityProof!;
+            activatedProofs.add(proof);
+            durableComplete ??= proof;
+            var acceptedAll = true;
+            for (final row in preparation.rows) {
+              final recipient = row.recipientPeerIds.single;
+              final outcomes = availability[recipient]!;
+              final accepted = outcomes.isNotEmpty && outcomes.removeAt(0);
+              if (accepted) {
+                durableRows.remove(recipient);
+              } else {
+                acceptedAll = false;
+              }
+            }
+            return acceptedAll;
+          },
+          cancel: (_) async => true,
+        );
+      }
+
+      installAdapter();
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+      final first = await distributeCurrentGroupKeyToDeferredPeer(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        peerId: 'peer-bob',
+        selfPeerId: selfPeerId,
+        senderPublicKey: source.deviceSigningPublicKey,
+        senderPrivateKey: 'self-private-key',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: (_, _) async => true,
+      );
+      expect(first, 0);
+      expect(durableRows.keys, <String>{physicalB.transportPeerId});
+      final firstProof = durablePrepared!;
+      expect(firstProof.authorityData['recipientTransportPeerIds'], <String>[
+        physicalA.transportPeerId,
+        physicalB.transportPeerId,
+      ]);
+
+      // Reconstruct only the adapter. Durable PREPARED/COMPLETE and the B
+      // survivor are the restart state; A must never be recreated.
+      setProtectedGroupAuthorityAdapter();
+      installAdapter();
+      final second = await distributeCurrentGroupKeyToDeferredPeer(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        peerId: 'peer-bob',
+        selfPeerId: selfPeerId,
+        senderPublicKey: source.deviceSigningPublicKey,
+        senderPrivateKey: 'self-private-key',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: (_, _) async => true,
+      );
+      expect(second, 2);
+      expect(durableRows, isEmpty);
+      expect(durableComplete, same(firstProof));
+      expect(activatedProofs, everyElement(same(firstProof)));
+      expect(requests, hasLength(2));
+      expect(requests[1].transitionId, requests[0].transitionId);
+      expect(
+        requests[1].replayData['timestamp'],
+        keyCreatedAt.toIso8601String(),
+      );
+      expect(requests[1].resumePreparedSurvivors, isTrue);
+      expect(requests[1].deliveryReplayDataByTransportPeerId?.keys, <String>{
+        physicalA.transportPeerId,
+        physicalB.transportPeerId,
+      });
     },
   );
 

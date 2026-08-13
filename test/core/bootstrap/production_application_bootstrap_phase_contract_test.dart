@@ -1490,7 +1490,16 @@ void main() {
           contains('dbCommitGroupKeyWithAuthorityComplete('),
           contains('dbCommitProtectedDissolvedGroup('),
           contains('recoverPreparedProtectedGroupDissolve('),
-          contains('pendingDissolves.any('),
+          contains('recoverPreparedProtectedGroupKey('),
+          contains('discoverLocalPreparedAuthorities('),
+          contains('discoverPreparedAuthorities:'),
+          allOf(
+            contains('resumePreparedSurvivors'),
+            contains('pendingDissolves.any('),
+            contains('newestFirst: true'),
+            contains('activeDevicesWithLegacyFallback()'),
+            contains('deliveryReplayDataByTransportPeerId'),
+          ),
         ),
         reason:
             'common key authority and the recoverable two-phase dissolve '

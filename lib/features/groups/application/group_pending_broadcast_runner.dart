@@ -44,6 +44,17 @@ class GroupPendingBroadcastRunner {
   final Future<bool> Function(GroupPendingBroadcast broadcast)?
   finalizeProtectedDissolve;
 
+  /// Bounded authenticated-history discovery for locally authored PREPARED
+  /// facts that have no remaining broadcast row. This is the restart owner for
+  /// zero-recipient transitions and for a crash after the last durable custody
+  /// survivor retired but before terminal completion.
+  final Future<List<ProtectedGroupAuthorityPreparation>> Function(
+    String? groupId,
+  )?
+  discoverPreparedAuthorities;
+  final Future<bool> Function(ProtectedGroupAuthorityPreparation preparation)?
+  recoverPreparedAuthority;
+
   /// One identity-safe serial tail per group. The map always points at the
   /// newest queued turn; an older completion may remove it only when it still
   /// owns that exact entry.
@@ -58,41 +69,74 @@ class GroupPendingBroadcastRunner {
     this.linkedGroupBootstrapRepository,
     this.ensureProtectedAuthorityComplete,
     this.finalizeProtectedDissolve,
+    this.discoverPreparedAuthorities,
+    this.recoverPreparedAuthority,
   });
 
-  /// Drains every pending broadcast for [groupId]. Returns the count re-pushed.
-  Future<int> drainForGroup(String groupId) => _enqueueGroupDrain(groupId);
+  /// Drains rowless PREPARED recovery plus every pending broadcast for
+  /// [groupId]. Returns the number of completed recoveries/re-pushes.
+  Future<int> drainForGroup(String groupId) async {
+    final recovered = await _recoverPreparedOnly(groupId);
+    return recovered + await _enqueueGroupDrain(groupId);
+  }
 
-  /// Drains every pending broadcast across all groups (app-resume sweep).
+  /// Drains rowless PREPARED recovery and pending broadcasts across all groups
+  /// (app-resume sweep).
   ///
   /// The all-row read is discovery only. Every discovered group enters the
   /// same keyed path as a direct/manual drain and reloads inside its turn.
   Future<int> drainAll() async {
+    final recovered = await _recoverPreparedOnly(null);
     final discovered = await repository.all();
     final groupIds = <String>{
       for (final broadcast in discovered) broadcast.groupId,
     };
-    if (groupIds.isEmpty) return 0;
+    if (groupIds.isEmpty) return recovered;
     final counts = await Future.wait(groupIds.map(_enqueueGroupDrain));
-    return counts.fold<int>(0, (total, count) => total + count);
+    return recovered + counts.fold<int>(0, (total, count) => total + count);
   }
 
   /// Drains only Plan-363 protected rows. Restricted linked pause uses this
   /// exact owner so historical generic system broadcasts remain stopped.
   Future<int> drainProtectedAll() async {
+    final recovered = await _recoverPreparedOnly(null);
     final discovered = await repository.all();
     final groupIds = <String>{
       for (final broadcast in discovered)
         if (isProtectedGroupPendingBroadcastKind(broadcast.kind))
           broadcast.groupId,
     };
-    if (groupIds.isEmpty) return 0;
+    if (groupIds.isEmpty) return recovered;
     final counts = await Future.wait(
       groupIds.map(
         (groupId) => _enqueueGroupDrain(groupId, protectedOnly: true),
       ),
     );
-    return counts.fold<int>(0, (total, count) => total + count);
+    return recovered + counts.fold<int>(0, (total, count) => total + count);
+  }
+
+  Future<int> _recoverPreparedOnly(String? groupId) async {
+    final discover = discoverPreparedAuthorities;
+    final recover = recoverPreparedAuthority;
+    if (discover == null || recover == null) return 0;
+    try {
+      final preparations = await discover(groupId);
+      var recovered = 0;
+      for (final preparation in preparations) {
+        if (await recover(preparation)) recovered++;
+      }
+      return recovered;
+    } catch (error) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_PREPARED_AUTHORITY_DISCOVERY_ERROR',
+        details: {
+          if (groupId != null) 'groupId': _safeId(groupId),
+          'error': error.toString(),
+        },
+      );
+      return 0;
+    }
   }
 
   Future<int> _enqueueGroupDrain(String groupId, {bool protectedOnly = false}) {

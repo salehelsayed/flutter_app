@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
@@ -25,7 +26,8 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 class _DissolveCleanupTrackingGroupRepository extends InMemoryGroupRepository
     implements
         AtomicGroupDissolveRepository,
-        AtomicProtectedGroupDissolveRepository {
+        AtomicProtectedGroupDissolveRepository,
+        AtomicProtectedGroupKeyAuthorityRepository {
   final displayRowsByGroup = <String, Set<String>>{};
   int terminalCommitCalls = 0;
   int protectedTerminalCommitCalls = 0;
@@ -35,6 +37,11 @@ class _DissolveCleanupTrackingGroupRepository extends InMemoryGroupRepository
     required List<GroupPendingBroadcast> expectedBroadcasts,
   })?
   onProtectedCommit;
+  Future<void> Function({
+    required GroupKeyInfo key,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+  })?
+  onProtectedKeyCommit;
 
   @override
   Future<void> commitDissolvedGroup(GroupModel group) async {
@@ -59,6 +66,18 @@ class _DissolveCleanupTrackingGroupRepository extends InMemoryGroupRepository
       authorityComplete: authorityComplete,
       expectedBroadcasts: expectedBroadcasts,
     );
+  }
+
+  @override
+  Future<void> commitProtectedGroupKeyAuthority({
+    required GroupKeyInfo key,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+  }) async {
+    final commit = onProtectedKeyCommit;
+    if (commit == null) {
+      throw StateError('protected key test commit is unavailable');
+    }
+    await commit(key: key, authorityComplete: authorityComplete);
   }
 }
 
@@ -177,6 +196,7 @@ void main() {
   installProtectedDissolve({
     required List<InboxStoreOutcome> outcomes,
     bool failFirstTerminalCommit = false,
+    bool includeSecondRecipient = false,
     void Function()? beforeStore,
   }) async {
     const source = GroupMemberDeviceIdentity(
@@ -191,6 +211,12 @@ void main() {
       deviceSigningPublicKey: 'bob-device-public',
       mlKemPublicKey: 'bob-mlkem',
     );
+    const secondRecipient = GroupMemberDeviceIdentity(
+      deviceId: 'carol-device',
+      transportPeerId: 'carol-transport',
+      deviceSigningPublicKey: 'carol-device-public',
+      mlKemPublicKey: 'carol-mlkem',
+    );
     await groupRepo.saveMember(
       GroupMember(
         groupId: 'group-1',
@@ -203,6 +229,20 @@ void main() {
         joinedAt: now,
       ),
     );
+    if (includeSecondRecipient) {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-carol',
+          username: 'Carol',
+          role: MemberRole.writer,
+          publicKey: 'pk-carol',
+          mlKemPublicKey: secondRecipient.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[secondRecipient],
+          joinedAt: now,
+        ),
+      );
+    }
     await groupRepo.saveMember(
       GroupMember(
         groupId: 'group-1',
@@ -369,7 +409,7 @@ void main() {
   );
 
   test(
-    'TC-363-02e protected dissolve restart repairs custody-complete pre-terminal crash',
+    'TC-363-02e protected dissolve restart repairs rowless custody-complete pre-terminal crash',
     () async {
       final harness = await installProtectedDissolve(
         failFirstTerminalCommit: true,
@@ -403,7 +443,11 @@ void main() {
       );
       expect(result, DissolveGroupResult.bridgeError);
       expect((await groupRepo.getGroup('group-1'))?.isDissolved, isFalse);
-      expect(harness.pending.rows, hasLength(1));
+      expect(
+        harness.pending.rows,
+        isEmpty,
+        reason: 'accepted custody is the durable per-target receipt',
+      );
       expect(
         harness.history.keys,
         isNot(
@@ -429,11 +473,317 @@ void main() {
       expect(repaired, isTrue);
       expect((await groupRepo.getGroup('group-1'))?.isDissolved, isTrue);
       expect(harness.pending.rows, isEmpty);
+      expect(
+        harness.store.recipients,
+        <String>['bob-transport'],
+        reason: 'rowless PREPARED recovery must not contact an accepted target',
+      );
+      expect(groupRepo.protectedTerminalCommitCalls, 2);
+    },
+  );
+
+  test(
+    'TC-363-02h protected dissolve persists A receipt and restarts from B survivor',
+    () async {
+      const accepted = InboxStoreOutcome(
+        status: InboxStoreStatus.stored,
+        storeStatus: 'stored',
+        custodyContract: ackOrExpiryInboxCustodyContract,
+      );
+      const ambiguous = InboxStoreOutcome(
+        status: InboxStoreStatus.stored,
+        storeStatus: 'stored',
+      );
+      const duplicate = InboxStoreOutcome(
+        status: InboxStoreStatus.duplicate,
+        storeStatus: 'duplicate',
+        custodyContract: ackOrExpiryInboxCustodyContract,
+      );
+      final harness = await installProtectedDissolve(
+        includeSecondRecipient: true,
+        outcomes: const <InboxStoreOutcome>[accepted, ambiguous, duplicate],
+      );
+
+      final (result, _) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        actorDeviceId: 'admin-device',
+        actorTransportPeerId: 'admin-transport',
+        dissolvedAt: now.add(const Duration(minutes: 4)),
+      );
+      expect(result, DissolveGroupResult.bridgeError);
+      expect((await groupRepo.getGroup('group-1'))?.isDissolved, isFalse);
+      expect(harness.pending.rows.values, hasLength(1));
+      expect(harness.pending.rows.values.single.recipientPeerIds, <String>[
+        'carol-transport',
+      ]);
       expect(harness.store.recipients, <String>[
         'bob-transport',
-        'bob-transport',
+        'carol-transport',
       ]);
-      expect(groupRepo.protectedTerminalCommitCalls, 2);
+
+      final prepared = harness.history.values.single;
+      final repaired = await recoverPreparedProtectedGroupDissolve(
+        groupId: prepared.groupId,
+        eventId: prepared.eventId,
+        groupRepository: groupRepo,
+        pendingRepository: harness.pending,
+        protectedInboxStore: harness.store,
+        pendingSiblingDeviceRepository: groupRepo,
+        loadAuthorityProof:
+            ({required groupId, required phase, required eventId}) async =>
+                harness.history['${phase.name}:$eventId'],
+      );
+      expect(repaired, isTrue);
+      expect((await groupRepo.getGroup('group-1'))?.isDissolved, isTrue);
+      expect(harness.pending.rows, isEmpty);
+      expect(harness.store.recipients, <String>[
+        'bob-transport',
+        'carol-transport',
+        'carol-transport',
+      ]);
+      expect(
+        harness.history.keys,
+        contains(
+          '${AuthenticatedGroupAuthorityPhase.complete.name}:'
+          '${prepared.eventId}',
+        ),
+      );
+    },
+  );
+
+  test(
+    'TC-363-02i prepared-only discovery repairs zero-target key and dissolve after restart',
+    () async {
+      final keyAt = now.add(const Duration(minutes: 5));
+      final dissolveAt = keyAt.add(const Duration(microseconds: 1));
+      const keyEventId = 'group_key_update:group-1:peer-admin:zero-target';
+      const dissolveEventId = 'group_dissolved:group-1:peer-admin:zero-target';
+      final draft = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 2,
+        encryptedKey: 'zero-target-key-v2',
+        createdAt: keyAt,
+      );
+      await groupRepo.savePendingKeyRotation(draft);
+      final keyProof = AuthenticatedGroupAuthorityProof(
+        eventId: keyEventId,
+        groupId: 'group-1',
+        eventAt: keyAt,
+        keyEpoch: 2,
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+        actorAccountPeerId: 'peer-admin',
+        actorAccountPublicKey: 'pk-admin',
+        senderTransportPeerId: 'admin-transport',
+        senderTransportPublicKey: 'pk-admin',
+        authorityData: secretFreeProtectedAuthorityData(
+          control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+          replayData: <String, dynamic>{
+            'groupId': 'group-1',
+            'keyGeneration': 2,
+            'encryptedKey': draft.encryptedKey,
+            'from': 'admin-transport',
+            'timestamp': keyAt.toIso8601String(),
+          },
+          frozenRecipientPeerIds: const <String>[],
+        ),
+        signature: 'key-signature',
+      );
+      final dissolveText = jsonEncode(<String, dynamic>{
+        '__sys': 'group_dissolved',
+        'dissolvedAt': dissolveAt.toIso8601String(),
+        'dissolvedBy': 'peer-admin',
+        'signedTransitionAudit': <String, dynamic>{
+          'transitionType': 'group_dissolved',
+          'groupId': 'group-1',
+          'sourceEventId': dissolveEventId,
+          'eventAt': dissolveAt.toIso8601String(),
+        },
+      });
+      final dissolveProof = AuthenticatedGroupAuthorityProof(
+        eventId: dissolveEventId,
+        groupId: 'group-1',
+        eventAt: dissolveAt,
+        keyEpoch: 2,
+        control: ProtectedGroupAuthorityControl.groupDissolve.wireValue,
+        actorAccountPeerId: 'peer-admin',
+        actorAccountPublicKey: 'pk-admin',
+        senderTransportPeerId: 'admin-transport',
+        senderTransportPublicKey: 'pk-admin',
+        authorityData: secretFreeProtectedAuthorityData(
+          control: ProtectedGroupAuthorityControl.groupDissolve.wireValue,
+          replayData: <String, dynamic>{
+            'groupId': 'group-1',
+            'senderId': 'peer-admin',
+            'senderUsername': 'Admin',
+            'text': dissolveText,
+            'timestamp': dissolveAt.toIso8601String(),
+            'messageId': dissolveEventId,
+          },
+          frozenRecipientPeerIds: const <String>[],
+        ),
+        signature: 'dissolve-signature',
+      );
+      final history = <String, AuthenticatedGroupAuthorityProof>{
+        '${AuthenticatedGroupAuthorityPhase.prepared.name}:$keyEventId':
+            keyProof,
+        '${AuthenticatedGroupAuthorityPhase.prepared.name}:$dissolveEventId':
+            dissolveProof,
+      };
+      groupRepo.onProtectedKeyCommit =
+          ({required key, required authorityComplete}) async {
+            final proof = AuthenticatedGroupAuthorityProof.tryParse(
+              authorityComplete.payload['proof'],
+            )!;
+            await groupRepo.saveKey(key);
+            history['${AuthenticatedGroupAuthorityPhase.complete.name}:'
+                    '${proof.eventId}'] =
+                proof;
+          };
+      groupRepo.onProtectedCommit =
+          ({
+            required group,
+            required authorityComplete,
+            required expectedBroadcasts,
+          }) async {
+            expect(expectedBroadcasts, isEmpty);
+            final proof = AuthenticatedGroupAuthorityProof.tryParse(
+              authorityComplete.payload['proof'],
+            )!;
+            await groupRepo.updateGroup(group);
+            history['${AuthenticatedGroupAuthorityPhase.complete.name}:'
+                    '${proof.eventId}'] =
+                proof;
+          };
+      Future<AuthenticatedGroupAuthorityProof?> loadProof({
+        required String groupId,
+        required AuthenticatedGroupAuthorityPhase phase,
+        required String eventId,
+      }) async => history['${phase.name}:$eventId'];
+
+      final pending = _DissolvePendingRepository();
+      final emptyStore = _DissolveCustodyStore(const <InboxStoreOutcome>[]);
+      final promoted = <GroupKeyInfo>[];
+      final candidates = <ProtectedGroupAuthorityPreparation>[
+        ProtectedGroupAuthorityPreparation(
+          groupId: 'group-1',
+          rows: const <GroupPendingBroadcast>[],
+          authorityProof: keyProof,
+          control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+          replayData: Map<String, dynamic>.from(keyProof.authorityData),
+        ),
+        ProtectedGroupAuthorityPreparation(
+          groupId: 'group-1',
+          rows: const <GroupPendingBroadcast>[],
+          authorityProof: dissolveProof,
+          control: ProtectedGroupAuthorityControl.groupDissolve,
+          replayData: Map<String, dynamic>.from(dissolveProof.authorityData),
+        ),
+      ];
+      final runner = GroupPendingBroadcastRunner(
+        repository: pending,
+        rePush: (_) async => false,
+        protectedInboxStore: emptyStore,
+        discoverPreparedAuthorities: (groupId) async => candidates
+            .where(
+              (candidate) => groupId == null || candidate.groupId == groupId,
+            )
+            .where(
+              (candidate) => !history.containsKey(
+                '${AuthenticatedGroupAuthorityPhase.complete.name}:'
+                '${candidate.authorityProof!.eventId}',
+              ),
+            )
+            .toList(growable: false),
+        recoverPreparedAuthority: (preparation) {
+          final proof = preparation.authorityProof!;
+          if (preparation.control ==
+              ProtectedGroupAuthorityControl.groupKeyUpdate) {
+            return recoverPreparedProtectedGroupKey(
+              proof: proof,
+              groupRepository: groupRepo,
+              promoteKey: (key) async => promoted.add(key),
+              loadAuthorityProof: loadProof,
+            );
+          }
+          return recoverPreparedProtectedGroupDissolve(
+            groupId: preparation.groupId,
+            eventId: proof.eventId,
+            groupRepository: groupRepo,
+            pendingRepository: pending,
+            protectedInboxStore: emptyStore,
+            pendingSiblingDeviceRepository: groupRepo,
+            loadAuthorityProof: loadProof,
+          );
+        },
+      );
+
+      expect(await runner.drainProtectedAll(), 2);
+      expect(promoted.map((key) => key.keyGeneration), <int>[2]);
+      expect(
+        (await groupRepo.getKeyByGeneration('group-1', 2))?.encryptedKey,
+        draft.encryptedKey,
+      );
+      expect(await groupRepo.getPendingKeyRotation('group-1'), isNull);
+      expect((await groupRepo.getGroup('group-1'))?.isDissolved, isTrue);
+      expect(emptyStore.recipients, isEmpty);
+      expect(
+        history.keys,
+        containsAll(<String>[
+          '${AuthenticatedGroupAuthorityPhase.complete.name}:$keyEventId',
+          '${AuthenticatedGroupAuthorityPhase.complete.name}:$dissolveEventId',
+        ]),
+      );
+
+      final abortedAt = dissolveAt.add(const Duration(microseconds: 1));
+      final abortedDraft = GroupKeyInfo(
+        groupId: 'group-1',
+        keyGeneration: 3,
+        encryptedKey: 'aborted-nonempty-key-v3',
+        createdAt: abortedAt,
+      );
+      await groupRepo.savePendingKeyRotation(abortedDraft);
+      final abortedProof = AuthenticatedGroupAuthorityProof(
+        eventId: 'group_key_update:group-1:peer-admin:aborted-nonempty',
+        groupId: 'group-1',
+        eventAt: abortedAt,
+        keyEpoch: 3,
+        control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+        actorAccountPeerId: 'peer-admin',
+        actorAccountPublicKey: 'pk-admin',
+        senderTransportPeerId: 'admin-transport',
+        senderTransportPublicKey: 'pk-admin',
+        authorityData: secretFreeProtectedAuthorityData(
+          control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+          replayData: <String, dynamic>{
+            'groupId': 'group-1',
+            'keyGeneration': 3,
+            'encryptedKey': abortedDraft.encryptedKey,
+            'from': 'admin-transport',
+            'timestamp': abortedAt.toIso8601String(),
+          },
+          frozenRecipientPeerIds: const <String>['remote-transport'],
+        ),
+        signature: 'aborted-signature',
+      );
+      expect(
+        await recoverPreparedProtectedGroupKey(
+          proof: abortedProof,
+          groupRepository: groupRepo,
+          promoteKey: (_) async => fail('aborted rows must not promote a key'),
+          loadAuthorityProof: loadProof,
+        ),
+        isFalse,
+        reason: 'row absence is not custody evidence for a nonempty ACL',
+      );
+      expect(await groupRepo.getKeyByGeneration('group-1', 3), isNull);
     },
   );
 

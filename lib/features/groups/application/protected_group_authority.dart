@@ -5,6 +5,7 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
@@ -85,7 +86,9 @@ class ProtectedGroupAuthorityPrepareRequest {
     required this.senderDevice,
     required this.frozenRecipients,
     this.deliveryRecipients,
+    this.deliveryReplayDataByTransportPeerId,
     this.sharedAuthorityProof,
+    this.resumePreparedSurvivors = false,
   });
 
   final String groupId;
@@ -98,7 +101,9 @@ class ProtectedGroupAuthorityPrepareRequest {
   final GroupMemberDeviceIdentity senderDevice;
   final List<GroupMemberDeviceIdentity> frozenRecipients;
   final List<GroupMemberDeviceIdentity>? deliveryRecipients;
+  final Map<String, Map<String, dynamic>>? deliveryReplayDataByTransportPeerId;
   final AuthenticatedGroupAuthorityProof? sharedAuthorityProof;
+  final bool resumePreparedSurvivors;
 }
 
 typedef PrepareProtectedGroupAuthority =
@@ -412,6 +417,7 @@ Future<ProtectedGroupAuthorityPreparation> buildProtectedGroupAuthorityRows({
   required GroupMemberDeviceIdentity senderDevice,
   required List<GroupMemberDeviceIdentity> frozenRecipients,
   List<GroupMemberDeviceIdentity>? deliveryRecipients,
+  Map<String, Map<String, dynamic>>? deliveryReplayDataByTransportPeerId,
   AuthenticatedGroupAuthorityProof? sharedAuthorityProof,
   required LinkedGroupSign callSign,
   required LinkedGroupEncrypt callEncrypt,
@@ -450,6 +456,17 @@ Future<ProtectedGroupAuthorityPreparation> buildProtectedGroupAuthorityRows({
     );
   }
   if (deliveryPeerIds != null && recipients.length != deliveryPeerIds.length) {
+    return ProtectedGroupAuthorityPreparation(
+      groupId: groupId,
+      rows: const <GroupPendingBroadcast>[],
+    );
+  }
+  final deliveryReplayData = deliveryReplayDataByTransportPeerId;
+  if (deliveryReplayData != null &&
+      (deliveryReplayData.length != recipients.length ||
+          !deliveryReplayData.keys.toSet().containsAll(
+            recipients.map((recipient) => recipient.transportPeerId),
+          ))) {
     return ProtectedGroupAuthorityPreparation(
       groupId: groupId,
       rows: const <GroupPendingBroadcast>[],
@@ -507,6 +524,21 @@ Future<ProtectedGroupAuthorityPreparation> buildProtectedGroupAuthorityRows({
   final rows = <GroupPendingBroadcast>[];
   for (final recipient in recipients) {
     final recipientKey = recipient.mlKemPublicKey!.trim();
+    final recipientReplayData =
+        deliveryReplayData?[recipient.transportPeerId] ?? replayData;
+    if (canonicalLinkedGroupAuthorityJson(
+          secretFreeProtectedAuthorityData(
+            control: control.wireValue,
+            replayData: recipientReplayData,
+            frozenRecipientPeerIds: acl,
+          ),
+        ) !=
+        canonicalLinkedGroupAuthorityJson(authorityProof.authorityData)) {
+      return ProtectedGroupAuthorityPreparation(
+        groupId: groupId,
+        rows: const <GroupPendingBroadcast>[],
+      );
+    }
     var payload = ProtectedGroupAuthorityPayload(
       transitionId: transitionId,
       groupId: groupId,
@@ -519,7 +551,7 @@ Future<ProtectedGroupAuthorityPreparation> buildProtectedGroupAuthorityRows({
       recipientTransportPeerId: recipient.transportPeerId,
       frozenRecipientPeerIds: acl,
       control: control,
-      replayData: replayData,
+      replayData: recipientReplayData,
       authorityProof: authorityProof,
       signature: '',
     );
@@ -593,6 +625,47 @@ Future<ProtectedGroupAuthorityPreparation> buildProtectedGroupAuthorityRows({
     control: control,
     replayData: Map<String, dynamic>.unmodifiable(replayData),
   );
+}
+
+/// Verifies that a durable PREPARED proof is the exact stable authority version
+/// requested by a sender retry. This compares only account-signed,
+/// secret-free bytes; target-specific encrypted deliveries remain outside the
+/// proof and are recovered from their immutable pending rows.
+bool protectedGroupAuthorityProofMatchesPrepareRequest({
+  required AuthenticatedGroupAuthorityProof proof,
+  required ProtectedGroupAuthorityPrepareRequest request,
+  required int keyEpoch,
+}) {
+  final frozen = request.frozenRecipients
+      .where(
+        (device) =>
+            device.isActive &&
+            device.transportPeerId != request.senderDevice.transportPeerId &&
+            device.mlKemPublicKey?.trim().isNotEmpty == true,
+      )
+      .toList(growable: false);
+  final acl = frozen.map((device) => device.transportPeerId).toSet().toList()
+    ..sort();
+  final eventAt = _utc(request.replayData['timestamp']);
+  if (eventAt == null || _strict(proof.signature) == null) return false;
+  final unsigned = AuthenticatedGroupAuthorityProof(
+    eventId: request.transitionId,
+    groupId: request.groupId,
+    eventAt: eventAt,
+    keyEpoch: keyEpoch,
+    control: request.control.wireValue,
+    actorAccountPeerId: request.actorAccountPeerId,
+    actorAccountPublicKey: request.actorAccountPublicKey,
+    senderTransportPeerId: request.senderDevice.transportPeerId,
+    senderTransportPublicKey: request.senderDevice.deviceSigningPublicKey,
+    authorityData: secretFreeProtectedAuthorityData(
+      control: request.control.wireValue,
+      replayData: request.replayData,
+      frozenRecipientPeerIds: acl,
+    ),
+    signature: '',
+  );
+  return proof.sameUnsigned(unsigned);
 }
 
 Future<bool> persistPreparedProtectedGroupAuthority({
@@ -996,13 +1069,135 @@ Future<bool> ensureLocalProtectedGroupAuthorityComplete({
       sameAuthenticatedGroupAuthorityProof(stored, prepared);
 }
 
+/// Recovers a locally authored key PREPARED fact that has no broadcast owner.
+///
+/// A zero-target rotation can crash after its atomic PREPARED fact but before
+/// local key promotion. The persisted rotation draft is the secret-bearing
+/// retry address; the authenticated proof supplies the exact epoch/hash/time.
+/// Promotion is idempotent, then the key projection and COMPLETE fact commit in
+/// one repository transaction before the draft retires.
+Future<bool> recoverPreparedProtectedGroupKey({
+  required AuthenticatedGroupAuthorityProof proof,
+  required GroupRepository groupRepository,
+  required Future<void> Function(GroupKeyInfo key) promoteKey,
+  required LoadAuthenticatedGroupAuthorityProof loadAuthorityProof,
+}) {
+  return runGroupAuthorityPhaseIfNeeded(
+    groupId: proof.groupId,
+    authorityPhaseHeld: isGroupAuthorityPhaseHeld(proof.groupId),
+    action: () async {
+      try {
+        if (proof.control !=
+                ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue ||
+            proof.authorityData['groupId'] != proof.groupId) {
+          return false;
+        }
+        final recipients = _strictRecipientAcl(
+          proof.authorityData['recipientTransportPeerIds'],
+        );
+        if (recipients == null || recipients.isNotEmpty) {
+          // This recovery entry point has no broadcast owner. A nonempty ACL
+          // without rows is not proof of custody: it can also be an aborted
+          // preparation whose rows were cancelled. Fresh/deferred nonempty
+          // transitions complete locally before their rows are allowed to
+          // retire; only an explicitly signed empty ACL is rowless by design.
+          return false;
+        }
+        final complete = await loadAuthorityProof(
+          groupId: proof.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.complete,
+          eventId: proof.eventId,
+        );
+        if (complete != null) {
+          return sameAuthenticatedGroupAuthorityProof(complete, proof);
+        }
+        if (groupRepository is! GroupKeyRotationDraftRepository ||
+            groupRepository is! AtomicProtectedGroupKeyAuthorityRepository) {
+          return false;
+        }
+        final group = await groupRepository.getGroup(proof.groupId);
+        if (group == null || group.selfRemovedAt != null || group.isDissolved) {
+          return false;
+        }
+        final generation = proof.authorityData['keyGeneration'];
+        final encryptedKeyHash = _strict(
+          proof.authorityData['encryptedKeyHash'],
+        );
+        if (generation is! int ||
+            generation <= 0 ||
+            generation != proof.keyEpoch ||
+            encryptedKeyHash == null) {
+          return false;
+        }
+        bool matches(GroupKeyInfo? key) =>
+            key != null &&
+            key.keyGeneration == generation &&
+            key.createdAt.toUtc() == proof.eventAt.toUtc() &&
+            groupAuthoritySha256(key.encryptedKey) == encryptedKeyHash;
+        final latest = await groupRepository.getLatestKey(proof.groupId);
+        if (latest != null &&
+            (latest.keyGeneration > generation ||
+                (latest.keyGeneration == generation && !matches(latest)))) {
+          return false;
+        }
+        final committed = await groupRepository.getKeyByGeneration(
+          proof.groupId,
+          generation,
+        );
+        final draftRepository =
+            groupRepository as GroupKeyRotationDraftRepository;
+        final draft = await draftRepository.getPendingKeyRotation(
+          proof.groupId,
+        );
+        final key = matches(committed)
+            ? committed!
+            : matches(draft)
+            ? draft!
+            : null;
+        if (key == null) return false;
+
+        await promoteKey(key);
+        final atomicRepository =
+            groupRepository as AtomicProtectedGroupKeyAuthorityRepository;
+        await atomicRepository.commitProtectedGroupKeyAuthority(
+          key: key,
+          authorityComplete: ProtectedGroupAuthorityCompleteFact(
+            sourcePeerId: proof.actorAccountPeerId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.complete,
+              proof.eventId,
+            ),
+            sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+            payload: authenticatedGroupAuthorityFactPayload(proof),
+          ),
+        );
+        if (draft != null && matches(draft)) {
+          await draftRepository.clearPendingKeyRotation(
+            proof.groupId,
+            draft.keyGeneration,
+          );
+        }
+        final stored = await loadAuthorityProof(
+          groupId: proof.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.complete,
+          eventId: proof.eventId,
+        );
+        return stored != null &&
+            sameAuthenticatedGroupAuthorityProof(stored, proof);
+      } catch (_) {
+        return false;
+      }
+    },
+  );
+}
+
 /// Recovers the sender half of a protected dissolve from durable PREPARED
 /// history and exact protected rows.
 ///
-/// Rows are intentionally retained after strict custody. The final repository
-/// call atomically commits the terminal projection, COMPLETE history, exact-row
-/// retirement, and display-custody cleanup. A crash anywhere before that
-/// transaction simply replays relay custody as `duplicate` after restart.
+/// Each accepted target's exact row retires as its durable receipt. Remaining
+/// rows are the survivor set; after the final receipt, authenticated PREPARED
+/// history owns the rowless crash gap until the repository atomically commits
+/// terminal projection, COMPLETE history, and display-custody cleanup.
 Future<bool> recoverPreparedProtectedGroupDissolve({
   required String groupId,
   required String eventId,
@@ -1049,19 +1244,36 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
           prepared.authorityData['recipientTransportPeerIds'],
         );
         if (expectedRecipients == null) return false;
-        final rows = (await pendingRepository.forGroup(groupId))
-            .where((row) {
-              if (row.kind != groupPendingBroadcastKindProtectedAuthority) {
-                return false;
-              }
-              final identity = parseProtectedGroupAuthorityDeliveryId(
-                row.sourceMessageId ?? '',
+        final pendingRows = await pendingRepository.forGroup(groupId);
+        if (pendingRows.any(
+          (row) =>
+              row.kind == groupPendingBroadcastKindProtectedAuthority &&
+              parseProtectedGroupAuthorityDeliveryId(
+                    row.sourceMessageId ?? '',
+                  ) ==
+                  null,
+        )) {
+          return false;
+        }
+        final rows =
+            pendingRows
+                .where((row) {
+                  if (row.kind != groupPendingBroadcastKindProtectedAuthority) {
+                    return false;
+                  }
+                  final identity = parseProtectedGroupAuthorityDeliveryId(
+                    row.sourceMessageId ?? '',
+                  );
+                  return identity?.control ==
+                          ProtectedGroupAuthorityControl.groupDissolve &&
+                      identity?.transitionId == eventId;
+                })
+                .toList(growable: false)
+              ..sort(
+                (left, right) => left.recipientPeerIds.single.compareTo(
+                  right.recipientPeerIds.single,
+                ),
               );
-              return identity?.control ==
-                      ProtectedGroupAuthorityControl.groupDissolve &&
-                  identity?.transitionId == eventId;
-            })
-            .toList(growable: false);
         final rowRecipients = <String>{};
         for (final row in rows) {
           if (row.recipientPeerIds.length != 1) return false;
@@ -1082,8 +1294,7 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
             return false;
           }
         }
-        if (rowRecipients.length != expectedRecipients.length ||
-            !rowRecipients.containsAll(expectedRecipients)) {
+        if (!expectedRecipients.toSet().containsAll(rowRecipients)) {
           return false;
         }
 
@@ -1097,6 +1308,7 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
             return false;
           }
         }
+        var allAccepted = true;
         for (final row in rows) {
           final outcome = await protectedInboxStore
               .storeInAckCustodyInboxDetailed(
@@ -1104,8 +1316,23 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
                 row.sysText,
                 custodyKind: AckCustodyKind.groupAuthorityV1,
               );
-          if (!outcome.ackOrExpiryAccepted) return false;
+          if (!outcome.ackOrExpiryAccepted) {
+            allAccepted = false;
+            continue;
+          }
+          // Exact-row retirement is the durable per-target receipt. Once a
+          // target accepts custody it can never become a retry prerequisite
+          // again, so alternating target availability still converges. A
+          // crash after the final retirement is recovered from rowless
+          // authenticated PREPARED history.
+          if (!await removeGroupPendingBroadcastIfExact(
+            pendingRepository,
+            row,
+          )) {
+            allAccepted = false;
+          }
         }
+        if (!allAccepted) return false;
 
         if (groupRepository is! AtomicProtectedGroupDissolveRepository) {
           return false;
@@ -1123,7 +1350,7 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
             sourceTimestamp: fixedGroupAuthorityUtc(prepared.eventAt),
             payload: authenticatedGroupAuthorityFactPayload(prepared),
           ),
-          expectedBroadcasts: rows,
+          expectedBroadcasts: const <GroupPendingBroadcast>[],
         );
         final storedComplete = await loadAuthorityProof(
           groupId: groupId,

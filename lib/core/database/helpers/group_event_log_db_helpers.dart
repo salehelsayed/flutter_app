@@ -140,7 +140,9 @@ Future<Map<String, Object?>?> dbLoadGroupEventLogEntryExact(
   return rows.isEmpty ? null : rows.single;
 }
 
-/// Bounded history page in chronological index order.
+/// Bounded history page in chronological index order, optionally newest-first.
+/// [afterSourceTimestamp]/[afterSourceEventId] always mean after the cursor in
+/// the selected order, so descending callers page toward older rows.
 Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
   Database db, {
   required String groupId,
@@ -148,6 +150,7 @@ Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
   String? afterSourceTimestamp,
   String? afterSourceEventId,
   String? throughSourceTimestamp,
+  bool newestFirst = false,
   int limit = 100,
 }) {
   if (limit < 1 || limit > 200) {
@@ -156,9 +159,10 @@ Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
   final where = <String>['group_id = ?', 'event_type = ?'];
   final args = <Object?>[groupId, eventType];
   if (afterSourceTimestamp != null) {
+    final comparison = newestFirst ? '<' : '>';
     where.add(
-      '(source_timestamp > ? OR '
-      '(source_timestamp = ? AND source_event_id > ?))',
+      '(source_timestamp $comparison ? OR '
+      '(source_timestamp = ? AND source_event_id $comparison ?))',
     );
     args.addAll(<Object?>[
       afterSourceTimestamp,
@@ -174,7 +178,9 @@ Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
     'group_event_log',
     where: where.join(' AND '),
     whereArgs: args,
-    orderBy: 'source_timestamp ASC, source_event_id ASC',
+    orderBy: newestFirst
+        ? 'source_timestamp DESC, source_event_id DESC'
+        : 'source_timestamp ASC, source_event_id ASC',
     limit: limit,
   );
 }
