@@ -73,27 +73,28 @@ Future<bool> dbInsertPendingGroupBroadcastsAtomically(
 /// from a pre-history build; conflicting outbox or history bytes fail closed.
 Future<bool> dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
   Database db, {
+  required String groupId,
   required List<Map<String, Object?>> rows,
   required String authorityPreparedSourcePeerId,
   required String authorityPreparedSourceEventId,
   required String authorityPreparedSourceTimestamp,
   required Map<String, Object?> authorityPreparedPayload,
 }) async {
-  if (rows.isEmpty ||
+  if (groupId.isEmpty ||
       authorityPreparedSourcePeerId.isEmpty ||
       authorityPreparedSourceEventId.isEmpty ||
       authorityPreparedSourceTimestamp.isEmpty ||
       authorityPreparedPayload.isEmpty) {
     return false;
   }
-  final groupId = rows.first['group_id'];
-  if (groupId is! String ||
-      groupId.isEmpty ||
-      rows.any((row) => row['group_id'] != groupId)) {
+  if (rows.any((row) => row['group_id'] != groupId)) {
     return false;
   }
   try {
     return await dbWriteTransaction(db, (transaction) async {
+      if (!await dbAllowsOrdinaryGroupWrite(transaction, groupId)) {
+        throw StateError('protected authority parent is unavailable');
+      }
       for (final row in rows) {
         await dbInsertPendingGroupBroadcastWithExecutor(transaction, row);
         final existing = await transaction.query(
@@ -120,6 +121,32 @@ Future<bool> dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
     });
   } catch (_) {
     return false;
+  }
+}
+
+/// Retires one exact protected-authority row inside a caller-owned terminal
+/// transaction. This deliberately bypasses the ordinary live-parent predicate:
+/// the same transaction has already advanced (or is about to advance) the
+/// exact group to its terminal dissolved projection.
+Future<void> dbDeleteProtectedGroupAuthorityBroadcastIfExactInTransaction(
+  DatabaseExecutor transaction, {
+  required String groupId,
+  required Map<String, Object?> expected,
+}) async {
+  if (groupId.isEmpty ||
+      expected['group_id'] != groupId ||
+      expected['kind'] != 'group_authority_v1') {
+    throw StateError('invalid protected dissolve broadcast');
+  }
+  final deleted = await transaction.delete(
+    _table,
+    where: _pendingBroadcastExactWhere,
+    whereArgs: _pendingBroadcastExactFields
+        .map((field) => expected[field])
+        .toList(growable: false),
+  );
+  if (deleted != 1) {
+    throw StateError('protected dissolve broadcast changed before commit');
   }
 }
 

@@ -250,19 +250,21 @@ String groupAuthoritySha256(String value) =>
 Map<String, Object?> secretFreeProtectedAuthorityData({
   required String control,
   required Map<String, dynamic> replayData,
+  Iterable<String>? frozenRecipientPeerIds,
 }) {
+  final recipients = frozenRecipientPeerIds == null
+      ? null
+      : (frozenRecipientPeerIds.toSet().toList()..sort());
   if (control == 'group_key_update') {
     final encryptedKey = replayData['encryptedKey'];
-    final content = replayData['content'];
     return <String, Object?>{
       'groupId': replayData['groupId'],
       'keyGeneration': replayData['keyGeneration'],
       if (encryptedKey is String)
         'encryptedKeyHash': groupAuthoritySha256(encryptedKey),
       'from': replayData['from'],
-      'to': replayData['to'],
-      if (content is String) 'contentHash': groupAuthoritySha256(content),
       'timestamp': replayData['timestamp'],
+      'recipientTransportPeerIds': ?recipients,
     };
   }
   return <String, Object?>{
@@ -276,6 +278,27 @@ Map<String, Object?> secretFreeProtectedAuthorityData({
     'text': replayData['text'],
     'timestamp': replayData['timestamp'],
     if (replayData['messageId'] != null) 'messageId': replayData['messageId'],
+    'recipientTransportPeerIds': ?recipients,
+  };
+}
+
+/// Pre-common-version key authority retained only for accepting already
+/// persisted Plan-363 rows. New key proofs never bind target-specific `to` or
+/// encrypted delivery bytes.
+Map<String, Object?> legacyTargetQualifiedKeyAuthorityData(
+  Map<String, dynamic> replayData,
+) {
+  final encryptedKey = replayData['encryptedKey'];
+  final content = replayData['content'];
+  return <String, Object?>{
+    'groupId': replayData['groupId'],
+    'keyGeneration': replayData['keyGeneration'],
+    if (encryptedKey is String)
+      'encryptedKeyHash': groupAuthoritySha256(encryptedKey),
+    'from': replayData['from'],
+    'to': replayData['to'],
+    if (content is String) 'contentHash': groupAuthoritySha256(content),
+    'timestamp': replayData['timestamp'],
   };
 }
 

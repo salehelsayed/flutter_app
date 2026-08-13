@@ -1258,7 +1258,10 @@ void main() {
       // as a usable `active` snapshot instead of `failClosed`. ──
       expect(
         wiring,
-        contains('.load(expectedAccountPeerId: identity?.peerId)'),
+        allOf(
+          contains('return linkedInstallationAuthority.load('),
+          contains('expectedAccountPeerId: identity?.peerId,'),
+        ),
       );
 
       // ── Both Move protections are on the REAL journey, not just injected
@@ -1479,6 +1482,19 @@ void main() {
           contains('storeInAckCustodyInboxDetailed('),
           contains('AckCustodyKind.groupAuthorityV1'),
         ),
+      );
+      final production = File(_productionPath).readAsStringSync();
+      expect(
+        production,
+        allOf(
+          contains('dbCommitGroupKeyWithAuthorityComplete('),
+          contains('dbCommitProtectedDissolvedGroup('),
+          contains('recoverPreparedProtectedGroupDissolve('),
+          contains('pendingDissolves.any('),
+        ),
+        reason:
+            'common key authority and the recoverable two-phase dissolve '
+            'must be composed on the production repository/runner path',
       );
     },
   );

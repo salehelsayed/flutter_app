@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
@@ -37,6 +38,12 @@ class GroupPendingBroadcastRunner {
   final Future<bool> Function(GroupPendingBroadcast broadcast)?
   ensureProtectedAuthorityComplete;
 
+  /// Dedicated prepared -> strict custody -> atomic terminal+COMPLETE recovery
+  /// for dissolve rows. The callback owns every exact row for the transition;
+  /// the generic per-row removal path must never retire one early.
+  final Future<bool> Function(GroupPendingBroadcast broadcast)?
+  finalizeProtectedDissolve;
+
   /// One identity-safe serial tail per group. The map always points at the
   /// newest queued turn; an older completion may remove it only when it still
   /// owns that exact entry.
@@ -50,6 +57,7 @@ class GroupPendingBroadcastRunner {
     this.pendingSiblingDeviceRepository,
     this.linkedGroupBootstrapRepository,
     this.ensureProtectedAuthorityComplete,
+    this.finalizeProtectedDissolve,
   });
 
   /// Drains every pending broadcast for [groupId]. Returns the count re-pushed.
@@ -206,6 +214,14 @@ class GroupPendingBroadcastRunner {
           // authority row remains exact and durable, but cannot overtake it.
           return false;
         }
+      }
+      final identity = parseProtectedGroupAuthorityDeliveryId(
+        broadcast.sourceMessageId ?? '',
+      );
+      if (identity?.control == ProtectedGroupAuthorityControl.groupDissolve) {
+        if (identity?.recipientTransportPeerId != recipient) return false;
+        final finalize = finalizeProtectedDissolve;
+        return finalize != null && await finalize(broadcast);
       }
       final ensureComplete = ensureProtectedAuthorityComplete;
       if (ensureComplete != null && !await ensureComplete(broadcast)) {

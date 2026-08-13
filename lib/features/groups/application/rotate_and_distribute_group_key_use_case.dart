@@ -6,6 +6,7 @@ import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -432,14 +433,14 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         ? 1
         : distributionAttemptCount;
 
-    // 2. Prepare target-qualified protected key authority before promoting the
-    // local epoch. Each replay payload is the incumbent signed+encrypted direct
-    // key update for that exact device; the protected envelope freezes the
-    // complete pre-transition physical ACL but emits only the selected target.
+    // 2. Prepare one common signed key-authority version before promoting the
+    // local epoch. Only the outer delivery tuple and encrypted replay are
+    // target-qualified; every recipient resolves the same event ID and proof.
     final protectedPreparations = <int, ProtectedGroupAuthorityPreparation>{};
+    ProtectedGroupAuthorityPreparation? authorityOnlyPreparation;
+    AuthenticatedGroupAuthorityProof? sharedAuthorityProof;
     if (hasProtectedGroupAuthorityAdapter &&
-        hasProtectedGroupPhysicalAuthority(members) &&
-        distributionTargets.isNotEmpty) {
+        hasProtectedGroupPhysicalAuthority(members)) {
       if (sourceDevice == null) {
         return RotateGroupKeyOutcome.notRotated;
       }
@@ -447,6 +448,33 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
       final protectedTransitionId =
           'group_key_update:$groupId:$selfPeerId:$newEpoch:'
           '${directKeyUpdateEventAt.microsecondsSinceEpoch}';
+      if (distributionTargets.isEmpty) {
+        authorityOnlyPreparation = await prepareProtectedGroupAuthority(
+          ProtectedGroupAuthorityPrepareRequest(
+            groupId: groupId,
+            transitionId: protectedTransitionId,
+            control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+            replayData: <String, dynamic>{
+              'groupId': groupId,
+              'keyGeneration': newEpoch,
+              'encryptedKey': newKey,
+              'from': sourceDevice.transportPeerId,
+              'timestamp': directKeyUpdateEventAt.toIso8601String(),
+            },
+            actorAccountPeerId: selfPeerId,
+            actorAccountPublicKey: senderPublicKey,
+            actorAccountPrivateKey: senderPrivateKey,
+            senderDevice: sourceDevice,
+            frozenRecipients: frozenRecipients,
+            deliveryRecipients: const <GroupMemberDeviceIdentity>[],
+          ),
+        );
+        if (authorityOnlyPreparation == null ||
+            !authorityOnlyPreparation.hasAuthenticatedAuthority) {
+          return RotateGroupKeyOutcome.notRotated;
+        }
+        sharedAuthorityProof = authorityOnlyPreparation.authorityProof;
+      }
       for (var index = 0; index < distributionTargets.length; index++) {
         final target = distributionTargets[index];
         final built = await _buildRotatedKeyDeviceEnvelope(
@@ -474,11 +502,7 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         final preparation = await prepareProtectedGroupAuthority(
           ProtectedGroupAuthorityPrepareRequest(
             groupId: groupId,
-            // Each encrypted direct-key replay is target-specific. Qualifying
-            // the signed authority event prevents two physical recipients
-            // from competing for one immutable prepared-history key.
-            transitionId:
-                '$protectedTransitionId:${target.device.transportPeerId}',
+            transitionId: protectedTransitionId,
             control: ProtectedGroupAuthorityControl.groupKeyUpdate,
             replayData: <String, dynamic>{
               'groupId': groupId,
@@ -495,12 +519,26 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
             senderDevice: sourceDevice,
             frozenRecipients: frozenRecipients,
             deliveryRecipients: <GroupMemberDeviceIdentity>[target.device],
+            sharedAuthorityProof: sharedAuthorityProof,
           ),
         );
-        if (preparation == null || !preparation.hasRecipients) {
+        if (preparation == null ||
+            !preparation.hasRecipients ||
+            !preparation.hasAuthenticatedAuthority) {
           for (final prepared in protectedPreparations.values) {
             await cancelProtectedGroupAuthority(prepared);
           }
+          return RotateGroupKeyOutcome.notRotated;
+        }
+        sharedAuthorityProof ??= preparation.authorityProof;
+        if (!sameAuthenticatedGroupAuthorityProof(
+          sharedAuthorityProof!,
+          preparation.authorityProof!,
+        )) {
+          for (final prepared in protectedPreparations.values) {
+            await cancelProtectedGroupAuthority(prepared);
+          }
+          await cancelProtectedGroupAuthority(preparation);
           return RotateGroupKeyOutcome.notRotated;
         }
         protectedPreparations[index] = preparation;
@@ -562,6 +600,7 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
       for (final preparation in protectedPreparations.values) {
         await cancelProtectedGroupAuthority(preparation);
       }
+      await cancelProtectedGroupAuthority(authorityOnlyPreparation);
       emitFlowEvent(
         layer: 'FL',
         event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
@@ -576,7 +615,28 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
       encryptedKey: newKey,
       createdAt: generatedAt,
     );
-    await groupRepo.saveKey(keyInfo);
+    final proof = sharedAuthorityProof;
+    if (proof != null &&
+        groupRepo is AtomicProtectedGroupKeyAuthorityRepository) {
+      final atomicKeyRepository =
+          groupRepo as AtomicProtectedGroupKeyAuthorityRepository;
+      await atomicKeyRepository.commitProtectedGroupKeyAuthority(
+        key: keyInfo,
+        authorityComplete: ProtectedGroupAuthorityCompleteFact(
+          sourcePeerId: proof.actorAccountPeerId,
+          sourceEventId: authenticatedGroupAuthoritySourceEventId(
+            AuthenticatedGroupAuthorityPhase.complete,
+            proof.eventId,
+          ),
+          sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+          payload: authenticatedGroupAuthorityFactPayload(proof),
+        ),
+      );
+    } else {
+      // Lightweight repositories keep the incumbent projection write; their
+      // injected authority adapter completes immediately after this point.
+      await groupRepo.saveKey(keyInfo);
+    }
     await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
 
     emitFlowEvent(
@@ -584,6 +644,13 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
       event: 'GROUP_ROTATE_KEY_SAVED',
       details: {'newEpoch': newEpoch},
     );
+
+    if (authorityOnlyPreparation != null) {
+      await activateProtectedGroupAuthority(
+        authorityOnlyPreparation,
+        requireAllCustody: true,
+      );
+    }
 
     for (final entry in protectedPreparations.entries) {
       try {

@@ -1,6 +1,8 @@
 import 'package:sqflite_sqlcipher/sqflite.dart';
 
+import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
+import 'group_event_log_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 
 /// Inserts a group key into the database.
@@ -100,6 +102,62 @@ Future<void> dbInsertGroupKey(Database db, Map<String, Object?> row) async {
     );
     rethrow;
   }
+}
+
+/// Atomically promotes one locally authored group-key projection and its
+/// authenticated COMPLETE authority fact. Exact retries repair either side;
+/// an epoch/key or history conflict aborts the transaction.
+Future<void> dbCommitGroupKeyWithAuthorityComplete(
+  Database db, {
+  required Map<String, Object?> keyRow,
+  required String authorityCompleteSourcePeerId,
+  required String authorityCompleteSourceEventId,
+  required String authorityCompleteSourceTimestamp,
+  required Map<String, Object?> authorityCompletePayload,
+}) async {
+  final groupId = keyRow['group_id'] as String? ?? '';
+  final keyGeneration = keyRow['key_generation'] as int? ?? 0;
+  if (groupId.isEmpty ||
+      keyGeneration <= 0 ||
+      authorityCompleteSourcePeerId.isEmpty ||
+      authorityCompleteSourceEventId.isEmpty ||
+      authorityCompleteSourceTimestamp.isEmpty ||
+      authorityCompletePayload.isEmpty) {
+    throw ArgumentError('invalid protected key authority transaction');
+  }
+  await dbWriteTransaction(db, (transaction) async {
+    final existing = await transaction.query(
+      'group_keys',
+      columns: const ['encrypted_key'],
+      where: 'group_id = ? AND key_generation = ?',
+      whereArgs: <Object?>[groupId, keyGeneration],
+      limit: 1,
+    );
+    if (existing.isNotEmpty) {
+      if (existing.single['encrypted_key'] != keyRow['encrypted_key']) {
+        throw StateError('conflicting protected group key authority');
+      }
+    } else {
+      final inserted = await dbInsertOrdinaryGroupOwnedRow(
+        transaction,
+        table: 'group_keys',
+        row: keyRow,
+        conflictAlgorithm: ConflictAlgorithm.abort,
+      );
+      if (!inserted) {
+        throw StateError('protected group key parent authority refused');
+      }
+    }
+    await dbAppendGroupEventLogEntryInTransaction(
+      transaction,
+      groupId: groupId,
+      eventType: 'protected_authority_complete',
+      sourcePeerId: authorityCompleteSourcePeerId,
+      sourceEventId: authorityCompleteSourceEventId,
+      sourceTimestamp: authorityCompleteSourceTimestamp,
+      payload: authorityCompletePayload,
+    );
+  });
 }
 
 /// Loads the latest (highest generation) key for a group.

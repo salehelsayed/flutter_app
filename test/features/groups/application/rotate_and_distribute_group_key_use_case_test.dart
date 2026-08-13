@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -13,6 +14,7 @@ import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -189,6 +191,345 @@ void main() {
       expect(captured?.deliveryRecipients?.single.transportPeerId, 'peer-bob');
       expect(captured?.replayData['keyGeneration'], 1);
       expect(captured?.replayData['content'], contains('group_key_update'));
+    },
+  );
+
+  test(
+    'TC-363-02c key rotation keeps one sender/A/B authority version across restart and zero targets',
+    () async {
+      const source = GroupMemberDeviceIdentity(
+        deviceId: 'source-device',
+        transportPeerId: 'source-transport',
+        deviceSigningPublicKey: 'selfPubKey',
+        mlKemPublicKey: 'source-mlkem',
+      );
+      const physicalA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'physical-a',
+        deviceSigningPublicKey: 'public-a',
+        mlKemPublicKey: 'mlkem-a',
+      );
+      const physicalB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'physical-b',
+        deviceSigningPublicKey: 'public-b',
+        mlKemPublicKey: 'mlkem-b',
+      );
+      await groupRepo.removeMember(groupId, 'peer-bob');
+      await groupRepo.removeMember(groupId, 'peer-carol');
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'source-mlkem',
+          devices: const <GroupMemberDeviceIdentity>[source],
+          joinedAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      for (final entry in const <(String, String, GroupMemberDeviceIdentity)>[
+        ('peer-a', 'Peer A', physicalA),
+        ('peer-b', 'Peer B', physicalB),
+      ]) {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: entry.$1,
+            username: entry.$2,
+            role: MemberRole.writer,
+            publicKey: 'account-${entry.$1}',
+            mlKemPublicKey: entry.$3.mlKemPublicKey,
+            devices: <GroupMemberDeviceIdentity>[entry.$3],
+            joinedAt: DateTime.utc(2026, 8, 13),
+          ),
+        );
+      }
+
+      final durablePrepared = <String, AuthenticatedGroupAuthorityProof>{};
+      final durableComplete = <String, AuthenticatedGroupAuthorityProof>{};
+      final rowsByRecipient = <String, GroupPendingBroadcast>{};
+      final plaintextByRecipient = <String, String>{};
+      final requests = <ProtectedGroupAuthorityPrepareRequest>[];
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          requests.add(request);
+          final recipientByKey = <String, String>{
+            for (final device in request.frozenRecipients)
+              if (device.mlKemPublicKey != null)
+                device.mlKemPublicKey!: device.transportPeerId,
+          };
+          final preparation = await buildProtectedGroupAuthorityRows(
+            groupId: request.groupId,
+            transitionId: request.transitionId,
+            control: request.control,
+            replayData: request.replayData,
+            keyEpoch: request.replayData['keyGeneration'] as int,
+            actorAccountPeerId: request.actorAccountPeerId,
+            actorAccountPublicKey: request.actorAccountPublicKey,
+            actorAccountPrivateKey: request.actorAccountPrivateKey,
+            senderDevice: request.senderDevice,
+            frozenRecipients: request.frozenRecipients,
+            deliveryRecipients: request.deliveryRecipients,
+            sharedAuthorityProof: request.sharedAuthorityProof,
+            callSign: (data, _) async => <String, dynamic>{
+              'ok': true,
+              'signature': 'sig:${data.hashCode}',
+            },
+            callEncrypt:
+                ({required recipientMlKemPublicKey, required plaintext}) async {
+                  final recipient = recipientByKey[recipientMlKemPublicKey]!;
+                  plaintextByRecipient[recipient] = plaintext;
+                  return <String, dynamic>{
+                    'ok': true,
+                    'kem': 'kem-$recipient',
+                    'ciphertext': 'ciphertext-$recipient',
+                    'nonce': 'nonce-$recipient',
+                  };
+                },
+            now: () => DateTime.parse(
+              request.replayData['timestamp'] as String,
+            ).toUtc(),
+          );
+          final proof = preparation.authorityProof;
+          if (proof == null) return preparation;
+          final existing = durablePrepared[proof.eventId];
+          if (existing != null &&
+              !sameAuthenticatedGroupAuthorityProof(existing, proof)) {
+            return null;
+          }
+          durablePrepared[proof.eventId] = proof;
+          for (final row in preparation.rows) {
+            rowsByRecipient[row.recipientPeerIds.single] = row;
+          }
+          return preparation;
+        },
+        activate: (preparation, {required requireAllCustody}) async {
+          final proof = preparation.authorityProof!;
+          durableComplete[proof.eventId] = proof;
+          return requireAllCustody;
+        },
+        cancel: (_) async => true,
+      );
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+
+      final rotated = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: _sendOk,
+      );
+      expect(rotated.rotated, isTrue);
+      expect(requests, hasLength(2));
+      expect(
+        requests.map((request) => request.transitionId).toSet(),
+        hasLength(1),
+      );
+      final proofA = ProtectedGroupAuthorityPayload.tryParse(
+        plaintextByRecipient['physical-a']!,
+      )!.authorityProof;
+      final proofB = ProtectedGroupAuthorityPayload.tryParse(
+        plaintextByRecipient['physical-b']!,
+      )!.authorityProof;
+      expect(sameAuthenticatedGroupAuthorityProof(proofA, proofB), isTrue);
+      expect(proofA.authorityData['recipientTransportPeerIds'], <String>[
+        'physical-a',
+        'physical-b',
+      ]);
+      expect(
+        proofA.eventId,
+        requests.first.transitionId,
+        reason: 'only the outer delivery tuple may be target-qualified',
+      );
+      expect(durablePrepared[proofA.eventId], isNotNull);
+      expect(durableComplete[proofA.eventId], isNotNull);
+
+      Future<void> receiveAndRestart(
+        GroupMemberDeviceIdentity recipient,
+      ) async {
+        final receiverHistory = <String, AuthenticatedGroupAuthorityProof>{};
+        final receiver = InMemoryGroupRepository();
+        await receiver.saveGroup(
+          GroupModel(
+            id: groupId,
+            name: 'Restart receiver',
+            type: GroupType.chat,
+            topicName: 'topic-$groupId',
+            createdAt: DateTime.utc(2026, 8, 13),
+            createdBy: selfPeerId,
+            myRole: GroupRole.member,
+          ),
+        );
+        await receiver.saveMember(
+          GroupMember(
+            groupId: groupId,
+            peerId: selfPeerId,
+            username: 'Self',
+            role: MemberRole.admin,
+            publicKey: 'selfPubKey',
+            mlKemPublicKey: source.mlKemPublicKey,
+            devices: const <GroupMemberDeviceIdentity>[source],
+            joinedAt: DateTime.utc(2026, 8, 13),
+          ),
+        );
+        await receiver.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: 1,
+            encryptedKey: 'oldKey==',
+            createdAt: DateTime.utc(2026, 8, 13),
+          ),
+        );
+        final row = rowsByRecipient[recipient.transportPeerId]!;
+        final plaintext = plaintextByRecipient[recipient.transportPeerId]!;
+        final result = await handleProtectedGroupAuthority(
+          message: ChatMessage(
+            from: source.transportPeerId,
+            to: recipient.transportPeerId,
+            content: row.sysText,
+            timestamp: proofA.eventAt.toIso8601String(),
+            isIncoming: true,
+          ),
+          ownTransportPeerId: recipient.transportPeerId,
+          ownMlKemSecretKey: 'secret-${recipient.deviceId}',
+          groupRepository: receiver,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) async => <String, dynamic>{'ok': true, 'plaintext': plaintext},
+          callVerify:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof:
+              ({required groupId, required phase, required eventId}) async =>
+                  receiverHistory['${phase.name}:$eventId'],
+          appendAuthorityProof: ({required phase, required proof}) async {
+            receiverHistory['${phase.name}:${proof.eventId}'] = proof;
+          },
+          applyReplay: (control, replayData) async {
+            await receiver.saveKey(
+              GroupKeyInfo(
+                groupId: groupId,
+                keyGeneration: replayData['keyGeneration'] as int,
+                encryptedKey: replayData['encryptedKey'] as String,
+                createdAt: proofA.eventAt,
+              ),
+            );
+            return ProtectedGroupAuthorityApplyResult.applied;
+          },
+          now: () => proofA.eventAt,
+        );
+        expect(result, ProtectedGroupAuthorityHandleResult.applied);
+
+        final restarted = InMemoryGroupRepository();
+        await restarted.saveGroup((await receiver.getGroup(groupId))!);
+        await restarted.saveKey((await receiver.getLatestKey(groupId))!);
+        final duplicate = await handleProtectedGroupAuthority(
+          message: ChatMessage(
+            from: source.transportPeerId,
+            to: recipient.transportPeerId,
+            content: row.sysText,
+            timestamp: proofA.eventAt.toIso8601String(),
+            isIncoming: true,
+          ),
+          ownTransportPeerId: recipient.transportPeerId,
+          ownMlKemSecretKey: 'secret-${recipient.deviceId}',
+          groupRepository: restarted,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) async => <String, dynamic>{'ok': true, 'plaintext': plaintext},
+          callVerify:
+              ({required publicKey, required data, required signature}) async =>
+                  true,
+          loadAuthorityProof:
+              ({required groupId, required phase, required eventId}) async =>
+                  receiverHistory['${phase.name}:$eventId'],
+          appendAuthorityProof: ({required phase, required proof}) async =>
+              fail('completed restart must not append authority'),
+          applyReplay: (_, _) async =>
+              fail('completed restart must not replay the key'),
+          now: () => proofA.eventAt,
+        );
+        expect(duplicate, ProtectedGroupAuthorityHandleResult.duplicate);
+      }
+
+      await receiveAndRestart(physicalA);
+      await receiveAndRestart(physicalB);
+
+      const zeroGroupId = 'group-zero-target';
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: zeroGroupId,
+          name: 'Zero target',
+          type: GroupType.chat,
+          topicName: 'topic-$zeroGroupId',
+          createdAt: DateTime.utc(2026, 8, 13),
+          createdBy: selfPeerId,
+          myRole: GroupRole.admin,
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: zeroGroupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: source.mlKemPublicKey,
+          devices: const <GroupMemberDeviceIdentity>[source],
+          joinedAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: zeroGroupId,
+          keyGeneration: 1,
+          encryptedKey: 'zero-old-key',
+          createdAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      final zeroResult = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: zeroGroupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sourceDeviceId: source.deviceId,
+        sendP2PMessage: _sendOk,
+      );
+      expect(zeroResult.rotated, isTrue);
+      final zeroProof = durableComplete.values.singleWhere(
+        (proof) => proof.groupId == zeroGroupId,
+      );
+      expect(
+        zeroProof.control,
+        ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+      );
+      expect(
+        zeroProof.authorityData['recipientTransportPeerIds'],
+        isEmpty,
+        reason: 'the common authority explicitly binds the empty remote ACL',
+      );
+      expect(
+        rowsByRecipient.values.where((row) => row.groupId == zeroGroupId),
+        isEmpty,
+      );
+      expect(durablePrepared[zeroProof.eventId], isNotNull);
     },
   );
 

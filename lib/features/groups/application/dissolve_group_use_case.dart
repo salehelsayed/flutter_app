@@ -248,6 +248,7 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
         dissolvedAt: eventAt,
         dissolvedBy: actorPeerId,
         lastMembershipEventAt: eventAt,
+        lastMembershipEventId: sourceEventId,
       );
       late final GroupSystemPublishResult published;
       try {
@@ -272,7 +273,9 @@ Future<(DissolveGroupResult, GroupModel?)> dissolveGroup({
       } catch (error) {
         return _DissolvePublishAttempt.failed(error, freshGroup);
       }
-      await groupRepo.commitDissolvedGroupTerminally(updatedGroup);
+      if (!published.protectedDissolveFinalized) {
+        await groupRepo.commitDissolvedGroupTerminally(updatedGroup);
+      }
       return _DissolvePublishAttempt.published(
         published,
         updatedGroup,

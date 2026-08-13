@@ -2,7 +2,10 @@ import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart'
@@ -10,6 +13,8 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
@@ -18,15 +23,97 @@ import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
 class _DissolveCleanupTrackingGroupRepository extends InMemoryGroupRepository
-    implements AtomicGroupDissolveRepository {
+    implements
+        AtomicGroupDissolveRepository,
+        AtomicProtectedGroupDissolveRepository {
   final displayRowsByGroup = <String, Set<String>>{};
   int terminalCommitCalls = 0;
+  int protectedTerminalCommitCalls = 0;
+  Future<void> Function({
+    required GroupModel group,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+    required List<GroupPendingBroadcast> expectedBroadcasts,
+  })?
+  onProtectedCommit;
 
   @override
   Future<void> commitDissolvedGroup(GroupModel group) async {
     terminalCommitCalls++;
     await updateGroup(group);
     displayRowsByGroup.remove(group.id);
+  }
+
+  @override
+  Future<void> commitProtectedGroupDissolve({
+    required GroupModel group,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+    required List<GroupPendingBroadcast> expectedBroadcasts,
+  }) async {
+    protectedTerminalCommitCalls++;
+    final commit = onProtectedCommit;
+    if (commit == null) {
+      throw StateError('protected dissolve test commit is unavailable');
+    }
+    await commit(
+      group: group,
+      authorityComplete: authorityComplete,
+      expectedBroadcasts: expectedBroadcasts,
+    );
+  }
+}
+
+class _DissolvePendingRepository implements GroupPendingBroadcastRepository {
+  final Map<String, GroupPendingBroadcast> rows = {};
+
+  @override
+  Future<void> enqueue(GroupPendingBroadcast broadcast) async {
+    rows[broadcast.id] = broadcast;
+  }
+
+  @override
+  Future<List<GroupPendingBroadcast>> forGroup(String groupId) async => rows
+      .values
+      .where((row) => row.groupId == groupId)
+      .toList(growable: false);
+
+  @override
+  Future<List<GroupPendingBroadcast>> all() async =>
+      rows.values.toList(growable: false);
+
+  @override
+  Future<int> countForGroup(String groupId) async =>
+      rows.values.where((row) => row.groupId == groupId).length;
+
+  @override
+  Future<void> remove(String id) async {
+    rows.remove(id);
+  }
+
+  @override
+  Future<void> removeForGroup(String groupId) async {
+    rows.removeWhere((_, row) => row.groupId == groupId);
+  }
+}
+
+class _DissolveCustodyStore implements AckOrExpiryInboxStore {
+  _DissolveCustodyStore(List<InboxStoreOutcome> outcomes, {this.beforeStore})
+    : outcomes = List<InboxStoreOutcome>.from(outcomes);
+
+  final List<InboxStoreOutcome> outcomes;
+  final void Function()? beforeStore;
+  final List<String> recipients = [];
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    beforeStore?.call();
+    expect(custodyKind, AckCustodyKind.groupAuthorityV1);
+    recipients.add(toPeerId);
+    return outcomes.removeAt(0);
   }
 }
 
@@ -79,6 +166,276 @@ void main() {
       ),
     );
   });
+
+  Future<
+    ({
+      _DissolvePendingRepository pending,
+      Map<String, AuthenticatedGroupAuthorityProof> history,
+      _DissolveCustodyStore store,
+    })
+  >
+  installProtectedDissolve({
+    required List<InboxStoreOutcome> outcomes,
+    bool failFirstTerminalCommit = false,
+    void Function()? beforeStore,
+  }) async {
+    const source = GroupMemberDeviceIdentity(
+      deviceId: 'admin-device',
+      transportPeerId: 'admin-transport',
+      deviceSigningPublicKey: 'pk-admin',
+      mlKemPublicKey: 'admin-mlkem',
+    );
+    const recipient = GroupMemberDeviceIdentity(
+      deviceId: 'bob-device',
+      transportPeerId: 'bob-transport',
+      deviceSigningPublicKey: 'bob-device-public',
+      mlKemPublicKey: 'bob-mlkem',
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-admin',
+        username: 'Admin',
+        role: MemberRole.admin,
+        publicKey: 'pk-admin',
+        mlKemPublicKey: source.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[source],
+        joinedAt: now,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: 'peer-bob',
+        username: 'Bob',
+        role: MemberRole.writer,
+        publicKey: 'pk-bob',
+        mlKemPublicKey: recipient.mlKemPublicKey,
+        devices: const <GroupMemberDeviceIdentity>[recipient],
+        joinedAt: now,
+      ),
+    );
+
+    final pending = _DissolvePendingRepository();
+    final history = <String, AuthenticatedGroupAuthorityProof>{};
+    final store = _DissolveCustodyStore(outcomes, beforeStore: beforeStore);
+    var failCommit = failFirstTerminalCommit;
+    groupRepo.onProtectedCommit =
+        ({
+          required group,
+          required authorityComplete,
+          required expectedBroadcasts,
+        }) async {
+          if (failCommit) {
+            failCommit = false;
+            throw StateError('simulated crash before terminal transaction');
+          }
+          final proof = AuthenticatedGroupAuthorityProof.tryParse(
+            authorityComplete.payload['proof'],
+          );
+          if (proof == null) {
+            throw StateError('missing complete proof');
+          }
+          for (final expected in expectedBroadcasts) {
+            final current = pending.rows[expected.id];
+            if (current == null ||
+                !sameExactGroupPendingBroadcast(current, expected)) {
+              throw StateError('protected dissolve row changed');
+            }
+          }
+          await groupRepo.updateGroup(group);
+          history['${AuthenticatedGroupAuthorityPhase.complete.name}:'
+                  '${proof.eventId}'] =
+              proof;
+          for (final expected in expectedBroadcasts) {
+            pending.rows.remove(expected.id);
+          }
+        };
+
+    setProtectedGroupAuthorityAdapter(
+      prepare: (request) async {
+        final key = await groupRepo.getLatestKey(request.groupId);
+        final preparation = await buildProtectedGroupAuthorityRows(
+          groupId: request.groupId,
+          transitionId: request.transitionId,
+          control: request.control,
+          replayData: request.replayData,
+          keyEpoch: key!.keyGeneration,
+          actorAccountPeerId: request.actorAccountPeerId,
+          actorAccountPublicKey: request.actorAccountPublicKey,
+          actorAccountPrivateKey: request.actorAccountPrivateKey,
+          senderDevice: request.senderDevice,
+          frozenRecipients: request.frozenRecipients,
+          deliveryRecipients: request.deliveryRecipients,
+          sharedAuthorityProof: request.sharedAuthorityProof,
+          callSign: (data, _) async => <String, dynamic>{
+            'ok': true,
+            'signature': 'sig:${data.hashCode}',
+          },
+          callEncrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async =>
+                  <String, dynamic>{
+                    'ok': true,
+                    'kem': 'kem-$recipientMlKemPublicKey',
+                    'ciphertext': 'ciphertext-$recipientMlKemPublicKey',
+                    'nonce': 'nonce-$recipientMlKemPublicKey',
+                  },
+          now: () =>
+              DateTime.parse(request.replayData['timestamp'] as String).toUtc(),
+        );
+        final proof = preparation.authorityProof;
+        if (proof == null) return preparation;
+        history['${AuthenticatedGroupAuthorityPhase.prepared.name}:'
+                '${proof.eventId}'] =
+            proof;
+        for (final row in preparation.rows) {
+          await pending.enqueue(row);
+        }
+        return preparation;
+      },
+      activate: (preparation, {required requireAllCustody}) =>
+          recoverPreparedProtectedGroupDissolve(
+            groupId: preparation.groupId,
+            eventId: preparation.authorityProof!.eventId,
+            groupRepository: groupRepo,
+            pendingRepository: pending,
+            protectedInboxStore: store,
+            pendingSiblingDeviceRepository: groupRepo,
+            loadAuthorityProof:
+                ({required groupId, required phase, required eventId}) async =>
+                    history['${phase.name}:$eventId'],
+          ),
+      cancel: (preparation) async {
+        for (final row in preparation.rows) {
+          pending.rows.remove(row.id);
+        }
+        return true;
+      },
+    );
+    addTearDown(() => setProtectedGroupAuthorityAdapter());
+    return (pending: pending, history: history, store: store);
+  }
+
+  test(
+    'TC-363-02d protected dissolve proves custody before atomic terminal COMPLETE',
+    () async {
+      final harness = await installProtectedDissolve(
+        outcomes: const <InboxStoreOutcome>[
+          InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          ),
+        ],
+        beforeStore: () => expect(
+          bridge.commandLog,
+          isNot(contains('group:publish')),
+          reason: 'strict custody must precede live dissolve publication',
+        ),
+      );
+
+      final (result, dissolved) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        actorDeviceId: 'admin-device',
+        actorTransportPeerId: 'admin-transport',
+        dissolvedAt: now.add(const Duration(minutes: 2)),
+      );
+
+      expect(result, DissolveGroupResult.success);
+      expect(dissolved?.isDissolved, isTrue);
+      expect(groupRepo.protectedTerminalCommitCalls, 1);
+      expect(groupRepo.terminalCommitCalls, 0);
+      expect(harness.store.recipients, <String>['bob-transport']);
+      expect(harness.pending.rows, isEmpty);
+      expect(
+        harness.history.keys,
+        contains(
+          startsWith('${AuthenticatedGroupAuthorityPhase.complete.name}:'),
+        ),
+      );
+      expect(
+        bridge.commandLog.indexOf('group:publish'),
+        greaterThanOrEqualTo(0),
+      );
+    },
+  );
+
+  test(
+    'TC-363-02e protected dissolve restart repairs custody-complete pre-terminal crash',
+    () async {
+      final harness = await installProtectedDissolve(
+        failFirstTerminalCommit: true,
+        outcomes: const <InboxStoreOutcome>[
+          InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          ),
+          InboxStoreOutcome(
+            status: InboxStoreStatus.duplicate,
+            storeStatus: 'duplicate',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          ),
+        ],
+      );
+
+      final (result, _) = await dissolveGroup(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        preflightAuthority: fakeClearGroupDissolvePreflightAuthority(),
+        groupId: 'group-1',
+        actorPeerId: 'peer-admin',
+        actorUsername: 'Admin',
+        actorPublicKey: 'pk-admin',
+        actorPrivateKey: 'sk-admin',
+        actorDeviceId: 'admin-device',
+        actorTransportPeerId: 'admin-transport',
+        dissolvedAt: now.add(const Duration(minutes: 3)),
+      );
+      expect(result, DissolveGroupResult.bridgeError);
+      expect((await groupRepo.getGroup('group-1'))?.isDissolved, isFalse);
+      expect(harness.pending.rows, hasLength(1));
+      expect(
+        harness.history.keys,
+        isNot(
+          contains(
+            startsWith('${AuthenticatedGroupAuthorityPhase.complete.name}:'),
+          ),
+        ),
+      );
+      expect(bridge.commandLog, isNot(contains('group:publish')));
+
+      final prepared = harness.history.values.single;
+      final repaired = await recoverPreparedProtectedGroupDissolve(
+        groupId: prepared.groupId,
+        eventId: prepared.eventId,
+        groupRepository: groupRepo,
+        pendingRepository: harness.pending,
+        protectedInboxStore: harness.store,
+        pendingSiblingDeviceRepository: groupRepo,
+        loadAuthorityProof:
+            ({required groupId, required phase, required eventId}) async =>
+                harness.history['${phase.name}:$eventId'],
+      );
+      expect(repaired, isTrue);
+      expect((await groupRepo.getGroup('group-1'))?.isDissolved, isTrue);
+      expect(harness.pending.rows, isEmpty);
+      expect(harness.store.recipients, <String>[
+        'bob-transport',
+        'bob-transport',
+      ]);
+      expect(groupRepo.protectedTerminalCommitCalls, 2);
+    },
+  );
 
   test(
     'EK004 dissolve stores signed group_dissolved replay envelope',

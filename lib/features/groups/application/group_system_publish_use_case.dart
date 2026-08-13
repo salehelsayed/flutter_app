@@ -17,6 +17,7 @@ class GroupSystemPublishResult {
     required this.inboxRetryPayload,
     this.timelineMessage,
     this.replayStorageError,
+    this.protectedDissolveFinalized = false,
   });
 
   final Map<String, dynamic> publishResult;
@@ -24,6 +25,7 @@ class GroupSystemPublishResult {
   final String? inboxRetryPayload;
   final GroupMessage? timelineMessage;
   final Object? replayStorageError;
+  final bool protectedDissolveFinalized;
 }
 
 Future<GroupSystemPublishResult> publishGroupSystemMessage({
@@ -103,9 +105,12 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
 
   final protectedControl = _protectedControlFromSignedSystemText(text);
   ProtectedGroupAuthorityPreparation? protectedPreparation;
+  var requiresProtectedDissolve = false;
   if (protectedControl != null && hasProtectedGroupAuthorityAdapter) {
     final members = await groupRepo.getMembers(groupId);
     if (hasProtectedGroupPhysicalAuthority(members)) {
+      requiresProtectedDissolve =
+          protectedControl == ProtectedGroupAuthorityControl.groupDissolve;
       final actorMatches = members
           .where((member) => member.peerId == senderPeerId)
           .toList(growable: false);
@@ -140,13 +145,24 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
               frozenRecipients: freezeProtectedGroupPhysicalRecipients(members),
             ),
           );
-          if (protectedPreparation == null &&
-              protectedControl ==
-                  ProtectedGroupAuthorityControl.groupDissolve) {
-            throw StateError('protected dissolve preparation failed');
-          }
         }
       }
+    }
+  }
+  if (requiresProtectedDissolve &&
+      (protectedPreparation == null ||
+          !protectedPreparation.hasAuthenticatedAuthority)) {
+    throw StateError('protected dissolve preparation failed');
+  }
+
+  var protectedAccepted = true;
+  if (requiresProtectedDissolve) {
+    protectedAccepted = await activateProtectedGroupAuthority(
+      protectedPreparation,
+      requireAllCustody: true,
+    );
+    if (!protectedAccepted) {
+      throw StateError('protected dissolve custody not accepted');
     }
   }
 
@@ -165,14 +181,11 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
     messageId: messageId,
   );
 
-  final protectedAccepted = await activateProtectedGroupAuthority(
-    protectedPreparation,
-    requireAllCustody:
-        protectedControl == ProtectedGroupAuthorityControl.groupDissolve,
-  );
-  if (!protectedAccepted &&
-      protectedControl == ProtectedGroupAuthorityControl.groupDissolve) {
-    throw StateError('protected dissolve custody not accepted');
+  if (!requiresProtectedDissolve) {
+    protectedAccepted = await activateProtectedGroupAuthority(
+      protectedPreparation,
+      requireAllCustody: false,
+    );
   }
 
   if (recipientPeerIds.isEmpty) {
@@ -184,6 +197,7 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
         inboxStored: true,
         inboxRetryPayload: null,
       ),
+      protectedDissolveFinalized: requiresProtectedDissolve,
     );
   }
 
@@ -222,6 +236,7 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
       inboxRetryPayload: null,
       timelineMessage: timelineMessage,
       replayStorageError: e,
+      protectedDissolveFinalized: requiresProtectedDissolve,
     );
   }
 
@@ -257,6 +272,7 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
       inboxRetryPayload: inboxRetryPayload,
       timelineMessage: retryableTimelineMessage ?? timelineMessage,
       replayStorageError: e,
+      protectedDissolveFinalized: requiresProtectedDissolve,
     );
   }
 
@@ -268,6 +284,7 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
       inboxStored: true,
       inboxRetryPayload: null,
     ),
+    protectedDissolveFinalized: requiresProtectedDissolve,
   );
 }
 

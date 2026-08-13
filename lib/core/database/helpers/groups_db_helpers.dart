@@ -2,7 +2,9 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../db_write_transaction.dart';
 import '../../utils/flow_event_emitter.dart';
+import 'group_event_log_db_helpers.dart';
 import 'group_notification_display_outbox_db_helpers.dart';
+import 'pending_group_broadcasts_db_helpers.dart';
 
 /// Inserts a group into the database.
 Future<void> dbInsertGroup(Database db, Map<String, Object?> row) async {
@@ -203,6 +205,64 @@ Future<void> dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(
     );
     rethrow;
   }
+}
+
+/// Atomically closes a protected dissolve after every exact physical delivery
+/// has strict relay custody.
+///
+/// The pending rows remain intact until this transaction commits, so a crash
+/// after relay acceptance replays as `duplicate` and can safely retry the same
+/// terminal projection plus authenticated COMPLETE fact.
+Future<void> dbCommitProtectedDissolvedGroup(
+  Database db, {
+  required Map<String, Object?> groupRow,
+  required List<Map<String, Object?>> expectedBroadcastRows,
+  required String authorityCompleteSourcePeerId,
+  required String authorityCompleteSourceEventId,
+  required String authorityCompleteSourceTimestamp,
+  required Map<String, Object?> authorityCompletePayload,
+}) async {
+  final groupId = groupRow['id'] as String? ?? '';
+  if (groupId.trim().isEmpty || groupRow['is_dissolved'] != 1) {
+    throw ArgumentError('protected dissolve requires a terminal group row');
+  }
+  if (authorityCompleteSourcePeerId.isEmpty ||
+      authorityCompleteSourceEventId.isEmpty ||
+      authorityCompleteSourceTimestamp.isEmpty ||
+      authorityCompletePayload.isEmpty ||
+      expectedBroadcastRows.any(
+        (row) =>
+            row['group_id'] != groupId || row['kind'] != 'group_authority_v1',
+      )) {
+    throw ArgumentError('invalid protected dissolve authority transaction');
+  }
+
+  await dbWriteTransaction(db, (transaction) async {
+    final updated = await _updateGroupRowPreservingAuthority(
+      transaction,
+      groupRow,
+    );
+    if (!updated) {
+      throw StateError('cannot dissolve a missing group');
+    }
+    await dbDeleteGroupNotificationDisplayOutboxForGroup(transaction, groupId);
+    await dbAppendGroupEventLogEntryInTransaction(
+      transaction,
+      groupId: groupId,
+      eventType: 'protected_authority_complete',
+      sourcePeerId: authorityCompleteSourcePeerId,
+      sourceEventId: authorityCompleteSourceEventId,
+      sourceTimestamp: authorityCompleteSourceTimestamp,
+      payload: authorityCompletePayload,
+    );
+    for (final expected in expectedBroadcastRows) {
+      await dbDeleteProtectedGroupAuthorityBroadcastIfExactInTransaction(
+        transaction,
+        groupId: groupId,
+        expected: expected,
+      );
+    }
+  });
 }
 
 /// Dedicated authenticated-membership seam. Ordinary full-row writes never

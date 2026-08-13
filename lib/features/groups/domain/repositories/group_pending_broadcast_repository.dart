@@ -55,6 +55,7 @@ class GroupPendingBroadcastAuthorityFact {
 abstract interface class GroupPendingBroadcastProtectedBatchRepository {
   Future<bool> enqueueProtectedBatch(
     List<GroupPendingBroadcast> rows, {
+    required String groupId,
     required GroupPendingBroadcastAuthorityFact authorityPrepared,
   });
 }

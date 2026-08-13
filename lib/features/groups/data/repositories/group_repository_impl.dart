@@ -76,6 +76,8 @@ class GroupRepositoryImpl
         GroupKeyRotationDraftRepository,
         GroupMembershipWatermarkRepository,
         AtomicGroupDissolveRepository,
+        AtomicProtectedGroupDissolveRepository,
+        AtomicProtectedGroupKeyAuthorityRepository,
         GroupExitCleanupRepository,
         SelfRemovedGroupShellRepository,
         FreshJoinProjectionAtomicity,
@@ -87,6 +89,15 @@ class GroupRepositoryImpl
   final Future<Map<String, Object?>?> Function(String id) dbLoadGroup;
   final Future<void> Function(Map<String, Object?> row) dbUpdateGroup;
   final Future<void> Function(Map<String, Object?> row)? dbCommitDissolvedGroup;
+  final Future<void> Function({
+    required Map<String, Object?> groupRow,
+    required List<Map<String, Object?>> expectedBroadcastRows,
+    required String authorityCompleteSourcePeerId,
+    required String authorityCompleteSourceEventId,
+    required String authorityCompleteSourceTimestamp,
+    required Map<String, Object?> authorityCompletePayload,
+  })?
+  dbCommitProtectedDissolvedGroup;
   final Future<void> Function(String id) dbDeleteGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadActiveGroups;
   final Future<void> Function(String id) dbArchiveGroup;
@@ -180,6 +191,14 @@ class GroupRepositoryImpl
 
   // --- Key DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupKey;
+  final Future<void> Function({
+    required Map<String, Object?> keyRow,
+    required String authorityCompleteSourcePeerId,
+    required String authorityCompleteSourceEventId,
+    required String authorityCompleteSourceTimestamp,
+    required Map<String, Object?> authorityCompletePayload,
+  })?
+  dbCommitProtectedGroupKeyAuthority;
   final Future<Map<String, Object?>?> Function(String groupId)
   dbLoadLatestGroupKey;
   final Future<Map<String, Object?>?> Function(String groupId, int generation)
@@ -337,6 +356,7 @@ class GroupRepositoryImpl
     required this.dbLoadGroup,
     required this.dbUpdateGroup,
     this.dbCommitDissolvedGroup,
+    this.dbCommitProtectedDissolvedGroup,
     required this.dbDeleteGroup,
     required this.dbLoadActiveGroups,
     required this.dbArchiveGroup,
@@ -366,6 +386,7 @@ class GroupRepositoryImpl
     this.dbClearGroupRejoinStateFn,
     this.dbForceGroupRejoinEligibleFn,
     required this.dbInsertGroupKey,
+    this.dbCommitProtectedGroupKeyAuthority,
     required this.dbLoadLatestGroupKey,
     required this.dbLoadGroupKeyByGeneration,
     required this.dbDeleteAllGroupKeys,
@@ -482,6 +503,42 @@ class GroupRepositoryImpl
       } else {
         await commit(group.toMap());
       }
+      final authoritative = await _projectAuthoritativeGroup(group.id);
+      if (authoritative != null && authoritative.selfRemovedAt == null) {
+        await _mirrorGroupMutedForPush(authoritative.id, authoritative.isMuted);
+      }
+    });
+    emitGroupNotificationReconciliationSignal(group.id);
+  }
+
+  @override
+  Future<void> commitProtectedGroupDissolve({
+    required GroupModel group,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+    required List<GroupPendingBroadcast> expectedBroadcasts,
+  }) async {
+    if (!group.isDissolved) {
+      throw ArgumentError.value(
+        group.isDissolved,
+        'group.isDissolved',
+        'must be true for a protected terminal dissolve commit',
+      );
+    }
+    final commit = dbCommitProtectedDissolvedGroup;
+    if (commit == null) {
+      throw StateError('protected dissolve atomic persistence is unavailable');
+    }
+    await _runGroupMutation(group.id, () async {
+      await commit(
+        groupRow: group.toMap(),
+        expectedBroadcastRows: expectedBroadcasts
+            .map((broadcast) => broadcast.toMap())
+            .toList(growable: false),
+        authorityCompleteSourcePeerId: authorityComplete.sourcePeerId,
+        authorityCompleteSourceEventId: authorityComplete.sourceEventId,
+        authorityCompleteSourceTimestamp: authorityComplete.sourceTimestamp,
+        authorityCompletePayload: authorityComplete.payload,
+      );
       final authoritative = await _projectAuthoritativeGroup(group.id);
       if (authoritative != null && authoritative.selfRemovedAt == null) {
         await _mirrorGroupMutedForPush(authoritative.id, authoritative.isMuted);
@@ -1648,6 +1705,49 @@ class GroupRepositoryImpl
         await _deleteGroupKeyMaterial(key);
         await groupReactionProjection?.removeGroup(key.groupId);
         throw StateError('Group key authority changed during save.');
+      }
+      if (!_projectionMirrorsSuppressed(key.groupId)) {
+        await groupReactionProjection?.upsertKeyEpoch(key);
+      }
+      final hydratedKey = await _hydrateGroupKey(key);
+      if (hydratedKey != null) {
+        await _mirrorGroupKeyForPush(hydratedKey);
+      }
+      await _pruneObsoleteKeys(key.groupId);
+    });
+  }
+
+  @override
+  Future<void> commitProtectedGroupKeyAuthority({
+    required GroupKeyInfo key,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+  }) async {
+    final commit = dbCommitProtectedGroupKeyAuthority;
+    if (commit == null) {
+      throw StateError('protected key authority persistence is unavailable');
+    }
+    await _runGroupMutation(key.groupId, () async {
+      await _requireOrdinaryGroupAuthority(key.groupId);
+      final storageRow = await _toStorageRow(key);
+      await commit(
+        keyRow: storageRow,
+        authorityCompleteSourcePeerId: authorityComplete.sourcePeerId,
+        authorityCompleteSourceEventId: authorityComplete.sourceEventId,
+        authorityCompleteSourceTimestamp: authorityComplete.sourceTimestamp,
+        authorityCompletePayload: authorityComplete.payload,
+      );
+      final authoritative = await _loadGroupModel(key.groupId);
+      final stored = await dbLoadGroupKeyByGeneration(
+        key.groupId,
+        key.keyGeneration,
+      );
+      if ((selfRemovedShellAuthorityEnabled && authoritative == null) ||
+          authoritative?.selfRemovedAt != null ||
+          stored == null) {
+        await _deleteGroupKeyMirror(key);
+        await _deleteGroupKeyMaterial(key);
+        await groupReactionProjection?.removeGroup(key.groupId);
+        throw StateError('Group key authority changed during protected save.');
       }
       if (!_projectionMirrorsSuppressed(key.groupId)) {
         await groupReactionProjection?.upsertKeyEpoch(key);

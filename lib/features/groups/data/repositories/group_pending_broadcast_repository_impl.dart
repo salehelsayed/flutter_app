@@ -22,6 +22,7 @@ class GroupPendingBroadcastRepositoryImpl
   })?
   dbRemoveRecipientIfExact;
   final Future<bool> Function({
+    required String groupId,
     required List<Map<String, Object?>> rows,
     required String authorityPreparedSourcePeerId,
     required String authorityPreparedSourceEventId,
@@ -113,11 +114,13 @@ class GroupPendingBroadcastRepositoryImpl
   @override
   Future<bool> enqueueProtectedBatch(
     List<GroupPendingBroadcast> rows, {
+    required String groupId,
     required GroupPendingBroadcastAuthorityFact authorityPrepared,
   }) async {
     final insert = dbInsertProtectedBatch;
-    if (insert == null || rows.isEmpty) return false;
+    if (insert == null || groupId.isEmpty) return false;
     return insert(
+      groupId: groupId,
       rows: rows.map((row) => row.toMap()).toList(growable: false),
       authorityPreparedSourcePeerId: authorityPrepared.sourcePeerId,
       authorityPreparedSourceEventId: authorityPrepared.sourceEventId,

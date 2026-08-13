@@ -1,6 +1,7 @@
 import '../models/group_key_info.dart';
 import '../models/group_member.dart';
 import '../models/group_model.dart';
+import '../models/group_pending_broadcast.dart';
 
 /// Finding 05 Phase 3: per-group rejoin-retry state. A value exists only for a
 /// group that has failed to rejoin its topic and is being backed off.
@@ -106,6 +107,45 @@ abstract class GroupRepository {
 /// retiring every display-outbox row owned by that exact group atomically.
 abstract interface class AtomicGroupDissolveRepository {
   Future<void> commitDissolvedGroup(GroupModel group);
+}
+
+/// Secret-free authenticated COMPLETE fact committed with a protected
+/// dissolve's terminal projection.
+class ProtectedGroupAuthorityCompleteFact {
+  const ProtectedGroupAuthorityCompleteFact({
+    required this.sourcePeerId,
+    required this.sourceEventId,
+    required this.sourceTimestamp,
+    required this.payload,
+  });
+
+  final String sourcePeerId;
+  final String sourceEventId;
+  final String sourceTimestamp;
+  final Map<String, Object?> payload;
+}
+
+/// Production capability for the final protected-dissolve transaction.
+///
+/// Strict custody is proven first while the exact protected rows remain
+/// durable. This commit then advances the terminal group projection, appends
+/// authenticated COMPLETE history, retires those exact rows, and clears the
+/// exact-group notification display outbox atomically.
+abstract interface class AtomicProtectedGroupDissolveRepository {
+  Future<void> commitProtectedGroupDissolve({
+    required GroupModel group,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+    required List<GroupPendingBroadcast> expectedBroadcasts,
+  });
+}
+
+/// Production capability for promoting one locally authored key authority and
+/// its authenticated COMPLETE fact in the same database transaction.
+abstract interface class AtomicProtectedGroupKeyAuthorityRepository {
+  Future<void> commitProtectedGroupKeyAuthority({
+    required GroupKeyInfo key,
+    required ProtectedGroupAuthorityCompleteFact authorityComplete,
+  });
 }
 
 /// Routes terminal dissolve writes through [AtomicGroupDissolveRepository]

@@ -191,6 +191,23 @@ void main() {
           commitDissolvedGroupOverride ??
           (row) =>
               dbCommitDissolvedGroupAndDeleteNotificationDisplayOutbox(db, row),
+      dbCommitProtectedDissolvedGroup:
+          ({
+            required groupRow,
+            required expectedBroadcastRows,
+            required authorityCompleteSourcePeerId,
+            required authorityCompleteSourceEventId,
+            required authorityCompleteSourceTimestamp,
+            required authorityCompletePayload,
+          }) => dbCommitProtectedDissolvedGroup(
+            db,
+            groupRow: groupRow,
+            expectedBroadcastRows: expectedBroadcastRows,
+            authorityCompleteSourcePeerId: authorityCompleteSourcePeerId,
+            authorityCompleteSourceEventId: authorityCompleteSourceEventId,
+            authorityCompleteSourceTimestamp: authorityCompleteSourceTimestamp,
+            authorityCompletePayload: authorityCompletePayload,
+          ),
       dbDeleteGroup: (id) => dbDeleteGroup(db, id),
       dbLoadActiveGroups: () => dbLoadActiveGroups(db),
       dbArchiveGroup: (id) => dbArchiveGroup(db, id),
@@ -210,6 +227,21 @@ void main() {
       dbLoadRemovedGroupMemberSnapshot: (groupId, peerId) =>
           dbLoadRemovedGroupMemberSnapshot(db, groupId, peerId),
       dbInsertGroupKey: (row) => dbInsertGroupKey(db, row),
+      dbCommitProtectedGroupKeyAuthority:
+          ({
+            required keyRow,
+            required authorityCompleteSourcePeerId,
+            required authorityCompleteSourceEventId,
+            required authorityCompleteSourceTimestamp,
+            required authorityCompletePayload,
+          }) => dbCommitGroupKeyWithAuthorityComplete(
+            db,
+            keyRow: keyRow,
+            authorityCompleteSourcePeerId: authorityCompleteSourcePeerId,
+            authorityCompleteSourceEventId: authorityCompleteSourceEventId,
+            authorityCompleteSourceTimestamp: authorityCompleteSourceTimestamp,
+            authorityCompletePayload: authorityCompletePayload,
+          ),
       dbLoadLatestGroupKey: (groupId) => dbLoadLatestGroupKey(db, groupId),
       dbLoadGroupKeyByGeneration: (groupId, gen) =>
           dbLoadGroupKeyByGeneration(db, groupId, gen),
@@ -910,6 +942,7 @@ void main() {
         expect(
           await dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
             db,
+            groupId: senderGroup.id,
             rows: <Map<String, Object?>>[localAuthorityRow.toMap()],
             authorityPreparedSourcePeerId: localProof.actorAccountPeerId,
             authorityPreparedSourceEventId:
@@ -1066,6 +1099,294 @@ void main() {
             whereArgs: <Object?>[secondGroup.id],
           ),
           isEmpty,
+        );
+      },
+    );
+
+    test(
+      'TC-363-02f sender key COMPLETE and dissolve terminal transactions survive restart',
+      () async {
+        await db.close();
+        db = await openDatabase(inMemoryDatabasePath, version: 1);
+        await runProductionOnCreate(db, currentIdentityDatabaseVersion);
+        groupKeyStore = FakeSecureKeyStore();
+        final durableRepo = makeRepo(sharedPushKeyStore);
+
+        const keyGroupId = 'protected-key-zero-target';
+        final keyGroup = makeGroup(id: keyGroupId);
+        await durableRepo.saveGroup(keyGroup);
+        await durableRepo.saveMember(
+          makeMember(
+            groupId: keyGroupId,
+            peerId: 'peer-creator',
+            role: MemberRole.admin,
+          ),
+        );
+        final keyEventAt = DateTime.utc(2026, 8, 13, 13, 0, 0, 123, 456);
+        final keyProof = AuthenticatedGroupAuthorityProof(
+          eventId: 'group_key_update:$keyGroupId:peer-creator:2',
+          groupId: keyGroupId,
+          eventAt: keyEventAt,
+          keyEpoch: 2,
+          control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+          actorAccountPeerId: 'peer-creator',
+          actorAccountPublicKey: 'pk',
+          senderTransportPeerId: 'creator-transport',
+          senderTransportPublicKey: 'creator-device-key',
+          authorityData: <String, Object?>{
+            'groupId': keyGroupId,
+            'keyGeneration': 2,
+            'encryptedKeyHash': groupAuthoritySha256('protected-key-v2'),
+            'from': 'creator-transport',
+            'timestamp': keyEventAt.toIso8601String(),
+          },
+          signature: 'common-key-proof-signature',
+        );
+        expect(
+          await dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
+            db,
+            groupId: keyGroupId,
+            rows: const <Map<String, Object?>>[],
+            authorityPreparedSourcePeerId: keyProof.actorAccountPeerId,
+            authorityPreparedSourceEventId:
+                authenticatedGroupAuthoritySourceEventId(
+                  AuthenticatedGroupAuthorityPhase.prepared,
+                  keyProof.eventId,
+                ),
+            authorityPreparedSourceTimestamp: fixedGroupAuthorityUtc(
+              keyProof.eventAt,
+            ),
+            authorityPreparedPayload: authenticatedGroupAuthorityFactPayload(
+              keyProof,
+            ),
+          ),
+          isTrue,
+          reason: 'a zero-target rotation still owns durable PREPARED history',
+        );
+        await (durableRepo as AtomicProtectedGroupKeyAuthorityRepository)
+            .commitProtectedGroupKeyAuthority(
+              key: GroupKeyInfo(
+                groupId: keyGroupId,
+                keyGeneration: 2,
+                encryptedKey: 'protected-key-v2',
+                createdAt: keyEventAt,
+              ),
+              authorityComplete: ProtectedGroupAuthorityCompleteFact(
+                sourcePeerId: keyProof.actorAccountPeerId,
+                sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                  AuthenticatedGroupAuthorityPhase.complete,
+                  keyProof.eventId,
+                ),
+                sourceTimestamp: fixedGroupAuthorityUtc(keyProof.eventAt),
+                payload: authenticatedGroupAuthorityFactPayload(keyProof),
+              ),
+            );
+        final keyRestart = makeRepo(sharedPushKeyStore);
+        expect(
+          (await keyRestart.getKeyByGeneration(keyGroupId, 2))?.encryptedKey,
+          'protected-key-v2',
+        );
+        expect(
+          await dbLoadGroupEventLogEntryExact(
+            db,
+            groupId: keyGroupId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.complete,
+              keyProof.eventId,
+            ),
+          ),
+          isNotNull,
+        );
+
+        const dissolveGroupId = 'protected-dissolve-atomic';
+        final liveGroup = makeGroup(id: dissolveGroupId);
+        await durableRepo.saveGroup(liveGroup);
+        final dissolveEventAt = DateTime.utc(2026, 8, 13, 13, 5);
+        final dissolveProof = AuthenticatedGroupAuthorityProof(
+          eventId: 'group_dissolved:$dissolveGroupId:peer-creator:1',
+          groupId: dissolveGroupId,
+          eventAt: dissolveEventAt,
+          keyEpoch: 1,
+          control: ProtectedGroupAuthorityControl.groupDissolve.wireValue,
+          actorAccountPeerId: 'peer-creator',
+          actorAccountPublicKey: 'pk',
+          senderTransportPeerId: 'creator-transport',
+          senderTransportPublicKey: 'creator-device-key',
+          authorityData: <String, Object?>{
+            'groupId': dissolveGroupId,
+            'senderId': 'peer-creator',
+            'senderUsername': 'Creator',
+            'text': '{"__sys":"group_dissolved"}',
+            'timestamp': dissolveEventAt.toIso8601String(),
+            'messageId': 'group_dissolved:$dissolveGroupId:peer-creator:1',
+            'recipientTransportPeerIds': <String>['recipient-a'],
+          },
+          signature: 'dissolve-proof-signature',
+        );
+        final dissolveDeliveryId = protectedGroupAuthorityDeliveryId(
+          dissolveProof.control,
+          dissolveProof.eventId,
+          'recipient-a',
+        );
+        final dissolveRow = GroupPendingBroadcast(
+          id: 'protected-authority:$dissolveDeliveryId',
+          groupId: dissolveGroupId,
+          kind: groupPendingBroadcastKindProtectedAuthority,
+          sysText: '{"protected":"dissolve"}',
+          recipientPeerIds: const <String>['recipient-a'],
+          eventAt: dissolveEventAt,
+          sourceMessageId: dissolveDeliveryId,
+          createdAt: dissolveEventAt,
+          updatedAt: dissolveEventAt,
+        );
+        expect(
+          await dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
+            db,
+            groupId: dissolveGroupId,
+            rows: <Map<String, Object?>>[dissolveRow.toMap()],
+            authorityPreparedSourcePeerId: dissolveProof.actorAccountPeerId,
+            authorityPreparedSourceEventId:
+                authenticatedGroupAuthoritySourceEventId(
+                  AuthenticatedGroupAuthorityPhase.prepared,
+                  dissolveProof.eventId,
+                ),
+            authorityPreparedSourceTimestamp: fixedGroupAuthorityUtc(
+              dissolveProof.eventAt,
+            ),
+            authorityPreparedPayload: authenticatedGroupAuthorityFactPayload(
+              dissolveProof,
+            ),
+          ),
+          isTrue,
+        );
+        await (durableRepo as AtomicProtectedGroupDissolveRepository)
+            .commitProtectedGroupDissolve(
+              group: liveGroup.copyWith(
+                isDissolved: true,
+                dissolvedAt: dissolveEventAt,
+                dissolvedBy: 'peer-creator',
+                lastMembershipEventAt: dissolveEventAt,
+                lastMembershipEventId: dissolveProof.eventId,
+              ),
+              authorityComplete: ProtectedGroupAuthorityCompleteFact(
+                sourcePeerId: dissolveProof.actorAccountPeerId,
+                sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                  AuthenticatedGroupAuthorityPhase.complete,
+                  dissolveProof.eventId,
+                ),
+                sourceTimestamp: fixedGroupAuthorityUtc(dissolveProof.eventAt),
+                payload: authenticatedGroupAuthorityFactPayload(dissolveProof),
+              ),
+              expectedBroadcasts: <GroupPendingBroadcast>[dissolveRow],
+            );
+        final dissolveRestart = makeRepo(sharedPushKeyStore);
+        expect(
+          (await dissolveRestart.getGroup(dissolveGroupId))?.isDissolved,
+          isTrue,
+        );
+        expect(
+          await dbLoadGroupEventLogEntryExact(
+            db,
+            groupId: dissolveGroupId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.complete,
+              dissolveProof.eventId,
+            ),
+          ),
+          isNotNull,
+        );
+        expect(
+          await dbLoadPendingGroupBroadcastsForGroup(db, dissolveGroupId),
+          isEmpty,
+        );
+
+        const rollbackGroupId = 'protected-dissolve-rollback';
+        final rollbackGroup = makeGroup(id: rollbackGroupId);
+        await durableRepo.saveGroup(rollbackGroup);
+        final rollbackProof = AuthenticatedGroupAuthorityProof(
+          eventId: 'group_dissolved:$rollbackGroupId:peer-creator:1',
+          groupId: rollbackGroupId,
+          eventAt: dissolveEventAt,
+          keyEpoch: 1,
+          control: ProtectedGroupAuthorityControl.groupDissolve.wireValue,
+          actorAccountPeerId: 'peer-creator',
+          actorAccountPublicKey: 'pk',
+          senderTransportPeerId: 'creator-transport',
+          senderTransportPublicKey: 'creator-device-key',
+          authorityData: const <String, Object?>{'groupId': rollbackGroupId},
+          signature: 'rollback-proof-signature',
+        );
+        final rollbackDeliveryId = protectedGroupAuthorityDeliveryId(
+          rollbackProof.control,
+          rollbackProof.eventId,
+          'recipient-a',
+        );
+        final rollbackRow = GroupPendingBroadcast(
+          id: 'protected-authority:$rollbackDeliveryId',
+          groupId: rollbackGroupId,
+          kind: groupPendingBroadcastKindProtectedAuthority,
+          sysText: '{"protected":"rollback"}',
+          recipientPeerIds: const <String>['recipient-a'],
+          eventAt: dissolveEventAt,
+          sourceMessageId: rollbackDeliveryId,
+          createdAt: dissolveEventAt,
+          updatedAt: dissolveEventAt,
+        );
+        await dbInsertPendingGroupBroadcast(db, rollbackRow.toMap());
+        final staleExpected = GroupPendingBroadcast(
+          id: rollbackRow.id,
+          groupId: rollbackRow.groupId,
+          kind: rollbackRow.kind,
+          sysText: rollbackRow.sysText,
+          recipientPeerIds: rollbackRow.recipientPeerIds,
+          eventAt: rollbackRow.eventAt,
+          sourceMessageId: rollbackRow.sourceMessageId,
+          createdAt: rollbackRow.createdAt,
+          updatedAt: rollbackRow.updatedAt.add(const Duration(seconds: 1)),
+        );
+        await expectLater(
+          (durableRepo as AtomicProtectedGroupDissolveRepository)
+              .commitProtectedGroupDissolve(
+                group: rollbackGroup.copyWith(
+                  isDissolved: true,
+                  dissolvedAt: dissolveEventAt,
+                  dissolvedBy: 'peer-creator',
+                ),
+                authorityComplete: ProtectedGroupAuthorityCompleteFact(
+                  sourcePeerId: rollbackProof.actorAccountPeerId,
+                  sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                    AuthenticatedGroupAuthorityPhase.complete,
+                    rollbackProof.eventId,
+                  ),
+                  sourceTimestamp: fixedGroupAuthorityUtc(
+                    rollbackProof.eventAt,
+                  ),
+                  payload: authenticatedGroupAuthorityFactPayload(
+                    rollbackProof,
+                  ),
+                ),
+                expectedBroadcasts: <GroupPendingBroadcast>[staleExpected],
+              ),
+          throwsStateError,
+        );
+        expect(
+          (await durableRepo.getGroup(rollbackGroupId))?.isDissolved,
+          isFalse,
+        );
+        expect(
+          await dbLoadGroupEventLogEntryExact(
+            db,
+            groupId: rollbackGroupId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.complete,
+              rollbackProof.eventId,
+            ),
+          ),
+          isNull,
+        );
+        expect(
+          await dbLoadPendingGroupBroadcastsForGroup(db, rollbackGroupId),
+          hasLength(1),
         );
       },
     );
