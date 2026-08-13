@@ -54,6 +54,11 @@ enum SiblingDeviceAdmissionOutcome {
 
   /// The announced device is missing required identity fields.
   invalidDevice,
+
+  /// The device was already admitted by the atomic linked-group bootstrap.
+  /// Its v85 row remains protected retry intent until exact relay custody and
+  /// must not enter generic key redistribution or deletion.
+  protectedBootstrapOwned,
 }
 
 /// B1b keystone (Part B of `12-P2-multi-device-honesty.md`): admit a same-user

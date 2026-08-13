@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_app/core/bridge/bridge.dart'
     show Bridge, callSignPayload, callVerifyPayload;
@@ -7,6 +9,9 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 import 'package:flutter_app/features/identity/application/linked_secondary_setup_use_case.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
@@ -32,6 +37,8 @@ class LinkedDeviceSetupWired extends StatefulWidget {
     required this.callIdentityGenerateForTransport,
     this.selector = const DirectLinkedDeviceSelector(),
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.groupRepository,
+    this.onSetupSuccess,
   });
 
   final IdentityRepository repository;
@@ -44,6 +51,8 @@ class LinkedDeviceSetupWired extends StatefulWidget {
   callIdentityGenerateForTransport;
   final DirectLinkedDeviceSelector selector;
   final BackgroundPreference backgroundPreference;
+  final GroupRepository? groupRepository;
+  final Future<void> Function()? onSetupSuccess;
 
   @override
   State<LinkedDeviceSetupWired> createState() => _LinkedDeviceSetupWiredState();
@@ -113,6 +122,17 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
       event: 'LINKED_DEVICE_SETUP_ROUTE_RESULT',
       details: {'result': result.name},
     );
+    if (result == LinkedSecondarySetupResult.success) {
+      try {
+        await widget.onSetupSuccess?.call();
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'LINKED_DEVICE_SETUP_RUNTIME_START_ERROR',
+          details: {'errorType': error.runtimeType.toString()},
+        );
+      }
+    }
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -135,6 +155,9 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
         linkedDeviceQrSource: DirectLinkedDeviceQrSource(
           selector: widget.selector,
           loadAuthority: _authority.load,
+        ),
+        footer: LinkedGroupReadOnlyStatus(
+          groupRepository: widget.groupRepository,
         ),
       );
     }
@@ -168,6 +191,101 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
               onPressed: _busy ? null : _submit,
               child: Text(_busy ? 'Linking…' : 'Link this device'),
             ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class LinkedGroupReadOnlyStatus extends StatefulWidget {
+  const LinkedGroupReadOnlyStatus({super.key, required this.groupRepository});
+
+  final GroupRepository? groupRepository;
+
+  @override
+  State<LinkedGroupReadOnlyStatus> createState() =>
+      _LinkedGroupReadOnlyStatusState();
+}
+
+class _LinkedGroupReadOnlyStatusState extends State<LinkedGroupReadOnlyStatus> {
+  StreamSubscription<void>? _refreshSubscription;
+  List<GroupModel> _groups = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshSubscription = linkedGroupStatusRefreshes.listen((_) => _load());
+    unawaited(_load());
+  }
+
+  @override
+  void dispose() {
+    _refreshSubscription?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _load() async {
+    final repository = widget.groupRepository;
+    final groups = repository == null
+        ? const <GroupModel>[]
+        : await repository.getAllGroups();
+    if (!mounted) return;
+    setState(() {
+      _groups = groups;
+      _loading = false;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      key: const Key('linked-group-status-list'),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Groups (read only)',
+                    style: theme.textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  key: const Key('linked-group-status-refresh'),
+                  onPressed: _load,
+                  icon: const Icon(Icons.refresh),
+                  tooltip: 'Refresh group status',
+                ),
+              ],
+            ),
+            if (_loading)
+              const LinearProgressIndicator()
+            else if (_groups.isEmpty)
+              const Text(
+                'Waiting for a group bootstrap from your primary device.',
+                key: Key('linked-group-status-waiting'),
+              )
+            else
+              for (final group in _groups)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(
+                    group.isDissolved ? Icons.lock_outline : Icons.group,
+                  ),
+                  title: Text(group.name),
+                  subtitle: Text(
+                    group.isDissolved
+                        ? 'Dissolved · read only'
+                        : '${group.myRole.name} · read only',
+                  ),
+                ),
           ],
         ),
       ),

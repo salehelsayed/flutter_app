@@ -951,6 +951,23 @@ String? validateInviteSendLatencyTopology({
   return null;
 }
 
+/// Plan 363 B1b uses the same availability-bounded Android topology as the
+/// latency proof, but keeps a scenario-specific diagnostic so runner failures
+/// cannot be mistaken for a latency execution.
+String? validateLinkedGroupBootstrapB1bTopology({
+  required List<String> selectedDeviceIds,
+  required List<InviteReliabilityDeviceTarget> liveDevices,
+}) {
+  final result = validateInviteSendLatencyTopology(
+    selectedDeviceIds: selectedDeviceIds,
+    liveDevices: liveDevices,
+  );
+  return result?.replaceFirst(
+    'invite_send_latency',
+    'b1b_sibling_device_convergence',
+  );
+}
+
 final class InviteSendLatencyArtifactValidation {
   InviteSendLatencyArtifactValidation(List<String> failures)
     : failures = List<String>.unmodifiable(failures);

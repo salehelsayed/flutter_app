@@ -1650,6 +1650,99 @@ void main() {
       contains('unexpected keys'),
     );
   });
+
+  test(
+    'TC-363-04a B1b requires live physical-first Android targets and production bootstrap sources',
+    () {
+      const physicalId = 'R58M123ABC';
+      const emulatorId = 'emulator-5554';
+      const live = <InviteReliabilityDeviceTarget>[
+        InviteReliabilityDeviceTarget(
+          id: physicalId,
+          targetPlatform: 'android-arm64',
+          isEmulator: false,
+        ),
+        InviteReliabilityDeviceTarget(
+          id: emulatorId,
+          targetPlatform: 'android-x64',
+          isEmulator: true,
+        ),
+      ];
+      expect(
+        validateLinkedGroupBootstrapB1bTopology(
+          selectedDeviceIds: const <String>[physicalId, emulatorId],
+          liveDevices: live,
+        ),
+        isNull,
+      );
+      for (final invalid in <List<String>>[
+        const <String>[emulatorId, physicalId],
+        const <String>[physicalId, physicalId],
+        const <String>[physicalId, '00008120-001A2B3C4D5E6F70'],
+        const <String>[physicalId, 'emulator-7777'],
+      ]) {
+        expect(
+          validateLinkedGroupBootstrapB1bTopology(
+            selectedDeviceIds: invalid,
+            liveDevices: live,
+          ),
+          isNotNull,
+          reason: 'invalid topology must refuse before build: $invalid',
+        );
+      }
+
+      final runner = File(
+        'integration_test/scripts/run_b1b_sibling_device_convergence.dart',
+      ).readAsStringSync();
+      expect(runner, contains('AndroidAppSignalBroker'));
+      expect(runner, contains('MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true'));
+      expect(runner, contains('MKNOON_ENABLE_MULTI_DEVICE_SYNC=true'));
+      expect(runner, contains("'linked_bootstrap_fixture.json'"));
+      final normalizedRunner = runner.toLowerCase();
+      for (final forbiddenIosRoute in const <String>[
+        'iphone',
+        'xcrun',
+        'ios simulator',
+        "targetplatform.contains('ios')",
+      ]) {
+        expect(normalizedRunner, isNot(contains(forbiddenIosRoute)));
+      }
+
+      final harness = File(
+        'integration_test/group_multi_device_real_harness.dart',
+      ).readAsStringSync();
+      final b1bStart = harness.indexOf(
+        '// ── Plan 363: availability-bounded B1b linked-group bootstrap proof',
+      );
+      final b1bEnd = harness.indexOf('\nvoid main()', b1bStart);
+      expect(b1bStart, isNonNegative);
+      expect(b1bEnd, greaterThan(b1bStart));
+      final b1b = harness.substring(b1bStart, b1bEnd);
+      expect(harness, contains('setUpLinkedSecondaryInstallation'));
+      expect(b1b, contains('setupAsLinkedSecondary: true'));
+      expect(b1b, contains('LinkedInstallationAuthority'));
+      expect(b1b, contains('buildDirectLinkedDeviceQr'));
+      expect(b1b, contains('parseLinkedGroupBootstrapQr'));
+      expect(b1b, contains('authorLinkedGroupBootstrap'));
+      expect(b1b, contains('deleteStorage: false'));
+      expect(b1b, contains('handleProtectedGroupAuthority'));
+      expect(b1b, isNot(contains('_importGroupShellForB1b')));
+      expect(b1b, isNot(contains('callGroupJoinWithConfig')));
+      expect(b1b, isNot(contains('announceRestoredDeviceToGroups')));
+      expect(b1b, isNot(contains('sendGroupMessage')));
+
+      final dispatcher = File(
+        'scripts/run_reliability_simulations.sh',
+      ).readAsStringSync();
+      expect(
+        dispatcher,
+        contains(
+          'integration_test/scripts/run_b1b_sibling_device_convergence.dart',
+        ),
+      );
+      expect(dispatcher, contains('<required:RELIABILITY_MULTI_DEVICE_IDS>'));
+    },
+  );
 }
 
 String _hashOf(String character) => List<String>.filled(64, character).join();

@@ -83,6 +83,11 @@ class GroupKeyUpdateListener {
     );
   }
 
+  /// Runs one protected authority envelope through the incumbent verified key
+  /// update path without starting the generic group-topic listener.
+  Future<void> handleProtectedEnvelope(ChatMessage message) =>
+      _handleMessage(message);
+
   Future<void> _handleMessage(ChatMessage message) async {
     try {
       final json = jsonDecode(message.content) as Map<String, dynamic>;

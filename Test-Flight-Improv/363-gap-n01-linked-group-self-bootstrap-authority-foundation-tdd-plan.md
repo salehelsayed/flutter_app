@@ -1,6 +1,6 @@
 # 363 - GAP-N01 Linked-Group Self-Bootstrap And Authority-Convergence Foundation
 
-Status: EXECUTION_READY / independently reviewed and revalidated / default-off / not release-eligible
+Status: IMPLEMENTED / host-verified / live-deployment-blocked / default-off / not release-eligible
 Type: Modification
 Planning baseline: `17e90bfcef5b74a7f4055225403f8cdf297f7bd1` (clean Plan-362 post-execution audit-hygiene closure over source/receipt closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`; Graphify `4bf3025ee64828d0`, 72,428 nodes / 106,174 edges)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; successor to Plan 362's direct event/blob fanout slice
@@ -26,6 +26,11 @@ Closure tier: four focused concurrent host bundles, four representative mutation
 |---|---|---|---|
 | 2026-08-12 | Planning and independent review | Anchored Graphify planning/review queries plus targeted source verification; active Plan-362 worktree | Contract ready for its blocked state. After Plan 362 closes, pin its clean audit SHA and already-refreshed committed graph, revalidate the exact shared APIs/counts once without refreshing, then author the four semantic RED bundles and exact Go REDs. |
 | 2026-08-13 | Prerequisite unblock | Clean Plan-362 audit-hygiene closure `17e90bfcef5b74a7f4055225403f8cdf297f7bd1`; source/receipt closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`; current anchored Graphify `4bf3025ee64828d0`; direct/linked/protected-custody API and gate-inventory verification | `EXECUTION_READY`. No Graphify refresh and no Plan-363 acceptance gate were required for the docs-only unblock. First implementation action is the literal clean-tree/ancestry preflight, then the four semantic RED bundles and exact Go REDs. |
+| 2026-08-13 | Production implementation | Selected-group SELF verification over the existing dual-signed QR; atomic legacy+linked roster/bootstrap intent; deterministic secure-key staging plus atomic group/member/key materialization; strict group-bootstrap/group-authority custody in Dart, node and relay; prepared physical-recipient authority for device/member/role/removal/dissolve/key transitions; prerequisite-waiting replay; linked restricted runtime and read-only UI | Code-complete on the reviewed schema-free boundary. Ordinary QR parsing and all-legacy group behavior remain incumbent; linked group content, media, history and activation remain unreachable. |
+| 2026-08-13 | Causal and focused proof | Four independent source mutations each re-red their owning Plan-363 row and were reverted. The final 31-file selector-on Flutter command ran at concurrency 4 and closed all five named rows plus preservation sentinels at `+9`, with every required ID observed and zero skips. Exact node `TestTC363GroupProtectedCustodyKinds` and relay `TestRelayNotificationClosure_GroupProtectedCustodyKinds` passed. | Atomicity, exact kind/target validation, generic-push refusal, authority convergence, restricted startup and B1b runner discovery are host-verified. |
+| 2026-08-13 | Gates and hygiene | Discovery and relay-rollout shell contracts PASS; DTR-18 c4 `+5`; `runtime-roots` PASS; final once-only curated `groups` gate `+4119` plus bridge/node/relay/toolchain tails PASS. The first loaded groups run reproduced the pre-implementation background storage deadline flake; its contract-authorized test-only scale was tuned `8 -> 16`, the exact test passed, and the complete groups gate then passed. Analyzer reports no issues; Dart/Go format, baseline/unstaged/staged diff checks and mutation-marker scan are clean. | Required host acceptance is green. No completeness, `1to1`, core/feature/full `host-all`, performance, SQLCipher, iOS or extra device gate was run. |
+| 2026-08-13 | Availability-bounded B1b | Live matrix: physical Pixel 6 `21071FDF600CSC` plus Android emulator `emulator-5554`. Runner discovery selected only B1b. The real journey produced the linked QR, created the ordinary-primary group, authored the bootstrap and retained its durable row, but the deployed relay rejected every attempt to store the additive protected bootstrap kind with `INBOX_ERROR`; both roles then timed out waiting for custody and the linked repository correctly remained empty. | `LIVE_DEPLOYMENT_BLOCKED`: targets were available, so this is not N/A. Do not downgrade to generic group storage. Deploy the Plan-363 node/relay kind allowlists before repeating B1b or enabling authoring; release eligibility remains false. |
+| 2026-08-13 | Graph and closure record | One incremental architecture refresh processed 66 changed code files and closed at 72,778 nodes / 106,641 edges. Exact-anchor review over `handleProtectedGroupAuthority` and `authorLinkedGroupBootstrap` is current at fingerprint `2044b6ea0d86f131`; index, status and GAP-N01 coverage record the same bounded result. | `IMPLEMENTED / HOST_VERIFIED / LIVE_DEPLOYMENT_BLOCKED / DEFAULT-OFF / NOT RELEASE-ELIGIBLE`. No activation, writable group content/media, UX-013 or GAP-N01 closure claim. |
 
 ## Problem And Source-Backed Evidence
 
@@ -410,16 +415,16 @@ git status --short
 ## Done Criteria
 
 - [x] Plan 362 is cleanly implemented at source/receipt closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5` and audit-hygiene closed at `17e90bfcef5b74a7f4055225403f8cdf297f7bd1`; current Graphify `4bf3025ee64828d0` (72,428 nodes / 106,174 edges), shared APIs and live inventories are revalidated, and plan/index/status move to `EXECUTION_READY` before RED.
-- [ ] An ordinary primary can scan the fresh linked installation's exact existing QR for one current group, with both selectors and no contact/direct-binding mutation; linked/self/crossed inputs refuse.
-- [ ] Verify preserves legacy+linked device authority and atomically owns exact protected bootstrap bytes plus durable intent before network; ambiguous custody cannot clear either owner.
-- [ ] Protected bootstrap and authority kinds bind exact physical sender/recipient and logical group/account authority through the existing action/backend; relay ACK/capacity/duplicate behavior is recipient-independent.
-- [ ] Fresh receiver materialization uses deterministic secure-key staging plus one authoritative SQL commit/read-back, preserves exact role, is idempotent and ACKs only afterward; authority-before/bootstrap-before/restart/terminal races converge without visible partial authority.
-- [ ] Membership/config/role/removal/dissolve/key/device authority converges through physical recipients while logical/transport signatures stay distinct; no user content becomes writable.
-- [ ] Restricted linked cold/resume/pause exposes only QR + read-only group status and exact bootstrap/authority recovery; generic group/feed/posts/contact/media/history/push owners remain zero and primary behavior is unchanged.
-- [ ] Four exact mutations re-red independently and are reverted. Independent multi-file tests use concurrency 4 wherever supported; final focused c4 proof is non-vacuous.
-- [ ] Exact node/relay protected-kind tests, mandatory DTR c4, discovery shell, runtime roots and one curated `groups` lane pass once. No migration/SQLCipher/completeness/1to1/core/feature/full-host/performance/extra-Go gate is run.
-- [ ] The existing B1b journey proves empty linked group repo -> automated QR bootstrap -> atomic key/group materialization -> offline protected authority convergence on an available physical Android + emulator, or is recorded N/A exactly under project policy.
-- [ ] Analyzer, changed-Dart format, Go format, three diff checks and one post-change Graphify refresh/review are clean; index/status/GAP coverage record the actual receipt while activation, writable group events, media, UX-013 and GAP-N01 remain open.
+- [x] An ordinary primary can scan the fresh linked installation's exact existing QR for one current group, with both selectors and no contact/direct-binding mutation; linked/self/crossed inputs refuse.
+- [x] Verify preserves legacy+linked device authority and atomically owns exact protected bootstrap bytes plus durable intent before network; ambiguous custody cannot clear either owner.
+- [x] Protected bootstrap and authority kinds bind exact physical sender/recipient and logical group/account authority through the existing action/backend; relay ACK/capacity/duplicate behavior is recipient-independent.
+- [x] Fresh receiver materialization uses deterministic secure-key staging plus one authoritative SQL commit/read-back, preserves exact role, is idempotent and ACKs only afterward; authority-before/bootstrap-before/restart/terminal races converge without visible partial authority.
+- [x] Membership/config/role/removal/dissolve/key/device authority converges through physical recipients while logical/transport signatures stay distinct; no user content becomes writable.
+- [x] Restricted linked cold/resume/pause exposes only QR + read-only group status and exact bootstrap/authority recovery; generic group/feed/posts/contact/media/history/push owners remain zero and primary behavior is unchanged.
+- [x] Four exact mutations re-red independently and are reverted. Independent multi-file tests use concurrency 4 wherever supported; final focused c4 proof is non-vacuous.
+- [x] Exact node/relay protected-kind tests, mandatory DTR c4, discovery shell, runtime roots and one curated `groups` lane pass once. No migration/SQLCipher/completeness/1to1/core/feature/full-host/performance/extra-Go gate is run.
+- [ ] The existing B1b journey proves empty linked group repo -> automated QR bootstrap -> atomic key/group materialization -> offline protected authority convergence on an available physical Android + emulator, or is recorded N/A exactly under project policy. `LIVE_DEPLOYMENT_BLOCKED`: both targets were available, but the deployed relay rejected the new protected kind with `INBOX_ERROR`; the durable bootstrap was retained and no unsafe fallback was taken.
+- [x] Analyzer, changed-Dart format, Go format, three diff checks and one post-change Graphify refresh/review are clean; index/status/GAP coverage record the actual receipt while activation, writable group events, media, UX-013 and GAP-N01 remain open.
 
 ## Reviewer Findings
 
@@ -451,21 +456,20 @@ git status --short
 
 ## Arbiter Decision
 
-`EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED.` The smallest
-production-reachable Plan 363 is a group-scoped same-account QR bootstrap,
-atomic sender/receiver authority, two additive protected-custody kinds, signed
-group authority convergence and a read-only linked surface. Writable group
-discussion, admin announcements and reactions would require a separate
-event-vs-authority contract and are deferred to Plan 364; group blobs remain
-Plan 365. No v115, new queue, ACK ledger, group discovery service, relay action,
-bridge/native command or extra device campaign is justified. Plan 362's exact
-closure SHA and current committed graph are pinned, and no incompatible shared
-API or gate-inventory drift remains; semantic RED authoring is now authorized.
+`IMPLEMENTED / HOST_VERIFIED / LIVE_DEPLOYMENT_BLOCKED / DEFAULT-OFF / NOT
+RELEASE-ELIGIBLE.` The bounded foundation is code-complete and its causal host,
+Go, curated-gate, static and graph evidence is green. The available Android pair
+proved production QR creation and durable bootstrap authoring, then the deployed
+relay failed closed because it does not yet admit the additive protected kinds.
+That deployment must be updated before B1b can close; generic group storage is
+not an acceptable fallback. Writable discussion, announcements and reactions
+remain Plan 364, group blobs remain Plan 365, and no activation or GAP-N01
+closure is claimed.
 
 ## Handoff
 
-- Current state: `EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED`; Plan 362 is audit-hygiene closed at `17e90bfcef5b74a7f4055225403f8cdf297f7bd1` over source/receipt closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`, and Plan-363 RED is authorized only after the literal preflight.
-- Unblock action: complete. The closure SHA, current Graphify fingerprint/counts, shared APIs and live inventories are pinned/revalidated in this artifact; this docs-only unblock did not refresh the graph.
-- First execution action: run the literal preflight, then record `TC-363-01a`, `01b`, `02a`, `03a`, host `04a` and the exact node/relay REDs before production wiring.
-- Runtime economy: run every independent Flutter multi-file bundle with concurrency 4 wherever supported to speed feedback; keep only mutations, curated gates and device work serial.
+- Current state: `IMPLEMENTED / HOST_VERIFIED / LIVE_DEPLOYMENT_BLOCKED / DEFAULT-OFF / NOT RELEASE-ELIGIBLE`; all required code and host acceptance are complete, and Graphify is current at `2044b6ea0d86f131` (72,778 nodes / 106,641 edges).
+- Deployment action: deploy the additive `group_bootstrap_v1` and `group_authority_v1` node/relay allowlists, then rerun the single discovered B1b scenario on the physical Pixel 6 plus `emulator-5554`. Do not enable authoring before that proof passes.
+- Receipt boundary: final focused c4 `+9`, 4/4 mutation re-reds reverted, exact node/relay PASS, DTR c4 `+5`, discovery/runtime-roots/contracts PASS, curated groups `+4119` plus all Go tails, analyzer/format/diff clean, and one incremental Graphify refresh/review.
+- Safety disposition: the failed live store retained durable bootstrap authority, the linked repository stayed empty, and no generic-storage downgrade or activation was introduced.
 - Successor work: Plan 364 owns blob-free group discussion/announcement/reaction authoring after authority convergence; Plan 365 owns group media/blob/voice; later plans own history/no-intent, activation, capability rollout and final GAP-N01/release closure.

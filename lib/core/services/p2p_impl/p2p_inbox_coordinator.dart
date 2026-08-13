@@ -1,5 +1,16 @@
 part of '../p2p_service_impl.dart';
 
+bool _sameProtectedRelayEntry(
+  InboxStagingEntry left,
+  InboxStagingEntry right,
+) =>
+    left.entryId == right.entryId &&
+    left.ownerPeerId == right.ownerPeerId &&
+    left.senderPeerId == right.senderPeerId &&
+    left.messageType == right.messageType &&
+    left.relayTimestamp == right.relayTimestamp &&
+    left.envelope == right.envelope;
+
 class _P2PInboxPort {
   final NodeState Function() readNodeState;
   final Stream<NodeState> nodeStateStream;
@@ -75,6 +86,7 @@ class _P2PInboxCoordinator {
   _replayRecoveredInboxContactRequest;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxReaction;
   final ReplayRecoveredInboxChatMessage? _replayRecoveredInboxMessageDeletion;
+  ReplayRecoveredProtectedGroupEnvelope? _replayRecoveredProtectedGroupEnvelope;
   final Future<String?> Function(ChatMessage message)?
   _predecryptInboxChatEntry;
   final int _maxInboxPages;
@@ -102,6 +114,8 @@ class _P2PInboxCoordinator {
     replayRecoveredInboxContactRequest,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion,
+    ReplayRecoveredProtectedGroupEnvelope?
+    replayRecoveredProtectedGroupEnvelope,
     Future<String?> Function(ChatMessage message)? predecryptInboxChatEntry,
     required int maxInboxPages,
     required int maxRecoverableInboxReplayEntries,
@@ -120,11 +134,19 @@ class _P2PInboxCoordinator {
        _replayRecoveredInboxReaction = replayRecoveredInboxReaction,
        _replayRecoveredInboxMessageDeletion =
            replayRecoveredInboxMessageDeletion,
+       _replayRecoveredProtectedGroupEnvelope =
+           replayRecoveredProtectedGroupEnvelope,
        _predecryptInboxChatEntry = predecryptInboxChatEntry,
        _maxInboxPages = maxInboxPages,
        _maxRecoverableInboxReplayEntries = maxRecoverableInboxReplayEntries,
        _maxConcurrentInboxDecrypts = maxConcurrentInboxDecrypts,
        _foregroundInboxTimeout = foregroundInboxTimeout;
+
+  void setProtectedGroupReplayHandler(
+    ReplayRecoveredProtectedGroupEnvelope? handler,
+  ) {
+    _replayRecoveredProtectedGroupEnvelope = handler;
+  }
 
   String _normalizeInboxTimestamp(dynamic ts) {
     if (ts is int) {
@@ -559,7 +581,10 @@ class _P2PInboxCoordinator {
     return plaintextByEntryId;
   }
 
-  Future<int> _replayStagedInboxEntries({List<String>? entryIds}) async {
+  Future<int> _replayStagedInboxEntries({
+    List<String>? entryIds,
+    Set<String>? protectedRelayAckableEntryIds,
+  }) async {
     final repo = _inboxStagingRepository;
 
     final entries = entryIds == null
@@ -575,6 +600,59 @@ class _P2PInboxCoordinator {
       final entryStopwatch = Stopwatch()..start();
       final message = entry.toChatMessage();
       try {
+        if (entry.messageType == _linkedGroupBootstrapInboxEnvelopeType ||
+            entry.messageType == _protectedGroupAuthorityInboxEnvelopeType) {
+          final replay = _replayRecoveredProtectedGroupEnvelope;
+          if (replay == null) {
+            await _markProtectedGroupPrerequisiteWaiting(
+              repo,
+              entry,
+              reasonCode: 'protected_group_handler_unavailable',
+            );
+            continue;
+          }
+          final outcome = await replay(message);
+          switch (outcome.disposition) {
+            case ProtectedGroupReplayDisposition.applied:
+            case ProtectedGroupReplayDisposition.duplicate:
+            case ProtectedGroupReplayDisposition.terminalRejected:
+              // Keep terminal local evidence until the relay confirms the
+              // exact ACK. If ACK fails, the staged bytes drive an idempotent
+              // retry instead of depending on a later re-download.
+              await _markProtectedGroupAckPending(repo, entry.entryId);
+              protectedRelayAckableEntryIds?.add(entry.entryId);
+              replayed++;
+              break;
+            case ProtectedGroupReplayDisposition.retryable:
+              await repo.markRetryable(
+                entry.entryId,
+                reasonCode: outcome.reasonCode,
+                reasonDetail: outcome.reasonDetail,
+              );
+              break;
+            case ProtectedGroupReplayDisposition.prerequisiteWaiting:
+              await _markProtectedGroupPrerequisiteWaiting(
+                repo,
+                entry,
+                reasonCode: outcome.reasonCode,
+                reasonDetail: outcome.reasonDetail,
+              );
+              break;
+          }
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'P2P_SERVICE_PROTECTED_GROUP_REPLAY',
+            details: {
+              'entryId': entry.entryId.length > 8
+                  ? entry.entryId.substring(0, 8)
+                  : entry.entryId,
+              'messageType': entry.messageType,
+              'disposition': outcome.disposition.name,
+              'reasonCode': outcome.reasonCode,
+            },
+          );
+          continue;
+        }
         final ReplayRecoveredInboxChatMessage? chatReplay;
         if (entry.entryId.startsWith('direct:')) {
           chatReplay =
@@ -796,6 +874,42 @@ class _P2PInboxCoordinator {
     }
 
     return replayed;
+  }
+
+  Future<void> _markProtectedGroupPrerequisiteWaiting(
+    InboxStagingRepository repo,
+    InboxStagingEntry entry, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    if (repo is InboxStagingPrerequisiteWaitingRepository) {
+      await (repo as InboxStagingPrerequisiteWaitingRepository)
+          .markPrerequisiteWaiting(
+            entry.entryId,
+            reasonCode: reasonCode,
+            reasonDetail: reasonDetail,
+          );
+    }
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'P2P_SERVICE_PROTECTED_GROUP_PREREQUISITE_WAITING',
+      details: {
+        'entryId': entry.entryId.length > 8
+            ? entry.entryId.substring(0, 8)
+            : entry.entryId,
+        'reasonCode': reasonCode,
+      },
+    );
+  }
+
+  Future<void> _markProtectedGroupAckPending(
+    InboxStagingRepository repo,
+    String entryId,
+  ) async {
+    if (repo is InboxStagingProtectedAckPendingRepository) {
+      await (repo as InboxStagingProtectedAckPendingRepository)
+          .markProtectedAckPending(entryId);
+    }
   }
 
   Future<void> _quarantineRecoveredInboxEntry({
@@ -1063,7 +1177,22 @@ class _P2PInboxCoordinator {
       );
     }
 
-    final ackableEntryIds = await repo.stageEntries(entries);
+    final ackableEntryIds = (await repo.stageEntries(entries)).toList();
+    final protectedRelayAckableEntryIds = <String>{};
+    for (final entry in entries) {
+      if (ackableEntryIds.contains(entry.entryId) ||
+          (entry.messageType != _linkedGroupBootstrapInboxEnvelopeType &&
+              entry.messageType != _protectedGroupAuthorityInboxEnvelopeType)) {
+        continue;
+      }
+      final existing = await repo.getEntry(entry.entryId);
+      if (existing != null &&
+          existing.status == 'protected_ack_pending' &&
+          _sameProtectedRelayEntry(existing, entry)) {
+        ackableEntryIds.add(entry.entryId);
+        protectedRelayAckableEntryIds.add(entry.entryId);
+      }
+    }
     if (ackableEntryIds.isNotEmpty &&
         !await _port.allowsAccountNetworkSideEffects(
           'p2p_inbox_ack_after_stage',
@@ -1087,16 +1216,31 @@ class _P2PInboxCoordinator {
     final replaySw = Stopwatch()..start();
     final replayed = ackableEntryIds.isEmpty
         ? 0
-        : await _replayStagedInboxEntries(entryIds: ackableEntryIds);
+        : await _replayStagedInboxEntries(
+            entryIds: ackableEntryIds,
+            protectedRelayAckableEntryIds: protectedRelayAckableEntryIds,
+          );
     replaySw.stop();
+
+    final relayAckableEntryIds = ackableEntryIds
+        .where((entryId) {
+          final entry = entries
+              .where((value) => value.entryId == entryId)
+              .first;
+          final protected =
+              entry.messageType == _linkedGroupBootstrapInboxEnvelopeType ||
+              entry.messageType == _protectedGroupAuthorityInboxEnvelopeType;
+          return !protected || protectedRelayAckableEntryIds.contains(entryId);
+        })
+        .toList(growable: false);
 
     final ackSw = Stopwatch();
     String? ackFailureReason;
-    if (ackableEntryIds.isNotEmpty) {
+    if (relayAckableEntryIds.isNotEmpty) {
       ackSw.start();
       try {
         final ackResponse = await _port.ackInbox(
-          entryIds: ackableEntryIds,
+          entryIds: relayAckableEntryIds,
           custodyContract: ackOrExpiryInboxCustodyContract,
         );
         if (ackResponse['ok'] != true) {
@@ -1109,10 +1253,10 @@ class _P2PInboxCoordinator {
           ackFailureReason = 'custody_proof_missing_or_invalid';
         } else {
           final acked = (ackResponse['acked'] as num?)?.toInt();
-          if (acked != ackableEntryIds.length) {
+          if (acked != relayAckableEntryIds.length) {
             ackFailureReason =
                 'inbox_ack_incomplete:${acked ?? 'missing'}/'
-                '${ackableEntryIds.length}';
+                '${relayAckableEntryIds.length}';
           }
         }
         emitFlowEvent(
@@ -1121,7 +1265,7 @@ class _P2PInboxCoordinator {
               ? 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_SUCCESS'
               : 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_ERROR',
           details: {
-            'requested': ackableEntryIds.length,
+            'requested': relayAckableEntryIds.length,
             'acked': ackResponse['acked'],
             'errorMessage': ?ackFailureReason,
           },
@@ -1131,14 +1275,38 @@ class _P2PInboxCoordinator {
         emitFlowEvent(
           layer: 'FL',
           event: 'P2P_SERVICE_INBOX_ACK_AFTER_STAGE_EXCEPTION',
-          details: {'requested': ackableEntryIds.length, 'error': e.toString()},
+          details: {
+            'requested': relayAckableEntryIds.length,
+            'error': e.toString(),
+          },
         );
       }
       ackSw.stop();
     }
 
+    if (ackFailureReason == null && relayAckableEntryIds.isNotEmpty) {
+      for (final entryId in protectedRelayAckableEntryIds) {
+        if (relayAckableEntryIds.contains(entryId)) {
+          await repo.deleteEntry(entryId);
+        }
+      }
+    }
+
+    var protectedPending = false;
+    for (final entry in entries) {
+      final isProtected =
+          entry.messageType == _linkedGroupBootstrapInboxEnvelopeType ||
+          entry.messageType == _protectedGroupAuthorityInboxEnvelopeType;
+      if (isProtected &&
+          !relayAckableEntryIds.contains(entry.entryId) &&
+          await repo.getEntry(entry.entryId) != null) {
+        protectedPending = true;
+        break;
+      }
+    }
     final pageFailureReason =
         ackFailureReason ??
+        (protectedPending ? 'protected_group_handler_not_terminal' : null) ??
         (skippedMalformed > 0
             ? 'malformed_inbox_rows:$skippedMalformed'
             : null);

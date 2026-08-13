@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_exit_policy.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
@@ -10,6 +11,7 @@ import 'package:flutter_app/features/groups/application/group_membership_timelin
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart'
     show groupMembershipMutationDissolvedMessage;
@@ -157,6 +159,49 @@ changeGroupMemberRoleAndBroadcast({
     },
   );
   final sysText = jsonEncode(signedPayload);
+  ProtectedGroupAuthorityPreparation? protectedPreparation;
+  if (hasProtectedGroupAuthorityAdapter &&
+      hasProtectedGroupPhysicalAuthority(members)) {
+    final actor = members.singleWhere(
+      (member) => member.peerId == identity.peerId,
+    );
+    final senderDevice = resolveProtectedGroupSenderDevice(
+      actor: actor,
+      senderPublicKey: senderBinding.devicePublicKey ?? identity.publicKey,
+      senderDeviceId: senderBinding.deviceId,
+      senderTransportPeerId: senderBinding.transportPeerId ?? identity.peerId,
+    );
+    if (senderDevice == null) {
+      throw StateError('Role transition sender device is not authoritative');
+    }
+    protectedPreparation = await prepareProtectedGroupAuthority(
+      ProtectedGroupAuthorityPrepareRequest(
+        groupId: groupId,
+        transitionId: sourceEventId,
+        control: ProtectedGroupAuthorityControl.memberRole,
+        replayData: <String, dynamic>{
+          'groupId': groupId,
+          'senderId': identity.peerId,
+          'senderUsername': identity.username,
+          if (senderBinding.deviceId != null)
+            'senderDeviceId': senderBinding.deviceId,
+          if (senderBinding.transportPeerId != null)
+            'transportPeerId': senderBinding.transportPeerId,
+          'text': sysText,
+          'timestamp': eventAt.toUtc().toIso8601String(),
+          'messageId': sourceEventId,
+        },
+        actorAccountPeerId: identity.peerId,
+        actorAccountPublicKey: identity.publicKey,
+        actorAccountPrivateKey: identity.privateKey,
+        senderDevice: senderDevice,
+        frozenRecipients: freezeProtectedGroupPhysicalRecipients(members),
+      ),
+    );
+    if (protectedPreparation == null) {
+      throw StateError('Role transition protected preparation failed');
+    }
+  }
 
   final recipients = proposedMembers
       .where((member) => member.peerId != identity.peerId)
@@ -224,6 +269,7 @@ changeGroupMemberRoleAndBroadcast({
       // id belongs to this invocation. Preserve any collision rather than
       // deleting another durable transition; no role/config write has occurred.
       clearGroupRolePreparationInFlight(pendingId);
+      await cancelProtectedGroupAuthority(protectedPreparation);
       throw StateError(
         'Role transition was not committed because its durable prepared row '
         'could not be verified: $queueError',
@@ -289,6 +335,7 @@ changeGroupMemberRoleAndBroadcast({
         'could not be removed ($discardError)',
       );
     }
+    await cancelProtectedGroupAuthority(protectedPreparation);
     rethrow;
   }
   if (committed == null) {
@@ -299,6 +346,7 @@ changeGroupMemberRoleAndBroadcast({
         clearGroupRolePreparationInFlight(pendingId);
       }
     }
+    await cancelProtectedGroupAuthority(protectedPreparation);
     final current = await groupRepo.getMember(groupId, memberPeerId);
     return ChangeGroupMemberRoleAndBroadcastResult(
       outcome: ChangeGroupMemberRoleAndBroadcastOutcome.unchanged,
@@ -330,6 +378,27 @@ changeGroupMemberRoleAndBroadcast({
       );
     }
     clearGroupRolePreparationInFlight(pendingId);
+  }
+  try {
+    await activateProtectedGroupAuthority(
+      protectedPreparation,
+      requireAllCustody: false,
+    );
+  } catch (error) {
+    // The durable protected row remains retryable. The role transition is
+    // already committed, so a transport failure cannot turn into a caller-
+    // visible mutation failure that invites a conflicting retry.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROLE_PROTECTED_ACTIVATION_DEFERRED',
+      details: {
+        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+        'memberPeerId': memberPeerId.length > 8
+            ? memberPeerId.substring(0, 8)
+            : memberPeerId,
+        'error': error.toString(),
+      },
+    );
   }
 
   Map<String, dynamic>? publishResult;

@@ -24,6 +24,9 @@ class DirectBlobFreeLinkedServices {
     required this.drainExactBlobFreeFanoutOutboxes,
     this.cleanupLinkedDirectMediaBlobCustodyLocally,
     this.drainLinkedDirectMediaBlobCustody,
+    this.materializeLinkedGroupBootstrap,
+    this.replayLinkedGroupAuthority,
+    this.refreshLinkedGroupList,
   });
 
   final Future<void> Function() initializeBridge;
@@ -50,6 +53,13 @@ class DirectBlobFreeLinkedServices {
   /// regardless of any authoring selector.
   final Future<void> Function()? drainLinkedDirectMediaBlobCustody;
 
+  /// 363 restricted ordering: a second typed protected pass lets an authority
+  /// row that appeared before its bootstrap become eligible without starting
+  /// generic group recovery.
+  final Future<void> Function()? materializeLinkedGroupBootstrap;
+  final Future<void> Function()? replayLinkedGroupAuthority;
+  final Future<void> Function()? refreshLinkedGroupList;
+
   Future<bool> start() async {
     try {
       await initializeBridge();
@@ -69,6 +79,12 @@ class DirectBlobFreeLinkedServices {
       // Replay + drain run after the exact listener set exists so recovered
       // envelopes route into the restricted surface only.
       await drainOfflineInbox();
+      // 363: group bootstrap is the prerequisite for every protected group
+      // authority row. Keep this ordering immediately behind the typed P2P
+      // stage/replay pass and ahead of every unrelated direct/media owner.
+      await materializeLinkedGroupBootstrap?.call();
+      await replayLinkedGroupAuthority?.call();
+      await refreshLinkedGroupList?.call();
       final drained = await drainExactBlobFreeFanoutOutboxes();
       emitFlowEvent(
         layer: 'FL',

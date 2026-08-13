@@ -431,6 +431,35 @@ if grep -Fq '==>' "$missing_invite_devices_run"; then
   fail 'invite_send_latency without device env reached Dart/device execution'
 fi
 
+# Plan 363 upgrades the existing B1b runner in place. It remains one group
+# discovery row, but now fails closed before Dart/device execution unless the
+# availability-bounded physical-Android + emulator pair is explicit.
+b1b_runner=integration_test/scripts/run_b1b_sibling_device_convergence.dart
+assert_record_once group runner "$b1b_runner"
+unset RELIABILITY_MULTI_DEVICE_IDS FLUTTER_MULTI_DEVICE_IDS FLUTTER_DEVICE_ID
+b1b_missing_list="$tmp_dir/b1b-missing-devices.list"
+./scripts/run_test_gates.sh reliability-sim group --list \
+  --only "$b1b_runner" >"$b1b_missing_list" ||
+  fail 'Plan 363 B1b list must remain available without device env'
+grep -Fq -- \
+  "dart run $b1b_runner -d '<required:RELIABILITY_MULTI_DEVICE_IDS>'" \
+  "$b1b_missing_list" ||
+  fail 'Plan 363 B1b list did not expose its required explicit Android pair'
+
+b1b_missing_run="$tmp_dir/b1b-missing-devices.run"
+set +e
+./scripts/run_test_gates.sh reliability-sim group \
+  --only "$b1b_runner" >"$b1b_missing_run" 2>&1
+b1b_missing_status=$?
+set -e
+[ "$b1b_missing_status" -eq 64 ] ||
+  fail "Plan 363 B1b without device env exited $b1b_missing_status instead of 64"
+grep -Fq 'Missing explicit two-device IDs' "$b1b_missing_run" ||
+  fail 'Plan 363 B1b missing-device run lost its explicit-pair diagnostic'
+if grep -Fq '==>' "$b1b_missing_run"; then
+  fail 'Plan 363 B1b without device env reached Dart/device execution'
+fi
+
 # Plans 342/345/347/361/362 share exactly one device-proof discovery row; it
 # is not a host test and covers the direct-text, direct-media, blob-custody,
 # linked-event and linked-media-fanout SQLCipher proofs the file carries.

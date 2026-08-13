@@ -9,6 +9,7 @@ import 'package:image_picker/image_picker.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
@@ -24,6 +25,8 @@ import 'package:flutter_app/features/groups/application/group_exit_intent_coordi
 import 'package:flutter_app/features/groups/application/group_exit_intent_sink.dart';
 import 'package:flutter_app/features/groups/application/group_exit_terminal_diagnostics.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/dissolve_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_dissolve_preflight_sink.dart';
@@ -61,6 +64,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
 import 'package:flutter_app/features/groups/presentation/group_invite_status_presentation.dart';
 import 'package:flutter_app/features/groups/presentation/group_exit_diagnostic_presenter.dart';
 import 'package:flutter_app/features/groups/presentation/group_security_status_view_state.dart';
@@ -70,6 +74,8 @@ import 'package:flutter_app/features/groups/presentation/screens/group_shared_me
 import 'package:flutter_app/features/groups/presentation/widgets/group_avatar.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_exit_recovery_sheet.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
+import 'package:flutter_app/features/qr_code/presentation/screens/qr_scanner_screen.dart';
 import 'package:flutter_app/features/settings/application/helpers/avatar_normalization_helper.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -117,6 +123,7 @@ class GroupInfoWired extends StatefulWidget {
   final BackgroundPreference backgroundPreference;
   final Widget Function(BuildContext context, GroupModel group)?
   sharedMediaRouteBuilder;
+  final bool isOrdinaryPrimary;
 
   const GroupInfoWired({
     super.key,
@@ -135,6 +142,7 @@ class GroupInfoWired extends StatefulWidget {
     this.uploadGroupAvatarFn = uploadGroupAvatar,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.sharedMediaRouteBuilder,
+    this.isOrdinaryPrimary = true,
   });
 
   @override
@@ -159,6 +167,7 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
   bool _isDissolving = false;
   bool _isDeletingLocally = false;
   bool _isDeletingSelfRemovedShell = false;
+  bool _isLinkingGroupDevice = false;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
 
@@ -426,27 +435,42 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     try {
       final pending = await (repo as PendingSiblingDeviceRepository)
           .getPendingSiblingDevicesForGroup(widget.group.id);
-      return pending.map((device) {
-        final member = members
-            .where((m) => m.peerId == device.memberPeerId)
-            .cast<GroupMember?>()
-            .firstWhere((m) => m != null, orElse: () => null);
-        final fingerprint =
-            '${device.deviceSigningPublicKey}:'
-            '${device.mlKemPublicKey ?? ''}:'
-            '${device.keyPackageId ?? ''}';
-        final safetyNumber = ContactSafetyNumber.build(
-          peerId: device.memberPeerId,
-          publicKey: device.verifiedAccountSigningPublicKey,
-          mlKemPublicKey: device.mlKemPublicKey,
-          deviceFingerprints: [fingerprint],
-        );
-        return PendingSiblingDeviceView(
-          device: device,
-          memberLabel: member?.username ?? device.memberPeerId,
-          safetyNumber: safetyNumber,
-        );
-      }).toList();
+      return pending
+          .where((device) {
+            final member = members
+                .where((candidate) => candidate.peerId == device.memberPeerId)
+                .cast<GroupMember?>()
+                .firstWhere(
+                  (candidate) => candidate != null,
+                  orElse: () => null,
+                );
+            final active = member?.findDeviceById(device.deviceId);
+            return active == null ||
+                active.transportPeerId != device.transportPeerId ||
+                active.deviceSigningPublicKey != device.deviceSigningPublicKey;
+          })
+          .map((device) {
+            final member = members
+                .where((m) => m.peerId == device.memberPeerId)
+                .cast<GroupMember?>()
+                .firstWhere((m) => m != null, orElse: () => null);
+            final fingerprint =
+                '${device.deviceSigningPublicKey}:'
+                '${device.mlKemPublicKey ?? ''}:'
+                '${device.keyPackageId ?? ''}';
+            final safetyNumber = ContactSafetyNumber.build(
+              peerId: device.memberPeerId,
+              publicKey: device.verifiedAccountSigningPublicKey,
+              mlKemPublicKey: device.mlKemPublicKey,
+              deviceFingerprints: [fingerprint],
+            );
+            return PendingSiblingDeviceView(
+              device: device,
+              memberLabel: member?.username ?? device.memberPeerId,
+              safetyNumber: safetyNumber,
+            );
+          })
+          .toList();
     } catch (e) {
       emitFlowEvent(
         layer: 'FL',
@@ -1242,6 +1266,124 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
         selfPeerId: identity?.peerId,
         actorUsername: identity?.username,
         msgRepo: widget.msgRepo,
+        prepareAuthority: identity == null || !hasProtectedGroupAuthorityAdapter
+            ? null
+            : ({
+                required group,
+                required members,
+                required removedMember,
+                required eventAt,
+                required eventId,
+              }) async {
+                if (!hasProtectedGroupPhysicalAuthority(members)) {
+                  return null;
+                }
+                final senderBinding = await resolveGroupSenderDeviceBinding(
+                  groupRepo: widget.groupRepo,
+                  groupId: group.id,
+                  senderPeerId: identity.peerId,
+                  preferredDeviceId: _currentSenderDeviceId,
+                  preferredTransportPeerId: _currentSenderDeviceId,
+                  senderPublicKey: identity.publicKey,
+                );
+                final actor = members
+                    .where((candidate) => candidate.peerId == identity.peerId)
+                    .single;
+                final senderDevice = resolveProtectedGroupSenderDevice(
+                  actor: actor,
+                  senderPublicKey:
+                      senderBinding.devicePublicKey ?? identity.publicKey,
+                  senderDeviceId: senderBinding.deviceId,
+                  senderTransportPeerId:
+                      senderBinding.transportPeerId ?? identity.peerId,
+                );
+                if (senderDevice == null) {
+                  throw StateError(
+                    'Member removal sender device is not authoritative',
+                  );
+                }
+                final proposedMembers = members
+                    .where(
+                      (candidate) => candidate.peerId != removedMember.peerId,
+                    )
+                    .toList(growable: false);
+                final proposedGroup = group.copyWith(
+                  lastMembershipEventAt: eventAt,
+                );
+                final systemPayload = <String, dynamic>{
+                  '__sys': 'member_removed',
+                  'member': <String, dynamic>{
+                    'peerId': removedMember.peerId,
+                    'username': removedMember.username,
+                  },
+                  'removedAt': eventAt.toUtc().toIso8601String(),
+                  'groupConfig': buildGroupConfigPayload(
+                    proposedGroup,
+                    proposedMembers,
+                    configVersionOverride: eventAt,
+                  ),
+                };
+                final signedSystemPayload =
+                    await signGroupSystemTransitionPayload(
+                      bridge: widget.bridge,
+                      groupRepo: widget.groupRepo,
+                      groupId: group.id,
+                      transitionType: 'member_removed',
+                      sourceEventId: eventId,
+                      eventAt: eventAt,
+                      actorPeerId: identity.peerId,
+                      actorUsername: identity.username,
+                      actorSigningPublicKey: identity.publicKey,
+                      actorPrivateKey: identity.privateKey,
+                      actorDeviceId: senderBinding.deviceId,
+                      actorTransportPeerId: senderBinding.transportPeerId,
+                      actorKeyPackageId: senderBinding.keyPackageId,
+                      preTransitionStateHash: preTransitionStateHash,
+                      systemPayload: systemPayload,
+                    );
+                final replayData = <String, dynamic>{
+                  'groupId': group.id,
+                  'senderId': identity.peerId,
+                  'senderUsername': identity.username,
+                  if (senderBinding.deviceId != null)
+                    'senderDeviceId': senderBinding.deviceId,
+                  if (senderBinding.transportPeerId != null)
+                    'transportPeerId': senderBinding.transportPeerId,
+                  'text': jsonEncode(signedSystemPayload),
+                  'timestamp': eventAt.toUtc().toIso8601String(),
+                  'messageId': eventId,
+                };
+                final preparation = await prepareProtectedGroupAuthority(
+                  ProtectedGroupAuthorityPrepareRequest(
+                    groupId: group.id,
+                    transitionId: eventId,
+                    control: ProtectedGroupAuthorityControl.memberRemove,
+                    replayData: replayData,
+                    actorAccountPeerId: identity.peerId,
+                    actorAccountPublicKey: identity.publicKey,
+                    actorAccountPrivateKey: identity.privateKey,
+                    senderDevice: senderDevice,
+                    // Freeze BEFORE removal, including every removed device.
+                    frozenRecipients: freezeProtectedGroupPhysicalRecipients(
+                      members,
+                    ),
+                  ),
+                );
+                if (preparation == null) {
+                  throw StateError('Member removal preparation failed');
+                }
+                return PreparedGroupMemberRemovalAuthority(
+                  activate: () async {
+                    await activateProtectedGroupAuthority(
+                      preparation,
+                      requireAllCustody: false,
+                    );
+                  },
+                  rollback: () async {
+                    await cancelProtectedGroupAuthority(preparation);
+                  },
+                );
+              },
       );
       localRemovalAccepted = true;
       final eventAt = minted.eventAt;
@@ -2562,6 +2704,139 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
     Navigator.of(context).pop(result);
   }
 
+  Future<void> _scanLinkedGroupDevice() async {
+    if (_isLinkingGroupDevice ||
+        !widget.isOrdinaryPrimary ||
+        !kDirectLinkedDevicesEnabled ||
+        !kMultiDeviceSyncEnabled) {
+      return;
+    }
+    await Navigator.of(context).push<void>(
+      MaterialPageRoute(
+        settings: const RouteSettings(name: 'linked-group-bootstrap-scan'),
+        builder: (_) => QRScannerScreen(
+          copy: const QRScannerScreenCopy(
+            title: 'Link group to device',
+            instruction: 'Scan the linked device code',
+            subtitle: 'Only this selected group will be shared',
+            pasteTitle: 'Paste linked device code',
+            pasteHint: 'Paste the complete linked-device QR document.',
+            pasteButton: 'Use code',
+            pastePayloadHintText: '{"mknoon":{...}}',
+          ),
+          onScanned: (qrData) {
+            unawaited(_authorLinkedGroupBootstrap(qrData));
+          },
+        ),
+      ),
+    );
+  }
+
+  Future<void> _authorLinkedGroupBootstrap(String qrData) async {
+    if (_isLinkingGroupDevice || !mounted) return;
+    setState(() => _isLinkingGroupDevice = true);
+    try {
+      final identity = await widget.identityRepo.loadIdentity();
+      if (identity == null) {
+        _showLinkedGroupBootstrapResult('Identity is not available.');
+        return;
+      }
+      final parsed = await parseLinkedGroupBootstrapQr(
+        qrString: qrData,
+        ownAccountPeerId: identity.peerId,
+        ownAccountPublicKey: identity.publicKey,
+        isOrdinaryPrimary: widget.isOrdinaryPrimary,
+        callVerify: ({required publicKey, required data, required signature}) =>
+            callVerifyPayload(
+              bridge: widget.bridge,
+              publicKey: publicKey,
+              data: data,
+              signature: signature,
+            ),
+      );
+      final target = parsed.$2;
+      if (parsed.$1 != ParseLinkedGroupBootstrapQrResult.success ||
+          target == null) {
+        _showLinkedGroupBootstrapResult(
+          'This linked-device code was refused (${parsed.$1.name}).',
+        );
+        return;
+      }
+
+      // The scanner route pops itself after delivering a value. Yield once so
+      // the explicit, selected-group confirmation is owned by this route.
+      await Future<void>.delayed(Duration.zero);
+      if (!mounted) return;
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('Link this group?'),
+          content: Text(
+            'Share “${_group.name}” with the scanned linked device. '
+            'No other groups or conversations will be shared.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              key: const ValueKey('group-link-device-confirm'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Link group'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
+
+      final result = await authorLinkedGroupBootstrap(
+        groupRepository: widget.groupRepo,
+        groupId: _group.id,
+        ownAccountPeerId: identity.peerId,
+        ownAccountPublicKey: identity.publicKey,
+        ownAccountPrivateKey: identity.privateKey,
+        verifiedTarget: target,
+        isOrdinaryPrimary: widget.isOrdinaryPrimary,
+        callSign: (data, privateKey) => callSignPayload(
+          bridge: widget.bridge,
+          dataToSign: data,
+          privateKey: privateKey,
+        ),
+        callEncrypt: ({required recipientMlKemPublicKey, required plaintext}) =>
+            callEncryptMessage(
+              bridge: widget.bridge,
+              recipientMlKemPublicKey: recipientMlKemPublicKey,
+              plaintext: plaintext,
+            ),
+      );
+      if (result == AuthorLinkedGroupBootstrapResult.committed ||
+          result == AuthorLinkedGroupBootstrapResult.duplicate ||
+          result == AuthorLinkedGroupBootstrapResult.alreadyAuthoritative) {
+        _didMutateGroup = true;
+        await _loadGroupInfo();
+        _showLinkedGroupBootstrapResult(
+          result == AuthorLinkedGroupBootstrapResult.committed
+              ? 'This group is ready for the linked device.'
+              : 'This group is already linked to that device.',
+        );
+        return;
+      }
+      _showLinkedGroupBootstrapResult(
+        'The group could not be linked (${result.name}).',
+      );
+    } finally {
+      if (mounted) setState(() => _isLinkingGroupDevice = false);
+    }
+  }
+
+  void _showLinkedGroupBootstrapResult(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
   @override
   Widget build(BuildContext context) {
     final isAdmin = _group.myRole == GroupRole.admin;
@@ -2602,6 +2877,13 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
                   _group.type == GroupType.announcement) &&
               !_group.isDissolved
           ? _openSharedMedia
+          : null,
+      onLinkDeviceToGroup:
+          widget.isOrdinaryPrimary &&
+              kDirectLinkedDevicesEnabled &&
+              kMultiDeviceSyncEnabled &&
+              widget.groupRepo is LinkedGroupBootstrapRepository
+          ? _scanLinkedGroupDevice
           : null,
       onResendInvite: canManageGroup && widget.inviteDeliveryAttemptRepo != null
           ? _onResendInvite

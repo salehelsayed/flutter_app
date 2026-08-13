@@ -2,36 +2,25 @@
 //
 // R6 device-matrix orchestrator: b1b_sibling_device_convergence.
 //
-// Drives the 2-role multi-device harness on two booted iOS simulators to prove
-// per-device ML-KEM key separation. The primary (admin/creator) admits its OWN
-// restored sibling device; the sibling obtains the current group key ONLY via
-// the live announce->admit->redistribute path (a 1:1 key-update ML-KEM-sealed to
-// its FRESH per-device key), never via the fixture. Built with the multi-device
-// sync flag ON (test-scoped, via --dart-define). No CLI peer (unlike MD-004).
+// Drives the availability-bounded physical-Android + Android-emulator pair.
+// The fresh linked installation produces the production Plan-360 QR and starts
+// with no group rows; the ordinary primary selects one group and bootstraps it
+// through protected custody. Signals move only through AndroidAppSignalBroker.
 //
 //   dart run integration_test/scripts/run_b1b_sibling_device_convergence.dart \
-//     [-d <primarySimUuid>,<siblingSimUuid>]
-//
-// Defaults to the booted iPhone Air (primary) + iPhone 17 (sibling).
+//     -d <physicalAndroidId>,<androidEmulatorId>
 
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import '../_support/android_app_file_broker.dart';
+import '../_support/invite_reliability_runner_contract.dart';
 import '../_support/signal_files.dart';
+import '_android_app_package.dart';
 
-const _defaultPrimaryDevice = '347FB118-10D0-40C8-A05B-B0C3BD6B8CCD';
-const _defaultSiblingDevice = '5BA69F1C-B112-47BE-B1FF-8C1003728C8F';
 const _harnessPath = 'integration_test/group_multi_device_real_harness.dart';
 const _scenario = 'b1b_sibling_device_convergence';
-
-bool _isIosDeviceId(String? deviceId) {
-  if (deviceId == null) return false;
-  return RegExp(
-    r'^(?:[0-9A-F]{8}-[0-9A-F]{16}|[0-9A-F]{8}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{4}-[0-9A-F]{12})$',
-    caseSensitive: false,
-  ).hasMatch(deviceId);
-}
 
 List<String> _relayDartDefines() {
   final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
@@ -64,14 +53,11 @@ Future<Process> _startHarnessRole({
   required String runId,
 }) async {
   final args = <String>[
-    if (_isIosDeviceId(deviceId)) ...<String>[
-      'drive',
-      '--driver=test_driver/integration_test.dart',
-      '--target=$_harnessPath',
-      '--publish-port',
-      '--no-pub',
-    ] else ...<String>['test', '--no-pub', _harnessPath],
+    'test',
+    '--no-pub',
+    _harnessPath,
     '--dart-define=MD004_SCENARIO=$_scenario',
+    '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true',
     '--dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true',
     '--dart-define=E2E_SHARED_DIR=${sharedDir.path}',
     '--dart-define=MD004_ROLE=$role',
@@ -85,7 +71,8 @@ Future<Process> _startHarnessRole({
   return Process.start('flutter', args);
 }
 
-void _parseDevices(List<String> args, List<String> out) {
+List<String> _parseDevices(List<String> args) {
+  final out = <String>[];
   for (var i = 0; i < args.length; i++) {
     if ((args[i] == '--device' || args[i] == '-d') && i + 1 < args.length) {
       out.addAll(
@@ -95,21 +82,103 @@ void _parseDevices(List<String> args, List<String> out) {
             .where((part) => part.isNotEmpty),
       );
       i++;
+    } else {
+      throw ArgumentError('Unknown argument: ${args[i]}');
     }
   }
-  if (out.isEmpty) {
-    out.addAll([_defaultPrimaryDevice, _defaultSiblingDevice]);
-  }
-  if (out.length != 2) {
+  if (out.length != 2 || out[0] == out[1]) {
     throw ArgumentError(
-      'Expected exactly two device IDs via -d <primary,sibling> or defaults',
+      'Expected exactly two distinct explicit device IDs via '
+      '-d <physical-android,android-emulator>',
     );
+  }
+  if (!isPlausibleAndroidDeviceId(out[0]) ||
+      !isPlausibleAndroidDeviceId(out[1])) {
+    throw ArgumentError('Both B1b targets must be Android device IDs');
+  }
+  if (isAndroidEmulatorDeviceId(out[0]) || !isAndroidEmulatorDeviceId(out[1])) {
+    throw ArgumentError(
+      'B1b device order must be physical Android first and emulator second',
+    );
+  }
+  return out;
+}
+
+Future<List<InviteReliabilityDeviceTarget>> _discoverFlutterDevices() async {
+  final result = await Process.run('flutter', const <String>[
+    'devices',
+    '--machine',
+  ]);
+  if (result.exitCode != 0) {
+    throw StateError('flutter devices --machine failed: ${result.stderr}');
+  }
+  final decoded = jsonDecode(result.stdout.toString());
+  if (decoded is! List) {
+    throw const FormatException('flutter devices --machine was not a list');
+  }
+  return decoded
+      .map<InviteReliabilityDeviceTarget>((raw) {
+        final value = Map<String, Object?>.from(raw as Map);
+        return InviteReliabilityDeviceTarget(
+          id: value['id']! as String,
+          targetPlatform: value['targetPlatform']! as String,
+          isEmulator: value['emulator']! as bool,
+        );
+      })
+      .toList(growable: false);
+}
+
+Future<Set<String>> _discoverAdbDevices() async {
+  final result = await Process.run('adb', const <String>['devices', '-l']);
+  if (result.exitCode != 0) {
+    throw StateError('adb devices -l failed: ${result.stderr}');
+  }
+  return result.stdout
+      .toString()
+      .split('\n')
+      .skip(1)
+      .map((line) => line.trim().split(RegExp(r'\s+')))
+      .where((parts) => parts.length >= 2 && parts[1] == 'device')
+      .map((parts) => parts.first)
+      .toSet();
+}
+
+Future<void> _preflightTargets(List<String> devices) async {
+  final discovered = await Future.wait<Object>(<Future<Object>>[
+    _discoverFlutterDevices(),
+    _discoverAdbDevices(),
+  ]);
+  final adb = discovered[1] as Set<String>;
+  final missingAdb = devices.where((id) => !adb.contains(id)).toList();
+  if (missingAdb.isNotEmpty) {
+    throw StateError(
+      'N/A (target unavailable by project policy): adb does not report '
+      '${missingAdb.join(', ')}',
+    );
+  }
+  final topology = validateLinkedGroupBootstrapB1bTopology(
+    selectedDeviceIds: devices,
+    liveDevices: discovered[0] as List<InviteReliabilityDeviceTarget>,
+  );
+  if (topology != null) {
+    throw StateError('N/A (target unavailable by project policy): $topology');
   }
 }
 
 Future<void> main(List<String> args) async {
-  final devices = <String>[];
-  _parseDevices(args, devices);
+  late final List<String> devices;
+  try {
+    devices = _parseDevices(args);
+    await _preflightTargets(devices);
+  } on ArgumentError catch (error) {
+    stderr.writeln(error.message);
+    exitCode = 64;
+    return;
+  } on StateError catch (error) {
+    stderr.writeln(error.message);
+    exitCode = 64;
+    return;
+  }
   final primaryDevice = devices[0];
   final siblingDevice = devices[1];
   final runId = DateTime.now().millisecondsSinceEpoch.toString();
@@ -130,6 +199,18 @@ Future<void> main(List<String> args) async {
   ).openWrite(mode: FileMode.writeOnlyAppend);
   Process? primary;
   Process? sibling;
+  final package = resolveAndroidAppPackage();
+  final remoteRelative = 'cache/b1b_linked_group_$runId';
+  final remoteAbsolute = '/data/user/0/$package/$remoteRelative';
+  final broker = AndroidAppSignalBroker(
+    transport: AdbRunAsAppFileTransport(appPackage: package),
+    deviceIds: devices,
+    hostDirectory: sharedDir,
+    remoteDirectory: remoteRelative,
+    filePrefix: 'md004_${runId}_',
+    log: (message) => _log('SYNC', message),
+  );
+  final brokerRun = broker.run();
 
   _log(
     'ORCH',
@@ -140,24 +221,27 @@ Future<void> main(List<String> args) async {
     primary = await _startHarnessRole(
       role: 'primary',
       deviceId: primaryDevice,
-      sharedDir: sharedDir,
+      sharedDir: Directory(remoteAbsolute),
       runId: runId,
     );
     _pipeOutput(primary.stdout, 'PRIMARY', primaryLog);
     _pipeOutput(primary.stderr, 'PRIMARY-ERR', primaryLog);
 
-    // The primary publishes its identity + the group fixture once the group is
-    // created; that is the cue to launch the sibling (which restores from it).
+    // The physical linked installation publishes the production QR and account
+    // recovery seed; only then may the ordinary emulator start.
     await signalDir.waitForJson(
-      'group_fixture.json',
+      'linked_bootstrap_fixture.json',
       timeout: const Duration(minutes: 12),
     );
-    _log('ORCH', 'Primary published the group fixture; starting sibling');
+    _log(
+      'ORCH',
+      'Linked installation published its QR; starting ordinary primary',
+    );
 
     sibling = await _startHarnessRole(
       role: 'sibling',
       deviceId: siblingDevice,
-      sharedDir: sharedDir,
+      sharedDir: Directory(remoteAbsolute),
       runId: runId,
     );
     _pipeOutput(sibling.stdout, 'SIBLING', siblingLog);
@@ -173,18 +257,18 @@ Future<void> main(List<String> args) async {
     }
 
     await signalDir.waitForSignal(
-      'sibling_complete',
+      'linked_complete',
       timeout: const Duration(minutes: 2),
     );
 
-    // Surface the per-device proof verdicts.
-    for (final name in ['primary_verdict.json', 'sibling_verdict.json']) {
+    // Surface the two role-qualified proof verdicts.
+    for (final name in ['linked_verdict.json', 'ordinary_verdict.json']) {
       final file = File('${sharedDir.path}/md004_${runId}_$name');
       if (file.existsSync()) {
         _log('VERDICT', '$name => ${file.readAsStringSync()}');
       }
     }
-    _log('ORCH', 'B1b per-device ML-KEM convergence proof PASSED');
+    _log('ORCH', 'B1b linked-group bootstrap/reopen/dissolve proof PASSED');
     _log('ORCH', 'Primary log: ${sharedDir.path}/primary.log');
     _log('ORCH', 'Sibling log: ${sharedDir.path}/sibling.log');
   } finally {
@@ -194,6 +278,8 @@ Future<void> main(List<String> args) async {
     try {
       sibling?.kill();
     } catch (_) {}
+    broker.stop();
+    await brokerRun;
     await primaryLog.close();
     await siblingLog.close();
   }

@@ -19,6 +19,25 @@ const groupMembershipMutationDissolvedMessage =
     'Cannot mutate membership of a dissolved group';
 const staleGroupMembershipEventMessage = 'Stale group membership event';
 
+class PreparedGroupMemberRemovalAuthority {
+  const PreparedGroupMemberRemovalAuthority({
+    required this.activate,
+    required this.rollback,
+  });
+
+  final Future<void> Function() activate;
+  final Future<void> Function() rollback;
+}
+
+typedef PrepareGroupMemberRemovalAuthority =
+    Future<PreparedGroupMemberRemovalAuthority?> Function({
+      required GroupModel group,
+      required List<GroupMember> members,
+      required GroupMember removedMember,
+      required DateTime eventAt,
+      required String eventId,
+    });
+
 bool _memberAllows(
   GroupMember? member,
   GroupRole fallbackRole,
@@ -52,6 +71,7 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
   String? actorUsername,
   DateTime? eventAt,
   GroupMessageRepository? msgRepo,
+  PrepareGroupMemberRemovalAuthority? prepareAuthority,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -217,18 +237,27 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
         removedAt: normalizedEventAt,
       );
 
-      // 2. Remove member from local DB
-      await groupRepo.removeMember(groupId, memberPeerId);
-
-      // 3. Build updated GroupConfig from remaining members and update Go config
-      final remainingMembers = await groupRepo.getMembers(groupId);
-      final groupConfig = buildGroupConfigPayload(
-        group.copyWith(lastMembershipEventAt: normalizedEventAt),
-        remainingMembers,
-        configVersionOverride: normalizedEventAt,
+      final membersBeforeRemoval = await groupRepo.getMembers(groupId);
+      final preparedAuthority = await prepareAuthority?.call(
+        group: group,
+        members: membersBeforeRemoval,
+        removedMember: removedMember,
+        eventAt: normalizedEventAt,
+        eventId: mintedEventId,
       );
 
+      late final List<GroupMember> remainingMembers;
       try {
+        // 2. Remove member from local DB.
+        await groupRepo.removeMember(groupId, memberPeerId);
+
+        // 3. Build updated GroupConfig from remaining members and update Go config.
+        remainingMembers = await groupRepo.getMembers(groupId);
+        final groupConfig = buildGroupConfigPayload(
+          group.copyWith(lastMembershipEventAt: normalizedEventAt),
+          remainingMembers,
+          configVersionOverride: normalizedEventAt,
+        );
         await callGroupUpdateConfig(
           bridge,
           groupId: groupId,
@@ -241,6 +270,7 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
           eventId: mintedEventId,
         );
       } catch (e) {
+        await preparedAuthority?.rollback();
         await groupRepo.saveMember(removedMember);
         if (removalCutoffMessage != null) {
           await msgRepo?.deleteMessage(removalCutoffMessage.id);
@@ -256,6 +286,24 @@ Future<({DateTime eventAt, String eventId})> removeGroupMember({
           },
         );
         rethrow;
+      }
+      try {
+        await preparedAuthority?.activate();
+      } catch (error) {
+        // The durable protected row remains the retry owner. Once the local
+        // removal and native ACL update commit, a transport failure must not
+        // surface as a reversible membership failure to the caller.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_REMOVE_MEMBER_PROTECTED_ACTIVATION_DEFERRED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'memberPeerId': memberPeerId.length > 8
+                ? memberPeerId.substring(0, 8)
+                : memberPeerId,
+            'error': error.toString(),
+          },
+        );
       }
 
       emitFlowEvent(

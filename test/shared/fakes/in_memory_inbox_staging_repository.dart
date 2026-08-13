@@ -1,7 +1,11 @@
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository.dart';
 
-class InMemoryInboxStagingRepository implements InboxStagingRepository {
+class InMemoryInboxStagingRepository
+    implements
+        InboxStagingRepository,
+        InboxStagingPrerequisiteWaitingRepository,
+        InboxStagingProtectedAckPendingRepository {
   final Map<String, InboxStagingEntry> _entries = {};
 
   void seed(InboxStagingEntry entry) {
@@ -75,6 +79,28 @@ class InMemoryInboxStagingRepository implements InboxStagingRepository {
       status: 'retryable',
       attemptCount: existing.attemptCount + 1,
       lastAttemptedAt: '2026-04-01T00:00:00.000Z',
+      rejectReasonCode: reasonCode,
+      rejectReasonDetail: reasonDetail,
+    );
+  }
+
+  @override
+  Future<void> markProtectedAckPending(String entryId) async {
+    final existing = _entries[entryId];
+    if (existing == null) return;
+    _entries[entryId] = existing.copyWith(status: 'protected_ack_pending');
+  }
+
+  @override
+  Future<void> markPrerequisiteWaiting(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    final existing = _entries[entryId];
+    if (existing == null) return;
+    _entries[entryId] = existing.copyWith(
+      status: 'retryable',
       rejectReasonCode: reasonCode,
       rejectReasonDetail: reasonDetail,
     );

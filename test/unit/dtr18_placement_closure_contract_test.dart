@@ -57,7 +57,10 @@ const _relocations = <String, List<String>>{
     // physical sender into this same adapter's plural v108 stage so SQL can
     // validate linked outer envelopes without rewriting the logical parent.
     // Both are capabilities on the same adapter — nothing relocates.
-    '0c3317375b892abad90a99880554b0a6d32d73458e0e2858b75b5524f43dcd12',
+    // The Plan-362 Task-10 body landed with this formatted digest; the prior
+    // lock still carried its pre-final-format value even though the adapter
+    // itself is unchanged by Plan 363.
+    '16f57af5f0c2a4a27799d6d12246c3e2c419822d3762b187c07fd06ad06c3737',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
@@ -117,7 +120,9 @@ const _relocations = <String, List<String>>{
       'group_pending_broadcast_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/'
         'group_pending_broadcast_repository_impl.dart',
-    '2a61d288bd4719986886a96a54521329f5311bbb5db7f58fb2c0f167d1c12783',
+    // Plan 363 adds exact protected-recipient removal and atomic protected
+    // batch persistence capabilities to this already-relocated adapter.
+    'a6020d3c64ce8cba0a21e56c0e38eecddb8f893c6880244450748eed56f75804',
   ],
   'lib/features/groups/domain/repositories/'
       'group_pending_key_distribution_repository_impl.dart': <String>[
@@ -152,7 +157,9 @@ const _relocations = <String, List<String>>{
   'lib/features/groups/domain/repositories/'
       'group_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/group_repository_impl.dart',
-    'd25715a537c6160530f32cf5549b8f89b0c171953cc5b129489e54ba0bed3704',
+    // Plan 363 adds the group-scoped bootstrap transaction and exact
+    // authoritative read-back to this already-relocated adapter.
+    '36f07c40ee3cde94c52ed458553729de80bd30ca422ab0f9651b00444bd6bcd2',
   ],
   'lib/features/groups/domain/repositories/'
       'pending_group_invite_repository_impl.dart': <String>[

@@ -1334,6 +1334,154 @@ void main() {
       );
     });
   });
+
+  test(
+    'TC-363-03a linked startup defers without identity and orders protected recovery before read-only refresh',
+    () async {
+      var hasIdentity = false;
+      var authorityLoads = 0;
+      var linkedStarts = 0;
+      final runtime = RoleAwareDeferredRuntimeStart(
+        hasIdentity: () async => hasIdentity,
+        loadLinkedAuthority: () async {
+          authorityLoads += 1;
+          return const LinkedInstallationAuthoritySnapshot(
+            disposition: LinkedInstallationDisposition.active,
+            credential: LinkedTransportCredential(
+              state: LinkedTransportCredentialState.active,
+              accountPeerId: 'account-peer',
+              accountPublicKey: 'account-public-key',
+              deviceId: 'linked-device',
+              transportPeerId: 'linked-transport',
+              transportPublicKey: 'transport-public-key',
+              transportPrivateKey: 'transport-private-key',
+              createdAt: '2026-08-13T00:00:00.000Z',
+              activatedAt: '2026-08-13T00:00:00.000Z',
+            ),
+            failClosedReason: null,
+          );
+        },
+        startPrimaryRuntimeServices: () async => true,
+        startLinkedFoundationPrerequisites: () async {
+          linkedStarts += 1;
+          return true;
+        },
+      );
+      expect(await runtime.start(), isFalse);
+      expect(
+        runtime.lastOutcome,
+        RoleAwareRuntimeStartOutcome.deferredNoIdentity,
+      );
+      expect(authorityLoads, 0);
+      expect(linkedStarts, 0);
+      hasIdentity = true;
+      expect(await runtime.start(), isTrue);
+      expect(authorityLoads, 1);
+      expect(linkedStarts, 1);
+
+      final cold = File(
+        'lib/app/bootstrap/direct_blob_free_linked_services.dart',
+      ).readAsStringSync();
+      final coldStart = cold.indexOf('Future<bool> start() async');
+      final coldDrain = cold.indexOf('await drainOfflineInbox();', coldStart);
+      final coldBootstrap = cold.indexOf(
+        'await materializeLinkedGroupBootstrap?.call();',
+        coldStart,
+      );
+      final coldAuthority = cold.indexOf(
+        'await replayLinkedGroupAuthority?.call();',
+        coldStart,
+      );
+      final coldRefresh = cold.indexOf(
+        'await refreshLinkedGroupList?.call();',
+        coldStart,
+      );
+      final coldDirect = cold.indexOf(
+        'await drainExactBlobFreeFanoutOutboxes();',
+        coldStart,
+      );
+      expect(
+        <int>[coldDrain, coldBootstrap, coldAuthority, coldRefresh, coldDirect],
+        orderedEquals(
+          <int>[
+            coldDrain,
+            coldBootstrap,
+            coldAuthority,
+            coldRefresh,
+            coldDirect,
+          ]..sort(),
+        ),
+      );
+
+      final root = File(_applicationRootPath).readAsStringSync();
+      final linkedResume = root.indexOf(
+        'if (widget.isLinkedBlobFreeRuntime?.call() ?? false)',
+        root.indexOf('Future<void> _onResumed() async'),
+      );
+      final resumeDrain = root.indexOf(
+        'await widget.p2pService.drainOfflineInbox();',
+        linkedResume,
+      );
+      final resumeBootstrap = root.indexOf(
+        'await widget.drainLinkedGroupBootstrap?.call();',
+        linkedResume,
+      );
+      final resumeAuthority = root.indexOf(
+        'await widget.replayLinkedGroupAuthority?.call();',
+        linkedResume,
+      );
+      final resumeRefresh = root.indexOf(
+        'await widget.refreshLinkedGroupList?.call();',
+        linkedResume,
+      );
+      expect(
+        <int>[resumeDrain, resumeBootstrap, resumeAuthority, resumeRefresh],
+        orderedEquals(
+          <int>[resumeDrain, resumeBootstrap, resumeAuthority, resumeRefresh]
+            ..sort(),
+        ),
+      );
+
+      final startup = File(
+        'lib/features/identity/presentation/startup_router.dart',
+      ).readAsStringSync();
+      expect(
+        startup.indexOf('linkedAuthority?.isActiveLinkedSecondary == true'),
+        lessThan(startup.indexOf('contactRepository.getContactCount()')),
+      );
+      final setup = File(
+        'lib/features/identity/presentation/screens/linked_device_setup_wired.dart',
+      ).readAsStringSync();
+      expect(setup, contains('await widget.onSetupSuccess?.call();'));
+      expect(setup, contains('LinkedGroupReadOnlyStatus('));
+      expect(
+        File(_productionPath).readAsStringSync(),
+        contains('groupPendingBroadcastRunner.drainProtectedAll()'),
+      );
+      final protectedRunner = File(
+        'lib/features/groups/application/group_pending_broadcast_runner.dart',
+      ).readAsStringSync();
+      expect(
+        File(_productionPath).readAsStringSync(),
+        contains('protectedInboxStore: p2pService'),
+        reason: 'production supplies the typed per-target custody capability',
+      );
+      expect(
+        protectedRunner,
+        contains('? await _pushProtected(broadcast)'),
+        reason:
+            'protected bootstrap/authority rows never route through generic '
+            'group_store rePush',
+      );
+      expect(
+        protectedRunner,
+        allOf(
+          contains('storeInAckCustodyInboxDetailed('),
+          contains('AckCustodyKind.groupAuthorityV1'),
+        ),
+      );
+    },
+  );
   test('TC-361-03b linked runtime starts only direct blob-free event owners — '
       'production composes one reverse transport authority, one restricted '
       'linked service set and the exact route-push fanout seams', () {

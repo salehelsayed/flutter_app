@@ -5,6 +5,7 @@ import 'package:flutter_app/features/groups/application/group_pending_key_distri
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_device_repository.dart';
 
 /// Injection seam for the listener: hold an account-signed sibling-device
@@ -124,6 +125,12 @@ Future<SiblingDeviceAdmissionOutcome> verifyAndAdmitPendingSiblingDevice({
           if (current == null || !_samePendingSiblingDevice(current, pending)) {
             return SiblingDeviceAdmissionOutcome.memberNotFound;
           }
+          final guard = pendingRepo;
+          if (guard is LinkedGroupBootstrapIntentGuard &&
+              await (guard as LinkedGroupBootstrapIntentGuard)
+                  .isLinkedGroupBootstrapIntent(current)) {
+            return SiblingDeviceAdmissionOutcome.protectedBootstrapOwned;
+          }
           final outcome = await admitSiblingDeviceIfTrusted(
             groupRepo: groupRepo,
             groupId: current.groupId,
@@ -177,6 +184,12 @@ Future<void> rejectPendingSiblingDevice({
         pending.deviceId,
       );
       if (current == null || !_samePendingSiblingDevice(current, pending)) {
+        return;
+      }
+      final guard = pendingRepo;
+      if (guard is LinkedGroupBootstrapIntentGuard &&
+          await (guard as LinkedGroupBootstrapIntentGuard)
+              .isLinkedGroupBootstrapIntent(current)) {
         return;
       }
       await pendingRepo.deletePendingSiblingDevice(

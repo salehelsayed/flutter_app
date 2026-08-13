@@ -66,6 +66,11 @@ require_fixed 'TestDispatchInboxAckCustodyContract' "$GATE_SCRIPT"
 require_fixed 'TestInboxStoreMediaExpiryCeilingBridgeContract' "$GATE_SCRIPT"
 require_fixed 'TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling' "$GATE_SCRIPT"
 require_fixed 'TestRelayNotificationClosure_DirectMutationCustody' "$GATE_SCRIPT"
+require_fixed "go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363'" "$GATE_SCRIPT"
+require_fixed 'TestTC363GroupProtectedCustodyKinds' \
+  go-mknoon/node/inbox_ack_custody_test.go
+require_fixed 'TestRelayNotificationClosure_GroupProtectedCustodyKinds' \
+  go-relay-server/ack_custody_protocol_test.go
 require_fixed 'TestAckCustodyMixedVersionMatrix' "$GATE_SCRIPT"
 require_fixed 'TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace' "$GATE_SCRIPT"
 require_fixed 'go_binding_staleness_contract_test.sh' "$GATE_SCRIPT"

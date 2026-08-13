@@ -41,6 +41,7 @@ class GroupInfoScreen extends StatelessWidget {
   final ValueChanged<GroupMember>? onToggleAdminRole;
   final VoidCallback? onAddMember;
   final VoidCallback? onOpenSharedMedia;
+  final VoidCallback? onLinkDeviceToGroup;
   final ValueChanged<GroupMember>? onResendInvite;
   final ValueChanged<GroupMember>? onRevokeInvite;
   final BackgroundPreference backgroundPreference;
@@ -72,6 +73,7 @@ class GroupInfoScreen extends StatelessWidget {
     this.onToggleAdminRole,
     this.onAddMember,
     this.onOpenSharedMedia,
+    this.onLinkDeviceToGroup,
     this.onResendInvite,
     this.onRevokeInvite,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
@@ -212,6 +214,18 @@ class GroupInfoScreen extends StatelessWidget {
                 onPressed: onEditDetails,
                 icon: const Icon(Icons.edit_outlined, size: 18),
                 label: Text(l10n.group_edit_details),
+                style: TextButton.styleFrom(foregroundColor: actionBlue),
+              ),
+            ),
+          ],
+          if (!group.isDissolved && onLinkDeviceToGroup != null) ...[
+            const SizedBox(height: 8),
+            Center(
+              child: TextButton.icon(
+                key: const ValueKey('group-link-device-button'),
+                onPressed: onLinkDeviceToGroup,
+                icon: const Icon(Icons.phonelink_ring_outlined, size: 18),
+                label: const Text('Link this group to another device'),
                 style: TextButton.styleFrom(foregroundColor: actionBlue),
               ),
             ),

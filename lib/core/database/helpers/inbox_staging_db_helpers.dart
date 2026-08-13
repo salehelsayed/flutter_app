@@ -203,6 +203,40 @@ Future<int> dbMarkInboxStagingEntryRetryable(
   }
 }
 
+Future<int> dbMarkInboxStagingEntryPrerequisiteWaiting(
+  Database db,
+  String entryId, {
+  required String reasonCode,
+  String? reasonDetail,
+}) {
+  return db.update(
+    'inbox_staging_entries',
+    {
+      'status': 'retryable',
+      'reject_reason_code': reasonCode,
+      'reject_reason_detail': reasonDetail,
+    },
+    where: 'entry_id = ?',
+    whereArgs: [entryId],
+  );
+}
+
+Future<int> dbMarkInboxStagingEntryProtectedAckPending(
+  Database db,
+  String entryId,
+) {
+  return db.update(
+    'inbox_staging_entries',
+    <String, Object?>{
+      'status': 'protected_ack_pending',
+      'reject_reason_code': null,
+      'reject_reason_detail': null,
+    },
+    where: 'entry_id = ?',
+    whereArgs: <Object?>[entryId],
+  );
+}
+
 Future<int> dbMarkInboxStagingEntryQuarantined(
   Database db,
   String entryId, {
@@ -277,14 +311,11 @@ Future<int> dbCountNeedsAttentionInboxStagingEntries(Database db) async {
     _recoverableClassRejectReasonCodes.length,
     '?',
   ).join(', ');
-  final rows = await db.rawQuery(
-    '''
+  final rows = await db.rawQuery('''
     SELECT COUNT(*) AS total FROM inbox_staging_entries
     WHERE status = 'quarantined'
        OR (status = 'rejected' AND reject_reason_code IN ($placeholders))
-    ''',
-    _recoverableClassRejectReasonCodes,
-  );
+    ''', _recoverableClassRejectReasonCodes);
   return Sqflite.firstIntValue(rows) ?? 0;
 }
 

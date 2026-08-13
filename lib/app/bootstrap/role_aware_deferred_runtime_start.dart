@@ -3,6 +3,10 @@ import 'package:flutter_app/features/identity/application/linked_installation_au
 
 /// What the role-aware deferred start actually did.
 enum RoleAwareRuntimeStartOutcome {
+  /// Identity restoration/setup has not committed yet. Returning false keeps
+  /// the application startup latch re-armable for setup success.
+  deferredNoIdentity,
+
   /// Ordinary primary: the incumbent full runtime startup ran.
   primaryRuntimeStarted,
 
@@ -39,14 +43,17 @@ class RoleAwareDeferredRuntimeStart {
     loadLinkedAuthority,
     required Future<bool> Function() startPrimaryRuntimeServices,
     required Future<bool> Function() startLinkedFoundationPrerequisites,
+    Future<bool> Function()? hasIdentity,
   }) : _loadLinkedAuthority = loadLinkedAuthority,
        _startPrimaryRuntimeServices = startPrimaryRuntimeServices,
-       _startLinkedFoundationPrerequisites = startLinkedFoundationPrerequisites;
+       _startLinkedFoundationPrerequisites = startLinkedFoundationPrerequisites,
+       _hasIdentity = hasIdentity;
 
   final Future<LinkedInstallationAuthoritySnapshot> Function()
   _loadLinkedAuthority;
   final Future<bool> Function() _startPrimaryRuntimeServices;
   final Future<bool> Function() _startLinkedFoundationPrerequisites;
+  final Future<bool> Function()? _hasIdentity;
 
   RoleAwareRuntimeStartOutcome? _lastOutcome;
   String? _activeLinkedTransportPeerId;
@@ -83,6 +90,18 @@ class RoleAwareDeferredRuntimeStart {
   /// Returns whether runtime services this installation is entitled to are
   /// now up — matching the incumbent `deferredRuntimeStartup` contract.
   Future<bool> start() async {
+    final hasIdentity = _hasIdentity;
+    if (hasIdentity != null && !await hasIdentity()) {
+      _activeLinkedTransportPeerId = null;
+      _activeLinkedAccountPeerId = null;
+      _lastOutcome = RoleAwareRuntimeStartOutcome.deferredNoIdentity;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'ROLE_AWARE_RUNTIME_START_DEFERRED_NO_IDENTITY',
+        details: const {},
+      );
+      return false;
+    }
     final LinkedInstallationAuthoritySnapshot snapshot;
     try {
       snapshot = await _loadLinkedAuthority();

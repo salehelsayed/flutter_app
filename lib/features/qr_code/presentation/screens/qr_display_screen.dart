@@ -22,6 +22,7 @@ class QRDisplayScreen extends StatefulWidget {
   /// Called when the user taps "Scan a friend's code".
   final VoidCallback? onScanPressed;
   final BackgroundPreference backgroundPreference;
+  final Widget? footer;
 
   const QRDisplayScreen({
     super.key,
@@ -29,6 +30,7 @@ class QRDisplayScreen extends StatefulWidget {
     required this.onClose,
     this.onScanPressed,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
+    this.footer,
   });
 
   @override
@@ -167,6 +169,10 @@ class _QRDisplayScreenState extends State<QRDisplayScreen>
                                 child: EmptyCircleState(),
                               ),
                             ),
+                            if (widget.footer case final footer?) ...[
+                              SizedBox(height: sectionGap),
+                              footer,
+                            ],
                             SizedBox(height: bottomGap),
                           ],
                         ),

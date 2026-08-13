@@ -210,6 +210,150 @@ func TestRelayNotificationClosure_AckCustodyEligibilityIsNarrow(t *testing.T) {
 	}
 }
 
+func TestRelayNotificationClosure_GroupProtectedCustodyKinds(t *testing.T) {
+	server := miniredis.RunT(t)
+	backend := newAckCustodyRedisBackend(t, server, "ack-group-363:", 32)
+	inbox := NewInboxStoreWithBackendAndCapacity(
+		backend,
+		NewPushServiceWithBackend(newMemoryPushTokenStore()),
+		32,
+	)
+	inbox.SetAckCustodyAdmissionEnabled(true)
+	env := setupInboxStreamEnv(t, inbox, NewGroupInboxStore(500, 7*24*time.Hour))
+	sender := env.sender.ID().String()
+	recipientA := env.recipient.ID().String()
+	recipientB := env.intruder.ID().String()
+
+	envelope := func(kind, logicalID, recipient string) string {
+		typeValue := "linked_group_bootstrap_v1"
+		if kind == ackCustodyGroupAuthorityKind {
+			typeValue = "group_authority_v1"
+		}
+		return fmt.Sprintf(
+			`{"type":%q,"version":"1","id":%q,"senderPeerId":%q,"recipientPeerId":%q,"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`,
+			typeValue,
+			logicalID,
+			sender,
+			recipient,
+		)
+	}
+
+	bootstrapA := envelope(ackCustodyGroupBootstrapKind, "bootstrap-shared", recipientA)
+	storedA := sendAckCustodyStoreRequest(
+		t,
+		env,
+		recipientA,
+		ackCustodyGroupBootstrapKind,
+		ackCustodyContract,
+		bootstrapA,
+	)
+	if storedA.Status != "OK" || storedA.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("bootstrap A store = %#v", storedA)
+	}
+	duplicateA := sendAckCustodyStoreRequest(
+		t,
+		env,
+		recipientA,
+		ackCustodyGroupBootstrapKind,
+		ackCustodyContract,
+		bootstrapA,
+	)
+	if duplicateA.Status != "OK" || duplicateA.StoreStatus != string(InboxStoreResultDuplicate) {
+		t.Fatalf("bootstrap A duplicate = %#v", duplicateA)
+	}
+	bootstrapB := envelope(ackCustodyGroupBootstrapKind, "bootstrap-shared", recipientB)
+	storedB := sendAckCustodyStoreRequest(
+		t,
+		env,
+		recipientB,
+		ackCustodyGroupBootstrapKind,
+		ackCustodyContract,
+		bootstrapB,
+	)
+	if storedB.Status != "OK" || storedB.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("bootstrap B independent store = %#v", storedB)
+	}
+	authority := sendAckCustodyStoreRequest(
+		t,
+		env,
+		recipientA,
+		ackCustodyGroupAuthorityKind,
+		ackCustodyContract,
+		envelope(ackCustodyGroupAuthorityKind, "authority-shared", recipientA),
+	)
+	if authority.Status != "OK" || authority.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("authority store = %#v", authority)
+	}
+	longAuthorityID := "15:member_removed" + strings.Repeat("18:transition-segment", 8) + "17:" + recipientB
+	if len(longAuthorityID) <= 128 || len(longAuthorityID) > 512 {
+		t.Fatalf("long canonical authority id length = %d", len(longAuthorityID))
+	}
+	longAuthority := sendAckCustodyStoreRequest(
+		t,
+		env,
+		recipientB,
+		ackCustodyGroupAuthorityKind,
+		ackCustodyContract,
+		envelope(ackCustodyGroupAuthorityKind, longAuthorityID, recipientB),
+	)
+	if longAuthority.Status != "OK" || longAuthority.StoreStatus != string(InboxStoreResultStored) {
+		t.Fatalf("long canonical authority store = %#v", longAuthority)
+	}
+	if backend.CountAckCustody(recipientA) != 2 || backend.CountAckCustody(recipientB) != 2 {
+		t.Fatalf(
+			"per-recipient protected counts = A:%d B:%d, want 2/2",
+			backend.CountAckCustody(recipientA),
+			backend.CountAckCustody(recipientB),
+		)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		kind      string
+		message   string
+		recipient string
+	}{
+		{
+			name:      "target mismatch",
+			kind:      ackCustodyGroupBootstrapKind,
+			message:   envelope(ackCustodyGroupBootstrapKind, "target-mismatch", recipientB),
+			recipient: recipientA,
+		},
+		{
+			name:      "kind type crossing",
+			kind:      ackCustodyGroupAuthorityKind,
+			message:   envelope(ackCustodyGroupBootstrapKind, "kind-cross", recipientA),
+			recipient: recipientA,
+		},
+		{
+			name:      "content kind excluded",
+			kind:      ackCustodyGroupAuthorityKind,
+			message:   fmt.Sprintf(`{"type":"group_message","version":"1","id":"content","senderPeerId":%q,"recipientPeerId":%q,"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}`, sender, recipientA),
+			recipient: recipientA,
+		},
+		{
+			name:      "malformed logical id",
+			kind:      ackCustodyGroupBootstrapKind,
+			message:   envelope(ackCustodyGroupBootstrapKind, "bad/id", recipientA),
+			recipient: recipientA,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			resp := sendAckCustodyStoreRequest(
+				t,
+				env,
+				tc.recipient,
+				tc.kind,
+				ackCustodyContract,
+				tc.message,
+			)
+			if resp.Status != "ERROR" || resp.ErrorCode != ackCustodyErrorIneligible {
+				t.Fatalf("ineligible protected group response = %#v", resp)
+			}
+		})
+	}
+}
+
 func TestRelayNotificationClosure_DirectMutationCustody(t *testing.T) {
 	server := miniredis.RunT(t)
 	backend := newAckCustodyRedisBackend(t, server, "ack-mutation:", 16)

@@ -6,6 +6,13 @@ import 'group_parent_write_guard.dart';
 Future<void> dbUpsertPendingSiblingDevice(
   Database db,
   Map<String, Object?> row,
+) => dbUpsertPendingSiblingDeviceWithExecutor(db, row);
+
+/// Transaction-body variant used when sibling intent must commit beside other
+/// group authority in one outer SQL transaction.
+Future<void> dbUpsertPendingSiblingDeviceWithExecutor(
+  DatabaseExecutor db,
+  Map<String, Object?> row,
 ) async {
   await dbInsertOrdinaryGroupOwnedRow(
     db,
@@ -51,6 +58,18 @@ Future<Map<String, Object?>?> dbLoadPendingSiblingDevice(
 
 Future<void> dbDeletePendingSiblingDevice(
   Database db,
+  String groupId,
+  String memberPeerId,
+  String deviceId,
+) => dbDeletePendingSiblingDeviceWithExecutor(
+  db,
+  groupId,
+  memberPeerId,
+  deviceId,
+);
+
+Future<void> dbDeletePendingSiblingDeviceWithExecutor(
+  DatabaseExecutor db,
   String groupId,
   String memberPeerId,
   String deviceId,

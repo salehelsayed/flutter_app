@@ -2,6 +2,7 @@ import 'dart:collection';
 import 'dart:convert';
 
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/utils/key_conversion.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
@@ -125,6 +126,27 @@ enum ParseDirectLinkedDeviceQrResult {
 
   /// The document describes this installation's own account.
   selfScan,
+}
+
+/// Result of authenticating the existing linked-device QR for the one
+/// same-account, selected-group bootstrap entry point.
+///
+/// This is intentionally separate from [ParseDirectLinkedDeviceQrResult]: the
+/// ordinary contact parser must keep returning `selfScan` before expensive
+/// verification, while this narrow path must verify both signatures and time
+/// bounds before it may author group authority.
+enum ParseLinkedGroupBootstrapQrResult {
+  success,
+  selectorDisabled,
+  multiDeviceDisabled,
+  linkedScannerRefused,
+  malformed,
+  invalidTimestamp,
+  expired,
+  futureSkew,
+  accountMismatch,
+  peerDerivationMismatch,
+  invalidSignature,
 }
 
 /// The authenticated contents of one linked-device QR document.
@@ -521,6 +543,192 @@ parseDirectLinkedDeviceQr({
   );
   return (
     ParseDirectLinkedDeviceQrResult.success,
+    DirectLinkedDeviceQrDocument(
+      accountPeerId: accountPeerId,
+      accountPublicKey: accountPublicKey,
+      deviceId: deviceId,
+      deviceMlKemPublicKey: deviceMlKemPublicKey,
+      issuedAt: issuedAt,
+      transportPeerId: transportPeerId,
+      transportPublicKey: transportPublicKey,
+    ),
+  );
+}
+
+/// Fully verifies the exact Plan-360 QR bytes for a selected group owned by
+/// the same logical account.
+///
+/// No contact lookup or linked-credential lookup is performed. An ordinary
+/// primary is allowed to qualify the remote installation solely from the
+/// carried account+transport signatures; the receiver later requalifies the
+/// same tuple against its active local linked credential and ML-KEM key.
+Future<(ParseLinkedGroupBootstrapQrResult, DirectLinkedDeviceQrDocument?)>
+parseLinkedGroupBootstrapQr({
+  required String qrString,
+  required String ownAccountPeerId,
+  required String ownAccountPublicKey,
+  required bool isOrdinaryPrimary,
+  required Future<bool> Function({
+    required String publicKey,
+    required String data,
+    required String signature,
+  })
+  callVerify,
+  DirectLinkedDeviceSelector selector = const DirectLinkedDeviceSelector(),
+  bool multiDeviceSyncEnabled = kMultiDeviceSyncEnabled,
+  DateTime Function()? now,
+}) async {
+  if (!selector.allowsLinkedDeviceAuthoring) {
+    return (ParseLinkedGroupBootstrapQrResult.selectorDisabled, null);
+  }
+  if (!multiDeviceSyncEnabled) {
+    return (ParseLinkedGroupBootstrapQrResult.multiDeviceDisabled, null);
+  }
+  if (!isOrdinaryPrimary) {
+    return (ParseLinkedGroupBootstrapQrResult.linkedScannerRefused, null);
+  }
+  if (qrString.trim().isEmpty ||
+      utf8.encode(qrString).length > directLinkedDeviceQrMaxBytes) {
+    return (ParseLinkedGroupBootstrapQrResult.malformed, null);
+  }
+
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(qrString);
+  } catch (_) {
+    return (ParseLinkedGroupBootstrapQrResult.malformed, null);
+  }
+  if (decoded is! Map<String, dynamic> ||
+      decoded.length != 1 ||
+      !decoded.containsKey(_envelopeKey)) {
+    return (ParseLinkedGroupBootstrapQrResult.malformed, null);
+  }
+  final envelope = decoded[_envelopeKey];
+  if (envelope is! Map<String, dynamic> ||
+      envelope.keys.toSet().length != _requiredEnvelopeKeys.length ||
+      !envelope.keys.toSet().containsAll(_requiredEnvelopeKeys) ||
+      envelope['purpose'] != directLinkedDeviceQrPurpose ||
+      envelope['version'] != directLinkedDeviceQrVersion) {
+    return (ParseLinkedGroupBootstrapQrResult.malformed, null);
+  }
+  final body = envelope['body'];
+  if (body is! Map<String, dynamic> ||
+      body.keys.toSet().length != _requiredBodyKeys.length ||
+      !body.keys.toSet().containsAll(_requiredBodyKeys)) {
+    return (ParseLinkedGroupBootstrapQrResult.malformed, null);
+  }
+
+  final accountPeerId = _boundedString(body['accountPeerId'], _maxPeerIdLength);
+  final accountPublicKey = _boundedString(
+    body['accountPublicKey'],
+    _maxPublicKeyLength,
+  );
+  final deviceId = _boundedString(body['deviceId'], _maxDeviceIdLength);
+  final deviceMlKemPublicKey = _boundedString(
+    body['deviceMlKemPublicKey'],
+    _maxMlKemPublicKeyLength,
+  );
+  final issuedAt = _boundedString(body['issuedAt'], _maxIssuedAtLength);
+  final transportPeerId = _boundedString(
+    body['transportPeerId'],
+    _maxPeerIdLength,
+  );
+  final transportPublicKey = _boundedString(
+    body['transportPublicKey'],
+    _maxPublicKeyLength,
+  );
+  final accountSignature = _boundedString(
+    envelope['accountSignature'],
+    _maxSignatureLength,
+  );
+  final transportSignature = _boundedString(
+    envelope['transportSignature'],
+    _maxSignatureLength,
+  );
+  if (accountPeerId == null ||
+      accountPublicKey == null ||
+      deviceId == null ||
+      deviceMlKemPublicKey == null ||
+      issuedAt == null ||
+      transportPeerId == null ||
+      transportPublicKey == null ||
+      accountSignature == null ||
+      transportSignature == null) {
+    return (ParseLinkedGroupBootstrapQrResult.malformed, null);
+  }
+  if (accountPeerId != ownAccountPeerId.trim() ||
+      accountPublicKey != ownAccountPublicKey.trim()) {
+    return (ParseLinkedGroupBootstrapQrResult.accountMismatch, null);
+  }
+  if (transportPeerId == accountPeerId ||
+      transportPublicKey == accountPublicKey ||
+      accountSignature == transportSignature ||
+      deviceId == accountPeerId) {
+    return (ParseLinkedGroupBootstrapQrResult.invalidSignature, null);
+  }
+
+  final DateTime issuedAtUtc;
+  try {
+    if (!issuedAt.endsWith('Z')) {
+      return (ParseLinkedGroupBootstrapQrResult.invalidTimestamp, null);
+    }
+    final parsed = DateTime.parse(issuedAt);
+    if (!parsed.isUtc) {
+      return (ParseLinkedGroupBootstrapQrResult.invalidTimestamp, null);
+    }
+    issuedAtUtc = parsed;
+  } catch (_) {
+    return (ParseLinkedGroupBootstrapQrResult.invalidTimestamp, null);
+  }
+  final currentTime = (now ?? DateTime.now)().toUtc();
+  if (issuedAtUtc.isAfter(currentTime.add(directLinkedDeviceQrMaxFutureSkew))) {
+    return (ParseLinkedGroupBootstrapQrResult.futureSkew, null);
+  }
+  if (currentTime.difference(issuedAtUtc) > directLinkedDeviceQrMaxAge) {
+    return (ParseLinkedGroupBootstrapQrResult.expired, null);
+  }
+  if (!ed25519PublicKeyMatchesPeerId(
+        base64PublicKey: accountPublicKey,
+        claimedPeerId: accountPeerId,
+      ) ||
+      !ed25519PublicKeyMatchesPeerId(
+        base64PublicKey: transportPublicKey,
+        claimedPeerId: transportPeerId,
+      )) {
+    return (ParseLinkedGroupBootstrapQrResult.peerDerivationMismatch, null);
+  }
+
+  final canonicalBody = canonicalDirectLinkedDeviceQrBody(
+    accountPeerId: accountPeerId,
+    accountPublicKey: accountPublicKey,
+    deviceId: deviceId,
+    deviceMlKemPublicKey: deviceMlKemPublicKey,
+    issuedAt: issuedAt,
+    transportPeerId: transportPeerId,
+    transportPublicKey: transportPublicKey,
+  );
+  final signedPayload = directLinkedDeviceQrSignedPayload(canonicalBody);
+  final accountValid = await _verify(
+    callVerify,
+    publicKey: accountPublicKey,
+    data: signedPayload,
+    signature: accountSignature,
+  );
+  if (!accountValid) {
+    return (ParseLinkedGroupBootstrapQrResult.invalidSignature, null);
+  }
+  final transportValid = await _verify(
+    callVerify,
+    publicKey: transportPublicKey,
+    data: signedPayload,
+    signature: transportSignature,
+  );
+  if (!transportValid) {
+    return (ParseLinkedGroupBootstrapQrResult.invalidSignature, null);
+  }
+
+  return (
+    ParseLinkedGroupBootstrapQrResult.success,
     DirectLinkedDeviceQrDocument(
       accountPeerId: accountPeerId,
       accountPublicKey: accountPublicKey,

@@ -32,12 +32,33 @@ import '../../features/push/domain/received_wake_token_store.dart';
 part 'p2p_impl/p2p_inbox_coordinator.dart';
 part 'p2p_impl/p2p_peer_transport_coordinator.dart';
 
+const String _linkedGroupBootstrapInboxEnvelopeType =
+    'linked_group_bootstrap_v1';
+const String _protectedGroupAuthorityInboxEnvelopeType = 'group_authority_v1';
+
 enum RecoveredInboxChatDisposition {
   committed,
   retryable,
   rejected,
   quarantined,
 }
+
+enum ProtectedGroupReplayDisposition {
+  applied,
+  duplicate,
+  terminalRejected,
+  retryable,
+  prerequisiteWaiting,
+}
+
+typedef ProtectedGroupReplayOutcome = ({
+  ProtectedGroupReplayDisposition disposition,
+  String reasonCode,
+  String? reasonDetail,
+});
+
+typedef ReplayRecoveredProtectedGroupEnvelope =
+    Future<ProtectedGroupReplayOutcome> Function(ChatMessage message);
 
 /// Replay attempts allowed before a retryable staged entry is quarantined
 /// instead of looping forever. Quarantine keeps the envelope (INV-1) but
@@ -293,6 +314,8 @@ class P2PServiceImpl
     replayRecoveredInboxContactRequest,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction,
     ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion,
+    ReplayRecoveredProtectedGroupEnvelope?
+    replayRecoveredProtectedGroupEnvelope,
     Future<String?> Function(ChatMessage message)? predecryptInboxChatEntry,
     TransportMetrics? transportMetrics,
     Duration? keyRotationGracePeriodOverride,
@@ -395,6 +418,8 @@ class P2PServiceImpl
       replayRecoveredInboxContactRequest: replayRecoveredInboxContactRequest,
       replayRecoveredInboxReaction: replayRecoveredInboxReaction,
       replayRecoveredInboxMessageDeletion: replayRecoveredInboxMessageDeletion,
+      replayRecoveredProtectedGroupEnvelope:
+          replayRecoveredProtectedGroupEnvelope,
       predecryptInboxChatEntry: predecryptInboxChatEntry,
       maxInboxPages: maxInboxPages,
       maxRecoverableInboxReplayEntries: maxRecoverableInboxReplayEntries,
@@ -563,6 +588,15 @@ class P2PServiceImpl
     );
 
     unawaited(_restorePersistedPushTokenIfNeeded());
+  }
+
+  /// Installs the group bootstrap/authority handler after group services have
+  /// been composed. The protected coordinator still owns stage-before-handler
+  /// and handler-before-relay-ACK ordering.
+  void setProtectedGroupReplayHandler(
+    ReplayRecoveredProtectedGroupEnvelope? handler,
+  ) {
+    _inboxCoordinator.setProtectedGroupReplayHandler(handler);
   }
 
   @override

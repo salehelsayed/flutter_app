@@ -1137,7 +1137,9 @@ func dispatchInboxStoreAckCustodyContract(
 	if custodyContract != node.AckOrExpiryCustodyContract ||
 		(custodyKind != node.CustodyKindDirectTextV108 &&
 			custodyKind != node.CustodyKindDirectReactionV109 &&
-			custodyKind != node.CustodyKindDirectMutationV109) {
+			custodyKind != node.CustodyKindDirectMutationV109 &&
+			custodyKind != node.CustodyKindGroupBootstrapV1 &&
+			custodyKind != node.CustodyKindGroupAuthorityV1) {
 		return node.InboxStoreOutcome{}, fmt.Errorf(
 			"%w: contract=%q kind=%q",
 			errInvalidInboxAckCustodyContract,

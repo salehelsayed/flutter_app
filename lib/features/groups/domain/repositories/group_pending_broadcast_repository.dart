@@ -29,6 +29,17 @@ abstract interface class GroupPendingBroadcastExactRepository {
   Future<bool> removeIfExact(GroupPendingBroadcast expected);
 }
 
+abstract interface class GroupPendingBroadcastProtectedRecipientRepository {
+  Future<bool> removeRecipientIfExact(
+    GroupPendingBroadcast expected,
+    String recipientPeerId,
+  );
+}
+
+abstract interface class GroupPendingBroadcastProtectedBatchRepository {
+  Future<bool> enqueueProtectedBatch(List<GroupPendingBroadcast> rows);
+}
+
 Future<bool> removeGroupPendingBroadcastIfExact(
   GroupPendingBroadcastRepository repository,
   GroupPendingBroadcast expected,

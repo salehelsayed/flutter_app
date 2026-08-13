@@ -5,12 +5,14 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_membership_limit_policy.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -91,6 +93,104 @@ void main() {
 
     bridge.responses['group:publish'] = {'ok': true, 'messageId': 'sys-msg-id'};
   });
+
+  test(
+    'TC-363-02a protected group authority converges physical devices before content is enabled',
+    () async {
+      expect(
+        hasProtectedGroupPhysicalAuthority(await groupRepo.getMembers(groupId)),
+        isFalse,
+        reason: 'an all-legacy group keeps incumbent delivery default-off',
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: groupId,
+          peerId: selfPeerId,
+          username: 'Self',
+          role: MemberRole.admin,
+          publicKey: 'selfPubKey',
+          mlKemPublicKey: 'selfMlKem',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: selfPeerId,
+              transportPeerId: selfPeerId,
+              deviceSigningPublicKey: 'selfPubKey',
+              mlKemPublicKey: 'selfMlKem',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'self-linked-device',
+              transportPeerId: 'self-linked-transport',
+              deviceSigningPublicKey: 'self-linked-public-key',
+              mlKemPublicKey: 'self-linked-mlkem',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+
+      ProtectedGroupAuthorityPrepareRequest? captured;
+      var activationCount = 0;
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          captured = request;
+          final instant = DateTime.utc(2026, 8, 13);
+          return ProtectedGroupAuthorityPreparation(
+            groupId: request.groupId,
+            rows: <GroupPendingBroadcast>[
+              GroupPendingBroadcast(
+                id: 'protected-key-row',
+                groupId: request.groupId,
+                kind: groupPendingBroadcastKindProtectedAuthority,
+                sysText: '{}',
+                recipientPeerIds: const <String>['peer-bob'],
+                eventAt: instant,
+                sourceMessageId: 'protected-key-source',
+                createdAt: instant,
+                updatedAt: instant,
+              ),
+            ],
+          );
+        },
+        activate: (preparation, {required requireAllCustody}) async {
+          activationCount++;
+          expect(requireAllCustody, isTrue);
+          return true;
+        },
+        cancel: (_) async => true,
+      );
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+      var ordinaryLiveSends = 0;
+      var ordinaryInboxStores = 0;
+
+      final delivered = await distributeCurrentGroupKeyToDeferredPeer(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        peerId: 'peer-bob',
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: (_, _) async {
+          ordinaryLiveSends++;
+          return true;
+        },
+        storeP2PMessageInInbox: (_, _) async {
+          ordinaryInboxStores++;
+          return true;
+        },
+      );
+
+      expect(delivered, 1);
+      expect(activationCount, 1);
+      expect(ordinaryLiveSends, 0);
+      expect(ordinaryInboxStores, 0);
+      expect(captured?.control, ProtectedGroupAuthorityControl.groupKeyUpdate);
+      expect(captured?.deliveryRecipients?.single.transportPeerId, 'peer-bob');
+      expect(captured?.replayData['keyGeneration'], 1);
+      expect(captured?.replayData['content'], contains('group_key_update'));
+    },
+  );
 
   test(
     'OB-002 key generation failure emits safe group and epoch metadata',
@@ -1105,74 +1205,67 @@ void main() {
     expect(latestKey!.keyGeneration, 1);
   });
 
-  test(
-    'INV-D5 an enqueue throw never aborts rotation (deferred member still '
-    'promoted + preserved, error telemetry emitted)',
-    () async {
-      // INV-D5: the per-peer deferred-distribution enqueue is best-effort. If
-      // the enqueue closure throws, rotation MUST still complete (epoch promoted,
-      // keyed members delivered, keyless member preserved in deferredPeerIds);
-      // only a GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR is emitted. A regression
-      // moving the await outside its try/catch would resurface the abort bug.
-      final flowEvents = <Map<String, dynamic>>[];
-      debugSetFlowEventSink(flowEvents.add);
-      addTearDown(() => debugSetFlowEventSink(null));
+  test('INV-D5 an enqueue throw never aborts rotation (deferred member still '
+      'promoted + preserved, error telemetry emitted)', () async {
+    // INV-D5: the per-peer deferred-distribution enqueue is best-effort. If
+    // the enqueue closure throws, rotation MUST still complete (epoch promoted,
+    // keyed members delivered, keyless member preserved in deferredPeerIds);
+    // only a GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR is emitted. A regression
+    // moving the await outside its try/catch would resurface the abort bug.
+    final flowEvents = <Map<String, dynamic>>[];
+    debugSetFlowEventSink(flowEvents.add);
+    addTearDown(() => debugSetFlowEventSink(null));
 
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: groupId,
-          peerId: 'peer-dave',
-          username: 'Dave',
-          role: MemberRole.writer,
-          publicKey: 'davePubKey',
-          mlKemPublicKey: null,
-          joinedAt: DateTime.now().toUtc(),
-        ),
-      );
-
-      final enqueueAttempts = <(String, String, int)>[];
-
-      final result = await rotateAndDistributeGroupKey(
-        bridge: bridge,
-        groupRepo: groupRepo,
+    await groupRepo.saveMember(
+      GroupMember(
         groupId: groupId,
-        selfPeerId: selfPeerId,
-        senderPublicKey: 'selfPubKey',
-        senderPrivateKey: 'selfPrivKey',
-        senderUsername: 'Self',
-        distributionAttemptCount: 2,
-        distributionRetryDelay: Duration.zero,
-        sendP2PMessage: (peerId, message) async => true,
-        enqueueDeferredDistribution:
-            ({
-              required String groupId,
-              required String peerId,
-              required int keyEpoch,
-            }) async {
-              enqueueAttempts.add((groupId, peerId, keyEpoch));
-              throw Exception('enqueue boom');
-            },
-      );
+        peerId: 'peer-dave',
+        username: 'Dave',
+        role: MemberRole.writer,
+        publicKey: 'davePubKey',
+        mlKemPublicKey: null,
+        joinedAt: DateTime.now().toUtc(),
+      ),
+    );
 
-      // Rotation succeeded despite the enqueue throw.
-      expect(result.rotated, isTrue);
-      expect(result.key!.keyGeneration, 2);
-      expect(result.fullyDistributed, isFalse);
-      expect(result.deferredPeerIds, <String>['peer-dave']);
-      // The enqueue closure was reached once for the deferred peer.
-      expect(enqueueAttempts, <(String, String, int)>[
-        (groupId, 'peer-dave', 2),
-      ]);
-      // The throw was caught and surfaced as telemetry, not propagated.
-      final enqueueError = flowEvents.singleWhere(
-        (event) =>
-            event['event'] == 'GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR',
-      );
-      final enqueueErrorDetails =
-          enqueueError['details'] as Map<String, dynamic>;
-      expect(enqueueErrorDetails['error'], contains('enqueue boom'));
-    },
-  );
+    final enqueueAttempts = <(String, String, int)>[];
+
+    final result = await rotateAndDistributeGroupKey(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      selfPeerId: selfPeerId,
+      senderPublicKey: 'selfPubKey',
+      senderPrivateKey: 'selfPrivKey',
+      senderUsername: 'Self',
+      distributionAttemptCount: 2,
+      distributionRetryDelay: Duration.zero,
+      sendP2PMessage: (peerId, message) async => true,
+      enqueueDeferredDistribution:
+          ({
+            required String groupId,
+            required String peerId,
+            required int keyEpoch,
+          }) async {
+            enqueueAttempts.add((groupId, peerId, keyEpoch));
+            throw Exception('enqueue boom');
+          },
+    );
+
+    // Rotation succeeded despite the enqueue throw.
+    expect(result.rotated, isTrue);
+    expect(result.key!.keyGeneration, 2);
+    expect(result.fullyDistributed, isFalse);
+    expect(result.deferredPeerIds, <String>['peer-dave']);
+    // The enqueue closure was reached once for the deferred peer.
+    expect(enqueueAttempts, <(String, String, int)>[(groupId, 'peer-dave', 2)]);
+    // The throw was caught and surfaced as telemetry, not propagated.
+    final enqueueError = flowEvents.singleWhere(
+      (event) => event['event'] == 'GROUP_ROTATE_KEY_DEFERRED_ENQUEUE_ERROR',
+    );
+    final enqueueErrorDetails = enqueueError['details'] as Map<String, dynamic>;
+    expect(enqueueErrorDetails['error'], contains('enqueue boom'));
+  });
 
   test(
     'promotes then defers a member that has no deliverable key device',
@@ -2456,42 +2549,45 @@ void main() {
     },
   );
 
-  test('promotes and defers all recipients when direct sends time out', () async {
-    final result = await rotateAndDistributeGroupKey(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      selfPeerId: selfPeerId,
-      senderPublicKey: 'selfPubKey',
-      senderPrivateKey: 'selfPrivKey',
-      senderUsername: 'Self',
-      perRecipientTimeout: const Duration(milliseconds: 5),
-      distributionAttemptCount: 1,
-      sendP2PMessage: (_, _) async {
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-        return false;
-      },
-    );
+  test(
+    'promotes and defers all recipients when direct sends time out',
+    () async {
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        perRecipientTimeout: const Duration(milliseconds: 5),
+        distributionAttemptCount: 1,
+        sendP2PMessage: (_, _) async {
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+          return false;
+        },
+      );
 
-    // Every send timed out → all remaining members deferred, epoch still
-    // promoted so the removed member loses the live key.
-    expect(result.rotated, isTrue);
-    expect(result.key!.keyGeneration, 2);
-    expect(result.distributedDeviceCount, 0);
-    expect(
-      result.deferredPeerIds,
-      unorderedEquals(<String>['peer-bob', 'peer-carol']),
-    );
-    expect(
-      _bridgeCommandIndex(bridge, 'group:updateKey', keyEpoch: 2),
-      greaterThanOrEqualTo(0),
-    );
-    expect(bridge.commandLog, contains('group:publish'));
+      // Every send timed out → all remaining members deferred, epoch still
+      // promoted so the removed member loses the live key.
+      expect(result.rotated, isTrue);
+      expect(result.key!.keyGeneration, 2);
+      expect(result.distributedDeviceCount, 0);
+      expect(
+        result.deferredPeerIds,
+        unorderedEquals(<String>['peer-bob', 'peer-carol']),
+      );
+      expect(
+        _bridgeCommandIndex(bridge, 'group:updateKey', keyEpoch: 2),
+        greaterThanOrEqualTo(0),
+      );
+      expect(bridge.commandLog, contains('group:publish'));
 
-    final latestKey = await groupRepo.getLatestKey(groupId);
-    expect(latestKey, isNotNull);
-    expect(latestKey!.keyGeneration, 2);
-  });
+      final latestKey = await groupRepo.getLatestKey(groupId);
+      expect(latestKey, isNotNull);
+      expect(latestKey!.keyGeneration, 2);
+    },
+  );
 
   test(
     'mixed cohort: keyed-direct delivered, keyed-inbox delivered, keyless deferred',
@@ -2546,40 +2642,43 @@ void main() {
     },
   );
 
-  test('genuine generate failure returns notRotated and enqueues nothing', () async {
-    // INV-R4: only a true generate/promote failure yields notRotated, and the
-    // deferred-distribution seam is never invoked on that path.
-    bridge.responses['group:generateNextKey'] = {
-      'ok': false,
-      'errorCode': 'GENERATE_FAILED',
-    };
-    final deferredEnqueues = <String>[];
+  test(
+    'genuine generate failure returns notRotated and enqueues nothing',
+    () async {
+      // INV-R4: only a true generate/promote failure yields notRotated, and the
+      // deferred-distribution seam is never invoked on that path.
+      bridge.responses['group:generateNextKey'] = {
+        'ok': false,
+        'errorCode': 'GENERATE_FAILED',
+      };
+      final deferredEnqueues = <String>[];
 
-    final result = await rotateAndDistributeGroupKey(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      selfPeerId: selfPeerId,
-      senderPublicKey: 'selfPubKey',
-      senderPrivateKey: 'selfPrivKey',
-      senderUsername: 'Self',
-      sendP2PMessage: _sendOk,
-      enqueueDeferredDistribution:
-          ({
-            required String groupId,
-            required String peerId,
-            required int keyEpoch,
-          }) async {
-            deferredEnqueues.add(peerId);
-          },
-    );
+      final result = await rotateAndDistributeGroupKey(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        groupId: groupId,
+        selfPeerId: selfPeerId,
+        senderPublicKey: 'selfPubKey',
+        senderPrivateKey: 'selfPrivKey',
+        senderUsername: 'Self',
+        sendP2PMessage: _sendOk,
+        enqueueDeferredDistribution:
+            ({
+              required String groupId,
+              required String peerId,
+              required int keyEpoch,
+            }) async {
+              deferredEnqueues.add(peerId);
+            },
+      );
 
-    expect(result.rotated, isFalse);
-    expect(result.deferredPeerIds, isEmpty);
-    expect(deferredEnqueues, isEmpty);
-    final latestKey = await groupRepo.getLatestKey(groupId);
-    expect(latestKey!.keyGeneration, 1);
-  });
+      expect(result.rotated, isFalse);
+      expect(result.deferredPeerIds, isEmpty);
+      expect(deferredEnqueues, isEmpty);
+      final latestKey = await groupRepo.getLatestKey(groupId);
+      expect(latestKey!.keyGeneration, 1);
+    },
+  );
 
   test(
     'falls back to the process-wide deferred-distribution sink when no explicit '
@@ -2623,7 +2722,9 @@ void main() {
 
       expect(result.rotated, isTrue);
       expect(result.deferredPeerIds, <String>['peer-dave']);
-      expect(globalEnqueues, <(String, String, int)>[(groupId, 'peer-dave', 2)]);
+      expect(globalEnqueues, <(String, String, int)>[
+        (groupId, 'peer-dave', 2),
+      ]);
     },
   );
 
@@ -2660,13 +2761,10 @@ void main() {
       senderPrivateKey: 'selfPrivKey',
       senderUsername: 'Self',
       sendP2PMessage: _sendOk,
-      enqueueDeferredDistribution: ({
-        required groupId,
-        required peerId,
-        required keyEpoch,
-      }) async {
-        explicitEnqueues.add(peerId);
-      },
+      enqueueDeferredDistribution:
+          ({required groupId, required peerId, required keyEpoch}) async {
+            explicitEnqueues.add(peerId);
+          },
     );
 
     expect(explicitEnqueues, <String>['peer-dave']);

@@ -584,6 +584,8 @@ requires_explicit_multi_device_ids() {
     [ "$path:$scenario" = \
       "integration_test/scripts/run_invite_reliability_multi_device.dart:direct_linked_device_event_blob_fanout" ] ||
     [ "$path" = \
+      "integration_test/scripts/run_b1b_sibling_device_convergence.dart" ] ||
+    [ "$path" = \
       "integration_test/scripts/run_group_media_send_reliability.dart" ]
 }
 

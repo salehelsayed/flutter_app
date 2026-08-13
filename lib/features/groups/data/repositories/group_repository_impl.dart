@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter_app/core/database/helpers/linked_group_bootstrap_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/self_removed_group_shell_db_helpers.dart'
     as shell_db;
 import 'package:flutter_app/core/notifications/group_reaction_notification_projection.dart';
@@ -11,10 +12,12 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import '../../domain/models/group_key_info.dart';
 import '../../domain/models/group_key_retention_policy.dart';
 import '../../domain/models/group_member.dart';
+import '../../domain/models/group_pending_broadcast.dart';
 import '../../domain/models/pending_sibling_device.dart';
 import '../../domain/repositories/pending_sibling_device_repository.dart';
 import '../../domain/models/group_model.dart';
 import '../../domain/repositories/group_repository.dart';
+import '../../domain/repositories/linked_group_bootstrap_repository.dart';
 
 String sharedGroupPushKeyName(String groupId, int keyGeneration) =>
     'group_key:$groupId:$keyGeneration';
@@ -30,6 +33,38 @@ bool _sameInstant(DateTime? left, DateTime? right) {
   return left.toUtc().isAtSameMomentAs(right.toUtc());
 }
 
+bool _sameRow(Map<String, Object?> left, Map<String, Object?> right) {
+  if (left.length != right.length) return false;
+  for (final entry in left.entries) {
+    if (!right.containsKey(entry.key) || right[entry.key] != entry.value) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool _sameGroupKey(GroupKeyInfo left, GroupKeyInfo right) =>
+    left.groupId == right.groupId &&
+    left.keyGeneration == right.keyGeneration &&
+    left.encryptedKey == right.encryptedKey &&
+    _sameInstant(left.createdAt, right.createdAt);
+
+bool _sameMemberProjection(List<GroupMember> left, List<GroupMember> right) {
+  if (left.length != right.length) return false;
+  final leftRows = left.map((member) => member.toMap()).toList()
+    ..sort(
+      (a, b) => (a['peer_id'] as String).compareTo(b['peer_id'] as String),
+    );
+  final rightRows = right.map((member) => member.toMap()).toList()
+    ..sort(
+      (a, b) => (a['peer_id'] as String).compareTo(b['peer_id'] as String),
+    );
+  for (var index = 0; index < leftRows.length; index++) {
+    if (!_sameRow(leftRows[index], rightRows[index])) return false;
+  }
+  return true;
+}
+
 /// Implementation of GroupRepository using constructor-injected DB helper functions.
 class GroupRepositoryImpl
     implements
@@ -43,7 +78,9 @@ class GroupRepositoryImpl
         AtomicGroupDissolveRepository,
         GroupExitCleanupRepository,
         SelfRemovedGroupShellRepository,
-        FreshJoinProjectionAtomicity {
+        FreshJoinProjectionAtomicity,
+        LinkedGroupBootstrapRepository,
+        LinkedGroupBootstrapIntentGuard {
   // --- Group DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroup;
   final Future<List<Map<String, Object?>>> Function() dbLoadAllGroups;
@@ -105,6 +142,33 @@ class GroupRepositoryImpl
     String deviceId,
   )?
   dbDeletePendingSiblingDevice;
+  final Future<LinkedGroupBootstrapDbDisposition> Function({
+    required Map<String, Object?> expectedGroup,
+    required List<Map<String, Object?>> expectedMembers,
+    required Map<String, Object?> expectedSelfMember,
+    required int expectedLatestKeyGeneration,
+    required String expectedLatestKeyCreatedAt,
+    required Map<String, Object?> updatedSelfMember,
+    required Map<String, Object?> pendingDevice,
+    required Map<String, Object?> pendingBroadcast,
+  })?
+  dbCommitLinkedGroupBootstrapAuthoringFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expectedDevice,
+    required Map<String, Object?> expectedBroadcast,
+  })?
+  dbCompleteLinkedGroupBootstrapCustodyFn;
+  final Future<LinkedGroupBootstrapMaterializationDbDisposition> Function({
+    required Map<String, Object?> groupRow,
+    required List<Map<String, Object?>> memberRows,
+    required Map<String, Object?> keyRow,
+  })?
+  dbCommitLinkedGroupBootstrapMaterializationFn;
+  final Future<bool> Function({
+    required String groupId,
+    required String transportPeerId,
+  })?
+  dbHasLinkedGroupBootstrapIntentFn;
 
   // --- Key DB helpers ---
   final Future<void> Function(Map<String, Object?> row) dbInsertGroupKey;
@@ -285,6 +349,10 @@ class GroupRepositoryImpl
     this.dbLoadPendingSiblingDevicesForGroup,
     this.dbLoadPendingSiblingDevice,
     this.dbDeletePendingSiblingDevice,
+    this.dbCommitLinkedGroupBootstrapAuthoringFn,
+    this.dbCompleteLinkedGroupBootstrapCustodyFn,
+    this.dbCommitLinkedGroupBootstrapMaterializationFn,
+    this.dbHasLinkedGroupBootstrapIntentFn,
     this.dbLoadGroupRejoinStatesFn,
     this.dbRecordGroupRejoinFailureFn,
     this.dbClearGroupRejoinStateFn,
@@ -1334,6 +1402,199 @@ class GroupRepositoryImpl
     final delete = dbDeletePendingSiblingDevice;
     if (delete == null) return;
     await delete(groupId, memberPeerId, deviceId);
+  }
+
+  @override
+  Future<bool> isLinkedGroupBootstrapIntent(PendingSiblingDevice device) async {
+    final guard = dbHasLinkedGroupBootstrapIntentFn;
+    if (guard == null) return false;
+    return guard(
+      groupId: device.groupId,
+      transportPeerId: device.transportPeerId,
+    );
+  }
+
+  @override
+  Future<LinkedGroupBootstrapAuthorCommitOutcome>
+  commitLinkedGroupBootstrapAuthoring({
+    required GroupModel expectedGroup,
+    required List<GroupMember> expectedMembers,
+    required GroupMember expectedSelfMember,
+    required GroupKeyInfo expectedLatestKey,
+    required GroupMember updatedSelfMember,
+    required PendingSiblingDevice pendingDevice,
+    required GroupPendingBroadcast pendingBroadcast,
+  }) async {
+    final commit = dbCommitLinkedGroupBootstrapAuthoringFn;
+    if (commit == null) {
+      throw StateError('Linked group bootstrap authoring is unavailable.');
+    }
+    return _runGroupMutation(expectedGroup.id, () async {
+      final currentGroup = await getGroup(expectedGroup.id);
+      final currentSelf = await getMember(
+        expectedGroup.id,
+        expectedSelfMember.peerId,
+      );
+      final currentMembers = await getMembers(expectedGroup.id);
+      final currentKey = await getLatestKey(expectedGroup.id);
+      final updatedExpectedMembers = expectedMembers
+          .map(
+            (member) => member.peerId == expectedSelfMember.peerId
+                ? updatedSelfMember
+                : member,
+          )
+          .toList(growable: false);
+      final rosterMatchesExpected =
+          _sameMemberProjection(currentMembers, expectedMembers) ||
+          _sameMemberProjection(currentMembers, updatedExpectedMembers);
+      final selfMatchesExpected =
+          _sameRow(
+            currentSelf?.toMap() ?? const <String, Object?>{},
+            expectedSelfMember.toMap(),
+          ) ||
+          _sameRow(
+            currentSelf?.toMap() ?? const <String, Object?>{},
+            updatedSelfMember.toMap(),
+          );
+      if (currentGroup == null ||
+          currentSelf == null ||
+          currentKey == null ||
+          currentGroup.isDissolved ||
+          !_sameRow(currentGroup.toMap(), expectedGroup.toMap()) ||
+          !rosterMatchesExpected ||
+          !selfMatchesExpected ||
+          !_sameGroupKey(currentKey, expectedLatestKey)) {
+        return LinkedGroupBootstrapAuthorCommitOutcome.refusedStateChanged;
+      }
+      final result = await commit(
+        expectedGroup: expectedGroup.toMap(),
+        expectedMembers: expectedMembers
+            .map((member) => member.toMap())
+            .toList(growable: false),
+        expectedSelfMember: expectedSelfMember.toMap(),
+        expectedLatestKeyGeneration: expectedLatestKey.keyGeneration,
+        expectedLatestKeyCreatedAt: expectedLatestKey.createdAt
+            .toUtc()
+            .toIso8601String(),
+        updatedSelfMember: updatedSelfMember.toMap(),
+        pendingDevice: pendingDevice.toMap(),
+        pendingBroadcast: pendingBroadcast.toMap(),
+      );
+      return switch (result) {
+        LinkedGroupBootstrapDbDisposition.committed =>
+          LinkedGroupBootstrapAuthorCommitOutcome.committed,
+        LinkedGroupBootstrapDbDisposition.duplicate =>
+          LinkedGroupBootstrapAuthorCommitOutcome.duplicate,
+        LinkedGroupBootstrapDbDisposition.refusedPendingConflict =>
+          LinkedGroupBootstrapAuthorCommitOutcome.refusedPendingConflict,
+        LinkedGroupBootstrapDbDisposition.refusedStateChanged =>
+          LinkedGroupBootstrapAuthorCommitOutcome.refusedStateChanged,
+      };
+    });
+  }
+
+  @override
+  Future<bool> completeLinkedGroupBootstrapCustody({
+    required PendingSiblingDevice expectedDevice,
+    required GroupPendingBroadcast expectedBroadcast,
+  }) async {
+    final complete = dbCompleteLinkedGroupBootstrapCustodyFn;
+    if (complete == null) return false;
+    return _runGroupMutation(
+      expectedDevice.groupId,
+      () => complete(
+        expectedDevice: expectedDevice.toMap(),
+        expectedBroadcast: expectedBroadcast.toMap(),
+      ),
+    );
+  }
+
+  @override
+  Future<LinkedGroupBootstrapMaterializationOutcome>
+  commitLinkedGroupBootstrapMaterialization({
+    required String bootstrapId,
+    required GroupModel group,
+    required List<GroupMember> members,
+    required GroupKeyInfo key,
+  }) async {
+    final commit = dbCommitLinkedGroupBootstrapMaterializationFn;
+    final store = groupKeyStore;
+    if (commit == null || store == null) {
+      throw StateError(
+        'Linked group bootstrap materialization is unavailable.',
+      );
+    }
+    if (bootstrapId.trim().isEmpty ||
+        group.id != key.groupId ||
+        group.isDissolved ||
+        members.isEmpty ||
+        members.any((member) => member.groupId != group.id)) {
+      return LinkedGroupBootstrapMaterializationOutcome.refusedConflict;
+    }
+    return _runGroupMutation(group.id, () async {
+      final storeName = groupLinkedBootstrapKeyMaterialStoreName(
+        group.id,
+        key.keyGeneration,
+        bootstrapId,
+      );
+      final existingMaterial = await store.read(storeName);
+      if (existingMaterial != null && existingMaterial != key.encryptedKey) {
+        return LinkedGroupBootstrapMaterializationOutcome.refusedConflict;
+      }
+      var wroteMaterial = false;
+      if (existingMaterial == null) {
+        await store.write(storeName, key.encryptedKey);
+        wroteMaterial = true;
+      }
+      final stagedKey = GroupKeyInfo(
+        groupId: key.groupId,
+        keyGeneration: key.keyGeneration,
+        encryptedKey: secureStoreReferenceForKey(storeName),
+        createdAt: key.createdAt,
+      );
+      late final LinkedGroupBootstrapMaterializationDbDisposition dbResult;
+      try {
+        dbResult = await commit(
+          groupRow: group.toMap(),
+          memberRows: members.map((member) => member.toMap()).toList(),
+          keyRow: stagedKey.toMap(),
+        );
+      } catch (_) {
+        if (wroteMaterial) {
+          try {
+            await store.delete(storeName);
+          } catch (_) {}
+        }
+        rethrow;
+      }
+      if (dbResult ==
+          LinkedGroupBootstrapMaterializationDbDisposition.refusedConflict) {
+        if (wroteMaterial) {
+          try {
+            await store.delete(storeName);
+          } catch (_) {}
+        }
+        return LinkedGroupBootstrapMaterializationOutcome.refusedConflict;
+      }
+
+      // Hydrated exact read-back is part of the durable handler boundary. A
+      // failure here deliberately leaves the complete SQL projection and key
+      // address so exact replay can classify it duplicate before relay ACK.
+      final storedGroup = await getGroup(group.id);
+      final storedMembers = await getMembers(group.id);
+      final storedKey = await getLatestKey(group.id);
+      if (storedGroup == null ||
+          storedKey == null ||
+          !_sameRow(storedGroup.toMap(), group.toMap()) ||
+          !_sameMemberProjection(storedMembers, members) ||
+          !_sameGroupKey(storedKey, key)) {
+        throw StateError('Linked group bootstrap read-back mismatch.');
+      }
+      return dbResult ==
+              LinkedGroupBootstrapMaterializationDbDisposition.duplicate
+          ? LinkedGroupBootstrapMaterializationOutcome.duplicate
+          : LinkedGroupBootstrapMaterializationOutcome.committed;
+    });
   }
 
   @override

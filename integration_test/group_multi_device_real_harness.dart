@@ -36,6 +36,8 @@ import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/linked_group_bootstrap_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_sync_receipts_db_helpers.dart';
@@ -74,6 +76,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
+import 'package:flutter_app/features/groups/application/create_group_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
@@ -82,15 +85,13 @@ import 'package:flutter_app/features/groups/application/group_key_update_listene
 import 'package:flutter_app/features/groups/application/group_membership_update_listener.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
+import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
+import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
-import 'package:flutter_app/features/groups/application/admit_sibling_device_use_case.dart';
-import 'package:flutter_app/features/groups/application/announce_restored_device_use_case.dart';
-import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
-import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
-import 'package:flutter_app/features/groups/data/repositories/group_pending_key_distribution_repository_impl.dart';
-import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
@@ -115,6 +116,7 @@ import 'package:flutter_app/features/groups/presentation/screens/contact_picker_
 import 'package:flutter_app/features/groups/presentation/screens/create_group_picker_wired.dart';
 import 'package:flutter_app/features/identity/application/generate_identity_use_case.dart';
 import 'package:flutter_app/features/identity/application/restore_identity_use_case.dart';
+import 'package:flutter_app/features/identity/application/linked_secondary_setup_use_case.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/data/repositories/identity_repository_impl.dart';
 import 'package:flutter_app/l10n/app_localizations.dart';
@@ -465,7 +467,7 @@ class GroupMultiDeviceTestStack {
     return currentBridge.groupLeaveCommandCount;
   }
 
-  Future<void> teardown() async {
+  Future<void> teardown({bool deleteStorage = true}) async {
     chatMessageListener.dispose();
     deliveryReceiptListener.dispose();
     groupKeyUpdateListener.dispose();
@@ -479,7 +481,10 @@ class GroupMultiDeviceTestStack {
     p2pService.dispose();
     bridge.dispose();
     await db.close();
-    await deleteTestDatabase(dbName);
+    if (deleteStorage) {
+      await deleteTestDatabase(dbName);
+      await deleteTestSecureStore(dbName);
+    }
   }
 }
 
@@ -523,6 +528,9 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   bool deleteExistingDb = true,
   bool reuseExistingIdentity = false,
   bool useFreshTransportIdentityForRestoredAccount = false,
+  bool setupAsLinkedSecondary = false,
+  bool restrictedLinkedRuntime = false,
+  bool startGroupTopicsOnReuse = true,
   bool onJoinMetadataResyncEnabled = false,
   Future<OutgoingOrdinaryMutationResult> Function({
     required String messageId,
@@ -921,6 +929,57 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbDeletePendingGroupKeyRotation(db, groupId, keyGeneration),
     dbDeletePendingGroupKeyRotations: (groupId) =>
         dbDeletePendingGroupKeyRotations(db, groupId),
+    dbUpsertPendingSiblingDevice: (row) =>
+        dbUpsertPendingSiblingDevice(db, row),
+    dbLoadPendingSiblingDevicesForGroup: (groupId) =>
+        dbLoadPendingSiblingDevicesForGroup(db, groupId),
+    dbLoadPendingSiblingDevice: (groupId, memberPeerId, deviceId) =>
+        dbLoadPendingSiblingDevice(db, groupId, memberPeerId, deviceId),
+    dbDeletePendingSiblingDevice: (groupId, memberPeerId, deviceId) =>
+        dbDeletePendingSiblingDevice(db, groupId, memberPeerId, deviceId),
+    dbCommitLinkedGroupBootstrapAuthoringFn:
+        ({
+          required expectedGroup,
+          required expectedMembers,
+          required expectedSelfMember,
+          required expectedLatestKeyGeneration,
+          required expectedLatestKeyCreatedAt,
+          required updatedSelfMember,
+          required pendingDevice,
+          required pendingBroadcast,
+        }) => dbCommitLinkedGroupBootstrapAuthoring(
+          db,
+          expectedGroup: expectedGroup,
+          expectedMembers: expectedMembers,
+          expectedSelfMember: expectedSelfMember,
+          expectedLatestKeyGeneration: expectedLatestKeyGeneration,
+          expectedLatestKeyCreatedAt: expectedLatestKeyCreatedAt,
+          updatedSelfMember: updatedSelfMember,
+          pendingDevice: pendingDevice,
+          pendingBroadcast: pendingBroadcast,
+        ),
+    dbCompleteLinkedGroupBootstrapCustodyFn:
+        ({required expectedDevice, required expectedBroadcast}) =>
+            dbCompleteLinkedGroupBootstrapCustody(
+              db,
+              expectedDevice: expectedDevice,
+              expectedBroadcast: expectedBroadcast,
+            ),
+    dbCommitLinkedGroupBootstrapMaterializationFn:
+        ({required groupRow, required memberRows, required keyRow}) =>
+            dbCommitLinkedGroupBootstrapMaterialization(
+              db,
+              groupRow: groupRow,
+              memberRows: memberRows,
+              keyRow: keyRow,
+            ),
+    dbHasLinkedGroupBootstrapIntentFn:
+        ({required groupId, required transportPeerId}) =>
+            dbHasLinkedGroupBootstrapIntent(
+              db,
+              groupId: groupId,
+              transportPeerId: transportPeerId,
+            ),
     groupKeyStore: secureKeyStore,
     dbHasGroupExitCleanupPending: (groupId) async {
       final row = await dbLoadGroupExitIntentForGroup(db, groupId);
@@ -1088,6 +1147,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   );
   final groupPendingBroadcastRepo = GroupPendingBroadcastRepositoryImpl(
     dbInsert: (row) => dbInsertPendingGroupBroadcast(db, row),
+    dbInsertProtectedBatch: (rows) =>
+        dbInsertPendingGroupBroadcastsAtomically(db, rows),
     dbLoadForGroup: (groupId) =>
         dbLoadPendingGroupBroadcastsForGroup(db, groupId),
     dbLoadAll: () => dbLoadAllPendingGroupBroadcasts(db),
@@ -1098,6 +1159,14 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
         dbDeletePendingGroupBroadcastIfExact(db, expected),
     dbDeleteForGroup: (groupId) =>
         dbDeletePendingGroupBroadcastsForGroup(db, groupId),
+    dbRemoveRecipientIfExact:
+        ({required expected, required recipientPeerId, required updatedAt}) =>
+            dbRemovePendingGroupBroadcastRecipientIfExact(
+              db,
+              expected: expected,
+              recipientPeerId: recipientPeerId,
+              updatedAt: updatedAt,
+            ),
   );
   final groupInviteDeliveryAttemptRepo =
       GroupInviteDeliveryAttemptRepositoryImpl(
@@ -1560,6 +1629,60 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final bridge = RecordingGoBridgeClient();
   await bridge.initialize();
 
+  LinkedInstallationAuthority? setupLinkedAuthority;
+  String? effectiveRestoreMnemonic = restoreMnemonic;
+  if (setupAsLinkedSecondary) {
+    if (reuseExistingIdentity) {
+      setupLinkedAuthority = LinkedInstallationAuthority(
+        secureKeyStore: secureKeyStore,
+      );
+    } else {
+      if (effectiveRestoreMnemonic == null) {
+        final generated = await callIdentityGenerate(bridge);
+        final generatedIdentity = generated['identity'];
+        if (generated['ok'] != true || generatedIdentity is! Map) {
+          throw StateError('Could not generate the B1b account seed');
+        }
+        effectiveRestoreMnemonic = generatedIdentity['mnemonic12'] as String?;
+        if (effectiveRestoreMnemonic == null ||
+            effectiveRestoreMnemonic.trim().isEmpty) {
+          throw StateError('Generated B1b account seed had no mnemonic');
+        }
+      }
+      await secureKeyStore.write(
+        canonicalRuntimeInstallationIdStorageKey,
+        'b1b-linked-$configuredRunId',
+      );
+      setupLinkedAuthority = LinkedInstallationAuthority(
+        secureKeyStore: secureKeyStore,
+      );
+      final setup = await setUpLinkedSecondaryInstallation(
+        mnemonic: effectiveRestoreMnemonic,
+        authority: setupLinkedAuthority,
+        identityRepo: identityRepo,
+        callRestore: (mnemonic) => callIdentityRestore(bridge, mnemonic),
+        callMlKemKeygen: () => callMlKemKeygen(bridge),
+        callIdentityGenerate: () => callIdentityGenerate(bridge),
+        callSign: (data, privateKey) => callSignPayload(
+          bridge: bridge,
+          dataToSign: data,
+          privateKey: privateKey,
+        ),
+        callVerify: ({required publicKey, required data, required signature}) =>
+            callVerifyPayload(
+              bridge: bridge,
+              publicKey: publicKey,
+              data: data,
+              signature: signature,
+            ),
+        selector: const DirectLinkedDeviceSelector.enabled(),
+      );
+      if (setup != LinkedSecondarySetupResult.success) {
+        throw StateError('Production linked setup failed: ${setup.name}');
+      }
+    }
+  }
+
   var savedIdentity = restoreIdentity;
   if (savedIdentity == null && reuseExistingIdentity) {
     savedIdentity = await identityRepo.loadIdentity();
@@ -1569,15 +1692,15 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
       restoreMnemonic == null) {
     throw StateError('Existing identity requested but none was found');
   }
-  if (savedIdentity == null) {
-    final identityResult = restoreMnemonic == null
+  if (savedIdentity == null && !setupAsLinkedSecondary) {
+    final identityResult = effectiveRestoreMnemonic == null
         ? await generateNewIdentity(
             callGenerate: () => callIdentityGenerate(bridge),
             callMlKemKeygen: () => callMlKemKeygen(bridge),
             repo: identityRepo,
           )
         : await restoreIdentityFromMnemonic(
-            input: restoreMnemonic,
+            input: effectiveRestoreMnemonic,
             callRestore: (mnemonic) => callIdentityRestore(bridge, mnemonic),
             callMlKemKeygen: () => callMlKemKeygen(bridge),
             repo: identityRepo,
@@ -1587,6 +1710,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     }
     savedIdentity = await identityRepo.loadIdentity();
   }
+  savedIdentity ??= await identityRepo.loadIdentity();
 
   if (savedIdentity == null) {
     throw StateError('Identity missing after setup');
@@ -1609,7 +1733,18 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
 
   var transportPrivateKey = updatedIdentity.privateKey;
   var transportPeerId = updatedIdentity.peerId;
-  if (restoreMnemonic != null && useFreshTransportIdentityForRestoredAccount) {
+  if (setupAsLinkedSecondary) {
+    final authority = setupLinkedAuthority!;
+    final active = await authority.load(
+      expectedAccountPeerId: updatedIdentity.peerId,
+    );
+    if (!active.isActiveLinkedSecondary || active.credential == null) {
+      throw StateError('Linked setup did not leave active authority');
+    }
+    transportPrivateKey = active.credential!.transportPrivateKey;
+    transportPeerId = active.credential!.transportPeerId;
+  } else if (effectiveRestoreMnemonic != null &&
+      useFreshTransportIdentityForRestoredAccount) {
     final transportResponse = await callIdentityGenerate(bridge);
     if (transportResponse['ok'] != true) {
       throw StateError(
@@ -1795,14 +1930,16 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   messageRouter.start();
   chatMessageListener.start();
   deliveryReceiptListener.start();
-  groupKeyUpdateListener.start();
-  groupListener.start(
-    groupStreamController.stream,
-    incomingGroupReactions: groupReactionStreamController.stream,
-  );
-  groupMembershipUpdateListener.start();
-  groupInviteListener.start();
-  if (reuseExistingIdentity) {
+  if (!restrictedLinkedRuntime) {
+    groupKeyUpdateListener.start();
+    groupListener.start(
+      groupStreamController.stream,
+      incomingGroupReactions: groupReactionStreamController.stream,
+    );
+    groupMembershipUpdateListener.start();
+    groupInviteListener.start();
+  }
+  if (reuseExistingIdentity && startGroupTopicsOnReuse) {
     await rejoinGroupTopics(bridge: bridge, groupRepo: groupRepo);
   }
 
@@ -3537,434 +3674,465 @@ Future<void> _runInviteSendLatencySibling() async {
   }
 }
 
-// ── R6: b1b_sibling_device_convergence (per-device ML-KEM key separation) ──
-// primary = admin/creator; sibling = primary's restored second device (fresh
-// transport + fresh ML-KEM). The sibling joins the topic (for the announce +
-// to receive the post-admit group message) but DOES NOT persist the group key
-// locally — it must obtain the current key ONLY via the live admit->redistribute
-// 1:1 key-update, ML-KEM-sealed to its fresh per-device key. Build with
-// --dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC=true so admit/announce are live.
+// ── Plan 363: availability-bounded B1b linked-group bootstrap proof ─────────
+// The runner pins the physical Android as `primary`; that role is the fresh
+// linked secondary which owns an empty repository and publishes its production
+// QR. The emulator `sibling` is the ordinary account-primary which creates one
+// group, scans that QR, and owns protected bootstrap/authority custody.
 
-/// Imports the group SHELL (group + members + Go-side topic subscription) WITHOUT
-/// persisting the group key to the local repo, so the only way `getLatestKey`
-/// becomes non-null is the live key redistribution decrypting on this device's
-/// fresh ML-KEM secret (the B1b proof). Mirrors [importJoinedGroupFixture] minus
-/// the `saveKey` teleport.
-Future<String> _importGroupShellForB1b({
-  required GroupMultiDeviceTestStack stack,
-  required Map<String, dynamic> fixture,
-}) async {
-  final group = GroupModel.fromMap(
-    Map<String, dynamic>.from(fixture['group'] as Map),
-  );
-  final key = GroupKeyInfo.fromMap(
-    Map<String, dynamic>.from(fixture['key'] as Map),
-  );
-  final members = (fixture['members'] as List<dynamic>)
-      .map((raw) => GroupMember.fromMap(Map<String, dynamic>.from(raw as Map)))
-      .toList(growable: false);
-  final groupConfig = Map<String, dynamic>.from(fixture['groupConfig'] as Map);
+ProtectedGroupReplayOutcome _b1bReplayOutcome(
+  ProtectedGroupReplayDisposition disposition,
+  String reasonCode,
+) => (disposition: disposition, reasonCode: reasonCode, reasonDetail: null);
 
-  MemberRole? selfMemberRole;
-  for (final member in members) {
-    if (member.peerId == stack.identity.peerId) {
-      selfMemberRole = member.role;
-      break;
-    }
-  }
-  final importedGroup = selfMemberRole == null
-      ? group
-      : group.copyWith(
-          myRole: selfMemberRole == MemberRole.admin
-              ? GroupRole.admin
-              : GroupRole.member,
-        );
-  await stack.groupRepo.saveGroup(importedGroup);
-  for (final member in members) {
-    await stack.groupRepo.saveMember(member);
-  }
-  // NOTE: deliberately NO `stack.groupRepo.saveKey(key)` — the key must arrive
-  // via the live redistribution, not the fixture. callGroupJoinWithConfig still
-  // subscribes the Go bridge to the topic (so the announce can publish and the
-  // post-admit message can be received).
-  await callGroupJoinWithConfig(
-    stack.bridge,
-    groupId: group.id,
-    groupConfig: groupConfig,
-    groupKey: key.encryptedKey,
-    keyEpoch: key.keyGeneration,
-  );
-  return group.id;
+Future<LinkedInstallationAuthoritySnapshot> _b1bLinkedAuthority(
+  GroupMultiDeviceTestStack stack,
+) {
+  return LinkedInstallationAuthority(
+    secureKeyStore: stack.secureKeyStore,
+  ).load(expectedAccountPeerId: stack.identity.peerId);
 }
 
-Future<void> _runB1bConvergencePrimary() async {
-  final stack = await setupGroupMultiDeviceStack(
-    dbName: _dbNameForRole(),
-    username: 'B1b Primary',
-    cliPeerFixture: null,
-  );
-
-  // Wire the SEND side of the deferred-distribution machinery (the 2-role stack
-  // wires only the receive-side GroupKeyUpdateListener). Mirrors main.dart so
-  // admit's reopen+drain re-distributes the current key to the sibling device.
-  final distributionRepo = GroupPendingKeyDistributionRepositoryImpl(
-    dbUpsertGroupPendingKeyDistribution: (row) =>
-        dbUpsertGroupPendingKeyDistribution(stack.db, row),
-    dbReopenGroupPendingKeyDistributionForRedelivery: (row) =>
-        dbReopenGroupPendingKeyDistributionForRedelivery(stack.db, row),
-    dbLoadGroupPendingKeyDistribution: (id) =>
-        dbLoadGroupPendingKeyDistribution(stack.db, id),
-    dbLoadPendingGroupKeyDistributionsForPeer:
-        ({required peerId, groupId, int limit = 50}) =>
-            dbLoadPendingGroupKeyDistributionsForPeer(
-              stack.db,
-              peerId: peerId,
-              groupId: groupId,
-              limit: limit,
+void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
+  stack.p2pService.setProtectedGroupReplayHandler((message) async {
+    final authority = await _b1bLinkedAuthority(stack);
+    final identity = await stack.identityRepo.loadIdentity();
+    final ownMlKemPublicKey = identity?.mlKemPublicKey;
+    final ownMlKemSecretKey = identity?.mlKemSecretKey;
+    if (identity == null ||
+        ownMlKemPublicKey == null ||
+        ownMlKemSecretKey == null) {
+      return _b1bReplayOutcome(
+        ProtectedGroupReplayDisposition.prerequisiteWaiting,
+        'identity_unavailable',
+      );
+    }
+    final outer = ProtectedGroupEnvelope.tryParse(message.content);
+    if (outer?.type == linkedGroupBootstrapEnvelopeType) {
+      final result = await handleLinkedGroupBootstrapEnvelope(
+        message: message,
+        linkedAuthority: authority,
+        ownMlKemPublicKey: ownMlKemPublicKey,
+        ownMlKemSecretKey: ownMlKemSecretKey,
+        groupRepository: stack.groupRepo,
+        callDecrypt:
+            ({
+              required ownMlKemSecretKey,
+              required kem,
+              required ciphertext,
+              required nonce,
+            }) => callDecryptMessage(
+              bridge: stack.bridge,
+              ownMlKemSecretKey: ownMlKemSecretKey,
+              kem: kem,
+              ciphertext: ciphertext,
+              nonce: nonce,
             ),
-    dbLoadPendingGroupKeyDistributionsForGroup:
-        ({required groupId, int limit = 50}) =>
-            dbLoadPendingGroupKeyDistributionsForGroup(
-              stack.db,
-              groupId: groupId,
-              limit: limit,
+        callVerify: ({required publicKey, required data, required signature}) =>
+            callVerifyPayload(
+              bridge: stack.bridge,
+              publicKey: publicKey,
+              data: data,
+              signature: signature,
             ),
-    dbRecordGroupPendingKeyDistributionAttempt:
-        (id, {required lastError, required updatedAt}) =>
-            dbRecordGroupPendingKeyDistributionAttempt(
-              stack.db,
-              id,
-              lastError: lastError,
-              updatedAt: updatedAt,
-            ),
-    dbFinalizeGroupPendingKeyDistribution:
-        (id, {required status, required lastError, required finalizedAt}) =>
-            dbFinalizeGroupPendingKeyDistribution(
-              stack.db,
-              id,
-              status: status,
-              lastError: lastError,
-              finalizedAt: finalizedAt,
-            ),
-  );
-  final distributionRunner = GroupPendingKeyDistributionRunner(
-    bridge: stack.bridge,
-    groupRepo: stack.groupRepo,
-    repository: distributionRepo,
-    loadIdentity: stack.identityRepo.loadIdentity,
-    sendP2PMessage: (peerId, message) async =>
-        stack.p2pService.sendMessage(peerId, message),
-    storeP2PMessageInInbox: (peerId, message) async =>
-        stack.p2pService.storeInInbox(peerId, message),
-  );
-  setDeferredGroupKeyDistributionReopenSink(({
-    required groupId,
-    required peerId,
-    required keyEpoch,
-  }) async {
-    final now = DateTime.now().toUtc();
-    await distributionRepo.reopenForRedelivery(
-      GroupPendingKeyDistribution(
-        id: groupPendingKeyDistributionId(groupId, peerId),
-        groupId: groupId,
-        peerId: peerId,
-        keyEpoch: keyEpoch,
-        createdAt: now,
-        updatedAt: now,
+      );
+      return switch (result) {
+        HandleLinkedGroupBootstrapResult.applied => _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.applied,
+          'bootstrap_applied',
+        ),
+        HandleLinkedGroupBootstrapResult.duplicate => _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.duplicate,
+          'bootstrap_duplicate',
+        ),
+        HandleLinkedGroupBootstrapResult.terminalRejected => _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.terminalRejected,
+          'bootstrap_rejected',
+        ),
+        HandleLinkedGroupBootstrapResult.retryable => _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.retryable,
+          'bootstrap_retryable',
+        ),
+      };
+    }
+    if (outer?.type != protectedGroupAuthorityEnvelopeType) {
+      return _b1bReplayOutcome(
+        ProtectedGroupReplayDisposition.terminalRejected,
+        'unsupported_protected_type',
+      );
+    }
+    final result = await handleProtectedGroupAuthority(
+      message: message,
+      ownTransportPeerId: authority.isActiveLinkedSecondary
+          ? authority.credential!.transportPeerId
+          : identity.peerId,
+      ownMlKemSecretKey: ownMlKemSecretKey,
+      groupRepository: stack.groupRepo,
+      callDecrypt:
+          ({
+            required ownMlKemSecretKey,
+            required kem,
+            required ciphertext,
+            required nonce,
+          }) => callDecryptMessage(
+            bridge: stack.bridge,
+            ownMlKemSecretKey: ownMlKemSecretKey,
+            kem: kem,
+            ciphertext: ciphertext,
+            nonce: nonce,
+          ),
+      callVerify: ({required publicKey, required data, required signature}) =>
+          callVerifyPayload(
+            bridge: stack.bridge,
+            publicKey: publicKey,
+            data: data,
+            signature: signature,
+          ),
+      applyReplay: (control, replayData) async {
+        if (control != ProtectedGroupAuthorityControl.groupDissolve) {
+          return ProtectedGroupAuthorityApplyResult.rejected;
+        }
+        final groupId = replayData['groupId'];
+        final dissolvedAtRaw = replayData['dissolvedAt'];
+        final dissolvedBy = replayData['dissolvedBy'];
+        if (groupId is! String ||
+            dissolvedAtRaw is! String ||
+            dissolvedBy is! String) {
+          return ProtectedGroupAuthorityApplyResult.rejected;
+        }
+        final group = await stack.groupRepo.getGroup(groupId);
+        if (group == null) {
+          return ProtectedGroupAuthorityApplyResult.retryable;
+        }
+        if (group.isDissolved) {
+          return ProtectedGroupAuthorityApplyResult.duplicate;
+        }
+        final dissolvedAt = DateTime.tryParse(dissolvedAtRaw)?.toUtc();
+        if (dissolvedAt == null) {
+          return ProtectedGroupAuthorityApplyResult.rejected;
+        }
+        await stack.groupRepo.saveGroup(
+          group.copyWith(
+            isDissolved: true,
+            dissolvedAt: dissolvedAt,
+            dissolvedBy: dissolvedBy,
+            lastMembershipEventAt: dissolvedAt,
+          ),
+        );
+        return ProtectedGroupAuthorityApplyResult.applied;
+      },
+    );
+    return switch (result) {
+      ProtectedGroupAuthorityHandleResult.applied => _b1bReplayOutcome(
+        ProtectedGroupReplayDisposition.applied,
+        'authority_applied',
       ),
-    );
+      ProtectedGroupAuthorityHandleResult.duplicate => _b1bReplayOutcome(
+        ProtectedGroupReplayDisposition.duplicate,
+        'authority_duplicate',
+      ),
+      ProtectedGroupAuthorityHandleResult.terminalRejected => _b1bReplayOutcome(
+        ProtectedGroupReplayDisposition.terminalRejected,
+        'authority_rejected',
+      ),
+      ProtectedGroupAuthorityHandleResult.retryable => _b1bReplayOutcome(
+        ProtectedGroupReplayDisposition.retryable,
+        'authority_retryable',
+      ),
+      ProtectedGroupAuthorityHandleResult.prerequisiteWaiting =>
+        _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.prerequisiteWaiting,
+          'bootstrap_required',
+        ),
+    };
   });
-  setDeferredDistributionDrainSink(({required groupId, required peerId}) async {
-    await distributionRunner.drainPendingForPeer(
-      groupId: groupId,
-      peerId: peerId,
-    );
-  });
+}
 
+GroupPendingBroadcastRunner _b1bProtectedRunner(
+  GroupMultiDeviceTestStack stack,
+) => GroupPendingBroadcastRunner(
+  repository: stack.groupPendingBroadcastRepo,
+  rePush: (_) async => false,
+  protectedInboxStore: stack.p2pService,
+  pendingSiblingDeviceRepository: stack.groupRepo,
+  linkedGroupBootstrapRepository: stack.groupRepo,
+);
+
+Future<void> _runB1bConvergencePrimary() async {
+  final dbName = _dbNameForRole();
+  var stack = await setupGroupMultiDeviceStack(
+    dbName: dbName,
+    username: 'B1b Linked Secondary',
+    cliPeerFixture: null,
+    setupAsLinkedSecondary: true,
+    restrictedLinkedRuntime: true,
+  );
+  var deleteStorage = true;
   try {
-    writeSharedJson(
-      _signalName('primary_identity.json'),
-      _primaryIdentityFixture(stack.identity),
+    expect(await stack.groupRepo.getAllGroups(), isEmpty);
+    await _waitForDirectRelayReady(stack);
+    final authority = await _b1bLinkedAuthority(stack);
+    expect(authority.isActiveLinkedSecondary, isTrue);
+    final (qrResult, qrDocument) = await buildDirectLinkedDeviceQr(
+      linkedAuthority: authority,
+      accountPeerId: stack.identity.peerId,
+      accountPublicKey: stack.identity.publicKey,
+      accountPrivateKey: stack.identity.privateKey,
+      deviceMlKemPublicKey: stack.identity.mlKemPublicKey,
+      callSign: (data, privateKey) => callSignPayload(
+        bridge: stack.bridge,
+        dataToSign: data,
+        privateKey: privateKey,
+      ),
+      selector: const DirectLinkedDeviceSelector.enabled(),
     );
+    expect(qrResult, BuildDirectLinkedDeviceQrResult.success);
+    expect(qrDocument, isNotNull);
+    writeSharedJson(_signalName('linked_bootstrap_fixture.json'), {
+      'accountPeerId': stack.identity.peerId,
+      'mnemonic12': stack.identity.mnemonic12,
+      'linkedTransportPeerId': authority.credential!.transportPeerId,
+      'qrDocument': qrDocument,
+    });
+    _installB1bProtectedReplayHandler(stack);
 
-    final witness = await _generateOfflineContact(
-      bridge: stack.bridge,
-      username: 'B1b Witness',
-    );
-    await stack.contactRepo.addContact(witness);
-    final groupResult = await createGroupWithMembers(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
-      p2pService: stack.p2pService,
-      identity: stack.identity,
-      selectedContacts: [witness],
-      type: GroupType.chat,
-      name: 'B1b Sibling Convergence',
-      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
-    );
-    final groupId = groupResult.group.id;
-    final group = await stack.groupRepo.getGroup(groupId);
-    final keyInfo = await stack.groupRepo.getLatestKey(groupId);
-    final members = await stack.groupRepo.getMembers(groupId);
-    expect(group, isNotNull);
-    expect(keyInfo, isNotNull);
-    final primaryEpoch = keyInfo!.keyGeneration;
-
-    writeSharedJson(
-      _signalName('group_fixture.json'),
-      buildGroupFixture(group: group!, keyInfo: keyInfo, members: members),
-    );
-
-    // Wait for the sibling to restore + announce its fresh per-device identity.
-    final siblingDevice = await waitForSharedJson(
-      _signalName('sibling_announced.json'),
+    final authored = await waitForSharedJson(
+      _signalName('bootstrap_authored.json'),
       timeout: const Duration(minutes: 12),
     );
-    final siblingTransport = siblingDevice['transportPeerId'] as String;
-    final siblingMlKem = siblingDevice['mlKemPublicKey'] as String?;
-    final siblingSigningKey = siblingDevice['publicKey'] as String;
+    final groupId = authored['groupId'] as String;
+    await waitForCondition(() async {
+      try {
+        await stack.p2pService.drainOfflineInbox();
+      } catch (_) {}
+      return await stack.groupRepo.getGroup(groupId) != null &&
+          await stack.groupRepo.getLatestKey(groupId) != null;
+    }, timeout: const Duration(minutes: 3));
+    final materialized = await stack.groupRepo.getGroup(groupId);
+    expect(materialized, isNotNull);
+    expect(materialized!.myRole, GroupRole.admin);
+    expect(materialized.isDissolved, isFalse);
+    writeSharedText(_signalName('bootstrap_materialized'), 'ok');
 
-    // Process the device_announce that the sibling published on the group topic
-    // (best-effort; the admit below uses the announced identity directly — the
-    // admin's trust approval).
-    await drainGroupOfflineInboxForGroup(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
-      msgRepo: stack.groupMsgRepo,
-      groupId: groupId,
-      groupMessageListener: stack.groupListener,
+    final stableTransport = authority.credential!.transportPeerId;
+    await stack.teardown(deleteStorage: false);
+    deleteStorage = false;
+    stack = await setupGroupMultiDeviceStack(
+      dbName: dbName,
+      username: 'B1b Linked Secondary',
+      cliPeerFixture: null,
+      deleteExistingDb: false,
+      reuseExistingIdentity: true,
+      setupAsLinkedSecondary: true,
+      restrictedLinkedRuntime: true,
+      startGroupTopicsOnReuse: false,
     );
-
-    final outcome = await admitSiblingDeviceIfTrusted(
-      groupRepo: stack.groupRepo,
-      groupId: groupId,
-      memberPeerId: stack.identity.peerId,
-      announcedDeviceId: siblingTransport,
-      announcedTransportPeerId: siblingTransport,
-      announcedDeviceSigningPublicKey: siblingSigningKey,
-      verifiedAccountSigningPublicKey: stack.identity.publicKey,
-      announcedMlKemPublicKey: siblingMlKem,
-      multiDeviceSyncEnabled: true,
-    );
-    expect(
-      outcome,
-      SiblingDeviceAdmissionOutcome.admitted,
-      reason: 'B1b: the fresh sibling device must be admitted',
-    );
-    final selfMember = await stack.groupRepo.getMember(
-      groupId,
-      stack.identity.peerId,
-    );
-    expect(
-      selfMember!.activeDevices.any(
-        (device) => device.transportPeerId == siblingTransport,
-      ),
-      isTrue,
-      reason: 'B1b: the sibling device must land on the creator member roster',
-    );
-    writeSharedText(_signalName('primary_admitted_sibling'), 'ok');
-
-    // The admit triggered reopen+drain; also send a post-admit group message the
-    // converged sibling should receive + decrypt.
-    final postAdmitText = 'B1b post-admit from primary $configuredRunId';
-    final sendResult = await sendGroupMessage(
-      bridge: stack.bridge,
-      groupRepo: stack.groupRepo,
-      msgRepo: stack.groupMsgRepo,
-      groupId: groupId,
-      text: postAdmitText,
-      senderPeerId: stack.identity.peerId,
-      senderPublicKey: stack.identity.publicKey,
-      senderPrivateKey: stack.identity.privateKey,
-      senderUsername: stack.identity.username,
-      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
-      includeSenderPeerIdInDurableRecipients: true,
-    );
-    expect(
-      sendResult.$1,
-      anyOf(
-        SendGroupMessageResult.success,
-        SendGroupMessageResult.successNoPeers,
-      ),
-    );
-
-    writeSharedJson(_signalName('primary_verdict.json'), {
-      'primaryPeerId': stack.identity.peerId,
-      'primaryTransportPeerId': stack.p2pService.currentState.peerId,
-      'primaryMlKemPublicKey': stack.identity.mlKemPublicKey,
-      'admitOutcome': outcome.name,
-      'primaryEpoch': primaryEpoch,
-      'postAdmitText': postAdmitText,
-    });
+    deleteStorage = true;
+    await _waitForDirectRelayReady(stack);
+    final reopenedAuthority = await _b1bLinkedAuthority(stack);
+    expect(reopenedAuthority.credential!.transportPeerId, stableTransport);
+    expect(await stack.groupRepo.getGroup(groupId), isNotNull);
+    expect(await stack.groupRepo.getLatestKey(groupId), isNotNull);
+    _installB1bProtectedReplayHandler(stack);
+    writeSharedText(_signalName('linked_reopened'), 'ok');
 
     await waitForSharedSignal(
-      _signalName('sibling_complete'),
+      _signalName('dissolve_stored'),
       timeout: const Duration(minutes: 5),
     );
+    await waitForCondition(() async {
+      try {
+        await stack.p2pService.drainOfflineInbox();
+      } catch (_) {}
+      return (await stack.groupRepo.getGroup(groupId))?.isDissolved == true;
+    }, timeout: const Duration(minutes: 3));
+    final terminal = await stack.groupRepo.getGroup(groupId);
+    expect(terminal, isNotNull);
+    expect(terminal!.isDissolved, isTrue);
+    expect(await stack.groupRepo.getLatestKey(groupId), isNotNull);
+    writeSharedJson(_signalName('linked_verdict.json'), {
+      'groupId': groupId,
+      'linkedTransportPeerId': stableTransport,
+      'emptyRepositoryBeforeBootstrap': true,
+      'bootstrapMaterialized': true,
+      'preservedStorageReopened': true,
+      'terminalReadOnlyDissolve': true,
+    });
+    writeSharedText(_signalName('linked_complete'), 'ok');
   } finally {
-    setDeferredDistributionDrainSink(null);
-    setDeferredGroupKeyDistributionReopenSink(null);
-    await stack.teardown();
+    await stack.teardown(deleteStorage: deleteStorage);
+    if (!deleteStorage) {
+      await deleteTestDatabase(dbName);
+      await deleteTestSecureStore(dbName);
+    }
   }
 }
 
 Future<void> _runB1bConvergenceSibling() async {
-  final identityFixture = await waitForSharedJson(
-    _signalName('primary_identity.json'),
+  final fixture = await waitForSharedJson(
+    _signalName('linked_bootstrap_fixture.json'),
+    timeout: const Duration(minutes: 12),
   );
-  final mnemonic = identityFixture['mnemonic12'] as String?;
-  expect(
-    mnemonic,
-    isNotNull,
-    reason: 'Primary must publish a mnemonic for sibling restore',
-  );
-
+  final mnemonic = fixture['mnemonic12'] as String?;
+  final qrDocument = fixture['qrDocument'] as String?;
+  expect(mnemonic, isNotNull);
+  expect(qrDocument, isNotNull);
   final stack = await setupGroupMultiDeviceStack(
     dbName: _dbNameForRole(),
-    username: 'B1b Sibling',
+    username: 'B1b Ordinary Primary',
     cliPeerFixture: null,
     restoreMnemonic: mnemonic,
-    useFreshTransportIdentityForRestoredAccount: true,
   );
-
   try {
+    await _waitForDirectRelayReady(stack);
+    expect(stack.identity.peerId, fixture['accountPeerId']);
     expect(
+      stack.p2pService.currentState.peerId,
       stack.identity.peerId,
-      identityFixture['peerId'],
-      reason: 'Sibling must restore the same user (logical) identity',
+      reason: 'the emulator role must remain the ordinary account-primary',
     );
-    final siblingTransport = stack.p2pService.currentState.peerId!;
-    expect(
-      siblingTransport,
-      isNot(stack.identity.peerId),
-      reason: 'B1b: the restored device must use a FRESH transport peer id',
-    );
-    expect(
-      stack.identity.mlKemPublicKey,
-      isNot(identityFixture['mlKemPublicKey']),
-      reason: 'B1b: restore must mint a FRESH per-device ML-KEM key',
-    );
-
-    final fixture = await waitForSharedJson(_signalName('group_fixture.json'));
-    final groupId = await _importGroupShellForB1b(
-      stack: stack,
-      fixture: fixture,
-    );
-    // Proof precondition: the sibling has NO group key yet (the fixture key was
-    // deliberately not persisted).
-    expect(
-      await stack.groupRepo.getLatestKey(groupId),
-      isNull,
-      reason: 'B1b: sibling must start keyless (key only via redistribution)',
-    );
-
-    // Announce this fresh device to the group (account-key-signed) — exercises
-    // the real announce wire path.
-    final announcedDevice = GroupMemberDeviceIdentity(
-      deviceId: siblingTransport,
-      transportPeerId: siblingTransport,
-      deviceSigningPublicKey: stack.identity.publicKey,
-      mlKemPublicKey: stack.identity.mlKemPublicKey,
-    );
-    final announcedCount = await announceRestoredDeviceToGroups(
+    final creatorMlKem = stack.identity.mlKemPublicKey;
+    expect(creatorMlKem, isNotNull);
+    final group = await createGroup(
       bridge: stack.bridge,
       groupRepo: stack.groupRepo,
-      selfPeerId: stack.identity.peerId,
-      accountSigningPublicKey: stack.identity.publicKey,
-      accountSigningPrivateKey: stack.identity.privateKey,
-      selfUsername: stack.identity.username,
-      announcedDevice: announcedDevice,
+      name: 'B1b Linked Bootstrap',
+      type: GroupType.chat,
+      creatorPeerId: stack.identity.peerId,
+      creatorPublicKey: stack.identity.publicKey,
+      creatorMlKemPublicKey: creatorMlKem!,
+      creatorUsername: stack.identity.username,
+    );
+    final (parseResult, verifiedTarget) = await parseLinkedGroupBootstrapQr(
+      qrString: qrDocument!,
+      ownAccountPeerId: stack.identity.peerId,
+      ownAccountPublicKey: stack.identity.publicKey,
+      isOrdinaryPrimary: true,
+      callVerify: ({required publicKey, required data, required signature}) =>
+          callVerifyPayload(
+            bridge: stack.bridge,
+            publicKey: publicKey,
+            data: data,
+            signature: signature,
+          ),
+      selector: const DirectLinkedDeviceSelector.enabled(),
       multiDeviceSyncEnabled: true,
     );
-    expect(
-      announcedCount,
-      greaterThanOrEqualTo(1),
-      reason: 'B1b: the sibling must announce its device to the group',
+    expect(parseResult, ParseLinkedGroupBootstrapQrResult.success);
+    expect(verifiedTarget, isNotNull);
+    final authored = await authorLinkedGroupBootstrap(
+      groupRepository: stack.groupRepo,
+      groupId: group.id,
+      ownAccountPeerId: stack.identity.peerId,
+      ownAccountPublicKey: stack.identity.publicKey,
+      ownAccountPrivateKey: stack.identity.privateKey,
+      verifiedTarget: verifiedTarget!,
+      isOrdinaryPrimary: true,
+      callSign: (data, privateKey) => callSignPayload(
+        bridge: stack.bridge,
+        dataToSign: data,
+        privateKey: privateKey,
+      ),
+      callEncrypt: ({required recipientMlKemPublicKey, required plaintext}) =>
+          callEncryptMessage(
+            bridge: stack.bridge,
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+            plaintext: plaintext,
+          ),
+      selector: const DirectLinkedDeviceSelector.enabled(),
+      multiDeviceSyncEnabled: true,
     );
-
-    // Publish the announced device identity so the primary (admin) can admit it.
-    writeSharedJson(_signalName('sibling_announced.json'), {
-      'transportPeerId': siblingTransport,
-      'publicKey': stack.identity.publicKey,
-      if (stack.identity.mlKemPublicKey != null)
-        'mlKemPublicKey': stack.identity.mlKemPublicKey,
+    expect(authored, AuthorLinkedGroupBootstrapResult.committed);
+    writeSharedJson(_signalName('bootstrap_authored.json'), {
+      'groupId': group.id,
     });
-
-    // A restored device knows its OWN identity: register this device on the
-    // local member roster so the incoming redistribution's recipient-device
-    // binding (_isBoundToLocalRecipient) resolves. The shell fixture predates the
-    // admin's admit, so the device is otherwise absent from the local roster —
-    // this does NOT introduce the key (which still arrives only via the live
-    // 1:1 ML-KEM redistribution).
-    final selfMemberBeforeKey = await stack.groupRepo.getMember(
-      groupId,
-      stack.identity.peerId,
-    );
-    if (selfMemberBeforeKey != null &&
-        !selfMemberBeforeKey.devices.any(
-          (device) => device.transportPeerId == siblingTransport,
-        )) {
-      await stack.groupRepo.saveMember(
-        selfMemberBeforeKey.copyWith(
-          devices: [...selfMemberBeforeKey.devices, announcedDevice],
-        ),
-      );
-    }
-
+    final runner = _b1bProtectedRunner(stack);
+    await waitForCondition(() async {
+      await runner.drainForGroup(group.id);
+      return (await stack.groupPendingBroadcastRepo.forGroup(group.id)).isEmpty;
+    }, timeout: const Duration(minutes: 3));
     await waitForSharedSignal(
-      _signalName('primary_admitted_sibling'),
+      _signalName('bootstrap_materialized'),
+      timeout: const Duration(minutes: 5),
+    );
+    await waitForSharedSignal(
+      _signalName('linked_reopened'),
       timeout: const Duration(minutes: 5),
     );
 
-    // The runner now re-distributes the CURRENT group key 1:1, ML-KEM-sealed to
-    // this device's FRESH key. Drain the relay inbox so the key-update arrives;
-    // getLatestKey transitions null -> present ONLY when our GroupKeyUpdateListener
-    // decrypts that key-update with our fresh ML-KEM secret (the B1b proof).
-    await waitForCondition(() async {
-      await drainGroupOfflineInboxForGroup(
-        bridge: stack.bridge,
-        groupRepo: stack.groupRepo,
-        msgRepo: stack.groupMsgRepo,
-        groupId: groupId,
-        groupMessageListener: stack.groupListener,
-      );
-      return (await stack.groupRepo.getLatestKey(groupId)) != null;
-    }, timeout: const Duration(seconds: 120));
-    final convergedKey = await stack.groupRepo.getLatestKey(groupId);
-    expect(convergedKey, isNotNull);
-
-    // Decrypt the primary's post-admit group message (end-to-end proof).
-    final primaryVerdict = await waitForSharedJson(
-      _signalName('primary_verdict.json'),
+    final currentGroup = await stack.groupRepo.getGroup(group.id);
+    final selfMember = await stack.groupRepo.getMember(
+      group.id,
+      stack.identity.peerId,
     );
-    final postAdmitText = primaryVerdict['postAdmitText'] as String;
-    await waitForCondition(() async {
-      await drainGroupOfflineInboxForGroup(
+    expect(currentGroup, isNotNull);
+    expect(selfMember, isNotNull);
+    final senderDevice = selfMember!
+        .activeDevicesWithLegacyFallback()
+        .singleWhere(
+          (device) => device.transportPeerId == stack.identity.peerId,
+        );
+    final frozenRecipients = selfMember.activeDevicesWithLegacyFallback();
+    final dissolvedAt = DateTime.now().toUtc();
+    final transitionId = 'b1b-dissolve-${dissolvedAt.microsecondsSinceEpoch}';
+    final rows = await buildProtectedGroupAuthorityRows(
+      groupId: group.id,
+      transitionId: transitionId,
+      control: ProtectedGroupAuthorityControl.groupDissolve,
+      replayData: <String, dynamic>{
+        'groupId': group.id,
+        'dissolvedAt': dissolvedAt.toIso8601String(),
+        'dissolvedBy': stack.identity.peerId,
+      },
+      actorAccountPeerId: stack.identity.peerId,
+      actorAccountPublicKey: stack.identity.publicKey,
+      actorAccountPrivateKey: stack.identity.privateKey,
+      senderDevice: senderDevice,
+      frozenRecipients: frozenRecipients,
+      callSign: (data, privateKey) => callSignPayload(
         bridge: stack.bridge,
-        groupRepo: stack.groupRepo,
-        msgRepo: stack.groupMsgRepo,
-        groupId: groupId,
-        groupMessageListener: stack.groupListener,
-      );
-      final latest = await stack.groupMsgRepo.getLatestMessage(groupId);
-      return latest?.text == postAdmitText;
-    }, timeout: const Duration(seconds: 120));
-
+        dataToSign: data,
+        privateKey: privateKey,
+      ),
+      callEncrypt: ({required recipientMlKemPublicKey, required plaintext}) =>
+          callEncryptMessage(
+            bridge: stack.bridge,
+            recipientMlKemPublicKey: recipientMlKemPublicKey,
+            plaintext: plaintext,
+          ),
+      now: () => dissolvedAt,
+    );
+    expect(rows, hasLength(1));
     expect(
-      stack.identity.mlKemPublicKey,
-      isNot(primaryVerdict['primaryMlKemPublicKey']),
-      reason: 'B1b: sibling per-device ML-KEM must differ from the primary',
+      await persistPreparedProtectedGroupAuthority(
+        repository: stack.groupPendingBroadcastRepo,
+        rows: rows,
+      ),
+      isTrue,
     );
-    expect(siblingTransport, isNot(primaryVerdict['primaryTransportPeerId']));
-
-    writeSharedJson(_signalName('sibling_verdict.json'), {
-      'siblingPeerId': stack.identity.peerId,
-      'siblingTransportPeerId': siblingTransport,
-      'siblingMlKemPublicKey': stack.identity.mlKemPublicKey,
-      'keyEpochReceived': convergedKey!.keyGeneration,
-      'decryptedPostAdmitText': postAdmitText,
+    await waitForCondition(() async {
+      await runner.drainForGroup(group.id);
+      return (await stack.groupPendingBroadcastRepo.forGroup(group.id)).isEmpty;
+    }, timeout: const Duration(minutes: 3));
+    await stack.groupRepo.saveGroup(
+      currentGroup!.copyWith(
+        isDissolved: true,
+        dissolvedAt: dissolvedAt,
+        dissolvedBy: stack.identity.peerId,
+        lastMembershipEventAt: dissolvedAt,
+      ),
+    );
+    writeSharedText(_signalName('dissolve_stored'), 'ok');
+    await waitForSharedSignal(
+      _signalName('linked_complete'),
+      timeout: const Duration(minutes: 5),
+    );
+    writeSharedJson(_signalName('ordinary_verdict.json'), {
+      'groupId': group.id,
+      'linkedTransportPeerId': verifiedTarget.transportPeerId,
+      'bootstrapCustodyAccepted': true,
+      'dissolveCustodyAcceptedBeforeTerminalCommit': true,
     });
-    writeSharedText(_signalName('sibling_complete'), 'ok');
   } finally {
     await stack.teardown();
   }

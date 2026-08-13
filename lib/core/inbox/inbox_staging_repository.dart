@@ -42,3 +42,20 @@ abstract class InboxStagingRepository {
   /// pre-172 code terminally rejected. Content-safe rejections never count.
   Future<int> countNeedsAttentionEntries();
 }
+
+/// Optional status-only transition for protected group authority waiting on a
+/// bootstrap. It deliberately does not increment `attempt_count`, so an
+/// arbitrarily long authority-before-bootstrap race cannot quarantine itself.
+abstract interface class InboxStagingPrerequisiteWaitingRepository {
+  Future<void> markPrerequisiteWaiting(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  });
+}
+
+/// Terminal protected replay awaiting the relay's exact ACK. The local bytes
+/// stay durable but are excluded from ordinary replay/attempt accounting.
+abstract interface class InboxStagingProtectedAckPendingRepository {
+  Future<void> markProtectedAckPending(String entryId);
+}

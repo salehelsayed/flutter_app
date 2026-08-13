@@ -46,8 +46,9 @@ void main() {
   //
   // The original 270/250/380/60ms set lost that race in a batched `host-all`,
   // which runs four suites in parallel; the tests passed serially on the same
-  // tree. Tune `deadlineScale` alone if a loaded host ever needs more headroom.
-  const deadlineScale = 8;
+  // tree. The 4,000+ assertion curated groups lane needs the same additional
+  // loaded-host headroom. Tune `deadlineScale` alone if it needs more again.
+  const deadlineScale = 16;
   const storageAggregateBudget = Duration(milliseconds: 270 * deadlineScale);
   const storagePhaseBudget = Duration(milliseconds: 250 * deadlineScale);
   const observationBudget = Duration(milliseconds: 380 * deadlineScale);

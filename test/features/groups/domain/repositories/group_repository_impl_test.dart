@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
+import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/helpers/linked_group_bootstrap_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
@@ -26,7 +28,10 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
 /// 164 (cold-start-3): a [FakeSecureKeyStore] that counts write/delete/
@@ -162,6 +167,12 @@ void main() {
     Future<bool> Function(String groupId)? hasExitCleanupPending,
     Future<void> Function(Map<String, Object?> row)?
     commitDissolvedGroupOverride,
+    Future<LinkedGroupBootstrapMaterializationDbDisposition> Function({
+      required Map<String, Object?> groupRow,
+      required List<Map<String, Object?>> memberRows,
+      required Map<String, Object?> keyRow,
+    })?
+    commitLinkedBootstrapMaterializationOverride,
   }) {
     return GroupRepositoryImpl(
       dbInsertGroup: (row) => dbInsertGroup(db, row),
@@ -211,6 +222,15 @@ void main() {
       dbDeletePendingGroupKeyRotations: (groupId) =>
           dbDeletePendingGroupKeyRotations(db, groupId),
       groupKeyStore: groupKeyStore,
+      dbCommitLinkedGroupBootstrapMaterializationFn:
+          commitLinkedBootstrapMaterializationOverride ??
+          ({required groupRow, required memberRows, required keyRow}) =>
+              dbCommitLinkedGroupBootstrapMaterialization(
+                db,
+                groupRow: groupRow,
+                memberRows: memberRows,
+                keyRow: keyRow,
+              ),
       pushSharedKeyStore: pushStore,
       groupReactionProjection: projection,
       dbHasGroupExitCleanupPending: hasExitCleanupPending,
@@ -499,6 +519,194 @@ void main() {
   // --- Group tests ---
 
   group('Groups', () {
+    test(
+      'TC-363-01b protected self bootstrap commits atomically before exact relay ACK',
+      () async {
+        await db.close();
+        db = await openDatabase(inMemoryDatabasePath, version: 1);
+        await runProductionOnCreate(db, currentIdentityDatabaseVersion);
+        groupKeyStore = FakeSecureKeyStore();
+        final bootstrapRepo = makeRepo(FakeSecureKeyStore());
+        final capability = bootstrapRepo as LinkedGroupBootstrapRepository;
+        final group = makeGroup(
+          id: 'linked-bootstrap-group',
+        ).copyWith(myRole: GroupRole.admin);
+        final self = makeMember(
+          groupId: group.id,
+          peerId: 'account-self',
+          role: MemberRole.admin,
+        );
+        final witness = makeMember(
+          groupId: group.id,
+          peerId: 'peer-witness',
+          role: MemberRole.writer,
+        );
+        final key = makeKey(groupId: group.id, encryptedKey: 'raw-group-key');
+
+        expect(
+          await capability.commitLinkedGroupBootstrapMaterialization(
+            bootstrapId: 'bootstrap-one',
+            group: group,
+            members: <GroupMember>[self, witness],
+            key: key,
+          ),
+          LinkedGroupBootstrapMaterializationOutcome.committed,
+        );
+        expect(
+          (await bootstrapRepo.getGroup(group.id))?.myRole,
+          GroupRole.admin,
+        );
+        expect(await bootstrapRepo.getMembers(group.id), hasLength(2));
+        expect(
+          (await bootstrapRepo.getLatestKey(group.id))?.encryptedKey,
+          'raw-group-key',
+        );
+        final keyRow = (await db.query(
+          'group_keys',
+          where: 'group_id = ?',
+          whereArgs: <Object?>[group.id],
+        )).single;
+        final storeName = groupLinkedBootstrapKeyMaterialStoreName(
+          group.id,
+          1,
+          'bootstrap-one',
+        );
+        expect(keyRow['encrypted_key'], secureStoreReferenceForKey(storeName));
+        expect(await groupKeyStore.read(storeName), 'raw-group-key');
+
+        expect(
+          await capability.commitLinkedGroupBootstrapMaterialization(
+            bootstrapId: 'bootstrap-one',
+            group: group,
+            members: <GroupMember>[self, witness],
+            key: key,
+          ),
+          LinkedGroupBootstrapMaterializationOutcome.duplicate,
+        );
+        expect(
+          await capability.commitLinkedGroupBootstrapMaterialization(
+            bootstrapId: 'bootstrap-one',
+            group: group.copyWith(myRole: GroupRole.member),
+            members: <GroupMember>[self, witness],
+            key: key,
+          ),
+          LinkedGroupBootstrapMaterializationOutcome.refusedConflict,
+          reason:
+              'a replay can never hard-code or demote the signed admin role',
+        );
+
+        final pendingDevice = PendingSiblingDevice(
+          groupId: group.id,
+          memberPeerId: self.peerId,
+          deviceId: 'linked-device',
+          transportPeerId: 'linked-transport',
+          deviceSigningPublicKey: 'linked-signing-key',
+          mlKemPublicKey: 'linked-mlkem',
+          keyPackageId: 'linked-key-package',
+          verifiedAccountSigningPublicKey: 'account-signing-key',
+          announcedAt: now,
+        );
+        final pendingBroadcast = GroupPendingBroadcast(
+          id: 'linked-bootstrap:bootstrap-one',
+          groupId: group.id,
+          kind: groupPendingBroadcastKindLinkedBootstrap,
+          sysText: '{"protected":"exact"}',
+          recipientPeerIds: const <String>['linked-transport'],
+          eventAt: now,
+          sourceMessageId: 'bootstrap-one',
+          createdAt: now,
+          updatedAt: now,
+        );
+        await db.insert('pending_sibling_devices', pendingDevice.toMap());
+        await db.insert('pending_group_broadcasts', pendingBroadcast.toMap());
+        await db.update(
+          'pending_group_broadcasts',
+          <String, Object?>{
+            'updated_at': now.add(const Duration(seconds: 1)).toIso8601String(),
+          },
+          where: 'id = ?',
+          whereArgs: <Object?>[pendingBroadcast.id],
+        );
+        expect(
+          await dbCompleteLinkedGroupBootstrapCustody(
+            db,
+            expectedDevice: pendingDevice.toMap(),
+            expectedBroadcast: pendingBroadcast.toMap(),
+          ),
+          isFalse,
+          reason: 'an inexact paired owner cannot trigger a partial delete',
+        );
+        expect(await db.query('pending_sibling_devices'), hasLength(1));
+        expect(await db.query('pending_group_broadcasts'), hasLength(1));
+
+        await db.update(
+          'pending_group_broadcasts',
+          pendingBroadcast.toMap(),
+          where: 'id = ?',
+          whereArgs: <Object?>[pendingBroadcast.id],
+        );
+        expect(
+          await dbCompleteLinkedGroupBootstrapCustody(
+            db,
+            expectedDevice: pendingDevice.toMap(),
+            expectedBroadcast: pendingBroadcast.toMap(),
+          ),
+          isTrue,
+        );
+        expect(await db.query('pending_sibling_devices'), isEmpty);
+        expect(await db.query('pending_group_broadcasts'), isEmpty);
+
+        final refusedStore = FakeSecureKeyStore();
+        groupKeyStore = refusedStore;
+        final refusingRepo = makeRepo(
+          FakeSecureKeyStore(),
+          commitLinkedBootstrapMaterializationOverride:
+              ({
+                required groupRow,
+                required memberRows,
+                required keyRow,
+              }) async => LinkedGroupBootstrapMaterializationDbDisposition
+                  .refusedConflict,
+        );
+        final secondGroup = makeGroup(id: 'refused-bootstrap');
+        final secondKey = makeKey(
+          groupId: secondGroup.id,
+          encryptedKey: 'must-be-purged',
+        );
+        expect(
+          await (refusingRepo as LinkedGroupBootstrapRepository)
+              .commitLinkedGroupBootstrapMaterialization(
+                bootstrapId: 'bootstrap-refused',
+                group: secondGroup,
+                members: <GroupMember>[
+                  makeMember(groupId: secondGroup.id, peerId: 'account-self'),
+                ],
+                key: secondKey,
+              ),
+          LinkedGroupBootstrapMaterializationOutcome.refusedConflict,
+        );
+        expect(
+          await refusedStore.containsKey(
+            groupLinkedBootstrapKeyMaterialStoreName(
+              secondGroup.id,
+              1,
+              'bootstrap-refused',
+            ),
+          ),
+          isFalse,
+          reason: 'SQL refusal purges deterministic pre-commit key staging',
+        );
+        expect(
+          await db.query(
+            'groups',
+            where: 'id = ?',
+            whereArgs: <Object?>[secondGroup.id],
+          ),
+          isEmpty,
+        );
+      },
+    );
+
     test('saveGroup and getGroup round-trip', () async {
       final group = makeGroup();
       await repo.saveGroup(group);

@@ -53,6 +53,7 @@ import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts
 import 'package:flutter_app/core/database/helpers/pending_group_invites_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/intro_review_seen_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/linked_group_bootstrap_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/manage_pending_sibling_device.dart';
 import 'package:flutter_app/core/secure_storage/ml_kem_secret_ring.dart';
 import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart';
@@ -63,6 +64,7 @@ import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_h
 import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
 import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_exit_diagnostics_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_reactions_db_helpers.dart';
@@ -174,6 +176,10 @@ import 'package:flutter_app/features/conversation/application/strict_direct_medi
 import 'package:flutter_app/features/conversation/application/verify_inbox_custody_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
+import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
+import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_pending_key_repair_repository_impl.dart';
@@ -506,6 +512,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // 1. Create secure key store
     final secureKeyStore = FlutterSecureKeyStore();
+    final linkedInstallationAuthority = LinkedInstallationAuthority(
+      secureKeyStore: secureKeyStore,
+    );
     final SecureKeyStore? sharedPushKeyStore =
         !kIsWeb && Platform.isIOS && !isGroupMediaIosDisposableProfile
         ? FlutterSecureKeyStore(appleAccessGroup: mknoonSharedAppleAccessGroup)
@@ -1786,6 +1795,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 reasonCode: reasonCode,
                 reasonDetail: reasonDetail,
               ),
+      dbMarkInboxStagingEntryPrerequisiteWaiting:
+          (entryId, {required reasonCode, reasonDetail}) =>
+              dbMarkInboxStagingEntryPrerequisiteWaiting(
+                db,
+                entryId,
+                reasonCode: reasonCode,
+                reasonDetail: reasonDetail,
+              ),
+      dbMarkInboxStagingEntryProtectedAckPending: (entryId) =>
+          dbMarkInboxStagingEntryProtectedAckPending(db, entryId),
       dbMarkInboxStagingEntryRejected:
           (entryId, {required reasonCode, reasonDetail}) =>
               dbMarkInboxStagingEntryRejected(
@@ -3268,6 +3287,49 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           dbLoadPendingSiblingDevice(db, groupId, memberPeerId, deviceId),
       dbDeletePendingSiblingDevice: (groupId, memberPeerId, deviceId) =>
           dbDeletePendingSiblingDevice(db, groupId, memberPeerId, deviceId),
+      dbCommitLinkedGroupBootstrapAuthoringFn:
+          ({
+            required expectedGroup,
+            required expectedMembers,
+            required expectedSelfMember,
+            required expectedLatestKeyGeneration,
+            required expectedLatestKeyCreatedAt,
+            required updatedSelfMember,
+            required pendingDevice,
+            required pendingBroadcast,
+          }) => dbCommitLinkedGroupBootstrapAuthoring(
+            db,
+            expectedGroup: expectedGroup,
+            expectedMembers: expectedMembers,
+            expectedSelfMember: expectedSelfMember,
+            expectedLatestKeyGeneration: expectedLatestKeyGeneration,
+            expectedLatestKeyCreatedAt: expectedLatestKeyCreatedAt,
+            updatedSelfMember: updatedSelfMember,
+            pendingDevice: pendingDevice,
+            pendingBroadcast: pendingBroadcast,
+          ),
+      dbCompleteLinkedGroupBootstrapCustodyFn:
+          ({required expectedDevice, required expectedBroadcast}) =>
+              dbCompleteLinkedGroupBootstrapCustody(
+                db,
+                expectedDevice: expectedDevice,
+                expectedBroadcast: expectedBroadcast,
+              ),
+      dbCommitLinkedGroupBootstrapMaterializationFn:
+          ({required groupRow, required memberRows, required keyRow}) =>
+              dbCommitLinkedGroupBootstrapMaterialization(
+                db,
+                groupRow: groupRow,
+                memberRows: memberRows,
+                keyRow: keyRow,
+              ),
+      dbHasLinkedGroupBootstrapIntentFn:
+          ({required groupId, required transportPeerId}) =>
+              dbHasLinkedGroupBootstrapIntent(
+                db,
+                groupId: groupId,
+                transportPeerId: transportPeerId,
+              ),
       dbLoadGroupRejoinStatesFn: () => dbLoadGroupRejoinStates(db),
       dbRecordGroupRejoinFailureFn: (groupId, {required nextEligibleAtMs}) =>
           dbRecordGroupRejoinFailure(
@@ -6159,6 +6221,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // runner re-pushes on app resume / rejoin.
     final groupPendingBroadcastRepository = GroupPendingBroadcastRepositoryImpl(
       dbInsert: (row) => dbInsertPendingGroupBroadcast(db, row),
+      dbInsertProtectedBatch: (rows) =>
+          dbInsertPendingGroupBroadcastsAtomically(db, rows),
       dbLoadForGroup: (groupId) =>
           dbLoadPendingGroupBroadcastsForGroup(db, groupId),
       dbLoadAll: () => dbLoadAllPendingGroupBroadcasts(db),
@@ -6169,9 +6233,20 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           dbDeletePendingGroupBroadcastIfExact(db, expected),
       dbDeleteForGroup: (groupId) =>
           dbDeletePendingGroupBroadcastsForGroup(db, groupId),
+      dbRemoveRecipientIfExact:
+          ({required expected, required recipientPeerId, required updatedAt}) =>
+              dbRemovePendingGroupBroadcastRecipientIfExact(
+                db,
+                expected: expected,
+                recipientPeerId: recipientPeerId,
+                updatedAt: updatedAt,
+              ),
     );
     final groupPendingBroadcastRunner = GroupPendingBroadcastRunner(
       repository: groupPendingBroadcastRepository,
+      protectedInboxStore: p2pService,
+      pendingSiblingDeviceRepository: groupRepository,
+      linkedGroupBootstrapRepository: groupRepository,
       rePushFinalizesSuccess: true,
       rePush: buildGroupPendingBroadcastRePush(
         bridge: bridge,
@@ -6179,6 +6254,95 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         loadIdentity: repository.loadIdentity,
         pendingRepository: groupPendingBroadcastRepository,
       ),
+    );
+    setProtectedGroupAuthorityAdapter(
+      prepare: (request) async {
+        final rows = await buildProtectedGroupAuthorityRows(
+          groupId: request.groupId,
+          transitionId: request.transitionId,
+          control: request.control,
+          replayData: request.replayData,
+          actorAccountPeerId: request.actorAccountPeerId,
+          actorAccountPublicKey: request.actorAccountPublicKey,
+          actorAccountPrivateKey: request.actorAccountPrivateKey,
+          senderDevice: request.senderDevice,
+          frozenRecipients: request.frozenRecipients,
+          deliveryRecipients: request.deliveryRecipients,
+          callSign: (data, privateKey) => callSignPayload(
+            bridge: bridge,
+            dataToSign: data,
+            privateKey: privateKey,
+          ),
+          callEncrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) =>
+                  callEncryptMessage(
+                    bridge: bridge,
+                    recipientMlKemPublicKey: recipientMlKemPublicKey,
+                    plaintext: plaintext,
+                  ),
+        );
+        final preparation = ProtectedGroupAuthorityPreparation(
+          groupId: request.groupId,
+          rows: rows,
+        );
+        if (rows.isEmpty) return preparation;
+        if (await persistPreparedProtectedGroupAuthority(
+          repository: groupPendingBroadcastRepository,
+          rows: rows,
+        )) {
+          return preparation;
+        }
+
+        // A deterministic retry may re-mint after a crash while its earlier
+        // exact bytes are still pending. Recover those persisted bytes by the
+        // target-qualified identity and drain them; never overwrite them with
+        // newly encrypted bytes sharing the same v86 source id.
+        final expectedById = <String, GroupPendingBroadcast>{
+          for (final row in rows) row.id: row,
+        };
+        final persisted = await groupPendingBroadcastRepository.forGroup(
+          request.groupId,
+        );
+        final recovered = persisted
+            .where((candidate) {
+              final expected = expectedById[candidate.id];
+              return expected != null &&
+                  candidate.kind == expected.kind &&
+                  candidate.groupId == expected.groupId &&
+                  candidate.sourceMessageId == expected.sourceMessageId &&
+                  candidate.recipientPeerIds.length == 1 &&
+                  candidate.recipientPeerIds.single ==
+                      expected.recipientPeerIds.single;
+            })
+            .toList(growable: false);
+        return recovered.length == rows.length
+            ? ProtectedGroupAuthorityPreparation(
+                groupId: request.groupId,
+                rows: recovered,
+              )
+            : null;
+      },
+      activate: (preparation, {required requireAllCustody}) async {
+        await groupPendingBroadcastRunner.drainForGroup(preparation.groupId);
+        if (!requireAllCustody) return true;
+        final pending = await groupPendingBroadcastRepository.forGroup(
+          preparation.groupId,
+        );
+        final pendingIds = pending.map((row) => row.id).toSet();
+        return preparation.rows.every((row) => !pendingIds.contains(row.id));
+      },
+      cancel: (preparation) async {
+        var removed = true;
+        for (final row in preparation.rows) {
+          removed =
+              await removeGroupPendingBroadcastIfExact(
+                groupPendingBroadcastRepository,
+                row,
+              ) &&
+              removed;
+        }
+        return removed;
+      },
     );
     setGroupPendingBroadcastEnqueueSink(
       groupPendingBroadcastRepository.enqueue,
@@ -6588,6 +6752,193 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             createdAt: createdAt,
           ),
     );
+
+    // 363: the protected P2P coordinator owns stage-before-handler and
+    // handler-before-ACK. Installing this callback does not start group topic,
+    // history, invite, notification, or content listeners on a linked role.
+    p2pService.setProtectedGroupReplayHandler((message) async {
+      final identity = await repository.loadIdentity();
+      if (identity == null ||
+          identity.mlKemPublicKey == null ||
+          identity.mlKemSecretKey == null) {
+        return (
+          disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
+          reasonCode: 'linked_identity_unavailable',
+          reasonDetail: null,
+        );
+      }
+      final authority = await linkedInstallationAuthority.load(
+        expectedAccountPeerId: identity.peerId,
+      );
+      final envelope = ProtectedGroupEnvelope.tryParse(message.content);
+      if (envelope?.type == linkedGroupBootstrapEnvelopeType) {
+        final result = await handleLinkedGroupBootstrapEnvelope(
+          message: message,
+          linkedAuthority: authority,
+          ownMlKemPublicKey: identity.mlKemPublicKey!,
+          ownMlKemSecretKey: identity.mlKemSecretKey!,
+          groupRepository: groupRepository,
+          callDecrypt:
+              ({
+                required ownMlKemSecretKey,
+                required kem,
+                required ciphertext,
+                required nonce,
+              }) => callDecryptMessage(
+                bridge: bridge,
+                ownMlKemSecretKey: ownMlKemSecretKey,
+                kem: kem,
+                ciphertext: ciphertext,
+                nonce: nonce,
+              ),
+          callVerify:
+              ({required publicKey, required data, required signature}) =>
+                  callVerifyPayload(
+                    bridge: bridge,
+                    publicKey: publicKey,
+                    data: data,
+                    signature: signature,
+                  ),
+        );
+        return switch (result) {
+          HandleLinkedGroupBootstrapResult.applied => (
+            disposition: ProtectedGroupReplayDisposition.applied,
+            reasonCode: 'bootstrap_applied',
+            reasonDetail: null,
+          ),
+          HandleLinkedGroupBootstrapResult.duplicate => (
+            disposition: ProtectedGroupReplayDisposition.duplicate,
+            reasonCode: 'bootstrap_duplicate',
+            reasonDetail: null,
+          ),
+          HandleLinkedGroupBootstrapResult.terminalRejected => (
+            disposition: ProtectedGroupReplayDisposition.terminalRejected,
+            reasonCode: 'bootstrap_rejected',
+            reasonDetail: null,
+          ),
+          HandleLinkedGroupBootstrapResult.retryable => (
+            disposition: ProtectedGroupReplayDisposition.retryable,
+            reasonCode: 'bootstrap_retryable',
+            reasonDetail: null,
+          ),
+        };
+      }
+      if (envelope?.type != protectedGroupAuthorityEnvelopeType) {
+        return (
+          disposition: ProtectedGroupReplayDisposition.terminalRejected,
+          reasonCode: 'unknown_protected_group_type',
+          reasonDetail: null,
+        );
+      }
+      final result = await handleProtectedGroupAuthority(
+        message: message,
+        ownTransportPeerId: authority.isActiveLinkedSecondary
+            ? authority.credential!.transportPeerId
+            : identity.peerId,
+        ownMlKemSecretKey: identity.mlKemSecretKey!,
+        groupRepository: groupRepository,
+        callDecrypt:
+            ({
+              required ownMlKemSecretKey,
+              required kem,
+              required ciphertext,
+              required nonce,
+            }) => callDecryptMessage(
+              bridge: bridge,
+              ownMlKemSecretKey: ownMlKemSecretKey,
+              kem: kem,
+              ciphertext: ciphertext,
+              nonce: nonce,
+            ),
+        callVerify: ({required publicKey, required data, required signature}) =>
+            callVerifyPayload(
+              bridge: bridge,
+              publicKey: publicKey,
+              data: data,
+              signature: signature,
+            ),
+        applyReplay: (control, replayData) async {
+          try {
+            final before = await protectedGroupAuthorityReplayConverged(
+              control: control,
+              replayData: replayData,
+              groupRepository: groupRepository,
+            );
+            if (before == null) {
+              return ProtectedGroupAuthorityApplyResult.rejected;
+            }
+            if (before) {
+              return ProtectedGroupAuthorityApplyResult.duplicate;
+            }
+            if (control == ProtectedGroupAuthorityControl.groupKeyUpdate) {
+              final content = replayData['content'];
+              final from = replayData['from'];
+              final to = replayData['to'];
+              final timestamp = replayData['timestamp'];
+              if (content is! String ||
+                  from is! String ||
+                  to is! String ||
+                  timestamp is! String) {
+                return ProtectedGroupAuthorityApplyResult.rejected;
+              }
+              await groupKeyUpdateListener.handleProtectedEnvelope(
+                ChatMessage(
+                  from: from,
+                  to: to,
+                  content: content,
+                  timestamp: timestamp,
+                  isIncoming: true,
+                ),
+              );
+            } else {
+              await groupMessageListener.handleReplayEnvelope(
+                replayData,
+                rethrowOnError: true,
+                allowMembershipBuffer: true,
+              );
+            }
+            final after = await protectedGroupAuthorityReplayConverged(
+              control: control,
+              replayData: replayData,
+              groupRepository: groupRepository,
+            );
+            if (after != true) {
+              return ProtectedGroupAuthorityApplyResult.retryable;
+            }
+            return ProtectedGroupAuthorityApplyResult.applied;
+          } catch (_) {
+            return ProtectedGroupAuthorityApplyResult.retryable;
+          }
+        },
+      );
+      return switch (result) {
+        ProtectedGroupAuthorityHandleResult.applied => (
+          disposition: ProtectedGroupReplayDisposition.applied,
+          reasonCode: 'authority_applied',
+          reasonDetail: null,
+        ),
+        ProtectedGroupAuthorityHandleResult.duplicate => (
+          disposition: ProtectedGroupReplayDisposition.duplicate,
+          reasonCode: 'authority_duplicate',
+          reasonDetail: null,
+        ),
+        ProtectedGroupAuthorityHandleResult.terminalRejected => (
+          disposition: ProtectedGroupReplayDisposition.terminalRejected,
+          reasonCode: 'authority_rejected',
+          reasonDetail: null,
+        ),
+        ProtectedGroupAuthorityHandleResult.retryable => (
+          disposition: ProtectedGroupReplayDisposition.retryable,
+          reasonCode: 'authority_retryable',
+          reasonDetail: null,
+        ),
+        ProtectedGroupAuthorityHandleResult.prerequisiteWaiting => (
+          disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
+          reasonCode: 'bootstrap_required',
+          reasonDetail: null,
+        ),
+      };
+    });
 
     // Slice 2 / UDM-G — admin-side responder for the active key-pull. Re-delivers
     // the EXACT requested epoch (never mints a new one), gated by signed-request
@@ -7268,6 +7619,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // mode, because every one of those owners assumes a single primary
     // installation on one account mailbox. Plan 361 makes them device-aware.
     final roleAwareDeferredRuntimeStart = RoleAwareDeferredRuntimeStart(
+      hasIdentity: () async => await repository.loadIdentity() != null,
       // 360: bind the load to the CURRENT account peer. Without the expected
       // peer, a credential bound to a different logical account resolves as a
       // usable `active` snapshot instead of `failClosed`, and this installation
@@ -7276,9 +7628,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         final identity = await repository.loadIdentity();
         // 361: cache the account peer for the route-push fanout resolver.
         lastKnownAccountPeerId = identity?.peerId;
-        return LinkedInstallationAuthority(
-          secureKeyStore: secureKeyStore,
-        ).load(expectedAccountPeerId: identity?.peerId);
+        return linkedInstallationAuthority.load(
+          expectedAccountPeerId: identity?.peerId,
+        );
       },
       startPrimaryRuntimeServices: startLiveServicesIfAllowed,
       // 361: the restricted linked runtime starts ONLY the exact direct
@@ -7297,6 +7649,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           drainOfflineInbox: p2pService.drainOfflineInbox,
           drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,
           drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
+          materializeLinkedGroupBootstrap: p2pService.drainOfflineInbox,
+          replayLinkedGroupAuthority: p2pService.drainOfflineInbox,
+          refreshLinkedGroupList: refreshLinkedGroupStatusProjection,
         );
         return linkedServices.start();
       },
@@ -7465,6 +7820,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         // 362: the linked-scoped converger; distinct from the unrestricted
         // drain on the line above, which stays the primary's.
         drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
+        drainLinkedGroupBootstrap: p2pService.drainOfflineInbox,
+        replayLinkedGroupAuthority: p2pService.drainOfflineInbox,
+        refreshLinkedGroupList: refreshLinkedGroupStatusProjection,
+        flushLinkedGroupAuthorityOnPause: () async {
+          await groupPendingBroadcastRunner.drainProtectedAll();
+        },
         pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
         pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,
         pendingPostFollowOnRetrier: pendingPostFollowOnRetrier,
@@ -7556,9 +7917,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                   secureKeyStore: secureKeyStore,
                 ),
             explicitErasePreconditionSatisfied: true,
-            linkedInstallationAuthority: LinkedInstallationAuthority(
-              secureKeyStore: secureKeyStore,
-            ),
+            linkedInstallationAuthority: linkedInstallationAuthority,
           );
           if (precondition.status ==
               AccountMigrationImportPreconditionStatus

@@ -5,10 +5,12 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_distribution.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_key_distribution_repository.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 
@@ -126,6 +128,112 @@ void main() {
     expect(row!.status, groupPendingKeyDistributionStatusDistributed);
     expect(row.finalizedAt, isNotNull);
   });
+
+  test(
+    'protected deferred distribution waits for every current physical target without burning attempts',
+    () async {
+      await seedGroup(daveMlKem: 'daveMlKem');
+      final self = await groupRepo.getMember(groupId, selfPeerId);
+      await groupRepo.saveMember(
+        self!.copyWith(
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: selfPeerId,
+              transportPeerId: selfPeerId,
+              deviceSigningPublicKey: 'selfPubKey',
+              mlKemPublicKey: 'selfMlKem',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'self-linked-device',
+              transportPeerId: 'self-linked-transport',
+              deviceSigningPublicKey: 'self-linked-public-key',
+              mlKemPublicKey: 'self-linked-mlkem',
+            ),
+          ],
+        ),
+      );
+      final dave = await groupRepo.getMember(groupId, 'peer-dave');
+      await groupRepo.saveMember(
+        dave!.copyWith(
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'dave-a',
+              transportPeerId: 'dave-transport-a',
+              deviceSigningPublicKey: 'dave-public-a',
+              mlKemPublicKey: 'dave-mlkem-a',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'dave-b',
+              transportPeerId: 'dave-transport-b',
+              deviceSigningPublicKey: 'dave-public-b',
+              mlKemPublicKey: 'dave-mlkem-b',
+            ),
+          ],
+        ),
+      );
+      await pendingRepo.enqueue(daveRow());
+      final activationResults = <bool>[true, false, true, true];
+      var activationIndex = 0;
+      setProtectedGroupAuthorityAdapter(
+        prepare: (request) async {
+          final instant = DateTime.utc(2026, 8, 13);
+          final recipient = request.deliveryRecipients!.single.transportPeerId;
+          return ProtectedGroupAuthorityPreparation(
+            groupId: request.groupId,
+            rows: <GroupPendingBroadcast>[
+              GroupPendingBroadcast(
+                id: 'protected-$recipient',
+                groupId: request.groupId,
+                kind: groupPendingBroadcastKindProtectedAuthority,
+                sysText: '{}',
+                recipientPeerIds: <String>[recipient],
+                eventAt: instant,
+                sourceMessageId: 'source-$recipient',
+                createdAt: instant,
+                updatedAt: instant,
+              ),
+            ],
+          );
+        },
+        activate: (_, {required requireAllCustody}) async {
+          expect(requireAllCustody, isTrue);
+          return activationResults[activationIndex++];
+        },
+        cancel: (_) async => true,
+      );
+      addTearDown(() => setProtectedGroupAuthorityAdapter());
+      var ordinarySends = 0;
+      final protectedRunner = runner(
+        send: (_, _) async {
+          ordinarySends++;
+          return true;
+        },
+      );
+
+      expect(
+        await protectedRunner.drainPendingForPeer(
+          groupId: groupId,
+          peerId: 'peer-dave',
+        ),
+        0,
+      );
+      var row = await pendingRepo.getDistribution(daveRowId);
+      expect(row?.status, groupPendingKeyDistributionStatusPending);
+      expect(row?.attempts, 0);
+
+      expect(
+        await protectedRunner.drainPendingForPeer(
+          groupId: groupId,
+          peerId: 'peer-dave',
+        ),
+        1,
+      );
+      row = await pendingRepo.getDistribution(daveRowId);
+      expect(row?.status, groupPendingKeyDistributionStatusDistributed);
+      expect(ordinarySends, 0);
+      expect(activationIndex, 4);
+    },
+  );
 
   test('stays pending while the target is still keyless', () async {
     await seedGroup(daveMlKem: null);

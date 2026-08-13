@@ -16,6 +16,28 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
+func TestTC363GroupProtectedCustodyKinds(t *testing.T) {
+	t.Parallel()
+
+	for _, kind := range []string{
+		CustodyKindGroupBootstrapV1,
+		CustodyKindGroupAuthorityV1,
+	} {
+		if !isSupportedInboxCustodyKind(kind) {
+			t.Fatalf("group custody kind %q is not registered", kind)
+		}
+	}
+	for _, kind := range []string{
+		"group_message",
+		"group_reaction_v1",
+		"group_bootstrap_v2",
+	} {
+		if isSupportedInboxCustodyKind(kind) {
+			t.Fatalf("unsupported group/content kind %q was admitted", kind)
+		}
+	}
+}
+
 type ackCustodyTestRelay struct {
 	host host.Host
 

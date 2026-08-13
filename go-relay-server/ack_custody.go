@@ -17,6 +17,8 @@ const (
 	ackCustodyDirectTextKind              = "direct_text_v108"
 	ackCustodyDirectReactionKind          = "direct_reaction_v109"
 	ackCustodyDirectMutationKind          = "direct_mutation_v109"
+	ackCustodyGroupBootstrapKind          = "group_bootstrap_v1"
+	ackCustodyGroupAuthorityKind          = "group_authority_v1"
 	ackCustodyAdmissionEnabledEnv         = "DIRECT_INBOX_ACK_CUSTODY_ADMISSION_ENABLED"
 	ackCustodyErrorAdmissionDisabled      = "CUSTODY_ADMISSION_DISABLED"
 	ackCustodyErrorIdentityConflict       = "CUSTODY_IDENTITY_CONFLICT"
@@ -133,6 +135,20 @@ func extractAckCustodyDedupeKey(
 	message string,
 	authenticatedSender string,
 ) (string, bool) {
+	return extractAckCustodyDedupeKeyForRecipient(
+		custodyKind,
+		message,
+		authenticatedSender,
+		"",
+	)
+}
+
+func extractAckCustodyDedupeKeyForRecipient(
+	custodyKind string,
+	message string,
+	authenticatedSender string,
+	expectedRecipient string,
+) (string, bool) {
 	var envelope map[string]interface{}
 	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
 		return "", false
@@ -236,9 +252,81 @@ func extractAckCustodyDedupeKey(
 		default:
 			return "", false
 		}
+	case ackCustodyGroupBootstrapKind, ackCustodyGroupAuthorityKind:
+		if !hasExactJSONKeys(
+			envelope,
+			"type",
+			"version",
+			"id",
+			"senderPeerId",
+			"recipientPeerId",
+			"encrypted",
+		) || expectedRecipient == "" ||
+			exactString(envelope["version"]) != "1" ||
+			exactString(envelope["recipientPeerId"]) != expectedRecipient {
+			return "", false
+		}
+		wantType := "linked_group_bootstrap_v1"
+		prefix := "group-bootstrap-id:"
+		if custodyKind == ackCustodyGroupAuthorityKind {
+			wantType = "group_authority_v1"
+			prefix = "group-authority-id:"
+		}
+		logicalID := exactString(envelope["id"])
+		if exactString(envelope["type"]) != wantType || !validProtectedGroupLogicalID(logicalID) {
+			return "", false
+		}
+		return prefix + logicalID, true
 	default:
 		return "", false
 	}
+}
+
+func validProtectedGroupLogicalID(value string) bool {
+	if value == "" || len(value) > 512 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') ||
+			(r >= 'A' && r <= 'Z') ||
+			(r >= '0' && r <= '9') ||
+			r == '.' || r == '_' || r == ':' || r == '-' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// extractStoredAckCustodyDedupeKey reconstructs the namespace-qualified key
+// for rows already accepted into custody. Direct envelopes retain their frozen
+// parser; protected group envelopes are revalidated against the stored stream
+// sender and recipient before they may participate in duplicate detection.
+func extractStoredAckCustodyDedupeKey(
+	message string,
+	authenticatedSender string,
+	expectedRecipient string,
+) string {
+	// Try the strict protected shapes first: the frozen legacy helper falls
+	// back to any outer `id`, which would otherwise collapse these namespaces
+	// into `target-id:` before their exact type/recipient can be considered.
+	for _, kind := range []string{
+		ackCustodyGroupBootstrapKind,
+		ackCustodyGroupAuthorityKind,
+	} {
+		if key, ok := extractAckCustodyDedupeKeyForRecipient(
+			kind,
+			message,
+			authenticatedSender,
+			expectedRecipient,
+		); ok {
+			return key
+		}
+	}
+	if directKey := extractDirectInboxDedupeKey(message); directKey != "" {
+		return directKey
+	}
+	return ""
 }
 
 func (is *InboxStore) SetAckCustodyAdmissionEnabled(enabled bool) {
@@ -266,10 +354,11 @@ func (is *InboxStore) StoreAckCustody(
 		return "", inboxMessage{}, errAckCustodyBackendUnavailable
 	}
 
-	dedupeKey, eligible := extractAckCustodyDedupeKey(
+	dedupeKey, eligible := extractAckCustodyDedupeKeyForRecipient(
 		custodyKind,
 		entry.Message,
 		entry.From,
+		toPeerID,
 	)
 	if !eligible {
 		recordAckCustodyStoreResult(ackCustodyStoreMetricIneligible)

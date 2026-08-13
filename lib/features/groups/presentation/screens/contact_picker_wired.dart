@@ -24,6 +24,7 @@ import 'package:flutter_app/features/groups/application/group_membership_update_
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/application/group_sender_device_binding.dart';
 import 'package:flutter_app/features/groups/application/record_group_invite_delivery_attempts.dart';
@@ -374,6 +375,126 @@ class _ContactPickerWiredState extends State<ContactPickerWired> {
             newMember: newMember,
             selfPeerId: identity.peerId,
             syncBridgeConfig: false,
+            prepareAuthority: !hasProtectedGroupAuthorityAdapter
+                ? null
+                : ({
+                    required group,
+                    required members,
+                    required addedMember,
+                    required eventAt,
+                    required eventId,
+                  }) async {
+                    if (!hasProtectedGroupPhysicalAuthority(members)) {
+                      return null;
+                    }
+                    final senderBinding = await resolveGroupSenderDeviceBinding(
+                      groupRepo: widget.groupRepo,
+                      groupId: group.id,
+                      senderPeerId: identity.peerId,
+                      preferredDeviceId: _currentSenderDeviceId,
+                      preferredTransportPeerId: _currentSenderDeviceId,
+                      senderPublicKey: identity.publicKey,
+                    );
+                    final actors = members
+                        .where(
+                          (candidate) => candidate.peerId == identity.peerId,
+                        )
+                        .toList(growable: false);
+                    if (actors.length != 1) {
+                      throw StateError(
+                        'Member-add actor authority is ambiguous',
+                      );
+                    }
+                    final senderDevice = resolveProtectedGroupSenderDevice(
+                      actor: actors.single,
+                      senderPublicKey:
+                          senderBinding.devicePublicKey ?? identity.publicKey,
+                      senderDeviceId: senderBinding.deviceId,
+                      senderTransportPeerId:
+                          senderBinding.transportPeerId ?? identity.peerId,
+                    );
+                    if (senderDevice == null) {
+                      throw StateError(
+                        'Member-add sender device is not authoritative',
+                      );
+                    }
+                    final proposedMembers = <GroupMember>[
+                      ...members,
+                      addedMember,
+                    ];
+                    final systemPayload = <String, dynamic>{
+                      '__sys': 'member_added',
+                      'member': addedMember.toConfigJson(),
+                      'groupConfig': buildGroupConfigPayload(
+                        group.copyWith(lastMembershipEventAt: eventAt),
+                        proposedMembers,
+                        configVersionOverride: eventAt,
+                      ),
+                    };
+                    final signedPayload =
+                        await signGroupSystemTransitionPayload(
+                          bridge: widget.bridge,
+                          groupRepo: widget.groupRepo,
+                          groupId: group.id,
+                          transitionType: 'member_added',
+                          sourceEventId: eventId,
+                          eventAt: eventAt,
+                          actorPeerId: identity.peerId,
+                          actorUsername: identity.username,
+                          actorSigningPublicKey: identity.publicKey,
+                          actorPrivateKey: identity.privateKey,
+                          actorDeviceId: senderBinding.deviceId,
+                          actorTransportPeerId: senderBinding.transportPeerId,
+                          actorKeyPackageId: senderBinding.keyPackageId,
+                          preTransitionStateHash:
+                              await buildGroupTransitionStateHash(
+                                widget.groupRepo,
+                                group.id,
+                              ),
+                          systemPayload: systemPayload,
+                        );
+                    final preparation = await prepareProtectedGroupAuthority(
+                      ProtectedGroupAuthorityPrepareRequest(
+                        groupId: group.id,
+                        transitionId: eventId,
+                        control: ProtectedGroupAuthorityControl.memberAdd,
+                        replayData: <String, dynamic>{
+                          'groupId': group.id,
+                          'senderId': identity.peerId,
+                          'senderUsername': identity.username,
+                          if (senderBinding.deviceId != null)
+                            'senderDeviceId': senderBinding.deviceId,
+                          if (senderBinding.transportPeerId != null)
+                            'transportPeerId': senderBinding.transportPeerId,
+                          'text': jsonEncode(signedPayload),
+                          'timestamp': eventAt.toUtc().toIso8601String(),
+                          'messageId': eventId,
+                        },
+                        actorAccountPeerId: identity.peerId,
+                        actorAccountPublicKey: identity.publicKey,
+                        actorAccountPrivateKey: identity.privateKey,
+                        senderDevice: senderDevice,
+                        frozenRecipients:
+                            freezeProtectedGroupPhysicalRecipients(members),
+                      ),
+                    );
+                    if (preparation == null) {
+                      throw StateError(
+                        'Member-add protected preparation failed',
+                      );
+                    }
+                    return PreparedGroupMemberAddAuthority(
+                      activate: () async {
+                        await activateProtectedGroupAuthority(
+                          preparation,
+                          requireAllCustody: false,
+                        );
+                      },
+                      rollback: () async {
+                        await cancelProtectedGroupAuthority(preparation);
+                      },
+                    );
+                  },
           );
           addedMembers.add(newMember);
         } catch (e) {

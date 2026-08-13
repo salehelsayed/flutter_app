@@ -661,7 +661,11 @@ func (b *redisInboxBackend) StoreAckCustody(
 
 			var protectedMatch *inboxMessage
 			for i := range protectedMessages {
-				messageKey := extractDirectInboxDedupeKey(protectedMessages[i].Message)
+				messageKey := extractStoredAckCustodyDedupeKey(
+					protectedMessages[i].Message,
+					protectedMessages[i].From,
+					toPeerID,
+				)
 				if messageKey != dedupeKey {
 					continue
 				}
@@ -679,7 +683,11 @@ func (b *redisInboxBackend) StoreAckCustody(
 			} else if decisionErr == nil {
 				var legacyMatch *inboxMessage
 				for i := range legacyMessages {
-					if extractDirectInboxDedupeKey(legacyMessages[i].Message) != dedupeKey {
+					if extractStoredAckCustodyDedupeKey(
+						legacyMessages[i].Message,
+						legacyMessages[i].From,
+						toPeerID,
+					) != dedupeKey {
 						continue
 					}
 					if !inboxCustodyIdentityMatches(legacyMessages[i], entry) {

@@ -8,7 +8,15 @@ const String ackOrExpiryInboxCustodyContract = 'ack_or_expiry_v1';
 enum AckCustodyKind {
   directTextV108('direct_text_v108'),
   directReactionV109('direct_reaction_v109'),
-  directMutationV109('direct_mutation_v109');
+  directMutationV109('direct_mutation_v109'),
+
+  /// Same-account group snapshot bootstrap. The relay validates only the
+  /// exact clear envelope; the linked installation validates encrypted group
+  /// authority before committing it.
+  groupBootstrapV1('group_bootstrap_v1'),
+
+  /// Per-physical-recipient group membership/config/key authority.
+  groupAuthorityV1('group_authority_v1');
 
   const AckCustodyKind(this.wireValue);
 

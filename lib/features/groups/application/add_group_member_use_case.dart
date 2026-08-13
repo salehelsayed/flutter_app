@@ -28,6 +28,25 @@ const groupMembershipMutationDissolvedMessage =
     'Cannot mutate membership of a dissolved group';
 const staleGroupMembershipEventMessage = 'Stale group membership event';
 
+class PreparedGroupMemberAddAuthority {
+  const PreparedGroupMemberAddAuthority({
+    required this.activate,
+    required this.rollback,
+  });
+
+  final Future<void> Function() activate;
+  final Future<void> Function() rollback;
+}
+
+typedef PrepareGroupMemberAddAuthority =
+    Future<PreparedGroupMemberAddAuthority?> Function({
+      required GroupModel group,
+      required List<GroupMember> members,
+      required GroupMember addedMember,
+      required DateTime eventAt,
+      required String eventId,
+    });
+
 bool _sameOptionalString(String? left, String? right) {
   String? normalize(String? value) {
     final trimmed = value?.trim();
@@ -144,6 +163,7 @@ Future<void> addGroupMember({
   String? senderUsername,
   Future<bool> Function(String peerId, String message)? sendP2PMessage,
   Future<bool> Function(String peerId, String message)? storeP2PMessageInInbox,
+  PrepareGroupMemberAddAuthority? prepareAuthority,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -321,8 +341,27 @@ Future<void> addGroupMember({
         );
       }
 
+      final sourceEventId = canonicalMembershipEventId(
+        transitionType: 'member_added',
+        groupId: groupId,
+        actorPeerId: selfPeerId,
+        eventAt: membershipEventAt,
+      );
+      final preparedAuthority = await prepareAuthority?.call(
+        group: group,
+        members: currentMembers,
+        addedMember: memberToAdd,
+        eventAt: membershipEventAt,
+        eventId: sourceEventId,
+      );
+
       // 2. Save member to repo
-      await groupRepo.saveMember(memberToAdd);
+      try {
+        await groupRepo.saveMember(memberToAdd);
+      } catch (_) {
+        await preparedAuthority?.rollback();
+        rethrow;
+      }
 
       // Slice 2 (Finding 03): a (re-)added member with valid key material may be
       // owed a deferred key distribution from an earlier rotation that deferred
@@ -335,6 +374,11 @@ Future<void> addGroupMember({
       );
 
       if (!syncBridgeConfig) {
+        await _activatePreparedAddAuthority(
+          preparedAuthority,
+          groupId: groupId,
+          memberPeerId: memberToAdd.peerId,
+        );
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_ADD_MEMBER_USE_CASE_SKIPPED_SYNC',
@@ -384,6 +428,7 @@ Future<void> addGroupMember({
         );
       } catch (e) {
         await groupRepo.removeMember(groupId, memberToAdd.peerId);
+        await preparedAuthority?.rollback();
         final errorCode = _bridgeErrorCode(e);
         emitFlowEvent(
           layer: 'FL',
@@ -401,6 +446,12 @@ Future<void> addGroupMember({
         );
         rethrow;
       }
+
+      await _activatePreparedAddAuthority(
+        preparedAuthority,
+        groupId: groupId,
+        memberPeerId: memberToAdd.peerId,
+      );
 
       // B5: forward rotation on add. Runs ONLY after the member is added AND the
       // config-sync committed (the catch above rethrows on sync failure, so we
@@ -437,10 +488,36 @@ Future<void> addGroupMember({
           emitFlowEvent(
             layer: 'FL',
             event: 'GROUP_ADD_MEMBER_FORWARD_ROTATION_ERROR',
-            details: {'groupId': _diagnosticPrefix(groupId), 'error': e.toString()},
+            details: {
+              'groupId': _diagnosticPrefix(groupId),
+              'error': e.toString(),
+            },
           );
         }
       }
     },
   );
+}
+
+Future<void> _activatePreparedAddAuthority(
+  PreparedGroupMemberAddAuthority? prepared, {
+  required String groupId,
+  required String memberPeerId,
+}) async {
+  if (prepared == null) return;
+  try {
+    await prepared.activate();
+  } catch (error) {
+    // The prepared outbox remains the retry owner. A post-commit transport
+    // failure must never roll back a locally committed membership transition.
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ADD_MEMBER_PROTECTED_ACTIVATION_DEFERRED',
+      details: {
+        'groupId': _diagnosticPrefix(groupId),
+        'peerId': _diagnosticPrefix(memberPeerId),
+        'error': error.toString(),
+      },
+    );
+  }
 }

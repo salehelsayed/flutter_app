@@ -177,8 +177,10 @@ const _privacySha256 =
 // The final Task-10 composition also forwards the linked-media drain through
 // MyApp's existing cold/resume hook; this is the same app-owned runtime seam,
 // not a restored core dependency.
+// Plan 363 adds only the restricted protected-group recovery callbacks and
+// their linked-role lifecycle ordering on that same application root.
 const _applicationRootNormalizedSha256 =
-    'd629f7d06595a42326ca9e1f98fcfe6725d6ebd79aa4228c70351652a46165a2';
+    '879793d04a235b00651d3012b871a4c5123a9e8d185300ea89988683d237a7eb';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -212,8 +214,10 @@ const _applicationRootNormalizedSha256 =
 // transport peer into the existing media SQL-stage delegate and declares the
 // captured P2P service before that drain closure; this changes wiring/order
 // only and introduces no adapter or core shim.
+// Plan 363 composes protected bootstrap/authority persistence, replay and
+// read-only refresh through this same production root; no adapter relocates.
 const _productionBootstrapNormalizedSha256 =
-    'a35af6644ca3962fe589d450dc49f36d86aed7dd280ad31d2e09af6d85c32c87';
+    '05d897d673483d26e5956c1903e8243178ea37407d24b5091aa97fdca376f83d';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -4,7 +4,9 @@ import 'package:flutter_app/features/groups/domain/repositories/group_pending_br
 class GroupPendingBroadcastRepositoryImpl
     implements
         GroupPendingBroadcastRepository,
-        GroupPendingBroadcastExactRepository {
+        GroupPendingBroadcastExactRepository,
+        GroupPendingBroadcastProtectedRecipientRepository,
+        GroupPendingBroadcastProtectedBatchRepository {
   final Future<void> Function(Map<String, Object?> row) dbInsert;
   final Future<List<Map<String, Object?>>> Function(String groupId)
   dbLoadForGroup;
@@ -13,6 +15,14 @@ class GroupPendingBroadcastRepositoryImpl
   final Future<void> Function(String id) dbDelete;
   final Future<bool> Function(Map<String, Object?> expected)? dbDeleteIfExact;
   final Future<void> Function(String groupId)? dbDeleteForGroup;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required String recipientPeerId,
+    required String updatedAt,
+  })?
+  dbRemoveRecipientIfExact;
+  final Future<bool> Function(List<Map<String, Object?>> rows)?
+  dbInsertProtectedBatch;
 
   GroupPendingBroadcastRepositoryImpl({
     required this.dbInsert,
@@ -22,6 +32,8 @@ class GroupPendingBroadcastRepositoryImpl
     required this.dbDelete,
     this.dbDeleteIfExact,
     this.dbDeleteForGroup,
+    this.dbRemoveRecipientIfExact,
+    this.dbInsertProtectedBatch,
   });
 
   @override
@@ -76,5 +88,26 @@ class GroupPendingBroadcastRepositoryImpl
     for (final broadcast in pending) {
       await remove(broadcast.id);
     }
+  }
+
+  @override
+  Future<bool> removeRecipientIfExact(
+    GroupPendingBroadcast expected,
+    String recipientPeerId,
+  ) async {
+    final removeRecipient = dbRemoveRecipientIfExact;
+    if (removeRecipient == null) return false;
+    return removeRecipient(
+      expected: expected.toMap(),
+      recipientPeerId: recipientPeerId,
+      updatedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+  }
+
+  @override
+  Future<bool> enqueueProtectedBatch(List<GroupPendingBroadcast> rows) async {
+    final insert = dbInsertProtectedBatch;
+    if (insert == null || rows.isEmpty) return false;
+    return insert(rows.map((row) => row.toMap()).toList(growable: false));
   }
 }

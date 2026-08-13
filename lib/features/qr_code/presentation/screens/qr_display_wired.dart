@@ -42,6 +42,7 @@ class QRDisplayWired extends StatefulWidget {
   /// legacy payload, so an old parser still rejects the device document
   /// outright rather than half-reading it.
   final DirectLinkedDeviceQrSource? linkedDeviceQrSource;
+  final Widget? footer;
 
   const QRDisplayWired({
     super.key,
@@ -51,6 +52,7 @@ class QRDisplayWired extends StatefulWidget {
     this.onScanPressed,
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.linkedDeviceQrSource,
+    this.footer,
   });
 
   @override
@@ -250,6 +252,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           onClose: widget.onClose,
           onScanPressed: widget.onScanPressed,
           backgroundPreference: widget.backgroundPreference,
+          footer: widget.footer,
         );
 
       case _QRDisplayState.success:
@@ -258,6 +261,7 @@ class _QRDisplayWiredState extends State<QRDisplayWired> {
           onClose: widget.onClose,
           onScanPressed: widget.onScanPressed,
           backgroundPreference: widget.backgroundPreference,
+          footer: widget.footer,
         );
 
       case _QRDisplayState.noIdentity:

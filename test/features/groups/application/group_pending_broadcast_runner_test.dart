@@ -2,15 +2,19 @@ import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_repush.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../features/identity/domain/repositories/fake_identity_repository.dart';
@@ -19,7 +23,8 @@ import '../../../shared/fakes/in_memory_group_repository.dart';
 class _FakeRepo
     implements
         GroupPendingBroadcastRepository,
-        GroupPendingBroadcastExactRepository {
+        GroupPendingBroadcastExactRepository,
+        GroupPendingBroadcastProtectedRecipientRepository {
   final Map<String, GroupPendingBroadcast> rows = {};
   Future<void> Function(String groupId)? beforeForGroup;
   Future<void> Function(String id)? beforeRemove;
@@ -58,8 +63,58 @@ class _FakeRepo
   }
 
   @override
+  Future<bool> removeRecipientIfExact(
+    GroupPendingBroadcast expected,
+    String recipientPeerId,
+  ) async {
+    final current = rows[expected.id];
+    if (current == null ||
+        !sameExactGroupPendingBroadcast(current, expected) ||
+        !current.recipientPeerIds.contains(recipientPeerId)) {
+      return false;
+    }
+    final survivors = current.recipientPeerIds
+        .where((peerId) => peerId != recipientPeerId)
+        .toList(growable: false);
+    if (survivors.isEmpty) {
+      rows.remove(current.id);
+    } else {
+      rows[current.id] = GroupPendingBroadcast(
+        id: current.id,
+        groupId: current.groupId,
+        kind: current.kind,
+        sysText: current.sysText,
+        recipientPeerIds: survivors,
+        eventAt: current.eventAt,
+        sourceMessageId: current.sourceMessageId,
+        createdAt: current.createdAt,
+        updatedAt: current.updatedAt,
+      );
+    }
+    return true;
+  }
+
+  @override
   Future<void> removeForGroup(String groupId) async {
     rows.removeWhere((_, broadcast) => broadcast.groupId == groupId);
+  }
+}
+
+class _StrictCustodyStore implements AckOrExpiryInboxStore {
+  _StrictCustodyStore(this.outcomes);
+
+  final List<InboxStoreOutcome> outcomes;
+  final List<(String, String, AckCustodyKind)> calls = [];
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    calls.add((toPeerId, message, custodyKind));
+    return outcomes.removeAt(0);
   }
 }
 
@@ -80,6 +135,230 @@ void main() {
   late _FakeRepo repo;
 
   setUp(() => repo = _FakeRepo());
+
+  test(
+    'TC-363-02a protected group authority converges physical devices before content is enabled',
+    () async {
+      const accepted = InboxStoreOutcome(
+        status: InboxStoreStatus.stored,
+        storeStatus: 'stored',
+        custodyContract: ackOrExpiryInboxCustodyContract,
+      );
+      const ambiguous = InboxStoreOutcome(
+        status: InboxStoreStatus.stored,
+        storeStatus: 'stored',
+      );
+      final instant = DateTime.utc(2026, 8, 13);
+      GroupPendingBroadcast authority(String id, String recipient) {
+        final outer = ProtectedGroupEnvelope(
+          type: protectedGroupAuthorityEnvelopeType,
+          id: id,
+          senderPeerId: 'physical-sender',
+          recipientPeerId: recipient,
+          kem: 'kem',
+          ciphertext: 'ciphertext',
+          nonce: 'nonce',
+        ).toJson();
+        return GroupPendingBroadcast(
+          id: 'row-$id',
+          groupId: 'group-363',
+          kind: groupPendingBroadcastKindProtectedAuthority,
+          sysText: outer,
+          recipientPeerIds: <String>[recipient],
+          eventAt: instant,
+          sourceMessageId: id,
+          createdAt: instant,
+          updatedAt: instant,
+        );
+      }
+
+      final rowA = authority('authority-a', 'physical-a');
+      final rowB = authority('authority-b', 'physical-b');
+      await repo.enqueue(rowA);
+      await repo.enqueue(rowB);
+      final store = _StrictCustodyStore(<InboxStoreOutcome>[
+        accepted,
+        ambiguous,
+      ]);
+      var genericPushes = 0;
+      final runner = GroupPendingBroadcastRunner(
+        repository: repo,
+        rePush: (_) async {
+          genericPushes++;
+          return true;
+        },
+        protectedInboxStore: store,
+      );
+
+      expect(await runner.drainForGroup('group-363'), 1);
+      expect(genericPushes, 0, reason: 'protected controls never downgrade');
+      expect(store.calls, hasLength(2));
+      expect(store.calls[0].$1, 'physical-a');
+      expect(store.calls[0].$3, AckCustodyKind.groupAuthorityV1);
+      expect(repo.rows.containsKey(rowA.id), isFalse);
+      expect(repo.rows[rowB.id], same(rowB));
+
+      store.outcomes.add(
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.duplicate,
+          storeStatus: 'duplicate',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        ),
+      );
+      expect(await runner.drainForGroup('group-363'), 1);
+      expect(repo.rows, isEmpty);
+
+      const sender = GroupMemberDeviceIdentity(
+        deviceId: 'sender-device',
+        transportPeerId: 'physical-sender',
+        deviceSigningPublicKey: 'sender-public-key',
+        mlKemPublicKey: 'sender-mlkem',
+      );
+      const physicalA = GroupMemberDeviceIdentity(
+        deviceId: 'device-a',
+        transportPeerId: 'physical-a',
+        deviceSigningPublicKey: 'public-a',
+        mlKemPublicKey: 'mlkem-a',
+      );
+      const physicalB = GroupMemberDeviceIdentity(
+        deviceId: 'device-b',
+        transportPeerId: 'physical-b',
+        deviceSigningPublicKey: 'public-b',
+        mlKemPublicKey: 'mlkem-b',
+      );
+      late String protectedPlaintext;
+      final targetQualified = await buildProtectedGroupAuthorityRows(
+        groupId: 'group-363',
+        transitionId:
+            'member_removed:${List<String>.filled(8, 'transition-segment-').join()}',
+        control: ProtectedGroupAuthorityControl.memberRemove,
+        replayData: const <String, dynamic>{
+          'groupId': 'group-363',
+          'text': '{"__sys":"member_removed"}',
+        },
+        actorAccountPeerId: 'logical-account',
+        actorAccountPublicKey: 'account-public-key',
+        actorAccountPrivateKey: 'account-private-key',
+        senderDevice: sender,
+        frozenRecipients: const <GroupMemberDeviceIdentity>[
+          sender,
+          physicalA,
+          physicalB,
+        ],
+        deliveryRecipients: const <GroupMemberDeviceIdentity>[physicalB],
+        callSign: (data, privateKey) async => <String, dynamic>{
+          'ok': true,
+          'signature': 'account-signature',
+        },
+        callEncrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              expect(recipientMlKemPublicKey, 'mlkem-b');
+              protectedPlaintext = plaintext;
+              return <String, dynamic>{
+                'ok': true,
+                'kem': 'kem-b',
+                'ciphertext': 'ciphertext-b',
+                'nonce': 'nonce-b',
+              };
+            },
+        now: () => instant,
+      );
+      expect(targetQualified, hasLength(1));
+      expect(targetQualified.single.recipientPeerIds, <String>['physical-b']);
+      final protectedPayload = ProtectedGroupAuthorityPayload.tryParse(
+        protectedPlaintext,
+      );
+      expect(protectedPayload, isNotNull);
+      expect(
+        protectedPayload!.frozenRecipientPeerIds,
+        <String>['physical-a', 'physical-b'],
+        reason: 'target qualification must not shrink the frozen ACL',
+      );
+      final targetSourceId = targetQualified.single.sourceMessageId;
+      expect(targetSourceId, isNotNull);
+      final targetSourceIdLength = targetSourceId?.length ?? 0;
+      expect(
+        targetSourceIdLength,
+        greaterThan(128),
+        reason: 'canonical IDs preserve the signed transition without hashing',
+      );
+      expect(
+        targetSourceIdLength,
+        lessThanOrEqualTo(protectedGroupLogicalIdMaxLength),
+      );
+
+      final receiverRepo = InMemoryGroupRepository();
+      await receiverRepo.saveGroup(
+        GroupModel(
+          id: 'group-363',
+          name: 'Protected group',
+          type: GroupType.chat,
+          topicName: 'topic-group-363',
+          createdAt: instant,
+          createdBy: 'logical-account',
+          myRole: GroupRole.member,
+        ),
+      );
+      await receiverRepo.saveMember(
+        GroupMember(
+          groupId: 'group-363',
+          peerId: 'logical-account',
+          username: 'Actor',
+          role: MemberRole.admin,
+          publicKey: 'account-public-key',
+          mlKemPublicKey: 'sender-mlkem',
+          devices: const <GroupMemberDeviceIdentity>[sender],
+          joinedAt: instant,
+        ),
+      );
+      final addressedMessage = ChatMessage(
+        from: 'physical-sender',
+        to: 'physical-b',
+        content: targetQualified.single.sysText,
+        timestamp: instant.toIso8601String(),
+        isIncoming: true,
+      );
+      var applied = 0;
+      Future<ProtectedGroupAuthorityHandleResult> receiveAs(
+        String ownTransportPeerId,
+      ) => handleProtectedGroupAuthority(
+        message: addressedMessage,
+        ownTransportPeerId: ownTransportPeerId,
+        ownMlKemSecretKey: 'receiver-secret-key',
+        groupRepository: receiverRepo,
+        callDecrypt:
+            ({
+              required ownMlKemSecretKey,
+              required kem,
+              required ciphertext,
+              required nonce,
+            }) async => <String, dynamic>{
+              'ok': true,
+              'plaintext': protectedPlaintext,
+            },
+        callVerify:
+            ({required publicKey, required data, required signature}) async =>
+                true,
+        applyReplay: (control, replayData) async {
+          applied++;
+          return ProtectedGroupAuthorityApplyResult.applied;
+        },
+        now: () => instant,
+      );
+      expect(
+        await receiveAs('unaddressed-installation'),
+        ProtectedGroupAuthorityHandleResult.terminalRejected,
+      );
+      expect(applied, 0);
+      expect(
+        await receiveAs('physical-b'),
+        ProtectedGroupAuthorityHandleResult.applied,
+        reason:
+            'an addressed account-primary installation must not need linked-secondary authority',
+      );
+      expect(applied, 1);
+    },
+  );
 
   test('drainForGroup re-pushes and clears every row on success', () async {
     await repo.enqueue(_b('b1'));

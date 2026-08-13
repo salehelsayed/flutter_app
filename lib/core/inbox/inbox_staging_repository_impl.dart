@@ -2,7 +2,11 @@ import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_repository.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
-class InboxStagingRepositoryImpl implements InboxStagingRepository {
+class InboxStagingRepositoryImpl
+    implements
+        InboxStagingRepository,
+        InboxStagingPrerequisiteWaitingRepository,
+        InboxStagingProtectedAckPendingRepository {
   final Future<int> Function(Map<String, Object?> row)
   dbInsertInboxStagingEntry;
   final Future<List<Map<String, Object?>>> Function({
@@ -19,6 +23,14 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
     String? reasonDetail,
   })
   dbMarkInboxStagingEntryRetryable;
+  final Future<int> Function(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  })?
+  dbMarkInboxStagingEntryPrerequisiteWaiting;
+  final Future<int> Function(String entryId)?
+  dbMarkInboxStagingEntryProtectedAckPending;
   final Future<int> Function(
     String entryId, {
     required String reasonCode,
@@ -45,6 +57,8 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
     required this.dbLoadInboxStagingEntry,
     required this.dbDeleteInboxStagingEntry,
     required this.dbMarkInboxStagingEntryRetryable,
+    this.dbMarkInboxStagingEntryPrerequisiteWaiting,
+    this.dbMarkInboxStagingEntryProtectedAckPending,
     required this.dbMarkInboxStagingEntryRejected,
     required this.dbMarkInboxStagingEntryQuarantined,
     required this.dbCountQuarantinedInboxStagingEntries,
@@ -121,6 +135,22 @@ class InboxStagingRepositoryImpl implements InboxStagingRepository {
       reasonCode: reasonCode,
       reasonDetail: reasonDetail,
     );
+  }
+
+  @override
+  Future<void> markPrerequisiteWaiting(
+    String entryId, {
+    required String reasonCode,
+    String? reasonDetail,
+  }) async {
+    final mark = dbMarkInboxStagingEntryPrerequisiteWaiting;
+    if (mark == null) return;
+    await mark(entryId, reasonCode: reasonCode, reasonDetail: reasonDetail);
+  }
+
+  @override
+  Future<void> markProtectedAckPending(String entryId) async {
+    await dbMarkInboxStagingEntryProtectedAckPending?.call(entryId);
   }
 
   @override

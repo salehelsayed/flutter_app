@@ -1,8 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_broadcast.dart';
+import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_pending_broadcast_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/pending_sibling_device_repository.dart';
 
 String _safeId(String id) => id.length > 8 ? id.substring(0, 8) : id;
 
@@ -21,6 +25,12 @@ class GroupPendingBroadcastRunner {
   /// legacy runner-owned completion by leaving this false.
   final bool rePushFinalizesSuccess;
 
+  /// Narrow strict-custody dependencies. When absent, protected rows stay
+  /// pending; they are never downgraded through [rePush].
+  final AckOrExpiryInboxStore? protectedInboxStore;
+  final PendingSiblingDeviceRepository? pendingSiblingDeviceRepository;
+  final LinkedGroupBootstrapRepository? linkedGroupBootstrapRepository;
+
   /// One identity-safe serial tail per group. The map always points at the
   /// newest queued turn; an older completion may remove it only when it still
   /// owns that exact entry.
@@ -30,6 +40,9 @@ class GroupPendingBroadcastRunner {
     required this.repository,
     required this.rePush,
     this.rePushFinalizesSuccess = false,
+    this.protectedInboxStore,
+    this.pendingSiblingDeviceRepository,
+    this.linkedGroupBootstrapRepository,
   });
 
   /// Drains every pending broadcast for [groupId]. Returns the count re-pushed.
@@ -49,26 +62,47 @@ class GroupPendingBroadcastRunner {
     return counts.fold<int>(0, (total, count) => total + count);
   }
 
-  Future<int> _enqueueGroupDrain(String groupId) {
+  /// Drains only Plan-363 protected rows. Restricted linked pause uses this
+  /// exact owner so historical generic system broadcasts remain stopped.
+  Future<int> drainProtectedAll() async {
+    final discovered = await repository.all();
+    final groupIds = <String>{
+      for (final broadcast in discovered)
+        if (isProtectedGroupPendingBroadcastKind(broadcast.kind))
+          broadcast.groupId,
+    };
+    if (groupIds.isEmpty) return 0;
+    final counts = await Future.wait(
+      groupIds.map(
+        (groupId) => _enqueueGroupDrain(groupId, protectedOnly: true),
+      ),
+    );
+    return counts.fold<int>(0, (total, count) => total + count);
+  }
+
+  Future<int> _enqueueGroupDrain(String groupId, {bool protectedOnly = false}) {
     final result = Completer<int>();
     final previous = _groupTails[groupId] ?? Future<void>.value();
     late final Future<void> current;
-    current = previous.then((_) async {
-      try {
-        result.complete(
-          await _drain(
-            () => repository.forGroup(groupId),
-            scope: _safeId(groupId),
-          ),
-        );
-      } catch (error, stackTrace) {
-        result.completeError(error, stackTrace);
-      }
-    }).whenComplete(() {
-      if (identical(_groupTails[groupId], current)) {
-        _groupTails.remove(groupId);
-      }
-    });
+    current = previous
+        .then((_) async {
+          try {
+            result.complete(
+              await _drain(
+                () => repository.forGroup(groupId),
+                scope: _safeId(groupId),
+                protectedOnly: protectedOnly,
+              ),
+            );
+          } catch (error, stackTrace) {
+            result.completeError(error, stackTrace);
+          }
+        })
+        .whenComplete(() {
+          if (identical(_groupTails[groupId], current)) {
+            _groupTails.remove(groupId);
+          }
+        });
     _groupTails[groupId] = current;
     return result.future;
   }
@@ -76,8 +110,14 @@ class GroupPendingBroadcastRunner {
   Future<int> _drain(
     Future<List<GroupPendingBroadcast>> Function() load, {
     required String scope,
+    bool protectedOnly = false,
   }) async {
-    final pending = await load();
+    final loaded = await load();
+    final pending = protectedOnly
+        ? loaded
+              .where((row) => isProtectedGroupPendingBroadcastKind(row.kind))
+              .toList(growable: false)
+        : loaded;
     if (pending.isEmpty) {
       return 0;
     }
@@ -97,7 +137,9 @@ class GroupPendingBroadcastRunner {
       }
       bool pushed;
       try {
-        pushed = await rePush(broadcast);
+        pushed = isProtectedGroupPendingBroadcastKind(broadcast.kind)
+            ? await _pushProtected(broadcast)
+            : await rePush(broadcast);
       } catch (e) {
         pushed = false;
         emitFlowEvent(
@@ -109,7 +151,9 @@ class GroupPendingBroadcastRunner {
           },
         );
       }
-      if (pushed && !rePushFinalizesSuccess) {
+      if (pushed &&
+          !isProtectedGroupPendingBroadcastKind(broadcast.kind) &&
+          !rePushFinalizesSuccess) {
         pushed = await removeGroupPendingBroadcastIfExact(
           repository,
           broadcast,
@@ -126,5 +170,77 @@ class GroupPendingBroadcastRunner {
       details: {'scope': scope, 'drained': drained, 'total': pending.length},
     );
     return drained;
+  }
+
+  Future<bool> _pushProtected(GroupPendingBroadcast broadcast) async {
+    final store = protectedInboxStore;
+    if (store == null || broadcast.recipientPeerIds.length != 1) return false;
+    final recipient = broadcast.recipientPeerIds.single;
+    final expectedType =
+        broadcast.kind == groupPendingBroadcastKindLinkedBootstrap
+        ? linkedGroupBootstrapEnvelopeType
+        : protectedGroupAuthorityEnvelopeType;
+    final envelope = ProtectedGroupEnvelope.tryParse(
+      broadcast.sysText,
+      expectedType: expectedType,
+    );
+    if (envelope == null ||
+        envelope.id != broadcast.sourceMessageId ||
+        envelope.recipientPeerId != recipient) {
+      return false;
+    }
+    if (broadcast.kind == groupPendingBroadcastKindProtectedAuthority) {
+      final pendingRepository = pendingSiblingDeviceRepository;
+      if (pendingRepository != null) {
+        final pending = await pendingRepository
+            .getPendingSiblingDevicesForGroup(broadcast.groupId);
+        if (pending.any((row) => row.transportPeerId == recipient)) {
+          // Bootstrap custody is the target's readiness barrier. The prepared
+          // authority row remains exact and durable, but cannot overtake it.
+          return false;
+        }
+      }
+    }
+    final custodyKind =
+        broadcast.kind == groupPendingBroadcastKindLinkedBootstrap
+        ? AckCustodyKind.groupBootstrapV1
+        : AckCustodyKind.groupAuthorityV1;
+    final outcome = await store.storeInAckCustodyInboxDetailed(
+      recipient,
+      broadcast.sysText,
+      custodyKind: custodyKind,
+    );
+    if (!outcome.ackOrExpiryAccepted) return false;
+
+    if (broadcast.kind == groupPendingBroadcastKindLinkedBootstrap) {
+      final pendingRepository = pendingSiblingDeviceRepository;
+      final bootstrapRepository = linkedGroupBootstrapRepository;
+      if (pendingRepository == null || bootstrapRepository == null) {
+        return false;
+      }
+      final candidates = await pendingRepository
+          .getPendingSiblingDevicesForGroup(broadcast.groupId);
+      final matches = candidates
+          .where(
+            (candidate) =>
+                candidate.transportPeerId == recipient &&
+                candidate.memberPeerId == envelope.senderPeerId,
+          )
+          .toList(growable: false);
+      if (matches.length != 1) return false;
+      return bootstrapRepository.completeLinkedGroupBootstrapCustody(
+        expectedDevice: matches.single,
+        expectedBroadcast: broadcast,
+      );
+    }
+
+    final recipientRepository = repository;
+    if (recipientRepository
+        is! GroupPendingBroadcastProtectedRecipientRepository) {
+      return false;
+    }
+    return (recipientRepository
+            as GroupPendingBroadcastProtectedRecipientRepository)
+        .removeRecipientIfExact(broadcast, recipient);
   }
 }

@@ -1,8 +1,11 @@
+import 'dart:convert';
+
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -98,6 +101,55 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
     );
   }
 
+  final protectedControl = _protectedControlFromSignedSystemText(text);
+  ProtectedGroupAuthorityPreparation? protectedPreparation;
+  if (protectedControl != null && hasProtectedGroupAuthorityAdapter) {
+    final members = await groupRepo.getMembers(groupId);
+    if (hasProtectedGroupPhysicalAuthority(members)) {
+      final actorMatches = members
+          .where((member) => member.peerId == senderPeerId)
+          .toList(growable: false);
+      if (actorMatches.length == 1) {
+        final senderDevice = resolveProtectedGroupSenderDevice(
+          actor: actorMatches.single,
+          senderPublicKey: senderDevicePublicKey ?? senderPublicKey,
+          senderDeviceId: senderDeviceId,
+          senderTransportPeerId: senderTransportPeerId ?? senderPeerId,
+        );
+        if (senderDevice != null) {
+          protectedPreparation = await prepareProtectedGroupAuthority(
+            ProtectedGroupAuthorityPrepareRequest(
+              groupId: groupId,
+              transitionId: messageId,
+              control: protectedControl,
+              replayData: _protectedReplayData(
+                replayPlaintext: replayPlaintext,
+                text: text,
+                groupId: groupId,
+                senderPeerId: senderPeerId,
+                senderUsername: senderUsername,
+                senderDeviceId: senderDeviceId,
+                senderTransportPeerId: senderTransportPeerId,
+                messageId: messageId,
+                timelineMessage: timelineMessage,
+              ),
+              actorAccountPeerId: senderPeerId,
+              actorAccountPublicKey: senderPublicKey,
+              actorAccountPrivateKey: senderPrivateKey,
+              senderDevice: senderDevice,
+              frozenRecipients: freezeProtectedGroupPhysicalRecipients(members),
+            ),
+          );
+          if (protectedPreparation == null &&
+              protectedControl ==
+                  ProtectedGroupAuthorityControl.groupDissolve) {
+            throw StateError('protected dissolve preparation failed');
+          }
+        }
+      }
+    }
+  }
+
   final publishResult = await callGroupPublish(
     bridge,
     groupId: groupId,
@@ -112,6 +164,16 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
     senderKeyPackageId: senderKeyPackageId,
     messageId: messageId,
   );
+
+  final protectedAccepted = await activateProtectedGroupAuthority(
+    protectedPreparation,
+    requireAllCustody:
+        protectedControl == ProtectedGroupAuthorityControl.groupDissolve,
+  );
+  if (!protectedAccepted &&
+      protectedControl == ProtectedGroupAuthorityControl.groupDissolve) {
+    throw StateError('protected dissolve custody not accepted');
+  }
 
   if (recipientPeerIds.isEmpty) {
     return GroupSystemPublishResult(
@@ -207,4 +269,64 @@ publishGroupSystemMessageAssumingMembershipPhaseHeld({
       inboxRetryPayload: null,
     ),
   );
+}
+
+ProtectedGroupAuthorityControl? _protectedControlFromSignedSystemText(
+  String text,
+) {
+  try {
+    final decoded = jsonDecode(text);
+    if (decoded is! Map<String, dynamic>) return null;
+    final kind = decoded['__sys'];
+    if (kind is! String) return null;
+    return ProtectedGroupAuthorityControl.fromWire(kind);
+  } catch (_) {
+    return null;
+  }
+}
+
+Map<String, dynamic> _protectedReplayData({
+  required String replayPlaintext,
+  required String text,
+  required String groupId,
+  required String senderPeerId,
+  required String senderUsername,
+  required String? senderDeviceId,
+  required String? senderTransportPeerId,
+  required String messageId,
+  required GroupMessage? timelineMessage,
+}) {
+  try {
+    final decoded = jsonDecode(replayPlaintext);
+    if (decoded is Map<String, dynamic> &&
+        decoded['groupId'] is String &&
+        decoded['text'] is String) {
+      return Map<String, dynamic>.from(decoded);
+    }
+  } catch (_) {}
+  String? signedEventAt;
+  try {
+    final decodedText = jsonDecode(text);
+    if (decodedText is Map<String, dynamic>) {
+      final audit = decodedText['signedTransitionAudit'];
+      if (audit is Map<String, dynamic> && audit['eventAt'] is String) {
+        signedEventAt = audit['eventAt'] as String;
+      }
+    }
+  } catch (_) {}
+  return <String, dynamic>{
+    'groupId': groupId,
+    'senderId': senderPeerId,
+    'senderUsername': senderUsername,
+    if (senderDeviceId != null && senderDeviceId.isNotEmpty)
+      'senderDeviceId': senderDeviceId,
+    if (senderTransportPeerId != null && senderTransportPeerId.isNotEmpty)
+      'transportPeerId': senderTransportPeerId,
+    'text': text,
+    'timestamp':
+        signedEventAt ??
+        timelineMessage?.timestamp.toUtc().toIso8601String() ??
+        DateTime.now().toUtc().toIso8601String(),
+    'messageId': messageId,
+  };
 }

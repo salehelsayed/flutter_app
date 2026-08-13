@@ -592,6 +592,47 @@ class _StartupRouterState extends State<StartupRouter> {
       final p2pService = widget.p2pService;
       final transportMetrics = widget.transportMetrics;
 
+      // 363: ACTIVE linked authority owns a restricted QR + read-only group
+      // home. Resolve it before contact count/FTE so a fresh linked identity
+      // can never fall into generic onboarding or Feed/group startup.
+      if (decision != StartupDecision.accountMigrationBlocked) {
+        final identity = await repository.loadIdentity();
+        if (!mounted) return;
+        final linkedAuthority = identity == null
+            ? null
+            : widget.linkedAuthorityOverride ??
+                  await LinkedInstallationAuthority(
+                    secureKeyStore: widget.secureKeyStore,
+                  ).load(expectedAccountPeerId: identity.peerId);
+        if (linkedAuthority?.isActiveLinkedSecondary == true) {
+          await widget.ensureRuntimeServicesReady?.call();
+          if (!mounted) return;
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'ID_STARTUP_ROUTE_LINKED_READ_ONLY',
+            details: const {},
+          );
+          await _pushStartupReplacement(
+            builder: (_) => LinkedDeviceSetupWired(
+              repository: repository,
+              secureKeyStore: widget.secureKeyStore,
+              bridge: bridge,
+              callIdentityRestore: (mnemonic) =>
+                  callIdentityRestore(bridge, mnemonic),
+              callMlKemKeygen: () => callMlKemKeygen(bridge),
+              callIdentityGenerateForTransport: () =>
+                  callIdentityGenerate(bridge),
+              groupRepository: widget.groupRepository,
+              onSetupSuccess: widget.ensureRuntimeServicesReady,
+              backgroundPreference:
+                  widget.appShellController.backgroundPreference,
+            ),
+          );
+          return;
+        }
+        if (!mounted) return;
+      }
+
       switch (decision) {
         case StartupDecision.accountMigrationBlocked:
           emitFlowEvent(
@@ -821,6 +862,8 @@ class _StartupRouterState extends State<StartupRouter> {
                       callMlKemKeygen: () => callMlKemKeygen(bridge),
                       callIdentityGenerateForTransport: () =>
                           callIdentityGenerate(bridge),
+                      groupRepository: widget.groupRepository,
+                      onSetupSuccess: widget.ensureRuntimeServicesReady,
                       backgroundPreference:
                           widget.appShellController.backgroundPreference,
                     ),

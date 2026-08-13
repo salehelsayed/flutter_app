@@ -389,6 +389,13 @@ class MyApp extends StatefulWidget {
   /// target-qualified v114/v108 drain-and-download); absent keeps 361 exact.
   final Future<void> Function()? drainLinkedDirectMediaBlobCustody;
 
+  /// 363: restricted protected-group recovery only. These callbacks never
+  /// start group topics, content listeners, Feed, push, or history owners.
+  final Future<void> Function()? drainLinkedGroupBootstrap;
+  final Future<void> Function()? replayLinkedGroupAuthority;
+  final Future<void> Function()? refreshLinkedGroupList;
+  final Future<void> Function()? flushLinkedGroupAuthorityOnPause;
+
   final GroupMediaDeleteForMeCoordinator groupMediaDeleteForMeCoordinator;
 
   /// 235: one bounded deletion-journal reconciliation pass; runs on resume
@@ -527,6 +534,10 @@ class MyApp extends StatefulWidget {
     this.isLinkedBlobFreeRuntime,
     this.drainDirectBlobFreeLinkedOutboxes,
     this.drainLinkedDirectMediaBlobCustody,
+    this.drainLinkedGroupBootstrap,
+    this.replayLinkedGroupAuthority,
+    this.refreshLinkedGroupList,
+    this.flushLinkedGroupAuthorityOnPause,
     required this.groupMediaDeletionCleanup,
     this.privateMediaLifecycleRecovery,
     this.directMediaBlobLocalCleanup,
@@ -2176,18 +2187,20 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // without the FDC-06 pause flush; every generic pause owner stays zero.
     if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
       unawaited(
-        handleAppPaused(
-          messageRepo: widget.messageRepository,
-          p2pService: widget.p2pService,
-          bridge: widget.bridge,
-          enablePauseFlush: false,
-        ).then((result) {
+        (() async {
+          final result = await handleAppPaused(
+            messageRepo: widget.messageRepository,
+            p2pService: widget.p2pService,
+            bridge: widget.bridge,
+            enablePauseFlush: false,
+          );
+          await widget.flushLinkedGroupAuthorityOnPause?.call();
           emitFlowEvent(
             layer: 'FL',
             event: 'APP_LIFECYCLE_LINKED_PAUSE_COMPLETE',
             details: {'transitioned': result.transitionedCount},
           );
-        }),
+        })(),
       );
       return;
     }
@@ -2273,6 +2286,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // strict-media custody convergers when they are wired.
     if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
       widget.p2pService.markResumeStarted();
+      await widget.p2pService.drainOfflineInbox();
+      await widget.drainLinkedGroupBootstrap?.call();
+      await widget.replayLinkedGroupAuthority?.call();
+      await widget.refreshLinkedGroupList?.call();
       final drained =
           await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;
       await widget.drainLinkedDirectMediaBlobCustody?.call();

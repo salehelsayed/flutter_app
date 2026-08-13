@@ -106,6 +106,25 @@ Map<String, dynamic> _pendingInboxRow({
   };
 }
 
+Map<String, dynamic> _pendingProtectedGroupRow({required String entryId}) =>
+    <String, dynamic>{
+      'id': entryId,
+      'from': 'physical-sender',
+      'message': jsonEncode(<String, dynamic>{
+        'type': 'group_authority_v1',
+        'version': '1',
+        'id': '15:member_removed10:transition17:physical-linked',
+        'senderPeerId': 'physical-sender',
+        'recipientPeerId': 'physical-linked',
+        'encrypted': <String, dynamic>{
+          'kem': 'kem',
+          'ciphertext': 'ciphertext',
+          'nonce': 'nonce',
+        },
+      }),
+      'timestamp': '2026-04-01T00:00:00.000Z',
+    };
+
 Future<void> _start(P2PServiceImpl service, _FakeBridge bridge) async {
   bridge.whenCommand(
     'node:start',
@@ -152,6 +171,104 @@ void main() {
   });
 
   group('replay-before-ack ordering', () {
+    test(
+      'TC-363-01b protected self bootstrap commits atomically before exact relay ACK',
+      () async {
+        expect(
+          const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+          ).ackOrExpiryAccepted,
+          isFalse,
+          reason:
+              'a generic or ambiguous store response cannot retire either '
+              'bootstrap owner',
+        );
+        expect(
+          const InboxStoreOutcome(
+            status: InboxStoreStatus.stored,
+            storeStatus: 'stored',
+            custodyContract: ackOrExpiryInboxCustodyContract,
+          ).ackOrExpiryAccepted,
+          isTrue,
+        );
+        final bridge = _FakeBridge();
+        final repo = InMemoryInboxStagingRepository();
+        var ackAttempts = 0;
+        var replayAttempts = 0;
+        var bootstrapAvailable = false;
+        bridge.whenCommand('inbox:retrieve_pending', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          return jsonEncode(<String, dynamic>{
+            'ok': true,
+            'custodyContract': custodyContract,
+            'messages': <Map<String, dynamic>>[
+              _pendingProtectedGroupRow(entryId: 'protected-entry'),
+            ],
+            'hasMore': false,
+          });
+        });
+        bridge.whenCommand('inbox:ack', (payload) {
+          final custodyContract = _requireAckOrExpiryCustodyContract(payload);
+          ackAttempts++;
+          if (ackAttempts == 1) throw StateError('ack unavailable');
+          return jsonEncode(<String, dynamic>{
+            'ok': true,
+            'acked': 1,
+            'custodyContract': custodyContract,
+          });
+        });
+        final service = P2PServiceImpl(
+          bridge: bridge,
+          inboxStagingRepository: repo,
+          replayRecoveredProtectedGroupEnvelope: (message) async {
+            replayAttempts++;
+            if (!bootstrapAvailable) {
+              return (
+                disposition:
+                    ProtectedGroupReplayDisposition.prerequisiteWaiting,
+                reasonCode: 'bootstrap_required',
+                reasonDetail: null,
+              );
+            }
+            return (
+              disposition: ProtectedGroupReplayDisposition.applied,
+              reasonCode: 'applied',
+              reasonDetail: null,
+            );
+          },
+        );
+        await _start(service, bridge);
+
+        for (var drain = 0; drain < 12; drain++) {
+          await service.drainOfflineInbox();
+        }
+        expect(repo.entry('protected-entry')?.attemptCount, 0);
+        expect(repo.entry('protected-entry')?.status, 'retryable');
+        expect(ackAttempts, 0);
+
+        bootstrapAvailable = true;
+        await service.drainOfflineInbox();
+        expect(repo.entry('protected-entry'), isNotNull);
+        expect(replayAttempts, 13);
+        expect(ackAttempts, 1);
+
+        await service.drainOfflineInbox();
+        expect(repo.entry('protected-entry'), isNull);
+        expect(
+          replayAttempts,
+          13,
+          reason: 'terminal local evidence is ACKed without reapplying it',
+        );
+        expect(ackAttempts, 2);
+        expect(bridge.payloadsFor('inbox:ack').last?['entryIds'], <String>[
+          'protected-entry',
+        ]);
+
+        service.dispose();
+      },
+    );
+
     test(
       'staged entries replay and reach the render stream even when the inbox ack never completes',
       () async {

@@ -5,6 +5,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_key_update_signature.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -431,11 +432,86 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         ? 1
         : distributionAttemptCount;
 
-    // 2. Distribute to remaining members via encrypted 1:1 delivery. Keep this
-    // sequential so the function does not return while a batch timeout has
-    // left recipient sends running in the background.
+    // 2. Prepare target-qualified protected key authority before promoting the
+    // local epoch. Each replay payload is the incumbent signed+encrypted direct
+    // key update for that exact device; the protected envelope freezes the
+    // complete pre-transition physical ACL but emits only the selected target.
+    final protectedPreparations = <int, ProtectedGroupAuthorityPreparation>{};
+    if (hasProtectedGroupAuthorityAdapter &&
+        hasProtectedGroupPhysicalAuthority(members) &&
+        distributionTargets.isNotEmpty) {
+      if (sourceDevice == null) {
+        return RotateGroupKeyOutcome.notRotated;
+      }
+      final frozenRecipients = freezeProtectedGroupPhysicalRecipients(members);
+      final protectedTransitionId =
+          'group_key_update:$groupId:$selfPeerId:$newEpoch:'
+          '${directKeyUpdateEventAt.microsecondsSinceEpoch}';
+      for (var index = 0; index < distributionTargets.length; index++) {
+        final target = distributionTargets[index];
+        final built = await _buildRotatedKeyDeviceEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          sourcePeerId: selfPeerId,
+          sourceDevice: sourceDevice,
+          senderPublicKey: senderPublicKey,
+          senderPrivateKey: senderPrivateKey,
+          senderUsername: senderUsername,
+          member: target.member,
+          device: target.device,
+          newEpoch: newEpoch,
+          newKey: newKey,
+          eventAt: directKeyUpdateEventAt,
+          preTransitionStateHash: preTransitionStateHash,
+        );
+        if (built == null) {
+          for (final preparation in protectedPreparations.values) {
+            await cancelProtectedGroupAuthority(preparation);
+          }
+          return RotateGroupKeyOutcome.notRotated;
+        }
+        final preparation = await prepareProtectedGroupAuthority(
+          ProtectedGroupAuthorityPrepareRequest(
+            groupId: groupId,
+            transitionId: protectedTransitionId,
+            control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+            replayData: <String, dynamic>{
+              'groupId': groupId,
+              'keyGeneration': newEpoch,
+              'encryptedKey': newKey,
+              'from': sourceDevice.transportPeerId,
+              'to': target.device.transportPeerId,
+              'content': built.envelope,
+              'timestamp': directKeyUpdateEventAt.toIso8601String(),
+            },
+            actorAccountPeerId: selfPeerId,
+            actorAccountPublicKey: senderPublicKey,
+            actorAccountPrivateKey: senderPrivateKey,
+            senderDevice: sourceDevice,
+            frozenRecipients: frozenRecipients,
+            deliveryRecipients: <GroupMemberDeviceIdentity>[target.device],
+          ),
+        );
+        if (preparation == null || !preparation.hasRecipients) {
+          for (final prepared in protectedPreparations.values) {
+            await cancelProtectedGroupAuthority(prepared);
+          }
+          return RotateGroupKeyOutcome.notRotated;
+        }
+        protectedPreparations[index] = preparation;
+      }
+    }
+
+    // Incumbent ordinary delivery is preserved only when the protected adapter
+    // is absent. A protected target never races the live/generic inbox path.
     final distributionResults = <bool>[];
-    for (final target in distributionTargets) {
+    for (var index = 0; index < distributionTargets.length; index++) {
+      final target = distributionTargets[index];
+      if (protectedPreparations.containsKey(index)) {
+        distributionResults.add(false);
+        continue;
+      }
       try {
         final sent = await _distributeRotatedKeyToDeviceWithRetry(
           bridge: bridge,
@@ -469,16 +545,61 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
       }
     }
 
-    final distributedDeviceCount = distributionResults
-        .where((ok) => ok)
-        .length;
+    // 3. Promote the admin's own validator and local key. Prepared protected
+    // bytes already exist, so a crash after this point cannot lose authority.
+    try {
+      await callGroupUpdateKey(
+        bridge,
+        groupId: groupId,
+        groupKey: newKey,
+        keyEpoch: newEpoch,
+      );
+    } catch (e) {
+      for (final preparation in protectedPreparations.values) {
+        await cancelProtectedGroupAuthority(preparation);
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
+        details: {'error': e.toString()},
+      );
+      return RotateGroupKeyOutcome.notRotated;
+    }
+
+    final keyInfo = GroupKeyInfo(
+      groupId: groupId,
+      keyGeneration: newEpoch,
+      encryptedKey: newKey,
+      createdAt: generatedAt,
+    );
+    await groupRepo.saveKey(keyInfo);
+    await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
+
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'GROUP_ROTATE_KEY_SAVED',
+      details: {'newEpoch': newEpoch},
+    );
+
+    for (final entry in protectedPreparations.entries) {
+      try {
+        distributionResults[entry.key] = await activateProtectedGroupAuthority(
+          entry.value,
+          requireAllCustody: true,
+        );
+      } catch (_) {
+        // The exact prepared row remains the durable retry owner.
+        distributionResults[entry.key] = false;
+      }
+    }
+
+    final distributedDeviceCount = distributionResults.where((ok) => ok).length;
     final failedDistributionCount =
         distributionResults.length - distributedDeviceCount;
 
     // A remaining member is "delivered" when at least one of its device targets
-    // received the key. Members whose every send failed, plus keyless members
-    // (no device targets at all), are DEFERRED — not a rotation failure. The
-    // epoch is promoted regardless so the removed member is excluded.
+    // has exact custody. All other current members retain the existing durable
+    // pending-key-distribution owner.
     final memberDelivered = <String, bool>{};
     for (var i = 0; i < distributionTargets.length; i++) {
       final peerId = distributionTargets[i].member.peerId;
@@ -507,39 +628,6 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         },
       );
     }
-
-    // 3. Promote the admin's own validator and local key only after
-    // every required recipient confirms key delivery.
-    try {
-      await callGroupUpdateKey(
-        bridge,
-        groupId: groupId,
-        groupKey: newKey,
-        keyEpoch: newEpoch,
-      );
-    } catch (e) {
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
-        details: {'error': e.toString()},
-      );
-      return RotateGroupKeyOutcome.notRotated;
-    }
-
-    final keyInfo = GroupKeyInfo(
-      groupId: groupId,
-      keyGeneration: newEpoch,
-      encryptedKey: newKey,
-      createdAt: generatedAt,
-    );
-    await groupRepo.saveKey(keyInfo);
-    await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
-
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROTATE_KEY_SAVED',
-      details: {'newEpoch': newEpoch},
-    );
 
     // 3b. Enqueue deferred members for later distribution. The epoch is already
     // promoted, so these members are temporarily on the old epoch (a degraded
@@ -705,6 +793,79 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
     groupId,
   );
   final eventAt = DateTime.now().toUtc();
+
+  // Once this group owns a distinct physical-device roster, deferred key
+  // repair stays on the same target-qualified protected authority lane as a
+  // fresh rotation. It must never fall back to live/group_store delivery.
+  if (hasProtectedGroupAuthorityAdapter &&
+      hasProtectedGroupPhysicalAuthority(members)) {
+    if (sourceDevice == null) return 0;
+    final frozenRecipients = freezeProtectedGroupPhysicalRecipients(members);
+    final transitionId =
+        'group_key_update_deferred:$groupId:$selfPeerId:$peerId:'
+        '${latestKey.keyGeneration}';
+    var protectedDelivered = 0;
+    for (final device in devices) {
+      try {
+        final built = await _buildRotatedKeyDeviceEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          sourcePeerId: selfPeerId,
+          sourceDevice: sourceDevice,
+          senderPublicKey: senderPublicKey,
+          senderPrivateKey: senderPrivateKey,
+          senderUsername: senderUsername,
+          member: target,
+          device: device,
+          newEpoch: latestKey.keyGeneration,
+          newKey: latestKey.encryptedKey,
+          eventAt: eventAt,
+          preTransitionStateHash: preTransitionStateHash,
+        );
+        if (built == null) continue;
+        final preparation = await prepareProtectedGroupAuthority(
+          ProtectedGroupAuthorityPrepareRequest(
+            groupId: groupId,
+            transitionId: transitionId,
+            control: ProtectedGroupAuthorityControl.groupKeyUpdate,
+            replayData: <String, dynamic>{
+              'groupId': groupId,
+              'keyGeneration': latestKey.keyGeneration,
+              'encryptedKey': latestKey.encryptedKey,
+              'from': sourceDevice.transportPeerId,
+              'to': device.transportPeerId,
+              'content': built.envelope,
+              'timestamp': eventAt.toIso8601String(),
+            },
+            actorAccountPeerId: selfPeerId,
+            actorAccountPublicKey: senderPublicKey,
+            actorAccountPrivateKey: senderPrivateKey,
+            senderDevice: sourceDevice,
+            frozenRecipients: frozenRecipients,
+            deliveryRecipients: <GroupMemberDeviceIdentity>[device],
+          ),
+        );
+        if (preparation == null || !preparation.hasRecipients) continue;
+        if (await activateProtectedGroupAuthority(
+          preparation,
+          requireAllCustody: true,
+        )) {
+          protectedDelivered++;
+        }
+      } catch (error) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_KEY_DISTRIBUTION_PROTECTED_RETRY_DEFERRED',
+          details: {
+            'peerId': _diagnosticPrefix(peerId),
+            'error': error.toString(),
+          },
+        );
+      }
+    }
+    return protectedDelivered;
+  }
 
   final maxAttempts = attemptCount < 1 ? 1 : attemptCount;
   var delivered = 0;
@@ -1003,6 +1164,129 @@ Future<bool> _distributeRotatedKeyToDeviceWithRetry({
   return false;
 }
 
+class _BuiltRotatedKeyDeviceEnvelope {
+  const _BuiltRotatedKeyDeviceEnvelope(this.envelope);
+
+  final String envelope;
+}
+
+Future<_BuiltRotatedKeyDeviceEnvelope?> _buildRotatedKeyDeviceEnvelope({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String sourcePeerId,
+  required GroupMemberDeviceIdentity? sourceDevice,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  required String senderUsername,
+  required GroupMember member,
+  required GroupMemberDeviceIdentity device,
+  required int newEpoch,
+  required String newKey,
+  required DateTime eventAt,
+  required String preTransitionStateHash,
+}) async {
+  try {
+    final signedPayload = canonicalGroupKeyUpdateSignedPayload(
+      groupId: groupId,
+      sourcePeerId: sourcePeerId,
+      sourceDeviceId: sourceDevice?.deviceId,
+      sourceTransportPeerId: sourceDevice?.transportPeerId,
+      recipientPeerId: member.peerId,
+      recipientDeviceId: device.deviceId,
+      recipientTransportPeerId: device.transportPeerId,
+      recipientKeyPackageId: device.keyPackageId,
+      keyGeneration: newEpoch,
+      encryptedKey: newKey,
+    );
+    final signResult = await callSignPayload(
+      bridge: bridge,
+      dataToSign: signedPayload,
+      privateKey: senderPrivateKey,
+    );
+    final signature = signResult['signature'];
+    if (signResult['ok'] != true || signature is! String || signature.isEmpty) {
+      return null;
+    }
+    final sourceEventId = _directKeyUpdateSourceEventId(
+      groupId: groupId,
+      sourcePeerId: sourcePeerId,
+      sourceDevice: sourceDevice,
+      recipientPeerId: member.peerId,
+      recipientDevice: device,
+      keyGeneration: newEpoch,
+    );
+    final transitionSubject = buildGroupKeyUpdateTransitionSubject(
+      groupId: groupId,
+      sourcePeerId: sourcePeerId,
+      sourceDeviceId: sourceDevice?.deviceId,
+      sourceTransportPeerId: sourceDevice?.transportPeerId,
+      recipientPeerId: member.peerId,
+      recipientDeviceId: device.deviceId,
+      recipientTransportPeerId: device.transportPeerId,
+      recipientKeyPackageId: device.keyPackageId,
+      keyGeneration: newEpoch,
+      encryptedKey: newKey,
+    );
+    final signedTransitionAudit = await signGroupTransitionAudit(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      groupId: groupId,
+      transitionType: 'group_key_update',
+      sourceEventId: sourceEventId,
+      eventAt: eventAt,
+      actorPeerId: sourcePeerId,
+      actorUsername: senderUsername,
+      actorSigningPublicKey:
+          sourceDevice?.deviceSigningPublicKey ?? senderPublicKey,
+      actorPrivateKey: senderPrivateKey,
+      actorDeviceId: sourceDevice?.deviceId,
+      actorTransportPeerId: sourceDevice?.transportPeerId,
+      actorKeyPackageId: sourceDevice?.keyPackageId,
+      preTransitionStateHash: preTransitionStateHash,
+      transitionSubject: transitionSubject,
+    );
+    final encryptResult = await callEncryptMessage(
+      bridge: bridge,
+      recipientMlKemPublicKey: device.mlKemPublicKey!,
+      plaintext: jsonEncode({
+        'groupId': groupId,
+        'sourceEventId': sourceEventId,
+        'eventAt': eventAt.toIso8601String(),
+        'sourcePeerId': sourcePeerId,
+        if (sourceDevice != null) 'sourceDeviceId': sourceDevice.deviceId,
+        if (sourceDevice != null)
+          'sourceTransportPeerId': sourceDevice.transportPeerId,
+        'recipientPeerId': member.peerId,
+        'recipientDeviceId': device.deviceId,
+        'recipientTransportPeerId': device.transportPeerId,
+        if (device.keyPackageId != null)
+          'recipientKeyPackageId': device.keyPackageId,
+        'keyGeneration': newEpoch,
+        'encryptedKey': newKey,
+        'signatureAlgorithm': groupKeyUpdateSignatureAlgorithm,
+        'signedPayload': signedPayload,
+        'signature': signature,
+        signedGroupTransitionAuditField: signedTransitionAudit,
+      }),
+    );
+    if (encryptResult['ok'] != true) return null;
+    return _BuiltRotatedKeyDeviceEnvelope(
+      jsonEncode({
+        'type': 'group_key_update',
+        'version': '2',
+        'encrypted': {
+          'kem': encryptResult['kem'],
+          'ciphertext': encryptResult['ciphertext'],
+          'nonce': encryptResult['nonce'],
+        },
+      }),
+    );
+  } catch (_) {
+    return null;
+  }
+}
+
 Future<bool> _distributeRotatedKeyToDevice({
   required Bridge bridge,
   required GroupRepository groupRepo,
@@ -1167,8 +1451,9 @@ List<GroupMember> _undeliverableActiveMembers({
 /// ML-KEM public key, with the legacy member-level fallback). Receive-side drain
 /// triggers use this so "regained a usable key" means exactly what rotation's
 /// promote/defer logic means — no second, drifting definition of "keyless".
-List<GroupMemberDeviceIdentity> deliverableGroupKeyDevices(GroupMember member) =>
-    _deliverableDevicesForRotation(member);
+List<GroupMemberDeviceIdentity> deliverableGroupKeyDevices(
+  GroupMember member,
+) => _deliverableDevicesForRotation(member);
 
 List<GroupMemberDeviceIdentity> _deliverableDevicesForRotation(
   GroupMember member,

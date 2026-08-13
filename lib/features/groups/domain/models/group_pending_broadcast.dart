@@ -3,9 +3,14 @@ import 'dart:convert';
 const groupPendingBroadcastKindMemberRoleUpdated = 'member_role_updated';
 const groupPendingBroadcastKindMemberRolePrepared =
     'member_role_updated_prepared';
-const groupPendingBroadcastKindExitLeaveNotice =
-    'member_removed_exit_intent';
+const groupPendingBroadcastKindExitLeaveNotice = 'member_removed_exit_intent';
 const groupPendingBroadcastKindMemberRemoved = 'member_removed';
+const groupPendingBroadcastKindLinkedBootstrap = 'linked_group_bootstrap_v1';
+const groupPendingBroadcastKindProtectedAuthority = 'group_authority_v1';
+
+bool isProtectedGroupPendingBroadcastKind(String kind) =>
+    kind == groupPendingBroadcastKindLinkedBootstrap ||
+    kind == groupPendingBroadcastKindProtectedAuthority;
 
 bool isPendingGroupMemberRoleBroadcastKind(String kind) =>
     kind == groupPendingBroadcastKindMemberRoleUpdated ||

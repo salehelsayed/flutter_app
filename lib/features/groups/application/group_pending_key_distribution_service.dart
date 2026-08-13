@@ -1,5 +1,6 @@
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -197,7 +198,7 @@ class GroupPendingKeyDistributionRunner {
           return false;
         }
 
-        return _drainOneLocked(current, identity);
+        return _drainOneLocked(current, identity, target);
       },
     );
     return guarded.didRun && (guarded.value ?? false);
@@ -206,6 +207,7 @@ class GroupPendingKeyDistributionRunner {
   Future<bool> _drainOneLocked(
     GroupPendingKeyDistribution row,
     IdentityModel identity,
+    GroupMember target,
   ) async {
     try {
       final delivered = await distributeCurrentGroupKeyToDeferredPeer(
@@ -222,7 +224,15 @@ class GroupPendingKeyDistributionRunner {
         perRecipientTimeout: perRecipientTimeout,
       );
 
-      if (delivered > 0) {
+      final protectedAuthorityOwned =
+          hasProtectedGroupAuthorityAdapter &&
+          hasProtectedGroupPhysicalAuthority(
+            await groupRepo.getMembers(row.groupId),
+          );
+      final requiredDeliveryCount = protectedAuthorityOwned
+          ? deliverableGroupKeyDevices(target).length
+          : 1;
+      if (delivered > 0 && delivered >= requiredDeliveryCount) {
         final finalized = await finalizeGroupPendingKeyDistributionIfExact(
           repository,
           row,
@@ -238,6 +248,12 @@ class GroupPendingKeyDistributionRunner {
           },
         );
         return true;
+      }
+
+      if (protectedAuthorityOwned) {
+        // Exact protected rows remain the retry owner. Do not burn the legacy
+        // attempt cap while one physical target still lacks strict custody.
+        return false;
       }
 
       // Still undeliverable (keyless or every send failed): record + maybe cap.
