@@ -1,8 +1,8 @@
 # 363 - GAP-N01 Linked-Group Self-Bootstrap And Authority-Convergence Foundation
 
-Status: PREREQUISITE_BLOCKED / CONTRACT_READY / independently reviewed / default-off / not release-eligible
+Status: EXECUTION_READY / independently reviewed and revalidated / default-off / not release-eligible
 Type: Modification
-Planning baseline: `<PLAN_362_POST_EXECUTION_AUDIT_SHA>` (must be replaced by Plan 362's clean, committed post-execution audit closure before RED)
+Planning baseline: `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5` (clean Plan-362 post-execution audit closure; Graphify `4bf3025ee64828d0`, 72,428 nodes / 106,174 edges)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; successor to Plan 362's direct event/blob fanout slice
 Classification: schema-free, group-scoped same-account linked-installation bootstrap plus receive-only group authority convergence; no group content authoring, media, activation, release, or GAP-N01 closure claim
 Closure tier: four focused concurrent host bundles, four representative mutations, two exact protected-custody Go tests, mandatory DTR/runtime-root checks, the curated `groups` lane once, and one availability-bounded physical-Android + Android-emulator upgrade of the existing B1b scenario
@@ -18,12 +18,14 @@ Closure tier: four focused concurrent host bundles, four representative mutation
 | 2026-08-12 | Product-scope review | Initial proposal combining bootstrap, discussion, announcement and reactions; physical-recipient event fanout; authority races | Writable group events are not safe until a fresh linked installation can materialize a group and converge membership/role/removal/dissolve/key authority. Combining both mechanisms creates too many new trust and runtime boundaries for one economical plan. | Plan 363 ends at a production-reachable read-only group authority foundation. Plan 364 owns blob-free discussion/announcement/reaction authoring; Plan 365 owns group blobs/media/voice. |
 | 2026-08-12 | Test / gate review | Existing group/admission/invite/system-transition/runtime tests; group curated inventory; protected-custody Go tails; B1b runner; DTR-18 and runtime-root contracts | Existing test files and schemas are sufficient. One migrated B1b journey is the only distinct physical seam; no migration/SQLCipher/new host path/family/full-host gate is justified. | Use five host IDs across four concurrent bundles, four mutations, exact Go RED/GREEN, mandatory DTR/runtime roots, curated `groups` once and one Android pair. Run independent Flutter files with concurrency 4 wherever supported. |
 | 2026-08-12 | Independent TDD review | Architecture counterexamples, bootstrap reachability, selector conjunction, relay semantics, source-current limits, UI route, literal paths/commands and gate economy | Review rejected the initial writable-event scope and the legacy group-inbox premise. The bounded protected-custody + atomic-bootstrap + read-only-authority split closes those findings without v115, a new scheduler or a general group shell. | `PREREQUISITE_BLOCKED / CONTRACT_READY`; only Plan 362's clean closure and final shared-API/Graphify revalidation remain. |
+| 2026-08-13 | Final Plan-362 closure and successor revalidation | Plan-362 audit closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`; committed/current Graphify `4bf3025ee64828d0` (72,428 nodes / 106,174 edges); DB v114 floor, linked-installation authority, protected `AckCustodyKind`/`AckOrExpiryInboxStore`, direct survivor authority and restricted runtime seams; live curated inventories | Plan 362 changes only the direct media adopter and preserves the group bootstrap/custody boundaries assumed here. The post-commit review query is anchored/current. Host `1to1` discovers 126 paths; the canonical `GROUP_TESTS` array contains 244 unique Flutter paths plus its incumbent registered Go bridge tail. No Plan-363 source or test is authored. | Prerequisite satisfied. Mark `EXECUTION_READY`, pin the exact closure SHA/fingerprint, retain the reviewed c4-focused/serial-curated cadence, and do not refresh Graphify again until Plan 363 has a coherent code change. |
 
 ## Execution Progress
 
 | Time | Step | Evidence | Result / next action |
 |---|---|---|---|
 | 2026-08-12 | Planning and independent review | Anchored Graphify planning/review queries plus targeted source verification; active Plan-362 worktree | Contract ready for its blocked state. After Plan 362 closes, pin its clean audit SHA and already-refreshed committed graph, revalidate the exact shared APIs/counts once without refreshing, then author the four semantic RED bundles and exact Go REDs. |
+| 2026-08-13 | Prerequisite unblock | Clean Plan-362 closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`; current anchored Graphify `4bf3025ee64828d0`; direct/linked/protected-custody API and gate-inventory verification | `EXECUTION_READY`. No Graphify refresh and no Plan-363 acceptance gate were required for the docs-only unblock. First implementation action is the literal clean-tree/ancestry preflight, then the four semantic RED bundles and exact Go REDs. |
 
 ## Problem And Source-Backed Evidence
 
@@ -54,16 +56,17 @@ Stop and re-review before adding v115, a parallel group outbox, per-target ACK r
 
 ## Graph Grounding Snapshot
 
-- Graph: `graphify-arch`. Both planning and review queries were anchored against the last committed architecture graph, fingerprint `488091ffcb7bae21`; active Plan-362 source makes that a planning reference, not Plan-363 execution evidence.
+- Graph: `graphify-arch`. Both original planning/review queries were anchored against fingerprint `488091ffcb7bae21`; that remains historical planning context only.
+- Final unblock: Plan-362 closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5` carries the single final incremental refresh at fingerprint `4bf3025ee64828d0` (72,428 nodes / 106,174 edges). The post-commit successor query was anchored/current; direct target-survivor authority remains v114-persisted, linked role authority remains fail-closed, and the protected custody API remains additive. Raw source verification found no incompatible group-boundary change.
 - Planning query: `python3 graphify-arch/tdd_context.py query "Plan 363 GAP-N01 group and announcement linked-device fanout after Plan 362 direct media fanout: sendGroupMessage sendAnnouncement group pubsub reliable inbox custody group multi-device sibling roster device keys ACK retry receive ordering and media blobs" --profile tdd --budget 700`.
 - Review query: `python3 graphify-arch/tdd_context.py query "Review Plan 363 linked-group self-bootstrap and blob-free discussion announcement reaction convergence for production reachability, trust boundaries, custody ordering, retry durability, linked runtime, missing tests and overengineering; anchors send_group_invite_use_case.dart send_group_message_use_case.dart drain_group_offline_inbox_use_case.dart run_b1b_sibling_device_convergence.dart" --profile review --budget 800`.
-- Before RED, replace the placeholder baseline, record Plan 362's final committed Graphify fingerprint/counts, query that already-refreshed graph once, and revalidate the Plan-362 target/auth/runtime APIs. Do not refresh at unblock time; Plan 363 performs one incremental refresh only after its coherent code change.
+- Final unblock completed without refresh: the exact baseline/fingerprint/counts are pinned above and the already-refreshed graph plus Plan-362 target/auth/runtime APIs were revalidated once. Plan 363 performs one incremental refresh only after its coherent code change.
 
 ## Scope Contract
 
 ### Prerequisite, selectors and rollout authority
 
-- Author RED only from `<PLAN_362_POST_EXECUTION_AUDIT_SHA>` or a descendant whose intervening files are this Plan-363 artifact, `00-INDEX.md` and `STATUS.md`, after the literal preflight below. Plan 362 must be code-complete, post-execution audited and clean.
+- Author RED only from `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5` or a descendant whose intervening files are this Plan-363 artifact, `00-INDEX.md` and `STATUS.md`, after the literal preflight below. Plan 362 is code-complete, post-execution audited and clean.
 - Add no new selector. Producing the QR on the linked installation and receiving bootstrap there require active persisted linked authority; the ordinary primary's selected-group scan/Verify requires both existing `MKNOON_ENABLE_DIRECT_LINKED_DEVICES=true` and `MKNOON_ENABLE_MULTI_DEVICE_SYNC=true` authorities but does not require a local copy of the remote credential. Mixed-selector, missing linked receiver credential, linked-role scanner, missing own membership and disabled cases are all-zero before crypto, DB or network.
 - The scanner is available only on an ordinary-primary installation for its current own membership. An active linked secondary may display its QR on the restricted linked surface but cannot scan, stage or Verify its own credential.
 - Once exact linked group device authority or protected custody exists, its bootstrap/authority retry, receive and terminal drain is state-driven and continues after either selector rolls back. Selector rollback cannot demote to generic invite/group inbox or erase persisted authority.
@@ -165,8 +168,8 @@ Run only after Plan 362 is audit-closed and the Plan-363 planning docs are commi
 
 ```bash
 set -euo pipefail
-PLAN363_ACCEPTED_BASE='<PLAN_362_POST_EXECUTION_AUDIT_SHA>'
-test "$PLAN363_ACCEPTED_BASE" != '<PLAN_362_POST_EXECUTION_AUDIT_SHA>'
+PLAN363_ACCEPTED_BASE='051e26d5aefca8dc2f89d8d8c6d83113187c9ed5'
+test "$PLAN363_ACCEPTED_BASE" = '051e26d5aefca8dc2f89d8d8c6d83113187c9ed5'
 test "$(git rev-parse "$PLAN363_ACCEPTED_BASE^{commit}")" = "$PLAN363_ACCEPTED_BASE"
 git merge-base --is-ancestor "$PLAN363_ACCEPTED_BASE" HEAD
 test -z "$(git status --porcelain)"
@@ -406,7 +409,7 @@ git status --short
 
 ## Done Criteria
 
-- [ ] Plan 362 is cleanly implemented and post-execution audited; its literal closure SHA/current committed Graphify fingerprint replace every placeholder, shared APIs/counts are revalidated, and plan/index/status move to `EXECUTION_READY` before RED.
+- [x] Plan 362 is cleanly implemented and post-execution audited at `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`; current Graphify `4bf3025ee64828d0` (72,428 nodes / 106,174 edges), shared APIs and live inventories are revalidated, and plan/index/status move to `EXECUTION_READY` before RED.
 - [ ] An ordinary primary can scan the fresh linked installation's exact existing QR for one current group, with both selectors and no contact/direct-binding mutation; linked/self/crossed inputs refuse.
 - [ ] Verify preserves legacy+linked device authority and atomically owns exact protected bootstrap bytes plus durable intent before network; ambiguous custody cannot clear either owner.
 - [ ] Protected bootstrap and authority kinds bind exact physical sender/recipient and logical group/account authority through the existing action/backend; relay ACK/capacity/duplicate behavior is recipient-independent.
@@ -448,19 +451,21 @@ git status --short
 
 ## Arbiter Decision
 
-`PREREQUISITE_BLOCKED / CONTRACT_READY / INDEPENDENTLY REVIEWED.` The smallest
+`EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED.` The smallest
 production-reachable Plan 363 is a group-scoped same-account QR bootstrap,
 atomic sender/receiver authority, two additive protected-custody kinds, signed
 group authority convergence and a read-only linked surface. Writable group
 discussion, admin announcements and reactions would require a separate
 event-vs-authority contract and are deferred to Plan 364; group blobs remain
 Plan 365. No v115, new queue, ACK ledger, group discovery service, relay action,
-bridge/native command or extra device campaign is justified.
+bridge/native command or extra device campaign is justified. Plan 362's exact
+closure SHA and current committed graph are pinned, and no incompatible shared
+API or gate-inventory drift remains; semantic RED authoring is now authorized.
 
 ## Handoff
 
-- Current state: `PREREQUISITE_BLOCKED / CONTRACT_READY`; Plan 362 is active and no Plan-363 RED is authorized.
-- Unblock action: after Plan 362's clean post-execution audit, replace `<PLAN_362_POST_EXECUTION_AUDIT_SHA>`, pin/query its already-refreshed committed graph, revalidate shared APIs/live counts, update plan/index/status to `EXECUTION_READY`, and commit those docs before RED.
+- Current state: `EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED`; Plan 362 is audit-closed at `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`, and Plan-363 RED is authorized only after the literal preflight.
+- Unblock action: complete. The closure SHA, current Graphify fingerprint/counts, shared APIs and live inventories are pinned/revalidated in this artifact; this docs-only unblock did not refresh the graph.
 - First execution action: run the literal preflight, then record `TC-363-01a`, `01b`, `02a`, `03a`, host `04a` and the exact node/relay REDs before production wiring.
 - Runtime economy: run every independent Flutter multi-file bundle with concurrency 4 wherever supported to speed feedback; keep only mutations, curated gates and device work serial.
 - Successor work: Plan 364 owns blob-free group discussion/announcement/reaction authoring after authority convergence; Plan 365 owns group media/blob/voice; later plans own history/no-intent, activation, capability rollout and final GAP-N01/release closure.
