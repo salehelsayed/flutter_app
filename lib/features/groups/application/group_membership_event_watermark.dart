@@ -5,6 +5,13 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 final Map<String, Future<void>> _groupAuthorityPhaseLocks = {};
 final Object _groupAuthorityPhaseZoneKey = Object();
 
+bool isGroupAuthorityPhaseHeld(String groupId) {
+  final normalizedGroupId = groupId.trim();
+  if (normalizedGroupId.isEmpty) return false;
+  final held = Zone.current[_groupAuthorityPhaseZoneKey] as Set<String>?;
+  return held?.contains(normalizedGroupId) ?? false;
+}
+
 /// Runs one mutation in the process-wide, per-group authority phase.
 ///
 /// Membership, bootstrap receive, protected authority replay, and protected

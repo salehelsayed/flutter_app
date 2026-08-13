@@ -36,8 +36,27 @@ abstract interface class GroupPendingBroadcastProtectedRecipientRepository {
   );
 }
 
+/// Authenticated sender authority committed with its immutable protected
+/// recipient rows. It deliberately carries only event-log-safe fields.
+class GroupPendingBroadcastAuthorityFact {
+  const GroupPendingBroadcastAuthorityFact({
+    required this.sourcePeerId,
+    required this.sourceEventId,
+    required this.sourceTimestamp,
+    required this.payload,
+  });
+
+  final String sourcePeerId;
+  final String sourceEventId;
+  final String sourceTimestamp;
+  final Map<String, Object?> payload;
+}
+
 abstract interface class GroupPendingBroadcastProtectedBatchRepository {
-  Future<bool> enqueueProtectedBatch(List<GroupPendingBroadcast> rows);
+  Future<bool> enqueueProtectedBatch(
+    List<GroupPendingBroadcast> rows, {
+    required GroupPendingBroadcastAuthorityFact authorityPrepared,
+  });
 }
 
 Future<bool> removeGroupPendingBroadcastIfExact(

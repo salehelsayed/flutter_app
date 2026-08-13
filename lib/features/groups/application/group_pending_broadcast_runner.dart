@@ -31,6 +31,12 @@ class GroupPendingBroadcastRunner {
   final PendingSiblingDeviceRepository? pendingSiblingDeviceRepository;
   final LinkedGroupBootstrapRepository? linkedGroupBootstrapRepository;
 
+  /// Repairs or verifies sender-side complete authority before a protected
+  /// outbox row can retire. Production supplies the durable event-log owner;
+  /// simple repositories may omit it for non-production queue tests.
+  final Future<bool> Function(GroupPendingBroadcast broadcast)?
+  ensureProtectedAuthorityComplete;
+
   /// One identity-safe serial tail per group. The map always points at the
   /// newest queued turn; an older completion may remove it only when it still
   /// owns that exact entry.
@@ -43,6 +49,7 @@ class GroupPendingBroadcastRunner {
     this.protectedInboxStore,
     this.pendingSiblingDeviceRepository,
     this.linkedGroupBootstrapRepository,
+    this.ensureProtectedAuthorityComplete,
   });
 
   /// Drains every pending broadcast for [groupId]. Returns the count re-pushed.
@@ -199,6 +206,13 @@ class GroupPendingBroadcastRunner {
           // authority row remains exact and durable, but cannot overtake it.
           return false;
         }
+      }
+      final ensureComplete = ensureProtectedAuthorityComplete;
+      if (ensureComplete != null && !await ensureComplete(broadcast)) {
+        // A prepared sender row may survive a crash before its local
+        // projection. Do not expose that transition or retire its owner until
+        // complete history has been proven from durable local state.
+        return false;
       }
     }
     final custodyKind =

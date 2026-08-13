@@ -151,6 +151,10 @@ class GroupRepositoryImpl
     required Map<String, Object?> updatedSelfMember,
     required Map<String, Object?> pendingDevice,
     required Map<String, Object?> pendingBroadcast,
+    required String authorityGenesisSourcePeerId,
+    required String authorityGenesisSourceEventId,
+    required String authorityGenesisSourceTimestamp,
+    required Map<String, Object?> authorityGenesisPayload,
   })?
   dbCommitLinkedGroupBootstrapAuthoringFn;
   final Future<bool> Function({
@@ -1428,6 +1432,7 @@ class GroupRepositoryImpl
     required GroupMember updatedSelfMember,
     required PendingSiblingDevice pendingDevice,
     required GroupPendingBroadcast pendingBroadcast,
+    required LinkedGroupBootstrapAuthorityGenesis authorityGenesis,
   }) async {
     final commit = dbCommitLinkedGroupBootstrapAuthoringFn;
     if (commit == null) {
@@ -1483,6 +1488,10 @@ class GroupRepositoryImpl
         updatedSelfMember: updatedSelfMember.toMap(),
         pendingDevice: pendingDevice.toMap(),
         pendingBroadcast: pendingBroadcast.toMap(),
+        authorityGenesisSourcePeerId: authorityGenesis.sourcePeerId,
+        authorityGenesisSourceEventId: authorityGenesis.sourceEventId,
+        authorityGenesisSourceTimestamp: authorityGenesis.sourceTimestamp,
+        authorityGenesisPayload: authorityGenesis.payload,
       );
       return switch (result) {
         LinkedGroupBootstrapDbDisposition.committed =>

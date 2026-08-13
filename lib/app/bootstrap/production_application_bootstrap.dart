@@ -177,6 +177,7 @@ import 'package:flutter_app/features/conversation/application/verify_inbox_custo
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/recover_stuck_sending_group_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
@@ -3298,6 +3299,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required updatedSelfMember,
             required pendingDevice,
             required pendingBroadcast,
+            required authorityGenesisSourcePeerId,
+            required authorityGenesisSourceEventId,
+            required authorityGenesisSourceTimestamp,
+            required authorityGenesisPayload,
           }) => dbCommitLinkedGroupBootstrapAuthoring(
             db,
             expectedGroup: expectedGroup,
@@ -3308,6 +3313,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             updatedSelfMember: updatedSelfMember,
             pendingDevice: pendingDevice,
             pendingBroadcast: pendingBroadcast,
+            authorityGenesisSourcePeerId: authorityGenesisSourcePeerId,
+            authorityGenesisSourceEventId: authorityGenesisSourceEventId,
+            authorityGenesisSourceTimestamp: authorityGenesisSourceTimestamp,
+            authorityGenesisPayload: authorityGenesisPayload,
           ),
       dbCompleteLinkedGroupBootstrapCustodyFn:
           ({required expectedDevice, required expectedBroadcast}) =>
@@ -6233,8 +6242,21 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // runner re-pushes on app resume / rejoin.
     final groupPendingBroadcastRepository = GroupPendingBroadcastRepositoryImpl(
       dbInsert: (row) => dbInsertPendingGroupBroadcast(db, row),
-      dbInsertProtectedBatch: (rows) =>
-          dbInsertPendingGroupBroadcastsAtomically(db, rows),
+      dbInsertProtectedBatch:
+          ({
+            required rows,
+            required authorityPreparedSourcePeerId,
+            required authorityPreparedSourceEventId,
+            required authorityPreparedSourceTimestamp,
+            required authorityPreparedPayload,
+          }) => dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
+            db,
+            rows: rows,
+            authorityPreparedSourcePeerId: authorityPreparedSourcePeerId,
+            authorityPreparedSourceEventId: authorityPreparedSourceEventId,
+            authorityPreparedSourceTimestamp: authorityPreparedSourceTimestamp,
+            authorityPreparedPayload: authorityPreparedPayload,
+          ),
       dbLoadForGroup: (groupId) =>
           dbLoadPendingGroupBroadcastsForGroup(db, groupId),
       dbLoadAll: () => dbLoadAllPendingGroupBroadcasts(db),
@@ -6254,11 +6276,114 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 updatedAt: updatedAt,
               ),
     );
+
+    Future<AuthenticatedGroupAuthorityProof?> loadLocalAuthorityProof({
+      required String groupId,
+      required AuthenticatedGroupAuthorityPhase phase,
+      required String eventId,
+    }) => loadAuthenticatedGroupAuthorityProofFromEventLog(
+      loadRow: ({required groupId, required sourceEventId}) =>
+          dbLoadGroupEventLogEntryExact(
+            db,
+            groupId: groupId,
+            sourceEventId: sourceEventId,
+          ),
+      groupId: groupId,
+      phase: phase,
+      eventId: eventId,
+      verify: ({required publicKey, required data, required signature}) =>
+          callVerifyPayload(
+            bridge: bridge,
+            publicKey: publicKey,
+            data: data,
+            signature: signature,
+          ),
+    );
+
+    Future<void> appendLocalAuthorityProof({
+      required AuthenticatedGroupAuthorityPhase phase,
+      required AuthenticatedGroupAuthorityProof proof,
+    }) async {
+      await dbAppendGroupEventLogEntry(
+        db,
+        groupId: proof.groupId,
+        eventType: phase.eventType,
+        sourcePeerId: proof.actorAccountPeerId,
+        sourceEventId: authenticatedGroupAuthoritySourceEventId(
+          phase,
+          proof.eventId,
+        ),
+        sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+        payload: authenticatedGroupAuthorityFactPayload(proof),
+      );
+    }
+
+    Future<bool> completeLocalProtectedAuthority(
+      AuthenticatedGroupAuthorityProof expected,
+    ) async {
+      final control = ProtectedGroupAuthorityControl.fromWire(expected.control);
+      if (control == null) return false;
+      return ensureLocalProtectedGroupAuthorityComplete(
+        groupId: expected.groupId,
+        eventId: expected.eventId,
+        expectedControl: control,
+        expectedProof: expected,
+        groupRepository: groupRepository,
+        loadAuthorityProof:
+            ({required groupId, required phase, required eventId}) =>
+                loadLocalAuthorityProof(
+                  groupId: groupId,
+                  phase: phase,
+                  eventId: eventId,
+                ),
+        appendAuthorityProof: ({required phase, required proof}) =>
+            appendLocalAuthorityProof(phase: phase, proof: proof),
+      );
+    }
+
+    Future<bool> ensureProtectedAuthorityComplete(
+      GroupPendingBroadcast broadcast,
+    ) async {
+      final identity = parseProtectedGroupAuthorityDeliveryId(
+        broadcast.sourceMessageId ?? '',
+      );
+      if (identity == null ||
+          identity.recipientTransportPeerId !=
+              broadcast.recipientPeerIds.single) {
+        return false;
+      }
+      final complete = await loadLocalAuthorityProof(
+        groupId: broadcast.groupId,
+        phase: AuthenticatedGroupAuthorityPhase.complete,
+        eventId: identity.transitionId,
+      );
+      if (complete != null) {
+        return complete.control == identity.control.wireValue;
+      }
+      return runGroupAuthorityPhaseIfNeeded(
+        groupId: broadcast.groupId,
+        authorityPhaseHeld: isGroupAuthorityPhaseHeld(broadcast.groupId),
+        action: () async {
+          final prepared = await loadLocalAuthorityProof(
+            groupId: broadcast.groupId,
+            phase: AuthenticatedGroupAuthorityPhase.prepared,
+            eventId: identity.transitionId,
+          );
+          if (prepared == null ||
+              prepared.control != identity.control.wireValue) {
+            return false;
+          }
+          return completeLocalProtectedAuthority(prepared);
+        },
+      );
+    }
+
     final groupPendingBroadcastRunner = GroupPendingBroadcastRunner(
       repository: groupPendingBroadcastRepository,
       protectedInboxStore: p2pService,
       pendingSiblingDeviceRepository: groupRepository,
       linkedGroupBootstrapRepository: groupRepository,
+      ensureProtectedAuthorityComplete: ensureProtectedAuthorityComplete,
       rePushFinalizesSuccess: true,
       rePush: buildGroupPendingBroadcastRePush(
         bridge: bridge,
@@ -6283,7 +6408,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             rows: const <GroupPendingBroadcast>[],
           );
         }
-        final rows = await buildProtectedGroupAuthorityRows(
+        final preparation = await buildProtectedGroupAuthorityRows(
           groupId: request.groupId,
           transitionId: request.transitionId,
           control: request.control,
@@ -6308,14 +6433,11 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                     plaintext: plaintext,
                   ),
         );
-        final preparation = ProtectedGroupAuthorityPreparation(
-          groupId: request.groupId,
-          rows: rows,
-        );
+        final rows = preparation.rows;
         if (rows.isEmpty) return preparation;
         if (await persistPreparedProtectedGroupAuthority(
           repository: groupPendingBroadcastRepository,
-          rows: rows,
+          preparation: preparation,
         )) {
           return preparation;
         }
@@ -6342,14 +6464,41 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                       expected.recipientPeerIds.single;
             })
             .toList(growable: false);
-        return recovered.length == rows.length
-            ? ProtectedGroupAuthorityPreparation(
-                groupId: request.groupId,
-                rows: recovered,
-              )
-            : null;
+        if (recovered.length != rows.length) return null;
+        final persistedProof = await loadLocalAuthorityProof(
+          groupId: request.groupId,
+          phase: AuthenticatedGroupAuthorityPhase.prepared,
+          eventId: request.transitionId,
+        );
+        final persistedControl = persistedProof == null
+            ? null
+            : ProtectedGroupAuthorityControl.fromWire(persistedProof.control);
+        if (persistedProof == null || persistedControl != request.control) {
+          return null;
+        }
+        return ProtectedGroupAuthorityPreparation(
+          groupId: request.groupId,
+          rows: recovered,
+          authorityProof: persistedProof,
+          control: persistedControl,
+          replayData: Map<String, dynamic>.from(persistedProof.authorityData),
+        );
       },
       activate: (preparation, {required requireAllCustody}) async {
+        final proof = preparation.authorityProof;
+        final control = preparation.control;
+        if (proof == null ||
+            control == null ||
+            proof.control != control.wireValue ||
+            !await runGroupAuthorityPhaseIfNeeded(
+              groupId: preparation.groupId,
+              authorityPhaseHeld: isGroupAuthorityPhaseHeld(
+                preparation.groupId,
+              ),
+              action: () => completeLocalProtectedAuthority(proof),
+            )) {
+          return false;
+        }
         await groupPendingBroadcastRunner.drainForGroup(preparation.groupId);
         if (!requireAllCustody) return true;
         final pending = await groupPendingBroadcastRepository.forGroup(

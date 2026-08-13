@@ -49,6 +49,7 @@ abstract interface class LinkedGroupBootstrapRepository {
     required GroupMember updatedSelfMember,
     required PendingSiblingDevice pendingDevice,
     required GroupPendingBroadcast pendingBroadcast,
+    required LinkedGroupBootstrapAuthorityGenesis authorityGenesis,
   });
 
   /// Exact all-or-nothing completion after strict stored/duplicate custody.

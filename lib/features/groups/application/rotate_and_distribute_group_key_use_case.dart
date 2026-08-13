@@ -474,7 +474,11 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
         final preparation = await prepareProtectedGroupAuthority(
           ProtectedGroupAuthorityPrepareRequest(
             groupId: groupId,
-            transitionId: protectedTransitionId,
+            // Each encrypted direct-key replay is target-specific. Qualifying
+            // the signed authority event prevents two physical recipients
+            // from competing for one immutable prepared-history key.
+            transitionId:
+                '$protectedTransitionId:${target.device.transportPeerId}',
             control: ProtectedGroupAuthorityControl.groupKeyUpdate,
             replayData: <String, dynamic>{
               'groupId': groupId,
@@ -827,7 +831,7 @@ Future<int> distributeCurrentGroupKeyToDeferredPeer({
         final preparation = await prepareProtectedGroupAuthority(
           ProtectedGroupAuthorityPrepareRequest(
             groupId: groupId,
-            transitionId: transitionId,
+            transitionId: '$transitionId:${device.transportPeerId}',
             control: ProtectedGroupAuthorityControl.groupKeyUpdate,
             replayData: <String, dynamic>{
               'groupId': groupId,

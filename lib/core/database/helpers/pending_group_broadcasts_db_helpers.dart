@@ -4,6 +4,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../utils/flow_event_emitter.dart';
 import '../db_write_transaction.dart';
+import 'group_event_log_db_helpers.dart';
 import 'group_exit_intents_db_helpers.dart';
 import 'group_parent_write_guard.dart';
 
@@ -60,6 +61,61 @@ Future<bool> dbInsertPendingGroupBroadcastsAtomically(
           throw StateError('protected authority row conflict');
         }
       }
+      return true;
+    });
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Commits locally authored protected authority rows and their authenticated
+/// prepared fact in the same transaction. Exact retries repair a fact missing
+/// from a pre-history build; conflicting outbox or history bytes fail closed.
+Future<bool> dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
+  Database db, {
+  required List<Map<String, Object?>> rows,
+  required String authorityPreparedSourcePeerId,
+  required String authorityPreparedSourceEventId,
+  required String authorityPreparedSourceTimestamp,
+  required Map<String, Object?> authorityPreparedPayload,
+}) async {
+  if (rows.isEmpty ||
+      authorityPreparedSourcePeerId.isEmpty ||
+      authorityPreparedSourceEventId.isEmpty ||
+      authorityPreparedSourceTimestamp.isEmpty ||
+      authorityPreparedPayload.isEmpty) {
+    return false;
+  }
+  final groupId = rows.first['group_id'];
+  if (groupId is! String ||
+      groupId.isEmpty ||
+      rows.any((row) => row['group_id'] != groupId)) {
+    return false;
+  }
+  try {
+    return await dbWriteTransaction(db, (transaction) async {
+      for (final row in rows) {
+        await dbInsertPendingGroupBroadcastWithExecutor(transaction, row);
+        final existing = await transaction.query(
+          _table,
+          where: 'group_id = ? AND source_message_id = ?',
+          whereArgs: <Object?>[row['group_id'], row['source_message_id']],
+          limit: 1,
+        );
+        if (existing.length != 1 ||
+            !_samePendingBroadcastRow(existing.single, row)) {
+          throw StateError('protected authority row conflict');
+        }
+      }
+      await dbAppendGroupEventLogEntryInTransaction(
+        transaction,
+        groupId: groupId,
+        eventType: 'protected_authority_prepared',
+        sourcePeerId: authorityPreparedSourcePeerId,
+        sourceEventId: authorityPreparedSourceEventId,
+        sourceTimestamp: authorityPreparedSourceTimestamp,
+        payload: authorityPreparedPayload,
+      );
       return true;
     });
   } catch (_) {

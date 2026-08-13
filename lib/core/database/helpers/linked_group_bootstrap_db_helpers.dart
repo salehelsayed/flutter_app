@@ -37,7 +37,8 @@ Future<bool> dbHasLinkedGroupBootstrapIntent(
 ///
 /// Crypto and envelope construction happen before this call. Every durable
 /// fact becomes visible together: the legacy-preserving self roster, v85 retry
-/// intent, and the immutable v86 protected envelope.
+/// intent, the immutable v86 protected envelope, and the authenticated
+/// sender-side genesis fact that remains after custody retires both owners.
 Future<LinkedGroupBootstrapDbDisposition> dbCommitLinkedGroupBootstrapAuthoring(
   Database db, {
   required Map<String, Object?> expectedGroup,
@@ -48,6 +49,10 @@ Future<LinkedGroupBootstrapDbDisposition> dbCommitLinkedGroupBootstrapAuthoring(
   required Map<String, Object?> updatedSelfMember,
   required Map<String, Object?> pendingDevice,
   required Map<String, Object?> pendingBroadcast,
+  required String authorityGenesisSourcePeerId,
+  required String authorityGenesisSourceEventId,
+  required String authorityGenesisSourceTimestamp,
+  required Map<String, Object?> authorityGenesisPayload,
 }) {
   return dbWriteTransaction(db, (transaction) async {
     final groupId = expectedGroup['id'] as String? ?? '';
@@ -61,6 +66,10 @@ Future<LinkedGroupBootstrapDbDisposition> dbCommitLinkedGroupBootstrapAuthoring(
         deviceId.isEmpty ||
         sourceMessageId == null ||
         sourceMessageId.isEmpty ||
+        authorityGenesisSourcePeerId.isEmpty ||
+        authorityGenesisSourceEventId.isEmpty ||
+        authorityGenesisSourceTimestamp.isEmpty ||
+        authorityGenesisPayload.isEmpty ||
         pendingDevice['group_id'] != groupId ||
         pendingBroadcast['group_id'] != groupId) {
       return LinkedGroupBootstrapDbDisposition.refusedStateChanged;
@@ -133,7 +142,21 @@ Future<LinkedGroupBootstrapDbDisposition> dbCommitLinkedGroupBootstrapAuthoring(
         existingBroadcast.length == 1 &&
         _containsExpected(existingBroadcast.single, pendingBroadcast);
     if (alreadyCommitted) {
-      return LinkedGroupBootstrapDbDisposition.duplicate;
+      // Repair an authoring transaction created by a pre-history build. The
+      // exact immutable owners qualify the same signed genesis, and a
+      // conflicting fact throws so the transaction cannot report success.
+      final genesis = await dbAppendGroupEventLogEntryInTransaction(
+        transaction,
+        groupId: groupId,
+        eventType: 'protected_authority_genesis',
+        sourcePeerId: authorityGenesisSourcePeerId,
+        sourceEventId: authorityGenesisSourceEventId,
+        sourceTimestamp: authorityGenesisSourceTimestamp,
+        payload: authorityGenesisPayload,
+      );
+      return genesis.inserted
+          ? LinkedGroupBootstrapDbDisposition.committed
+          : LinkedGroupBootstrapDbDisposition.duplicate;
     }
     if (existingPending.isNotEmpty || existingBroadcast.isNotEmpty) {
       return LinkedGroupBootstrapDbDisposition.refusedPendingConflict;
@@ -161,6 +184,15 @@ Future<LinkedGroupBootstrapDbDisposition> dbCommitLinkedGroupBootstrapAuthoring(
       'pending_group_broadcasts',
       pendingBroadcast,
       conflictAlgorithm: ConflictAlgorithm.abort,
+    );
+    await dbAppendGroupEventLogEntryInTransaction(
+      transaction,
+      groupId: groupId,
+      eventType: 'protected_authority_genesis',
+      sourcePeerId: authorityGenesisSourcePeerId,
+      sourceEventId: authorityGenesisSourceEventId,
+      sourceTimestamp: authorityGenesisSourceTimestamp,
+      payload: authorityGenesisPayload,
     );
     return LinkedGroupBootstrapDbDisposition.committed;
   });

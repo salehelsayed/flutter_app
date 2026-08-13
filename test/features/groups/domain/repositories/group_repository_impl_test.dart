@@ -5,6 +5,8 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/helpers/linked_group_bootstrap_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
@@ -32,6 +34,8 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_broadcas
 import 'package:flutter_app/features/groups/domain/models/pending_sibling_device.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/linked_group_bootstrap_repository.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import '../../../../core/secure_storage/fake_secure_key_store.dart';
 
 /// 164 (cold-start-3): a [FakeSecureKeyStore] that counts write/delete/
@@ -226,6 +230,42 @@ void main() {
       dbDeletePendingGroupKeyRotations: (groupId) =>
           dbDeletePendingGroupKeyRotations(db, groupId),
       groupKeyStore: groupKeyStore,
+      dbCommitLinkedGroupBootstrapAuthoringFn:
+          ({
+            required expectedGroup,
+            required expectedMembers,
+            required expectedSelfMember,
+            required expectedLatestKeyGeneration,
+            required expectedLatestKeyCreatedAt,
+            required updatedSelfMember,
+            required pendingDevice,
+            required pendingBroadcast,
+            required authorityGenesisSourcePeerId,
+            required authorityGenesisSourceEventId,
+            required authorityGenesisSourceTimestamp,
+            required authorityGenesisPayload,
+          }) => dbCommitLinkedGroupBootstrapAuthoring(
+            db,
+            expectedGroup: expectedGroup,
+            expectedMembers: expectedMembers,
+            expectedSelfMember: expectedSelfMember,
+            expectedLatestKeyGeneration: expectedLatestKeyGeneration,
+            expectedLatestKeyCreatedAt: expectedLatestKeyCreatedAt,
+            updatedSelfMember: updatedSelfMember,
+            pendingDevice: pendingDevice,
+            pendingBroadcast: pendingBroadcast,
+            authorityGenesisSourcePeerId: authorityGenesisSourcePeerId,
+            authorityGenesisSourceEventId: authorityGenesisSourceEventId,
+            authorityGenesisSourceTimestamp: authorityGenesisSourceTimestamp,
+            authorityGenesisPayload: authorityGenesisPayload,
+          ),
+      dbCompleteLinkedGroupBootstrapCustodyFn:
+          ({required expectedDevice, required expectedBroadcast}) =>
+              dbCompleteLinkedGroupBootstrapCustody(
+                db,
+                expectedDevice: expectedDevice,
+                expectedBroadcast: expectedBroadcast,
+              ),
       dbCommitLinkedGroupBootstrapMaterializationFn:
           commitLinkedBootstrapMaterializationOverride ??
           ({
@@ -697,6 +737,277 @@ void main() {
         );
         expect(await db.query('pending_sibling_devices'), isEmpty);
         expect(await db.query('pending_group_broadcasts'), isEmpty);
+
+        final senderGroup = makeGroup(
+          id: 'sender-bootstrap-group',
+        ).copyWith(myRole: GroupRole.admin);
+        final senderSelf = makeMember(
+          groupId: senderGroup.id,
+          peerId: 'sender-account',
+          role: MemberRole.admin,
+        );
+        final senderKey = makeKey(
+          groupId: senderGroup.id,
+          encryptedKey: 'sender-group-key',
+        );
+        await bootstrapRepo.saveGroup(senderGroup);
+        await bootstrapRepo.saveMember(senderSelf);
+        await bootstrapRepo.saveKey(senderKey);
+        const primaryDevice = GroupMemberDeviceIdentity(
+          deviceId: 'sender-account',
+          transportPeerId: 'sender-account',
+          deviceSigningPublicKey: 'pk',
+          mlKemPublicKey: 'mlkem',
+        );
+        const linkedDevice = GroupMemberDeviceIdentity(
+          deviceId: 'sender-linked-device',
+          transportPeerId: 'sender-linked-transport',
+          deviceSigningPublicKey: 'sender-linked-signing',
+          mlKemPublicKey: 'sender-linked-mlkem',
+          keyPackageId: 'sender-linked-package',
+        );
+        final senderUpdated = senderSelf.copyWith(
+          devices: const <GroupMemberDeviceIdentity>[
+            primaryDevice,
+            linkedDevice,
+          ],
+        );
+        final senderPendingDevice = PendingSiblingDevice(
+          groupId: senderGroup.id,
+          memberPeerId: senderSelf.peerId,
+          deviceId: linkedDevice.deviceId,
+          transportPeerId: linkedDevice.transportPeerId,
+          deviceSigningPublicKey: linkedDevice.deviceSigningPublicKey,
+          mlKemPublicKey: linkedDevice.mlKemPublicKey!,
+          keyPackageId: linkedDevice.keyPackageId!,
+          verifiedAccountSigningPublicKey: 'pk',
+          announcedAt: now,
+        );
+        final senderPendingBroadcast = GroupPendingBroadcast(
+          id: 'linked-bootstrap:sender-bootstrap',
+          groupId: senderGroup.id,
+          kind: groupPendingBroadcastKindLinkedBootstrap,
+          sysText: '{"protected":"sender-exact"}',
+          recipientPeerIds: const <String>['sender-linked-transport'],
+          eventAt: now,
+          sourceMessageId: 'sender-bootstrap',
+          createdAt: now,
+          updatedAt: now,
+        );
+        const senderGenesis = LinkedGroupBootstrapAuthorityGenesis(
+          sourcePeerId: 'sender-account',
+          sourceEventId: 'pga1:g:sender-bootstrap',
+          sourceTimestamp: '2026-01-15T12:00:00.000000Z',
+          payload: <String, Object?>{
+            'proof': <String, Object?>{
+              'signature': 'sender-bootstrap-signature',
+              'keyMaterialHash': 'sender-safe-key-hash',
+            },
+          },
+        );
+        expect(
+          await capability.commitLinkedGroupBootstrapAuthoring(
+            expectedGroup: senderGroup,
+            expectedMembers: <GroupMember>[senderSelf],
+            expectedSelfMember: senderSelf,
+            expectedLatestKey: senderKey,
+            updatedSelfMember: senderUpdated,
+            pendingDevice: senderPendingDevice,
+            pendingBroadcast: senderPendingBroadcast,
+            authorityGenesis: senderGenesis,
+          ),
+          LinkedGroupBootstrapAuthorCommitOutcome.committed,
+        );
+        expect(
+          await db.query(
+            'group_event_log',
+            where: 'group_id = ? AND source_event_id = ?',
+            whereArgs: <Object?>[senderGroup.id, senderGenesis.sourceEventId],
+          ),
+          hasLength(1),
+          reason: 'the primary owns genesis before any custody attempt',
+        );
+
+        final restartedSenderRepo = makeRepo(sharedPushKeyStore);
+        final restartedCapability =
+            restartedSenderRepo as LinkedGroupBootstrapRepository;
+        expect(
+          await restartedCapability.completeLinkedGroupBootstrapCustody(
+            expectedDevice: senderPendingDevice,
+            expectedBroadcast: senderPendingBroadcast,
+          ),
+          isTrue,
+        );
+        expect(
+          await db.query(
+            'pending_group_broadcasts',
+            where: 'group_id = ?',
+            whereArgs: <Object?>[senderGroup.id],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            'pending_sibling_devices',
+            where: 'group_id = ?',
+            whereArgs: <Object?>[senderGroup.id],
+          ),
+          isEmpty,
+        );
+        expect(
+          await db.query(
+            'group_event_log',
+            where: 'group_id = ? AND source_event_id = ?',
+            whereArgs: <Object?>[senderGroup.id, senderGenesis.sourceEventId],
+          ),
+          hasLength(1),
+          reason: 'sender genesis survives owner retirement and restart',
+        );
+        expect(
+          (await restartedSenderRepo.getMember(
+            senderGroup.id,
+            senderSelf.peerId,
+          ))?.devices,
+          hasLength(2),
+        );
+
+        final authorityEventAt = DateTime.utc(2026, 1, 15, 12, 1, 0, 123, 456);
+        final localProof = AuthenticatedGroupAuthorityProof(
+          eventId: 'local-key-authority:sender-linked-transport',
+          groupId: senderGroup.id,
+          eventAt: authorityEventAt,
+          keyEpoch: senderKey.keyGeneration,
+          control: ProtectedGroupAuthorityControl.groupKeyUpdate.wireValue,
+          actorAccountPeerId: senderSelf.peerId,
+          actorAccountPublicKey: 'pk',
+          senderTransportPeerId: senderSelf.peerId,
+          senderTransportPublicKey: 'pk',
+          authorityData: <String, Object?>{
+            'groupId': senderGroup.id,
+            'keyGeneration': senderKey.keyGeneration,
+            'encryptedKeyHash': groupAuthoritySha256(senderKey.encryptedKey),
+            'from': senderSelf.peerId,
+            'timestamp': authorityEventAt.toIso8601String(),
+          },
+          signature: 'local-authority-signature',
+        );
+        final localDeliveryId = protectedGroupAuthorityDeliveryId(
+          localProof.control,
+          localProof.eventId,
+          linkedDevice.transportPeerId,
+        );
+        final localAuthorityRow = GroupPendingBroadcast(
+          id: 'protected-authority:$localDeliveryId',
+          groupId: senderGroup.id,
+          kind: groupPendingBroadcastKindProtectedAuthority,
+          sysText: '{"protected":"local-authority-exact"}',
+          recipientPeerIds: <String>[linkedDevice.transportPeerId],
+          eventAt: authorityEventAt,
+          sourceMessageId: localDeliveryId,
+          createdAt: authorityEventAt,
+          updatedAt: authorityEventAt,
+        );
+        expect(
+          await dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
+            db,
+            rows: <Map<String, Object?>>[localAuthorityRow.toMap()],
+            authorityPreparedSourcePeerId: localProof.actorAccountPeerId,
+            authorityPreparedSourceEventId:
+                authenticatedGroupAuthoritySourceEventId(
+                  AuthenticatedGroupAuthorityPhase.prepared,
+                  localProof.eventId,
+                ),
+            authorityPreparedSourceTimestamp: fixedGroupAuthorityUtc(
+              localProof.eventAt,
+            ),
+            authorityPreparedPayload: authenticatedGroupAuthorityFactPayload(
+              localProof,
+            ),
+          ),
+          isTrue,
+        );
+
+        Future<AuthenticatedGroupAuthorityProof?> loadLocalFact({
+          required String groupId,
+          required AuthenticatedGroupAuthorityPhase phase,
+          required String eventId,
+        }) => loadAuthenticatedGroupAuthorityProofFromEventLog(
+          loadRow: ({required groupId, required sourceEventId}) =>
+              dbLoadGroupEventLogEntryExact(
+                db,
+                groupId: groupId,
+                sourceEventId: sourceEventId,
+              ),
+          groupId: groupId,
+          phase: phase,
+          eventId: eventId,
+          verify:
+              ({required publicKey, required data, required signature}) async =>
+                  publicKey == 'pk' &&
+                  data == localProof.canonicalSignedPayload() &&
+                  signature == localProof.signature,
+        );
+
+        final restartedAuthorityRepo = makeRepo(sharedPushKeyStore);
+        expect(
+          await ensureLocalProtectedGroupAuthorityComplete(
+            groupId: senderGroup.id,
+            eventId: localProof.eventId,
+            expectedControl: ProtectedGroupAuthorityControl.groupKeyUpdate,
+            groupRepository: restartedAuthorityRepo,
+            loadAuthorityProof: loadLocalFact,
+            appendAuthorityProof: ({required phase, required proof}) async {
+              await dbAppendGroupEventLogEntry(
+                db,
+                groupId: proof.groupId,
+                eventType: phase.eventType,
+                sourcePeerId: proof.actorAccountPeerId,
+                sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                  phase,
+                  proof.eventId,
+                ),
+                sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+                payload: authenticatedGroupAuthorityFactPayload(proof),
+              );
+            },
+          ),
+          isTrue,
+          reason: 'restart repairs complete from prepared plus projection',
+        );
+        await dbDeletePendingGroupBroadcast(db, localAuthorityRow.id);
+        final afterRetirementRestart = makeRepo(sharedPushKeyStore);
+        expect(
+          await afterRetirementRestart.getKeyByGeneration(
+            senderGroup.id,
+            senderKey.keyGeneration,
+          ),
+          isNotNull,
+        );
+        expect(
+          await loadLocalFact(
+            groupId: senderGroup.id,
+            phase: AuthenticatedGroupAuthorityPhase.prepared,
+            eventId: localProof.eventId,
+          ),
+          isNotNull,
+        );
+        expect(
+          await loadLocalFact(
+            groupId: senderGroup.id,
+            phase: AuthenticatedGroupAuthorityPhase.complete,
+            eventId: localProof.eventId,
+          ),
+          isNotNull,
+        );
+        expect(
+          await db.query(
+            'pending_group_broadcasts',
+            where: 'id = ?',
+            whereArgs: <Object?>[localAuthorityRow.id],
+          ),
+          isEmpty,
+          reason: 'prepared and complete survive exact outbox retirement',
+        );
 
         final refusedStore = FakeSecureKeyStore();
         groupKeyStore = refusedStore;

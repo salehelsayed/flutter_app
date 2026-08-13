@@ -266,8 +266,10 @@ void main() {
             },
         now: () => instant,
       );
-      expect(targetQualified, hasLength(1));
-      expect(targetQualified.single.recipientPeerIds, <String>['physical-b']);
+      expect(targetQualified.rows, hasLength(1));
+      expect(targetQualified.rows.single.recipientPeerIds, <String>[
+        'physical-b',
+      ]);
       final protectedPayload = ProtectedGroupAuthorityPayload.tryParse(
         protectedPlaintext,
       );
@@ -277,7 +279,7 @@ void main() {
         <String>['physical-a', 'physical-b'],
         reason: 'target qualification must not shrink the frozen ACL',
       );
-      final targetSourceId = targetQualified.single.sourceMessageId;
+      final targetSourceId = targetQualified.rows.single.sourceMessageId;
       expect(targetSourceId, isNotNull);
       final targetSourceIdLength = targetSourceId?.length ?? 0;
       expect(
@@ -325,7 +327,7 @@ void main() {
       final addressedMessage = ChatMessage(
         from: 'physical-sender',
         to: 'physical-b',
-        content: targetQualified.single.sysText,
+        content: targetQualified.rows.single.sysText,
         timestamp: instant.toIso8601String(),
         isIncoming: true,
       );
@@ -398,6 +400,59 @@ void main() {
         reason: 'completed historical authority wins over current projection',
       );
       expect(applied, 2, reason: 'completed history must not replay old state');
+    },
+  );
+
+  test(
+    'TC-363-02b sender authority outbox waits for durable complete history',
+    () async {
+      final instant = DateTime.utc(2026, 8, 13, 12);
+      final deliveryId = protectedGroupAuthorityDeliveryId(
+        ProtectedGroupAuthorityControl.memberRole.wireValue,
+        'local-role-transition',
+        'physical-a',
+      );
+      final row = GroupPendingBroadcast(
+        id: 'protected-authority:$deliveryId',
+        groupId: 'group-sender-history',
+        kind: groupPendingBroadcastKindProtectedAuthority,
+        sysText: ProtectedGroupEnvelope(
+          type: protectedGroupAuthorityEnvelopeType,
+          id: deliveryId,
+          senderPeerId: 'physical-sender',
+          recipientPeerId: 'physical-a',
+          kem: 'kem',
+          ciphertext: 'ciphertext',
+          nonce: 'nonce',
+        ).toJson(),
+        recipientPeerIds: const <String>['physical-a'],
+        eventAt: instant,
+        sourceMessageId: deliveryId,
+        createdAt: instant,
+        updatedAt: instant,
+      );
+      await repo.enqueue(row);
+      final store = _StrictCustodyStore(<InboxStoreOutcome>[
+        const InboxStoreOutcome(
+          status: InboxStoreStatus.stored,
+          storeStatus: 'stored',
+          custodyContract: ackOrExpiryInboxCustodyContract,
+        ),
+      ]);
+      var complete = false;
+      final runner = GroupPendingBroadcastRunner(
+        repository: repo,
+        rePush: (_) async => false,
+        protectedInboxStore: store,
+        ensureProtectedAuthorityComplete: (_) async => complete,
+      );
+
+      expect(await runner.drainForGroup(row.groupId), 0);
+      expect(repo.rows[row.id], same(row));
+      expect(store.calls, isEmpty, reason: 'prepared-only state cannot egress');
+      complete = true;
+      expect(await runner.drainForGroup(row.groupId), 1);
+      expect(repo.rows, isEmpty);
     },
   );
 

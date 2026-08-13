@@ -499,6 +499,15 @@ Future<AuthorLinkedGroupBootstrapResult> authorLinkedGroupBootstrap({
           updatedSelfMember: updatedSelf,
           pendingDevice: pendingDevice,
           pendingBroadcast: pendingBroadcast,
+          authorityGenesis: LinkedGroupBootstrapAuthorityGenesis(
+            sourcePeerId: authorityProof.actorAccountPeerId,
+            sourceEventId: authenticatedGroupAuthoritySourceEventId(
+              AuthenticatedGroupAuthorityPhase.genesis,
+              authorityProof.eventId,
+            ),
+            sourceTimestamp: fixedGroupAuthorityUtc(authorityProof.eventAt),
+            payload: authenticatedGroupAuthorityFactPayload(authorityProof),
+          ),
         );
     return switch (committed) {
       LinkedGroupBootstrapAuthorCommitOutcome.committed =>

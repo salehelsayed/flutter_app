@@ -55,11 +55,19 @@ class ProtectedGroupAuthorityPreparation {
   const ProtectedGroupAuthorityPreparation({
     required this.groupId,
     required this.rows,
+    this.authorityProof,
+    this.control,
+    this.replayData,
   });
 
   final String groupId;
   final List<GroupPendingBroadcast> rows;
+  final AuthenticatedGroupAuthorityProof? authorityProof;
+  final ProtectedGroupAuthorityControl? control;
+  final Map<String, dynamic>? replayData;
   bool get hasRecipients => rows.isNotEmpty;
+  bool get hasAuthenticatedAuthority =>
+      authorityProof != null && control != null && replayData != null;
 }
 
 class ProtectedGroupAuthorityPrepareRequest {
@@ -384,7 +392,7 @@ const _authorityBodyKeys = <String>{
 
 /// Builds one immutable target-qualified row per frozen physical recipient.
 /// Callers persist the returned rows before committing their local transition.
-Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
+Future<ProtectedGroupAuthorityPreparation> buildProtectedGroupAuthorityRows({
   required String groupId,
   required String transitionId,
   required ProtectedGroupAuthorityControl control,
@@ -428,11 +436,19 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
       senderDevice.transportPeerId.trim().isEmpty ||
       senderDevice.deviceSigningPublicKey.trim().isEmpty ||
       keyEpoch <= 0) {
-    return const [];
+    return ProtectedGroupAuthorityPreparation(
+      groupId: groupId,
+      rows: const <GroupPendingBroadcast>[],
+    );
   }
   final instant = (now ?? DateTime.now)().toUtc();
   final eventAt = _utc(replayData['timestamp']);
-  if (eventAt == null) return const [];
+  if (eventAt == null) {
+    return ProtectedGroupAuthorityPreparation(
+      groupId: groupId,
+      rows: const <GroupPendingBroadcast>[],
+    );
+  }
   var authorityProof = AuthenticatedGroupAuthorityProof(
     eventId: transitionId,
     groupId: groupId,
@@ -454,7 +470,12 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
     actorAccountPrivateKey,
   );
   final proofSignature = _strict(proofSign['signature']);
-  if (proofSign['ok'] != true || proofSignature == null) return const [];
+  if (proofSign['ok'] != true || proofSignature == null) {
+    return ProtectedGroupAuthorityPreparation(
+      groupId: groupId,
+      rows: const <GroupPendingBroadcast>[],
+    );
+  }
   authorityProof = authorityProof.withSignature(proofSignature);
   final rows = <GroupPendingBroadcast>[];
   for (final recipient in recipients) {
@@ -480,7 +501,12 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
       actorAccountPrivateKey,
     );
     final signature = _strict(signed['signature']);
-    if (signed['ok'] != true || signature == null) return const [];
+    if (signed['ok'] != true || signature == null) {
+      return ProtectedGroupAuthorityPreparation(
+        groupId: groupId,
+        rows: const <GroupPendingBroadcast>[],
+      );
+    }
     payload = payload.withSignature(signature);
     final encrypted = await callEncrypt(
       recipientMlKemPublicKey: recipientKey,
@@ -493,7 +519,10 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
         kem == null ||
         ciphertext == null ||
         nonce == null) {
-      return const [];
+      return ProtectedGroupAuthorityPreparation(
+        groupId: groupId,
+        rows: const <GroupPendingBroadcast>[],
+      );
     }
     final deliveryId = protectedGroupAuthorityDeliveryId(
       control.wireValue,
@@ -502,7 +531,10 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
     );
     if (deliveryId.length > protectedGroupLogicalIdMaxLength ||
         !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(deliveryId)) {
-      return const [];
+      return ProtectedGroupAuthorityPreparation(
+        groupId: groupId,
+        rows: const <GroupPendingBroadcast>[],
+      );
     }
     final outer = ProtectedGroupEnvelope(
       type: protectedGroupAuthorityEnvelopeType,
@@ -527,17 +559,35 @@ Future<List<GroupPendingBroadcast>> buildProtectedGroupAuthorityRows({
       ),
     );
   }
-  return rows;
+  return ProtectedGroupAuthorityPreparation(
+    groupId: groupId,
+    rows: List<GroupPendingBroadcast>.unmodifiable(rows),
+    authorityProof: authorityProof,
+    control: control,
+    replayData: Map<String, dynamic>.unmodifiable(replayData),
+  );
 }
 
 Future<bool> persistPreparedProtectedGroupAuthority({
   required GroupPendingBroadcastRepository repository,
-  required List<GroupPendingBroadcast> rows,
+  required ProtectedGroupAuthorityPreparation preparation,
 }) async {
-  if (rows.isEmpty) return false;
+  final proof = preparation.authorityProof;
+  if (!preparation.hasRecipients || proof == null) return false;
   if (repository
       case final GroupPendingBroadcastProtectedBatchRepository batch) {
-    return batch.enqueueProtectedBatch(rows);
+    return batch.enqueueProtectedBatch(
+      preparation.rows,
+      authorityPrepared: GroupPendingBroadcastAuthorityFact(
+        sourcePeerId: proof.actorAccountPeerId,
+        sourceEventId: authenticatedGroupAuthoritySourceEventId(
+          AuthenticatedGroupAuthorityPhase.prepared,
+          proof.eventId,
+        ),
+        sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+        payload: authenticatedGroupAuthorityFactPayload(proof),
+      ),
+    );
   }
   return false;
 }
@@ -816,6 +866,149 @@ Future<bool?> protectedGroupAuthorityReplayConverged({
     case ProtectedGroupAuthorityControl.groupKeyUpdate:
       throw StateError('handled above');
   }
+}
+
+/// Verifies that the local sender projection represented by a durable,
+/// secret-free authority proof has committed. This is intentionally usable
+/// after restart, when plaintext key material and the original preparation
+/// object are no longer in memory.
+Future<bool?> protectedGroupAuthorityProofConverged({
+  required AuthenticatedGroupAuthorityProof proof,
+  required GroupRepository groupRepository,
+}) async {
+  final control = ProtectedGroupAuthorityControl.fromWire(proof.control);
+  if (control == null || proof.authorityData['groupId'] != proof.groupId) {
+    return null;
+  }
+  if (control == ProtectedGroupAuthorityControl.groupKeyUpdate) {
+    final generation = proof.authorityData['keyGeneration'];
+    final encryptedKeyHash = _strict(proof.authorityData['encryptedKeyHash']);
+    if (generation is! int || generation <= 0 || encryptedKeyHash == null) {
+      return null;
+    }
+    final stored = await groupRepository.getKeyByGeneration(
+      proof.groupId,
+      generation,
+    );
+    return stored != null &&
+        groupAuthoritySha256(stored.encryptedKey) == encryptedKeyHash;
+  }
+  return protectedGroupAuthorityReplayConverged(
+    control: control,
+    replayData: Map<String, dynamic>.from(proof.authorityData),
+    groupRepository: groupRepository,
+  );
+}
+
+bool sameAuthenticatedGroupAuthorityProof(
+  AuthenticatedGroupAuthorityProof left,
+  AuthenticatedGroupAuthorityProof right,
+) => left.sameUnsigned(right) && left.signature == right.signature;
+
+/// Repairs sender-side complete history from an authenticated prepared fact
+/// only after the durable local projection converges. Callers serialize this
+/// through [runGroupAuthorityPhaseIfNeeded].
+Future<bool> ensureLocalProtectedGroupAuthorityComplete({
+  required String groupId,
+  required String eventId,
+  required ProtectedGroupAuthorityControl expectedControl,
+  AuthenticatedGroupAuthorityProof? expectedProof,
+  required GroupRepository groupRepository,
+  required LoadAuthenticatedGroupAuthorityProof loadAuthorityProof,
+  required AppendAuthenticatedGroupAuthorityProof appendAuthorityProof,
+}) async {
+  final complete = await loadAuthorityProof(
+    groupId: groupId,
+    phase: AuthenticatedGroupAuthorityPhase.complete,
+    eventId: eventId,
+  );
+  if (complete != null) {
+    return complete.control == expectedControl.wireValue &&
+        (expectedProof == null ||
+            sameAuthenticatedGroupAuthorityProof(complete, expectedProof));
+  }
+  final prepared = await loadAuthorityProof(
+    groupId: groupId,
+    phase: AuthenticatedGroupAuthorityPhase.prepared,
+    eventId: eventId,
+  );
+  if (prepared == null ||
+      prepared.control != expectedControl.wireValue ||
+      (expectedProof != null &&
+          !sameAuthenticatedGroupAuthorityProof(prepared, expectedProof))) {
+    return false;
+  }
+  final converged = await protectedGroupAuthorityProofConverged(
+    proof: prepared,
+    groupRepository: groupRepository,
+  );
+  if (converged != true) return false;
+  await appendAuthorityProof(
+    phase: AuthenticatedGroupAuthorityPhase.complete,
+    proof: prepared,
+  );
+  final stored = await loadAuthorityProof(
+    groupId: groupId,
+    phase: AuthenticatedGroupAuthorityPhase.complete,
+    eventId: eventId,
+  );
+  return stored != null &&
+      sameAuthenticatedGroupAuthorityProof(stored, prepared);
+}
+
+class ProtectedGroupAuthorityDeliveryIdentity {
+  const ProtectedGroupAuthorityDeliveryIdentity({
+    required this.control,
+    required this.transitionId,
+    required this.recipientTransportPeerId,
+  });
+
+  final ProtectedGroupAuthorityControl control;
+  final String transitionId;
+  final String recipientTransportPeerId;
+}
+
+/// Reverses the canonical length-prefixed v86 delivery tuple without relying
+/// on an auxiliary target hash or mutable ledger.
+ProtectedGroupAuthorityDeliveryIdentity? parseProtectedGroupAuthorityDeliveryId(
+  String deliveryId,
+) {
+  if (deliveryId.isEmpty ||
+      deliveryId.length > protectedGroupLogicalIdMaxLength ||
+      !RegExp(r'^[A-Za-z0-9._:-]+$').hasMatch(deliveryId)) {
+    return null;
+  }
+  var offset = 0;
+  String? readField() {
+    final colon = deliveryId.indexOf(':', offset);
+    if (colon <= offset) return null;
+    final byteLength = int.tryParse(deliveryId.substring(offset, colon));
+    if (byteLength == null || byteLength <= 0) return null;
+    final start = colon + 1;
+    final end = start + byteLength;
+    if (end > deliveryId.length) return null;
+    final value = deliveryId.substring(start, end);
+    offset = end;
+    return value;
+  }
+
+  final controlRaw = readField();
+  final transitionId = readField();
+  final recipient = readField();
+  final control = controlRaw == null
+      ? null
+      : ProtectedGroupAuthorityControl.fromWire(controlRaw);
+  if (control == null ||
+      transitionId == null ||
+      recipient == null ||
+      offset != deliveryId.length) {
+    return null;
+  }
+  return ProtectedGroupAuthorityDeliveryIdentity(
+    control: control,
+    transitionId: transitionId,
+    recipientTransportPeerId: recipient,
+  );
 }
 
 String protectedGroupAuthorityDeliveryId(
