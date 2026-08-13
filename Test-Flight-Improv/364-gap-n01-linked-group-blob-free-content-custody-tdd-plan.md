@@ -2,7 +2,7 @@
 
 Status: EXECUTION_READY / host-development-unblocked / live-acceptance-blocked / independently reviewed / default-off / not release-eligible
 Type: Modification
-Planning baseline: `bb2184fe07121a12d6515d95c32b019e1e8e1151` (clean Plan-363 post-execution authority-history audit closure; Graphify `d7be06567d488766`, 72,865 nodes / 106,798 edges; DB v114; canonical `GROUP_TESTS` 244/244 unique paths)
+Planning baseline: `7380c7c045596fe17d24589930d92088851ea129` (clean Plan-363 sender-history post-execution audit closure; Graphify `fa124fa2c3be08f5`, 72,895 nodes / 106,832 edges; DB v114; canonical `GROUP_TESTS` 244/244 unique paths)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; successor to Plan 363's linked-group bootstrap and authority foundation
 Classification: schema-free expected, blob-free discussion / admin announcement / reaction ADD+REMOVE adopter over Plan-363 authority and protected custody; no group blobs, generic group history, activation, release, or GAP-N01 closure claim
 Closure tier: five causal host IDs across four focused concurrent Flutter bundles, four representative mutations, two exact Go protected-kind tests, mandatory DTR/runtime-root contracts, the curated `groups` lane once, and one availability-bounded extension of the existing Android B1b scenario
@@ -18,6 +18,8 @@ Closure tier: five causal host IDs across four focused concurrent Flutter bundle
 | 2026-08-13 | Runtime / UI review | Plan-363 restricted runtime/list, full `GroupConversationWired`, pure `GroupConversationScreen`, cold/resume/pause owners | Starting group topics or reusing the full wired controller would expose history/media/settings and account-key fail-open paths. | Add one narrow linked conversation owner over the pure screen, one protected content recovery phase, and no topic/cursor/history/broad runtime owner. |
 | 2026-08-13 | Test / gate economy review | Existing group test paths, `GROUP_TESTS`, Go tails, DTR/runtime contracts and B1b runner | Existing files cover every boundary. No migration/SQLCipher/new host path/full-host campaign is justified if the accepted Plan-363 event log can own exact content ordering. | Use four concurrency-4 bundles, four mutations, exact Go tests, one curated groups gate and one upgraded B1b run. Recount after Plan 363; do not duplicate family/device campaigns. |
 | 2026-08-13 | Plan-363 closure revalidation | Post-execution audit closure `bb2184fe07121a12d6515d95c32b019e1e8e1151`; current anchored Graphify `d7be06567d488766`; `AuthenticatedGroupAuthorityProof`, exact/bounded authenticated history loaders, `runGroupAuthorityPhase`, protected kind/parser owners, active `LinkedTransportCredential`, restricted runtime callbacks, DB v114 and the canonical `GROUP_TESTS` array | Plan 363 now retains independently signed genesis/prepared/complete authority after relay ACK, resolves exact `(eventAt,eventId,keyEpoch)` versions, shares one non-reentrant per-group phase with protected key repair, and preserves the reviewed schema-free/event-log boundary. Inventory is 244/244 unique paths. The deployed relay still lacks the additive Plan-363 protected-kind allowlists. | Hard host-development stop condition satisfied. Mark `EXECUTION_READY`; pin this SHA/graph/API/count baseline. Relay deployment and a passing Plan-363 B1b remain mandatory before Plan-364 device acceptance, activation or release, but do not block host RED/GREEN development. |
+| 2026-08-13 | Sender-history prerequisite audit | Ordinary-primary bootstrap authoring, local protected-authority preparation/activation, paired custody retirement and repository restart | Audit found that the primary signed bootstrap genesis without persisting it and that locally authored authority retained no durable prepared/complete proof after outbox retirement. The earlier `bb2184fe…` pin therefore did not satisfy strict content authoring despite its receiving-side history repair. | Re-block Plan 364. Require atomic sender genesis, atomic local prepared history, projection-proven complete repair before egress/retirement, restart survival, a committed Plan-363 closure and a fresh graph/inventory pin. Production admission remains a separate default-off live gate. |
+| 2026-08-13 | Sender-history prerequisite reclosure | Plan-363 closure `7380c7c045596fe17d24589930d92088851ea129`; anchored/current Graphify `fa124fa2c3be08f5`; sender genesis/prepared/complete production paths; focused c4 `+5`; analyzer; canonical inventory | The primary now commits authenticated genesis with bootstrap authoring. Local authority commits prepared with exact protected rows, proves or repairs complete from authenticated history plus durable projection under the shared group phase, and permits no protected egress/retirement beforehand. Genesis/prepared/complete survive owner retirement and repository reconstruction. Inventory remains 244/244; DB remains v114. | Host prerequisite is now satisfied. Restore `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED` and pin this exact closure. The protected-kind binary is deployed, but admission remains off and was not changed. |
 
 ## Execution Progress
 
@@ -27,6 +29,7 @@ Closure tier: five causal host IDs across four focused concurrent Flutter bundle
 | 2026-08-13 | Independent TDD review | Formal review query; sender/retry, receive/runtime/UI, gate/non-vacuity and overengineering counterexamples | READY after bounded amendments. Recipient-survivor liveness, authority-order reconciliation, retry/transaction atomicity, selector/runtime reachability and proof non-vacuity are closed without expanding the one-kind/existing-owner/four-bundle boundary. |
 | 2026-08-13 | Prerequisite closure | Clean Plan-363 audit commit `bb2184fe07121a12d6515d95c32b019e1e8e1151`; current anchored TDD query at `d7be06567d488766`; exact API/kind/runtime/DB/inventory verification | `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`. First implementation action is the literal clean-tree/ancestry preflight, then all five Flutter IDs and both exact Go REDs. Do not run B1b until the Plan-363 node/relay allowlists are deployed and its bootstrap journey passes. |
 | 2026-08-13 | Plan-363 relay deployment follow-up | Exact linux/amd64 binary SHA-256 `1b2b6a3e1b2a44262754e5423a0ea73b3a19d3b7b8a593d31e07d4ec88ad7812`; Redis-backed systemd service; rollback artifact; live Android pair | The protected-kind binary is deployed and stable, but startup proves ACK-custody admission remains unset/default-off. `StoreAckCustody` rejects at that guard before the kind parser, so B1b was not relaunched into a deterministic failure. Plan 364 remains host-execution-ready; separate S2 admission authorization plus a passing Plan-363 B1b gate device acceptance, activation and release only. |
+| 2026-08-13 | Sender-history prerequisite closure | Clean Plan-363 repair/audit commit `7380c7c045596fe17d24589930d92088851ea129`; current anchored TDD review `fa124fa2c3be08f5`; exact sender/history/API/DB/inventory verification | `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`. The literal preflight and hygiene baseline now use this closure and allow the five intentional Plan-363/364/index/status/coverage documentation owners. No Plan-364 RED or production code has started. |
 
 ## Problem And Source-Backed Evidence
 
@@ -62,14 +65,14 @@ Stop and re-review before adding a second group selector, v115, a parallel conte
 - Planning context: anchored/current against committed fingerprint `4bf3025ee64828d0` before active Plan-363 implementation; this is historical planning context, not the Plan-364 execution baseline.
 - Planning query: `python3 graphify-arch/tdd_context.py query "Plan 364 linked-group blob-free discussion announcement reaction authoring after Plan 363 authority convergence; exact protected physical-recipient custody, sender transport credential, event-vs-role/remove/dissolve/key ordering, retry, linked runtime and UI" --profile tdd --budget 700`.
 - Final review query is recorded after the draft under Reviewer Findings. No graph refresh is performed while Plan 363 owns the dirty shared tree.
-- Execution baseline: Plan-363 audit closure `bb2184fe07121a12d6515d95c32b019e1e8e1151`; current Graphify fingerprint `d7be06567d488766`, 72,865 nodes / 106,798 edges. The final anchored TDD query returned `confidence=anchored` and `freshness=current` with anchors at `GROUP_TESTS`, `loadAuthenticatedGroupAuthorityProofPage` and `runGroupAuthorityPhase`; no refresh was needed.
+- Execution baseline: Plan-363 sender-history audit closure `7380c7c045596fe17d24589930d92088851ea129`; current Graphify fingerprint `fa124fa2c3be08f5`, 72,895 nodes / 106,832 edges. The final anchored review returned `confidence=anchored` and `freshness=current` with anchors at `ensureLocalProtectedGroupAuthorityComplete`, `GroupPendingBroadcastRunner` and `dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically`.
 - Pinned shared boundary: DB v114; `AckCustodyKind.groupBootstrapV1` / `group_bootstrap_v1`, `AckCustodyKind.groupAuthorityV1` / `group_authority_v1`, inner `linked_group_bootstrap_v1`; `AuthenticatedGroupAuthorityProof`, `loadAuthenticatedAuthorityVersion`, `loadAuthenticatedGroupAuthorityProofPage`, exact/bounded DB loaders and `runGroupAuthorityPhase`; `LinkedTransportCredential` active-state authority; restricted `isLinkedBlobFreeRuntime`, `drainLinkedGroupBootstrap` and `drainLinkedDirectMediaBlobCustody` callbacks; canonical `GROUP_TESTS` 244/244 unique paths.
 
 ## Scope Contract
 
 ### Prerequisite, selector and rollout authority
 
-- Plan 363 is code-complete, post-execution audited and committed at `bb2184fe07121a12d6515d95c32b019e1e8e1151`; this exact baseline is the source of shared API names and authorizes Plan-364 host RED/GREEN development. Its protected-kind relay binary is deployed, while production ACK-custody admission remains default-off and still blocks B1b/device acceptance, activation and release.
+- Plan 363 is code-complete, post-execution audited and committed at `7380c7c045596fe17d24589930d92088851ea129`; this exact baseline includes sender-side genesis plus locally authored prepared/complete survival and authorizes Plan-364 host RED/GREEN development. Its protected-kind relay binary is deployed, while production ACK-custody admission remains default-off and still blocks B1b/device acceptance, activation and release.
 - Add no new selector. New strict content requires exactly `DirectLinkedDeviceSelector.allowsLinkedDeviceAuthoring && kMultiDeviceSyncEnabled`; `DirectLinkedEventFanoutSelector` is direct-contact-only and may not authorize group content. A Plan-363-initialized explicit self-device roster selects strict custody for both an ordinary primary and an active linked secondary. Check persisted device authority before fallback: initialized authority with either selector disabled, a missing strict signer or missing strict store refuses; only an uninitialized ordinary-primary group retains incumbent behavior byte-for-byte.
 - Existing strict content rows drain after selector rollback. A disabled/missing selector may block new authoring but may not rebuild, demote to aggregate group storage, publish without custody, or delete committed retry authority.
 - Reader/parser/relay support deploys before authoring activation. Mixed-version negotiation, cohorts, telemetry, kill switches, legacy retirement and release are later WP-07 work.
@@ -185,7 +188,7 @@ Literal prerequisite preflight against the accepted Plan-363 closure:
 
 ```bash
 set -euo pipefail
-PLAN364_ACCEPTED_BASE='bb2184fe07121a12d6515d95c32b019e1e8e1151'
+PLAN364_ACCEPTED_BASE='7380c7c045596fe17d24589930d92088851ea129'
 PLAN364_EXPECTED_GROUP_PATHS='244'
 case "$PLAN364_ACCEPTED_BASE" in *'<'*|*'>'*) exit 1 ;; esac
 case "$PLAN364_EXPECTED_GROUP_PATHS" in ''|*[!0-9]*) exit 1 ;; esac
@@ -193,7 +196,7 @@ test "$(git rev-parse "$PLAN364_ACCEPTED_BASE^{commit}")" = "$PLAN364_ACCEPTED_B
 git merge-base --is-ancestor "$PLAN364_ACCEPTED_BASE" HEAD
 test -z "$(git status --porcelain)"
 test -z "$(git diff --name-only "$PLAN364_ACCEPTED_BASE"..HEAD | \
-  rg -v '^(Test-Flight-Improv/364-gap-n01-linked-group-blob-free-content-custody-tdd-plan\.md|Test-Flight-Improv/00-INDEX\.md|STATUS\.md)$')"
+  rg -v '^(Test-Flight-Improv/(363-gap-n01-linked-group-self-bootstrap-authority-foundation-tdd-plan|364-gap-n01-linked-group-blob-free-content-custody-tdd-plan|00-INDEX)\.md|UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1\.2_Codebase_Coverage_and_Gaps\.md|STATUS\.md)$')"
 python3 - "$PLAN364_EXPECTED_GROUP_PATHS" <<'PY'
 import re
 import sys
@@ -386,7 +389,7 @@ Final hygiene, using the accepted Plan-363 SHA literally in a fresh shell:
 
 ```bash
 set -euo pipefail
-plan364_base_ref='bb2184fe07121a12d6515d95c32b019e1e8e1151'
+plan364_base_ref='7380c7c045596fe17d24589930d92088851ea129'
 case "$plan364_base_ref" in *'<'*|*'>'*) exit 1 ;; esac
 flutter analyze
 plan364_dart_list="$(mktemp)"
@@ -438,7 +441,7 @@ Do not run a migration/SQLCipher leg, standalone group-media suite, `1to1`, core
 
 ## Done Criteria
 
-- [ ] Plan 363 is cleanly implemented and post-execution audited; its exact SHA, committed graph, DB floor, authority/credential/protected-runtime APIs and `groups` inventory are pinned and revalidated before RED.
+- [x] Plan 363 is cleanly implemented and post-execution audited at `7380c7c045596fe17d24589930d92088851ea129`; its committed Graphify `fa124fa2c3be08f5`, DB v114, sender/receiver authority, credential/protected-runtime APIs and 244/244 `groups` inventory are pinned and revalidated before RED.
 - [ ] Eligible discussion/admin-announcement/reaction authoring resolves logical actor plus exact physical signer, freezes all eligible physical targets including same-account siblings, persists exact bytes before egress, converges every strict receipt and makes zero pubsub calls for marked content.
 - [ ] Existing message/reaction owners retain immutable full signed authority plus an exact-CAS mutable pending-recipient subset across partial success, relay ACK/delete, crash and selector rollback without a new table/ledger, roster/key/crypto rebuild, singular/aggregate demotion or starvation.
 - [ ] One additive content kind/parser binds sender, recipient, ACL, group, event, payload and epoch consistently in admission and stored-row/Redis reparse; bootstrap/authority namespaces remain separate.
@@ -488,8 +491,8 @@ acceptance, activation and release only.
 
 ## Handoff
 
-- Current state: `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`; Plan 363 is pinned at `bb2184fe07121a12d6515d95c32b019e1e8e1151`, Graphify `d7be06567d488766`, DB v114 and `GROUP_TESTS` 244/244.
-- Live-acceptance action: obtain separate S2 production-admission authorization/operations evidence, enable ACK custody on the already deployed Redis-backed relay, and rerun Plan-363 B1b before Plan-364 device acceptance, activation or release. Do not downgrade to aggregate storage while admission is pending.
+- Current state: `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`; Plan 363 is pinned at `7380c7c045596fe17d24589930d92088851ea129`, Graphify `fa124fa2c3be08f5`, DB v114 and `GROUP_TESTS` 244/244. No Plan-364 RED or production implementation has started.
+- Live-acceptance action: obtain separate S2 production-admission authorization/operations evidence, enable ACK custody only for Plan-363 B1b on the already deployed Redis-backed relay, and restore it to off immediately afterward. Persistent admission requires a separately authorized rollout decision; B1b still precedes Plan-364 device acceptance, activation or release. Do not downgrade to aggregate storage while admission is pending.
 - First execution action: run the literal preflight, then author `TC-364-01a`, `01b`, `02a`, `03a`, `04a` and both exact Go REDs before production wiring.
 - Runtime economy: run independent Flutter files concurrently with `--concurrency=4` whenever supported to speed feedback; keep mutations, curated gates and the device pair serial.
 - Successor work: Plan 365 owns group media/blob/voice and per-final-recipient blob lifetime. Later work owns group history/no-intent, activation, mixed-version rollout, legacy retirement and final GAP-N01/release closure.
