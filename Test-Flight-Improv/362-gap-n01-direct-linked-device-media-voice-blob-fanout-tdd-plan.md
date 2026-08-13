@@ -493,19 +493,36 @@ git status --short
 
 ## Arbiter Decision
 
-`EXECUTION_READY / INDEPENDENTLY REVIEWED AND REVALIDATED.` The smallest
-coherent design is DB v114 over the incumbent v111 owner, one target-independent
-lineage version, one shared encrypted artifact, existing v108/v109 event
-custody, one narrow linked-media authoring selector, and a bounded relay
-`(recipient,id)` internal-key repair. No second blob ledger, accepted state,
-target hash, refcount table, further selector, linked LAN,
-new wire/native surface or broader device matrix is justified. Plan 361 is
-audit-closed at the pinned baseline, its shared APIs and gate inventories are
-revalidated, and no prerequisite blocker remains.
+`POST_EXECUTION_AUDIT_CLOSED / CODE_COMPLETE / DEFAULT-OFF AUTHORING / NOT RELEASE-ELIGIBLE.`
+DB v114, the incumbent v108/v109/v111 owners, the
+target-independent lineage version, shared encrypted artifact, exact
+recipient-qualified relay state, survivor-first retry and last-reference
+cleanup are implemented and causally proved at source/receipt closure
+`051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`. The final focused c4 proof is
+`+69` with every required TC-362 host ID present and zero skips; the serial
+curated `1to1` gate closes 126/126 paths; analyzer, format, diff and Graphify
+hygiene are clean at fingerprint `4bf3025ee64828d0` (72,428 nodes / 106,174
+edges). Voice/share plural routing and all media-parent caption-EDIT/DFE fanout
+remain explicitly unsupported on initialized linked rosters and fail closed;
+activation, GAP-N01 and release closure remain later work. No second blob
+ledger, accepted state, target hash, refcount table, further selector, linked
+LAN, new wire/native surface or broader device matrix is justified.
 
 ## Handoff
 
-- Current state: `EXECUTION_READY`; accepted Plan-361 audit-hygiene baseline `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`, implementation `be897336d60f94c742fa04cb9933d90886489265`, receipts `94e6e2d74a2a7ab8da768c0b61f65975e52a8637`, Graphify `488091ffcb7bae21`.
-- First execution action: run the literal clean-tree/ancestry preflight, add inert compile scaffolding only if needed, then record the four concurrent host semantic RED bundles plus exact Go RED.
-- Runtime economy: run independent tests concurrently at 4 whenever supported to speed feedback; keep only worktree mutations, curated `1to1` and device scenarios serial.
-- Successor work: group/announcement fanout, historical/no-intent disposition, activation/operations, mixed-version capability rollout and final GAP-N01/release closure remain later plans.
+- Current state: `POST_EXECUTION_AUDIT_CLOSED / CODE_COMPLETE / DEFAULT-OFF / NOT RELEASE-ELIGIBLE`;
+  accepted Plan-361 baseline
+  `c78c465a027da7ff8586712ce0c9e6f7162f3ab8`, final Plan-362 source/receipt
+  closure `051e26d5aefca8dc2f89d8d8c6d83113187c9ed5`, and committed/current
+  Graphify `4bf3025ee64828d0` (72,428 nodes / 106,174 edges).
+- The final fourth-repair proof supersedes the interim `+31 ~3` receipt:
+  focused c4 `+69` with zero TC-362 skips, serial curated `1to1` 126/126, and
+  clean analyzer/format/diff evidence. No additional host-all or device rerun
+  was required for that bounded repair.
+- Recorded product boundary: voice/share plural routing and every media-parent
+  caption-EDIT/DFE fanout remain fail-closed on an initialized linked roster;
+  persisted v109/v114 authority continues exact recovery without demotion.
+- Successor work: Plan 363 may pin this audit-hygiene closure and begin its
+  reviewed group-authority RED sequence. Group content, historical/no-intent,
+  activation/operations, mixed-version rollout and final GAP-N01/release
+  closure remain later plans.
