@@ -25,6 +25,7 @@ import 'package:crypto/crypto.dart';
 
 import '../_support/invite_reliability_runner_contract.dart';
 import '_android_app_package.dart';
+import 'run_direct_media_blob_custody_sims.dart' as plan347_fixture;
 
 const _harnessPath = 'integration_test/group_multi_device_real_harness.dart';
 const _defaultPrimaryDevice =
@@ -74,6 +75,7 @@ Future<Process> _startRole({
   required String runId,
   required String relayAddresses,
   required InviteReliabilityRunnerArguments options,
+  String? fixtureIdentitySha256,
 }) async {
   final args = <String>[
     if (_isIosDeviceId(deviceId)) ...<String>[
@@ -105,6 +107,9 @@ Future<Process> _startRole({
       '--dart-define=MKNOON_DIRECT_MEDIA_BLOB_CUSTODY_CLIENT_ENABLED=true',
       '--dart-define=MKNOON_ENABLE_DIRECT_LINKED_MEDIA_FANOUT=true',
     ],
+    if (fixtureIdentitySha256 != null)
+      '--dart-define=PLAN362_FIXTURE_IDENTITY_SHA256='
+          '$fixtureIdentitySha256',
     '--dart-define=E2E_DB_NAME=${options.scenario}_${runId}_$role.db',
     '--dart-define=MKNOON_RELAY_ADDRESSES=$relayAddresses',
     '-d',
@@ -511,6 +516,254 @@ Future<File> _validateAndWriteLatencySummary({
   return summaryFile;
 }
 
+Future<int> _probeDirectMediaProtectedCount({
+  required String probeUrl,
+  required String attachmentId,
+  String? recipientPeerId,
+}) async {
+  final base = Uri.parse(probeUrl);
+  final query = <String, String>{
+    'attachmentId': attachmentId,
+    'recipientPeerId': ?recipientPeerId,
+  };
+  final uri = base.replace(queryParameters: query);
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  try {
+    final request = await client
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 5));
+    final response = await request.close().timeout(const Duration(seconds: 5));
+    final body = await utf8.decoder
+        .bind(response)
+        .join()
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != HttpStatus.ok) {
+      throw StateError(
+        'Plan-347 recipient probe returned HTTP ${response.statusCode}',
+      );
+    }
+    final decoded = jsonDecode(body);
+    if (decoded is! Map ||
+        decoded['schema'] != 'mknoon.plan347.direct-media-probe.v1' ||
+        decoded['protectedMediaCountForId'] is! int) {
+      throw const FormatException(
+        'Plan-347 recipient probe returned an invalid response',
+      );
+    }
+    return decoded['protectedMediaCountForId'] as int;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<({int count, String envelopeSha256})> _probeDirectInboxEvidence({
+  required String probeUrl,
+  required String recipientPeerId,
+  required String messageId,
+}) async {
+  final uri = Uri.parse(probeUrl).replace(
+    queryParameters: <String, String>{
+      'recipientPeerId': recipientPeerId,
+      'inboxMessageId': messageId,
+    },
+  );
+  final client = HttpClient()..connectionTimeout = const Duration(seconds: 5);
+  try {
+    final request = await client
+        .getUrl(uri)
+        .timeout(const Duration(seconds: 5));
+    final response = await request.close().timeout(const Duration(seconds: 5));
+    final body = await utf8.decoder
+        .bind(response)
+        .join()
+        .timeout(const Duration(seconds: 5));
+    if (response.statusCode != HttpStatus.ok) {
+      throw StateError(
+        'Plan-347 protected-inbox probe returned HTTP '
+        '${response.statusCode}',
+      );
+    }
+    final decoded = jsonDecode(body);
+    final count = decoded is Map
+        ? decoded['protectedInboxCountForMessage']
+        : null;
+    final envelopeSha256 = decoded is Map
+        ? decoded['protectedInboxEnvelopeSha256']
+        : null;
+    if (decoded is! Map ||
+        decoded['schema'] != 'mknoon.plan347.direct-media-probe.v1' ||
+        count is! int ||
+        envelopeSha256 is! String ||
+        (count == 1 && !RegExp(r'^[0-9a-f]{64}$').hasMatch(envelopeSha256)) ||
+        (count != 1 && envelopeSha256.isNotEmpty)) {
+      throw const FormatException(
+        'Plan-347 protected-inbox probe returned an invalid response',
+      );
+    }
+    return (count: count, envelopeSha256: envelopeSha256);
+  } finally {
+    client.close(force: true);
+  }
+}
+
+Future<File> _validateAndWriteDirectFanoutSummary({
+  required Directory sharedDir,
+  required String runId,
+  required plan347_fixture.DirectMediaBlobCustodyFixtureLease fixture,
+}) async {
+  final primaryFile = File(
+    '${sharedDir.path}/'
+    '${directLinkedDeviceEventBlobFanoutArtifactFileName(runId, 'primary')}',
+  );
+  final siblingFile = File(
+    '${sharedDir.path}/'
+    '${directLinkedDeviceEventBlobFanoutArtifactFileName(runId, 'sibling')}',
+  );
+  final targetsFile = File(
+    '${sharedDir.path}/'
+    '${directLinkedDeviceEventBlobFanoutTargetFixtureFileName(runId)}',
+  );
+  final primaryArtifact = await _readJsonArtifact(primaryFile);
+  final siblingArtifact = await _readJsonArtifact(siblingFile);
+  final targets = await _readJsonArtifact(targetsFile);
+  const targetKeys = <String>{
+    'schema',
+    'schemaVersion',
+    'runId',
+    'liveRecipientPeerId',
+    'offlineRecipientPeerId',
+    'eventMessageId',
+    'mediaMessageId',
+    'attachmentId',
+  };
+  if (targets.keys.toSet().difference(targetKeys).isNotEmpty ||
+      targetKeys.difference(targets.keys.toSet()).isNotEmpty ||
+      targets['schema'] !=
+          directLinkedDeviceEventBlobFanoutTargetFixtureSchema ||
+      targets['schemaVersion'] !=
+          directLinkedDeviceEventBlobFanoutTargetFixtureSchemaVersion ||
+      targets['runId'] != runId) {
+    throw const FormatException('TC-362 target fixture was not exact');
+  }
+  final liveRecipient = targets['liveRecipientPeerId'];
+  final offlineRecipient = targets['offlineRecipientPeerId'];
+  final attachmentId = targets['attachmentId'];
+  final eventMessageId = targets['eventMessageId'];
+  final mediaMessageId = targets['mediaMessageId'];
+  final validToken = RegExp(r'^[A-Za-z0-9._:-]{1,160}$');
+  if (liveRecipient is! String ||
+      offlineRecipient is! String ||
+      attachmentId is! String ||
+      eventMessageId is! String ||
+      mediaMessageId is! String ||
+      !validToken.hasMatch(liveRecipient) ||
+      !validToken.hasMatch(offlineRecipient) ||
+      !validToken.hasMatch(attachmentId) ||
+      !validToken.hasMatch(eventMessageId) ||
+      !validToken.hasMatch(mediaMessageId) ||
+      liveRecipient == offlineRecipient) {
+    throw const FormatException(
+      'TC-362 target fixture identities were invalid',
+    );
+  }
+
+  final counts = await Future.wait<int>(<Future<int>>[
+    _probeDirectMediaProtectedCount(
+      probeUrl: fixture.probeUrl,
+      attachmentId: attachmentId,
+      recipientPeerId: liveRecipient,
+    ),
+    _probeDirectMediaProtectedCount(
+      probeUrl: fixture.probeUrl,
+      attachmentId: attachmentId,
+      recipientPeerId: offlineRecipient,
+    ),
+    _probeDirectMediaProtectedCount(
+      probeUrl: fixture.probeUrl,
+      attachmentId: attachmentId,
+    ),
+  ]);
+  final inboxEvidence = await Future.wait<({int count, String envelopeSha256})>(
+    <Future<({int count, String envelopeSha256})>>[
+      _probeDirectInboxEvidence(
+        probeUrl: fixture.probeUrl,
+        recipientPeerId: liveRecipient,
+        messageId: eventMessageId,
+      ),
+      _probeDirectInboxEvidence(
+        probeUrl: fixture.probeUrl,
+        recipientPeerId: offlineRecipient,
+        messageId: eventMessageId,
+      ),
+      _probeDirectInboxEvidence(
+        probeUrl: fixture.probeUrl,
+        recipientPeerId: liveRecipient,
+        messageId: mediaMessageId,
+      ),
+      _probeDirectInboxEvidence(
+        probeUrl: fixture.probeUrl,
+        recipientPeerId: offlineRecipient,
+        messageId: mediaMessageId,
+      ),
+    ],
+  );
+  final validation = validateDirectLinkedDeviceEventBlobFanoutArtifacts(
+    primaryArtifact: primaryArtifact,
+    siblingArtifact: siblingArtifact,
+    expectedRunId: runId,
+    expectedFixtureIdentitySha256: fixture.fixtureIdentitySha256,
+    liveProtectedCountAfterAck: counts[0],
+    offlineProtectedCountAfterAck: counts[1],
+    aggregateProtectedCountAfterAck: counts[2],
+    liveEventInboxCountAfterAck: inboxEvidence[0].count,
+    offlineEventInboxCountAfterAck: inboxEvidence[1].count,
+    offlineEventEnvelopeSha256: inboxEvidence[1].envelopeSha256,
+    liveMediaInboxCountAfterAck: inboxEvidence[2].count,
+    offlineMediaInboxCountAfterAck: inboxEvidence[3].count,
+    offlineMediaEnvelopeSha256: inboxEvidence[3].envelopeSha256,
+  );
+  if (!validation.ok) {
+    throw StateError('TC-362 role artifacts rejected: ${validation.detail}');
+  }
+
+  final summary = buildDirectLinkedDeviceEventBlobFanoutHostSummary(
+    runId: runId,
+    fixtureIdentitySha256: fixture.fixtureIdentitySha256,
+    primaryArtifactSha256: sha256
+        .convert(await primaryFile.readAsBytes())
+        .toString(),
+    siblingArtifactSha256: sha256
+        .convert(await siblingFile.readAsBytes())
+        .toString(),
+    liveRecipientPeerIdSha256: sha256
+        .convert(utf8.encode(liveRecipient))
+        .toString(),
+    offlineRecipientPeerIdSha256: sha256
+        .convert(utf8.encode(offlineRecipient))
+        .toString(),
+    liveProtectedCountAfterAck: counts[0],
+    offlineProtectedCountAfterAck: counts[1],
+    aggregateProtectedCountAfterAck: counts[2],
+    liveEventInboxCountAfterAck: inboxEvidence[0].count,
+    offlineEventInboxCountAfterAck: inboxEvidence[1].count,
+    offlineEventEnvelopeSha256: inboxEvidence[1].envelopeSha256,
+    liveMediaInboxCountAfterAck: inboxEvidence[2].count,
+    offlineMediaInboxCountAfterAck: inboxEvidence[3].count,
+    offlineMediaEnvelopeSha256: inboxEvidence[3].envelopeSha256,
+  );
+  final summaryFile = File(
+    '${sharedDir.path}/'
+    '${directLinkedDeviceEventBlobFanoutHostSummaryFileName(runId)}',
+  );
+  final pending = File('${summaryFile.path}.pending');
+  await pending.writeAsString(
+    const JsonEncoder.withIndent('  ').convert(summary),
+    flush: true,
+  );
+  await pending.rename(summaryFile.path);
+  return summaryFile;
+}
+
 final class _AndroidSignalBroker {
   _AndroidSignalBroker({
     required this.deviceIds,
@@ -786,140 +1039,184 @@ Future<void> main(List<String> args) async {
     return;
   }
   final devices = options.deviceIds;
-  if (options.isLatencyScenario) {
+  final isDirectFanoutScenario =
+      options.scenario == directLinkedDeviceEventBlobFanoutScenario;
+  if (options.isLatencyScenario || isDirectFanoutScenario) {
     await _preflightLatencyTargets(devices);
   }
-  final androidPair = await _usesAndroidSignalTransport(devices);
-  final primaryDevice = devices[0];
-  final siblingDevice = devices[1];
-  final runId = DateTime.now().millisecondsSinceEpoch.toString();
-  final relayAddresses = _relayAddresses();
-  final preflightProvenance = options.isLatencyScenario
-      ? await _captureProvenance(relayAddresses)
-      : null;
-  final sharedDir = await Directory.systemTemp.createTemp(
-    'invite_reliability_multi_device_',
-  );
-  final primaryLog = File(
-    '${sharedDir.path}/primary.log',
-  ).openWrite(mode: FileMode.writeOnlyAppend);
-  final siblingLog = File(
-    '${sharedDir.path}/sibling.log',
-  ).openWrite(mode: FileMode.writeOnlyAppend);
-  final broker = androidPair
-      ? _AndroidSignalBroker(
-          deviceIds: devices,
-          hostDir: sharedDir,
-          runId: runId,
-          appPackage: resolveAndroidAppPackage(),
-          inviteSendLatencyMode: options.isLatencyScenario
-              ? options.mode
-              : null,
-        )
-      : null;
-  final signalSync = broker?.run();
-  final targetSharedDir = broker?.remoteDirAbsolute ?? sharedDir.path;
+  plan347_fixture.DirectMediaBlobCustodyFixtureLease? directFanoutFixture;
+  try {
+    final androidPair = await _usesAndroidSignalTransport(devices);
+    if (isDirectFanoutScenario) {
+      final environment = Platform.environment;
+      final hostIp = await plan347_fixture
+          .resolveDirectMediaBlobCustodyFixtureHostIp(environment);
+      directFanoutFixture =
+          await plan347_fixture.DirectMediaBlobCustodyFixtureLease.start(
+            goExecutable:
+                environment['PLAN347_GO_EXECUTABLE']?.trim().isNotEmpty == true
+                ? environment['PLAN347_GO_EXECUTABLE']!.trim()
+                : 'go',
+            hostIp: hostIp,
+            environment: environment,
+          );
+      await plan347_fixture
+          .verifyDirectMediaBlobCustodyAndroidTopologyAndReachability(
+            adbExecutable:
+                environment['PLAN347_ADB_EXECUTABLE']?.trim().isNotEmpty == true
+                ? environment['PLAN347_ADB_EXECUTABLE']!.trim()
+                : 'adb',
+            devices: devices,
+            host: directFanoutFixture.host,
+            port: directFanoutFixture.port,
+          );
+    }
+    final primaryDevice = devices[0];
+    final siblingDevice = devices[1];
+    final runId = DateTime.now().millisecondsSinceEpoch.toString();
+    final relayAddresses = directFanoutFixture?.multiaddr ?? _relayAddresses();
+    final preflightProvenance = options.isLatencyScenario
+        ? await _captureProvenance(relayAddresses)
+        : null;
+    final sharedDir = await Directory.systemTemp.createTemp(
+      'invite_reliability_multi_device_',
+    );
+    final primaryLog = File(
+      '${sharedDir.path}/primary.log',
+    ).openWrite(mode: FileMode.writeOnlyAppend);
+    final siblingLog = File(
+      '${sharedDir.path}/sibling.log',
+    ).openWrite(mode: FileMode.writeOnlyAppend);
+    final broker = androidPair
+        ? _AndroidSignalBroker(
+            deviceIds: devices,
+            hostDir: sharedDir,
+            runId: runId,
+            appPackage: resolveAndroidAppPackage(),
+            inviteSendLatencyMode: options.isLatencyScenario
+                ? options.mode
+                : null,
+          )
+        : null;
+    final signalSync = broker?.run();
+    final targetSharedDir = broker?.remoteDirAbsolute ?? sharedDir.path;
 
-  _log(
-    'ORCH',
-    'invite-reliability shared dir: ${sharedDir.path}; '
-        'primary=$primaryDevice sibling=$siblingDevice '
-        'scenario=${options.scenario} mode=${options.mode ?? 'legacy'}',
-  );
-  if (broker != null) {
     _log(
       'ORCH',
-      'Android target-local signal dir: ${broker.remoteDirAbsolute}; '
-          'host-mediated synchronization enabled',
+      'invite-reliability shared dir: ${sharedDir.path}; '
+          'primary=$primaryDevice sibling=$siblingDevice '
+          'scenario=${options.scenario} mode=${options.mode ?? 'legacy'}',
     );
-  }
-  _log('ORCH', 'Relay: $relayAddresses');
-
-  Process? primary;
-  Process? sibling;
-  try {
-    // Launch primary first; wait until it has built + is running (it writes
-    // alice_identity.json once its stack is up) before launching the sibling,
-    // so the two flutter builds don't contend on the global startup lock.
-    primary = await _startRole(
-      role: 'primary',
-      deviceId: primaryDevice,
-      targetSharedDir: targetSharedDir,
-      runId: runId,
-      relayAddresses: relayAddresses,
-      options: options,
-    );
-    _pipeOutput(primary.stdout, 'PRIMARY', primaryLog);
-    _pipeOutput(primary.stderr, 'PRIMARY-ERR', primaryLog);
-
-    _log('ORCH', 'Waiting for primary to build + come online...');
-    final primaryReadyName = options.isLatencyScenario
-        ? 'latency_alice_identity.json'
-        : 'alice_identity.json';
-    final primaryReadyFile = File(
-      '${sharedDir.path}/md004_${runId}_$primaryReadyName',
-    );
-    sibling = await launchInviteReliabilitySiblingWhenPrimaryReady<Process>(
-      isPrimaryReady: primaryReadyFile.existsSync,
-      primaryExitCode: primary.exitCode,
-      timeout: const Duration(minutes: 12),
-      pollInterval: const Duration(seconds: 1),
-      readinessDescription: primaryReadyFile.path,
-      launchSibling: () {
-        _log('ORCH', 'Primary online; launching sibling');
-        return _startRole(
-          role: 'sibling',
-          deviceId: siblingDevice,
-          targetSharedDir: targetSharedDir,
-          runId: runId,
-          relayAddresses: relayAddresses,
-          options: options,
-        );
-      },
-    );
-    _pipeOutput(sibling.stdout, 'SIBLING', siblingLog);
-    _pipeOutput(sibling.stderr, 'SIBLING-ERR', siblingLog);
-
-    final roleExits = await superviseInviteReliabilityRoleExits(
-      primaryExitCode: primary.exitCode,
-      siblingExitCode: sibling.exitCode,
-      terminatePrimary: () => _terminateRole(primary!, 'primary'),
-      terminateSibling: () => _terminateRole(sibling!, 'sibling'),
-    );
-    final primaryExit = roleExits.primary;
-    final siblingExit = roleExits.sibling;
-    _log('ORCH', 'primaryExit=$primaryExit siblingExit=$siblingExit');
-    _log('ORCH', 'Primary log: ${sharedDir.path}/primary.log');
-    _log('ORCH', 'Sibling log: ${sharedDir.path}/sibling.log');
-    if (primaryExit != 0 || siblingExit != 0) {
-      throw StateError(
-        'invite-reliability harness failure: primary=$primaryExit '
-        'sibling=$siblingExit sharedDir=${sharedDir.path}',
+    if (broker != null) {
+      _log(
+        'ORCH',
+        'Android target-local signal dir: ${broker.remoteDirAbsolute}; '
+            'host-mediated synchronization enabled',
       );
     }
-    if (options.isLatencyScenario) {
-      final summaryFile = await _validateAndWriteLatencySummary(
-        sharedDir: sharedDir,
+    _log('ORCH', 'Relay: $relayAddresses');
+
+    Process? primary;
+    Process? sibling;
+    try {
+      // Launch primary first; wait until it has built + is running (it writes
+      // alice_identity.json once its stack is up) before launching the sibling,
+      // so the two flutter builds don't contend on the global startup lock.
+      primary = await _startRole(
+        role: 'primary',
+        deviceId: primaryDevice,
+        targetSharedDir: targetSharedDir,
         runId: runId,
-        mode: options.mode!,
         relayAddresses: relayAddresses,
-        preflightProvenance: preflightProvenance!,
+        options: options,
+        fixtureIdentitySha256: directFanoutFixture?.fixtureIdentitySha256,
       );
-      _log('ORCH', 'Validated latency host summary: ${summaryFile.path}');
+      _pipeOutput(primary.stdout, 'PRIMARY', primaryLog);
+      _pipeOutput(primary.stderr, 'PRIMARY-ERR', primaryLog);
+
+      _log('ORCH', 'Waiting for primary to build + come online...');
+      final primaryReadyName = options.isLatencyScenario
+          ? 'latency_alice_identity.json'
+          : 'alice_identity.json';
+      final primaryReadyFile = File(
+        '${sharedDir.path}/md004_${runId}_$primaryReadyName',
+      );
+      sibling = await launchInviteReliabilitySiblingWhenPrimaryReady<Process>(
+        isPrimaryReady: primaryReadyFile.existsSync,
+        primaryExitCode: primary.exitCode,
+        timeout: const Duration(minutes: 12),
+        pollInterval: const Duration(seconds: 1),
+        readinessDescription: primaryReadyFile.path,
+        launchSibling: () {
+          _log('ORCH', 'Primary online; launching sibling');
+          return _startRole(
+            role: 'sibling',
+            deviceId: siblingDevice,
+            targetSharedDir: targetSharedDir,
+            runId: runId,
+            relayAddresses: relayAddresses,
+            options: options,
+            fixtureIdentitySha256: directFanoutFixture?.fixtureIdentitySha256,
+          );
+        },
+      );
+      _pipeOutput(sibling.stdout, 'SIBLING', siblingLog);
+      _pipeOutput(sibling.stderr, 'SIBLING-ERR', siblingLog);
+
+      final roleExits = await superviseInviteReliabilityRoleExits(
+        primaryExitCode: primary.exitCode,
+        siblingExitCode: sibling.exitCode,
+        terminatePrimary: () => _terminateRole(primary!, 'primary'),
+        terminateSibling: () => _terminateRole(sibling!, 'sibling'),
+      );
+      final primaryExit = roleExits.primary;
+      final siblingExit = roleExits.sibling;
+      _log('ORCH', 'primaryExit=$primaryExit siblingExit=$siblingExit');
+      _log('ORCH', 'Primary log: ${sharedDir.path}/primary.log');
+      _log('ORCH', 'Sibling log: ${sharedDir.path}/sibling.log');
+      if (primaryExit != 0 || siblingExit != 0) {
+        throw StateError(
+          'invite-reliability harness failure: primary=$primaryExit '
+          'sibling=$siblingExit sharedDir=${sharedDir.path}',
+        );
+      }
+      if (options.isLatencyScenario) {
+        final summaryFile = await _validateAndWriteLatencySummary(
+          sharedDir: sharedDir,
+          runId: runId,
+          mode: options.mode!,
+          relayAddresses: relayAddresses,
+          preflightProvenance: preflightProvenance!,
+        );
+        _log('ORCH', 'Validated latency host summary: ${summaryFile.path}');
+      }
+      if (isDirectFanoutScenario) {
+        final summaryFile = await _validateAndWriteDirectFanoutSummary(
+          sharedDir: sharedDir,
+          runId: runId,
+          fixture: directFanoutFixture!,
+        );
+        _log('ORCH', 'Validated TC-362 host summary: ${summaryFile.path}');
+      }
+      _log(
+        'ORCH',
+        'invite-reliability two-device proof completed successfully',
+      );
+    } finally {
+      try {
+        primary?.kill();
+      } catch (_) {}
+      try {
+        sibling?.kill();
+      } catch (_) {}
+      broker?.stop();
+      if (signalSync != null) {
+        await signalSync;
+      }
+      await primaryLog.close();
+      await siblingLog.close();
     }
-    _log('ORCH', 'invite-reliability two-device proof completed successfully');
   } finally {
-    try {
-      primary?.kill();
-    } catch (_) {}
-    try {
-      sibling?.kill();
-    } catch (_) {}
-    broker?.stop();
-    if (signalSync != null) {
-      await signalSync;
-    }
-    await primaryLog.close();
-    await siblingLog.close();
+    await directFanoutFixture?.stop();
   }
 }

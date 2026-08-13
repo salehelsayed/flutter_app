@@ -1553,7 +1553,157 @@ void main() {
       isNot(contains('--dart-define=MKNOON_ENABLE_MULTI_DEVICE_SYNC')),
       reason: 'group same-user convergence stays off behind this scenario',
     );
+    expect(
+      runner,
+      contains('DirectMediaBlobCustodyFixtureLease.start'),
+      reason: 'the aggregate scenario must reuse the Plan-347 fixture owner',
+    );
+    expect(runner, contains('_validateAndWriteDirectFanoutSummary'));
+
+    final gateScript = File(
+      'scripts/run_reliability_simulations.sh',
+    ).readAsStringSync();
+    expect(
+      gateScript,
+      contains(
+        "printf '%s\\t%s\\tdirect_linked_device_event_blob_fanout\\n' "
+        '"\$kind" "\$path"',
+      ),
+    );
+    expect(
+      gateScript,
+      contains(
+        'run_invite_reliability_multi_device.dart:'
+        'direct_linked_device_event_blob_fanout',
+      ),
+    );
   });
+
+  test('TC-362-05b cross-role event/blob evidence is value-sensitive and '
+      'recipient-aware', () {
+    final artifacts = _validDirectFanoutArtifacts();
+    final accepted = validateDirectLinkedDeviceEventBlobFanoutArtifacts(
+      primaryArtifact: artifacts.primary,
+      siblingArtifact: artifacts.sibling,
+      expectedRunId: 'run-362',
+      expectedFixtureIdentitySha256: _hashOf('f'),
+      liveProtectedCountAfterAck: 0,
+      offlineProtectedCountAfterAck: 1,
+      aggregateProtectedCountAfterAck: 1,
+      liveEventInboxCountAfterAck: 0,
+      offlineEventInboxCountAfterAck: 1,
+      offlineEventEnvelopeSha256: _hashOf('8'),
+      liveMediaInboxCountAfterAck: 0,
+      offlineMediaInboxCountAfterAck: 1,
+      offlineMediaEnvelopeSha256: _hashOf('0'),
+    );
+    expect(accepted.ok, isTrue, reason: accepted.detail);
+
+    final crossed = _validDirectFanoutArtifacts();
+    crossed.sibling['ciphertextSha256'] = _hashOf('9');
+    crossed.sibling['receiptDestinationPeerIdSha256'] = _hashOf('a');
+    final crossedValidation =
+        validateDirectLinkedDeviceEventBlobFanoutArtifacts(
+          primaryArtifact: crossed.primary,
+          siblingArtifact: crossed.sibling,
+          expectedRunId: 'run-362',
+          expectedFixtureIdentitySha256: _hashOf('f'),
+          liveProtectedCountAfterAck: 1,
+          offlineProtectedCountAfterAck: 0,
+          aggregateProtectedCountAfterAck: 1,
+          liveEventInboxCountAfterAck: 0,
+          offlineEventInboxCountAfterAck: 1,
+          offlineEventEnvelopeSha256: _hashOf('8'),
+          liveMediaInboxCountAfterAck: 0,
+          offlineMediaInboxCountAfterAck: 1,
+          offlineMediaEnvelopeSha256: _hashOf('0'),
+        );
+    expect(crossedValidation.ok, isFalse);
+    expect(
+      crossedValidation.detail,
+      allOf(
+        contains('ciphertextSha256'),
+        contains('receiptDestinationPeerIdSha256'),
+        contains('live B protected blob count'),
+        contains('offline B protected blob count'),
+      ),
+    );
+
+    final extraKey = _validDirectFanoutArtifacts();
+    extraKey.primary['unownedClaim'] = true;
+    expect(
+      validateDirectLinkedDeviceEventBlobFanoutArtifacts(
+        primaryArtifact: extraKey.primary,
+        siblingArtifact: extraKey.sibling,
+        expectedRunId: 'run-362',
+        expectedFixtureIdentitySha256: _hashOf('f'),
+        liveProtectedCountAfterAck: 0,
+        offlineProtectedCountAfterAck: 1,
+        aggregateProtectedCountAfterAck: 1,
+        liveEventInboxCountAfterAck: 0,
+        offlineEventInboxCountAfterAck: 1,
+        offlineEventEnvelopeSha256: _hashOf('8'),
+        liveMediaInboxCountAfterAck: 0,
+        offlineMediaInboxCountAfterAck: 1,
+        offlineMediaEnvelopeSha256: _hashOf('0'),
+      ).detail,
+      contains('unexpected keys'),
+    );
+  });
+}
+
+String _hashOf(String character) => List<String>.filled(64, character).join();
+
+({Map<String, Object?> primary, Map<String, Object?> sibling})
+_validDirectFanoutArtifacts() {
+  final common = <String, Object?>{
+    'schema': directLinkedDeviceEventBlobFanoutArtifactSchema,
+    'schemaVersion': directLinkedDeviceEventBlobFanoutArtifactSchemaVersion,
+    'scenario': directLinkedDeviceEventBlobFanoutScenario,
+    'runId': 'run-362',
+    'fixtureIdentitySha256': _hashOf('f'),
+    'accountAPeerIdSha256': _hashOf('a'),
+    'accountATransportPeerIdSha256': _hashOf('b'),
+    'accountBPeerIdSha256': _hashOf('c'),
+    'offlineBTransportPeerIdSha256': _hashOf('d'),
+    'eventMessageIdSha256': _hashOf('1'),
+    'mediaMessageIdSha256': _hashOf('2'),
+    'attachmentIdSha256': _hashOf('3'),
+    'ciphertextSha256': _hashOf('4'),
+  };
+  return (
+    primary: <String, Object?>{
+      ...common,
+      'role': 'primary',
+      'legacyBMlKemPublicKeySha256': _hashOf('5'),
+      'offlineBMlKemPublicKeySha256': _hashOf('6'),
+      'eventLegacyEnvelopeSha256': _hashOf('7'),
+      'eventOfflineEnvelopeSha256': _hashOf('8'),
+      'mediaLegacyEnvelopeSha256': _hashOf('9'),
+      'mediaOfflineEnvelopeSha256': _hashOf('0'),
+      'transportDistinctFromAccount': true,
+      'targetMlKemKeysDistinct': true,
+      'eventTargetCount': 2,
+      'mediaTargetCount': 2,
+      'oneBlobAcrossTargets': true,
+      'eventEnvelopesDistinct': true,
+      'mediaEnvelopesDistinct': true,
+      'offlineEventSiblingExact': true,
+      'offlineBlobSiblingExact': true,
+    },
+    sibling: <String, Object?>{
+      ...common,
+      'role': 'sibling',
+      'outerSenderTransportPeerIdSha256': _hashOf('b'),
+      'innerSenderAccountPeerIdSha256': _hashOf('a'),
+      'receiptDestinationPeerIdSha256': _hashOf('b'),
+      'eventApplied': true,
+      'mediaApplied': true,
+      'blobDownloaded': true,
+      'blobAcked': true,
+      'receiptRoutedToPhysicalTransport': true,
+    },
+  );
 }
 
 const String _primaryLatencyArtifactPath = '/tmp/tc341-primary.json';

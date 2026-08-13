@@ -1358,6 +1358,27 @@ Future<_OutgoingPendingRestartSeed> _seedOutgoingPendingPrivateMedia(
   bool seedCanonicalResidue = false,
   bool seedStoredKey = false,
 }) async {
+  final persistedContact = await fixture.db.query(
+    'contacts',
+    columns: const <String>['peer_id'],
+    where: 'peer_id = ?',
+    whereArgs: const <Object?>['contact-1'],
+    limit: 1,
+  );
+  if (persistedContact.isEmpty) {
+    // Retry admission must distinguish an authorized incumbent contact from
+    // an absent/unreadable snapshot. These restart fixtures model the former:
+    // a valid contact whose linked-device roster is not initialized.
+    await fixture.db.insert('contacts', const <String, Object?>{
+      'peer_id': 'contact-1',
+      'public_key': 'contact-public-key',
+      'rendezvous': '/dns4/relay/tcp/443/p2p/relay',
+      'username': 'Restart Contact',
+      'signature': 'contact-signature',
+      'scanned_at': '2026-07-20T00:00:00.000Z',
+      'ml_kem_public_key': 'contact-ml-kem-public',
+    });
+  }
   const mime = 'image/jpeg';
   const bytes = <int>[7, 8, 9, 10];
   final pendingRelative = MediaFilePathConvention.relativePathForPendingUpload(

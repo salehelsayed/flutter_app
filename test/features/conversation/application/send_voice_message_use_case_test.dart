@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show DirectMediaFanoutTargetBinding;
+    show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
@@ -356,8 +356,10 @@ class _FanoutCapableVoiceRepository
     required ConversationMessage expected,
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   }) => throw StateError('fresh voice must refuse before the fanout stage');
 }
@@ -1552,6 +1554,7 @@ void main() {
             timestamp: prepared.timestamp,
             blobId: attachmentId,
             directMediaBlobCustodyCoordinator: coordinator,
+            directMediaBlobCustodyClientEnabled: true,
           );
 
           // 362: an initialized roster forbids the singular fresh voice path
@@ -1570,7 +1573,6 @@ void main() {
           expect(p2p.sendCallCount, 0);
           expect(p2p.storeInInboxCallCount, 0);
         },
-        skip: !kDirectMediaBlobCustodyClientEnabled,
       );
 
       test(

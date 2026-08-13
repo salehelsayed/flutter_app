@@ -13,9 +13,17 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/bridge/go_bridge_client.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/encrypted_db_opener.dart';
 import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/notifications/canonical_runtime_lease.dart';
 import 'package:flutter_app/core/secure_storage/flutter_secure_key_store.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
@@ -35,20 +43,36 @@ import 'package:flutter_app/core/database/helpers/groups_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/identity_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/media_file_manager.dart';
+import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/core/services/incoming_message_router.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/features/contacts/data/repositories/contact_repository_impl.dart';
+import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/delivery_receipt_listener.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
+import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/send_delivery_receipt_use_case.dart';
 import 'package:flutter_app/features/conversation/data/repositories/media_attachment_repository_impl.dart';
+import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
+import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_ordinary_mutation_result.dart';
+import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/create_group_with_members_use_case.dart';
 import 'package:flutter_app/features/groups/application/drain_group_offline_inbox_use_case.dart';
@@ -120,6 +144,10 @@ const configuredRunId = String.fromEnvironment(
 );
 const configuredDbName = String.fromEnvironment(
   'E2E_DB_NAME',
+  defaultValue: '',
+);
+const configuredPlan362FixtureIdentitySha256 = String.fromEnvironment(
+  'PLAN362_FIXTURE_IDENTITY_SHA256',
   defaultValue: '',
 );
 
@@ -369,6 +397,7 @@ class GroupMultiDeviceTestStack {
   final GroupRepositoryImpl groupRepo;
   final GroupMessageRepositoryImpl groupMsgRepo;
   final GroupInviteDeliveryAttemptRepositoryImpl groupInviteDeliveryAttemptRepo;
+  final MessageRepositoryImpl messageRepo;
   final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
   final ReactionRepositoryImpl reactionRepo;
   final GroupReactionReplayOutboxRepositoryImpl reactionReplayOutboxRepo;
@@ -376,6 +405,11 @@ class GroupMultiDeviceTestStack {
   final GroupPendingBroadcastRepository groupPendingBroadcastRepo;
   final DurableGroupExitDriver durableGroupExitDriver;
   final IncomingMessageRouter messageRouter;
+  final ChatMessageListener chatMessageListener;
+  final DeliveryReceiptListener deliveryReceiptListener;
+  final MediaFileManager mediaFileManager;
+  final List<String> deliveryReceiptTargets;
+  final List<Map<String, String>> mediaFanoutEnvelopeBindings;
   final GroupKeyUpdateListener groupKeyUpdateListener;
   final GroupMembershipUpdateListener groupMembershipUpdateListener;
   final GroupMessageListener groupListener;
@@ -398,6 +432,7 @@ class GroupMultiDeviceTestStack {
     required this.groupRepo,
     required this.groupMsgRepo,
     required this.groupInviteDeliveryAttemptRepo,
+    required this.messageRepo,
     required this.mediaAttachmentRepo,
     required this.reactionRepo,
     required this.reactionReplayOutboxRepo,
@@ -405,6 +440,11 @@ class GroupMultiDeviceTestStack {
     required this.groupPendingBroadcastRepo,
     required this.durableGroupExitDriver,
     required this.messageRouter,
+    required this.chatMessageListener,
+    required this.deliveryReceiptListener,
+    required this.mediaFileManager,
+    required this.deliveryReceiptTargets,
+    required this.mediaFanoutEnvelopeBindings,
     required this.groupKeyUpdateListener,
     required this.groupMembershipUpdateListener,
     required this.groupListener,
@@ -426,6 +466,8 @@ class GroupMultiDeviceTestStack {
   }
 
   Future<void> teardown() async {
+    chatMessageListener.dispose();
+    deliveryReceiptListener.dispose();
     groupKeyUpdateListener.dispose();
     groupMembershipUpdateListener.dispose();
     messageRouter.dispose();
@@ -520,6 +562,330 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbDismissIntroBanner: (peerId) => dbDismissIntroBanner(db, peerId),
     dbSetIntrosSentAt: (peerId, timestamp) =>
         dbSetIntrosSentAt(db, peerId, timestamp),
+  );
+  late final MediaAttachmentRepositoryImpl mediaAttachmentRepo;
+  final messageRepo = MessageRepositoryImpl(
+    dbInsertMessage: (row) => dbInsertMessage(db, row),
+    dbLoadMessagesForContact: (contactPeerId) =>
+        dbLoadMessagesForContact(db, contactPeerId),
+    dbLoadLatestMessageForContact: (contactPeerId) =>
+        dbLoadLatestMessageForContact(db, contactPeerId),
+    dbUpdateMessageStatus: (id, status) =>
+        dbUpdateMessageStatus(db, id, status),
+    dbLoadMessage: (id) => dbLoadMessage(db, id),
+    dbExistsMessageByContent: (contactPeerId, senderPeerId, text, timestamp) =>
+        dbExistsMessageByContent(
+          db,
+          contactPeerId,
+          senderPeerId,
+          text,
+          timestamp,
+        ),
+    dbExistsMessageByDedupKey: (contactPeerId, senderPeerId, dedupKey) =>
+        dbExistsMessageByDedupKey(db, contactPeerId, senderPeerId, dedupKey),
+    dbCountMessagesForContact: (contactPeerId) =>
+        dbCountMessagesForContact(db, contactPeerId),
+    dbMarkConversationAsRead: (contactPeerId) =>
+        dbMarkConversationAsRead(db, contactPeerId),
+    dbCountUnreadForContact: (contactPeerId) =>
+        dbCountUnreadForContact(db, contactPeerId),
+    dbCountTotalUnread: () => dbCountTotalUnread(db),
+    dbCountTotalUnreadExcludingArchived: () =>
+        dbCountTotalUnreadExcludingArchived(db),
+    dbDeleteMessagesForContact: (contactPeerId) =>
+        dbDeleteMessagesForContact(db, contactPeerId),
+    dbDeleteMessage: (id) => dbDeleteMessage(db, id),
+    dbLoadMessagesPage: (contactPeerId, {limit = 50, beforeTimestamp}) =>
+        dbLoadMessagesPage(
+          db,
+          contactPeerId,
+          limit: limit,
+          beforeTimestamp: beforeTimestamp,
+        ),
+    dbLoadFailedOutgoingMessages: () => dbLoadFailedOutgoingMessages(db),
+    dbLoadUnackedOutgoingMessages: ({required olderThan, limit = 50}) =>
+        dbLoadUnackedOutgoingMessages(db, olderThan: olderThan, limit: limit),
+    dbLoadConversationThreadSummaries: (contactPeerIds) =>
+        dbLoadConversationThreadSummaries(db, contactPeerIds),
+    dbRecoverStuckSendingMessages: ({required olderThan, limit = 50}) =>
+        dbRecoverStuckSendingMessages(db, olderThan: olderThan, limit: limit),
+    dbUpdateWireEnvelope: (id, wireEnvelope) =>
+        dbUpdateWireEnvelope(db, id, wireEnvelope),
+    dbStageOutgoingOrdinaryAttempt:
+        ({required expectedRow, required stagedRow, required kind}) =>
+            dbStageOutgoingOrdinaryAttempt(
+              db,
+              expectedRow: expectedRow,
+              stagedRow: stagedRow,
+              kind: kind,
+            ),
+    dbStageOutgoingDirectTextInboxCustody:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required kind,
+          required recipientPeerId,
+          required messageId,
+          required incarnationId,
+          required wireEnvelope,
+        }) => dbStageOutgoingDirectTextInboxCustody(
+          db,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          incarnationId: incarnationId,
+          wireEnvelope: wireEnvelope,
+        ),
+    dbReadDirectContactFanoutSnapshot: ({required contactAccountPeerId}) =>
+        dbReadDirectContactFanoutSnapshot(
+          db,
+          contactAccountPeerId: contactAccountPeerId,
+        ),
+    dbLoadDirectInboxCustodyOutboxRowsForMessageId: ({required messageId}) =>
+        dbLoadDirectInboxCustodyOutboxRowsForMessageId(
+          db,
+          messageId: messageId,
+        ),
+    dbLoadDirectReactionInboxCustodyOutboxRowsForEventId:
+        ({required eventId}) =>
+            dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+              db,
+              eventId: eventId,
+            ),
+    dbStageOutgoingDirectTextFanoutInboxCustody:
+        ({
+          required stagedRow,
+          required messageId,
+          required contactAccountPeerId,
+          required senderTransportPeerId,
+          required expectedSnapshot,
+          required candidates,
+        }) => dbStageOutgoingDirectTextFanoutInboxCustody(
+          db,
+          stagedRow: stagedRow,
+          messageId: messageId,
+          contactAccountPeerId: contactAccountPeerId,
+          senderTransportPeerId: senderTransportPeerId,
+          expectedSnapshot: expectedSnapshot,
+          candidates: candidates,
+        ),
+    dbStageOutgoingDirectTextMutationFanoutInboxCustody:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required kind,
+          required eventId,
+          required parentMessageId,
+          required contactAccountPeerId,
+          required senderTransportPeerId,
+          required expectedSnapshot,
+          required candidates,
+        }) => dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+          db,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          kind: kind,
+          eventId: eventId,
+          parentMessageId: parentMessageId,
+          contactAccountPeerId: contactAccountPeerId,
+          senderTransportPeerId: senderTransportPeerId,
+          expectedSnapshot: expectedSnapshot,
+          candidates: candidates,
+        ),
+    dbApplyIncomingOrdinaryTextMutationWithAuthority:
+        ({
+          required incomingRow,
+          required kind,
+          required authenticatedTransportPeerId,
+        }) => dbApplyIncomingOrdinaryTextMutation(
+          db,
+          incomingRow: incomingRow,
+          kind: kind,
+          authenticatedTransportPeerId: authenticatedTransportPeerId,
+        ),
+    dbApplyIncomingDirectMessageDeletionWithAuthority:
+        ({
+          required messageId,
+          required senderPeerId,
+          required deletedAt,
+          required transport,
+          required createdAt,
+          required authenticatedTransportPeerId,
+        }) => dbApplyIncomingDirectMessageDeletion(
+          db,
+          messageId: messageId,
+          senderPeerId: senderPeerId,
+          deletedAt: deletedAt,
+          transport: transport,
+          createdAt: createdAt,
+          authenticatedTransportPeerId: authenticatedTransportPeerId,
+        ),
+    dbSettleOutgoingOrdinaryTransportWithFanoutAuthority:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+          required isDeleteTombstone,
+          expectedDirectEventFanoutGenerationId,
+          authenticatedTransportPeerId,
+        }) => isDeleteTombstone
+        ? dbSettleOutgoingOrdinaryDeleteTombstone(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+            expectedDirectEventFanoutGenerationId:
+                expectedDirectEventFanoutGenerationId,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
+          )
+        : dbSettleOutgoingOrdinaryTransport(
+            db,
+            messageId: messageId,
+            expectedContactPeerId: expectedContactPeerId,
+            expectedEnvelope: expectedEnvelope,
+            status: status,
+            transport: transport,
+            relayExpiresAt: relayExpiresAt,
+            mode: mode,
+            expectedDirectEventFanoutGenerationId:
+                expectedDirectEventFanoutGenerationId,
+            authenticatedTransportPeerId: authenticatedTransportPeerId,
+          ),
+    dbLoadDirectInboxCustodyOutbox: ({limit = 50}) =>
+        dbLoadDirectInboxCustodyOutbox(db, limit: limit),
+    dbLoadDirectInboxCustodyOutboxForMessage:
+        ({required recipientPeerId, required messageId}) =>
+            dbLoadDirectInboxCustodyOutboxForMessage(
+              db,
+              recipientPeerId: recipientPeerId,
+              messageId: messageId,
+            ),
+    dbLoadDirectInboxCustodyOutboxOwnerForMessageId: ({required messageId}) =>
+        dbLoadDirectInboxCustodyOutboxOwnerForMessageId(
+          db,
+          messageId: messageId,
+        ),
+    dbRecordDirectInboxCustodyFailureIfExact:
+        ({
+          required recipientPeerId,
+          required messageId,
+          required expectedIncarnationId,
+          required expectedWireEnvelope,
+          required errorCode,
+          required attemptedAt,
+        }) => dbRecordDirectInboxCustodyFailureIfExact(
+          db,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          expectedIncarnationId: expectedIncarnationId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          errorCode: errorCode,
+          attemptedAt: attemptedAt,
+        ),
+    dbCompleteAcceptedDirectInboxCustodyIfExact:
+        ({
+          required recipientPeerId,
+          required messageId,
+          required expectedIncarnationId,
+          required expectedWireEnvelope,
+          required relayExpiresAt,
+        }) => dbCompleteAcceptedDirectInboxCustodyIfExact(
+          db,
+          recipientPeerId: recipientPeerId,
+          messageId: messageId,
+          expectedIncarnationId: expectedIncarnationId,
+          expectedWireEnvelope: expectedWireEnvelope,
+          relayExpiresAt: relayExpiresAt,
+        ),
+    dbSettleOutgoingOrdinaryTransport:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryTransport(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbSettleOutgoingOrdinaryDeleteTombstone:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required status,
+          required transport,
+          required relayExpiresAt,
+          required mode,
+        }) => dbSettleOutgoingOrdinaryDeleteTombstone(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          status: status,
+          transport: transport,
+          relayExpiresAt: relayExpiresAt,
+          mode: mode,
+        ),
+    dbInvalidateOutgoingOrdinaryEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+        }) => dbInvalidateOutgoingOrdinaryEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+        ),
+    dbQuarantineUnsafeLegacyOutgoingEnvelope:
+        ({
+          required messageId,
+          required expectedContactPeerId,
+          required expectedEnvelope,
+          required isDeleteTombstone,
+        }) => dbQuarantineUnsafeLegacyOutgoingEnvelope(
+          db,
+          messageId: messageId,
+          expectedContactPeerId: expectedContactPeerId,
+          expectedEnvelope: expectedEnvelope,
+          isDeleteTombstone: isDeleteTombstone,
+        ),
+    loadOutgoingOrdinaryMedia: (messageId) => mediaAttachmentRepo
+        .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.direct),
+    dbLoadStuckSendingOutgoingMessages: ({required olderThan, limit = 50}) =>
+        dbLoadStuckSendingOutgoingMessages(
+          db,
+          olderThan: olderThan,
+          limit: limit,
+        ),
+    dbLoadSendingOutgoingMessages: () => dbLoadSendingOutgoingMessages(db),
+    dbConditionalTransitionStatus:
+        (id, {required fromStatus, required toStatus}) =>
+            dbConditionalTransitionStatus(
+              db,
+              id,
+              fromStatus: fromStatus,
+              toStatus: toStatus,
+            ),
   );
   final groupRepo = GroupRepositoryImpl(
     dbInsertGroup: (row) => dbInsertGroup(db, row),
@@ -810,9 +1176,19 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     dbDeleteGroupPendingKeyRepair: (id) =>
         dbDeleteGroupPendingKeyRepair(db, id),
   );
-  final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
+  final mediaFanoutEnvelopeBindings = <Map<String, String>>[];
+  mediaAttachmentRepo = MediaAttachmentRepositoryImpl(
+    // Keep the production ordinary/private classifier in front of generic
+    // pending-row persistence. For this TC-362 ordinary parent it returns
+    // `notPrivateParent`, authorizing the incumbent generic insert; omitting
+    // the seam would turn a real ordinary v110 preparation into a synthetic
+    // private-media refusal in the shared harness only.
+    dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible: (rows) =>
+        dbInsertOutgoingDirectPrivatePendingAttachmentsIfEligible(db, rows),
     dbSaveMediaAttachmentPreservingLocalState: (row) =>
         dbSaveMediaAttachmentPreservingLocalState(db, row),
+    dbCanApplyGenericMediaAttachmentSave: (row) =>
+        dbCanApplyGenericMediaAttachmentSave(db, row),
     dbStageOutgoingOrdinaryAttemptWithMedia:
         ({
           required expectedRow,
@@ -826,7 +1202,214 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           attachmentRows: attachmentRows,
           kind: kind,
         ),
-    publishOutgoingOrdinaryMutation: publishOutgoingOrdinaryMutation,
+    dbStageOutgoingDirectMediaInboxCustody:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required attachmentRows,
+          required kind,
+          required recipientPeerId,
+          required wireEnvelope,
+          wireMediaBlobManifestHash,
+          wireMediaBlobExpiresAtMs,
+        }) => dbStageOutgoingDirectMediaInboxCustody(
+          db,
+          expectedRow: expectedRow,
+          stagedRow: stagedRow,
+          attachmentRows: attachmentRows,
+          kind: kind,
+          recipientPeerId: recipientPeerId,
+          wireEnvelope: wireEnvelope,
+          wireMediaBlobManifestHash: wireMediaBlobManifestHash,
+          wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
+        ),
+    dbStageOutgoingDirectMediaBlobGeneration:
+        ({
+          required expectedParentRow,
+          required expectedAttachmentRows,
+          required preparedAttachmentRows,
+          required custodyRows,
+        }) => dbStageOutgoingDirectMediaBlobGeneration(
+          db,
+          expectedParentRow: expectedParentRow,
+          expectedAttachmentRows: expectedAttachmentRows,
+          preparedAttachmentRows: preparedAttachmentRows,
+          custodyRows: custodyRows,
+        ),
+    dbStageFreshOutgoingDirectMediaBlobGeneration:
+        ({
+          required parentRow,
+          required expectedAttachmentRows,
+          required preparedAttachmentRows,
+          required custodyRows,
+          authorizedForwardDedupKey,
+        }) => dbStageFreshOutgoingDirectMediaBlobGeneration(
+          db,
+          parentRow: parentRow,
+          expectedAttachmentRows: expectedAttachmentRows,
+          preparedAttachmentRows: preparedAttachmentRows,
+          custodyRows: custodyRows,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
+        ),
+    dbReadDirectContactFanoutSnapshotForMedia:
+        ({required contactAccountPeerId}) => dbReadDirectContactFanoutSnapshot(
+          db,
+          contactAccountPeerId: contactAccountPeerId,
+        ),
+    dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration:
+        ({
+          required expectedParentRow,
+          required expectedAttachmentRows,
+          required preparedAttachmentRows,
+          required custodyRows,
+          required contactAccountPeerId,
+          required expectedSnapshot,
+        }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
+          db,
+          expectedParentRow: expectedParentRow,
+          expectedAttachmentRows: expectedAttachmentRows,
+          preparedAttachmentRows: preparedAttachmentRows,
+          custodyRows: custodyRows,
+          contactAccountPeerId: contactAccountPeerId,
+          expectedSnapshot: expectedSnapshot,
+        ),
+    dbStageOutgoingDirectMediaFanoutInboxCustody:
+        ({
+          required expectedRow,
+          required stagedRow,
+          required attachmentRows,
+          required senderTransportPeerId,
+          required contactAccountPeerId,
+          required authority,
+          required expectedSnapshot,
+          required targetBindings,
+        }) =>
+            dbStageOutgoingDirectMediaFanoutInboxCustody(
+              db,
+              expectedRow: expectedRow,
+              stagedRow: stagedRow,
+              attachmentRows: attachmentRows,
+              senderTransportPeerId: senderTransportPeerId,
+              contactAccountPeerId: contactAccountPeerId,
+              authority: authority,
+              expectedSnapshot: expectedSnapshot,
+              targetBindings: targetBindings,
+            ).whenComplete(() {
+              mediaFanoutEnvelopeBindings
+                ..clear()
+                ..addAll(
+                  targetBindings.map(
+                    (binding) => <String, String>{
+                      'recipientPeerId': binding.recipientPeerId,
+                      'wireEnvelope': binding.wireEnvelope,
+                    },
+                  ),
+                );
+            }),
+    dbLoadDirectMediaBlobCustodyRowsForAttachment: ({required attachmentId}) =>
+        dbLoadDirectMediaBlobCustodyRowsForAttachment(
+          db,
+          attachmentId: attachmentId,
+        ),
+    dbLoadDirectMediaBlobCustodyForTarget:
+        ({required attachmentId, required direction, recipientPeerId}) =>
+            dbLoadDirectMediaBlobCustodyForTarget(
+              db,
+              attachmentId: attachmentId,
+              direction: direction,
+              recipientPeerId: recipientPeerId,
+            ),
+    dbLoadDirectMediaBlobCustodyForMessage: ({required messageId}) =>
+        dbLoadDirectMediaBlobCustodyForMessage(db, messageId: messageId),
+    dbLoadDirectMediaBlobCustodyByStates: ({required states, int limit = 50}) =>
+        dbLoadDirectMediaBlobCustodyByStates(db, states: states, limit: limit),
+    dbLoadLinkedDirectMediaBlobCustodyByStates:
+        ({required states, int limit = 50}) =>
+            dbLoadLinkedDirectMediaBlobCustodyByStates(
+              db,
+              states: states,
+              limit: limit,
+            ),
+    dbTransitionDirectMediaBlobCustodyIfExact:
+        ({required expected, required next}) =>
+            dbTransitionDirectMediaBlobCustodyIfExact(
+              db,
+              expected: expected,
+              next: next,
+            ),
+    dbDeleteDirectMediaBlobCleanupPendingIfExact: ({required expected}) =>
+        dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: expected),
+    dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact:
+        ({required expectedRows, required reason, required nowMs}) =>
+            dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
+              db,
+              expectedRows: expectedRows,
+              reason: reason,
+              nowMs: nowMs,
+            ),
+    dbStageIncomingDirectMediaBlobCustody:
+        ({
+          required messageRow,
+          required attachmentRows,
+          required custodyRows,
+          authenticatedTransportPeerId,
+        }) => dbStageIncomingDirectMediaBlobCustody(
+          db,
+          messageRow: messageRow,
+          attachmentRows: attachmentRows,
+          custodyRows: custodyRows,
+          authenticatedTransportPeerId: authenticatedTransportPeerId,
+        ),
+    dbCommitIncomingDirectMediaBlobLocalPath:
+        ({
+          required expectedAttachmentRow,
+          required expectedCustody,
+          required localPath,
+          required sourceRelayPeerId,
+          required updatedAt,
+          required nowMs,
+        }) => dbCommitIncomingDirectMediaBlobLocalPath(
+          db,
+          expectedAttachmentRow: expectedAttachmentRow,
+          expectedCustody: expectedCustody,
+          localPath: localPath,
+          sourceRelayPeerId: sourceRelayPeerId,
+          updatedAt: updatedAt,
+          nowMs: nowMs,
+        ),
+    dbDeleteIncomingDirectMediaBlobAckPendingIfExact: ({required expected}) =>
+        dbDeleteIncomingDirectMediaBlobAckPendingIfExact(
+          db,
+          expected: expected,
+        ),
+    dbDeleteIncomingDirectMediaBlobIfExpired:
+        ({required expected, required nowMs}) =>
+            dbDeleteIncomingDirectMediaBlobIfExpired(
+              db,
+              expected: expected,
+              nowMs: nowMs,
+            ),
+    dbProjectOutgoingDirectMediaCustodyUploadFailure:
+        ({
+          required expectedParentRow,
+          required expectedAttachmentRows,
+          required failedAttachmentId,
+          required disposition,
+        }) => dbProjectOutgoingDirectMediaCustodyUploadFailure(
+          db,
+          expectedParentRow: expectedParentRow,
+          expectedAttachmentRows: expectedAttachmentRows,
+          failedAttachmentId: failedAttachmentId,
+          disposition: disposition,
+        ),
+    publishOutgoingOrdinaryMutation:
+        publishOutgoingOrdinaryMutation ??
+        ({required messageId, required outcome, required committedMedia}) =>
+            messageRepo.publishOutgoingOrdinaryMutation(
+              messageId: messageId,
+              outcome: outcome,
+              committedMedia: committedMedia,
+            ),
     dbLoadMediaForMessage: (messageId, ownerLane) =>
         dbLoadMediaForMessage(db, messageId, ownerLane: ownerLane),
     dbLoadMediaById: (id) => dbLoadMediaById(db, id),
@@ -1075,6 +1658,41 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   final notificationService = FakeNotificationService();
   await notificationService.initialize();
   final messageRouter = IncomingMessageRouter(p2pService: p2pService);
+  final directTransportAuthority = DatabaseDirectTransportAuthority(
+    database: db,
+  );
+  final mediaFileManager = MediaFileManager();
+  final deliveryReceiptTargets = <String>[];
+  final chatMessageListener = ChatMessageListener(
+    transportAuthority: directTransportAuthority,
+    chatMessageStream: messageRouter.chatMessageStream,
+    messageRepo: messageRepo,
+    contactRepo: contactRepo,
+    bridge: bridge,
+    getOwnMlKemSecretKey: () async => updatedIdentity.mlKemSecretKey,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    mediaFileManager: mediaFileManager,
+    sendDeliveryReceipt:
+        ({
+          required contactPeerId,
+          required messageIds,
+          mutationEventIds,
+        }) async {
+          deliveryReceiptTargets.add(contactPeerId);
+          await sendDeliveryReceipt(
+            p2pService: p2pService,
+            targetPeerId: contactPeerId,
+            messageIds: messageIds,
+            mutationEventIds: mutationEventIds,
+          );
+        },
+  );
+  final deliveryReceiptListener = DeliveryReceiptListener(
+    transportAuthority: directTransportAuthority,
+    receiptStream: messageRouter.deliveryReceiptStream,
+    messageRepo: messageRepo,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+  );
   final groupKeyUpdateListener = GroupKeyUpdateListener(
     groupKeyUpdateStream: messageRouter.groupKeyUpdateStream,
     groupRepo: groupRepo,
@@ -1175,6 +1793,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   );
 
   messageRouter.start();
+  chatMessageListener.start();
+  deliveryReceiptListener.start();
   groupKeyUpdateListener.start();
   groupListener.start(
     groupStreamController.stream,
@@ -1197,6 +1817,7 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupRepo: groupRepo,
     groupMsgRepo: groupMsgRepo,
     groupInviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepo,
+    messageRepo: messageRepo,
     mediaAttachmentRepo: mediaAttachmentRepo,
     reactionRepo: reactionRepo,
     reactionReplayOutboxRepo: reactionReplayOutboxRepo,
@@ -1204,6 +1825,11 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     groupPendingBroadcastRepo: groupPendingBroadcastRepo,
     durableGroupExitDriver: durableGroupExitDriver,
     messageRouter: messageRouter,
+    chatMessageListener: chatMessageListener,
+    deliveryReceiptListener: deliveryReceiptListener,
+    mediaFileManager: mediaFileManager,
+    deliveryReceiptTargets: deliveryReceiptTargets,
+    mediaFanoutEnvelopeBindings: mediaFanoutEnvelopeBindings,
     groupKeyUpdateListener: groupKeyUpdateListener,
     groupMembershipUpdateListener: groupMembershipUpdateListener,
     groupListener: groupListener,
@@ -3410,6 +4036,17 @@ void main() {
           return;
         }
 
+        // 362 / TC-362-05b: one aggregate linked-origin text + shared-blob
+        // fanout proof on the availability-bounded Android pair.
+        if (configuredScenario == directLinkedDeviceEventBlobFanoutScenario) {
+          if (_isPrimaryRole) {
+            await _runDirectLinkedDeviceEventBlobFanoutLinkedSide();
+          } else {
+            await _runDirectLinkedDeviceEventBlobFanoutAccountBSide();
+          }
+          return;
+        }
+
         // 360: an unregistered scenario is TERMINAL.
         //
         // Before this guard, anything unrecognized fell through to the legacy
@@ -3827,6 +4464,912 @@ Future<void> _runDirectLinkedDeviceAddressingLinkedSide() async {
   } finally {
     // Raw key material never outlives the run, and the canonical installation
     // ID is restored to exactly what this proof found.
+    await restoreRunScopedSecureState();
+    await stack.teardown();
+  }
+}
+
+// ── 362 / TC-362-05b: aggregate linked-origin event + blob fanout ─────────
+
+String _plan362Sha256(String value) =>
+    sha256.convert(utf8.encode(value)).toString();
+
+List<int> _plan362TinyPngBytes() => base64Decode(
+  // One opaque 1x1 PNG. Its bytes are intentionally fixed so the receiver can
+  // prove the downloaded plaintext rather than merely observing `done`.
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
+  '/w8AAusB9Y9ZQmcAAAAASUVORK5CYII=',
+);
+
+void _requirePlan362FixtureIdentity() {
+  if (!RegExp(
+    r'^[0-9a-f]{64}$',
+  ).hasMatch(configuredPlan362FixtureIdentitySha256)) {
+    throw StateError(
+      'TC-362 requires the capability-bound Plan-347 fixture identity',
+    );
+  }
+}
+
+Future<void> _waitForDirectRelayReady(GroupMultiDeviceTestStack stack) async {
+  await waitForCondition(
+    () async => stack.p2pService.currentState.relayReady,
+    timeout: const Duration(minutes: 2),
+  );
+}
+
+Future<DirectLinkedDeviceQrDocument> _stageAndVerifyLinkedQr({
+  required GroupMultiDeviceTestStack stack,
+  required String qrDocument,
+}) async {
+  final (parseResult, document) = await parseDirectLinkedDeviceQr(
+    qrString: qrDocument,
+    ownAccountPeerId: stack.identity.peerId,
+    lookupContact: stack.contactRepo.getContact,
+    callVerify:
+        ({
+          required String publicKey,
+          required String data,
+          required String signature,
+        }) => callVerifyPayload(
+          bridge: stack.bridge,
+          publicKey: publicKey,
+          data: data,
+          signature: signature,
+        ),
+    selector: const DirectLinkedDeviceSelector.enabled(),
+  );
+  expect(parseResult, ParseDirectLinkedDeviceQrResult.success);
+  expect(document, isNotNull);
+  final authenticated = document!;
+  final stageOutcome = await dbStageDirectContactDeviceBinding(
+    stack.db,
+    contactAccountPeerId: authenticated.accountPeerId,
+    accountSigningPublicKey: authenticated.accountPublicKey,
+    deviceId: authenticated.deviceId,
+    transportPeerId: authenticated.transportPeerId,
+    transportPublicKey: authenticated.transportPublicKey,
+    deviceMlKemPublicKey: authenticated.deviceMlKemPublicKey,
+    stagedAt: DateTime.now().toUtc().toIso8601String(),
+  );
+  expect(stageOutcome, DirectContactDeviceBindingStageOutcome.staged);
+  final fingerprint = computeDirectContactDeviceBindingFingerprint(
+    contactAccountPeerId: authenticated.accountPeerId,
+    accountSigningPublicKey: authenticated.accountPublicKey,
+    deviceId: authenticated.deviceId,
+    transportPeerId: authenticated.transportPeerId,
+    transportPublicKey: authenticated.transportPublicKey,
+    deviceMlKemPublicKey: authenticated.deviceMlKemPublicKey,
+  );
+  expect(
+    await dbVerifyDirectContactDeviceBinding(
+      stack.db,
+      contactAccountPeerId: authenticated.accountPeerId,
+      deviceId: authenticated.deviceId,
+      expectedFingerprint: fingerprint,
+      expectedAccountSigningPublicKey: authenticated.accountPublicKey,
+      decidedAt: DateTime.now().toUtc().toIso8601String(),
+    ),
+    isTrue,
+  );
+  return authenticated;
+}
+
+Map<String, dynamic> _plan362CommonArtifact({
+  required String role,
+  required String accountAPeerId,
+  required String accountATransportPeerId,
+  required String accountBPeerId,
+  required String offlineBTransportPeerId,
+  required String eventMessageId,
+  required String mediaMessageId,
+  required String attachmentId,
+  required String ciphertextSha256,
+}) => <String, dynamic>{
+  'schema': directLinkedDeviceEventBlobFanoutArtifactSchema,
+  'schemaVersion': directLinkedDeviceEventBlobFanoutArtifactSchemaVersion,
+  'scenario': directLinkedDeviceEventBlobFanoutScenario,
+  'runId': configuredRunId,
+  'role': role,
+  'fixtureIdentitySha256': configuredPlan362FixtureIdentitySha256,
+  'accountAPeerIdSha256': _plan362Sha256(accountAPeerId),
+  'accountATransportPeerIdSha256': _plan362Sha256(accountATransportPeerId),
+  'accountBPeerIdSha256': _plan362Sha256(accountBPeerId),
+  'offlineBTransportPeerIdSha256': _plan362Sha256(offlineBTransportPeerId),
+  'eventMessageIdSha256': _plan362Sha256(eventMessageId),
+  'mediaMessageIdSha256': _plan362Sha256(mediaMessageId),
+  'attachmentIdSha256': _plan362Sha256(attachmentId),
+  'ciphertextSha256': ciphertextSha256,
+};
+
+/// The emulator/account-B receiver. It creates one inert offline linked-B
+/// target, verifies A's linked transport, goes offline before authoring, then
+/// drains only its own protected siblings and proves apply/download/ACK.
+Future<void> _runDirectLinkedDeviceEventBlobFanoutAccountBSide() async {
+  _requirePlan362FixtureIdentity();
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Bob TC362',
+    cliPeerFixture: null,
+  );
+  final observedOuter = <String, ChatMessage>{};
+  final outerSubscription = stack.messageRouter.chatMessageStream.listen((msg) {
+    try {
+      final decoded = jsonDecode(msg.content);
+      if (decoded is Map && decoded['id'] is String) {
+        observedOuter[decoded['id'] as String] = msg;
+      }
+    } on Object {
+      // Non-v2 messages are outside this scenario and remain with the router.
+    }
+  });
+
+  try {
+    final offlineIdentityResult = await callIdentityGenerate(stack.bridge);
+    expect(offlineIdentityResult['ok'], isTrue);
+    final offlineIdentity = Map<String, dynamic>.from(
+      offlineIdentityResult['identity'] as Map,
+    );
+    final offlineMlKemResult = await callMlKemKeygen(stack.bridge);
+    expect(offlineMlKemResult['ok'], isTrue);
+    final offlineTransportPeerId = offlineIdentity['peerId'] as String;
+    final offlineTransportPublicKey = offlineIdentity['publicKey'] as String;
+    final offlineMlKemPublicKey = offlineMlKemResult['publicKey'] as String;
+    final liveMlKemPublicKey = stack.identity.mlKemPublicKey;
+    expect(liveMlKemPublicKey, isNotNull);
+    expect(offlineTransportPeerId, isNot(stack.identity.peerId));
+    expect(offlineMlKemPublicKey, isNot(liveMlKemPublicKey));
+
+    writeSharedJson(_signalName('fanout_b_identity.json'), <String, dynamic>{
+      ..._peerIdentityFixture(stack.identity),
+      'offlineDeviceId': offlineTransportPeerId,
+      'offlineTransportPeerId': offlineTransportPeerId,
+      'offlineTransportPublicKey': offlineTransportPublicKey,
+      'offlineMlKemPublicKey': offlineMlKemPublicKey,
+    });
+
+    final aliceFixture = await waitForSharedJson(
+      _signalName('alice_identity.json'),
+      timeout: const Duration(minutes: 12),
+    );
+    await stack.contactRepo.addContact(
+      _contactFromFixture(aliceFixture, 'Alice TC362'),
+    );
+    final qrFixture = await waitForSharedJson(
+      _signalName('fanout_linked_qr.json'),
+    );
+    final linkedDocument = await _stageAndVerifyLinkedQr(
+      stack: stack,
+      qrDocument: qrFixture['document'] as String,
+    );
+    expect(linkedDocument.accountPeerId, aliceFixture['peerId']);
+    expect(linkedDocument.transportPeerId, isNot(linkedDocument.accountPeerId));
+
+    // The live legacy-B sibling must enter the protected relay inbox, not win
+    // a direct race. The offline linked-B identity never starts anywhere.
+    expect(await stack.p2pService.stopNode(), isTrue);
+    writeSharedText(_signalName('fanout_b_ready'), 'ok');
+    await waitForSharedSignal(
+      _signalName('fanout_authored'),
+      timeout: const Duration(minutes: 5),
+    );
+    final targets = await waitForSharedJson(
+      directLinkedDeviceEventBlobFanoutTargetFixtureFileName(configuredRunId),
+    );
+    final eventMessageId = targets['eventMessageId'] as String;
+    final mediaMessageId = targets['mediaMessageId'] as String;
+    final attachmentId = targets['attachmentId'] as String;
+    expect(targets['liveRecipientPeerId'], stack.identity.peerId);
+    expect(targets['offlineRecipientPeerId'], offlineTransportPeerId);
+
+    expect(
+      await stack.p2pService.startNode(
+        stack.identity.privateKey,
+        stack.identity.peerId,
+      ),
+      isTrue,
+    );
+    await _waitForDirectRelayReady(stack);
+
+    await waitForCondition(() async {
+      await stack.p2pService.drainOfflineInbox().timeout(
+        const Duration(seconds: 60),
+      );
+      final event = await stack.messageRepo.getMessage(eventMessageId);
+      final media = await stack.messageRepo.getMessage(mediaMessageId);
+      final attachments = await stack.mediaAttachmentRepo
+          .getAttachmentsForMessage(
+            mediaMessageId,
+            owner: MediaOwnerLane.direct,
+          );
+      if (event == null || media == null || attachments.length != 1) {
+        return false;
+      }
+      final attachment = attachments.single;
+      final storedPath = attachment.localPath;
+      if (attachment.downloadStatus != 'done' ||
+          storedPath == null ||
+          storedPath.isEmpty) {
+        return false;
+      }
+      final absolutePath = await stack.mediaFileManager.resolveStoredPath(
+        storedPath,
+      );
+      final incomingCustody = await stack.mediaAttachmentRepo
+          .loadIncomingDirectMediaBlobCustodyForAttachment(attachmentId);
+      return await File(absolutePath).exists() &&
+          incomingCustody == null &&
+          observedOuter.containsKey(eventMessageId) &&
+          observedOuter.containsKey(mediaMessageId) &&
+          stack.deliveryReceiptTargets.contains(linkedDocument.transportPeerId);
+    }, timeout: const Duration(minutes: 3));
+
+    final event = (await stack.messageRepo.getMessage(eventMessageId))!;
+    final media = (await stack.messageRepo.getMessage(mediaMessageId))!;
+    final attachment =
+        (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+          mediaMessageId,
+          owner: MediaOwnerLane.direct,
+        )).single;
+    final absoluteDownloadedPath = await stack.mediaFileManager
+        .resolveStoredPath(attachment.localPath!);
+    expect(
+      await File(absoluteDownloadedPath).readAsBytes(),
+      _plan362TinyPngBytes(),
+      reason: 'the live B target must hold the exact authored plaintext',
+    );
+    expect(event.senderPeerId, linkedDocument.accountPeerId);
+    expect(media.senderPeerId, linkedDocument.accountPeerId);
+    expect(
+      stack.deliveryReceiptTargets,
+      isNotEmpty,
+      reason: 'durable inbox apply must emit delivery receipts',
+    );
+    expect(
+      stack.deliveryReceiptTargets.toSet(),
+      <String>{linkedDocument.transportPeerId},
+      reason: 'receipts target only A physical transport, never A account',
+    );
+
+    for (final id in <String>[eventMessageId, mediaMessageId]) {
+      final outer = observedOuter[id]!;
+      final envelope = jsonDecode(outer.content) as Map<String, dynamic>;
+      expect(outer.from, linkedDocument.transportPeerId);
+      expect(envelope['senderPeerId'], linkedDocument.transportPeerId);
+    }
+    expect(attachment.contentHash, isNotNull);
+
+    writeSharedJson(
+      directLinkedDeviceEventBlobFanoutArtifactFileName(
+        configuredRunId,
+        'sibling',
+      ),
+      <String, dynamic>{
+        ..._plan362CommonArtifact(
+          role: 'sibling',
+          accountAPeerId: linkedDocument.accountPeerId,
+          accountATransportPeerId: linkedDocument.transportPeerId,
+          accountBPeerId: stack.identity.peerId,
+          offlineBTransportPeerId: offlineTransportPeerId,
+          eventMessageId: eventMessageId,
+          mediaMessageId: mediaMessageId,
+          attachmentId: attachmentId,
+          ciphertextSha256: attachment.contentHash!,
+        ),
+        'outerSenderTransportPeerIdSha256': _plan362Sha256(
+          linkedDocument.transportPeerId,
+        ),
+        'innerSenderAccountPeerIdSha256': _plan362Sha256(event.senderPeerId),
+        'receiptDestinationPeerIdSha256': _plan362Sha256(
+          linkedDocument.transportPeerId,
+        ),
+        'eventApplied': true,
+        'mediaApplied': true,
+        'blobDownloaded': true,
+        'blobAcked': true,
+        'receiptRoutedToPhysicalTransport': true,
+      },
+    );
+    writeSharedText(_signalName('fanout_b_complete'), 'ok');
+    await waitForSharedSignal(
+      _signalName('fanout_primary_complete'),
+      timeout: const Duration(minutes: 5),
+    );
+    await Future<void>.delayed(const Duration(seconds: 2));
+  } finally {
+    await outerSubscription.cancel();
+    await stack.teardown();
+  }
+}
+
+/// The physical linked-secondary/account-A author. One read-only admission is
+/// resolved before the media copy/parent/attachment/crypto boundary, then the
+/// exact snapshot authors both target batches while B is offline.
+Future<void> _runDirectLinkedDeviceEventBlobFanoutLinkedSide() async {
+  _requirePlan362FixtureIdentity();
+  expect(kDirectLinkedDevicesEnabled, isTrue);
+  expect(kDirectLinkedEventFanoutEnabled, isTrue);
+  expect(kDirectMediaBlobCustodyClientEnabled, isTrue);
+  expect(kDirectLinkedMediaFanoutEnabled, isTrue);
+
+  final stack = await setupGroupMultiDeviceStack(
+    dbName: _dbNameForRole(),
+    username: 'Alice TC362',
+    cliPeerFixture: null,
+  );
+  final deviceSecureStore = FlutterSecureKeyStore();
+  final artifactStore = DirectMediaBlobArtifactStore();
+  String? priorInstallationId;
+  String? pendingMediaMessageId;
+  File? plaintextSource;
+  final artifactRelativePaths = <String>{};
+
+  Future<void> restoreRunScopedSecureState() async {
+    await deviceSecureStore.delete(linkedInstallationRoleStorageKey);
+    await deviceSecureStore.delete(
+      linkedInstallationTransportCredentialStorageKey,
+    );
+    final prior = priorInstallationId;
+    if (prior == null) {
+      await deviceSecureStore.delete(canonicalRuntimeInstallationIdStorageKey);
+    } else {
+      await deviceSecureStore.write(
+        canonicalRuntimeInstallationIdStorageKey,
+        prior,
+      );
+    }
+  }
+
+  try {
+    priorInstallationId = await deviceSecureStore.read(
+      canonicalRuntimeInstallationIdStorageKey,
+    );
+    await deviceSecureStore.delete(linkedInstallationRoleStorageKey);
+    await deviceSecureStore.delete(
+      linkedInstallationTransportCredentialStorageKey,
+    );
+    await deviceSecureStore.write(
+      canonicalRuntimeInstallationIdStorageKey,
+      'tc362-$configuredRunId-linked',
+    );
+    final authority = LinkedInstallationAuthority(
+      secureKeyStore: deviceSecureStore,
+    );
+    await authority.markExpectedLinkedRole();
+    final (setupResult, credential) = await authority
+        .createOrResumeTransportCredential(
+          accountPeerId: stack.identity.peerId,
+          accountPublicKey: stack.identity.publicKey,
+          callIdentityGenerate: () => callIdentityGenerate(stack.bridge),
+          callSign: (data, privateKey) => callSignPayload(
+            bridge: stack.bridge,
+            dataToSign: data,
+            privateKey: privateKey,
+          ),
+          callVerify:
+              ({
+                required String publicKey,
+                required String data,
+                required String signature,
+              }) => callVerifyPayload(
+                bridge: stack.bridge,
+                publicKey: publicKey,
+                data: data,
+                signature: signature,
+              ),
+        );
+    expect(setupResult, LinkedInstallationSetupResult.success);
+    expect(credential, isNotNull);
+    expect(credential!.transportPeerId, isNot(stack.identity.peerId));
+    final (resumeResult, resumed) = await authority
+        .createOrResumeTransportCredential(
+          accountPeerId: stack.identity.peerId,
+          accountPublicKey: stack.identity.publicKey,
+          callIdentityGenerate: () => callIdentityGenerate(stack.bridge),
+          callSign: (data, privateKey) => callSignPayload(
+            bridge: stack.bridge,
+            dataToSign: data,
+            privateKey: privateKey,
+          ),
+          callVerify:
+              ({
+                required String publicKey,
+                required String data,
+                required String signature,
+              }) => callVerifyPayload(
+                bridge: stack.bridge,
+                publicKey: publicKey,
+                data: data,
+                signature: signature,
+              ),
+        );
+    expect(resumeResult, LinkedInstallationSetupResult.success);
+    expect(resumed!.transportPeerId, credential.transportPeerId);
+    expect(
+      await authority.activateTransportCredential(
+        accountPeerId: stack.identity.peerId,
+        expectedTransportPeerId: credential.transportPeerId,
+      ),
+      LinkedInstallationSetupResult.success,
+    );
+    final linkedAuthority = await authority.load(
+      expectedAccountPeerId: stack.identity.peerId,
+    );
+    expect(linkedAuthority.isActiveLinkedSecondary, isTrue);
+
+    await stack.p2pService.stopNode();
+    expect(
+      await startP2PNode(
+        identityRepo: stack.identityRepo,
+        p2pService: stack.p2pService,
+        linkedAuthority: linkedAuthority,
+      ),
+      StartNodeResult.success,
+    );
+    await _waitForDirectRelayReady(stack);
+    final senderTransportPeerId = stack.p2pService.currentState.peerId;
+    expect(senderTransportPeerId, credential.transportPeerId);
+    expect(senderTransportPeerId, isNot(stack.identity.peerId));
+
+    // This is the runner's release fixture: publish only after the linked node
+    // is actually authenticated and relay-ready.
+    writeSharedJson(
+      _signalName('alice_identity.json'),
+      _peerIdentityFixture(stack.identity),
+    );
+    final (qrResult, qrDocument) = await buildDirectLinkedDeviceQr(
+      linkedAuthority: linkedAuthority,
+      accountPeerId: stack.identity.peerId,
+      accountPublicKey: stack.identity.publicKey,
+      accountPrivateKey: stack.identity.privateKey,
+      deviceMlKemPublicKey: stack.identity.mlKemPublicKey,
+      callSign: (data, privateKey) => callSignPayload(
+        bridge: stack.bridge,
+        dataToSign: data,
+        privateKey: privateKey,
+      ),
+      selector: const DirectLinkedDeviceSelector(),
+    );
+    expect(qrResult, BuildDirectLinkedDeviceQrResult.success);
+    expect(qrDocument, isNotNull);
+    writeSharedJson(_signalName('fanout_linked_qr.json'), <String, dynamic>{
+      'document': qrDocument,
+    });
+
+    final bobFixture = await waitForSharedJson(
+      _signalName('fanout_b_identity.json'),
+      timeout: const Duration(minutes: 12),
+    );
+    final bobContact = _contactFromFixture(bobFixture, 'Bob TC362');
+    await stack.contactRepo.addContact(bobContact);
+    final offlineDeviceId = bobFixture['offlineDeviceId'] as String;
+    final offlineTransportPeerId =
+        bobFixture['offlineTransportPeerId'] as String;
+    final offlineTransportPublicKey =
+        bobFixture['offlineTransportPublicKey'] as String;
+    final offlineMlKemPublicKey = bobFixture['offlineMlKemPublicKey'] as String;
+    expect(offlineTransportPeerId, isNot(bobContact.peerId));
+    expect(offlineMlKemPublicKey, isNot(bobContact.mlKemPublicKey));
+
+    final stagedOffline = await dbStageDirectContactDeviceBinding(
+      stack.db,
+      contactAccountPeerId: bobContact.peerId,
+      accountSigningPublicKey: bobContact.publicKey,
+      deviceId: offlineDeviceId,
+      transportPeerId: offlineTransportPeerId,
+      transportPublicKey: offlineTransportPublicKey,
+      deviceMlKemPublicKey: offlineMlKemPublicKey,
+      stagedAt: DateTime.now().toUtc().toIso8601String(),
+    );
+    expect(stagedOffline, DirectContactDeviceBindingStageOutcome.staged);
+    final offlineFingerprint = computeDirectContactDeviceBindingFingerprint(
+      contactAccountPeerId: bobContact.peerId,
+      accountSigningPublicKey: bobContact.publicKey,
+      deviceId: offlineDeviceId,
+      transportPeerId: offlineTransportPeerId,
+      transportPublicKey: offlineTransportPublicKey,
+      deviceMlKemPublicKey: offlineMlKemPublicKey,
+    );
+    expect(
+      await dbVerifyDirectContactDeviceBinding(
+        stack.db,
+        contactAccountPeerId: bobContact.peerId,
+        deviceId: offlineDeviceId,
+        expectedFingerprint: offlineFingerprint,
+        expectedAccountSigningPublicKey: bobContact.publicKey,
+        decidedAt: DateTime.now().toUtc().toIso8601String(),
+      ),
+      isTrue,
+    );
+
+    // Strong admission boundary: resolve once before the source copy, parent
+    // write, attachment write, blob encryption, upload or event network.
+    final mediaAdmission = await resolveDirectMediaFanoutAdmission(
+      mediaAttachmentRepository: stack.mediaAttachmentRepo,
+      contactAccountPeerId: bobContact.peerId,
+      canServeLinkedFanout:
+          kDirectLinkedDevicesEnabled &&
+          kDirectLinkedEventFanoutEnabled &&
+          kDirectMediaBlobCustodyClientEnabled &&
+          kDirectLinkedMediaFanoutEnabled,
+    );
+    expect(mediaAdmission.requiresLinkedFanout, isTrue);
+    final snapshot = mediaAdmission.snapshot!;
+    expect(snapshot.rosterInitialized, isTrue);
+    expect(snapshot.targets.map((target) => target.peerId).toList(), <String>[
+      bobContact.peerId,
+      offlineTransportPeerId,
+    ]);
+
+    await waitForSharedSignal(
+      _signalName('fanout_b_ready'),
+      timeout: const Duration(minutes: 5),
+    );
+
+    final capturedEventCandidates = <DirectEventFanoutTargetCandidate>[];
+    final eventFanout = DirectEventFanoutAuthoring(
+      selector: const DirectLinkedEventFanoutSelector(),
+      linkedOrigin: true,
+      senderTransportPeerId: senderTransportPeerId!,
+      readSnapshot: stack.messageRepo.readDirectContactFanoutSnapshot,
+      encrypt: ({required recipientMlKemPublicKey, required plaintext}) async {
+        final encrypted = await callEncryptMessage(
+          bridge: stack.bridge,
+          recipientMlKemPublicKey: recipientMlKemPublicKey,
+          plaintext: plaintext,
+        );
+        if (encrypted['ok'] != true) return null;
+        return (
+          kem: encrypted['kem'] as String,
+          ciphertext: encrypted['ciphertext'] as String,
+          nonce: encrypted['nonce'] as String,
+        );
+      },
+      loadTextSiblings: stack.messageRepo.loadDirectTextFanoutSiblings,
+      stageTextFanout:
+          ({
+            required stagedRow,
+            required messageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) async {
+            capturedEventCandidates
+              ..clear()
+              ..addAll(candidates);
+            return stack.messageRepo.stageDirectTextFanout(
+              stagedRow: stagedRow,
+              messageId: messageId,
+              contactAccountPeerId: contactAccountPeerId,
+              senderTransportPeerId: senderTransportPeerId,
+              expectedSnapshot: expectedSnapshot,
+              candidates: candidates,
+            );
+          },
+      loadEventSiblings: stack.messageRepo.loadDirectEventFanoutSiblings,
+      stageMutationFanout:
+          ({
+            required expectedRow,
+            required stagedRow,
+            required kind,
+            required eventId,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) => stack.messageRepo.stageDirectTextMutationFanout(
+            expectedRow: expectedRow,
+            stagedRow: stagedRow,
+            kind: kind,
+            eventId: eventId,
+            parentMessageId: parentMessageId,
+            contactAccountPeerId: contactAccountPeerId,
+            senderTransportPeerId: senderTransportPeerId,
+            expectedSnapshot: expectedSnapshot,
+            candidates: candidates,
+          ),
+      stageReactionFanout:
+          ({
+            required reactionRow,
+            required action,
+            required parentMessageId,
+            required contactAccountPeerId,
+            required senderTransportPeerId,
+            required expectedSnapshot,
+            required candidates,
+          }) => throw StateError('TC-362 aggregate authors no reaction'),
+    );
+
+    final idScope = _plan362Sha256(configuredRunId).substring(0, 12);
+    final eventMessageId = 'tc362_${idScope}_event';
+    final mediaMessageId = 'tc362_${idScope}_media';
+    final attachmentId = 'tc362_${idScope}_blob';
+    pendingMediaMessageId = mediaMessageId;
+    final eventTimestamp = DateTime.now().toUtc().toIso8601String();
+    final (eventResult, eventMessage) = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: stack.messageRepo,
+      targetPeerId: bobContact.peerId,
+      text: 'TC-362 linked event $idScope',
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      messageId: eventMessageId,
+      preassignedMessageIdIsFresh: true,
+      timestamp: eventTimestamp,
+      createdAt: eventTimestamp,
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: bobContact.mlKemPublicKey,
+      directEventFanout: eventFanout,
+    );
+    expect(eventResult, SendChatMessageResult.success);
+    expect(eventMessage, isNotNull);
+    expect(capturedEventCandidates, hasLength(2));
+
+    final mediaTimestamp = DateTime.now().toUtc().toIso8601String();
+    plaintextSource = File('${Directory.systemTemp.path}/tc362_$idScope.png');
+    await plaintextSource.writeAsBytes(_plan362TinyPngBytes(), flush: true);
+    final pendingPath = await stack.mediaFileManager.copyToDurableStorage(
+      sourceFilePath: plaintextSource.path,
+      messageId: mediaMessageId,
+      attachmentId: attachmentId,
+      mime: 'image/png',
+    );
+    final pendingAbsolutePath = await stack.mediaFileManager.resolveStoredPath(
+      pendingPath,
+    );
+    final intentId = computeDirectMediaCustodyIntentId(
+      messageId: mediaMessageId,
+      attachmentIds: <String>[attachmentId],
+    );
+    final mediaParent = ConversationMessage(
+      id: mediaMessageId,
+      contactPeerId: bobContact.peerId,
+      senderPeerId: stack.identity.peerId,
+      text: '',
+      timestamp: mediaTimestamp,
+      status: 'sending',
+      isIncoming: false,
+      createdAt: mediaTimestamp,
+      directMediaCustodyIntentId: intentId,
+    );
+    final pendingAttachment = MediaAttachment(
+      id: attachmentId,
+      messageId: mediaMessageId,
+      mime: 'image/png',
+      size: await File(pendingAbsolutePath).length(),
+      mediaType: 'image',
+      width: 1,
+      height: 1,
+      localPath: pendingPath,
+      downloadStatus: 'upload_pending',
+      createdAt: mediaTimestamp,
+      ownerLane: MediaOwnerLane.direct,
+    );
+    await stack.messageRepo.saveMessage(mediaParent);
+    await stack.mediaAttachmentRepo.saveAttachment(
+      pendingAttachment,
+      owner: MediaOwnerLane.direct,
+    );
+
+    final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
+      repository: stack.mediaAttachmentRepo,
+      artifactStore: artifactStore,
+    );
+    final blobResult = await coordinator.prepareAndUploadFreshFanout(
+      bridge: stack.bridge,
+      identityPeerId: stack.identity.peerId,
+      contactAccountPeerId: bobContact.peerId,
+      snapshot: snapshot,
+      expectedParent: mediaParent,
+      sources: <PreparedDirectMediaBlobSource>[
+        PreparedDirectMediaBlobSource(
+          attachment: pendingAttachment,
+          plaintextPath: pendingAbsolutePath,
+        ),
+      ],
+    );
+    expect(blobResult.isComplete, isTrue);
+    expect(blobResult.attachments, hasLength(1));
+    expect(blobResult.targetRows.keys.toSet(), <String>{
+      bobContact.peerId,
+      offlineTransportPeerId,
+    });
+    final blobRows = blobResult.targetRows.values
+        .expand((rows) => rows)
+        .toList(growable: false);
+    expect(blobRows, hasLength(2));
+    artifactRelativePaths.addAll(
+      blobRows.map((row) => row.ciphertextRelativePath!).toSet(),
+    );
+    final contentHashes = blobRows.map((row) => row.contentHash).toSet();
+    final artifactPaths = blobRows
+        .map((row) => row.ciphertextRelativePath)
+        .toSet();
+    expect(contentHashes, hasLength(1));
+    expect(artifactPaths, hasLength(1));
+    expect(
+      blobRows.every(
+        (row) => row.state == DirectMediaBlobCustodyState.outgoingStored,
+      ),
+      isTrue,
+    );
+
+    final (mediaResult, mediaMessage) = await sendChatMessage(
+      p2pService: stack.p2pService,
+      messageRepo: stack.messageRepo,
+      targetPeerId: bobContact.peerId,
+      text: '',
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      messageId: mediaMessageId,
+      preassignedMessageIdIsFresh: false,
+      timestamp: mediaTimestamp,
+      createdAt: mediaTimestamp,
+      bridge: stack.bridge,
+      recipientMlKemPublicKey: bobContact.mlKemPublicKey,
+      mediaAttachments: blobResult.attachments,
+      mediaAttachmentRepo: stack.mediaAttachmentRepo,
+      directLinkedMediaFanout: DirectLinkedMediaFanoutContext(
+        contactAccountPeerId: bobContact.peerId,
+        snapshot: snapshot,
+        targetRows: blobResult.targetRows,
+      ),
+    );
+    expect(mediaResult, SendChatMessageResult.success);
+    expect(mediaMessage, isNotNull);
+    expect(stack.mediaFanoutEnvelopeBindings, hasLength(2));
+
+    writeSharedJson(
+      directLinkedDeviceEventBlobFanoutTargetFixtureFileName(configuredRunId),
+      <String, dynamic>{
+        'schema': directLinkedDeviceEventBlobFanoutTargetFixtureSchema,
+        'schemaVersion':
+            directLinkedDeviceEventBlobFanoutTargetFixtureSchemaVersion,
+        'runId': configuredRunId,
+        'liveRecipientPeerId': bobContact.peerId,
+        'offlineRecipientPeerId': offlineTransportPeerId,
+        'eventMessageId': eventMessageId,
+        'mediaMessageId': mediaMessageId,
+        'attachmentId': attachmentId,
+      },
+    );
+    writeSharedText(_signalName('fanout_authored'), 'ok');
+    await waitForSharedSignal(
+      _signalName('fanout_b_complete'),
+      timeout: const Duration(minutes: 5),
+    );
+
+    final eventByRecipient = <String, String>{
+      for (final candidate in capturedEventCandidates)
+        candidate.recipientPeerId: candidate.wireEnvelope,
+    };
+    final mediaByRecipient = <String, String>{
+      for (final binding in stack.mediaFanoutEnvelopeBindings)
+        binding['recipientPeerId']!: binding['wireEnvelope']!,
+    };
+    expect(eventByRecipient.keys, <String>{
+      bobContact.peerId,
+      offlineTransportPeerId,
+    });
+    expect(mediaByRecipient.keys, <String>{
+      bobContact.peerId,
+      offlineTransportPeerId,
+    });
+    for (final envelope in <String>[
+      ...eventByRecipient.values,
+      ...mediaByRecipient.values,
+    ]) {
+      expect(
+        (jsonDecode(envelope) as Map<String, dynamic>)['senderPeerId'],
+        senderTransportPeerId,
+      );
+    }
+
+    final ciphertextSha256 = contentHashes.single;
+    final absoluteCiphertextPath = await artifactStore.resolveOwnedArtifactPath(
+      identityPeerId: stack.identity.peerId,
+      relativePath: artifactRelativePaths.single,
+    );
+    expect(absoluteCiphertextPath, isNotNull);
+    expect(
+      sha256
+          .convert(await File(absoluteCiphertextPath!).readAsBytes())
+          .toString(),
+      ciphertextSha256,
+    );
+    final liveBlobRow = blobResult.targetRows[bobContact.peerId]!.single;
+    final offlineBlobRow =
+        blobResult.targetRows[offlineTransportPeerId]!.single;
+    expect(liveBlobRow.contentHash, offlineBlobRow.contentHash);
+    expect(
+      liveBlobRow.ciphertextRelativePath,
+      offlineBlobRow.ciphertextRelativePath,
+    );
+
+    writeSharedJson(
+      directLinkedDeviceEventBlobFanoutArtifactFileName(
+        configuredRunId,
+        'primary',
+      ),
+      <String, dynamic>{
+        ..._plan362CommonArtifact(
+          role: 'primary',
+          accountAPeerId: stack.identity.peerId,
+          accountATransportPeerId: senderTransportPeerId,
+          accountBPeerId: bobContact.peerId,
+          offlineBTransportPeerId: offlineTransportPeerId,
+          eventMessageId: eventMessageId,
+          mediaMessageId: mediaMessageId,
+          attachmentId: attachmentId,
+          ciphertextSha256: ciphertextSha256,
+        ),
+        'legacyBMlKemPublicKeySha256': _plan362Sha256(
+          bobContact.mlKemPublicKey!,
+        ),
+        'offlineBMlKemPublicKeySha256': _plan362Sha256(offlineMlKemPublicKey),
+        'eventLegacyEnvelopeSha256': _plan362Sha256(
+          eventByRecipient[bobContact.peerId]!,
+        ),
+        'eventOfflineEnvelopeSha256': _plan362Sha256(
+          eventByRecipient[offlineTransportPeerId]!,
+        ),
+        'mediaLegacyEnvelopeSha256': _plan362Sha256(
+          mediaByRecipient[bobContact.peerId]!,
+        ),
+        'mediaOfflineEnvelopeSha256': _plan362Sha256(
+          mediaByRecipient[offlineTransportPeerId]!,
+        ),
+        'transportDistinctFromAccount':
+            senderTransportPeerId != stack.identity.peerId,
+        'targetMlKemKeysDistinct':
+            bobContact.mlKemPublicKey != offlineMlKemPublicKey,
+        'eventTargetCount': eventByRecipient.length,
+        'mediaTargetCount': mediaByRecipient.length,
+        'oneBlobAcrossTargets':
+            contentHashes.length == 1 && artifactPaths.length == 1,
+        'eventEnvelopesDistinct': eventByRecipient.values.toSet().length == 2,
+        'mediaEnvelopesDistinct': mediaByRecipient.values.toSet().length == 2,
+        'offlineEventSiblingExact':
+            (jsonDecode(eventByRecipient[offlineTransportPeerId]!)
+                as Map<String, dynamic>)['id'] ==
+            eventMessageId,
+        'offlineBlobSiblingExact':
+            offlineBlobRow.contentHash == ciphertextSha256 &&
+            offlineBlobRow.ciphertextRelativePath ==
+                liveBlobRow.ciphertextRelativePath,
+      },
+    );
+    writeSharedText(_signalName('fanout_primary_complete'), 'ok');
+    await Future<void>.delayed(const Duration(seconds: 2));
+  } finally {
+    final mediaMessageId = pendingMediaMessageId;
+    if (mediaMessageId != null) {
+      try {
+        await stack.mediaFileManager.deletePendingUploadDir(mediaMessageId);
+      } on Object catch (error) {
+        debugPrint('TC-362 pending cleanup failed: ${error.runtimeType}');
+      }
+    }
+    for (final path in artifactRelativePaths) {
+      try {
+        await artifactStore.deleteOwnedArtifact(
+          identityPeerId: stack.identity.peerId,
+          relativePath: path,
+        );
+      } on Object catch (error) {
+        debugPrint('TC-362 artifact cleanup failed: ${error.runtimeType}');
+      }
+    }
+    final source = plaintextSource;
+    if (source != null && await source.exists()) {
+      try {
+        await source.delete();
+      } on Object catch (error) {
+        debugPrint('TC-362 plaintext cleanup failed: ${error.runtimeType}');
+      }
+    }
     await restoreRunScopedSecureState();
     await stack.teardown();
   }

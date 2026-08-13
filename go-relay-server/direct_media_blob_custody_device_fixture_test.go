@@ -277,18 +277,54 @@ func (fixture *directMediaDeviceFixture) startProbe(advertisedHost string) (stri
 		// (recipient, id) record; an absent recipient keeps the legacy
 		// aggregate-by-ID probe, which now counts every sibling target row.
 		recipientPeerID := request.URL.Query().Get("recipientPeerId")
-		if !validDirectMediaFixtureProbeID(attachmentID) ||
+		inboxMessageID := request.URL.Query().Get("inboxMessageId")
+		if (attachmentID == "" && inboxMessageID == "") ||
+			(attachmentID != "" && !validDirectMediaFixtureProbeID(attachmentID)) ||
 			(recipientPeerID != "" && !validDirectMediaFixtureProbeID(recipientPeerID)) {
 			http.Error(writer, "attachment rejected", http.StatusBadRequest)
 			return
 		}
-		count := directMediaFixturePendingProtectedCount(
-			fixture.media, recipientPeerID, attachmentID,
-		)
+		if inboxMessageID != "" &&
+			(!validDirectMediaFixtureProbeID(inboxMessageID) || recipientPeerID == "") {
+			http.Error(writer, "inbox identity rejected", http.StatusBadRequest)
+			return
+		}
+		count := 0
+		if attachmentID != "" {
+			count = directMediaFixturePendingProtectedCount(
+				fixture.media, recipientPeerID, attachmentID,
+			)
+		}
+		inboxCount := 0
+		inboxEnvelopeSHA256 := ""
+		if inboxMessageID != "" {
+			pending, _, err := fixture.stores.Inbox.RetrieveAckCustodyPending(
+				recipientPeerID, 100,
+			)
+			if err != nil {
+				http.Error(writer, "inbox probe unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			for _, entry := range pending {
+				var envelope map[string]any
+				if json.Unmarshal([]byte(entry.Message), &envelope) != nil ||
+					envelope["id"] != inboxMessageID {
+					continue
+				}
+				inboxCount++
+				digest := sha256.Sum256([]byte(entry.Message))
+				inboxEnvelopeSHA256 = hex.EncodeToString(digest[:])
+			}
+			if inboxCount != 1 {
+				inboxEnvelopeSHA256 = ""
+			}
+		}
 		writer.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(writer).Encode(map[string]any{
-			"schema":                   "mknoon.plan347.direct-media-probe.v1",
-			"protectedMediaCountForId": count,
+			"schema":                        "mknoon.plan347.direct-media-probe.v1",
+			"protectedMediaCountForId":      count,
+			"protectedInboxCountForMessage": inboxCount,
+			"protectedInboxEnvelopeSha256":  inboxEnvelopeSHA256,
 		})
 	})
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}

@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
     show DirectMediaBlobCustodyRow;
@@ -343,6 +343,7 @@ Future<int> retryIncompleteUploads({
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
   PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
+  Set<String>? restrictToMessageIds,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -391,8 +392,16 @@ Future<int> retryIncompleteUploads({
           ? messageRepo as DirectUploadRetryProjectionRepository
           : null);
 
-  final pendingAttachments = await mediaAttachmentRepo
+  final loadedPendingAttachments = await mediaAttachmentRepo
       .getUploadPendingAttachments(owner: MediaOwnerLane.direct);
+  final pendingAttachments = restrictToMessageIds == null
+      ? loadedPendingAttachments
+      : loadedPendingAttachments
+            .where(
+              (attachment) =>
+                  restrictToMessageIds.contains(attachment.messageId),
+            )
+            .toList(growable: false);
   if (pendingAttachments.isEmpty) {
     emitFlowEvent(
       layer: 'FL',
@@ -550,8 +559,7 @@ Future<int> retryIncompleteUploads({
       DirectMediaBlobCustodyRepository? directMediaBlobRepository;
       var directMediaBlobRows = const <DirectMediaBlobCustodyRow>[];
       var hasDirectMediaBlobGeneration = false;
-      if (kDirectMediaBlobCustodyClientEnabled &&
-          directMediaIntent != null &&
+      if (directMediaIntent != null &&
           mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
         final candidateRepository =
             mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
@@ -607,6 +615,68 @@ Future<int> retryIncompleteUploads({
           msg.privateMediaPolicy.version == 1 &&
           (msg.privateMediaMode == PrivateMediaMode.protected ||
               msg.privateMediaMode == PrivateMediaMode.viewOnce);
+      // 362 RETRY ADMISSION BOUNDARY. A NEVER-PUBLISHED generation is not a
+      // survivor: nothing is committed to any target yet, so the roster
+      // question is still open and the same rule the composer applies must
+      // apply here. Historical rows written by the pre-boundary build — a
+      // 'sending'/'failed' parent with `upload_pending` attachments and zero
+      // custody rows — land in exactly this shape, and without this guard they
+      // are re-uploaded to a SINGLE target on an initialized roster, undoing
+      // the refusal that produced them.
+      //
+      // Committed survivors are exempt by contract (b): they replay stored
+      // authority and must drain regardless of selector state.
+      if (retryPendingAttachments.isNotEmpty) {
+        var hasCommittedBlobCustody = hasDirectMediaBlobGeneration;
+        if (!hasCommittedBlobCustody &&
+            mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
+            (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
+                .supportsDirectMediaBlobCustody) {
+          // Flag-INDEPENDENT survivor probe. Keep this fallback independent of
+          // any caller-side route/selector classification: a rolled-back build
+          // must still recognize committed rows and never terminalize survivor
+          // authority as though it were a fresh single-target preparation.
+          hasCommittedBlobCustody =
+              (await (mediaAttachmentRepo as DirectMediaBlobCustodyRepository)
+                      .loadDirectMediaBlobCustodyForMessage(messageId))
+                  .isNotEmpty;
+        }
+        if (!hasCommittedBlobCustody) {
+          final retryAdmission = await resolveDirectMediaFanoutAdmission(
+            mediaAttachmentRepository: mediaAttachmentRepo,
+            contactAccountPeerId: msg.contactPeerId,
+            // No retry lane has a plural fresh owner, so an initialized roster
+            // refuses rather than reaching one target.
+            canServeLinkedFanout: false,
+          );
+          if (retryAdmission.refuses) {
+            // Terminalize through the incumbent owner so the row leaves the
+            // retry population for good: `upload_pending` is the admission
+            // predicate every lane uses, so failing those attachments is what
+            // makes the refusal durable instead of momentary.
+            final terminalized = await mediaAttachmentRepo
+                .markUploadPendingAttachmentsFailedForMessage(
+                  messageId,
+                  owner: MediaOwnerLane.direct,
+                );
+            emitFlowEvent(
+              layer: 'FL',
+              event: terminalized == retryPendingAttachments.length
+                  ? 'RETRY_INCOMPLETE_UPLOAD_MEDIA_FANOUT_TERMINALIZED'
+                  : 'RETRY_INCOMPLETE_UPLOAD_MEDIA_FANOUT_TERMINALIZATION_CAS_REFUSED',
+              details: {
+                'reason': retryAdmission.reason,
+                'pending': retryPendingAttachments.length,
+                'terminalized': terminalized,
+                'messageId': messageId.length > 8
+                    ? messageId.substring(0, 8)
+                    : messageId,
+              },
+            );
+            continue;
+          }
+        }
+      }
       final preUploadEnvelope = msg.wireEnvelope;
       final ordinaryTransportRepository =
           messageRepo is OutgoingTransportMutationRepository
@@ -724,8 +794,7 @@ Future<int> retryIncompleteUploads({
       var directMediaPreparationRefused = false;
       DirectLinkedMediaFanoutContext? linkedMediaFanout;
 
-      if (kDirectMediaBlobCustodyClientEnabled &&
-          directMediaIntent != null &&
+      if (directMediaIntent != null &&
           directMediaBlobRepository != null &&
           hasDirectMediaBlobGeneration) {
         final coordinator =
@@ -739,8 +808,7 @@ Future<int> retryIncompleteUploads({
         if (hasLinkedFanoutRows) {
           // 362: the persisted linked rows are survivor-first retry
           // authority. Replay the exact per-target uploads without a roster
-          // read; the live snapshot is consulted only to author the atomic
-          // per-target v108 batch through the send below.
+          // read; v108 is then bound solely from those persisted facts.
           final fanoutRepository =
               mediaAttachmentRepo
                   is OutgoingDirectLinkedMediaBlobFanoutRepository
@@ -775,21 +843,19 @@ Future<int> retryIncompleteUploads({
             );
             continue;
           }
-          final snapshot = await fanoutRepository
-              .readDirectContactFanoutSnapshotForMedia(rowContactAccountPeerId);
-          if (snapshot == null || snapshot.targets.isEmpty) {
+          linkedMediaFanout =
+              DirectLinkedMediaFanoutContext.fromPersistedV114Survivors(
+                contactAccountPeerId: rowContactAccountPeerId,
+                targetRows: strictResult.targetRows,
+              );
+          if (linkedMediaFanout == null) {
             emitFlowEvent(
               layer: 'FL',
               event: 'RETRY_INCOMPLETE_LINKED_FANOUT_RETAINED',
-              details: {'messageId': messageId, 'reason': 'snapshot'},
+              details: {'messageId': messageId, 'reason': 'survivor_shape'},
             );
             continue;
           }
-          linkedMediaFanout = DirectLinkedMediaFanoutContext(
-            contactAccountPeerId: rowContactAccountPeerId,
-            snapshot: snapshot,
-            targetRows: strictResult.targetRows,
-          );
           for (final attachment in strictResult.attachments) {
             carriedDirectMediaCustodyCompletions[attachment.id] = attachment;
           }
@@ -823,8 +889,7 @@ Future<int> retryIncompleteUploads({
       // envelope. A crossed or partial strict private projection fails closed
       // and retains its durable custody for a later attempt.
       var privateStrictReopened = false;
-      if (kDirectMediaBlobCustodyClientEnabled &&
-          isOutgoingPrivateOneMoreLook &&
+      if (isOutgoingPrivateOneMoreLook &&
           directMediaIntent == null &&
           mediaFileManager != null &&
           mediaAttachmentRepo is DirectMediaBlobCustodyRepository &&
@@ -1346,23 +1411,28 @@ Future<int> retryIncompleteUploads({
           .where((attachment) => attachment.downloadStatus == 'done')
           .toList(growable: false);
 
-      final contact = await contactRepo.getContact(refreshedMsg!.contactPeerId);
+      final sendMessage = refreshedMsg!;
+      final recipientMlKemPublicKey = linkedMediaFanout == null
+          ? (await contactRepo.getContact(
+              sendMessage.contactPeerId,
+            ))?.mlKemPublicKey
+          : null;
       final (result, _) = await sendChatMessage(
         p2pService: p2pService,
         messageRepo: messageRepo,
-        targetPeerId: refreshedMsg.contactPeerId,
-        text: refreshedMsg.text,
+        targetPeerId: sendMessage.contactPeerId,
+        text: sendMessage.text,
         senderPeerId: identity.peerId,
         senderUsername: identity.username,
-        messageId: refreshedMsg.id,
-        timestamp: refreshedMsg.timestamp,
+        messageId: sendMessage.id,
+        timestamp: sendMessage.timestamp,
         bridge: bridge,
-        recipientMlKemPublicKey: contact?.mlKemPublicKey,
-        quotedMessageId: refreshedMsg.quotedMessageId,
-        dedupKey: refreshedMsg.dedupKey,
-        isForwarded: refreshedMsg.isForwarded,
+        recipientMlKemPublicKey: recipientMlKemPublicKey,
+        quotedMessageId: sendMessage.quotedMessageId,
+        dedupKey: sendMessage.dedupKey,
+        isForwarded: sendMessage.isForwarded,
         mediaAttachments: fullAttachmentList,
-        privateMediaPolicy: refreshedMsg.privateMediaPolicy,
+        privateMediaPolicy: sendMessage.privateMediaPolicy,
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
         directLinkedMediaFanout: linkedMediaFanout,

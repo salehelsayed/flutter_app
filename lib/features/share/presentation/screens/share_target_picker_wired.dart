@@ -15,6 +15,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -73,6 +74,7 @@ class ShareTargetPickerWired extends StatefulWidget {
   final AppShellController? appShellController;
   final Future<void> Function(ShareBatchDeliveryResult? result)? onClose;
   final Future<void> Function()? preSendReady;
+  final DirectEventFanoutAuthoring? Function()? directEventFanoutResolver;
 
   /// 236: non-null puts the picker in group-media Forward mode. Destinations
   /// narrow to contacts and writable `GroupType.chat` groups, and Send routes
@@ -110,6 +112,7 @@ class ShareTargetPickerWired extends StatefulWidget {
     this.appShellController,
     this.onClose,
     this.preSendReady,
+    this.directEventFanoutResolver,
     this.groupMediaForwardRequest,
   });
 
@@ -561,6 +564,7 @@ class _ShareTargetPickerWiredState extends State<ShareTargetPickerWired> {
           imageProcessor: widget.imageProcessor,
           qualityPreference: _qualityPreference,
           videoQualityPreference: _videoQualityPreference,
+          directEventFanoutResolver: widget.directEventFanoutResolver,
           shareStoredOfflinePromise: AppLocalizations.of(
             context,
           )!.share_stored_offline_promise,

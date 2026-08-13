@@ -37,6 +37,329 @@ const String directLinkedDeviceAddressingScenario =
 const String directLinkedDeviceEventBlobFanoutScenario =
     'direct_linked_device_event_blob_fanout';
 
+const String directLinkedDeviceEventBlobFanoutArtifactSchema =
+    'mknoon.tc362.direct-linked-device-event-blob-fanout';
+const int directLinkedDeviceEventBlobFanoutArtifactSchemaVersion = 1;
+const String directLinkedDeviceEventBlobFanoutTargetFixtureSchema =
+    'mknoon.tc362.direct-linked-device-event-blob-fanout-targets';
+const int directLinkedDeviceEventBlobFanoutTargetFixtureSchemaVersion = 1;
+const String directLinkedDeviceEventBlobFanoutHostSummarySchema =
+    'mknoon.tc362.direct-linked-device-event-blob-fanout-host-summary';
+const int directLinkedDeviceEventBlobFanoutHostSummarySchemaVersion = 1;
+
+String directLinkedDeviceEventBlobFanoutArtifactFileName(
+  String runId,
+  String role,
+) => 'md004_${runId}_direct_linked_device_event_blob_fanout_$role.json';
+
+String directLinkedDeviceEventBlobFanoutTargetFixtureFileName(String runId) =>
+    'md004_${runId}_direct_linked_device_event_blob_fanout_targets.json';
+
+String directLinkedDeviceEventBlobFanoutHostSummaryFileName(String runId) =>
+    'md004_${runId}_direct_linked_device_event_blob_fanout_host_summary.json';
+
+final class DirectLinkedDeviceEventBlobFanoutValidation {
+  DirectLinkedDeviceEventBlobFanoutValidation(List<String> failures)
+    : failures = List<String>.unmodifiable(failures);
+
+  final List<String> failures;
+
+  bool get ok => failures.isEmpty;
+  String get detail => ok ? 'accepted' : failures.join('; ');
+}
+
+const Set<String> _directFanoutCommonArtifactKeys = <String>{
+  'schema',
+  'schemaVersion',
+  'scenario',
+  'runId',
+  'role',
+  'fixtureIdentitySha256',
+  'accountAPeerIdSha256',
+  'accountATransportPeerIdSha256',
+  'accountBPeerIdSha256',
+  'offlineBTransportPeerIdSha256',
+  'eventMessageIdSha256',
+  'mediaMessageIdSha256',
+  'attachmentIdSha256',
+  'ciphertextSha256',
+};
+
+const Set<String> _directFanoutPrimaryArtifactKeys = <String>{
+  ..._directFanoutCommonArtifactKeys,
+  'legacyBMlKemPublicKeySha256',
+  'offlineBMlKemPublicKeySha256',
+  'eventLegacyEnvelopeSha256',
+  'eventOfflineEnvelopeSha256',
+  'mediaLegacyEnvelopeSha256',
+  'mediaOfflineEnvelopeSha256',
+  'transportDistinctFromAccount',
+  'targetMlKemKeysDistinct',
+  'eventTargetCount',
+  'mediaTargetCount',
+  'oneBlobAcrossTargets',
+  'eventEnvelopesDistinct',
+  'mediaEnvelopesDistinct',
+  'offlineEventSiblingExact',
+  'offlineBlobSiblingExact',
+};
+
+const Set<String> _directFanoutSiblingArtifactKeys = <String>{
+  ..._directFanoutCommonArtifactKeys,
+  'outerSenderTransportPeerIdSha256',
+  'innerSenderAccountPeerIdSha256',
+  'receiptDestinationPeerIdSha256',
+  'eventApplied',
+  'mediaApplied',
+  'blobDownloaded',
+  'blobAcked',
+  'receiptRoutedToPhysicalTransport',
+};
+
+/// Strict cross-role proof validation for the aggregate Plan-362 device leg.
+///
+/// Role JSON owns only facts that role can observe. Shared identity/message/
+/// blob digests must agree, the authoring side proves two distinct envelopes
+/// over one blob, and the receiving side proves logical apply plus physical
+/// transport receipt routing. Recipient-aware relay counts are supplied by the
+/// host's capability-bound Plan-347 probe.
+DirectLinkedDeviceEventBlobFanoutValidation
+validateDirectLinkedDeviceEventBlobFanoutArtifacts({
+  required Object? primaryArtifact,
+  required Object? siblingArtifact,
+  required String expectedRunId,
+  required String expectedFixtureIdentitySha256,
+  required int liveProtectedCountAfterAck,
+  required int offlineProtectedCountAfterAck,
+  required int aggregateProtectedCountAfterAck,
+  required int liveEventInboxCountAfterAck,
+  required int offlineEventInboxCountAfterAck,
+  required String offlineEventEnvelopeSha256,
+  required int liveMediaInboxCountAfterAck,
+  required int offlineMediaInboxCountAfterAck,
+  required String offlineMediaEnvelopeSha256,
+}) {
+  final failures = <String>[];
+  final primary = _asStringMap(primaryArtifact, r'$.primary', failures);
+  final sibling = _asStringMap(siblingArtifact, r'$.sibling', failures);
+  if (primary == null || sibling == null) {
+    return DirectLinkedDeviceEventBlobFanoutValidation(failures);
+  }
+
+  _validateDirectFanoutArtifactRoot(
+    primary,
+    role: 'primary',
+    expectedRunId: expectedRunId,
+    expectedFixtureIdentitySha256: expectedFixtureIdentitySha256,
+    exactKeys: _directFanoutPrimaryArtifactKeys,
+    failures: failures,
+  );
+  _validateDirectFanoutArtifactRoot(
+    sibling,
+    role: 'sibling',
+    expectedRunId: expectedRunId,
+    expectedFixtureIdentitySha256: expectedFixtureIdentitySha256,
+    exactKeys: _directFanoutSiblingArtifactKeys,
+    failures: failures,
+  );
+
+  for (final key in const <String>[
+    'fixtureIdentitySha256',
+    'accountAPeerIdSha256',
+    'accountATransportPeerIdSha256',
+    'accountBPeerIdSha256',
+    'offlineBTransportPeerIdSha256',
+    'eventMessageIdSha256',
+    'mediaMessageIdSha256',
+    'attachmentIdSha256',
+    'ciphertextSha256',
+  ]) {
+    if (primary[key] != sibling[key]) {
+      failures.add(r'$.primary.' + key + r' must equal $.sibling.' + key);
+    }
+  }
+
+  if (primary['accountAPeerIdSha256'] ==
+      primary['accountATransportPeerIdSha256']) {
+    failures.add('account A transport must differ from account A identity');
+  }
+  if (primary['accountBPeerIdSha256'] ==
+      primary['offlineBTransportPeerIdSha256']) {
+    failures.add('offline B transport must differ from live account B');
+  }
+  if (primary['legacyBMlKemPublicKeySha256'] ==
+      primary['offlineBMlKemPublicKeySha256']) {
+    failures.add('B target ML-KEM public keys must be distinct');
+  }
+  if (primary['eventLegacyEnvelopeSha256'] ==
+      primary['eventOfflineEnvelopeSha256']) {
+    failures.add('event target envelopes must be independently encrypted');
+  }
+  if (primary['mediaLegacyEnvelopeSha256'] ==
+      primary['mediaOfflineEnvelopeSha256']) {
+    failures.add('media target envelopes must be independently encrypted');
+  }
+  for (final entry in const <String, Object>{
+    'transportDistinctFromAccount': true,
+    'targetMlKemKeysDistinct': true,
+    'eventTargetCount': 2,
+    'mediaTargetCount': 2,
+    'oneBlobAcrossTargets': true,
+    'eventEnvelopesDistinct': true,
+    'mediaEnvelopesDistinct': true,
+    'offlineEventSiblingExact': true,
+    'offlineBlobSiblingExact': true,
+  }.entries) {
+    _expectValue(primary, entry.key, entry.value, r'$.primary', failures);
+  }
+  _expectValue(
+    sibling,
+    'outerSenderTransportPeerIdSha256',
+    sibling['accountATransportPeerIdSha256']!,
+    r'$.sibling',
+    failures,
+  );
+  _expectValue(
+    sibling,
+    'innerSenderAccountPeerIdSha256',
+    sibling['accountAPeerIdSha256']!,
+    r'$.sibling',
+    failures,
+  );
+  _expectValue(
+    sibling,
+    'receiptDestinationPeerIdSha256',
+    sibling['accountATransportPeerIdSha256']!,
+    r'$.sibling',
+    failures,
+  );
+  for (final key in const <String>[
+    'eventApplied',
+    'mediaApplied',
+    'blobDownloaded',
+    'blobAcked',
+    'receiptRoutedToPhysicalTransport',
+  ]) {
+    _expectValue(sibling, key, true, r'$.sibling', failures);
+  }
+
+  if (liveProtectedCountAfterAck != 0) {
+    failures.add('live B protected blob count after ACK must equal 0');
+  }
+  if (offlineProtectedCountAfterAck != 1) {
+    failures.add('offline B protected blob count after ACK must equal 1');
+  }
+  if (aggregateProtectedCountAfterAck != 1) {
+    failures.add('aggregate protected blob count after ACK must equal 1');
+  }
+  if (liveEventInboxCountAfterAck != 0) {
+    failures.add('live B protected event count after ACK must equal 0');
+  }
+  if (offlineEventInboxCountAfterAck != 1) {
+    failures.add('offline B protected event count after ACK must equal 1');
+  }
+  if (offlineEventEnvelopeSha256 != primary['eventOfflineEnvelopeSha256']) {
+    failures.add('offline B event envelope bytes crossed role/relay evidence');
+  }
+  if (liveMediaInboxCountAfterAck != 0) {
+    failures.add(
+      'live B protected media-envelope count after ACK must equal 0',
+    );
+  }
+  if (offlineMediaInboxCountAfterAck != 1) {
+    failures.add(
+      'offline B protected media-envelope count after ACK must equal 1',
+    );
+  }
+  if (offlineMediaEnvelopeSha256 != primary['mediaOfflineEnvelopeSha256']) {
+    failures.add('offline B media envelope bytes crossed role/relay evidence');
+  }
+  return DirectLinkedDeviceEventBlobFanoutValidation(failures);
+}
+
+void _validateDirectFanoutArtifactRoot(
+  Map<String, Object?> root, {
+  required String role,
+  required String expectedRunId,
+  required String expectedFixtureIdentitySha256,
+  required Set<String> exactKeys,
+  required List<String> failures,
+}) {
+  final path = '\$.$role';
+  _expectExactKeys(root, exactKeys, path, failures);
+  _expectValue(
+    root,
+    'schema',
+    directLinkedDeviceEventBlobFanoutArtifactSchema,
+    path,
+    failures,
+  );
+  _expectValue(
+    root,
+    'schemaVersion',
+    directLinkedDeviceEventBlobFanoutArtifactSchemaVersion,
+    path,
+    failures,
+  );
+  _expectValue(
+    root,
+    'scenario',
+    directLinkedDeviceEventBlobFanoutScenario,
+    path,
+    failures,
+  );
+  _expectValue(root, 'runId', expectedRunId, path, failures);
+  _expectValue(root, 'role', role, path, failures);
+  _expectValue(
+    root,
+    'fixtureIdentitySha256',
+    expectedFixtureIdentitySha256,
+    path,
+    failures,
+  );
+  for (final key in exactKeys.where((key) => key.endsWith('Sha256'))) {
+    _sha256(root, key, path, failures);
+  }
+}
+
+Map<String, Object?> buildDirectLinkedDeviceEventBlobFanoutHostSummary({
+  required String runId,
+  required String fixtureIdentitySha256,
+  required String primaryArtifactSha256,
+  required String siblingArtifactSha256,
+  required String liveRecipientPeerIdSha256,
+  required String offlineRecipientPeerIdSha256,
+  required int liveProtectedCountAfterAck,
+  required int offlineProtectedCountAfterAck,
+  required int aggregateProtectedCountAfterAck,
+  required int liveEventInboxCountAfterAck,
+  required int offlineEventInboxCountAfterAck,
+  required String offlineEventEnvelopeSha256,
+  required int liveMediaInboxCountAfterAck,
+  required int offlineMediaInboxCountAfterAck,
+  required String offlineMediaEnvelopeSha256,
+}) => <String, Object?>{
+  'schema': directLinkedDeviceEventBlobFanoutHostSummarySchema,
+  'schemaVersion': directLinkedDeviceEventBlobFanoutHostSummarySchemaVersion,
+  'scenario': directLinkedDeviceEventBlobFanoutScenario,
+  'runId': runId,
+  'fixtureIdentitySha256': fixtureIdentitySha256,
+  'primaryArtifactSha256': primaryArtifactSha256,
+  'siblingArtifactSha256': siblingArtifactSha256,
+  'liveRecipientPeerIdSha256': liveRecipientPeerIdSha256,
+  'offlineRecipientPeerIdSha256': offlineRecipientPeerIdSha256,
+  'recipientAwareProbe': true,
+  'liveProtectedCountAfterAck': liveProtectedCountAfterAck,
+  'offlineProtectedCountAfterAck': offlineProtectedCountAfterAck,
+  'aggregateProtectedCountAfterAck': aggregateProtectedCountAfterAck,
+  'liveEventInboxCountAfterAck': liveEventInboxCountAfterAck,
+  'offlineEventInboxCountAfterAck': offlineEventInboxCountAfterAck,
+  'offlineEventEnvelopeSha256': offlineEventEnvelopeSha256,
+  'liveMediaInboxCountAfterAck': liveMediaInboxCountAfterAck,
+  'offlineMediaInboxCountAfterAck': offlineMediaInboxCountAfterAck,
+  'offlineMediaEnvelopeSha256': offlineMediaEnvelopeSha256,
+};
+
 /// The complete set of scenarios this runner may execute.
 ///
 /// Exhaustive on purpose. An unregistered scenario must be a TERMINAL error in

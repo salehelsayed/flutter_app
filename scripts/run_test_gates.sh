@@ -92,6 +92,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/presentation/widgets/letter_card_test.dart"
   "test/features/conversation/presentation/screens/conversation_screen_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  "test/features/conversation/presentation/screens/direct_conversation_route_authority_contract_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,
   # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
   "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"
@@ -312,6 +313,7 @@ readonly ONE_TO_ONE_TESTS=(
   "test/features/conversation/application/retry_incomplete_uploads_use_case_test.dart"
   "test/features/conversation/application/retry_failed_messages_use_case_test.dart"
   "test/features/conversation/application/retry_failed_messages_media_reupload_test.dart"
+  "test/features/conversation/application/direct_media_fanout_admission_test.dart"
   "test/features/conversation/application/send_voice_message_use_case_test.dart"
   "test/features/conversation/application/send_voice_message_durable_copy_test.dart"
   "test/core/lifecycle/handle_app_paused_test.dart"

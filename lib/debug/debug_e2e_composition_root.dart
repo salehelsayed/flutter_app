@@ -1092,6 +1092,15 @@ final class DebugE2ECompositionRoot {
             unawaited(
               navigator.push(
                 buildConversationRoute(
+                  // 362: deliberately NOT threaded with a
+                  // DirectConversationRouteAuthority. This debug composition
+                  // never builds a linked fanout owner, device-trust
+                  // capability or linked runtime role, so there is no
+                  // authority to carry; the admission boundary inside the
+                  // composer still fails closed on an initialized roster
+                  // because it reads the repository, not this widget. The
+                  // registered reliability-sim pair scenario — not this root —
+                  // is the device evidence for linked fanout.
                   builder: (_) => ConversationWired(
                     contact: contact,
                     identityRepo: dependencies.identityRepository,

@@ -317,7 +317,9 @@ class MediaRepositoryRealDbFixture {
             required expectedRow,
             required stagedRow,
             required attachmentRows,
+            required senderTransportPeerId,
             required contactAccountPeerId,
+            required authority,
             required expectedSnapshot,
             required targetBindings,
           }) => dbStageOutgoingDirectMediaFanoutInboxCustody(
@@ -325,7 +327,9 @@ class MediaRepositoryRealDbFixture {
             expectedRow: expectedRow,
             stagedRow: stagedRow,
             attachmentRows: attachmentRows,
+            senderTransportPeerId: senderTransportPeerId,
             contactAccountPeerId: contactAccountPeerId,
+            authority: authority,
             expectedSnapshot: expectedSnapshot,
             targetBindings: targetBindings,
           ),
@@ -348,6 +352,13 @@ class MediaRepositoryRealDbFixture {
       dbLoadDirectMediaBlobCustodyByStates:
           ({required states, int limit = 50}) =>
               dbLoadDirectMediaBlobCustodyByStates(
+                db,
+                states: states,
+                limit: limit,
+              ),
+      dbLoadLinkedDirectMediaBlobCustodyByStates:
+          ({required states, int limit = 50}) =>
+              dbLoadLinkedDirectMediaBlobCustodyByStates(
                 db,
                 states: states,
                 limit: limit,

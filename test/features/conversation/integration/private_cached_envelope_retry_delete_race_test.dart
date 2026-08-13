@@ -989,6 +989,18 @@ Future<void> _seedPrivateCachedEnvelope(
   required String status,
 }) async {
   const createdAt = '2020-01-01T00:00:00.000Z';
+  // This is an authorized incumbent single-device retry. Persist the contact
+  // so the production roster reader returns an explicit uninitialized
+  // snapshot; absence is deliberately a fail-closed condition.
+  await fixture.db.insert('contacts', const <String, Object?>{
+    'peer_id': _contactPeerId,
+    'public_key': 'public-key',
+    'rendezvous': '/ip4/127.0.0.1/tcp/4001',
+    'username': 'Private peer',
+    'signature': 'signature',
+    'scanned_at': createdAt,
+    'ml_kem_public_key': 'mlkem-public-key',
+  });
   await fixture.seedDirectParent(
     messageId,
     contactPeerId: _contactPeerId,
@@ -1045,6 +1057,28 @@ Future<void> _seedPrivateDeleteTombstone(
 }) async {
   const createdAt = '2020-01-01T00:00:00.000Z';
   const deletedAt = '2020-01-01T00:01:00.000Z';
+  // 362: attachmentless deletion retries are roster-admitted. These legacy
+  // private-DFE preservation cases model a still-current ordinary contact,
+  // so seed that persisted incumbent authority instead of relying on the
+  // removed nullable-snapshot fallback.
+  final persistedContact = await fixture.db.query(
+    'contacts',
+    columns: const <String>['peer_id'],
+    where: 'peer_id = ?',
+    whereArgs: const <Object?>[_contactPeerId],
+    limit: 1,
+  );
+  if (persistedContact.isEmpty) {
+    await fixture.db.insert('contacts', const <String, Object?>{
+      'peer_id': _contactPeerId,
+      'public_key': 'contact-public-key',
+      'rendezvous': '/ip4/127.0.0.1/tcp/4001',
+      'username': 'Private peer',
+      'signature': 'signature',
+      'scanned_at': '2020-01-01T00:00:00.000Z',
+      'ml_kem_public_key': 'mlkem-public-key',
+    });
+  }
   await fixture.seedDirectParent(
     messageId,
     contactPeerId: _contactPeerId,

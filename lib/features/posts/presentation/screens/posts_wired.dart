@@ -24,6 +24,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/introduction/domain/repositories/introduction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -94,14 +95,19 @@ class PostsWired extends StatefulWidget {
   final GroupRepository? groupRepository;
   final GroupMessageRepository? groupMessageRepository;
   final GroupInviteDeliveryAttemptRepository?
-      groupInviteDeliveryAttemptRepository;
+  groupInviteDeliveryAttemptRepository;
   final GroupMessageListener? groupMessageListener;
   final ActiveConversationTracker? groupConversationTracker;
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
+  /// 362: linked-device authority for the 1:1 conversation this shell can
+  /// push.
+  final DirectConversationRouteAuthority? directRouteAuthority;
+
   const PostsWired({
     super.key,
+    this.directRouteAuthority,
     required this.identityRepo,
     required this.contactRepo,
     required this.postRepo,
@@ -1004,6 +1010,11 @@ class _PostsWiredState extends State<PostsWired> {
     await Navigator.of(context).push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
+          directEventFanout:
+              widget.directRouteAuthority.resolvedDirectEventFanout,
+          directDeviceTrust:
+              widget.directRouteAuthority.resolvedDirectDeviceTrust,
+          modalityGate: widget.directRouteAuthority.resolvedModalityGate,
           contact: contact,
           identityRepo: widget.identityRepo,
           messageRepo: messageRepo,

@@ -487,6 +487,22 @@ void main() {
     expect(localCleanup, contains('runLocalCleanupBounded()'));
     expect(networkDrain, contains('directMediaBlobCustodyDrain'));
     expect(networkDrain, contains('runNetworkBounded()'));
+    // 362: the restricted linked runtime gets its own converger, wired to the
+    // SAME single drain instance through the linked-scoped entry point. It was
+    // declared and awaited by the application root but never supplied, so the
+    // linked resume drain was inert in production.
+    final linkedNetworkDrain =
+        localBodies['drainLinkedDirectMediaBlobCustody']!;
+    expect(linkedNetworkDrain, contains('directMediaBlobCustodyDrain'));
+    expect(linkedNetworkDrain, contains('runNetworkBoundedLinked()'));
+    expect(
+      'drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,'
+          .allMatches(production),
+      hasLength(2),
+      reason:
+          'the linked converger is supplied at BOTH cold start (linked '
+          'services) and resume (application root)',
+    );
 
     for (final binding in const <String>[
       'dbStageOutgoingDirectMediaBlobGeneration:',

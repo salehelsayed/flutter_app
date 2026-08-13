@@ -8754,15 +8754,25 @@ bool _isOrdinaryIncomingMediaPolicy(Map<String, Object?> row) =>
 /// One exact physical target of a v114 media fanout v108 batch: its
 /// per-target wire envelope plus the manifest hash / earliest expiry computed
 /// from ONLY that target's v114 rows.
+enum DirectMediaFanoutStageAuthority {
+  /// Fresh authoring: the transaction must requalify the captured roster.
+  currentRosterSnapshot,
+
+  /// Restart/retry: complete STORED v114 survivors are the only authority.
+  persistedV114Survivors,
+}
+
 final class DirectMediaFanoutTargetBinding {
   const DirectMediaFanoutTargetBinding({
     required this.recipientPeerId,
+    required this.recipientMlKemPublicKey,
     required this.wireEnvelope,
     required this.wireMediaBlobManifestHash,
     required this.wireMediaBlobExpiresAtMs,
   });
 
   final String recipientPeerId;
+  final String recipientMlKemPublicKey;
   final String wireEnvelope;
   final String wireMediaBlobManifestHash;
   final int wireMediaBlobExpiresAtMs;
@@ -9150,8 +9160,10 @@ dbStageOutgoingDirectMediaFanoutInboxCustody(
   required Map<String, Object?> expectedRow,
   required Map<String, Object?> stagedRow,
   required List<Map<String, Object?>> attachmentRows,
+  required String senderTransportPeerId,
   required String contactAccountPeerId,
-  required DirectContactFanoutSnapshot expectedSnapshot,
+  required DirectMediaFanoutStageAuthority authority,
+  required DirectContactFanoutSnapshot? expectedSnapshot,
   required List<DirectMediaFanoutTargetBinding> targetBindings,
   int capacity = kDirectInboxCustodyOutboxCapacity,
   int? nowMs,
@@ -9167,24 +9179,42 @@ dbStageOutgoingDirectMediaFanoutInboxCustody(
   final bindingByPeer = <String, DirectMediaFanoutTargetBinding>{
     for (final binding in targetBindings) binding.recipientPeerId: binding,
   };
-  final snapshotPeerIds = expectedSnapshot.targets
+  final snapshotPeerIds = expectedSnapshot?.targets
       .map((target) => target.peerId)
       .toList(growable: false);
+  final persistedPeerIds = bindingByPeer.keys.toList()..sort();
+  if (persistedPeerIds.remove(contactAccountPeerId)) {
+    persistedPeerIds.insert(0, contactAccountPeerId);
+  }
+  final exactAuthorityShape = switch (authority) {
+    DirectMediaFanoutStageAuthority.currentRosterSnapshot =>
+      expectedSnapshot != null &&
+          expectedSnapshot.contactAccountPeerId == contactAccountPeerId &&
+          snapshotPeerIds!.length == targetBindings.length &&
+          List.generate(
+            targetBindings.length,
+            (index) =>
+                targetBindings[index].recipientPeerId == snapshotPeerIds[index],
+          ).every((matches) => matches),
+    DirectMediaFanoutStageAuthority.persistedV114Survivors =>
+      expectedSnapshot == null &&
+          persistedPeerIds.length == targetBindings.length &&
+          List.generate(
+            targetBindings.length,
+            (index) =>
+                targetBindings[index].recipientPeerId ==
+                persistedPeerIds[index],
+          ).every((matches) => matches),
+  };
   final validShape =
       capacity >= 0 &&
       messageId.trim().isNotEmpty &&
+      senderTransportPeerId.trim().isNotEmpty &&
+      senderTransportPeerId.trim() == senderTransportPeerId &&
       contactAccountPeerId.trim().isNotEmpty &&
-      expectedSnapshot.contactAccountPeerId == contactAccountPeerId &&
+      exactAuthorityShape &&
       targetBindings.isNotEmpty &&
       bindingByPeer.length == targetBindings.length &&
-      // Candidates ride the snapshot's exact persisted peer order; the FIRST
-      // target is the canonical witness.
-      snapshotPeerIds.length == targetBindings.length &&
-      List.generate(
-        targetBindings.length,
-        (index) =>
-            targetBindings[index].recipientPeerId == snapshotPeerIds[index],
-      ).every((matches) => matches) &&
       stagedRow['contact_peer_id'] == contactAccountPeerId &&
       stagedRow['wire_envelope'] == targetBindings.first.wireEnvelope &&
       stagedRow[_directMediaCustodyIntentColumn] == null &&
@@ -9221,12 +9251,13 @@ dbStageOutgoingDirectMediaFanoutInboxCustody(
       targetBindings.every(
         (binding) =>
             binding.recipientPeerId.trim().isNotEmpty &&
+            binding.recipientMlKemPublicKey.trim().isNotEmpty &&
             _isExactLowercaseHex(binding.wireMediaBlobManifestHash, 64) &&
             binding.wireMediaBlobExpiresAtMs > 0 &&
             isExactV2DirectChatInitialEnvelope(
               binding.wireEnvelope,
               messageId: messageId,
-              senderPeerId: stagedRow['sender_peer_id'],
+              senderPeerId: senderTransportPeerId,
             ),
       );
   if (!validShape) {
@@ -9235,15 +9266,19 @@ dbStageOutgoingDirectMediaFanoutInboxCustody(
 
   try {
     return await dbWriteTransaction(db, (txn) async {
-      // Requalify the persisted contact/snapshot; the roster is never
-      // consulted again after this transaction.
-      final currentSnapshot = await dbReadDirectContactFanoutSnapshot(
-        txn,
-        contactAccountPeerId: contactAccountPeerId,
-      );
-      if (currentSnapshot == null ||
-          !currentSnapshot.sameSnapshotAs(expectedSnapshot)) {
-        return const DirectMediaFanoutInboxCustodyDbStageResult.refused();
+      // Fresh authoring requalifies the captured roster. A restart carrying
+      // complete STORED v114 survivors deliberately performs no contact or
+      // roster read: the exact persisted recipient/key/manifest facts below
+      // are the committed obligation and sole authority for v108 binding.
+      if (authority == DirectMediaFanoutStageAuthority.currentRosterSnapshot) {
+        final currentSnapshot = await dbReadDirectContactFanoutSnapshot(
+          txn,
+          contactAccountPeerId: contactAccountPeerId,
+        );
+        if (currentSnapshot == null ||
+            !currentSnapshot.sameSnapshotAs(expectedSnapshot!)) {
+          return const DirectMediaFanoutInboxCustodyDbStageResult.refused();
+        }
       }
 
       final currentMessages = await txn.query(
@@ -9357,6 +9392,8 @@ dbStageOutgoingDirectMediaFanoutInboxCustody(
           final attachment = attachmentById[row.attachmentId];
           return row.state == DirectMediaBlobCustodyState.outgoingStored &&
               row.contactAccountPeerId == contactAccountPeerId &&
+              row.recipientPeerId == binding.recipientPeerId &&
+              row.recipientMlKemPublicKey == binding.recipientMlKemPublicKey &&
               row.expiresAtMs != null &&
               row.expiresAtMs! > strictPreflightNowMs + 3000 &&
               row.custodyRelayPeerId != null &&

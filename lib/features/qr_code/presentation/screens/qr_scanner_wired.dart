@@ -12,6 +12,7 @@ import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/core/theme/app_colors.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/account_migration/application/migration_account_size_estimator.dart';
 import 'package:flutter_app/features/contact_request/application/contact_request_listener.dart';
 import 'package:flutter_app/features/contact_request/application/send_contact_request_use_case.dart';
@@ -112,8 +113,13 @@ class QRScannerWired extends StatelessWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
+  /// 362: linked-device authority forwarded to the FeedWired this scanner
+  /// hands off to.
+  final DirectConversationRouteAuthority? directRouteAuthority;
+
   const QRScannerWired({
     super.key,
+    this.directRouteAuthority,
     required this.bridge,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -434,6 +440,7 @@ class QRScannerWired extends StatelessWidget {
                   navigator.pushAndRemoveUntil(
                     buildFeedSlideUpRoute(
                       builder: (_) => FeedWired(
+                        directRouteAuthority: directRouteAuthority,
                         repository: identityRepository,
                         contactRepository: contactRepository,
                         contactRequestRepository: contactRequestRepository,
@@ -604,6 +611,8 @@ class QRScannerWired extends StatelessWidget {
       groupConversationTracker: groupConversationTracker,
       introductionRepository: introductionRepository,
       appShellController: appShellController,
+      directEventFanoutResolver:
+          directRouteAuthority?.directEventFanoutResolver,
     );
   }
 

@@ -149,6 +149,17 @@ Future<void> _runExternalShareCardCase(
     MediaRepositoryRealDbFixture.create,
   ))!;
   addTearDown(() => tester.runAsync(repositoryFixture.dispose));
+  await tester.runAsync(
+    () => repositoryFixture.db.insert('contacts', <String, Object?>{
+      'peer_id': contact.peerId,
+      'public_key': contact.publicKey,
+      'rendezvous': contact.rendezvous,
+      'username': contact.username,
+      'signature': contact.signature,
+      'scanned_at': contact.scannedAt,
+      'ml_kem_public_key': contact.mlKemPublicKey,
+    }),
+  );
   final messageRepository = repositoryFixture.messageRepo;
   final mediaAttachmentRepository = repositoryFixture.repo;
   final p2pService = _AckOrExpiryFakeP2PService(

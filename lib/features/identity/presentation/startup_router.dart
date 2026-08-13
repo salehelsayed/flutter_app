@@ -13,6 +13,7 @@ import 'package:flutter_app/core/notifications/ios_apns_notification_open_bridge
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
@@ -426,8 +427,13 @@ class StartupRouter extends StatefulWidget {
   final Future<bool> Function(List<String> contactPeerIds)?
   issueWakeTokensForContacts;
 
+  /// 362: linked-device authority threaded to every shell that can push a
+  /// 1:1 conversation (FeedWired, and the first-time experience).
+  final DirectConversationRouteAuthority? directRouteAuthority;
+
   const StartupRouter({
     super.key,
+    this.directRouteAuthority,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -605,6 +611,7 @@ class _StartupRouterState extends State<StartupRouter> {
           _setStartupStage(startupStageOpeningFeed);
           final navigator = Navigator.of(context);
           Widget buildFeed(BuildContext _) => FeedWired(
+            directRouteAuthority: widget.directRouteAuthority,
             repository: repository,
             contactRepository: contactRepository,
             contactRequestRepository: contactRequestRepository,
@@ -683,6 +690,8 @@ class _StartupRouterState extends State<StartupRouter> {
                 introductionRepository: widget.introductionRepository,
                 appShellController: widget.appShellController,
                 preSendReady: widget.ensureRuntimeServicesReady,
+                directEventFanoutResolver:
+                    widget.directRouteAuthority?.directEventFanoutResolver,
                 onClose: (_) async {
                   await Navigator.of(routeContext).pushReplacement(
                     buildStartupReplacementRoute(builder: buildFeed),
@@ -830,6 +839,7 @@ class _StartupRouterState extends State<StartupRouter> {
                       Navigator.of(progressContext).pushAndRemoveUntil(
                         buildStartupReplacementRoute<void>(
                           builder: (_) => FirstTimeExperienceWired(
+                            directRouteAuthority: widget.directRouteAuthority,
                             repository: repository,
                             contactRepository: contactRepository,
                             contactRequestRepository: contactRequestRepository,
@@ -1629,6 +1639,7 @@ class _StartupRouterState extends State<StartupRouter> {
   }) async {
     await _pushStartupReplacement(
       builder: (_) => FirstTimeExperienceWired(
+        directRouteAuthority: widget.directRouteAuthority,
         repository: repository,
         contactRepository: contactRepository,
         contactRequestRepository: contactRequestRepository,
@@ -1730,6 +1741,8 @@ class _StartupRouterState extends State<StartupRouter> {
       introductionRepository: widget.introductionRepository,
       appShellController: widget.appShellController,
       preSendReady: widget.ensureRuntimeServicesReady,
+      directEventFanoutResolver:
+          widget.directRouteAuthority?.directEventFanoutResolver,
     );
   }
 
@@ -1750,6 +1763,7 @@ class _StartupRouterState extends State<StartupRouter> {
 
   StartupRouter _buildRestartedStartupRouter() {
     return StartupRouter(
+      directRouteAuthority: widget.directRouteAuthority,
       repository: widget.repository,
       contactRepository: widget.contactRepository,
       contactRequestRepository: widget.contactRequestRepository,

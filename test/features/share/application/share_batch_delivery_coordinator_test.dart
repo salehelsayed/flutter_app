@@ -10,9 +10,13 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
+    show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -25,8 +29,10 @@ import 'package:flutter_app/core/media/video_process_result.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_media_custody_stage_result.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
@@ -53,6 +59,61 @@ import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_message_repository.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../identity/domain/repositories/fake_identity_repository.dart';
+
+class _AdmissionFirstMediaRepository extends InMemoryMediaAttachmentRepository
+    implements OutgoingDirectLinkedMediaBlobFanoutRepository {
+  _AdmissionFirstMediaRepository(this.snapshot);
+
+  final DirectContactFanoutSnapshot snapshot;
+  int snapshotReads = 0;
+  int sourceProjectionReads = 0;
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async {
+    snapshotReads++;
+    return contactAccountPeerId == snapshot.contactAccountPeerId
+        ? snapshot
+        : null;
+  }
+
+  @override
+  Future<List<MediaAttachment>> getAttachmentsForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    sourceProjectionReads++;
+    return super.getAttachmentsForMessage(messageId, owner: owner);
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+  }) => throw StateError('admission refusal must precede generation staging');
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
+    required String contactAccountPeerId,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) => throw StateError('admission refusal must precede v108 staging');
+}
 
 class _DissolveOnForwardSnapshotRepository extends InMemoryGroupRepository {
   _DissolveOnForwardSnapshotRepository({required this.snapshotCall});
@@ -1473,6 +1534,7 @@ void main() {
           scannedAt: '2026-08-08T12:00:00.000Z',
           mlKemPublicKey: 'mlkem-peer-share-348-causal',
         );
+        await _seedPersistedUninitializedShareContact(fixture, contact);
         final contacts = InMemoryContactRepository();
         await contacts.addContact(contact);
         final source = File('${documents.path}/external-share.jpg')
@@ -1613,6 +1675,13 @@ void main() {
           'Queued',
         );
         final sentContact = _makeMlKemContact('peer-share-348-sent', 'Sent');
+        for (final contact in <ContactModel>[
+          failedContact,
+          queuedContact,
+          sentContact,
+        ]) {
+          await _seedPersistedUninitializedShareContact(fixture, contact);
+        }
         final contacts = InMemoryContactRepository();
         await contacts.addContact(failedContact);
         await contacts.addContact(queuedContact);
@@ -1813,7 +1882,10 @@ void main() {
           'Decision $suffix',
         );
         final contacts = InMemoryContactRepository();
-        if (addCurrentContact) await contacts.addContact(contact);
+        if (addCurrentContact) {
+          await contacts.addContact(contact);
+          await _seedPersistedUninitializedShareContact(fixture, contact);
+        }
         final source = File('${documents.path}/decision.jpg')
           ..writeAsBytesSync(List<int>.generate(48, (index) => index));
         final uploads = <Map<String, dynamic>>[];
@@ -1893,15 +1965,22 @@ void main() {
       expect(missingFresh.uploads.single['custodyContract'], isNull);
       expect(await v111Rows(missingFresh.fixture), isEmpty);
 
-      final suppliedFallback = await runScenario(
+      final missingPersistedAuthority = await runScenario(
         selector: true,
         addCurrentContact: false,
       );
-      expect(suppliedFallback.result.sentCount, 1);
-      expect(suppliedFallback.uploads, hasLength(1));
       expect(
-        suppliedFallback.uploads.single['custodyContract'],
-        'ack_or_expiry_v1',
+        missingPersistedAuthority.result.failureCount,
+        1,
+        reason:
+            'a stale supplied picker contact cannot replace the persisted '
+            'fanout snapshot authority',
+      );
+      expect(missingPersistedAuthority.uploads, isEmpty);
+      expect(await v111Rows(missingPersistedAuthority.fixture), isEmpty);
+      expect(
+        await missingPersistedAuthority.fixture.db.query('messages'),
+        isEmpty,
       );
 
       final strictFailure = await runScenario(
@@ -2028,6 +2107,7 @@ void main() {
           peerId: 'my-peer-id-12345',
         ),
       )..isConnectedToPeerResult = false;
+      var processCalls = 0;
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
         contactRepository: contacts,
@@ -2040,14 +2120,17 @@ void main() {
         mediaFileManager: MediaFileManager(),
         imageProcessor: _imageProcessor(),
         directMediaBlobCustodyClientEnabled: true,
-        processSharedMediaFn: (_) async => ProcessedShareMediaBatch(
-          processedMedia: <PendingComposerMedia>[
-            PendingComposerMedia(
-              file: source,
-              budgetBytes: source.lengthSync(),
-            ),
-          ],
-        ),
+        processSharedMediaFn: (_) async {
+          processCalls++;
+          return ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: source,
+                budgetBytes: source.lengthSync(),
+              ),
+            ],
+          );
+        },
       );
 
       final result = await coordinator.deliver(
@@ -2062,6 +2145,13 @@ void main() {
         result.failureCount,
         1,
         reason: 'the initialized-roster destination fails closed',
+      );
+      expect(
+        processCalls,
+        0,
+        reason:
+            'admission is a pre-authoring boundary: even preprocessing or '
+            'copying the shared file is too late',
       );
       expect(
         uploads,
@@ -2080,6 +2170,246 @@ void main() {
         isEmpty,
         reason: 'the refusal precedes the fresh parent stage',
       );
+    });
+
+    test(
+      'TC-362-02a external share direct forward and group-to-contact forward all admit before source work',
+      () async {
+        final contact = _makeMlKemContact(
+          'peer-share-362-three-entry',
+          'Three Entry Contact',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(contact);
+        final media = _AdmissionFirstMediaRepository(
+          DirectContactFanoutSnapshot(
+            contactAccountPeerId: contact.peerId,
+            contactAccountSigningPublicKey: contact.publicKey,
+            rosterInitialized: true,
+            targets: const <DirectContactFanoutTargetFact>[
+              DirectContactFanoutTargetFact(
+                peerId: 'peer-share-362-linked-device',
+                mlKemPublicKey: 'mlkem-share-362-linked-device',
+                isLegacyAccountTarget: false,
+                fingerprint:
+                    'abababababababababababababababababababababababababababababababab',
+                deviceId: 'share-device',
+                transportPublicKey: 'share-device-transport-key',
+              ),
+            ],
+          ),
+        );
+        final sourceRoot = Directory.systemTemp.createTempSync(
+          'tc362_share_three_entry_',
+        );
+        addTearDown(() {
+          if (sourceRoot.existsSync()) sourceRoot.deleteSync(recursive: true);
+        });
+        final source = File('${sourceRoot.path}/source.jpg')
+          ..writeAsBytesSync(List<int>.generate(64, (index) => index));
+        final messages = InMemoryMessageRepository();
+        final groups = InMemoryGroupRepository();
+        final groupMessages = InMemoryGroupMessageRepository();
+        final bridge = FakeBridge();
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+        );
+        var processCalls = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: messages,
+          mediaAttachmentRepository: media,
+          groupRepository: groups,
+          groupMessageRepository: groupMessages,
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: FakeMediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          processSharedMediaFn: (intent) async {
+            processCalls++;
+            return ProcessedShareMediaBatch(
+              processedMedia: <PendingComposerMedia>[
+                PendingComposerMedia(
+                  file: source,
+                  budgetBytes: source.lengthSync(),
+                ),
+              ],
+            );
+          },
+        );
+        final targets = <ShareTargetSelection>[
+          ShareTargetSelection.contact(contact),
+        ];
+
+        final external = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+          ),
+          targets: targets,
+        );
+        expect(external.failureCount, 1);
+        expect(processCalls, 0);
+        expect(media.sourceProjectionReads, 0);
+
+        final directForward = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+            forwardProvenance: const ForwardProvenance(
+              operationDedupKey: 'tc362-direct-forward',
+            ),
+            directForwardSourceAuthority: DirectForwardSourceAuthority(
+              contactPeerId: 'peer-source-direct',
+              messageId: 'message-source-direct',
+              attachmentIds: <String>['attachment-source-direct'],
+            ),
+          ),
+          targets: targets,
+        );
+        expect(directForward.failureCount, 1);
+        expect(processCalls, 0);
+        expect(
+          media.sourceProjectionReads,
+          0,
+          reason: 'direct source capture must remain unreachable',
+        );
+
+        final groupForward = await coordinator.deliverGroupMediaForward(
+          request: const GroupMediaForwardRequest(
+            groupId: 'group-source-362',
+            messageId: 'message-source-group-362',
+            attachmentId: 'attachment-source-group-362',
+            initialCaption: 'group source',
+            provenance: ForwardProvenance(
+              operationDedupKey: 'tc362-group-forward',
+            ),
+          ),
+          caption: 'group source',
+          targets: targets,
+        );
+        expect(groupForward.failureCount, 1);
+        expect(
+          media.sourceProjectionReads,
+          0,
+          reason: 'group source verification/copy must remain unreachable',
+        );
+        expect(media.snapshotReads, 3, reason: 'one admission per entry');
+        expect(processCalls, 0);
+        expect(await messages.getMessagesForContact(contact.peerId), isEmpty);
+        expect(bridge.sendCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+      },
+    );
+
+    test('TC-362-06g fileless direct share consumes blob-free fanout authority '
+        'instead of demoting', () async {
+      final contact = _makeMlKemContact(
+        'peer-share-362-text-fanout',
+        'Linked Text Contact',
+      );
+      final contacts = InMemoryContactRepository();
+      await contacts.addContact(contact);
+      var resolverCalls = 0;
+      var snapshotReads = 0;
+      Never unreachable() =>
+          throw StateError('a zero-target refusal must not author');
+      final authoring = DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: 'my-peer-id-12345',
+        readSnapshot: (peerId) async {
+          snapshotReads++;
+          return DirectContactFanoutSnapshot(
+            contactAccountPeerId: peerId,
+            contactAccountSigningPublicKey: contact.publicKey,
+            rosterInitialized: true,
+            targets: const <DirectContactFanoutTargetFact>[],
+          );
+        },
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                unreachable(),
+        loadTextSiblings: (_) async => unreachable(),
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+        loadEventSiblings: (_) async => unreachable(),
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+      );
+      final bridge = FakeBridge(
+        initialResponses: const <String, Map<String, dynamic>>{},
+      );
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      );
+      final messages = InMemoryMessageRepository();
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: contacts,
+        messageRepository: messages,
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: InMemoryGroupRepository(),
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: bridge,
+        p2pService: p2pService,
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        directEventFanoutResolver: () {
+          resolverCalls++;
+          return authoring;
+        },
+      );
+
+      final result = await coordinator.deliver(
+        shareIntent: const ShareIntent(
+          type: ShareIntentType.text,
+          text: 'fan out this text',
+        ),
+        targets: <ShareTargetSelection>[ShareTargetSelection.contact(contact)],
+      );
+
+      expect(result.failureCount, 1);
+      expect(resolverCalls, 1);
+      expect(snapshotReads, 1);
+      expect(bridge.sendCallCount, 0, reason: 'zero target crypto');
+      expect(p2pService.sendMessageCallCount, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+      expect(await messages.getMessagesForContact(contact.peerId), isEmpty);
     });
 
     test(
@@ -2192,6 +2522,7 @@ void main() {
           );
           final contacts = InMemoryContactRepository();
           await contacts.addContact(contact);
+          await _seedPersistedUninitializedShareContact(fixture, contact);
           final groups = InMemoryGroupRepository();
           final group = _makeGroup(
             'group-350-decision-$scenarioIndex',
@@ -2442,6 +2773,7 @@ void main() {
           );
           final contacts = InMemoryContactRepository();
           await contacts.addContact(contact);
+          await _seedPersistedUninitializedShareContact(fixture, contact);
           final source = File('${documents.path}/forward.jpg')
             ..writeAsBytesSync(List<int>.generate(64, (index) => index));
           final uploads = <Map<String, dynamic>>[];
@@ -2564,6 +2896,7 @@ void main() {
         );
         final contacts = InMemoryContactRepository();
         await contacts.addContact(contact);
+        await _seedPersistedUninitializedShareContact(fixture, contact);
         final source = File('${documents.path}/observer.jpg')
           ..writeAsBytesSync(List<int>.generate(64, (index) => index));
         final bridge = _RecipientAuthorityObservingBridge(
@@ -2759,6 +3092,13 @@ void main() {
         await contacts.addContact(relayContact);
         await contacts.addContact(lanContact);
         await contacts.addContact(groupForwardContact);
+        for (final contact in <ContactModel>[
+          relayContact,
+          lanContact,
+          groupForwardContact,
+        ]) {
+          await _seedPersistedUninitializedShareContact(fixture, contact);
+        }
 
         final observedAtFirstNetwork = <String, _ForwardAuthoritySnapshot>{};
         Future<void> observe(
@@ -5276,6 +5616,25 @@ class _ForwardAuthoritySnapshot {
         ciphertextRelativePaths: ciphertextRelativePaths,
         strictRequestObserved: strict,
       );
+}
+
+/// A production-coherent incumbent direct destination: the contact is
+/// persisted and deliverable, while the absence of roster metadata means its
+/// linked-device roster is explicitly uninitialized. Plan 362 admission may
+/// therefore authorize the historical single-target route.
+Future<void> _seedPersistedUninitializedShareContact(
+  MediaRepositoryRealDbFixture fixture,
+  ContactModel contact,
+) async {
+  await fixture.db.insert('contacts', <String, Object?>{
+    'peer_id': contact.peerId,
+    'public_key': contact.publicKey,
+    'rendezvous': contact.rendezvous,
+    'username': contact.username,
+    'signature': contact.signature,
+    'scanned_at': contact.scannedAt,
+    'ml_kem_public_key': contact.mlKemPublicKey,
+  });
 }
 
 Future<_ForwardAuthoritySnapshot> _readForwardAuthority(

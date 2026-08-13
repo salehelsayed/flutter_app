@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
@@ -33,7 +34,11 @@ enum SendVoiceMessageResult {
   sendFailed,
 }
 
-const _maxFileSizeBytes = 100 * 1024 * 1024; // 100 MB
+/// Largest voice recording a fresh send accepts (100 MB).
+///
+/// 362: also consumed by the composer's admission boundary, which pulls
+/// this read-only validation ahead of every send-owned durable write.
+const kMaxVoiceRecordingBytes = 100 * 1024 * 1024;
 
 /// Orchestrates sending a voice message:
 /// 1. Validate recording
@@ -66,6 +71,8 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
   PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
+  bool directMediaBlobCustodyClientEnabled =
+      kDirectMediaBlobCustodyClientEnabled,
 }) async {
   final sendStopwatch = Stopwatch()..start();
   void emitVoiceTiming({
@@ -285,7 +292,8 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   // 1. Validate only when no immutable v108 authority exists. A custody row
   // can outlive the recorder source and every mutable media projection, so
   // stale caller-side recording metadata must never strand its exact bytes.
-  if (recording.sizeBytes <= 0 || recording.sizeBytes > _maxFileSizeBytes) {
+  if (recording.sizeBytes <= 0 ||
+      recording.sizeBytes > kMaxVoiceRecordingBytes) {
     emitFlowEvent(
       layer: 'FL',
       event: 'VOICE_SEND_INVALID',
@@ -348,7 +356,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
               attachmentId: attachmentId,
               mime: recording.mime,
             );
-        final strictRepository = kDirectMediaBlobCustodyClientEnabled
+        final strictRepository = directMediaBlobCustodyClientEnabled
             ? _directMediaBlobRepository(repository)
             : null;
         final strictRows = strictRepository == null
@@ -450,12 +458,47 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     }
   }
 
+  // 362 ADMISSION BOUNDARY (voice use case). Hoisted ABOVE the strict-custody
+  // selector so it governs the legacy singular lane too: with the incumbent
+  // custody selector off, `strictRepository` below is null and control used to
+  // fall straight through to a single-target `runUploadMedia` without ever
+  // reading the roster.
+  //
+  // Fresh voice has no plural fanout owner, so an initialized roster refuses
+  // rather than reaching one target. Survivors are exempt by contract — a
+  // committed generation replays exact persisted bytes and must never
+  // re-resolve the roster. `preparedVoiceHasStrictGeneration` is itself
+  // selector-derived, but a rolled-back persisted generation cannot reach here
+  // in a selector-off build: it fails the exact-prepared-identity gate above
+  // first, so the survivor carve-out cannot be silently widened by the flag.
+  if (!preparedVoiceHasStrictGeneration) {
+    final voiceAdmission = await resolveDirectMediaFanoutAdmission(
+      mediaAttachmentRepository: mediaAttachmentRepo,
+      contactAccountPeerId: targetPeerId,
+      canServeLinkedFanout: false,
+    );
+    if (voiceAdmission.refuses) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'VOICE_SEND_MEDIA_FANOUT_SINGULAR_REFUSED',
+        details: {
+          'reason': voiceAdmission.reason,
+          'target': targetPeerId.length > 10
+              ? targetPeerId.substring(0, 10)
+              : targetPeerId,
+        },
+      );
+      emitVoiceTiming(outcome: 'media_fanout_singular_refused');
+      return (SendVoiceMessageResult.sendFailed, null);
+    }
+  }
+
   // 2. Upload
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
   final uploadStopwatch = Stopwatch()..start();
   final strictRepository =
-      kDirectMediaBlobCustodyClientEnabled &&
+      directMediaBlobCustodyClientEnabled &&
           preparedVoiceParent != null &&
           preparedVoiceAttachment != null
       ? _directMediaBlobRepository(mediaAttachmentRepo)
@@ -470,31 +513,9 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
         );
     final parent = preparedVoiceParent!;
     final attachment = preparedVoiceAttachment!;
-    // 362: fresh voice has no plural fanout owner wired yet. An initialized
-    // roster forbids the singular fresh path — refuse BEFORE media crypto,
-    // upload or network and never demote to one target. Reopen replays the
-    // exact persisted survivor rows and stays untouched.
-    if (!preparedVoiceHasStrictGeneration &&
-        strictRepository is OutgoingDirectLinkedMediaBlobFanoutRepository &&
-        (strictRepository as OutgoingDirectLinkedMediaBlobFanoutRepository)
-            .supportsDirectLinkedMediaBlobFanout) {
-      final fanoutSnapshot =
-          await (strictRepository
-                  as OutgoingDirectLinkedMediaBlobFanoutRepository)
-              .readDirectContactFanoutSnapshotForMedia(targetPeerId);
-      if (fanoutSnapshot != null && fanoutSnapshot.rosterInitialized) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'VOICE_SEND_MEDIA_FANOUT_SINGULAR_REFUSED',
-          details: {
-            'target': targetPeerId.length > 10
-                ? targetPeerId.substring(0, 10)
-                : targetPeerId,
-          },
-        );
-        return (SendVoiceMessageResult.sendFailed, null);
-      }
-    }
+    // 362: the fanout admission boundary above now governs BOTH this strict
+    // lane and the legacy singular lane, so the old flag-gated guard that
+    // used to sit here is gone.
     final strictResult = preparedVoiceHasStrictGeneration
         ? await coordinator.reopenAndUpload(
             bridge: bridge,

@@ -357,6 +357,9 @@ while IFS=$'\t' read -r kind path scenario; do
     # 360 (TC-360-04a): the registered linked-device addressing pair is a third
     # independently selectable row on the same runner.
     printf '%s\t%s\tdirect_linked_device_addressing\n' "$kind" "$path"
+    # 362 (TC-362-05b): aggregate linked event + shared-blob fanout proof on
+    # one physical Android and one Android emulator.
+    printf '%s\t%s\tdirect_linked_device_event_blob_fanout\n' "$kind" "$path"
     continue
   fi
   if [ "$path" = "integration_test/scripts/run_group_media_send_reliability.dart" ]; then
@@ -578,6 +581,8 @@ requires_explicit_multi_device_ids() {
     "integration_test/scripts/run_invite_reliability_multi_device.dart:invite_send_latency" ] ||
     [ "$path:$scenario" = \
       "integration_test/scripts/run_invite_reliability_multi_device.dart:direct_linked_device_addressing" ] ||
+    [ "$path:$scenario" = \
+      "integration_test/scripts/run_invite_reliability_multi_device.dart:direct_linked_device_event_blob_fanout" ] ||
     [ "$path" = \
       "integration_test/scripts/run_group_media_send_reliability.dart" ]
 }

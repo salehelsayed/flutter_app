@@ -50,7 +50,14 @@ const _relocations = <String, List<String>>{
     // relocates.
     // The Plan-362 execution's final format pass reflowed this adapter after
     // the first repin; the digest below is the formatted body.
-    'c79a0b6427a97a5c5bdd971c72802f0dab3002ca5ac98613722ca9b1d44700fa',
+    // Plan 362 post-audit repair: the adapter additionally implements the
+    // restricted linked drain scope (one capability getter plus one
+    // linked-scoped states loader) so the linked runtime converges only rows
+    // it owns. The Task-10 real-device repair further threads the authenticated
+    // physical sender into this same adapter's plural v108 stage so SQL can
+    // validate linked outer envelopes without rewriting the logical parent.
+    // Both are capabilities on the same adapter — nothing relocates.
+    '0c3317375b892abad90a99880554b0a6d32d73458e0e2858b75b5524f43dcd12',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[

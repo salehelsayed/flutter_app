@@ -65,6 +65,18 @@ void main() {
       // Persist the actual rows, then apply viewer-only state through the
       // owner-aware repository boundary. None of this state is constructor
       // reseeding, so the close/reopen below must rehydrate it from SQLite.
+      // The direct-media retry boundary also requires explicit persisted
+      // contact/roster authority. This fixture is the incumbent
+      // single-device case: a valid contact with no initialized roster.
+      await senderStore.db.insert('contacts', const <String, Object?>{
+        'peer_id': receiverPeerId,
+        'public_key': 'receiver-public-key',
+        'rendezvous': '/dns4/relay/tcp/443',
+        'username': 'Receiver',
+        'signature': 'receiver-signature',
+        'scanned_at': '2026-07-10T09:00:00.000Z',
+        'ml_kem_public_key': 'receiver-mlkem-public-key',
+      });
       await senderStore.messageRepo.saveMessage(originalRow);
       await senderStore.repo.saveAttachment(
         originalAttachment,

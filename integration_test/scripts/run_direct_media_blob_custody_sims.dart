@@ -192,6 +192,14 @@ Future<String> _resolveReachableHostIp(Map<String, String> environment) async {
   );
 }
 
+/// Shared Plan-347 fixture host resolution for registered device-pair proofs.
+///
+/// The aggregate Plan-362 scenario deliberately leases this exact disposable
+/// relay instead of growing a second fixture owner.
+Future<String> resolveDirectMediaBlobCustodyFixtureHostIp(
+  Map<String, String> environment,
+) => _resolveReachableHostIp(environment);
+
 Future<void> _verifyAndroidTopologyAndReachability({
   required String adbExecutable,
   required List<String> devices,
@@ -239,6 +247,20 @@ Future<void> _verifyAndroidTopologyAndReachability({
     }
   }
 }
+
+/// Proves the selected targets are a physical-Android/emulator pair and that
+/// both can reach the leased disposable relay before either APK is built.
+Future<void> verifyDirectMediaBlobCustodyAndroidTopologyAndReachability({
+  required String adbExecutable,
+  required List<String> devices,
+  required String host,
+  required int port,
+}) => _verifyAndroidTopologyAndReachability(
+  adbExecutable: adbExecutable,
+  devices: devices,
+  host: host,
+  port: port,
+);
 
 Future<int> _runCentralSims({
   required String dartExecutable,
@@ -458,6 +480,37 @@ final class _FixtureSession {
       client.close(force: true);
     }
   }
+}
+
+/// Public lease over the one Plan-347 disposable relay fixture owner.
+///
+/// Keeping [_FixtureSession] private preserves its existing adapter contract;
+/// this bounded wrapper lets another registered scenario reuse the same
+/// readiness validation and exact teardown path without copying it.
+final class DirectMediaBlobCustodyFixtureLease {
+  DirectMediaBlobCustodyFixtureLease._(this._session);
+
+  static Future<DirectMediaBlobCustodyFixtureLease> start({
+    required String goExecutable,
+    required String hostIp,
+    required Map<String, String> environment,
+  }) async => DirectMediaBlobCustodyFixtureLease._(
+    await _FixtureSession.start(
+      goExecutable: goExecutable,
+      hostIp: hostIp,
+      environment: environment,
+    ),
+  );
+
+  final _FixtureSession _session;
+
+  String get multiaddr => _session.multiaddr;
+  String get host => _session.host;
+  int get port => _session.port;
+  String get fixtureIdentitySha256 => _session.fixtureIdentitySha256;
+  String get probeUrl => _session.probeUrl;
+
+  Future<void> stop() => _session.stop();
 }
 
 ({

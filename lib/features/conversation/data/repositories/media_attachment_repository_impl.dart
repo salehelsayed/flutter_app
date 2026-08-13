@@ -10,6 +10,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
         DirectMediaCaptionEditCustodyDbStageResult,
         DirectMediaDeletionCustodyDbStageResult,
         DirectMediaFanoutInboxCustodyDbStageResult,
+        DirectMediaFanoutStageAuthority,
         DirectMediaFanoutTargetBinding,
         DirectMediaInboxCustodyDbStageResult,
         GenericMediaAttachmentCustodySaveRefused,
@@ -141,6 +142,7 @@ class MediaAttachmentRepositoryImpl
         OutgoingDirectMediaCaptionEditInboxCustodyRepository,
         IncomingDirectMediaCaptionEditApplyRepository,
         DirectMediaBlobCustodyRepository,
+        LinkedDirectMediaBlobCustodyDrainRepository,
         OutgoingDirectLinkedMediaBlobFanoutRepository,
         FreshOutgoingDirectMediaBlobGenerationRepository,
         OutgoingDirectPrivateMediaBlobGenerationRepository,
@@ -245,8 +247,10 @@ class MediaAttachmentRepositoryImpl
     required Map<String, Object?> expectedRow,
     required Map<String, Object?> stagedRow,
     required List<Map<String, Object?>> attachmentRows,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   })?
   dbStageOutgoingDirectMediaFanoutInboxCustody;
@@ -269,6 +273,11 @@ class MediaAttachmentRepositoryImpl
     int limit,
   })?
   dbLoadDirectMediaBlobCustodyByStates;
+  final Future<List<DirectMediaBlobCustodyRow>> Function({
+    required Set<DirectMediaBlobCustodyState> states,
+    int limit,
+  })?
+  dbLoadLinkedDirectMediaBlobCustodyByStates;
   final Future<bool> Function({
     required DirectMediaBlobCustodyRow expected,
     required DirectMediaBlobCustodyRow next,
@@ -665,6 +674,7 @@ class MediaAttachmentRepositoryImpl
     this.dbLoadDirectMediaBlobCustodyForTarget,
     this.dbLoadDirectMediaBlobCustodyForMessage,
     this.dbLoadDirectMediaBlobCustodyByStates,
+    this.dbLoadLinkedDirectMediaBlobCustodyByStates,
     this.dbTransitionDirectMediaBlobCustodyIfExact,
     this.dbDeleteDirectMediaBlobCleanupPendingIfExact,
     this.dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact,
@@ -1780,6 +1790,21 @@ class MediaAttachmentRepositoryImpl
     int limit = 50,
   }) {
     final load = dbLoadDirectMediaBlobCustodyByStates;
+    if (load == null) return Future.value(const []);
+    return load(states: states, limit: limit);
+  }
+
+  @override
+  bool get supportsLinkedDirectMediaBlobCustodyDrain =>
+      dbLoadLinkedDirectMediaBlobCustodyByStates != null;
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadLinkedDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) {
+    final load = dbLoadLinkedDirectMediaBlobCustodyByStates;
     if (load == null) return Future.value(const []);
     return load(states: states, limit: limit);
   }
@@ -3953,8 +3978,10 @@ class MediaAttachmentRepositoryImpl
     required ConversationMessage expected,
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   }) async {
     final stage = dbStageOutgoingDirectMediaFanoutInboxCustody;
@@ -3974,7 +4001,14 @@ class MediaAttachmentRepositoryImpl
         attachments.isEmpty ||
         staged.id.isEmpty ||
         expected.id != staged.id ||
-        expectedSnapshot.contactAccountPeerId != contactAccountPeerId ||
+        senderTransportPeerId.isEmpty ||
+        senderTransportPeerId.trim() != senderTransportPeerId ||
+        (authority == DirectMediaFanoutStageAuthority.currentRosterSnapshot &&
+            (expectedSnapshot == null ||
+                expectedSnapshot.contactAccountPeerId !=
+                    contactAccountPeerId)) ||
+        (authority == DirectMediaFanoutStageAuthority.persistedV114Survivors &&
+            expectedSnapshot != null) ||
         expected.contactPeerId != contactAccountPeerId ||
         staged.contactPeerId != contactAccountPeerId ||
         targetBindings.isEmpty ||
@@ -4034,7 +4068,9 @@ class MediaAttachmentRepositoryImpl
           expectedRow: expected.toMap(),
           stagedRow: staged.toMap(),
           attachmentRows: rows,
+          senderTransportPeerId: senderTransportPeerId,
           contactAccountPeerId: contactAccountPeerId,
+          authority: authority,
           expectedSnapshot: expectedSnapshot,
           targetBindings: targetBindings,
         );

@@ -4,6 +4,7 @@ import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
     show
+        DirectMediaFanoutStageAuthority,
         DirectMediaFanoutTargetBinding,
         IncomingDirectMediaCaptionEditOutcome,
         OutgoingDirectDeletionLane,
@@ -417,6 +418,22 @@ abstract interface class OutgoingDirectMediaBlobTerminalizationRepository {
   });
 }
 
+/// 362: the restricted linked runtime's drain scope.
+///
+/// Kept separate from [DirectMediaBlobCustodyRepository] — the file's standing
+/// idiom — so single-target fakes cannot accidentally acquire linked-scoped
+/// authority. See `dbLoadLinkedDirectMediaBlobCustodyByStates` for why the
+/// scope narrows the OUTGOING arm only.
+abstract interface class LinkedDirectMediaBlobCustodyDrainRepository {
+  bool get supportsLinkedDirectMediaBlobCustodyDrain;
+
+  Future<List<DirectMediaBlobCustodyRow>>
+  loadLinkedDirectMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit,
+  });
+}
+
 /// Receiver-only atomic authority for strict ordinary-direct media.
 ///
 /// This is deliberately separate from [DirectMediaBlobCustodyRepository], so
@@ -566,15 +583,23 @@ abstract interface class OutgoingDirectLinkedMediaBlobFanoutRepository {
   /// sibling per persisted physical target (that target's own manifest hash,
   /// earliest expiry and envelope) plus the canonical parent commit and v110
   /// token consumption — all or none. [targetBindings] must ride the
-  /// snapshot's exact target order; the canonical witness is the FIRST
-  /// target's envelope.
+  /// authority's exact target order; the canonical witness is the FIRST
+  /// target's envelope. Fresh authoring supplies [expectedSnapshot] and uses
+  /// [DirectMediaFanoutStageAuthority.currentRosterSnapshot]. A restart uses
+  /// [DirectMediaFanoutStageAuthority.persistedV114Survivors] with a null
+  /// snapshot; complete v114 recipient/key/manifest facts are then the sole
+  /// authority and the roster is not resolved. [senderTransportPeerId] is the
+  /// locally authenticated physical node named by every outer envelope; it
+  /// can deliberately differ from the logical account sender in [staged].
   Future<DirectMediaFanoutInboxCustodyStageResult>
   stageOutgoingDirectMediaFanoutInboxCustody({
     required ConversationMessage expected,
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   });
 }

@@ -3,15 +3,17 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:fake_async/fake_async.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart' show Database;
 import 'package:flutter_app/core/bridge/bridge.dart' show Bridge;
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
+    show computeDirectEventFanoutIncarnation;
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show DirectMediaFanoutTargetBinding;
+    show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
@@ -227,6 +229,24 @@ ContactModel makeContact({
   );
 }
 
+MediaAttachment _historicalRetryAttachment({
+  required String messageId,
+  required String attachmentId,
+  required String downloadStatus,
+}) {
+  return MediaAttachment(
+    id: attachmentId,
+    messageId: messageId,
+    mime: 'image/jpeg',
+    size: 128,
+    mediaType: 'image',
+    localPath: '/tmp/$attachmentId.jpg',
+    downloadStatus: downloadStatus,
+    createdAt: '2026-08-12T08:00:00.000Z',
+    ownerLane: MediaOwnerLane.direct,
+  );
+}
+
 Map<String, dynamic> decodeWirePayload(String wireJson) {
   final envelope = jsonDecode(wireJson) as Map<String, dynamic>;
   final payload = envelope['payload'];
@@ -364,6 +384,13 @@ class _LinkedFanoutDirectMediaBlobRepository
   int fanoutGenerationStageCalls = 0;
   int fanoutInboxStageCalls = 0;
   int snapshotReads = 0;
+  bool throwOnSnapshotRead = false;
+  bool applyFanoutInboxStage = false;
+  DirectContactFanoutSnapshot? snapshot;
+  DirectMediaFanoutStageAuthority? fanoutInboxAuthority;
+  DirectContactFanoutSnapshot? fanoutInboxSnapshot;
+  List<DirectMediaFanoutTargetBinding> fanoutInboxBindings =
+      const <DirectMediaFanoutTargetBinding>[];
 
   @override
   bool get supportsDirectMediaBlobCustody => true;
@@ -455,7 +482,10 @@ class _LinkedFanoutDirectMediaBlobRepository
     String contactAccountPeerId,
   ) async {
     snapshotReads++;
-    return null;
+    if (throwOnSnapshotRead) {
+      throw StateError('persisted survivor retry must not resolve the roster');
+    }
+    return snapshot;
   }
 
   @override
@@ -478,12 +508,63 @@ class _LinkedFanoutDirectMediaBlobRepository
     required ConversationMessage expected,
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   }) async {
     fanoutInboxStageCalls++;
-    return const DirectMediaFanoutInboxCustodyStageResult.refused();
+    fanoutInboxAuthority = authority;
+    fanoutInboxSnapshot = expectedSnapshot;
+    fanoutInboxBindings = List<DirectMediaFanoutTargetBinding>.of(
+      targetBindings,
+    );
+    if (!applyFanoutInboxStage) {
+      return const DirectMediaFanoutInboxCustodyStageResult.refused();
+    }
+    return DirectMediaFanoutInboxCustodyStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      message: staged.copyWith(
+        directMediaCustodyIntentId: null,
+        media: attachments,
+      ),
+      attachments: attachments,
+      custodyRows: <Map<String, Object?>>[
+        for (final binding in targetBindings)
+          <String, Object?>{
+            'recipient_peer_id': binding.recipientPeerId,
+            'message_id': staged.id,
+            'incarnation_id': computeDirectEventFanoutIncarnation(
+              messageId: staged.id,
+              recipientPeerId: binding.recipientPeerId,
+            ),
+            'wire_envelope': binding.wireEnvelope,
+            'retry_count': 0,
+            'last_attempt_at': null,
+            'last_error_code': null,
+            'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
+            'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
+            'contact_account_peer_id': contactAccountPeerId,
+            'created_at': staged.createdAt,
+            'updated_at': staged.createdAt,
+          },
+      ],
+    );
+  }
+}
+
+class _CrossedTerminalizationMediaRepository
+    extends _LinkedFanoutDirectMediaBlobRepository {
+  int terminalizationAttempts = 0;
+
+  @override
+  Future<int> markUploadPendingAttachmentsFailedForMessage(
+    String messageId, {
+    required MediaOwnerLane owner,
+  }) async {
+    terminalizationAttempts++;
+    return 0;
   }
 }
 
@@ -582,8 +663,8 @@ void main() {
       () async {
         const contactPeerId = 'peer-target';
         const authoredAt = '2026-08-11T08:30:00.000Z';
-        const contentHash =
-            'fafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafafa';
+        final ciphertextBytes = utf8.encode('tc362 failed survivor artifact');
+        final contentHash = sha256.convert(ciphertextBytes).toString();
         identityRepo.seed(makeIdentity());
         contactRepo.seed(<ContactModel>[makeContact()]);
         final p2pService = FakeP2PService(
@@ -637,6 +718,8 @@ void main() {
           required String recipientPeerId,
           required String recipientMlKemPublicKey,
           required int expiresAtMs,
+          required String ciphertextRelativePath,
+          required int ciphertextSize,
         }) => DirectMediaBlobCustodyRow(
           attachmentId: attachmentId,
           messageId: messageId,
@@ -646,10 +729,9 @@ void main() {
           recipientPeerId: recipientPeerId,
           contactAccountPeerId: contactPeerId,
           recipientMlKemPublicKey: recipientMlKemPublicKey,
-          ciphertextRelativePath:
-              'direct_media_blob_custody_v1/$contentHash/$attachmentId.blob',
+          ciphertextRelativePath: ciphertextRelativePath,
           contentHash: contentHash,
-          ciphertextSize: 4096,
+          ciphertextSize: ciphertextSize,
           expiresAtMs: expiresAtMs,
           custodyRelayPeerId: 'peer-relay',
           lastAttemptAt: null,
@@ -661,13 +743,16 @@ void main() {
         PreparedDirectMediaBlobCustodyCoordinator recordingCoordinator(
           _LinkedFanoutDirectMediaBlobRepository repository,
           void Function() onPrepareArtifact,
-          void Function() onStrictUpload,
-        ) => PreparedDirectMediaBlobCustodyCoordinator(
+          void Function() onStrictUpload, {
+          DirectMediaBlobArtifactStore? artifactStore,
+        }) => PreparedDirectMediaBlobCustodyCoordinator(
           repository: repository,
-          artifactStore: DirectMediaBlobArtifactStore(
-            documentsDirectoryProvider: () async =>
-                Directory.systemTemp.createTempSync('tc362_02b_failed_'),
-          ),
+          artifactStore:
+              artifactStore ??
+              DirectMediaBlobArtifactStore(
+                documentsDirectoryProvider: () async =>
+                    Directory.systemTemp.createTempSync('tc362_02b_failed_'),
+              ),
           prepareArtifact:
               ({required Bridge bridge, required String localFilePath}) async {
                 onPrepareArtifact();
@@ -743,8 +828,31 @@ void main() {
             .toUtc()
             .add(const Duration(days: 7))
             .millisecondsSinceEpoch;
+        final linkedDocuments = await Directory.systemTemp.createTemp(
+          'tc362_02b_failed_survivor_',
+        );
+        addTearDown(() async {
+          if (await linkedDocuments.exists()) {
+            await linkedDocuments.delete(recursive: true);
+          }
+        });
+        final ciphertextSource = File(
+          '${linkedDocuments.path}/survivor-source.blob',
+        );
+        await ciphertextSource.writeAsBytes(ciphertextBytes, flush: true);
+        final linkedArtifactStore = DirectMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => linkedDocuments,
+        );
+        final survivorArtifact = await linkedArtifactStore.persistCandidate(
+          identityPeerId: 'my-peer-id',
+          attachmentId: 'att-362-failed-linked',
+          encryptedSourcePath: ciphertextSource.path,
+          expectedContentHash: contentHash,
+        );
         final linkedRepo = _LinkedFanoutDirectMediaBlobRepository()
           ..seed(<MediaAttachment>[linked.published])
+          ..throwOnSnapshotRead = true
+          ..applyFanoutInboxStage = true
           ..rows.addAll(<DirectMediaBlobCustodyRow>[
             linkedStoredRow(
               messageId: linked.message.id,
@@ -752,6 +860,8 @@ void main() {
               recipientPeerId: contactPeerId,
               recipientMlKemPublicKey: 'mlkem-legacy-account',
               expiresAtMs: expiresAtMs,
+              ciphertextRelativePath: survivorArtifact.relativePath,
+              ciphertextSize: survivorArtifact.ciphertextSize,
             ),
             linkedStoredRow(
               messageId: linked.message.id,
@@ -759,6 +869,8 @@ void main() {
               recipientPeerId: 'peer-target-device-a',
               recipientMlKemPublicKey: 'mlkem-device-a',
               expiresAtMs: expiresAtMs + 60000,
+              ciphertextRelativePath: survivorArtifact.relativePath,
+              ciphertextSize: survivorArtifact.ciphertextSize,
             ),
           ]);
         final rowsBefore = linkedRepo.rows
@@ -766,58 +878,60 @@ void main() {
             .toList(growable: false);
         final linkedMessages = FakeMessageRepository()
           ..seed(<ConversationMessage>[linked.message]);
+        contactRepo.seed(const <ContactModel>[]);
+        contactRepo.resetGetContactCounts();
         var linkedPrepares = 0;
         var linkedUploads = 0;
-        final linkedCount = await retryFailedMessages(
-          messageRepo: linkedMessages,
-          identityRepo: identityRepo,
-          contactRepo: contactRepo,
-          p2pService: p2pService,
-          bridge: bridge,
-          mediaAttachmentRepo: linkedRepo,
-          directMediaBlobCustodyCoordinator: recordingCoordinator(
-            linkedRepo,
-            () => linkedPrepares++,
-            () => linkedUploads++,
-          ),
-        );
+        var linkedCount = 0;
+        final linkedEvents = await captureFlowEvents(() async {
+          linkedCount = await retryFailedMessages(
+            messageRepo: linkedMessages,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            mediaAttachmentRepo: linkedRepo,
+            directMediaBlobCustodyCoordinator: recordingCoordinator(
+              linkedRepo,
+              () => linkedPrepares++,
+              () => linkedUploads++,
+              artifactStore: linkedArtifactStore,
+            ),
+          );
+        });
 
-        expect(linkedCount, 0);
-        if (kDirectMediaBlobCustodyClientEnabled) {
-          expect(
-            linkedRepo.lifecycleRuns,
-            1,
-            reason:
-                'retryPersistedFanoutGeneration ran once under the '
-                'coordinator lifecycle lease',
-          );
-          expect(
-            linkedRepo.blobLoads,
-            2,
-            reason:
-                'the lane and the fanout retry owner both read the '
-                'EXACT persisted rows for this parent',
-          );
-          expect(linkedRepo.loadedMessageIds.toSet(), <String>{
-            linked.message.id,
-          });
-          expect(
-            linkedRepo.snapshotReads,
-            0,
-            reason:
-                'the live roster snapshot is consulted only AFTER a '
-                'complete replay — never as retry authority',
-          );
-        } else {
-          expect(
-            linkedRepo.lifecycleRuns,
-            0,
-            reason:
-                'selector-off compilations fail closed without any '
-                'coordinator work',
-          );
-          expect(linkedRepo.blobLoads, 0);
-        }
+        expect(
+          linkedCount,
+          1,
+          reason:
+              'loads=${linkedRepo.blobLoads} lifecycle=${linkedRepo.lifecycleRuns} '
+              'snapshot=${linkedRepo.snapshotReads} stage=${linkedRepo.fanoutInboxStageCalls} '
+              'bridge=${bridge.sendCallCount} events='
+              '${linkedEvents.map((event) => event['event']).join(',')}',
+        );
+        expect(
+          linkedRepo.lifecycleRuns,
+          1,
+          reason:
+              'persisted v114 survivors are recovery authority independent '
+              'of the fresh-authoring selector',
+        );
+        expect(
+          linkedRepo.blobLoads,
+          3,
+          reason:
+              'the global media guard, strict-intent lane, and fanout retry '
+              'owner each read the EXACT persisted rows for this parent',
+        );
+        expect(linkedRepo.loadedMessageIds.toSet(), <String>{
+          linked.message.id,
+        });
+        expect(
+          linkedRepo.snapshotReads,
+          0,
+          reason: 'pre-v108 restart must never consult the unavailable roster',
+        );
+        expect(contactRepo.getContactCallCount, 0);
         expect(linkedPrepares, 0, reason: 'no re-encryption');
         expect(linkedUploads, 0);
         expect(
@@ -828,23 +942,145 @@ void main() {
               'over a linked generation',
         );
         expect(linkedRepo.fanoutGenerationStageCalls, 0);
-        expect(linkedRepo.fanoutInboxStageCalls, 0);
-        expect(bridge.sendCallCount, 0, reason: 'zero re-encryption');
+        expect(linkedRepo.fanoutInboxStageCalls, 1);
+        expect(
+          linkedRepo.fanoutInboxAuthority,
+          DirectMediaFanoutStageAuthority.persistedV114Survivors,
+        );
+        expect(linkedRepo.fanoutInboxSnapshot, isNull);
+        expect(
+          linkedRepo.fanoutInboxBindings
+              .map(
+                (binding) =>
+                    '${binding.recipientPeerId}:${binding.recipientMlKemPublicKey}',
+              )
+              .toList(),
+          const <String>[
+            'peer-target:mlkem-legacy-account',
+            'peer-target-device-a:mlkem-device-a',
+          ],
+          reason: 'v108 addressing is copied only from persisted v114 rows',
+        );
+        expect(
+          bridge.sendCallCount,
+          2,
+          reason: 'one event envelope is encrypted per persisted target',
+        );
         expect(p2pService.storeInInboxCallCount, 0);
-        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 2);
         expect(p2pService.sendMessageWithReplyCallCount, 0);
         expect(
           linkedRepo.rows.map((row) => row.toMap()).toList(growable: false),
           rowsBefore,
           reason: 'every exact persisted fanout row is byte-identical',
         );
+      },
+    );
+
+    test(
+      'TC-362-02c completed, retry-ceiling, and media-mutation parents refuse '
+      'before singular reconstruction or egress',
+      () async {
+        identityRepo.seed(makeIdentity());
+        contactRepo.seed(<ContactModel>[makeContact()]);
+        final completed = makeFailedMessage(
+          id: 'msg-362-completed',
+        ).copyWith(wireEnvelope: 'cached-completed-singular-envelope');
+        final retryCeiling = makeFailedMessage(
+          id: 'msg-362-retry-ceiling',
+        ).copyWith(wireEnvelope: 'cached-ceiling-singular-envelope');
+        final mutation = makeFailedEditMessage(id: 'msg-362-media-edit');
+        messageRepo.seed(<ConversationMessage>[
+          completed,
+          retryCeiling,
+          mutation,
+        ]);
+        final mediaRepository = _LinkedFanoutDirectMediaBlobRepository()
+          ..seed(<MediaAttachment>[
+            _historicalRetryAttachment(
+              messageId: completed.id,
+              attachmentId: 'att-362-completed',
+              downloadStatus: 'done',
+            ),
+            _historicalRetryAttachment(
+              messageId: retryCeiling.id,
+              attachmentId: 'att-362-retry-ceiling',
+              downloadStatus: 'upload_failed',
+            ),
+            _historicalRetryAttachment(
+              messageId: mutation.id,
+              attachmentId: 'att-362-media-edit',
+              downloadStatus: 'done',
+            ),
+          ]);
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+        );
+
+        final count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepository,
+        );
+
+        expect(count, 0);
+        expect(bridge.sendCallCount, 0, reason: 'zero reconstruction crypto');
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
         expect(
-          (await linkedMessages.getMessage(linked.message.id))!.status,
-          'failed',
-          reason: 'the durable parent is retained for the next attempt',
+          mediaRepository.allSavedAttachments,
+          isEmpty,
+          reason: 'no retry state or attachment projection is rewritten',
         );
       },
     );
+
+    test('TC-362-02d a crossed pending-row terminalization CAS still refuses '
+        'the retry attempt', () async {
+      identityRepo.seed(makeIdentity());
+      contactRepo.seed(<ContactModel>[makeContact()]);
+      final message = makeFailedMessage(id: 'msg-362-crossed-cas');
+      messageRepo.seed(<ConversationMessage>[message]);
+      final mediaRepository = _CrossedTerminalizationMediaRepository()
+        ..seed(<MediaAttachment>[
+          _historicalRetryAttachment(
+            messageId: message.id,
+            attachmentId: 'att-362-crossed-cas',
+            downloadStatus: 'upload_pending',
+          ),
+        ]);
+      final p2pService = FakeP2PService(
+        initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+        storeInInboxResult: true,
+      );
+
+      late int count;
+      final events = await captureFlowEvents(() async {
+        count = await retryFailedMessages(
+          messageRepo: messageRepo,
+          identityRepo: identityRepo,
+          contactRepo: contactRepo,
+          p2pService: p2pService,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepository,
+        );
+      });
+
+      expect(count, 0);
+      expect(mediaRepository.terminalizationAttempts, 1);
+      expect(
+        events.map((event) => event['event']),
+        contains('RETRY_FAILED_MEDIA_FANOUT_TERMINALIZATION_CAS_REFUSED'),
+      );
+      expect(bridge.sendCallCount, 0);
+      expect(p2pService.storeInInboxCallCount, 0);
+      expect(p2pService.sendMessageWithReplyCallCount, 0);
+    });
 
     test(
       'Plan 344 pending v108 retry cannot wrap bool success as protected receipt',
@@ -1266,6 +1502,121 @@ void main() {
       expect(editBacking.ordinaryAttemptStages, isEmpty);
       expect(await physicalRows(editEvent), hasLength(1));
     });
+
+    test(
+      'TC-362-02d attachmentless ownerless historical DFE is roster-admitted after exact v109 gets first chance',
+      () async {
+        identityRepo.seed(makeIdentity());
+        const recipient = 'peer-target';
+        final p2pService = FakeP2PService(
+          initialState: const NodeState(isStarted: true, peerId: 'my-peer-id'),
+          storeInInboxResult: true,
+          sendMessageWithReplyResult: const p2p.SendMessageResult(
+            sent: true,
+            reply: 'ack',
+          ),
+        );
+
+        // Historical v2 deletion envelopes had no eventId and can outlive all
+        // attachment rows. With no v109 owner, initialized-zero roster state
+        // must refuse before cached-envelope storage or singular replay.
+        const ownerlessId = 'tc362-02d-ownerless-dfe';
+        const ownerlessEnvelope =
+            '{"type":"message_deletion","version":"2",'
+            '"senderPeerId":"my-peer-id",'
+            '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+        final ownerlessMessages = FakeMessageRepository()
+          ..seed(<ConversationMessage>[
+            makeFailedMessage(
+              id: ownerlessId,
+              contactPeerId: recipient,
+              text: '',
+            ).copyWith(
+              deletedAt: '2026-08-13T10:00:00.000Z',
+              deletedByPeerId: 'my-peer-id',
+              wireEnvelope: ownerlessEnvelope,
+            ),
+          ]);
+        final ownerlessMedia = _LinkedFanoutDirectMediaBlobRepository()
+          ..snapshot = const DirectContactFanoutSnapshot(
+            contactAccountPeerId: recipient,
+            contactAccountSigningPublicKey: 'contact-signing-key',
+            rosterInitialized: true,
+            targets: <DirectContactFanoutTargetFact>[],
+          );
+
+        expect(
+          await retryFailedMessage(
+            messageId: ownerlessId,
+            messageRepo: ownerlessMessages,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            mediaAttachmentRepo: ownerlessMedia,
+          ),
+          0,
+        );
+        expect(ownerlessMedia.snapshotReads, 1);
+        expect(ownerlessMedia.blobLoads, 1);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(ownerlessMessages.ordinaryAttemptStages, isEmpty);
+
+        // The exact v109 survivor is stronger authority and is attempted
+        // before the same roster boundary. Its failed exact drain remains
+        // durable; no roster read and no singular deletion leg are allowed.
+        const ownedId = 'tc362-02d-owned-dfe';
+        const ownedEvent = '36200000-0000-4000-8000-00000000020d';
+        const ownedEnvelope =
+            '{"type":"message_deletion","version":"2",'
+            '"eventId":"$ownedEvent","senderPeerId":"my-peer-id",'
+            '"encrypted":{"kem":"k","ciphertext":"c","nonce":"n"}}';
+        final ownedMessages = FakeMessageRepository()
+          ..seed(<ConversationMessage>[
+            makeFailedMessage(
+              id: ownedId,
+              contactPeerId: recipient,
+              text: '',
+            ).copyWith(
+              deletedAt: '2026-08-13T10:01:00.000Z',
+              deletedByPeerId: 'my-peer-id',
+              wireEnvelope: ownedEnvelope,
+            ),
+          ])
+          ..directMutationCustodyRows['$recipient\u0000$ownedEvent'] =
+              const DirectReactionInboxCustodyOutboxEntry(
+                recipientPeerId: recipient,
+                eventId: ownedEvent,
+                wireEnvelope: ownedEnvelope,
+                retryCount: 0,
+                lastAttemptAt: null,
+                lastErrorCode: null,
+                createdAt: '2026-08-13T10:01:00.000Z',
+                updatedAt: '2026-08-13T10:01:00.000Z',
+              );
+        final ownedMedia = _LinkedFanoutDirectMediaBlobRepository()
+          ..throwOnSnapshotRead = true;
+
+        expect(
+          await retryFailedMessage(
+            messageId: ownedId,
+            messageRepo: ownedMessages,
+            identityRepo: identityRepo,
+            contactRepo: contactRepo,
+            p2pService: p2pService,
+            bridge: bridge,
+            mediaAttachmentRepo: ownedMedia,
+          ),
+          0,
+        );
+        expect(ownedMedia.snapshotReads, 0);
+        expect(ownedMedia.blobLoads, 0);
+        expect(ownedMessages.directMutationCustodyRows, hasLength(1));
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+      },
+    );
 
     test(
       'targeted failed text retry reuses the original row as first delivery',

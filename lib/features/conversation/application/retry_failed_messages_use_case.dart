@@ -3,7 +3,7 @@ import 'dart:io';
 
 import 'package:clock/clock.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
@@ -449,16 +449,6 @@ Future<bool> _retryFailedMessageCandidate({
   MediaUploadLease? uploadLease;
   _DirectPrivateManualRetryCustody? privateCustody;
   try {
-    final loadedMutationOwner = await _retryOwnedDirectMutationIfPresent(
-      message: msg,
-      messageRepo: messageRepo,
-      storeExactCustody: storeExactCustody,
-      attemptOwnedCustody: retryDirectInboxCustody,
-    );
-    if (loadedMutationOwner.handled) {
-      return loadedMutationOwner.success;
-    }
-
     // A v108 immutable custody row is the sole retry authority for its initial
     // direct event. Resolve it from the list-loaded identity before re-reading
     // the weaker parent: settlement or physical deletion may win between list
@@ -543,6 +533,34 @@ Future<bool> _retryFailedMessageCandidate({
       );
       return false;
     }
+    msg = fresh;
+
+    // Exact v109 mutation custody is stronger than roster admission. Give it
+    // first chance so a deletion survivor drains/retains its committed
+    // physical obligation even when every attachment projection is gone.
+    final freshMutationOwner = await _retryOwnedDirectMutationIfPresent(
+      message: msg,
+      messageRepo: messageRepo,
+      storeExactCustody: storeExactCustody,
+      attemptOwnedCustody: retryDirectInboxCustody,
+    );
+    if (freshMutationOwner.handled) {
+      return freshMutationOwner.success;
+    }
+
+    // Every historical media shape is admitted before mutation custody,
+    // cached-envelope egress, upload rearm, or singular reconstruction. This
+    // includes completed rows and retry-ceiling failures; `upload_pending` is
+    // only one possible historical state. Exact linked v114 survivors are the
+    // sole exemption and keep their persisted per-target retry authority.
+    if (mediaAttachmentRepo != null &&
+        await _refuseUnownedFailedDirectMediaRetry(
+          message: msg,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+        )) {
+      return false;
+    }
+
     if (fresh.directEventFanoutGenerationId != null &&
         fresh.directMediaCustodyIntentId == null) {
       // 361: zero surviving siblings with a nonnull generation marker is a
@@ -562,17 +580,6 @@ Future<bool> _retryFailedMessageCandidate({
       );
       return false;
     }
-    msg = fresh;
-
-    final freshMutationOwner = await _retryOwnedDirectMutationIfPresent(
-      message: msg,
-      messageRepo: messageRepo,
-      storeExactCustody: storeExactCustody,
-      attemptOwnedCustody: retryDirectInboxCustody,
-    );
-    if (freshMutationOwner.handled) {
-      return freshMutationOwner.success;
-    }
 
     // A persisted fresh-media intent is exclusive provenance. Validate its
     // complete current projection before any retry path can rebuild blobs,
@@ -588,8 +595,7 @@ Future<bool> _retryFailedMessageCandidate({
         DirectMediaBlobCustodyRepository? blobRepository;
         var blobCustodyRows = const <DirectMediaBlobCustodyRow>[];
         var hasDirectMediaBlobGeneration = false;
-        if (kDirectMediaBlobCustodyClientEnabled &&
-            mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
+        if (mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
           final candidateRepository =
               mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
           if (candidateRepository.supportsDirectMediaBlobCustody) {
@@ -634,8 +640,7 @@ Future<bool> _retryFailedMessageCandidate({
           if (hasLinkedFanoutRows) {
             // 362: survivors are retry authority — replay the exact
             // persisted per-target uploads without a roster read, then let
-            // the send below author the atomic per-target v108 batch against
-            // the live snapshot.
+            // the send below bind v108 solely from those survivor facts.
             final fanoutRepository =
                 mediaAttachmentRepo
                     is OutgoingDirectLinkedMediaBlobFanoutRepository
@@ -659,16 +664,12 @@ Future<bool> _retryFailedMessageCandidate({
                   expectedAttachments: currentAttachments,
                 );
             if (!strictResult.isComplete) return false;
-            final snapshot = await fanoutRepository
-                .readDirectContactFanoutSnapshotForMedia(
-                  rowContactAccountPeerId,
+            linkedMediaFanout =
+                DirectLinkedMediaFanoutContext.fromPersistedV114Survivors(
+                  contactAccountPeerId: rowContactAccountPeerId,
+                  targetRows: strictResult.targetRows,
                 );
-            if (snapshot == null || snapshot.targets.isEmpty) return false;
-            linkedMediaFanout = DirectLinkedMediaFanoutContext(
-              contactAccountPeerId: rowContactAccountPeerId,
-              snapshot: snapshot,
-              targetRows: strictResult.targetRows,
-            );
+            if (linkedMediaFanout == null) return false;
             strictBlobResolution = _RetryAttachmentResolution(
               attachments: strictResult.attachments,
               skipReason: _RetryFailedMessageSkipReason.none,
@@ -983,9 +984,12 @@ Future<bool> _retryFailedMessageCandidate({
       }
     }
 
-    // Look up contact for ML-KEM public key
-    final contact = await contactRepo.getContact(msg.contactPeerId);
-    final mlKemPk = contact?.mlKemPublicKey;
+    // A linked survivor retry is already addressed by persisted v114 facts;
+    // resolving the live logical contact here would let roster drift revoke a
+    // committed obligation before v108 binding.
+    final mlKemPk = linkedMediaFanout == null
+        ? (await contactRepo.getContact(msg.contactPeerId))?.mlKemPublicKey
+        : null;
 
     final attachments = resolution.attachments;
 
@@ -1066,6 +1070,82 @@ Future<bool> _retryFailedMessageCandidate({
       }
     }
   }
+}
+
+/// Fail-closed retry boundary for any direct parent that owns attachment rows.
+///
+/// Historical completed media, bounded `upload_failed` rows, and media-parent
+/// EDIT/DFE retries do not necessarily contain `upload_pending`, so status is
+/// deliberately not an admission predicate. Only exact linked v114 survivor
+/// rows bypass roster admission; they replay persisted physical targets.
+Future<bool> _refuseUnownedFailedDirectMediaRetry({
+  required ConversationMessage message,
+  required MediaAttachmentRepository mediaAttachmentRepository,
+}) async {
+  final attachments = await mediaAttachmentRepository.getAttachmentsForMessage(
+    message.id,
+    owner: MediaOwnerLane.direct,
+  );
+  // Deletion tombstones may outlive every attachment row. They are still a
+  // media-parent mutation and must be roster-admitted before cached-envelope
+  // storage/replay or reconstruction. Non-deletions without attachments are
+  // ordinary text history and remain outside this guard.
+  if (attachments.isEmpty && !message.isDeleted) return false;
+
+  var hasLinkedFanoutSurvivor = false;
+  if (mediaAttachmentRepository is DirectMediaBlobCustodyRepository) {
+    final custodyRepository =
+        mediaAttachmentRepository as DirectMediaBlobCustodyRepository;
+    if (custodyRepository.supportsDirectMediaBlobCustody) {
+      final rows = await custodyRepository.loadDirectMediaBlobCustodyForMessage(
+        message.id,
+      );
+      hasLinkedFanoutSurvivor =
+          message.directEventFanoutGenerationId != null &&
+          rows.isNotEmpty &&
+          rows.every((row) => row.isLinkedFanoutRow);
+    }
+  }
+  if (hasLinkedFanoutSurvivor) return false;
+
+  // A marker without survivors is already terminal/no-remint authority. Do
+  // not consult the roster or let an ownerless media mutation fall through.
+  if (message.directEventFanoutGenerationId != null) return true;
+
+  final admission = await resolveDirectMediaFanoutAdmission(
+    mediaAttachmentRepository: mediaAttachmentRepository,
+    contactAccountPeerId: message.contactPeerId,
+    canServeLinkedFanout: false,
+  );
+  if (!admission.refuses) return false;
+
+  final pendingCount = attachments
+      .where((attachment) => attachment.downloadStatus == 'upload_pending')
+      .length;
+  var terminalizedCount = 0;
+  if (pendingCount > 0) {
+    terminalizedCount = await mediaAttachmentRepository
+        .markUploadPendingAttachmentsFailedForMessage(
+          message.id,
+          owner: MediaOwnerLane.direct,
+        );
+  }
+  final terminalizationExact = terminalizedCount == pendingCount;
+  emitFlowEvent(
+    layer: 'FL',
+    event: terminalizationExact
+        ? 'RETRY_FAILED_MEDIA_FANOUT_TERMINALIZED'
+        : 'RETRY_FAILED_MEDIA_FANOUT_TERMINALIZATION_CAS_REFUSED',
+    details: <String, Object?>{
+      'reason': admission.reason,
+      'id': _messageIdPreview(message.id),
+      'pending': pendingCount,
+      'terminalized': terminalizedCount,
+    },
+  );
+  // A crossed CAS is still a refusal. The next retry re-reads current rows;
+  // this attempt never reconstructs or emits singular bytes.
+  return true;
 }
 
 Future<({bool handled, bool success})> _retryOwnedDirectMutationIfPresent({
@@ -2223,8 +2303,7 @@ Future<_StrictPrivateFailedRetry> _reopenStrictPrivateFailedRetryAttachments({
   required bool tokenBearingPreparation,
 }) async {
   const notOwned = (owned: false, attachments: null);
-  if (!kDirectMediaBlobCustodyClientEnabled ||
-      tokenBearingPreparation ||
+  if (tokenBearingPreparation ||
       privateMutationRepository == null ||
       mediaAttachmentRepo == null ||
       mediaFileManager == null ||

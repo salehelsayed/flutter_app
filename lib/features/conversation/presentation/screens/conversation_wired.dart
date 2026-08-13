@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:uuid/uuid.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:flutter_app/l10n/app_localizations.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -441,6 +443,12 @@ class ConversationWired extends StatefulWidget {
   final PreparedDirectMediaBlobCustodyCoordinator?
   preparedDirectMediaBlobCustodyCoordinator;
 
+  /// Testable view of the strict blob client selector. Production keeps the
+  /// compile-time default; default-build host proofs can enable the exact
+  /// authoring branch without skipping the causal scenario.
+  final bool directMediaBlobCustodyClientEnabled;
+  final bool directLinkedEventFanoutEnabled;
+
   /// 362: injectable authoring seam over the build-time linked-media
   /// selector; host proofs enable it per case, production reads the const.
   final DirectLinkedMediaFanoutSelector directLinkedMediaFanoutSelector;
@@ -551,6 +559,9 @@ class ConversationWired extends StatefulWidget {
     this.downloadMediaFn = downloadMedia,
     this.prepareEncryptedMediaArtifactFn = prepareEncryptedMediaArtifact,
     this.preparedDirectMediaBlobCustodyCoordinator,
+    this.directMediaBlobCustodyClientEnabled =
+        kDirectMediaBlobCustodyClientEnabled,
+    this.directLinkedEventFanoutEnabled = kDirectLinkedEventFanoutEnabled,
     this.directLinkedMediaFanoutSelector =
         const DirectLinkedMediaFanoutSelector(),
     this.notificationTappedAt,
@@ -2780,6 +2791,42 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
+    // 362: delete-for-everyone on a MEDIA parent has no plural owner. The v109
+    // blob-free fanout is reachable only through the text lane
+    // (`ownsDirectTextMutationInboxCustody`), and the lane classifier can never
+    // return `text` for a parent that has attachments — so every media parent,
+    // ordinary as well as private, silently single-targets today. Until that
+    // fanout exists, refuse on an initialized roster instead of reaching one
+    // device, and do it BEFORE the composer clearing below so the refusal
+    // leaves the edit draft and active quote intact.
+    if (action == _DeleteMessageAction.forEveryone &&
+        message.media.isNotEmpty) {
+      final deletionAdmission = await resolveDirectMediaFanoutAdmission(
+        mediaAttachmentRepository: widget.mediaAttachmentRepo,
+        contactAccountPeerId: _contact.peerId,
+        canServeLinkedFanout: false,
+      );
+      if (!mounted) return;
+      if (deletionAdmission.refuses) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'CONV_FL_DELETE_FOR_EVERYONE_MEDIA_FANOUT_REFUSED',
+          details: {'reason': deletionAdmission.reason},
+        );
+        ScaffoldMessenger.maybeOf(context)
+          ?..hideCurrentSnackBar()
+          ..showSnackBar(
+            SnackBar(
+              content: Text(
+                AppLocalizations.of(context)!.conversation_delete_failed,
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+        return;
+      }
+    }
+
     if (_editingMessageId == messageId) {
       setState(() {
         _editingMessageId = null;
@@ -3384,6 +3431,7 @@ class _ConversationWiredState extends State<ConversationWired>
         groupConversationTracker: widget.forwardGroupConversationTracker,
         introductionRepository: widget.introductionRepository,
         appShellController: widget.appShellController,
+        directEventFanoutResolver: () => widget.directEventFanout,
       ),
     );
     return true;
@@ -3464,6 +3512,21 @@ class _ConversationWiredState extends State<ConversationWired>
               selectedPolicy: privateMediaPolicy,
               eligibility: privateEligibility,
             ))) {
+      // 362: this gate is the ONLY thing standing between a multi-attachment
+      // Protected/View-Once send and persistence — `allowsNewPrivateMedia`
+      // requires exactly one attachment, and `_currentPrivateMediaEligibility`
+      // leaves the kind unknown above one, so such a send refuses HERE, before
+      // any lease, row or durable copy. The invariant is emergent across two
+      // files and five add sites, so it is named here and pinned by test.
+      //
+      // The reset to ordinary is DELIBERATE and pinned by test ("replacing a
+      // private image draft with GIF resets to keep in chat", "video
+      // replacement blocks stale view-once send", "failed private upload
+      // restores the exact selected policy"). It is not the kind of draft
+      // mutation the 362 admission contract forbids: the contract governs a
+      // FANOUT refusal, which must not silently rewrite the user's intent,
+      // whereas this is an eligibility reset the product wants — the composer
+      // drops back to "keep in chat" so the send can proceed on a retry.
       _setPrivateMediaPolicy(const PrivateMediaPolicy.ordinary());
       messenger?.showSnackBar(
         SnackBar(
@@ -3499,6 +3562,44 @@ class _ConversationWiredState extends State<ConversationWired>
 
       setState(() => _isSending = true);
 
+      // 362: a media-parent caption EDIT has the same structural gap as
+      // media-parent delete-for-everyone — `fanoutEligibleShape` excludes
+      // `hasAttachments`, and editChatMessage always supplies the parent's
+      // media, so a media parent can never resolve a fanout route and
+      // single-targets instead. Refuse on an initialized roster here, before
+      // the caller's unconditional draft clear below, so the typed caption
+      // survives the refusal.
+      if (editingMessage.media.isNotEmpty) {
+        final editAdmission = await resolveDirectMediaFanoutAdmission(
+          mediaAttachmentRepository: widget.mediaAttachmentRepo,
+          contactAccountPeerId: _contact.peerId,
+          canServeLinkedFanout: false,
+        );
+        if (!mounted) return;
+        if (editAdmission.refuses) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_CAPTION_EDIT_MEDIA_FANOUT_REFUSED',
+            details: {'reason': editAdmission.reason},
+          );
+          messenger
+            ?..hideCurrentSnackBar()
+            ..showSnackBar(
+              SnackBar(
+                content: Text(AppLocalizations.of(context)!.edit_save_failed),
+                behavior: SnackBarBehavior.floating,
+                margin: _composerClearingSnackBarMargin(),
+              ),
+            );
+          if (mounted) {
+            setState(() {
+              _isSending = false;
+              _draftText = sanitizedText;
+            });
+          }
+          return;
+        }
+      }
       try {
         final (result, message) = await widget.editChatMessageFn(
           p2pService: widget.p2pService,
@@ -3583,6 +3684,67 @@ class _ConversationWiredState extends State<ConversationWired>
         },
       );
 
+      // 362 ADMISSION BOUNDARY. Resolve legacy | fanout | refused for this
+      // send BEFORE any send-owned durable write: no upload lease, no composer
+      // clearing, no message/attachment row, no durable copy, no crypto, no
+      // custody staging, no network has happened yet at this line. A refusal
+      // therefore returns with the draft and the picker sources intact and
+      // leaves ZERO rows any retry lane could later pick up and upload to a
+      // single target.
+      //
+      // The pending list is captured here rather than at its old site further
+      // down because this boundary awaits: `_attemptAddPendingMedia` publishes
+      // without an `_isSending` guard, so a second attachment could otherwise
+      // land during the await and invalidate the shape we just validated.
+      final mediaToUpload = List<PendingComposerMedia>.from(
+        _composerController.pendingAttachments,
+      );
+      DirectMediaFanoutAdmission? mediaAdmission;
+      if (mediaToUpload.isNotEmpty) {
+        // Text-only sends are NOT admitted here: their route is already
+        // resolved inside sendChatMessage, which receives the authoring owner
+        // directly.
+        final fanoutCapableRepository =
+            widget.mediaAttachmentRepo
+                is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+            (widget.mediaAttachmentRepo
+                    as OutgoingDirectLinkedMediaBlobFanoutRepository)
+                .supportsDirectLinkedMediaBlobFanout;
+        // Protected/View-Once rides the private single-blob owner, which has
+        // no plural counterpart, so it can never serve an initialized roster
+        // and must refuse rather than reach one target.
+        final canServeLinkedFanout =
+            !_isOutgoingPrivateOneMoreLook(privateMediaPolicy) &&
+            widget.directMediaBlobCustodyClientEnabled &&
+            widget.directLinkedEventFanoutEnabled &&
+            widget
+                .directLinkedMediaFanoutSelector
+                .allowsDirectLinkedMediaFanoutAuthoring &&
+            fanoutCapableRepository;
+        mediaAdmission = await resolveDirectMediaFanoutAdmission(
+          mediaAttachmentRepository: widget.mediaAttachmentRepo,
+          contactAccountPeerId: _contact.peerId,
+          canServeLinkedFanout: canServeLinkedFanout,
+        );
+        if (mediaAdmission.refuses) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'CONV_FL_SEND_MEDIA_FANOUT_ADMISSION_REFUSED',
+            details: {
+              'reason': mediaAdmission.reason,
+              'attachments': mediaToUpload.length,
+            },
+          );
+          if (mounted) {
+            setState(() {
+              _isSending = false;
+              _draftText = sanitizedText;
+            });
+          }
+          return;
+        }
+      }
+
       final draftText = sanitizedText;
       final quotedMessageId = _activeQuoteMessageId;
       final composerSnapshot = _DirectComposerSnapshot(
@@ -3596,10 +3758,7 @@ class _ConversationWiredState extends State<ConversationWired>
         setState(() => _activeQuoteMessageId = null);
       }
 
-      // Capture and clear pending attachments
-      final mediaToUpload = List<PendingComposerMedia>.from(
-        _composerController.pendingAttachments,
-      );
+      // `mediaToUpload` was captured above the 362 admission boundary.
       List<MediaAttachment>? optimisticMedia;
       List<_PreparedConversationMediaUpload> preparedUploads = const [];
 
@@ -3675,7 +3834,7 @@ class _ConversationWiredState extends State<ConversationWired>
         directMediaCustodyIntentId:
             hasAttachments &&
                 (privateMediaPolicy.mode == PrivateMediaMode.ordinary ||
-                    (kDirectMediaBlobCustodyClientEnabled &&
+                    (widget.directMediaBlobCustodyClientEnabled &&
                         optimisticMedia!.length == 1 &&
                         sanitizedText.isEmpty &&
                         quotedMessageId == null &&
@@ -4022,7 +4181,7 @@ class _ConversationWiredState extends State<ConversationWired>
             // composer selection can never reach encryption or network, and it
             // never acquires the private one-more-look transfer lease.
             final strictBlobSelected =
-                kDirectMediaBlobCustodyClientEnabled &&
+                widget.directMediaBlobCustodyClientEnabled &&
                 privateTransferLease == null &&
                 manifestFailureParent != null &&
                 manifestFailureAttachments.length == mediaToUpload.length &&
@@ -4043,7 +4202,7 @@ class _ConversationWiredState extends State<ConversationWired>
             // re-checked here so a widened composer selection can never reach
             // encryption or network.
             final strictPrivateBlobSelected =
-                kDirectMediaBlobCustodyClientEnabled &&
+                widget.directMediaBlobCustodyClientEnabled &&
                 privateTransferLease != null &&
                 privateStrictParent != null &&
                 privateStrictAttachment != null &&
@@ -4080,21 +4239,19 @@ class _ConversationWiredState extends State<ConversationWired>
                     artifactStore: DirectMediaBlobArtifactStore(),
                     prepareArtifact: widget.prepareEncryptedMediaArtifactFn,
                   );
-              // 362: a Protected/View-Once initial has no plural owner yet.
-              // Any non-legacy route (fanout, selector-off, unavailable) on
-              // an initialized roster refuses BEFORE media crypto or network
-              // and never demotes to one target.
-              if (widget.directEventFanout != null) {
-                final privateRouting = await widget.directEventFanout!
-                    .decideRoute(_contact.peerId);
-                if (privateRouting.route !=
-                    DirectEventFanoutRoute.incumbentLegacy) {
-                  await _uploadActivityController.complete(uploadOperation);
-                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
-                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
-                  if (mounted) _updateComposerState(isUploading: false);
-                  return;
-                }
+              // 362: the admission boundary at the top of this send already
+              // refused every initialized roster for a Protected/View-Once
+              // shape, because that shape has no plural owner. Reaching here
+              // therefore proves the incumbent single-target path is
+              // authorized. Re-resolving the roster now would reintroduce the
+              // late refusal this plan removes — one whose rows are already
+              // durable and retryable.
+              if (mediaAdmission != null &&
+                  !mediaAdmission.allowsIncumbentSingleTarget) {
+                throw StateError(
+                  'private strict upload reached after a non-incumbent '
+                  'admission (${mediaAdmission.reason})',
+                );
               }
               final strictResult = await coordinator.prepareAndUploadPrivate(
                 bridge: widget.bridge!,
@@ -4189,45 +4346,14 @@ class _ConversationWiredState extends State<ConversationWired>
                 for (final attachment in manifestFailureAttachments)
                   attachment.id: attachment,
               };
-              // 362: the target route is decided BEFORE any media crypto or
-              // upload. The fanout route sends the ONE generation to every
-              // persisted target through the all-target owner; an initialized
-              // roster whose required selector is OFF (or whose route is
-              // unavailable) refuses here and never demotes to one target.
-              // Primary + uninitialized roster keeps the incumbent singular
-              // path byte-identically, including its LAN acceleration.
-              DirectEventFanoutRouting? mediaFanoutRouting;
-              if (widget.directEventFanout != null) {
-                mediaFanoutRouting = await widget.directEventFanout!
-                    .decideRoute(_contact.peerId);
-              }
-              final mediaFanoutRepository =
-                  blobCustodyRepository
-                          is OutgoingDirectLinkedMediaBlobFanoutRepository &&
-                      (blobCustodyRepository
-                              as OutgoingDirectLinkedMediaBlobFanoutRepository)
-                          .supportsDirectLinkedMediaBlobFanout
-                  ? blobCustodyRepository
-                        as OutgoingDirectLinkedMediaBlobFanoutRepository
-                  : null;
-              if (mediaFanoutRouting != null &&
-                  mediaFanoutRouting.route !=
-                      DirectEventFanoutRoute.incumbentLegacy) {
-                final routedSnapshot = mediaFanoutRouting.snapshot;
-                final canFanOut =
-                    mediaFanoutRouting.route == DirectEventFanoutRoute.fanout &&
-                    widget
-                        .directLinkedMediaFanoutSelector
-                        .allowsDirectLinkedMediaFanoutAuthoring &&
-                    mediaFanoutRepository != null &&
-                    routedSnapshot != null;
-                if (!canFanOut) {
-                  await _uploadActivityController.complete(uploadOperation);
-                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
-                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
-                  if (mounted) _updateComposerState(isUploading: false);
-                  return;
-                }
+              // 362: the target route was resolved ONCE, above every durable
+              // write, and is carried here. The roster is deliberately not
+              // re-read: a pairing that lands mid-send must not turn an
+              // already-persisted generation into a late refusal.
+              final routedSnapshot = mediaAdmission?.snapshot;
+              if (mediaAdmission != null &&
+                  mediaAdmission.requiresLinkedFanout &&
+                  routedSnapshot != null) {
                 final fanoutResult = await coordinator
                     .prepareAndUploadFreshFanout(
                       bridge: widget.bridge!,
@@ -4310,6 +4436,18 @@ class _ConversationWiredState extends State<ConversationWired>
                 }
               }
             } else {
+              // 362: this is the incumbent single-target lane. A generation
+              // the admission boundary routed to fanout may NEVER arrive here
+              // — a false strict predicate (durable re-read mismatch, swallowed
+              // snapshot error, absent capability) must be a hard failure, not
+              // a silent demotion to one recipient on an initialized roster.
+              if (mediaAdmission != null &&
+                  mediaAdmission.requiresLinkedFanout) {
+                throw StateError(
+                  'linked-fanout generation reached the incumbent '
+                  'single-target upload lane',
+                );
+              }
               for (var index = 0; index < mediaToUpload.length; index++) {
                 if (await _cancelActiveAttachmentUploadIfRequested(
                   operation: uploadOperation,
@@ -5542,6 +5680,29 @@ class _ConversationWiredState extends State<ConversationWired>
   /// optimistic → LAN → relay pipeline. Shared by the manual stop
   /// ([_onRecordStop]) and the 5-minute auto-stop review-send
   /// ([_onReviewSend]) so a reviewed recording follows the exact same path.
+  /// 362: puts a refused voice send back into the review-hold state instead of
+  /// dropping it.
+  ///
+  /// `_onReviewSend` nulls `_pendingReviewRecording`/`_pendingReviewWaveform`
+  /// and resets the composer to idle BEFORE calling `_sendVoiceRecording`, so
+  /// a refusal that simply returned would orphan the recorder temp with no
+  /// draft to restore. "Refuse with the source intact" means the user gets the
+  /// recording back, not that the bytes silently leak.
+  void _restoreVoiceReviewHoldAfterRefusal(
+    AudioRecording recording,
+    List<double> waveform,
+  ) {
+    if (!mounted) return;
+    _pendingReviewRecording = recording;
+    _pendingReviewWaveform = waveform;
+    _updateComposerState(
+      isUploading: false,
+      recordingState: VoiceRecordingState.reviewing,
+      recordingDuration: Duration(milliseconds: recording.durationMs),
+      amplitudeValues: const [],
+    );
+  }
+
   Future<void> _sendVoiceRecording(
     AudioRecording recording,
     List<double> waveform,
@@ -5550,6 +5711,50 @@ class _ConversationWiredState extends State<ConversationWired>
     final identity = _identity;
     if (identity == null) return;
     final quotedMessageId = _activeQuoteMessageId;
+
+    // 362 ADMISSION BOUNDARY (voice). Both callers of this method — the
+    // record-stop send and the review-hold send — carry a FRESH recording;
+    // survivor replay never reaches here, it drains through the retry lanes
+    // from stored authority. So the resolution below is fresh-only and never
+    // re-reads the roster for a committed generation.
+    //
+    // The read-only recording validation is pulled up from the use case,
+    // where it used to run only AFTER the durable copy, the recorder-temp
+    // delete and both durable rows. The order the contract requires is:
+    // validate, resolve, and only then take a lease or write anything.
+    // Size only — deliberately no filesystem probe here. Existence stays in
+    // the use case, which owns the recording bytes; hoisting an I/O check into
+    // the widget would make the composer refuse recordings whose file is
+    // supplied by the caller rather than the recorder.
+    if (recording.sizeBytes <= 0 ||
+        recording.sizeBytes > kMaxVoiceRecordingBytes) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_VOICE_SEND_INVALID_RECORDING',
+        details: {'sizeBytes': recording.sizeBytes},
+      );
+      _restoreVoiceReviewHoldAfterRefusal(recording, waveform);
+      return;
+    }
+    // Fresh voice has no plural fanout owner, so an initialized roster must
+    // refuse rather than reach a single target. Read through the repository,
+    // not `widget.directEventFanout`: the capability is wired unconditionally
+    // in production, so this holds with every authoring selector off.
+    final voiceAdmission = await resolveDirectMediaFanoutAdmission(
+      mediaAttachmentRepository: widget.mediaAttachmentRepo,
+      contactAccountPeerId: _contact.peerId,
+      canServeLinkedFanout: false,
+    );
+    if (voiceAdmission.refuses) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CONV_FL_VOICE_SEND_MEDIA_FANOUT_ADMISSION_REFUSED',
+        details: {'reason': voiceAdmission.reason},
+      );
+      _restoreVoiceReviewHoldAfterRefusal(recording, waveform);
+      return;
+    }
+
     final now = DateTime.now().toUtc().toIso8601String();
     final voiceMessageId = _uuid.v4();
     final voiceAttachmentId = _uuid.v4();
@@ -5727,7 +5932,7 @@ class _ConversationWiredState extends State<ConversationWired>
       // ride the encrypted envelope) and the relay upload reuses it.
       EncryptedMediaArtifact? voiceArtifact;
       final strictVoiceBlobSelected =
-          kDirectMediaBlobCustodyClientEnabled &&
+          widget.directMediaBlobCustodyClientEnabled &&
           switch (mediaAttachmentRepo) {
             DirectMediaBlobCustodyRepository repository
                 when repository.supportsDirectMediaBlobCustody =>
@@ -6724,6 +6929,7 @@ class _ConversationWiredState extends State<ConversationWired>
       imageProcessor: imageProcessor,
       qualityPreference: widget.qualityPreference,
       videoQualityPreference: widget.videoQualityPreference,
+      directEventFanoutResolver: () => widget.directEventFanout,
       shareStoredOfflinePromise: AppLocalizations.of(
         context,
       )!.share_stored_offline_promise,

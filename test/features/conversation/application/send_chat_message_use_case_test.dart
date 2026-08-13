@@ -12,7 +12,10 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
     show computeDirectEventFanoutIncarnation;
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show DirectMediaFanoutTargetBinding, OutgoingDirectMediaCaptionEditLane;
+    show
+        DirectMediaFanoutStageAuthority,
+        DirectMediaFanoutTargetBinding,
+        OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
@@ -12511,7 +12514,13 @@ void main() {
           ],
         };
         final bridge = _RecipientRecordingCryptoBridge();
-        final service = FakeP2PService();
+        const linkedSenderTransport = 'my-linked-transport';
+        final service = FakeP2PService(
+          currentState: const NodeState(
+            peerId: linkedSenderTransport,
+            isStarted: true,
+          ),
+        );
         final storePeers = <String>[];
 
         final (result, message) = await chat_use_case.sendChatMessage(
@@ -12579,10 +12588,16 @@ void main() {
           reason: 'each target rides its own exact ciphertext',
         );
         for (final binding in bindings) {
-          final encrypted =
-              (jsonDecode(binding.wireEnvelope)
-                      as Map<String, dynamic>)['encrypted']
-                  as Map<String, dynamic>;
+          final outer =
+              jsonDecode(binding.wireEnvelope) as Map<String, dynamic>;
+          expect(
+            outer['senderPeerId'],
+            linkedSenderTransport,
+            reason:
+                'linked media outer identity is the authenticated node '
+                'transport, not the logical account in the inner payload',
+          );
+          final encrypted = outer['encrypted'] as Map<String, dynamic>;
           final expectedKey = binding.recipientPeerId == contactAccount
               ? legacyKey
               : deviceKey;
@@ -13640,8 +13655,10 @@ class _LinkedMediaFanoutFakeRepository extends FakeMediaAttachmentRepository
     required ConversationMessage expected,
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   }) async {
     fanoutStageCalls++;

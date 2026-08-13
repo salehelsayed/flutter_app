@@ -348,10 +348,17 @@ assert_invite_scenario_selectable \
   closure \
   android-physical,android-emulator
 
-# Plan 360 (TC-360-04a) registers a THIRD explicit row on the same runner. It
+# Plan 360 (TC-360-04a) registers a third explicit row on the same runner. It
 # is mode-free and requires an explicit two-target pair.
 assert_invite_scenario_selectable \
   direct_linked_device_addressing \
+  "" \
+  android-physical,android-emulator
+
+# Plan 362 (TC-362-05b) registers the aggregate event+blob row on the same
+# runner, also mode-free and availability-bounded to the Android pair.
+assert_invite_scenario_selectable \
+  direct_linked_device_event_blob_fanout \
   "" \
   android-physical,android-emulator
 

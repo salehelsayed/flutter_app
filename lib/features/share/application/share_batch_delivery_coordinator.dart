@@ -6,6 +6,8 @@ import 'package:crypto/crypto.dart';
 import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
@@ -354,6 +356,7 @@ class DefaultShareBatchDeliveryCoordinator
   final Stream<Map<String, dynamic>>? mediaUploadProgressEvents;
   final String shareStoredOfflinePromise;
   final bool directMediaBlobCustodyClientEnabled;
+  final DirectEventFanoutAuthoring? Function()? directEventFanoutResolver;
   final DateTime Function() _forwardNow;
   final Map<String, DateTime> _forwardTimestampByOperationKey = {};
 
@@ -376,6 +379,7 @@ class DefaultShareBatchDeliveryCoordinator
     this.sendToGroupFn,
     this.mediaUploadProgressEvents,
     bool? directMediaBlobCustodyClientEnabled,
+    this.directEventFanoutResolver,
     String? shareStoredOfflinePromise,
     DateTime Function()? forwardNow,
   }) : shareStoredOfflinePromise =
@@ -389,6 +393,68 @@ class DefaultShareBatchDeliveryCoordinator
   String? get _currentSenderDeviceId {
     final peerId = p2pService.currentState.peerId?.trim();
     return peerId == null || peerId.isEmpty ? null : peerId;
+  }
+
+  /// Resolves every direct-media destination before an entry may preprocess,
+  /// copy, encrypt, persist, or upload a source file.
+  ///
+  /// The returned map is the one decision consumed by the later target loop;
+  /// no sender is allowed to re-read admission after preprocessing. Contact
+  /// ids are deduplicated because one logical destination has one roster fact
+  /// for this batch.
+  Future<Map<String, DirectMediaFanoutAdmission>>
+  _preflightDirectMediaAdmissions({
+    required bool hasFiles,
+    required Iterable<ShareTargetSelection> targets,
+  }) async {
+    if (!hasFiles) return const <String, DirectMediaFanoutAdmission>{};
+    final admissions = <String, DirectMediaFanoutAdmission>{};
+    for (final target in targets) {
+      if (target.kind != ShareTargetSelectionKind.contact) continue;
+      final peerId = target.requireContact.peerId;
+      if (admissions.containsKey(peerId)) continue;
+      admissions[peerId] = await resolveDirectMediaFanoutAdmission(
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        contactAccountPeerId: peerId,
+        // Share/forward still has no plural blob owner. An initialized roster
+        // therefore refuses at this pre-authoring boundary.
+        canServeLinkedFanout: false,
+      );
+    }
+    return admissions;
+  }
+
+  /// Returns a complete refusal only when no READY destination is allowed to
+  /// consume a preprocessed media batch. A ready group (or admitted direct
+  /// contact) still justifies the shared preprocessing work; refused direct
+  /// targets remain failed later without acquiring any media authority.
+  ShareBatchDeliveryResult? _refuseBeforeMediaPreprocessingIfNoTargetAdmitted({
+    required bool hasFiles,
+    required List<_InternalForwardTargetResolution> targetPlan,
+    required Map<String, DirectMediaFanoutAdmission> contactAdmissions,
+  }) {
+    if (!hasFiles) return null;
+    for (final planned in targetPlan) {
+      final target = planned.current;
+      if (target == null) continue;
+      if (target.kind == ShareTargetSelectionKind.group ||
+          contactAdmissions[target.requireContact.peerId]?.refuses == false) {
+        return null;
+      }
+    }
+    return ShareBatchDeliveryResult(
+      results: targetPlan
+          .map(
+            (planned) => planned.isReady
+                ? ShareBatchTargetResult(
+                    target: planned.current!,
+                    status: ShareBatchTargetStatus.failed,
+                    detail: 'Media preparation failed.',
+                  )
+                : planned.failure,
+          )
+          .toList(growable: false),
+    );
   }
 
   /// Reads the reviewed operation token at an entry leg whose source gate has
@@ -481,6 +547,22 @@ class DefaultShareBatchDeliveryCoordinator
       );
     }
 
+    // `captureForDispatch` may create an immutable source copy. Direct target
+    // admission therefore belongs above it, and the exact decisions are
+    // carried into the later target loop rather than re-read after capture.
+    final contactAdmissions = await _preflightDirectMediaAdmissions(
+      hasFiles: shareIntent.hasFiles,
+      targets: targetResolutions
+          .where((resolution) => resolution.isReady)
+          .map((resolution) => resolution.current!),
+    );
+    final preflightRefusal = _refuseBeforeMediaPreprocessingIfNoTargetAdmitted(
+      hasFiles: shareIntent.hasFiles,
+      targetPlan: targetResolutions,
+      contactAdmissions: contactAdmissions,
+    );
+    if (preflightRefusal != null) return preflightRefusal;
+
     // Direct received-media paths carried through the picker are previews, not
     // dispatch authority. Reload the exact current direct rows, requalify their
     // parent/policy/canonical bytes, and consume only immutable lock-captured
@@ -515,6 +597,7 @@ class DefaultShareBatchDeliveryCoordinator
         // Only after it succeeds (and clears the source authority) may a
         // contact destination read this entry's reviewed operation token.
         sourceGatedInternalForward: true,
+        precomputedContactAdmissions: contactAdmissions,
       );
     } finally {
       await lease.dispose();
@@ -529,6 +612,7 @@ class DefaultShareBatchDeliveryCoordinator
     List<_InternalForwardTargetResolution>? internalForwardTargetResolutions,
     bool externalOrdinaryShare = false,
     bool sourceGatedInternalForward = false,
+    Map<String, DirectMediaFanoutAdmission>? precomputedContactAdmissions,
   }) async {
     final identity =
         preloadedIdentity ?? await identityRepository.loadIdentity();
@@ -546,16 +630,6 @@ class DefaultShareBatchDeliveryCoordinator
       );
     }
 
-    final processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
-      shareIntent,
-    );
-    final processedMedia = processedBatch.processedMedia;
-    final results = <ShareBatchTargetResult>[];
-
-    var bytesPerTarget = 0;
-    for (final media in processedMedia) {
-      bytesPerTarget += media.budgetBytes;
-    }
     final targetPlan =
         internalForwardTargetResolutions ??
         targets
@@ -566,6 +640,30 @@ class DefaultShareBatchDeliveryCoordinator
               ),
             )
             .toList(growable: false);
+    final contactAdmissions =
+        precomputedContactAdmissions ??
+        await _preflightDirectMediaAdmissions(
+          hasFiles: shareIntent.hasFiles,
+          targets: targetPlan
+              .where((item) => item.isReady)
+              .map((item) => item.current!),
+        );
+    final preflightRefusal = _refuseBeforeMediaPreprocessingIfNoTargetAdmitted(
+      hasFiles: shareIntent.hasFiles,
+      targetPlan: targetPlan,
+      contactAdmissions: contactAdmissions,
+    );
+    if (preflightRefusal != null) return preflightRefusal;
+    final processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
+      shareIntent,
+    );
+    final processedMedia = processedBatch.processedMedia;
+    final results = <ShareBatchTargetResult>[];
+
+    var bytesPerTarget = 0;
+    for (final media in processedMedia) {
+      bytesPerTarget += media.budgetBytes;
+    }
     final totalBytes =
         bytesPerTarget * targetPlan.where((item) => item.isReady).length;
     final progressTracker = onProgress == null || totalBytes <= 0
@@ -609,6 +707,21 @@ class DefaultShareBatchDeliveryCoordinator
             shareIntent: shareIntent,
             target: target,
           );
+          final mediaAdmission = target.kind == ShareTargetSelectionKind.contact
+              ? contactAdmissions[target.requireContact.peerId]
+              : null;
+          if (shareIntent.hasFiles &&
+              target.kind == ShareTargetSelectionKind.contact &&
+              mediaAdmission?.refuses != false) {
+            results.add(
+              ShareBatchTargetResult(
+                target: target,
+                status: ShareBatchTargetStatus.failed,
+                detail: 'Media preparation failed.',
+              ),
+            );
+            continue;
+          }
           result = switch (target.kind) {
             ShareTargetSelectionKind.contact =>
               sendToContactFn != null
@@ -628,6 +741,7 @@ class DefaultShareBatchDeliveryCoordinator
                       requireCurrentContact:
                           internalForwardTargetResolutions != null,
                       externalOrdinaryShare: externalOrdinaryShare,
+                      mediaAdmission: mediaAdmission,
                       authorizedForwardDedupKey: sourceGatedInternalForward
                           ? _entryAuthorizedForwardDedupKey(targetIntent)
                           : null,
@@ -798,6 +912,14 @@ class DefaultShareBatchDeliveryCoordinator
       return failAll('Identity unavailable.');
     }
 
+    final contactAdmissions = await _preflightDirectMediaAdmissions(
+      hasFiles: true,
+      targets: contacts.map(ShareTargetSelection.contact),
+    );
+    if (!contactAdmissions.values.any((admission) => !admission.refuses)) {
+      return failAll('Media preparation failed.');
+    }
+
     final ProcessedShareMediaBatch processedBatch;
     try {
       processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
@@ -852,6 +974,17 @@ class DefaultShareBatchDeliveryCoordinator
             results.add(failed());
             continue;
           }
+          final mediaAdmission = contactAdmissions[current.peerId];
+          if (mediaAdmission?.refuses != false) {
+            results.add(
+              ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(requested),
+                status: ShareBatchTargetStatus.failed,
+                detail: 'Media preparation failed.',
+              ),
+            );
+            continue;
+          }
 
           final sender = sendToContactFn;
           final result = sender != null
@@ -872,6 +1005,7 @@ class DefaultShareBatchDeliveryCoordinator
                   processedMedia: processedMedia,
                   uploadHooks: uploadHooks,
                   useSuppliedContact: true,
+                  mediaAdmission: mediaAdmission,
                   authorizedForwardDedupKey: authorizedForwardDedupKey,
                 );
           results.add(result);
@@ -941,6 +1075,21 @@ class DefaultShareBatchDeliveryCoordinator
             .toList(growable: false),
       );
     }
+
+    // The immutable group-source snapshot below may copy the media. Admit all
+    // direct destinations first and carry these decisions through dispatch.
+    final contactAdmissions = await _preflightDirectMediaAdmissions(
+      hasFiles: true,
+      targets: targetResolutions
+          .where((resolution) => resolution.isReady)
+          .map((resolution) => resolution.current!),
+    );
+    final preflightRefusal = _refuseBeforeMediaPreprocessingIfNoTargetAdmitted(
+      hasFiles: true,
+      targetPlan: targetResolutions,
+      contactAdmissions: contactAdmissions,
+    );
+    if (preflightRefusal != null) return preflightRefusal;
 
     // Dispatch-time source verification: reload the exact parent and
     // group-owned row and revalidate the CURRENT canonical plaintext before
@@ -1024,6 +1173,10 @@ class DefaultShareBatchDeliveryCoordinator
             // 350: the verified source + immutable snapshot above IS this
             // entry's source gate.
             sourceGatedInternalForward: true,
+            mediaAdmission:
+                planned.current!.kind == ShareTargetSelectionKind.contact
+                ? contactAdmissions[planned.current!.requireContact.peerId]
+                : null,
           ),
         );
       }
@@ -1049,6 +1202,7 @@ class DefaultShareBatchDeliveryCoordinator
     String? sourceGroupIdToExclude,
     required bool allowAnnouncementTarget,
     bool sourceGatedInternalForward = false,
+    DirectMediaFanoutAdmission? mediaAdmission,
   }) async {
     ShareBatchTargetResult failed(String detail) {
       return ShareBatchTargetResult(
@@ -1061,6 +1215,9 @@ class DefaultShareBatchDeliveryCoordinator
     try {
       switch (target.kind) {
         case ShareTargetSelectionKind.contact:
+          if (mediaAdmission?.refuses != false) {
+            return failed('Media preparation failed.');
+          }
           final current = await contactRepository.getContact(
             target.requireContact.peerId,
           );
@@ -1094,6 +1251,7 @@ class DefaultShareBatchDeliveryCoordinator
                   processedMedia: processedMedia,
                   uploadHooks: ShareBatchUploadHooks.none,
                   requireCurrentContact: true,
+                  mediaAdmission: mediaAdmission,
                   authorizedForwardDedupKey: sourceGatedInternalForward
                       ? _entryAuthorizedForwardDedupKey(targetIntent)
                       : null,
@@ -1380,28 +1538,9 @@ class DefaultShareBatchDeliveryCoordinator
       }
       progressStarted = true;
 
-      // 362: the external-share/forward fresh entry has no plural fanout
-      // owner wired yet. An initialized roster forbids the singular path —
-      // refuse this destination BEFORE media crypto, file write, upload or
-      // network, and never demote to one target.
-      if (repository is OutgoingDirectLinkedMediaBlobFanoutRepository &&
-          (repository as OutgoingDirectLinkedMediaBlobFanoutRepository)
-              .supportsDirectLinkedMediaBlobFanout) {
-        final fanoutSnapshot =
-            await (repository as OutgoingDirectLinkedMediaBlobFanoutRepository)
-                .readDirectContactFanoutSnapshotForMedia(contact.peerId);
-        if (fanoutSnapshot != null && fanoutSnapshot.rosterInitialized) {
-          for (final _ in attachmentIds) {
-            uploadHooks.settled(succeeded: false);
-          }
-          progressSettled = true;
-          return ShareBatchTargetResult(
-            target: ShareTargetSelection.contact(contact),
-            status: ShareBatchTargetStatus.failed,
-            detail: 'Media preparation failed.',
-          );
-        }
-      }
+      // 362: the fanout admission boundary in _sendToContact now governs
+      // this entry AND the legacy loop, above every send-owned write, so
+      // the old too-late guard that used to sit here is gone.
       final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
         repository: repository,
         artifactStore: DirectMediaBlobArtifactStore(),
@@ -1701,6 +1840,7 @@ class DefaultShareBatchDeliveryCoordinator
     bool useSuppliedContact = false,
     bool requireCurrentContact = false,
     bool externalOrdinaryShare = false,
+    DirectMediaFanoutAdmission? mediaAdmission,
     String? authorizedForwardDedupKey,
   }) async {
     assert(!(useSuppliedContact && requireCurrentContact));
@@ -1775,6 +1915,16 @@ class DefaultShareBatchDeliveryCoordinator
         messageRepository is OutgoingTransportMutationRepository &&
         p2pService is AckOrExpiryInboxStore &&
         p2pService is MediaExpiryBoundedInboxStore;
+    // Admission was resolved by the entry BEFORE preprocessing/copying. A
+    // media sender that reaches this private sink without that decision is a
+    // wiring defect and fails closed; it never performs a late roster read.
+    if (processedMedia.isNotEmpty && mediaAdmission?.refuses != false) {
+      return ShareBatchTargetResult(
+        target: ShareTargetSelection.contact(contact),
+        status: ShareBatchTargetStatus.failed,
+        detail: 'Media preparation failed.',
+      );
+    }
     if (strictFreshSelected) {
       return _sendFreshDirectMediaWithBlobCustody(
         identity: identity,
@@ -1869,6 +2019,7 @@ class DefaultShareBatchDeliveryCoordinator
       mediaAttachmentRepo: mediaAttachmentRepository,
       dedupKey: shareIntent.forwardProvenance?.operationDedupKey,
       isForwarded: shareIntent.forwardProvenance != null,
+      directEventFanout: directEventFanoutResolver?.call(),
     );
 
     return ShareBatchTargetResult(

@@ -172,12 +172,15 @@ void main() {
     // route — one local-peer check, one ciphertext-only LAN callback after the
     // complete v111 generation is published, one bridge reference and one
     // artifact-preparation seam into the SAME coordinator. It adds no new
-    // upload/download owner and no received-media action route.
+    // upload/download owner and no received-media action route. Plan 362 adds
+    // one more bridge reference for the mutually exclusive all-target branch
+    // of that same strict coordinator; it is not another transport owner and
+    // remains outside the received-media action routes guarded below.
     // Save/Share/Info remain local-only Plan 231 actions. These exact counts
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
       'widget.p2pService': 23,
-      'widget.bridge': 33,
+      'widget.bridge': 34,
       'widget.sendChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
       'widget.deleteMessageForMeFn(': 1,

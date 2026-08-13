@@ -35,6 +35,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
@@ -110,8 +111,13 @@ class FirstTimeExperienceWired extends StatefulWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
+  /// 362: linked-device authority for the 1:1 conversation this shell can
+  /// push and for the FeedWired it hands off to.
+  final DirectConversationRouteAuthority? directRouteAuthority;
+
   const FirstTimeExperienceWired({
     super.key,
+    this.directRouteAuthority,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -261,6 +267,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       navigator.pushReplacement(
         buildFeedSlideUpRoute(
           builder: (_) => FeedWired(
+            directRouteAuthority: widget.directRouteAuthority,
             repository: widget.repository,
             contactRepository: widget.contactRepository,
             contactRequestRepository: widget.contactRequestRepository,
@@ -317,6 +324,11 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       navigator.push(
         buildConversationRoute(
           builder: (_) => ConversationWired(
+            directEventFanout:
+                widget.directRouteAuthority.resolvedDirectEventFanout,
+            directDeviceTrust:
+                widget.directRouteAuthority.resolvedDirectDeviceTrust,
+            modalityGate: widget.directRouteAuthority.resolvedModalityGate,
             contact: contact,
             identityRepo: widget.repository,
             messageRepo: widget.messageRepository,
@@ -604,6 +616,7 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (scannerContext) => QRScannerWired(
+          directRouteAuthority: widget.directRouteAuthority,
           bridge: widget.bridge,
           contactRepository: widget.contactRepository,
           contactRequestRepository: widget.contactRequestRepository,
@@ -725,6 +738,8 @@ class _FirstTimeExperienceWiredState extends State<FirstTimeExperienceWired> {
       groupConversationTracker: widget.groupConversationTracker,
       introductionRepository: widget.introductionRepository,
       appShellController: widget.appShellController,
+      directEventFanoutResolver:
+          widget.directRouteAuthority?.directEventFanoutResolver,
     );
   }
 

@@ -15,6 +15,7 @@ import 'package:flutter_app/core/database/helpers/group_media_deletion_journal_d
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
     show
+        DirectMediaFanoutStageAuthority,
         DirectMediaFanoutTargetBinding,
         IncomingDirectMediaCaptionEditOutcome,
         OutgoingDirectMediaCaptionEditLane;
@@ -1453,6 +1454,216 @@ void main() {
         }
       },
     );
+
+    test('TC-362-04b linked loader and drain include outgoing survivors and '
+        'cleanup while excluding historical outgoing rows', () async {
+      final documents = await Directory.systemTemp.createTemp(
+        'tc362-linked-loader-drain-',
+      );
+      addTearDown(() => documents.delete(recursive: true));
+      const identityPeerId = 'tc362-linked-loader-identity';
+      const contactPeerId = 'tc362-logical-contact';
+      const activeMessageId = 'tc362-linked-active-parent';
+      const createdAt = '2026-08-12T09:00:00.000Z';
+      final now = DateTime.utc(2026, 8, 12, 9, 5);
+      final store = DirectMediaBlobArtifactStore(
+        documentsDirectoryProvider: () async => documents,
+      );
+
+      Future<DirectMediaBlobArtifact> artifact(
+        String attachmentId,
+        List<int> bytes,
+      ) async {
+        final source = File('${documents.path}/$attachmentId.source')
+          ..writeAsBytesSync(bytes);
+        return store.persistCandidate(
+          identityPeerId: identityPeerId,
+          attachmentId: attachmentId,
+          encryptedSourcePath: source.path,
+          expectedContentHash: sha256.convert(bytes).toString(),
+        );
+      }
+
+      final activeArtifact = await artifact(
+        'tc362-linked-active-att',
+        const <int>[1, 2, 3, 4],
+      );
+      final cleanupArtifact = await artifact(
+        'tc362-linked-cleanup-att',
+        const <int>[5, 6, 7, 8],
+      );
+      final historicalArtifact = await artifact(
+        'tc362-historical-att',
+        const <int>[9, 10, 11, 12],
+      );
+
+      DirectMediaBlobCustodyRow outgoingRow({
+        required String attachmentId,
+        required String messageId,
+        required DirectMediaBlobCustodyState state,
+        required DirectMediaBlobArtifact artifact,
+        required bool linked,
+      }) => DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        direction: DirectMediaBlobCustodyDirection.outgoing,
+        state: state,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: linked
+            ? 'tc362-linked-recipient-$attachmentId'
+            : 'tc362-historical-recipient',
+        contactAccountPeerId: linked ? contactPeerId : null,
+        recipientMlKemPublicKey: linked ? 'mlkem-$attachmentId' : null,
+        ciphertextRelativePath: artifact.relativePath,
+        contentHash: artifact.contentHash,
+        ciphertextSize: artifact.ciphertextSize,
+        expiresAtMs: null,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+
+      final linkedActive = outgoingRow(
+        attachmentId: 'tc362-linked-active-att',
+        messageId: activeMessageId,
+        state: DirectMediaBlobCustodyState.outgoingPrepared,
+        artifact: activeArtifact,
+        linked: true,
+      );
+      final linkedCleanup = outgoingRow(
+        attachmentId: 'tc362-linked-cleanup-att',
+        messageId: 'tc362-linked-cleanup-parent',
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        artifact: cleanupArtifact,
+        linked: true,
+      );
+      final historical = outgoingRow(
+        attachmentId: 'tc362-historical-att',
+        messageId: 'tc362-historical-parent',
+        state: DirectMediaBlobCustodyState.outgoingPrepared,
+        artifact: historicalArtifact,
+        linked: false,
+      );
+      final incoming = DirectMediaBlobCustodyRow(
+        attachmentId: 'tc362-linked-local-incoming-att',
+        messageId: 'tc362-linked-local-incoming-parent',
+        direction: DirectMediaBlobCustodyDirection.incoming,
+        state: DirectMediaBlobCustodyState.incomingCommitted,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: null,
+        ciphertextRelativePath: null,
+        contentHash: 'd' * 64,
+        ciphertextSize: 99,
+        expiresAtMs: now.add(const Duration(hours: 1)).millisecondsSinceEpoch,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      for (final row in <DirectMediaBlobCustodyRow>[
+        linkedActive,
+        linkedCleanup,
+        historical,
+        incoming,
+      ]) {
+        await fixture.db.insert(kDirectMediaBlobCustodyTable, row.toMap());
+      }
+      await fixture.messageRepo.saveMessage(
+        const ConversationMessage(
+          id: activeMessageId,
+          contactPeerId: contactPeerId,
+          senderPeerId: identityPeerId,
+          text: '',
+          timestamp: createdAt,
+          status: 'failed',
+          isIncoming: false,
+          createdAt: createdAt,
+        ),
+      );
+
+      final linkedRepository =
+          fixture.repo as LinkedDirectMediaBlobCustodyDrainRepository;
+      expect(
+        linkedRepository.supportsLinkedDirectMediaBlobCustodyDrain,
+        isTrue,
+      );
+      final scoped = await linkedRepository
+          .loadLinkedDirectMediaBlobCustodyByStates(
+            DirectMediaBlobCustodyState.values.toSet(),
+          );
+      expect(
+        scoped.map((row) => row.attachmentId).toSet(),
+        <String>{
+          linkedActive.attachmentId,
+          linkedCleanup.attachmentId,
+          incoming.attachmentId,
+        },
+        reason:
+            'incoming rows are device-local, while only marker-bearing '
+            'outgoing rows belong to the linked runtime',
+      );
+
+      final outgoingRetries = <String>[];
+      final incomingRetries = <String>[];
+      final bridge = RecordingFakeBridge();
+      final drain = DirectMediaBlobCustodyDrain(
+        repository: fixture.repo,
+        incomingRepository:
+            fixture.repo as IncomingDirectMediaBlobCustodyRepository,
+        artifactStore: store,
+        identityPeerId: () async => identityPeerId,
+        strictDownloadAckOwner: StrictDirectMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: fixture.repo,
+          mediaFileManager: MediaFileManager(),
+        ),
+        retryOutgoingLinkedMessage: (messageId) async {
+          outgoingRetries.add(messageId);
+          return true;
+        },
+        retryIncomingDownload: (row) async {
+          incomingRetries.add(row.attachmentId);
+          return true;
+        },
+        countOtherArtifactReferences:
+            ({
+              required ciphertextRelativePath,
+              required contentHash,
+              required ciphertextSize,
+              required excluding,
+            }) => dbCountOtherDirectMediaBlobCustodyRowsReferencingArtifact(
+              fixture.db,
+              ciphertextRelativePath: ciphertextRelativePath,
+              contentHash: contentHash,
+              ciphertextSize: ciphertextSize,
+              excluding: excluding,
+            ),
+        now: () => now,
+      );
+
+      final result = await drain.runNetworkBoundedLinked();
+
+      expect(result.failed, 0);
+      expect(result.completed, 3);
+      expect(outgoingRetries, const <String>[activeMessageId]);
+      expect(incomingRetries, <String>[incoming.attachmentId]);
+      expect(File(cleanupArtifact.absolutePath).existsSync(), isFalse);
+      expect(
+        await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForMessage(linkedCleanup.messageId),
+        isEmpty,
+      );
+      expect(
+        await (fixture.repo as DirectMediaBlobCustodyRepository)
+            .loadDirectMediaBlobCustodyForMessage(historical.messageId),
+        hasLength(1),
+        reason: 'the linked drain never owns historical primary rows',
+      );
+      expect(File(historicalArtifact.absolutePath).existsSync(), isTrue);
+    });
 
     test(
       'TC-347-07 blob custody lifecycle and authority-safe cleanup',
@@ -8792,13 +9003,14 @@ END
         final custodyRepository =
             fixture.repo as DirectMediaBlobCustodyRepository;
         final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        const senderTransportPeerId = 'tc362-linked-sender-transport';
 
         String initialEnvelope(String messageId, String suffix) =>
             jsonEncode(<String, Object?>{
               'type': 'chat_message',
               'version': '2',
               'id': messageId,
-              'senderPeerId': 'tc362-local',
+              'senderPeerId': senderTransportPeerId,
               'encrypted': <String, String>{
                 'kem': 'kem-$suffix',
                 'ciphertext': 'cipher-$suffix',
@@ -8882,6 +9094,7 @@ END
                     .toList(growable: false);
                 return DirectMediaFanoutTargetBinding(
                   recipientPeerId: target.peerId,
+                  recipientMlKemPublicKey: target.mlKemPublicKey,
                   wireEnvelope: initialEnvelope(messageId, target.peerId),
                   wireMediaBlobManifestHash: computeDirectMediaBlobManifestHash(
                     manifest,
@@ -8932,6 +9145,13 @@ END
         final expectedParent = published.parent.copyWith(
           directEventFanoutGenerationId: messageId,
         );
+        expect(
+          senderTransportPeerId,
+          isNot(expectedParent.senderPeerId),
+          reason:
+              'a linked secondary authenticates the outer envelope with its '
+              'physical transport while the durable parent remains logical',
+        );
         final stagedAttempt = expectedParent.copyWith(
           wireEnvelope: published.bindings.first.wireEnvelope,
           directMediaCustodyIntentId: null,
@@ -8942,7 +9162,9 @@ END
               expected: expectedParent,
               staged: stagedAttempt,
               attachments: published.completed,
+              senderTransportPeerId: senderTransportPeerId,
               contactAccountPeerId: contactAccount,
+              authority: DirectMediaFanoutStageAuthority.currentRosterSnapshot,
               expectedSnapshot: snapshot,
               targetBindings: published.bindings,
             );
@@ -9018,6 +9240,8 @@ END
         final crossedBindings = <DirectMediaFanoutTargetBinding>[
           DirectMediaFanoutTargetBinding(
             recipientPeerId: crossed.bindings[0].recipientPeerId,
+            recipientMlKemPublicKey:
+                crossed.bindings[0].recipientMlKemPublicKey,
             wireEnvelope: crossed.bindings[0].wireEnvelope,
             wireMediaBlobManifestHash:
                 crossed.bindings[1].wireMediaBlobManifestHash,
@@ -9026,6 +9250,8 @@ END
           ),
           DirectMediaFanoutTargetBinding(
             recipientPeerId: crossed.bindings[1].recipientPeerId,
+            recipientMlKemPublicKey:
+                crossed.bindings[1].recipientMlKemPublicKey,
             wireEnvelope: crossed.bindings[1].wireEnvelope,
             wireMediaBlobManifestHash:
                 crossed.bindings[0].wireMediaBlobManifestHash,
@@ -9051,7 +9277,9 @@ END
                 media: crossed.completed,
               ),
               attachments: crossed.completed,
+              senderTransportPeerId: senderTransportPeerId,
               contactAccountPeerId: contactAccount,
+              authority: DirectMediaFanoutStageAuthority.currentRosterSnapshot,
               expectedSnapshot: snapshot,
               targetBindings: crossedBindings,
             );
@@ -9079,6 +9307,61 @@ END
           await durableFanoutRows(crossedId),
           v111Before,
           reason: 'every v111 row is byte-identical after the refusal',
+        );
+
+        // PRE-v108 restart: roster facts drift after every v114 target has a
+        // committed STORE receipt. The persisted recipient/key/manifests are
+        // now the obligation, so v108 binds without re-resolving or comparing
+        // the live roster.
+        const survivorId = 'tc362-02b-persisted-survivor-authority';
+        final survivor = await publishStoredGeneration(survivorId);
+        await fixture.db.update(
+          'contacts',
+          <String, Object?>{'ml_kem_public_key': 'mlkem-roster-drifted'},
+          where: 'peer_id = ?',
+          whereArgs: const <Object?>[contactAccount],
+        );
+        await fixture.db.update(
+          'direct_contact_device_bindings',
+          <String, Object?>{'state': 'revoked'},
+          where: 'contact_account_peer_id = ?',
+          whereArgs: const <Object?>[contactAccount],
+        );
+        final driftedSnapshot = await fanoutRepository
+            .readDirectContactFanoutSnapshotForMedia(contactAccount);
+        expect(driftedSnapshot, isNotNull);
+        expect(driftedSnapshot!.sameSnapshotAs(snapshot), isFalse);
+
+        final survivorExpected = survivor.parent.copyWith(
+          directEventFanoutGenerationId: survivorId,
+        );
+        final survivorBound = await fanoutRepository
+            .stageOutgoingDirectMediaFanoutInboxCustody(
+              expected: survivorExpected,
+              staged: survivorExpected.copyWith(
+                wireEnvelope: survivor.bindings.first.wireEnvelope,
+                directMediaCustodyIntentId: null,
+                media: survivor.completed,
+              ),
+              attachments: survivor.completed,
+              senderTransportPeerId: senderTransportPeerId,
+              contactAccountPeerId: contactAccount,
+              authority: DirectMediaFanoutStageAuthority.persistedV114Survivors,
+              expectedSnapshot: null,
+              targetBindings: survivor.bindings,
+            );
+        expect(survivorBound.outcome, OutgoingOrdinaryMutationOutcome.applied);
+        expect(survivorBound.authorizesTransport, isTrue);
+        expect(survivorBound.custodyRows, hasLength(2));
+        expect(
+          await fixture.db.query(
+            'direct_inbox_custody_outbox',
+            where: 'message_id = ?',
+            whereArgs: const <Object?>[survivorId],
+          ),
+          hasLength(2),
+          reason:
+              'v108 binds from exact v114 survivors despite live roster drift',
         );
       },
     );

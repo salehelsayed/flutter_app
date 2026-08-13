@@ -43,6 +43,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/identity/domain/models/identity_model.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
 import 'package:flutter_app/features/home/application/identity_avatar_resolver.dart';
@@ -211,19 +212,13 @@ class OrbitWired extends StatefulWidget {
   /// false so every other caller / bare pump keeps the toggle.
   final bool hideShellNav;
 
-  /// 360: the exact linked-device trust authority handed to the contact
-  /// profile this screen opens.
-  ///
-  /// Optional here (the production composition root supplies the real
-  /// database-backed capability) but REQUIRED and non-null on
-  /// [ContactProfileScreen]. Left null — bare pumps and tests — the profile
-  /// receives the inert [UnavailableDirectContactDeviceTrust], which reports an
-  /// empty uninitialized roster and refuses every decision, so the screen
-  /// renders exactly as it did before Plan 360.
-  final DirectContactDeviceTrustCapability? directDeviceTrust;
+  /// 362: the one linked-device authority for conversations, contact trust,
+  /// and QR staging in this shell. Null preserves incumbent behavior.
+  final DirectConversationRouteAuthority? directRouteAuthority;
 
   const OrbitWired({
     super.key,
+    this.directRouteAuthority,
     required this.identityRepo,
     required this.contactRepo,
     required this.contactRequestRepo,
@@ -279,7 +274,6 @@ class OrbitWired extends StatefulWidget {
     this.accountMigrationSizeGate,
     this.nearbyLocationService,
     this.hideShellNav = false,
-    this.directDeviceTrust,
   });
 
   @override
@@ -2557,6 +2551,11 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       final pushedRoute = Navigator.of(context).push(
         buildConversationRoute(
           builder: (_) => ConversationWired(
+            directEventFanout:
+                widget.directRouteAuthority.resolvedDirectEventFanout,
+            directDeviceTrust:
+                widget.directRouteAuthority.resolvedDirectDeviceTrust,
+            modalityGate: widget.directRouteAuthority.resolvedModalityGate,
             contact: contact,
             initialText: initialText,
             identityRepo: widget.identityRepo,
@@ -2606,7 +2605,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
       context,
       contact: friend.contact,
       directDeviceTrust:
-          widget.directDeviceTrust ??
+          widget.directRouteAuthority.resolvedDirectDeviceTrust ??
           const UnavailableDirectContactDeviceTrust(),
       onMessage: () {
         Navigator.of(context).pop();
@@ -2712,7 +2711,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
     BuildContext scannerContext,
     String qrData,
   ) async {
-    final trust = widget.directDeviceTrust;
+    final trust = widget.directRouteAuthority.resolvedDirectDeviceTrust;
     if (trust == null) return;
     final (result, document) = await parseDirectLinkedDeviceQr(
       qrString: qrData,
@@ -2746,6 +2745,7 @@ class _OrbitWiredState extends State<OrbitWired> with TickerProviderStateMixin {
         .push(
           buildConversationRoute(
             builder: (scannerContext) => QRScannerWired(
+              directRouteAuthority: widget.directRouteAuthority,
               // 360: the known-contact linked-device scan action. Supplying it
               // here is what makes the dedicated dual-signed document reach the
               // trust flow instead of being refused as invalid; the handler

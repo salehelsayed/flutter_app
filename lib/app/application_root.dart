@@ -1,11 +1,9 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
-import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
-import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:flutter_app/features/share/application/handle_share_intent_use_case.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/share/presentation/navigation/share_target_picker_route.dart';
 import 'package:flutter_app/features/introduction/data/repositories/introduction_repository_impl.dart';
 import 'package:flutter_app/features/introduction/data/repositories/intro_review_seen_repository_impl.dart';
@@ -109,7 +107,6 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
-import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
@@ -622,6 +619,19 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  // 362: the ONE linked-device authority bundle, threaded to every shell that
+  // can push a 1:1 conversation. Before this, the three values below reached
+  // only the notification-tap route, so ordinary navigation from Feed, Orbit,
+  // Posts or the first-time experience opened a chat with no fanout authority,
+  // an inert device-trust capability and the allow-everything modality gate.
+  // Rebuilt per read because the fanout owner is identity/role-scoped.
+  DirectConversationRouteAuthority get _directRouteAuthority =>
+      DirectConversationRouteAuthority(
+        directEventFanoutResolver: widget.directEventFanoutResolver,
+        directDeviceTrust: widget.directDeviceTrust,
+        isLinkedBlobFreeRuntime: widget.isLinkedBlobFreeRuntime,
+      );
+
   bool _isResuming = false;
   final DroppedPushRecoveryRepollLatch _droppedPushRecoveryRepollLatch =
       DroppedPushRecoveryRepollLatch();
@@ -1150,6 +1160,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       introductionRepository: widget.introductionRepository,
       appShellController: widget.appShellController,
       preSendReady: _ensureRuntimeServicesReady,
+      directEventFanoutResolver: widget.directEventFanoutResolver,
     );
   }
 
@@ -1799,7 +1810,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       appShellController: widget.appShellController,
       messageRepository: widget.messageRepository,
       builder: (feedUnreadCountListenable) => OrbitWired(
-        directDeviceTrust: widget.directDeviceTrust,
+        directRouteAuthority: _directRouteAuthority,
         groupMediaDeleteForMeCoordinator:
             widget.groupMediaDeleteForMeCoordinator,
         identityRepo: widget.repository,
@@ -1862,18 +1873,11 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       buildConversationRoute(
         builder: (_) => ConversationWired(
           contact: contact,
-          directDeviceTrust: widget.directDeviceTrust,
-          directEventFanout: widget.directEventFanoutResolver?.call(),
-          // 362: a linked secondary regains the media/voice/private composer
-          // capability ONLY when the full linked-media authoring triple is
-          // compiled on; otherwise the 361 blob-free gate stays byte-exact.
-          modalityGate: (widget.isLinkedBlobFreeRuntime?.call() ?? false)
-              ? ((kDirectLinkedMediaFanoutEnabled &&
-                        kDirectMediaBlobCustodyClientEnabled &&
-                        kDirectLinkedEventFanoutEnabled)
-                    ? const DirectConversationModalityGate()
-                    : const DirectConversationModalityGate.linkedBlobFree())
-              : const DirectConversationModalityGate(),
+          // 362: resolved from the ONE shared route-authority bundle so this
+          // route and every ordinary-navigation route agree by construction.
+          directDeviceTrust: _directRouteAuthority.directDeviceTrust,
+          directEventFanout: _directRouteAuthority.directEventFanout,
+          modalityGate: _directRouteAuthority.modalityGate,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
           uploadRetryProjectionRepo: widget.messageRepository,
@@ -3088,6 +3092,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         darkTheme: AppTheme.darkTheme,
         themeMode: themeMode,
         home: StartupRouter(
+          directRouteAuthority: _directRouteAuthority,
           repository: widget.repository,
           contactRepository: widget.contactRepository,
           contactRequestRepository: widget.contactRequestRepository,

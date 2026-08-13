@@ -10,6 +10,7 @@ import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
@@ -50,6 +51,7 @@ Route<void> buildShareTargetPickerRoute({
   AppShellController? appShellController,
   Future<void> Function(ShareBatchDeliveryResult? result)? onClose,
   Future<void> Function()? preSendReady,
+  DirectEventFanoutAuthoring? Function()? directEventFanoutResolver,
   GroupMediaForwardRequest? groupMediaForwardRequest,
 }) {
   return MaterialPageRoute<void>(
@@ -79,6 +81,7 @@ Route<void> buildShareTargetPickerRoute({
       appShellController: appShellController,
       onClose: onClose,
       preSendReady: preSendReady,
+      directEventFanoutResolver: directEventFanoutResolver,
       groupMediaForwardRequest: groupMediaForwardRequest,
     ),
   );

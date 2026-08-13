@@ -166,8 +166,19 @@ const _privacySha256 =
 // Plan 362 makes the linked modality gate selector-triple aware, adds the
 // optional restricted strict-media resume converger hook, and nothing
 // relocates.
+// Plan 362 post-audit repair: the three linked-device route values
+// (fanout resolver, device trust, modality gate) collapse into ONE
+// DirectConversationRouteAuthority getter that is now threaded to StartupRouter
+// and the Orbit host, so ordinary navigation reaches the same authority the
+// notification route always had. The notification push reads the same getter
+// instead of recomputing the gate inline, which is why the three selector flag
+// imports and the modality-gate import fall away. Composition only — nothing
+// relocates and no core shim returns.
+// The final Task-10 composition also forwards the linked-media drain through
+// MyApp's existing cold/resume hook; this is the same app-owned runtime seam,
+// not a restored core dependency.
 const _applicationRootNormalizedSha256 =
-    '91fe0426f0d34df6f19b8de36e2f6416e8f5ed8aececd59a2a745311040ba7c3';
+    'd629f7d06595a42326ca9e1f98fcfe6725d6ebd79aa4228c70351652a46165a2';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -190,8 +201,19 @@ const _applicationRootNormalizedSha256 =
 // SAME media repository construction; its post-audit repair additionally
 // wires the last-reference artifact counter into the SAME drain
 // construction. Nothing moved.
+// Plan 362 post-audit repair: binds the linked-scoped custody states loader on
+// the SAME media repository construction, adds one local converger closure over
+// the SAME single drain instance, and supplies it to the restricted linked
+// services at cold start and to MyApp on resume — closing a hook the
+// application root already declared and awaited but nothing ever filled. It
+// also threads the shared route-authority bundle into StartupRouter. All
+// composition on already-present owners; nothing moved. Task-10's physical
+// linked-sender repair additionally forwards the already-authenticated
+// transport peer into the existing media SQL-stage delegate and declares the
+// captured P2P service before that drain closure; this changes wiring/order
+// only and introduces no adapter or core shim.
 const _productionBootstrapNormalizedSha256 =
-    'c541007b8418989cfaf1c5dcf8e66ee9f9abd46732daaa862df466c716d688b0';
+    'a35af6644ca3962fe589d450dc49f36d86aed7dd280ad31d2e09af6d85c32c87';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

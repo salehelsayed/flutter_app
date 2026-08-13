@@ -988,6 +988,19 @@ Future<({String pendingRelative, String pendingAbsolute})> _seedFailedPending(
   // the immediate-apply case instead.
   String privateMode = 'protected',
 }) async {
+  // Plan 362 retry admission reads the same persisted contact/roster authority
+  // as fresh authoring. These are incumbent single-device fixtures, so model
+  // that fact explicitly with a valid contact and an uninitialized roster;
+  // an absent contact snapshot is intentionally fail-closed.
+  await fixture.db.insert('contacts', const <String, Object?>{
+    'peer_id': _contactPeerId,
+    'public_key': 'contact-public-key',
+    'rendezvous': '/dns4/relay/tcp/443/p2p/relay',
+    'username': 'P262 Manual Contact',
+    'signature': 'contact-signature',
+    'scanned_at': '2026-07-20T00:00:00.000Z',
+    'ml_kem_public_key': 'contact-ml-kem-public',
+  });
   await fixture.seedDirectParent(messageId, contactPeerId: _contactPeerId);
   await fixture.db.update(
     'messages',

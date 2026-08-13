@@ -60,7 +60,13 @@ const _controllerTestPaths = <String>[
 // incumbent single-target senders), plus the optional `directEventFanout`
 // parameter on the five send/edit/delete/reaction Fn typedefs. No handoff
 // expression, controller, or pure-screen boundary changed.
-const _expectedDirectApiFingerprint = '5e80dc06';
+// 362: repinned for exactly three added optional widget fields on
+// `ConversationWired`: `directLinkedMediaFanoutSelector` plus the incumbent
+// blob-custody and blob-free-event flag values. Production still receives each
+// const default; the injectable values make the default-build admission and
+// composer-to-retry host proofs causal without a second production route.
+// No controller owner or pure-screen handoff changed.
+const _expectedDirectApiFingerprint = 'f5df142f';
 const _expectedGroupApiFingerprint = '2d8f881b';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection

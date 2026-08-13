@@ -3,7 +3,7 @@ import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
 import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show DirectMediaFanoutTargetBinding;
+    show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
@@ -50,6 +50,7 @@ import 'package:flutter_app/features/conversation/application/download_media_use
 import 'package:flutter_app/features/conversation/application/received_media_action_controller.dart';
 import 'package:flutter_app/features/conversation/application/reaction_listener.dart';
 import 'package:flutter_app/features/conversation/application/remove_reaction_use_case.dart';
+import 'package:flutter_app/features/conversation/application/retry_incomplete_uploads_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_reaction_use_case.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
@@ -231,11 +232,23 @@ const _gifReplacementPolicyTestName =
 /// run inside the widget zone without a real database.
 class _FanoutComposerMediaRepository extends _StrictComposerMediaRepository
     implements OutgoingDirectLinkedMediaBlobFanoutRepository {
-  _FanoutComposerMediaRepository({required this.snapshot});
+  _FanoutComposerMediaRepository({
+    required this.snapshot,
+    this.onFreshFanoutGenerationPublished,
+  });
 
   final DirectContactFanoutSnapshot snapshot;
+  final Future<void> Function(ConversationMessage markedParent)?
+  onFreshFanoutGenerationPublished;
   final Map<String, DirectMediaBlobCustodyRow> fanoutRows =
       <String, DirectMediaBlobCustodyRow>{};
+  int snapshotReads = 0;
+  bool throwOnSnapshotRead = false;
+  bool applyFanoutInboxStage = false;
+  DirectMediaFanoutStageAuthority? fanoutInboxAuthority;
+  DirectContactFanoutSnapshot? fanoutInboxSnapshot;
+  List<DirectMediaFanoutTargetBinding> fanoutInboxBindings =
+      const <DirectMediaFanoutTargetBinding>[];
 
   String _key(String attachmentId, String recipientPeerId) =>
       '$attachmentId|$recipientPeerId';
@@ -246,8 +259,15 @@ class _FanoutComposerMediaRepository extends _StrictComposerMediaRepository
   @override
   Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
     String contactAccountPeerId,
-  ) async =>
-      contactAccountPeerId == snapshot.contactAccountPeerId ? snapshot : null;
+  ) async {
+    snapshotReads++;
+    if (throwOnSnapshotRead) {
+      throw StateError('persisted composer survivor must not read the roster');
+    }
+    return contactAccountPeerId == snapshot.contactAccountPeerId
+        ? snapshot
+        : null;
+  }
 
   @override
   Future<DirectMediaBlobGenerationStageResult>
@@ -270,6 +290,9 @@ class _FanoutComposerMediaRepository extends _StrictComposerMediaRepository
     for (final row in custodyRows) {
       fanoutRows[_key(row.attachmentId, row.recipientPeerId!)] = row;
     }
+    await onFreshFanoutGenerationPublished?.call(
+      expectedParent.copyWith(directEventFanoutGenerationId: expectedParent.id),
+    );
     return DirectMediaBlobGenerationStageResult(
       outcome: DirectMediaBlobGenerationStageOutcome.applied,
       attachments: preparedAttachments,
@@ -283,10 +306,36 @@ class _FanoutComposerMediaRepository extends _StrictComposerMediaRepository
     required ConversationMessage expected,
     required ConversationMessage staged,
     required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
     required String contactAccountPeerId,
-    required DirectContactFanoutSnapshot expectedSnapshot,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
-  }) => throw StateError('the faked send function owns v108 in this test');
+  }) async {
+    fanoutInboxAuthority = authority;
+    fanoutInboxSnapshot = expectedSnapshot;
+    fanoutInboxBindings = List<DirectMediaFanoutTargetBinding>.of(
+      targetBindings,
+    );
+    if (!applyFanoutInboxStage) {
+      throw StateError('the faked send function owns v108 in this test');
+    }
+    return DirectMediaFanoutInboxCustodyStageResult(
+      outcome: OutgoingOrdinaryMutationOutcome.applied,
+      message: staged.copyWith(
+        directMediaCustodyIntentId: null,
+        media: attachments,
+      ),
+      attachments: attachments,
+      custodyRows: <Map<String, Object?>>[
+        for (final binding in targetBindings)
+          <String, Object?>{
+            'recipient_peer_id': binding.recipientPeerId,
+            'wire_envelope': binding.wireEnvelope,
+          },
+      ],
+    );
+  }
 
   @override
   Future<DirectMediaBlobCustodyRow?>
@@ -1592,6 +1641,21 @@ void main() {
     );
   }
 
+  Future<void> seedPersistedIncumbentContact(
+    MediaRepositoryRealDbFixture fixture,
+  ) async {
+    final contact = makeContact();
+    await fixture.db.insert('contacts', <String, Object?>{
+      'peer_id': contact.peerId,
+      'public_key': contact.publicKey,
+      'rendezvous': contact.rendezvous,
+      'username': contact.username,
+      'signature': contact.signature,
+      'scanned_at': contact.scannedAt,
+      'ml_kem_public_key': 'contact-ml-kem-public-key',
+    });
+  }
+
   group('Plan 343 reaction optimistic attempt authority', () {
     MessageReaction optimistic(
       ReactionOptimisticAttempt attempt,
@@ -1748,6 +1812,8 @@ void main() {
     DirectConversationModalityGate? modalityGate,
     DirectEventFanoutAuthoring? directEventFanout,
     DirectLinkedMediaFanoutSelector? directLinkedMediaFanoutSelector,
+    bool? directMediaBlobCustodyClientEnabled,
+    bool? directLinkedEventFanoutEnabled,
   }) async {
     await tester.pumpWidget(
       MaterialApp(
@@ -1768,6 +1834,11 @@ void main() {
           directLinkedMediaFanoutSelector:
               directLinkedMediaFanoutSelector ??
               const DirectLinkedMediaFanoutSelector(),
+          directMediaBlobCustodyClientEnabled:
+              directMediaBlobCustodyClientEnabled ??
+              kDirectMediaBlobCustodyClientEnabled,
+          directLinkedEventFanoutEnabled:
+              directLinkedEventFanoutEnabled ?? kDirectLinkedEventFanoutEnabled,
           editChatMessageFn: editFn ?? editChatMessage,
           deleteMessageForMeFn: deleteForMeFn ?? deleteMessageForMe,
           deleteMessageForEveryoneFn:
@@ -2379,6 +2450,7 @@ void main() {
     Future<void> runFanoutRoutedComposerScenario(
       WidgetTester tester, {
       required bool selectorOn,
+      bool retryAfterInitialSendFailure = false,
     }) async {
       final tempDir = Directory.systemTemp.createTempSync(
         'composer_fanout_route_',
@@ -2409,7 +2481,14 @@ void main() {
           ),
         ],
       );
-      final repository = _FanoutComposerMediaRepository(snapshot: snapshot);
+      final messages = FakeMessageRepository();
+      final repository = _FanoutComposerMediaRepository(
+        snapshot: snapshot,
+        // The production v114 transaction publishes this marker with the
+        // linked rows. Keep the in-memory repository contract faithful so the
+        // same durable parent can be handed to the restart retrier below.
+        onFreshFanoutGenerationPublished: messages.saveMessage,
+      );
 
       final strictUploadRecipients = <String>[];
       final coordinator = PreparedDirectMediaBlobCustodyCoordinator(
@@ -2504,7 +2583,6 @@ void main() {
             }) async => neverCalled(),
       );
 
-      final messages = FakeMessageRepository();
       var sendCalls = 0;
       var legacyUploadCalls = 0;
       final source = File('${tempDir.path}/fanout.jpg')
@@ -2540,6 +2618,9 @@ void main() {
               directEventFanout,
             }) async {
               sendCalls++;
+              if (retryAfterInitialSendFailure) {
+                return (SendChatMessageResult.sendFailed, null);
+              }
               return (
                 SendChatMessageResult.success,
                 await messageRepo.getMessage(messageId!),
@@ -2577,6 +2658,8 @@ void main() {
         directLinkedMediaFanoutSelector: selectorOn
             ? const DirectLinkedMediaFanoutSelector.enabled()
             : const DirectLinkedMediaFanoutSelector.disabled(),
+        directMediaBlobCustodyClientEnabled: true,
+        directLinkedEventFanoutEnabled: true,
       );
       await tester.enterText(find.byType(TextField), 'Fanout route');
       await tester.pump(const Duration(milliseconds: 300));
@@ -2588,7 +2671,16 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 10));
           if (!selectorOn && deadline.elapsed.inMilliseconds > 1500) break;
         }
+        if (selectorOn && retryAfterInitialSendFailure) {
+          while (messages.store.values.every(
+                (message) => message.status != 'failed',
+              ) &&
+              deadline.elapsed < const Duration(seconds: 5)) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        }
       });
+      await tester.pump();
 
       expect(legacyUploadCalls, 0);
       if (selectorOn) {
@@ -2610,13 +2702,105 @@ void main() {
           ),
           isTrue,
         );
+        if (retryAfterInitialSendFailure) {
+          final messageId = repository.fanoutRows.values.first.messageId;
+          final failedParent = messages.store[messageId];
+          expect(failedParent?.status, 'failed');
+          expect(failedParent?.directEventFanoutGenerationId, messageId);
+
+          final snapshotReadsBeforeRestart = repository.snapshotReads;
+          repository
+            ..throwOnSnapshotRead = true
+            ..applyFanoutInboxStage = true;
+          final retryBridge = FakeBridge();
+          final retryP2p = FakeP2PService(
+            initialState: NodeState(
+              isStarted: true,
+              peerId: makeIdentity().peerId,
+            ),
+          );
+          var retryLegacyUploadCalls = 0;
+          late int retried;
+          await tester.runAsync(() async {
+            retried = await retryIncompleteUploads(
+              mediaAttachmentRepo: repository,
+              messageRepo: messages,
+              bridge: retryBridge,
+              p2pService: retryP2p,
+              identityRepo: FakeIdentityRepository(makeIdentity()),
+              contactRepo: FakeContactRepository(),
+              uploadMediaFn:
+                  ({
+                    required bridge,
+                    required localFilePath,
+                    required mime,
+                    required recipientPeerId,
+                    mediaFileManager,
+                    width,
+                    height,
+                    durationMs,
+                    waveform,
+                    allowedPeers,
+                    blobId,
+                    deleteSourceWhenDone = false,
+                    preparedArtifact,
+                  }) async {
+                    retryLegacyUploadCalls++;
+                    return const UploadMediaFailed(
+                      stage: UploadMediaStage.transport,
+                      disposition: UploadMediaDisposition.terminal,
+                      errorCode: 'LEGACY_UPLOAD_MUST_NOT_RUN',
+                    );
+                  },
+              directMediaBlobCustodyCoordinator: coordinator,
+              restrictToMessageIds: <String>{messageId},
+            );
+          });
+
+          expect(retried, 1);
+          expect(retryLegacyUploadCalls, 0);
+          expect(repository.snapshotReads, snapshotReadsBeforeRestart);
+          expect(
+            repository.fanoutInboxAuthority,
+            DirectMediaFanoutStageAuthority.persistedV114Survivors,
+          );
+          expect(repository.fanoutInboxSnapshot, isNull);
+          expect(
+            repository.fanoutInboxBindings
+                .map(
+                  (binding) => (
+                    binding.recipientPeerId,
+                    binding.recipientMlKemPublicKey,
+                  ),
+                )
+                .toList(growable: false),
+            <(String, String)>[
+              (contact.peerId, 'mlkem-legacy-account'),
+              (linkedTransport, 'mlkem-composer-a'),
+            ],
+          );
+          expect(
+            retryBridge.commandLog.where(
+              (command) => command == 'message.encrypt',
+            ),
+            hasLength(2),
+          );
+          expect(retryP2p.sendMessageCallCount, 2);
+        }
       } else {
         // 362: an initialized roster with a required selector OFF refuses
         // BEFORE media crypto/upload and never demotes to one target.
         expect(strictUploadRecipients, isEmpty);
         expect(sendCalls, 0);
         expect(repository.fanoutRows, isEmpty);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Fanout route',
+          reason: 'admission refusal must preserve the composer draft',
+        );
       }
+      // Settle the message-card entrance timer before removing the route.
+      await tester.pump(const Duration(milliseconds: 500));
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pump();
     }
@@ -2625,14 +2809,225 @@ void main() {
       'TC-362-02a composer routes a fresh strict generation through the '
       'all-target owner',
       (tester) => runFanoutRoutedComposerScenario(tester, selectorOn: true),
-      skip: !kDirectMediaBlobCustodyClientEnabled,
     );
 
     testWidgets(
       'TC-362-02a composer refuses a fresh strict send when a required '
       'selector is off',
       (tester) => runFanoutRoutedComposerScenario(tester, selectorOn: false),
-      skip: !kDirectMediaBlobCustodyClientEnabled,
+    );
+
+    testWidgets(
+      'TC-362-02b default-build composer failure restarts from persisted v114 '
+      'without a roster resolver',
+      (tester) => runFanoutRoutedComposerScenario(
+        tester,
+        selectorOn: true,
+        retryAfterInitialSendFailure: true,
+      ),
+    );
+
+    testWidgets(
+      'TC-362-02e media caption edit refuses initialized roster and preserves the draft',
+      (tester) async {
+        final contact = makeContact();
+        const messageId = 'tc362-caption-refusal';
+        const attachment = MediaAttachment(
+          id: '$messageId-att',
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 512,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-08-13T10:00:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        );
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: contact.peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Original media caption',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          media: const <MediaAttachment>[attachment],
+        );
+        final messages = FakeMessageRepository()..store[messageId] = message;
+        final media = _FanoutComposerMediaRepository(
+          snapshot: DirectContactFanoutSnapshot(
+            contactAccountPeerId: contact.peerId,
+            contactAccountSigningPublicKey: contact.publicKey,
+            rosterInitialized: true,
+            targets: const <DirectContactFanoutTargetFact>[
+              DirectContactFanoutTargetFact(
+                peerId: 'peer-caption-linked',
+                mlKemPublicKey: 'mlkem-caption-linked',
+                isLegacyAccountTarget: false,
+                fingerprint:
+                    'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd',
+                deviceId: 'caption-device',
+                transportPublicKey: 'caption-transport-key',
+              ),
+            ],
+          ),
+        )..seed(const <MediaAttachment>[attachment]);
+        var editCalls = 0;
+        Future<(SendChatMessageResult, ConversationMessage?)> editMustNotRun({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required ConversationMessage originalMessage,
+          required String updatedText,
+          required String senderUsername,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          bool emitTimingEvent = true,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          editCalls++;
+          return (SendChatMessageResult.sendFailed, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messages,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          editFn: editMustNotRun,
+          mediaAttachmentRepo: media,
+          initialMessages: <ConversationMessage>[message],
+        );
+
+        await tester.longPress(find.text('Original media caption'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.editActionKey));
+        await tester.pump();
+        await tester.enterText(find.byType(TextField), 'Edited draft survives');
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(editCalls, 0);
+        expect(
+          tester.widget<TextField>(find.byType(TextField)).controller?.text,
+          'Edited draft survives',
+        );
+        expect(
+          find.byKey(ConversationScreen.editModeBannerKey),
+          findsOneWidget,
+        );
+        expect(messages.store[messageId]?.text, 'Original media caption');
+      },
+    );
+
+    testWidgets(
+      'TC-362-02e media DFE refuses initialized roster before deletion dispatch',
+      (tester) async {
+        final contact = makeContact();
+        const messageId = 'tc362-dfe-refusal';
+        const attachment = MediaAttachment(
+          id: '$messageId-att',
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 512,
+          mediaType: 'image',
+          downloadStatus: 'done',
+          createdAt: '2026-08-13T10:00:00.000Z',
+          ownerLane: MediaOwnerLane.direct,
+        );
+        final message = ConversationMessage(
+          id: messageId,
+          contactPeerId: contact.peerId,
+          senderPeerId: makeIdentity().peerId,
+          text: 'Media DFE refusal',
+          timestamp: DateTime.now().toUtc().toIso8601String(),
+          status: 'delivered',
+          isIncoming: false,
+          createdAt: DateTime.now().toUtc().toIso8601String(),
+          media: const <MediaAttachment>[attachment],
+        );
+        final messages = FakeMessageRepository()..store[messageId] = message;
+        final media = _FanoutComposerMediaRepository(
+          snapshot: DirectContactFanoutSnapshot(
+            contactAccountPeerId: contact.peerId,
+            contactAccountSigningPublicKey: contact.publicKey,
+            rosterInitialized: true,
+            targets: const <DirectContactFanoutTargetFact>[
+              DirectContactFanoutTargetFact(
+                peerId: 'peer-dfe-linked',
+                mlKemPublicKey: 'mlkem-dfe-linked',
+                isLegacyAccountTarget: false,
+                fingerprint:
+                    'dededededededededededededededededededededededededededededededede',
+                deviceId: 'dfe-device',
+                transportPublicKey: 'dfe-transport-key',
+              ),
+            ],
+          ),
+        )..seed(const <MediaAttachment>[attachment]);
+        var deleteCalls = 0;
+        Future<(SendChatMessageResult, ConversationMessage?)> deleteMustNotRun({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required ConversationMessage originalMessage,
+          ReactionRepository? reactionRepo,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          bool emitTimingEvent = true,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          deleteCalls++;
+          return (SendChatMessageResult.sendFailed, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messages,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          deleteForEveryoneFn: deleteMustNotRun,
+          mediaAttachmentRepo: media,
+          initialMessages: <ConversationMessage>[message],
+        );
+
+        await tester.longPress(find.text('Media DFE refusal'));
+        await tester.pump(const Duration(milliseconds: 250));
+        await tester.tap(find.byKey(MessageContextOverlay.deleteActionKey));
+        await pumpUntil(
+          tester,
+          () => find
+              .byKey(ConversationWired.deleteForEveryoneKey)
+              .evaluate()
+              .isNotEmpty,
+        );
+        tester
+            .widget<InkWell>(
+              find.descendant(
+                of: find.byKey(ConversationWired.deleteForEveryoneKey),
+                matching: find.byType(InkWell),
+              ),
+            )
+            .onTap!();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 250));
+
+        expect(deleteCalls, 0);
+        expect(messages.store[messageId]?.isDeleted, isFalse);
+        expect(find.text('Media DFE refusal'), findsOneWidget);
+      },
     );
 
     testWidgets(
@@ -2655,6 +3050,7 @@ void main() {
           MediaRepositoryRealDbFixture.create,
         ))!;
         addTearDown(fixture.dispose);
+        await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
         final messageRepo = fixture.messageRepo;
         final manager = TrackingDurableConversationMediaFileManager(tempDir);
         final networkOrder = <String>[];
@@ -3251,6 +3647,7 @@ void main() {
         MediaRepositoryRealDbFixture.create,
       ))!;
       addTearDown(fixture.dispose);
+      await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
       final messageRepo = fixture.messageRepo;
       final durableMediaFileManager =
           TrackingDurableConversationMediaFileManager(tempDir);
@@ -3512,6 +3909,7 @@ void main() {
         MediaRepositoryRealDbFixture.create,
       ))!;
       addTearDown(fixture.dispose);
+      await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
       final messageRepo = fixture.messageRepo;
       final durableMediaFileManager =
           TrackingDurableConversationMediaFileManager(tempDir);
@@ -3686,6 +4084,7 @@ void main() {
         ),
       ))!;
       addTearDown(fixture.dispose);
+      await tester.runAsync(() => seedPersistedIncumbentContact(fixture));
       final messageRepo = fixture.messageRepo;
       final durableMediaFileManager =
           TrackingDurableConversationMediaFileManager(tempDir);
@@ -10612,6 +11011,110 @@ void main() {
         expect(find.byKey(const ValueKey('voice-review-send')), findsNothing);
       });
     });
+
+    testWidgets(
+      'TC-362-02a widget voice admission refuses initialized roster before durable copy or use-case dispatch',
+      (tester) async {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'tc362_widget_voice_admission_',
+        );
+        addTearDown(() {
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final voiceFile = File('${tempDir.path}/voice.m4a')
+          ..writeAsBytesSync(List<int>.filled(2048, 7));
+        final recorder = FakeAudioRecorderService()
+          ..fakeDurationMs = 300000
+          ..fakeSizeBytes = 2048
+          ..fakeOutputPath = voiceFile.path;
+        final messages = FakeMessageRepository();
+        final contact = makeContact();
+        final media = _FanoutComposerMediaRepository(
+          snapshot: DirectContactFanoutSnapshot(
+            contactAccountPeerId: contact.peerId,
+            contactAccountSigningPublicKey: contact.publicKey,
+            rosterInitialized: true,
+            targets: const <DirectContactFanoutTargetFact>[
+              DirectContactFanoutTargetFact(
+                peerId: 'peer-voice-linked',
+                mlKemPublicKey: 'mlkem-voice-linked',
+                isLegacyAccountTarget: false,
+                fingerprint:
+                    'abababababababababababababababababababababababababababababababab',
+                deviceId: 'voice-device',
+                transportPublicKey: 'voice-transport-key',
+              ),
+            ],
+          ),
+        );
+        final manager = TrackingDurableConversationMediaFileManager(tempDir);
+        var sendVoiceCalls = 0;
+        Future<(SendVoiceMessageResult, ConversationMessage?)> neverSendVoice({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String senderPeerId,
+          required String senderUsername,
+          required AudioRecording recording,
+          required Bridge bridge,
+          String? recipientMlKemPublicKey,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          MediaFileManager? mediaFileManager,
+          String? text,
+          String? quotedMessageId,
+          List<double>? waveform,
+          String? messageId,
+          String? timestamp,
+          String? blobId,
+          preparedArtifact,
+        }) async {
+          sendVoiceCalls++;
+          return (SendVoiceMessageResult.sendFailed, null);
+        }
+
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: messages,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: messages,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: _instantSuccessSendFn,
+          bridge: FakeBridge(),
+          p2pService: FakeP2PService(),
+          mediaAttachmentRepo: media,
+          mediaFileManager: manager,
+          audioRecorderService: recorder,
+          sendVoiceMessageFn: neverSendVoice,
+        );
+        var screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (screen.onRecordStart! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 100));
+        await recorder.triggerAutoStop();
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        screen = tester.widget<ConversationScreen>(
+          find.byType(ConversationScreen),
+        );
+        await (screen.onReviewSend! as Future<void> Function())();
+        await tester.pump(const Duration(milliseconds: 200));
+
+        expect(sendVoiceCalls, 0);
+        expect(messages.saveMessageCallCount, 0);
+        expect(media.allSavedAttachments, isEmpty);
+        expect(manager.copyCalls, 0);
+        expect(voiceFile.existsSync(), isTrue);
+        expect(
+          find.byKey(const ValueKey('voice-review-send')),
+          findsOneWidget,
+          reason: 'refusal restores the held recording for user review',
+        );
+      },
+    );
 
     // 117 Session 4 (finding #3c downstream): a sent voice message whose relay
     // upload failed now carries a durable 'upload_pending' owned copy

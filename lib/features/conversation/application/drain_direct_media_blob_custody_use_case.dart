@@ -10,6 +10,8 @@ import 'strict_direct_media_blob_download_ack_owner.dart';
 
 typedef RetryIncomingDirectMediaBlob =
     Future<bool> Function(DirectMediaBlobCustodyRow row);
+typedef RetryOutgoingLinkedDirectMediaBlobMessage =
+    Future<bool> Function(String messageId);
 
 /// Whether the automatic v111 drain may complete one incoming parent's
 /// transfer over the network.
@@ -51,6 +53,7 @@ final class DirectMediaBlobCustodyDrain {
     required this.identityPeerId,
     required this.strictDownloadAckOwner,
     this.retryIncomingDownload,
+    this.retryOutgoingLinkedMessage,
     this.countOtherArtifactReferences,
     DateTime Function()? now,
   }) : now = now ?? DateTime.now;
@@ -61,6 +64,7 @@ final class DirectMediaBlobCustodyDrain {
   final Future<String?> Function() identityPeerId;
   final StrictDirectMediaBlobDownloadAckOwner strictDownloadAckOwner;
   final RetryIncomingDirectMediaBlob? retryIncomingDownload;
+  final RetryOutgoingLinkedDirectMediaBlobMessage? retryOutgoingLinkedMessage;
 
   /// 362 (v114): counts sibling rows still referencing the exact shared
   /// `(path, contentHash, ciphertextSize)` artifact, excluding one natural
@@ -247,6 +251,14 @@ final class DirectMediaBlobCustodyDrain {
           DirectMediaBlobCustodyState.incomingCommitted,
           DirectMediaBlobCustodyState.incomingAckPending,
         }, limit: limit);
+    return _convergeIncomingRows(rows);
+  }
+
+  /// The exact per-row incoming convergence both network-bounded entry points
+  /// share, so the linked runtime cannot drift from the primary's semantics.
+  Future<DirectMediaBlobCustodyDrainResult> _convergeIncomingRows(
+    List<DirectMediaBlobCustodyRow> rows,
+  ) async {
     var completed = 0;
     var retained = 0;
     var failed = 0;
@@ -293,6 +305,215 @@ final class DirectMediaBlobCustodyDrain {
       completed: completed,
       retained: retained,
       failed: failed,
+    );
+  }
+
+  Future<DirectMediaBlobCustodyDrainResult> _cleanupExactOutgoingRows(
+    Iterable<DirectMediaBlobCustodyRow> candidates,
+  ) async {
+    final rowsByKey =
+        <DirectMediaBlobCustodyNaturalKey, DirectMediaBlobCustodyRow>{
+          for (final row in candidates)
+            DirectMediaBlobCustodyNaturalKey.ofRow(row): row,
+        };
+    if (rowsByKey.isEmpty) {
+      return const DirectMediaBlobCustodyDrainResult(
+        completed: 0,
+        retained: 0,
+        failed: 0,
+      );
+    }
+    final identity = await identityPeerId();
+    if (identity == null || identity.trim().isEmpty) {
+      return const DirectMediaBlobCustodyDrainResult(
+        completed: 0,
+        retained: 0,
+        failed: 1,
+      );
+    }
+    var completed = 0;
+    var retained = 0;
+    var failed = 0;
+    for (final row in rowsByKey.values) {
+      try {
+        final removed = await repository.runDirectMediaBlobCustodyLifecycle(
+          () async {
+            final path = row.ciphertextRelativePath;
+            if (path == null) return false;
+            final countOthers = countOtherArtifactReferences;
+            final unlinkArtifact =
+                countOthers == null ||
+                await countOthers(
+                      ciphertextRelativePath: path,
+                      contentHash: row.contentHash,
+                      ciphertextSize: row.ciphertextSize,
+                      excluding: DirectMediaBlobCustodyNaturalKey.ofRow(row),
+                    ) ==
+                    0;
+            if (unlinkArtifact &&
+                !await artifactStore.deleteOwnedArtifact(
+                  identityPeerId: identity,
+                  relativePath: path,
+                )) {
+              return false;
+            }
+            return repository.deleteDirectMediaBlobCleanupPendingIfExact(row);
+          },
+        );
+        removed ? completed++ : retained++;
+      } on Object {
+        failed++;
+      }
+    }
+    return DirectMediaBlobCustodyDrainResult(
+      completed: completed,
+      retained: retained,
+      failed: failed,
+    );
+  }
+
+  /// 362: the restricted linked runtime's converger.
+  ///
+  /// Same per-row work as [runNetworkBounded], but the page comes from the
+  /// LINKED-scoped loader so a linked secondary never converges rows it does
+  /// not own. It is one more entry point on the SINGLE shared v111 lifecycle
+  /// owner rather than a second drain instance, because the bootstrap phase
+  /// contract freezes `DirectMediaBlobCustodyDrain(` to exactly one
+  /// construction.
+  ///
+  /// Fails closed: a repository without the linked scope drains NOTHING here
+  /// rather than falling back to the unrestricted page.
+  ///
+  /// Deliberately does not touch local cleanup. `runLocalCleanupBounded`'s
+  /// orphan sweep builds its referenced-path set from a GLOBAL live-outgoing
+  /// inventory, so running it against a linked-only page would classify
+  /// primary-authored ciphertext as unreferenced and delete it.
+  Future<DirectMediaBlobCustodyDrainResult> runNetworkBoundedLinked({
+    int limit = 50,
+  }) async {
+    final candidate = repository;
+    if (candidate is! LinkedDirectMediaBlobCustodyDrainRepository) {
+      return const DirectMediaBlobCustodyDrainResult(
+        completed: 0,
+        retained: 0,
+        failed: 0,
+      );
+    }
+    final linkedRepository =
+        candidate as LinkedDirectMediaBlobCustodyDrainRepository;
+    if (!linkedRepository.supportsLinkedDirectMediaBlobCustodyDrain) {
+      return const DirectMediaBlobCustodyDrainResult(
+        completed: 0,
+        retained: 0,
+        failed: 0,
+      );
+    }
+    // Separate bounded pages prevent a full incoming page from starving
+    // outgoing survivors (or cleanup) forever.
+    final incomingRows = await linkedRepository
+        .loadLinkedDirectMediaBlobCustodyByStates(
+          const <DirectMediaBlobCustodyState>{
+            DirectMediaBlobCustodyState.incomingCommitted,
+            DirectMediaBlobCustodyState.incomingAckPending,
+          },
+          limit: limit,
+        );
+    final activeOutgoingRows = await linkedRepository
+        .loadLinkedDirectMediaBlobCustodyByStates(
+          const <DirectMediaBlobCustodyState>{
+            DirectMediaBlobCustodyState.outgoingPrepared,
+            DirectMediaBlobCustodyState.outgoingStored,
+          },
+          limit: limit,
+        );
+    final initialCleanupRows = await linkedRepository
+        .loadLinkedDirectMediaBlobCustodyByStates(
+          const <DirectMediaBlobCustodyState>{
+            DirectMediaBlobCustodyState.outgoingCleanupPending,
+          },
+          limit: limit,
+        );
+
+    var completed = 0;
+    var retained = 0;
+    var failed = 0;
+    final terminalizationRepository =
+        repository is OutgoingDirectMediaBlobTerminalizationRepository
+        ? repository as OutgoingDirectMediaBlobTerminalizationRepository
+        : null;
+    final messageIds = activeOutgoingRows.map((row) => row.messageId).toSet();
+    final nowMs = now().toUtc().millisecondsSinceEpoch;
+    for (final messageId in messageIds) {
+      try {
+        final completeRows = await repository
+            .loadDirectMediaBlobCustodyForMessage(messageId);
+        final outgoingRows = completeRows
+            .where(
+              (row) =>
+                  row.direction == DirectMediaBlobCustodyDirection.outgoing,
+            )
+            .toList(growable: false);
+        if (outgoingRows.isEmpty ||
+            outgoingRows.any((row) => !row.isLinkedFanoutRow)) {
+          retained++;
+          continue;
+        }
+
+        var terminalized = false;
+        if (terminalizationRepository != null &&
+            terminalizationRepository
+                .supportsOutgoingDirectMediaBlobTerminalization) {
+          var outcome = await terminalizationRepository
+              .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                expectedRows: outgoingRows,
+                reason:
+                    DirectMediaBlobTerminalizationReason.parentDeletedOrMissing,
+                nowMs: nowMs,
+              );
+          if (outcome == DirectMediaBlobTerminalizationOutcome.refused) {
+            outcome = await terminalizationRepository
+                .terminalizeOutgoingDirectMediaBlobGenerationIfExact(
+                  expectedRows: outgoingRows,
+                  reason:
+                      DirectMediaBlobTerminalizationReason.expiredUnboundProof,
+                  nowMs: nowMs,
+                );
+          }
+          terminalized = outcome.publishedCleanupAuthority;
+        }
+        if (terminalized) continue;
+
+        final retry = retryOutgoingLinkedMessage;
+        if (retry == null) {
+          retained++;
+        } else if (await retry(messageId)) {
+          completed++;
+        } else {
+          retained++;
+        }
+      } on Object {
+        failed++;
+      }
+    }
+
+    // Terminalization above may have published new cleanup rows. Reload the
+    // scoped page and merge it with the initial page by natural identity.
+    final refreshedCleanupRows = await linkedRepository
+        .loadLinkedDirectMediaBlobCustodyByStates(
+          const <DirectMediaBlobCustodyState>{
+            DirectMediaBlobCustodyState.outgoingCleanupPending,
+          },
+          limit: limit,
+        );
+    final cleanup = await _cleanupExactOutgoingRows(<DirectMediaBlobCustodyRow>[
+      ...initialCleanupRows,
+      ...refreshedCleanupRows,
+    ]);
+    final incoming = await _convergeIncomingRows(incomingRows);
+    return DirectMediaBlobCustodyDrainResult(
+      completed: completed + cleanup.completed + incoming.completed,
+      retained: retained + cleanup.retained + incoming.retained,
+      failed: failed + cleanup.failed + incoming.failed,
     );
   }
 }

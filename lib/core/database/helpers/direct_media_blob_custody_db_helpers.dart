@@ -237,6 +237,51 @@ Future<List<DirectMediaBlobCustodyRow>> dbLoadDirectMediaBlobCustodyByStates(
   return rows.map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
 }
 
+/// 362: the exact LINKED-scoped state page the restricted linked runtime
+/// drains, so a linked secondary never touches rows it does not own.
+///
+/// The scope is DIRECTION-DEPENDENT, and the difference is load-bearing:
+///
+/// * OUTGOING rows are per-target, and only a linked generation carries a
+///   logical `contact_account_peer_id`. Historical/single-target rows authored
+///   by the primary must stay invisible here, so they are filtered out.
+/// * INCOMING rows are inherently device-local — a linked secondary's database
+///   contains only the rows that device itself received — so there is nothing
+///   to filter and NO marker predicate is applied. Filtering incoming rows on
+///   `contact_account_peer_id IS NOT NULL` would be a correctness bug, not a
+///   restriction: that marker records that the SENDER's transport differed
+///   from the logical contact (see `dbStageIncomingDirectMediaBlobCustody`),
+///   so media arriving from an ordinary single-device contact is staged with a
+///   NULL marker and would never be drained or downloaded at all.
+Future<List<DirectMediaBlobCustodyRow>>
+dbLoadLinkedDirectMediaBlobCustodyByStates(
+  DatabaseExecutor db, {
+  required Set<DirectMediaBlobCustodyState> states,
+  int limit = kDirectMediaBlobCustodyMaxLoadBatch,
+}) async {
+  if (states.isEmpty || limit <= 0) return const [];
+  final orderedStates = states.map((state) => state.dbValue).toList()..sort();
+  final placeholders = List.filled(orderedStates.length, '?').join(',');
+  final bounded = math.min(limit, kDirectMediaBlobCustodyMaxLoadBatch);
+  final outgoingStates = orderedStates
+      .where((state) => state.startsWith('outgoing'))
+      .toList();
+  // Only the outgoing arm is narrowed; see the direction note above.
+  final linkedScope = outgoingStates.isEmpty
+      ? ''
+      : 'AND (state NOT IN (${List.filled(outgoingStates.length, '?').join(',')}) '
+            'OR contact_account_peer_id IS NOT NULL) ';
+  final rows = await db.rawQuery(
+    'SELECT * FROM $kDirectMediaBlobCustodyTable '
+    'WHERE state IN ($placeholders) '
+    '$linkedScope'
+    'ORDER BY next_attempt_at ASC, updated_at ASC, attachment_id ASC, '
+    'recipient_peer_id ASC LIMIT ?',
+    <Object?>[...orderedStates, ...outgoingStates, bounded],
+  );
+  return rows.map(DirectMediaBlobCustodyRow.fromMap).toList(growable: false);
+}
+
 /// Applies one allowed exact state transition under its own write transaction.
 Future<bool> dbTransitionDirectMediaBlobCustodyIfExact(
   Database db, {

@@ -47,6 +47,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/message_re
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
+import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_route_authority.dart';
 import 'package:flutter_app/features/feed/application/feed_reaction_store.dart';
 import 'package:flutter_app/features/feed/application/feed_pending_projection.dart';
 import 'package:flutter_app/features/feed/application/feed_store.dart';
@@ -191,8 +192,14 @@ class FeedWired extends StatefulWidget {
   final AccountMigrationTransferRunFn? accountMigrationRunTransfer;
   final AccountMigrationSizeGate? accountMigrationSizeGate;
 
+  /// 362: linked-device authority for every 1:1 conversation this shell can
+  /// push (and for the embedded Orbit host). Null preserves the incumbent
+  /// single-target behaviour exactly.
+  final DirectConversationRouteAuthority? directRouteAuthority;
+
   const FeedWired({
     super.key,
+    this.directRouteAuthority,
     required this.repository,
     required this.contactRepository,
     required this.contactRequestRepository,
@@ -1660,6 +1667,11 @@ class _FeedWiredState extends State<FeedWired>
     await Navigator.of(context).push(
       buildConversationRoute(
         builder: (_) => ConversationWired(
+          directEventFanout:
+              widget.directRouteAuthority.resolvedDirectEventFanout,
+          directDeviceTrust:
+              widget.directRouteAuthority.resolvedDirectDeviceTrust,
+          modalityGate: widget.directRouteAuthority.resolvedModalityGate,
           contact: contact,
           identityRepo: widget.repository,
           messageRepo: widget.messageRepository,
@@ -1701,6 +1713,11 @@ class _FeedWiredState extends State<FeedWired>
         .push(
           buildConversationRoute(
             builder: (_) => ConversationWired(
+              directEventFanout:
+                  widget.directRouteAuthority.resolvedDirectEventFanout,
+              directDeviceTrust:
+                  widget.directRouteAuthority.resolvedDirectDeviceTrust,
+              modalityGate: widget.directRouteAuthority.resolvedModalityGate,
               contact: contact,
               identityRepo: widget.repository,
               messageRepo: widget.messageRepository,
@@ -2233,6 +2250,8 @@ class _FeedWiredState extends State<FeedWired>
         timestamp: optimisticMessage.timestamp,
         bridge: widget.bridge,
         recipientMlKemPublicKey: contact.mlKemPublicKey,
+        directEventFanout:
+            widget.directRouteAuthority.resolvedDirectEventFanout,
         transportMetrics: widget.transportMetrics,
         onDirectTextCustodyStaged: (stagedMessageId) {
           if (stagedMessageId != messageId) return;
@@ -2927,6 +2946,7 @@ class _FeedWiredState extends State<FeedWired>
 
   Widget _buildOrbitHost() {
     return OrbitWired(
+      directRouteAuthority: widget.directRouteAuthority,
       identityRepo: widget.repository,
       contactRepo: widget.contactRepository,
       contactRequestRepo: widget.contactRequestRepository,

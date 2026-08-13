@@ -142,6 +142,7 @@ import 'package:flutter_app/features/conversation/application/chat_message_liste
 import 'package:flutter_app/features/conversation/application/direct_notification_projection_owner.dart';
 import 'package:flutter_app/features/conversation/application/direct_notification_display_retry_coordinator.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/application/direct_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
 import 'package:flutter_app/features/conversation/application/drain_direct_media_blob_custody_use_case.dart';
@@ -2109,7 +2110,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required expectedRow,
             required stagedRow,
             required attachmentRows,
+            required senderTransportPeerId,
             required contactAccountPeerId,
+            required authority,
             required expectedSnapshot,
             required targetBindings,
           }) => dbStageOutgoingDirectMediaFanoutInboxCustody(
@@ -2117,7 +2120,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             expectedRow: expectedRow,
             stagedRow: stagedRow,
             attachmentRows: attachmentRows,
+            senderTransportPeerId: senderTransportPeerId,
             contactAccountPeerId: contactAccountPeerId,
+            authority: authority,
             expectedSnapshot: expectedSnapshot,
             targetBindings: targetBindings,
           ),
@@ -2140,6 +2145,13 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       dbLoadDirectMediaBlobCustodyByStates:
           ({required states, int limit = 50}) =>
               dbLoadDirectMediaBlobCustodyByStates(
+                db,
+                states: states,
+                limit: limit,
+              ),
+      dbLoadLinkedDirectMediaBlobCustodyByStates:
+          ({required states, int limit = 50}) =>
+              dbLoadLinkedDirectMediaBlobCustodyByStates(
                 db,
                 states: states,
                 limit: limit,
@@ -4359,12 +4371,73 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create and initialize the bridge (Go native)
     final Bridge bridge = GoBridgeClient();
+    // Declared before the linked-media drain closure that captures it. The
+    // service is assigned later in this composition phase, before any runtime
+    // owner can invoke that closure.
+    late final P2PServiceImpl p2pService;
     final strictDirectMediaBlobDownloadAckOwner =
         StrictDirectMediaBlobDownloadAckOwner(
           bridge: bridge,
           mediaAttachmentRepository: mediaAttachmentRepository,
           mediaFileManager: mediaFileManager,
         );
+    Future<bool> retryOutgoingLinkedDirectMediaBlobMessage(
+      String messageId,
+    ) async {
+      // Once v108 exists, its immutable per-target envelopes are the sole
+      // network authority. Drain every media sibling directly; the singular
+      // owner lookup intentionally rejects plural generations.
+      final siblingMaps = await messageRepository.loadDirectTextFanoutSiblings(
+        messageId,
+      );
+      final mediaSiblings = siblingMaps
+          .map(DirectInboxCustodyOutboxEntry.fromMap)
+          .where(
+            (entry) =>
+                entry.contactAccountPeerId != null &&
+                entry.mediaBlobManifestHash != null &&
+                entry.mediaBlobExpiresAtMs != null,
+          )
+          .toList(growable: false);
+      if (mediaSiblings.isNotEmpty) {
+        var allCompleted = true;
+        for (final entry in mediaSiblings) {
+          final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+            entry: entry,
+            custodyRepository: messageRepository,
+            storeInAckCustodyInboxDetailed:
+                p2pService.storeInAckCustodyInboxDetailed,
+            storeInMediaExpiryBoundedInboxDetailed:
+                p2pService.storeInMediaExpiryBoundedInboxDetailed,
+          );
+          allCompleted = allCompleted && attempt.completed;
+        }
+        return allCompleted;
+      }
+
+      // Pre-v108 prepared/stored generations retain `upload_pending`
+      // attachments. Run the incumbent retrier against ONLY the message ids
+      // selected by the linked v114 loader; historical primary rows never
+      // enter this restricted runtime.
+      return await retryIncompleteUploads(
+            mediaAttachmentRepo: mediaAttachmentRepository,
+            messageRepo: messageRepository,
+            bridge: bridge,
+            p2pService: p2pService,
+            identityRepo: repository,
+            contactRepo: contactRepository,
+            mediaFileManager: mediaFileManager,
+            tryClaimUploadLease: (attachmentIds) =>
+                mediaUploadInFlightTracker.tryClaimAll(
+                  attachmentIds,
+                  source: MediaUploadTriggerSource.full,
+                ),
+            releaseUploadLease: mediaUploadInFlightTracker.release,
+            restrictToMessageIds: <String>{messageId},
+          ) >
+          0;
+    }
+
     final directMediaBlobCustodyDrain = DirectMediaBlobCustodyDrain(
       repository: mediaAttachmentRepository,
       incomingRepository: mediaAttachmentRepository,
@@ -4373,6 +4446,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       ),
       identityPeerId: () async => (await repository.loadIdentity())?.peerId,
       strictDownloadAckOwner: strictDirectMediaBlobDownloadAckOwner,
+      retryOutgoingLinkedMessage: retryOutgoingLinkedDirectMediaBlobMessage,
       // 362: the shared encrypted artifact is unlinked only by the LAST v114
       // sibling still referencing its exact (path, hash, size) proof; earlier
       // target retirements delete their row but must preserve the ciphertext
@@ -4456,6 +4530,33 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       return result.completed;
     }
 
+    // 362: the restricted linked runtime's strict-media converger. It reuses
+    // the ONE shared v111 lifecycle owner through its linked-scoped entry
+    // point, so a linked secondary converges only rows it owns and never the
+    // primary's historical single-target ones. Do NOT construct a second
+    // drain: the bootstrap phase contract freezes that constructor to exactly
+    // one occurrence by raw text scan, which is also why this comment must not
+    // spell the constructor out.
+    //
+    // Only the NETWORK leg is wired. The local-cleanup leg is deliberately
+    // left unsupplied: `runLocalCleanupBounded`'s orphan sweep builds its
+    // referenced-path set from a GLOBAL live-outgoing inventory, so pairing it
+    // with a linked-only page would classify primary-authored ciphertext as
+    // unreferenced and delete it.
+    Future<void> drainLinkedDirectMediaBlobCustody() async {
+      final result = await directMediaBlobCustodyDrain
+          .runNetworkBoundedLinked();
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'DIRECT_MEDIA_BLOB_CUSTODY_LINKED_NETWORK_DRAIN_RESULT',
+        details: <String, Object?>{
+          'completed': result.completed,
+          'retained': result.retained,
+          'failed': result.failed,
+        },
+      );
+    }
+
     final diagnosingDeleteDissolvedGroupShellAction =
         DiagnosingDeleteDissolvedGroupShellAction(
           inner: (groupId) => deleteGroupAndMessages(
@@ -4531,7 +4632,6 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       authorityRepository: accountMigrationAuthorityRepository,
       cutoverRepository: accountMigrationCutoverRepository,
     );
-    late final P2PServiceImpl p2pService;
     final accountMigrationTransferRuntime = AccountMigrationLocalTransferRuntime(
       discovery: localDiscovery,
       wsServer: localWsServer,
@@ -7196,6 +7296,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           startDeliveryReceiptListener: deliveryReceiptListener.start,
           drainOfflineInbox: p2pService.drainOfflineInbox,
           drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,
+          drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
         );
         return linkedServices.start();
       },
@@ -7361,6 +7462,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             roleAwareDeferredRuntimeStart.activeLinkedTransportPeerId != null,
         drainDirectBlobFreeLinkedOutboxes: drainDirectBlobFreeLinkedOutboxes,
         drainDirectMediaBlobCustody: drainDirectMediaBlobCustody,
+        // 362: the linked-scoped converger; distinct from the unrestricted
+        // drain on the line above, which stays the primary's.
+        drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
         pendingPostMediaUploadRetrier: pendingPostMediaUploadRetrier,
         pendingPostDeliveryRetrier: pendingPostDeliveryRetrier,
         pendingPostFollowOnRetrier: pendingPostFollowOnRetrier,

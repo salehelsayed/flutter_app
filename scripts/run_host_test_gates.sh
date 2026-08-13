@@ -32,6 +32,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/core/services/incoming_message_router_test.dart"
   "test/core/services/pending_message_retrier_upload_ordering_test.dart"
   "test/features/conversation/application/handle_incoming_chat_message_use_case_test.dart"
+  "test/features/conversation/application/direct_media_fanout_admission_test.dart"
   "test/features/conversation/application/chat_message_listener_test.dart"
   "test/features/conversation/application/outgoing_live_deadline_test.dart"
   "test/features/conversation/application/send_chat_message_use_case_test.dart"
@@ -85,6 +86,7 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   "test/features/conversation/application/received_media_action_controller_test.dart"
   "test/features/conversation/application/received_media_action_transport_boundary_test.dart"
   "test/features/conversation/presentation/screens/conversation_wired_test.dart"
+  "test/features/conversation/presentation/screens/direct_conversation_route_authority_contract_test.dart"
   # 294 DTR-15: shared compositional conversation-controller ownership,
   # lane-neutral mechanics, lifecycle, and exact facade/gate contracts.
   "test/features/conversation/presentation/controllers/conversation_controller_composition_contract_test.dart"

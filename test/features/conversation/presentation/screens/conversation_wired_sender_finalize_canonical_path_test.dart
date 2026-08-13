@@ -153,6 +153,20 @@ Future<void> _pumpUntil(
   expect(condition(), isTrue);
 }
 
+Future<void> _seedPersistedIncumbentContact(
+  MediaRepositoryRealDbFixture fixture,
+) => fixture.db
+    .insert('contacts', const <String, Object?>{
+      'peer_id': _contactPeerId,
+      'public_key': 'contact-public-key',
+      'rendezvous': '/dns4/relay/tcp/443/p2p/relay',
+      'username': 'Alice',
+      'signature': 'signature',
+      'scanned_at': '2026-07-20T09:00:00.000Z',
+      'ml_kem_public_key': 'contact-ml-kem-public',
+    })
+    .then((_) {});
+
 void main() {
   setUp(() {
     flowEventLoggingEnabled = false;
@@ -235,6 +249,7 @@ void main() {
           MediaRepositoryRealDbFixture.create,
         ))!;
         addTearDown(fixture.dispose);
+        await tester.runAsync(() => _seedPersistedIncumbentContact(fixture));
         final root = Directory.systemTemp.createTempSync(
           'sender_finalize_canonical_',
         );
@@ -854,6 +869,7 @@ void main() {
         MediaRepositoryRealDbFixture.create,
       ))!;
       addTearDown(fixture.dispose);
+      await tester.runAsync(() => _seedPersistedIncumbentContact(fixture));
       final root = Directory.systemTemp.createTempSync(
         'sender_prepare_refusal_',
       );
@@ -1058,6 +1074,7 @@ void main() {
         MediaRepositoryRealDbFixture.create,
       ))!;
       addTearDown(fixture.dispose);
+      await tester.runAsync(() => _seedPersistedIncumbentContact(fixture));
       await tester.runAsync(
         () => fixture.db.execute('''
           CREATE TRIGGER reject_private_optimistic_parent
@@ -1255,6 +1272,7 @@ void main() {
         () => MediaRepositoryRealDbFixture.create(lifecycleLock: lifecycleLock),
       ))!;
       addTearDown(fixture.dispose);
+      await tester.runAsync(() => _seedPersistedIncumbentContact(fixture));
       final root = Directory.systemTemp.createTempSync(
         'sender_contact_delete_parent_race_',
       );
@@ -1567,6 +1585,7 @@ void main() {
           MediaRepositoryRealDbFixture.create,
         ))!;
         addTearDown(fixture.dispose);
+        await tester.runAsync(() => _seedPersistedIncumbentContact(fixture));
         final root = Directory.systemTemp.createTempSync(
           'sender_failed_delete_guard_',
         );

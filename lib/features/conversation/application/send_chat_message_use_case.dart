@@ -14,7 +14,10 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
 import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart'
     show isExactV2DirectChatInitialEnvelope;
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
-    show DirectMediaFanoutTargetBinding, OutgoingDirectMediaCaptionEditLane;
+    show
+        DirectMediaFanoutStageAuthority,
+        DirectMediaFanoutTargetBinding,
+        OutgoingDirectMediaCaptionEditLane;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
@@ -568,15 +571,100 @@ PrivateMediaEligibility _privateMediaEligibilityForSend({
 /// supplied, the send may settle exclusively through the plural fanout stage —
 /// any shape/authority mismatch fails closed and never demotes to the
 /// single-target v108 stage.
+final class DirectLinkedMediaFanoutTargetAuthority {
+  const DirectLinkedMediaFanoutTargetAuthority({
+    required this.peerId,
+    required this.mlKemPublicKey,
+  });
+
+  final String peerId;
+  final String mlKemPublicKey;
+}
+
 final class DirectLinkedMediaFanoutContext {
-  const DirectLinkedMediaFanoutContext({
+  factory DirectLinkedMediaFanoutContext({
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot snapshot,
+    required Map<String, List<DirectMediaBlobCustodyRow>> targetRows,
+  }) => DirectLinkedMediaFanoutContext._(
+    contactAccountPeerId: contactAccountPeerId,
+    authority: DirectMediaFanoutStageAuthority.currentRosterSnapshot,
+    snapshot: snapshot,
+    targets: snapshot.targets
+        .map(
+          (target) => DirectLinkedMediaFanoutTargetAuthority(
+            peerId: target.peerId,
+            mlKemPublicKey: target.mlKemPublicKey,
+          ),
+        )
+        .toList(growable: false),
+    targetRows: targetRows,
+  );
+
+  const DirectLinkedMediaFanoutContext._({
     required this.contactAccountPeerId,
+    required this.authority,
     required this.snapshot,
+    required this.targets,
     required this.targetRows,
   });
 
+  /// Reconstructs restart authority solely from complete persisted v114 rows.
+  /// The logical account target, when present, is the canonical witness;
+  /// remaining physical peers are stable lexical order.
+  static DirectLinkedMediaFanoutContext? fromPersistedV114Survivors({
+    required String contactAccountPeerId,
+    required Map<String, List<DirectMediaBlobCustodyRow>> targetRows,
+  }) {
+    if (contactAccountPeerId.trim().isEmpty || targetRows.isEmpty) return null;
+    final targetsByPeer = <String, DirectLinkedMediaFanoutTargetAuthority>{};
+    for (final entry in targetRows.entries) {
+      final peerId = entry.key;
+      final rows = entry.value;
+      if (peerId.trim().isEmpty || rows.isEmpty) return null;
+      final key = rows.first.recipientMlKemPublicKey?.trim();
+      if (key == null ||
+          key.isEmpty ||
+          rows.any(
+            (row) =>
+                !row.isLinkedFanoutRow ||
+                row.contactAccountPeerId != contactAccountPeerId ||
+                row.recipientPeerId != peerId ||
+                row.recipientMlKemPublicKey != key ||
+                row.direction != DirectMediaBlobCustodyDirection.outgoing ||
+                row.state != DirectMediaBlobCustodyState.outgoingStored,
+          )) {
+        return null;
+      }
+      targetsByPeer[peerId] = DirectLinkedMediaFanoutTargetAuthority(
+        peerId: peerId,
+        mlKemPublicKey: key,
+      );
+    }
+    final orderedPeerIds = targetsByPeer.keys.toList()..sort();
+    if (orderedPeerIds.remove(contactAccountPeerId)) {
+      orderedPeerIds.insert(0, contactAccountPeerId);
+    }
+    return DirectLinkedMediaFanoutContext._(
+      contactAccountPeerId: contactAccountPeerId,
+      authority: DirectMediaFanoutStageAuthority.persistedV114Survivors,
+      snapshot: null,
+      targets: orderedPeerIds
+          .map((peerId) => targetsByPeer[peerId]!)
+          .toList(growable: false),
+      targetRows: Map<String, List<DirectMediaBlobCustodyRow>>.unmodifiable({
+        for (final peerId in orderedPeerIds)
+          peerId: List<DirectMediaBlobCustodyRow>.unmodifiable(
+            targetRows[peerId]!,
+          ),
+      }),
+    );
+  }
+
   final String contactAccountPeerId;
-  final DirectContactFanoutSnapshot snapshot;
+  final DirectMediaFanoutStageAuthority authority;
+  final DirectContactFanoutSnapshot? snapshot;
+  final List<DirectLinkedMediaFanoutTargetAuthority> targets;
 
   /// recipientPeerId -> that target's exact STORED v114 rows.
   final Map<String, List<DirectMediaBlobCustodyRow>> targetRows;
@@ -1110,6 +1198,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       directMediaCustodyCapability?.supportsDirectMediaInboxCustody == true
       ? directMediaCustodyCapability
       : null;
+  final directLinkedMediaFanoutCapability =
+      mediaAttachmentRepo is OutgoingDirectLinkedMediaBlobFanoutRepository
+      ? mediaAttachmentRepo as OutgoingDirectLinkedMediaBlobFanoutRepository
+      : null;
+  final ownsDirectLinkedMediaFanout =
+      directLinkedMediaFanout != null &&
+      directLinkedMediaFanoutCapability?.supportsDirectLinkedMediaBlobFanout ==
+          true;
 
   // 353: persisted media authority is consulted BEFORE any caller-derived
   // attachment gate. A caption-only EDIT of a proven strict generation takes
@@ -1315,6 +1411,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   final missingStrictMediaCustodyStore =
+      !ownsDirectLinkedMediaFanout &&
       (ownsDirectMediaInboxCustody || ownsDirectPrivateMediaInboxCustody) &&
       (effectiveStoreInAckCustodyInboxDetailed == null ||
           (effectiveHasCompleteStrictBlobManifest &&
@@ -1331,7 +1428,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
               directMutationLifecycleRepo == null) ||
           (ownsDirectMediaInboxCustody &&
               replayedDirectMediaCustody == null &&
-              directMediaCustodyRepo == null) ||
+              directMediaCustodyRepo == null &&
+              !ownsDirectLinkedMediaFanout) ||
           missingStrictMediaCustodyStore)) {
     emitFlowEvent(
       layer: 'FL',
@@ -1372,9 +1470,12 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
           directMutationLifecycleRepo != null) &&
       (!ownsDirectMediaInboxCustody ||
           replayedDirectMediaCustody != null ||
-          directMediaCustodyRepo != null) &&
+          directMediaCustodyRepo != null ||
+          ownsDirectLinkedMediaFanout) &&
       (replayedDirectMediaCustody != null ||
-          (bridge != null && recipientKey != null && recipientKey.isNotEmpty));
+          (bridge != null &&
+              (directLinkedMediaFanout != null ||
+                  (recipientKey != null && recipientKey.isNotEmpty))));
 
   // Preserve the historical pre-encryption return for paths that do not own
   // newly-authored direct-text custody, or cannot atomically acquire it. A
@@ -1391,7 +1492,9 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   }
 
   if (replayedDirectMediaCustody == null &&
-      (bridge == null || recipientKey == null || recipientKey.isEmpty)) {
+      (bridge == null ||
+          (directLinkedMediaFanout == null &&
+              (recipientKey == null || recipientKey.isEmpty)))) {
     emitFlowEvent(
       layer: 'FL',
       event: 'CHAT_MSG_SEND_ENCRYPTION_REQUIRED',
@@ -1549,9 +1652,8 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     // through the plural fanout stage. The persisted survivors ARE the
     // authority, so a producer that uploaded through the all-target owner
     // needs no caller-threaded context: it is self-assembled here from the
-    // stored rows plus the live snapshot (the plural stage requalifies that
-    // snapshot inside its transaction). Anything underivable — missing
-    // capability, unloadable snapshot, incoherent or unstored rows — refuses
+    // stored rows. Anything underivable — missing capability, incoherent or
+    // unstored rows — refuses
     // this singular path before encryption or network, and an unreadable
     // authority likewise fails closed.
     if (directLinkedMediaFanout == null &&
@@ -4316,9 +4418,8 @@ _authorDirectBlobFreeTextFanout({
 ///
 /// Survivors are retry/settlement authority: every row must be a STORED
 /// linked sibling of one logical contact equal to the send target, the
-/// repository must own the fanout capability, and the live snapshot must
-/// load. The plural v108 stage revalidates that snapshot inside its own
-/// transaction, so roster drift after this read still fails closed there.
+/// repository must own the fanout capability. No contact/roster resolver is
+/// consulted: the complete persisted recipient/key rows are the obligation.
 Future<DirectLinkedMediaFanoutContext?>
 _deriveLinkedMediaFanoutContextFromSurvivors({
   required List<DirectMediaBlobCustodyRow> rows,
@@ -4341,18 +4442,14 @@ _deriveLinkedMediaFanoutContextFromSurvivors({
       )) {
     return null;
   }
-  final snapshot = await fanoutRepository
-      .readDirectContactFanoutSnapshotForMedia(targetPeerId);
-  if (snapshot == null || snapshot.targets.isEmpty) return null;
   final targetRows = <String, List<DirectMediaBlobCustodyRow>>{};
   for (final row in rows) {
     targetRows
         .putIfAbsent(row.recipientPeerId!, () => <DirectMediaBlobCustodyRow>[])
         .add(row);
   }
-  return DirectLinkedMediaFanoutContext(
+  return DirectLinkedMediaFanoutContext.fromPersistedV114Survivors(
     contactAccountPeerId: targetPeerId,
-    snapshot: snapshot,
     targetRows: targetRows,
   );
 }
@@ -4398,14 +4495,32 @@ _authorDirectLinkedMediaFanout({
       mediaAttachmentRepo is OutgoingDirectLinkedMediaBlobFanoutRepository
       ? mediaAttachmentRepo as OutgoingDirectLinkedMediaBlobFanoutRepository
       : null;
+  // 362: the encrypted inner payload is authored by the logical account, but
+  // the outer envelope must name the node that actually authenticates the
+  // transport. On a primary those peers are equal; on a linked secondary they
+  // are deliberately distinct. Reusing [senderPeerId] here would make linked
+  // media bypass the same physical->logical authority enforced for blob-free
+  // events and would route delivery receipts to the dormant account mailbox.
+  final outerSenderTransportPeerId = p2pService.currentState.peerId;
   final snapshot = fanout.snapshot;
-  final targetPeerIds = snapshot.targets.map((target) => target.peerId).toSet();
+  final targets = fanout.targets;
+  final targetPeerIds = targets.map((target) => target.peerId).toSet();
+  final exactAuthorityShape = switch (fanout.authority) {
+    DirectMediaFanoutStageAuthority.currentRosterSnapshot =>
+      snapshot != null &&
+          snapshot.contactAccountPeerId == targetPeerId &&
+          snapshot.targets.length == targets.length,
+    DirectMediaFanoutStageAuthority.persistedV114Survivors => snapshot == null,
+  };
   if (fanoutRepository == null ||
       !fanoutRepository.supportsDirectLinkedMediaBlobFanout ||
+      outerSenderTransportPeerId == null ||
+      outerSenderTransportPeerId.trim().isEmpty ||
       fanout.contactAccountPeerId != targetPeerId ||
-      snapshot.contactAccountPeerId != targetPeerId ||
-      snapshot.targets.isEmpty ||
-      targetPeerIds.length != snapshot.targets.length ||
+      !exactAuthorityShape ||
+      targets.isEmpty ||
+      targetPeerIds.length != targets.length ||
+      fanout.targetRows.length != targets.length ||
       expectedParent.id != resolvedMessageId ||
       expectedParent.contactPeerId != targetPeerId ||
       expectedParent.directMediaCustodyIntentId == null) {
@@ -4433,15 +4548,15 @@ _authorDirectLinkedMediaFanout({
     markedParent = liveParent;
   }
 
-  // Per-target bindings ride the snapshot's exact target order. Each target's
-  // manifest/expiry come from ONLY that target's persisted STORED rows, and
-  // each envelope is encrypted with that row's exact persisted recipient key.
+  // Per-target bindings ride the selected authority's exact target order.
+  // Each target's manifest/expiry come from ONLY that target's persisted
+  // STORED rows, and each envelope is encrypted with that row's exact key.
   final innerJson = payload.toInnerJson();
   final expectedAttachmentIds = normalizedAttachments
       .map((attachment) => attachment.id)
       .toSet();
   final targetBindings = <DirectMediaFanoutTargetBinding>[];
-  for (final target in snapshot.targets) {
+  for (final target in targets) {
     final rows = fanout.targetRows[target.peerId];
     if (rows == null ||
         rows.length != normalizedAttachments.length ||
@@ -4505,9 +4620,10 @@ _authorDirectLinkedMediaFanout({
     targetBindings.add(
       DirectMediaFanoutTargetBinding(
         recipientPeerId: target.peerId,
+        recipientMlKemPublicKey: target.mlKemPublicKey,
         wireEnvelope: MessagePayload.buildEncryptedEnvelope(
           id: resolvedMessageId,
-          senderPeerId: senderPeerId,
+          senderPeerId: outerSenderTransportPeerId,
           senderUsername: senderUsername,
           kem: encryptResult['kem'] as String,
           ciphertext: encryptResult['ciphertext'] as String,
@@ -4548,7 +4664,9 @@ _authorDirectLinkedMediaFanout({
       expected: markedParent,
       staged: stagedAttempt,
       attachments: normalizedAttachments,
+      senderTransportPeerId: outerSenderTransportPeerId,
       contactAccountPeerId: targetPeerId,
+      authority: fanout.authority,
       expectedSnapshot: snapshot,
       targetBindings: targetBindings,
     );
