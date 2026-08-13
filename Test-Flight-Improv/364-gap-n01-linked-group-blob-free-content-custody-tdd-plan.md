@@ -26,6 +26,7 @@ Closure tier: five causal host IDs across four focused concurrent Flutter bundle
 | 2026-08-13 | Planning | Anchored Graphify planning context plus targeted source verification while Plan 363 is active | Contract drafted in prerequisite-blocked state. Pin the final Plan-363 audit SHA/graph and revalidate the stop conditions before any RED. |
 | 2026-08-13 | Independent TDD review | Formal review query; sender/retry, receive/runtime/UI, gate/non-vacuity and overengineering counterexamples | READY after bounded amendments. Recipient-survivor liveness, authority-order reconciliation, retry/transaction atomicity, selector/runtime reachability and proof non-vacuity are closed without expanding the one-kind/existing-owner/four-bundle boundary. |
 | 2026-08-13 | Prerequisite closure | Clean Plan-363 audit commit `bb2184fe07121a12d6515d95c32b019e1e8e1151`; current anchored TDD query at `d7be06567d488766`; exact API/kind/runtime/DB/inventory verification | `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`. First implementation action is the literal clean-tree/ancestry preflight, then all five Flutter IDs and both exact Go REDs. Do not run B1b until the Plan-363 node/relay allowlists are deployed and its bootstrap journey passes. |
+| 2026-08-13 | Plan-363 relay deployment follow-up | Exact linux/amd64 binary SHA-256 `1b2b6a3e1b2a44262754e5423a0ea73b3a19d3b7b8a593d31e07d4ec88ad7812`; Redis-backed systemd service; rollback artifact; live Android pair | The protected-kind binary is deployed and stable, but startup proves ACK-custody admission remains unset/default-off. `StoreAckCustody` rejects at that guard before the kind parser, so B1b was not relaunched into a deterministic failure. Plan 364 remains host-execution-ready; separate S2 admission authorization plus a passing Plan-363 B1b gate device acceptance, activation and release only. |
 
 ## Problem And Source-Backed Evidence
 
@@ -68,7 +69,7 @@ Stop and re-review before adding a second group selector, v115, a parallel conte
 
 ### Prerequisite, selector and rollout authority
 
-- Plan 363 is code-complete, post-execution audited and committed at `bb2184fe07121a12d6515d95c32b019e1e8e1151`; this exact baseline is the source of shared API names and authorizes Plan-364 host RED/GREEN development. Its undeployed protected-kind allowlists still block B1b/device acceptance, activation and release.
+- Plan 363 is code-complete, post-execution audited and committed at `bb2184fe07121a12d6515d95c32b019e1e8e1151`; this exact baseline is the source of shared API names and authorizes Plan-364 host RED/GREEN development. Its protected-kind relay binary is deployed, while production ACK-custody admission remains default-off and still blocks B1b/device acceptance, activation and release.
 - Add no new selector. New strict content requires exactly `DirectLinkedDeviceSelector.allowsLinkedDeviceAuthoring && kMultiDeviceSyncEnabled`; `DirectLinkedEventFanoutSelector` is direct-contact-only and may not authorize group content. A Plan-363-initialized explicit self-device roster selects strict custody for both an ordinary primary and an active linked secondary. Check persisted device authority before fallback: initialized authority with either selector disabled, a missing strict signer or missing strict store refuses; only an uninitialized ordinary-primary group retains incumbent behavior byte-for-byte.
 - Existing strict content rows drain after selector rollback. A disabled/missing selector may block new authoring but may not rebuild, demote to aggregate group storage, publish without custody, or delete committed retry authority.
 - Reader/parser/relay support deploys before authoring activation. Mixed-version negotiation, cohorts, telemetry, kill switches, legacy retirement and release are later WP-07 work.
@@ -360,7 +361,7 @@ bash scripts/test/relay_ack_custody_rollout_contract_test.sh
 
 Extend the existing group Go-tail regex to include `TC364`. In `relay_ack_custody_rollout_contract_test.sh`, extract the body of `run_group_forwarding_go_bridge_gate`, require exactly one `go test ./bridge ./node -run` selector there, and exact-match that selector with `TC364`; a comment or unrelated occurrence must not pass. Extend `TestDispatchInboxAckCustodyContract` for bridge allowlist threading. The relay test remains automatically selected by `^TestRelayNotificationClosure_`. The existing B1b registration/discovery contract is unchanged and is not rerun unless implementation actually edits its dispatcher/discovery registry. Do not add a new Go tail, run a standalone group-media gate, or run `groups` twice.
 
-After the Plan-363 node/relay protected-kind allowlists are deployed and its B1b production bootstrap/reopen journey passes, extend that same scenario with one offline blob-free discussion delivery, one reaction ADD/REMOVE round trip, then its existing protected terminal authority. This deployment prerequisite blocks only the device leg, not Plan-364 host development. Host tests cover announcement policy; no second announcement/device scenario is needed. Resolve and pin the live matrix at execution time:
+After separately authorized production ACK-custody admission is enabled and Plan 363's B1b production bootstrap/reopen journey passes, extend that same scenario with one offline blob-free discussion delivery, one reaction ADD/REMOVE round trip, then its existing protected terminal authority. The protected-kind binary is already deployed; the remaining admission/B1b prerequisite blocks only the device leg, not Plan-364 host development. Host tests cover announcement policy; no second announcement/device scenario is needed. Resolve and pin the live matrix at execution time:
 
 ```bash
 set -euo pipefail
@@ -481,13 +482,14 @@ protected blob-free content kind over Plan 363's authority foundation, with
 existing message/reaction/event-log owners, a typed receive decision and one
 narrow linked conversation. `$tdd-review` finds the contract coherent,
 sufficient and necessary-only after the recorded amendments. Plan-363's clean
-audit closure satisfies the host-development prerequisite; the relay allowlist
-deployment remains a separate blocker for B1b, activation and release only.
+audit closure satisfies the host-development prerequisite; default-off
+production ACK-custody admission and B1b remain separate blockers for device
+acceptance, activation and release only.
 
 ## Handoff
 
 - Current state: `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`; Plan 363 is pinned at `bb2184fe07121a12d6515d95c32b019e1e8e1151`, Graphify `d7be06567d488766`, DB v114 and `GROUP_TESTS` 244/244.
-- Live-acceptance action: deploy the Plan-363 node/relay allowlists and rerun B1b before Plan-364 device acceptance, activation or release. Do not downgrade to aggregate storage while deployment is pending.
+- Live-acceptance action: obtain separate S2 production-admission authorization/operations evidence, enable ACK custody on the already deployed Redis-backed relay, and rerun Plan-363 B1b before Plan-364 device acceptance, activation or release. Do not downgrade to aggregate storage while admission is pending.
 - First execution action: run the literal preflight, then author `TC-364-01a`, `01b`, `02a`, `03a`, `04a` and both exact Go REDs before production wiring.
 - Runtime economy: run independent Flutter files concurrently with `--concurrency=4` whenever supported to speed feedback; keep mutations, curated gates and the device pair serial.
 - Successor work: Plan 365 owns group media/blob/voice and per-final-recipient blob lifetime. Later work owns group history/no-intent, activation, mixed-version rollout, legacy retirement and final GAP-N01/release closure.
