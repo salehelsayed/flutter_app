@@ -13,6 +13,12 @@ typedef GroupMediaDeletePrepareFn =
       required String operationId,
     });
 
+/// Runs after the local tombstone/journal transaction and before ordinary
+/// file/key cleanup. `false` means at least one strict incoming blob still
+/// lacks a verified relay source, so its journal entry must remain retryable.
+typedef TerminalizeDeletedStrictGroupMediaCustody =
+    Future<bool> Function({required String groupId, required String messageId});
+
 /// 235: the production whole-message Delete-for-me coordinator.
 ///
 /// One confirmed delete = ONE operation UUID shared by every journaled
@@ -25,6 +31,7 @@ class DeleteGroupMediaForMeUseCase implements GroupMediaDeleteForMeCoordinator {
   DeleteGroupMediaForMeUseCase({
     required this.prepare,
     required this.runCleanup,
+    this.terminalizeStrictCustody,
     String Function()? operationIdFactory,
   }) : operationIdFactory = operationIdFactory ?? (() => const Uuid().v4());
 
@@ -34,6 +41,8 @@ class DeleteGroupMediaForMeUseCase implements GroupMediaDeleteForMeCoordinator {
   /// ([GroupMediaDeletionJournalReconciler.runBounded]); errors are isolated
   /// per item inside — a cleanup failure never un-deletes the message.
   final Future<void> Function() runCleanup;
+
+  final TerminalizeDeletedStrictGroupMediaCustody? terminalizeStrictCustody;
 
   final String Function() operationIdFactory;
 
@@ -62,6 +71,30 @@ class DeleteGroupMediaForMeUseCase implements GroupMediaDeleteForMeCoordinator {
         },
       );
       if (result.prepared) {
+        final terminalize = terminalizeStrictCustody;
+        if (terminalize != null) {
+          try {
+            final cleanupIsSafe = await terminalize(
+              groupId: groupId,
+              messageId: messageId,
+            );
+            if (!cleanupIsSafe) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'GROUP_MEDIA_DELETE_STRICT_CUSTODY_DEFERRED',
+                details: {'reason': 'source_not_yet_verified'},
+              );
+              return;
+            }
+          } catch (e) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_MEDIA_DELETE_STRICT_CUSTODY_DEFERRED',
+              details: {'error': e.runtimeType.toString()},
+            );
+            return;
+          }
+        }
         try {
           await runCleanup();
         } catch (e) {

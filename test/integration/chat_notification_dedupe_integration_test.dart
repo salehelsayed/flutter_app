@@ -98,7 +98,10 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 250));
 
       expect(notificationService.shown, isEmpty);
-      expect(messageRepo.lastSavedMessage?.id, 'msg-remote-dedupe-1');
+      expect(
+        (await messageRepo.getMessage('msg-remote-dedupe-1'))?.id,
+        'msg-remote-dedupe-1',
+      );
       expect(
         await gate.consumeIfRecentAnnouncement(
           payload: peerId,

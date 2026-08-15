@@ -71,6 +71,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   DirectUploadRetryProjectionRepository? uploadRetryProjectionRepo,
   DirectMediaBlobArtifactStore? directMediaBlobArtifactStore,
   PreparedDirectMediaBlobCustodyCoordinator? directMediaBlobCustodyCoordinator,
+  DirectMediaFanoutAdmission? mediaAdmission,
   bool directMediaBlobCustodyClientEnabled =
       kDirectMediaBlobCustodyClientEnabled,
 }) async {
@@ -106,6 +107,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     required List<MediaAttachment> attachments,
     required int uploadMs,
     required bool cleanupPreparedSource,
+    DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
   }) async {
     final voiceSendStopwatch = Stopwatch()..start();
     final (result, message) = await sendChatMessage(
@@ -123,6 +125,7 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       messageId: messageId,
       preassignedMessageIdIsFresh: preassignedMessageIdIsFresh,
       timestamp: timestamp,
+      directLinkedMediaFanout: directLinkedMediaFanout,
       emitTimingEvent: false,
     );
 
@@ -464,19 +467,38 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
   // fall straight through to a single-target `runUploadMedia` without ever
   // reading the roster.
   //
-  // Fresh voice has no plural fanout owner, so an initialized roster refuses
-  // rather than reaching one target. Survivors are exempt by contract — a
-  // committed generation replays exact persisted bytes and must never
-  // re-resolve the roster. `preparedVoiceHasStrictGeneration` is itself
-  // selector-derived, but a rolled-back persisted generation cannot reach here
-  // in a selector-off build: it fails the exact-prepared-identity gate above
-  // first, so the survivor carve-out cannot be silently widened by the flag.
+  // Fresh linked voice requires BOTH the base blob-custody repository used by
+  // the coordinator and the plural v114/v108 surface. Treating the latter
+  // alone as sufficient could authorize linked authority here and then fall
+  // through to the legacy uploader when the coordinator is unavailable.
+  // Survivors are exempt by contract — a committed generation replays exact
+  // persisted bytes and must never re-resolve the roster.
+  final strictRepository =
+      directMediaBlobCustodyClientEnabled &&
+          preparedVoiceParent != null &&
+          preparedVoiceAttachment != null
+      ? _directMediaBlobRepository(mediaAttachmentRepo)
+      : null;
+  final fanoutCapableRepository =
+      mediaAttachmentRepo is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+      (mediaAttachmentRepo as OutgoingDirectLinkedMediaBlobFanoutRepository)
+          .supportsDirectLinkedMediaBlobFanout;
+  final canExecuteFreshLinkedFanout =
+      strictRepository != null && fanoutCapableRepository;
+  DirectMediaFanoutAdmission? voiceAdmission;
   if (!preparedVoiceHasStrictGeneration) {
-    final voiceAdmission = await resolveDirectMediaFanoutAdmission(
-      mediaAttachmentRepository: mediaAttachmentRepo,
-      contactAccountPeerId: targetPeerId,
-      canServeLinkedFanout: false,
-    );
+    voiceAdmission =
+        mediaAdmission ??
+        await resolveDirectMediaFanoutAdmission(
+          mediaAttachmentRepository: mediaAttachmentRepo,
+          contactAccountPeerId: targetPeerId,
+          canServeLinkedFanout: canExecuteFreshLinkedFanout,
+        );
+    if (voiceAdmission.requiresLinkedFanout &&
+        voiceAdmission.snapshot?.contactAccountPeerId != targetPeerId) {
+      emitVoiceTiming(outcome: 'media_fanout_snapshot_refused');
+      return (SendVoiceMessageResult.sendFailed, null);
+    }
     if (voiceAdmission.refuses) {
       emitFlowEvent(
         layer: 'FL',
@@ -491,18 +513,21 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
       emitVoiceTiming(outcome: 'media_fanout_singular_refused');
       return (SendVoiceMessageResult.sendFailed, null);
     }
+    if (voiceAdmission.requiresLinkedFanout && !canExecuteFreshLinkedFanout) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'VOICE_SEND_MEDIA_FANOUT_OWNER_REFUSED',
+        details: const {'reason': 'linked_fanout_owner_unavailable'},
+      );
+      emitVoiceTiming(outcome: 'media_fanout_owner_refused');
+      return (SendVoiceMessageResult.sendFailed, null);
+    }
   }
 
   // 2. Upload
   emitFlowEvent(layer: 'FL', event: 'VOICE_UPLOAD_START', details: {});
 
   final uploadStopwatch = Stopwatch()..start();
-  final strictRepository =
-      directMediaBlobCustodyClientEnabled &&
-          preparedVoiceParent != null &&
-          preparedVoiceAttachment != null
-      ? _directMediaBlobRepository(mediaAttachmentRepo)
-      : null;
   if (strictRepository != null) {
     final coordinator =
         directMediaBlobCustodyCoordinator ??
@@ -516,6 +541,58 @@ Future<(SendVoiceMessageResult, ConversationMessage?)> sendVoiceMessage({
     // 362: the fanout admission boundary above now governs BOTH this strict
     // lane and the legacy singular lane, so the old flag-gated guard that
     // used to sit here is gone.
+    if (!preparedVoiceHasStrictGeneration &&
+        voiceAdmission?.requiresLinkedFanout == true) {
+      final snapshot = voiceAdmission!.snapshot!;
+      final fanoutResult = await coordinator.prepareAndUploadFreshFanout(
+        bridge: bridge,
+        identityPeerId: senderPeerId,
+        contactAccountPeerId: targetPeerId,
+        snapshot: snapshot,
+        expectedParent: parent,
+        sources: <PreparedDirectMediaBlobSource>[
+          PreparedDirectMediaBlobSource(
+            attachment: attachment,
+            plaintextPath: recording.filePath,
+            preparedArtifact: preparedArtifact,
+          ),
+        ],
+        onGenerationReady: p2pService.isLocalPeer(targetPeerId)
+            ? (artifacts) => _sendStrictVoiceOverLan(
+                p2pService: p2pService,
+                senderPeerId: senderPeerId,
+                targetPeerId: targetPeerId,
+                durationMs: recording.durationMs,
+                artifacts: artifacts,
+              )
+            : null,
+      );
+      uploadStopwatch.stop();
+      if (fanoutResult.isComplete) {
+        return sendCompletedVoiceProjection(
+          attachments: fanoutResult.attachments,
+          uploadMs: uploadStopwatch.elapsedMilliseconds,
+          cleanupPreparedSource: false,
+          directLinkedMediaFanout: DirectLinkedMediaFanoutContext(
+            contactAccountPeerId: targetPeerId,
+            snapshot: snapshot,
+            targetRows: fanoutResult.targetRows,
+          ),
+        );
+      }
+      emitVoiceTiming(
+        outcome:
+            fanoutResult.state == PreparedDirectMediaBlobUploadState.retained
+            ? 'strict_upload_queued'
+            : 'strict_generation_refused',
+      );
+      return (
+        fanoutResult.state == PreparedDirectMediaBlobUploadState.retained
+            ? SendVoiceMessageResult.uploadQueued
+            : SendVoiceMessageResult.sendFailed,
+        null,
+      );
+    }
     final strictResult = preparedVoiceHasStrictGeneration
         ? await coordinator.reopenAndUpload(
             bridge: bridge,

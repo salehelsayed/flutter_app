@@ -66,11 +66,53 @@ require_fixed 'TestDispatchInboxAckCustodyContract' "$GATE_SCRIPT"
 require_fixed 'TestInboxStoreMediaExpiryCeilingBridgeContract' "$GATE_SCRIPT"
 require_fixed 'TestRelayNotificationClosure_DirectMediaEnvelopeExpiryCeiling' "$GATE_SCRIPT"
 require_fixed 'TestRelayNotificationClosure_DirectMutationCustody' "$GATE_SCRIPT"
-require_fixed "go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363'" "$GATE_SCRIPT"
+group_forwarding_gate_body="$(awk '
+  /^run_group_forwarding_go_bridge_gate\(\) \{/ { in_gate = 1; next }
+  in_gate && /^}/ { exit }
+  in_gate { print }
+' "$GATE_SCRIPT")"
+group_forwarding_go_selectors="$(printf '%s\n' "$group_forwarding_gate_body" |
+  rg -F "go test ./bridge ./node -run " || true)"
+[ "$(printf '%s\n' "$group_forwarding_go_selectors" | rg -c . || true)" -eq 1 ] ||
+  fail 'group forwarding gate must contain exactly one bridge/node Go selector'
+printf '%s\n' "$group_forwarding_go_selectors" |
+  rg -Fxq "  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363|TC364|TC365' -count=1)" ||
+  fail 'group forwarding bridge/node selector must exact-match the permanent TC365 tail'
 require_fixed 'TestTC363GroupProtectedCustodyKinds' \
   go-mknoon/node/inbox_ack_custody_test.go
 require_fixed 'TestRelayNotificationClosure_GroupProtectedCustodyKinds' \
   go-relay-server/ack_custody_protocol_test.go
+require_fixed 'TestTC364GroupContentProtectedCustody' \
+  go-mknoon/node/inbox_ack_custody_test.go
+require_fixed 'TestRelayNotificationClosure_GroupContentProtectedCustody' \
+  go-relay-server/ack_custody_protocol_test.go
+require_fixed 'TestTC365GroupMediaBlobCustody' \
+  go-mknoon/node/media_custody_test.go
+require_fixed 'TestTC365GroupMediaBlobCustody' \
+  go-mknoon/bridge/media_custody_test.go
+require_fixed 'TestRelayNotificationClosure_GroupMediaBlobCustody' \
+  go-relay-server/ack_custody_protocol_test.go
+
+bridge_tc365_tests="$(
+  cd go-mknoon
+  GOTOOLCHAIN=go1.25.0 go test ./bridge -list '^TestTC365GroupMediaBlobCustody$'
+)"
+printf '%s\n' "$bridge_tc365_tests" | rg -Fxq 'TestTC365GroupMediaBlobCustody' ||
+  fail 'bridge TC365 test is not registered'
+node_tc365_tests="$(
+  cd go-mknoon
+  GOTOOLCHAIN=go1.25.0 go test ./node -list '^TestTC365GroupMediaBlobCustody$'
+)"
+printf '%s\n' "$node_tc365_tests" | rg -Fxq 'TestTC365GroupMediaBlobCustody' ||
+  fail 'node TC365 test is not registered'
+relay_tc365_tests="$(
+  cd go-relay-server
+  GOTOOLCHAIN=go1.25.0 go test . -list '^TestRelayNotificationClosure_GroupMediaBlobCustody$'
+)"
+printf '%s\n' "$relay_tc365_tests" |
+  rg -Fxq 'TestRelayNotificationClosure_GroupMediaBlobCustody' ||
+  fail 'relay notification-closure TC365 test is not registered'
+
 require_fixed 'TestAckCustodyMixedVersionMatrix' "$GATE_SCRIPT"
 require_fixed 'TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace' "$GATE_SCRIPT"
 require_fixed 'go_binding_staleness_contract_test.sh' "$GATE_SCRIPT"

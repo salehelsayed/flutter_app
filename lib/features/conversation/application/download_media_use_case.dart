@@ -23,6 +23,7 @@ import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/application/strict_group_media_blob_download_ack_owner.dart';
 import 'package:path/path.dart' as p;
 
 import 'private_media_action_eligibility.dart';
@@ -786,13 +787,41 @@ Future<MediaAttachment?> downloadMedia({
           return null;
         }
       }
+      final privateGroupParentId = currentParent.id;
       final persisted = await mediaAttachmentRepo.getAttachmentsForMessage(
-        currentParent.id,
+        privateGroupParentId,
         owner: MediaOwnerLane.group,
       );
       final exactRows = persisted.where((item) => item.id == attachment.id);
       if (exactRows.length != 1) return null;
       final exact = exactRows.single;
+      final groupCustodyRepository =
+          mediaAttachmentRepo is GroupMediaBlobCustodyRepository
+          ? mediaAttachmentRepo as GroupMediaBlobCustodyRepository
+          : null;
+      final strictRows =
+          groupCustodyRepository != null &&
+              groupCustodyRepository.supportsGroupMediaBlobCustody
+          ? await groupCustodyRepository.loadGroupMediaBlobCustodyForMessage(
+              groupId: contactPeerId,
+              messageId: privateGroupParentId,
+            )
+          : const <DirectMediaBlobCustodyRow>[];
+      if (attachment.groupMediaBlobCustodyFingerprint != null ||
+          exact.groupMediaBlobCustodyFingerprint != null ||
+          strictRows.any(
+            (row) =>
+                row.ownerLane == MediaBlobCustodyOwnerLane.group &&
+                row.groupId == contactPeerId &&
+                row.messageId == privateGroupParentId &&
+                row.attachmentId == exact.id &&
+                row.direction == DirectMediaBlobCustodyDirection.incoming,
+          )) {
+        // Plan 365 authoring admits only ordinary group media. A crossed
+        // strict fingerprint under private-media lifecycle is corruption and
+        // cannot be reinterpreted by that lane's proof-less transport.
+        return null;
+      }
       if (exact.messageId != attachment.messageId ||
           exact.ownerLane != MediaOwnerLane.group ||
           exact.mime != attachment.mime ||
@@ -816,8 +845,66 @@ Future<MediaAttachment?> downloadMedia({
       );
       directPrivateRuntime = _GroupPrivateCleanupRuntimeAdapter(groupRuntime);
     } else {
-      if (!currentParent.isIncoming ||
-          mediaAttachmentRepo is! OrdinaryGroupMediaDownloadFailureRepository) {
+      if (!currentParent.isIncoming) {
+        return null;
+      }
+      final currentParentId = currentParent.id;
+      // Plan 365: the durable group fingerprint/ledger is a one-way routing
+      // discriminator. Resolve it before any ordinary-group claim or legacy
+      // download can run. A crossed/missing strict projection fails closed;
+      // it never falls through to the proof-less `allowedPeers` transport.
+      final currentAttachments = await mediaAttachmentRepo
+          .getAttachmentsForMessage(
+            currentParentId,
+            owner: MediaOwnerLane.group,
+          );
+      final exactAttachments = currentAttachments.where(
+        (candidate) => candidate.id == attachment.id,
+      );
+      if (exactAttachments.length != 1) return null;
+      final exactAttachment = exactAttachments.single;
+      final groupCustodyRepository =
+          mediaAttachmentRepo is GroupMediaBlobCustodyRepository
+          ? mediaAttachmentRepo as GroupMediaBlobCustodyRepository
+          : null;
+      final strictRows =
+          groupCustodyRepository != null &&
+              groupCustodyRepository.supportsGroupMediaBlobCustody
+          ? await groupCustodyRepository.loadGroupMediaBlobCustodyForMessage(
+              groupId: contactPeerId,
+              messageId: currentParentId,
+            )
+          : const <DirectMediaBlobCustodyRow>[];
+      final hasStrictRow = strictRows.any(
+        (row) =>
+            row.ownerLane == MediaBlobCustodyOwnerLane.group &&
+            row.groupId == contactPeerId &&
+            row.messageId == currentParentId &&
+            row.attachmentId == exactAttachment.id &&
+            row.direction == DirectMediaBlobCustodyDirection.incoming,
+      );
+      final hasStrictSignal =
+          attachment.groupMediaBlobCustodyFingerprint != null ||
+          exactAttachment.groupMediaBlobCustodyFingerprint != null ||
+          hasStrictRow;
+      if (hasStrictSignal) {
+        if (groupCustodyRepository == null ||
+            !groupCustodyRepository.supportsGroupMediaBlobCustody ||
+            exactAttachment.groupMediaBlobCustodyFingerprint == null) {
+          return null;
+        }
+        return StrictGroupMediaBlobDownloadAckOwner(
+          bridge: bridge,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+          now: () =>
+              DateTime.fromMillisecondsSinceEpoch(currentNowMs(), isUtc: true),
+        ).downloadAndAcknowledge(
+          attachment: exactAttachment,
+          groupId: contactPeerId,
+        );
+      }
+      if (mediaAttachmentRepo is! OrdinaryGroupMediaDownloadFailureRepository) {
         return null;
       }
       ordinaryGroupDownloadFailureRepo =

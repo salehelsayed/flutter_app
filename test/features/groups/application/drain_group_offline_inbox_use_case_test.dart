@@ -3703,6 +3703,180 @@ void main() {
   );
 
   test(
+    'TC-366-04a listener and fallback history repair are locally read and notification inert',
+    () async {
+      await saveDefaultReplayKey();
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-good',
+          username: 'Good Source',
+          role: MemberRole.reader,
+          joinedAt: DateTime.utc(2026, 5, 1),
+        ),
+      );
+      final historyRepo = _InMemoryGroupHistoryGapRepairRepository();
+      final outbox = _DrainNotificationDisplayOutbox();
+      final notifications = FakeNotificationService();
+      final listener = GroupMessageListener(
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        bridge: bridge,
+        getSelfPeerId: () async => 'peer-local',
+        notificationService: notifications,
+        groupConversationTracker: ActiveConversationTracker(),
+        getAppLifecycleState: () => AppLifecycleState.paused,
+        notificationDisplayOutbox: outbox,
+      );
+      addTearDown(listener.dispose);
+
+      final duplicateReadAt = DateTime.utc(2026, 8, 14, 8, 30);
+      final duplicateSentAt = DateTime.utc(2026, 8, 14, 8, 0);
+      await msgRepo.saveMessage(
+        GroupMessage(
+          id: 'tc366-history-listener-duplicate',
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          transportPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'Canonical repaired duplicate',
+          timestamp: duplicateSentAt,
+          keyGeneration: 1,
+          status: 'delivered',
+          isIncoming: true,
+          readAt: duplicateReadAt,
+          createdAt: duplicateSentAt,
+        ),
+      );
+
+      final listenerRepair = <Map<String, dynamic>>[
+        await signedRelayMessage(
+          id: 'tc366-history-listener-fresh',
+          text: 'Fresh listener repair',
+          timestamp: DateTime.utc(2026, 8, 14, 8, 1),
+        ),
+        await signedRelayMessage(
+          id: 'tc366-history-listener-duplicate',
+          text: 'Canonical repaired duplicate',
+          timestamp: duplicateSentAt,
+        ),
+      ];
+      final listenerHash = computeGroupHistoryRangeHash(listenerRepair);
+      bridge.addPage(
+        'group-1',
+        '',
+        const <Map<String, dynamic>>[],
+        '',
+        historyGaps: [
+          historyGap(
+            expectedRangeHash: listenerHash,
+            gapId: 'tc366-listener-gap',
+          ),
+        ],
+      );
+
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        historyGapRepairRepo: historyRepo,
+        selfPeerId: 'peer-local',
+        requestHistoryRepairRange:
+            ({required gap, required sourcePeerId, int limit = 50}) async =>
+                GroupHistoryRepairRangeResult(
+                  groupId: gap.groupId,
+                  gapId: gap.gapId,
+                  sourcePeerId: sourcePeerId,
+                  rangeHash: gap.expectedRangeHash,
+                  headMessageId: gap.expectedHeadMessageId,
+                  messages: listenerRepair,
+                ),
+      );
+
+      expect(
+        (await msgRepo.getMessage('tc366-history-listener-fresh'))?.readAt,
+        isNotNull,
+      );
+      expect(
+        (await msgRepo.getMessage('tc366-history-listener-duplicate'))?.readAt,
+        duplicateReadAt,
+        reason: 'repair dedup must preserve the canonical local read stamp',
+      );
+      expect(outbox.stageAttempts, 0);
+      expect(outbox.entries, isEmpty);
+      expect(notifications.shown, isEmpty);
+
+      final fallbackRepair = <Map<String, dynamic>>[
+        await signedRelayMessage(
+          id: 'tc366-history-fallback-fresh',
+          text: 'Fresh fallback repair',
+          timestamp: DateTime.utc(2026, 8, 14, 8, 2),
+        ),
+      ];
+      final fallbackHash = computeGroupHistoryRangeHash(fallbackRepair);
+      final fallbackCursor = await msgRepo.getInboxCursor('group-1') ?? '';
+      bridge.addPage(
+        'group-1',
+        fallbackCursor,
+        const <Map<String, dynamic>>[],
+        '',
+        historyGaps: [
+          historyGap(
+            expectedRangeHash: fallbackHash,
+            gapId: 'tc366-fallback-gap',
+          ),
+        ],
+      );
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        historyGapRepairRepo: historyRepo,
+        selfPeerId: 'peer-local',
+        requestHistoryRepairRange:
+            ({required gap, required sourcePeerId, int limit = 50}) async =>
+                GroupHistoryRepairRangeResult(
+                  groupId: gap.groupId,
+                  gapId: gap.gapId,
+                  sourcePeerId: sourcePeerId,
+                  rangeHash: gap.expectedRangeHash,
+                  headMessageId: gap.expectedHeadMessageId,
+                  messages: fallbackRepair,
+                ),
+      );
+      expect(
+        (await msgRepo.getMessage('tc366-history-fallback-fresh'))?.readAt,
+        isNotNull,
+      );
+
+      final ordinary = await signedRelayMessage(
+        id: 'tc366-ordinary-replay',
+        text: 'Ordinary missed replay',
+        timestamp: DateTime.utc(2026, 8, 14, 8, 3),
+      );
+      final ordinaryCursor = await msgRepo.getInboxCursor('group-1') ?? '';
+      bridge.addPage('group-1', ordinaryCursor, [ordinary, ordinary], '');
+      await drainGroupOfflineInbox(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupMessageListener: listener,
+        selfPeerId: 'peer-local',
+      );
+
+      expect(
+        (await msgRepo.getMessage('tc366-ordinary-replay'))?.readAt,
+        isNull,
+        reason: 'ordinary replay remains unread',
+      );
+      expect(outbox.stageAttempts, 1);
+      expect(notifications.shown, hasLength(1));
+      expect(notifications.shown.single.payload, contains('tc366-ordinary'));
+    },
+  );
+
+  test(
     'loaded history repair source request is skipped after B3 or completes before B3 without routing stale history',
     () async {
       await saveDefaultReplayKey();

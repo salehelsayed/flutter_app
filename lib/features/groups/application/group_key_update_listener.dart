@@ -100,11 +100,14 @@ class GroupKeyUpdateListener {
     ChatMessage message, {
     required VerifiedProtectedGroupAuthorityReplay authority,
     bool authorityPhaseHeld = false,
+    void Function(GroupPendingKeyRepairRetryRequest request)?
+    deferPendingRepair,
   }) {
     return _handleMessage(
       message,
       authorityPhaseHeld: authorityPhaseHeld,
       protectedAuthorityReplay: authority,
+      deferPendingRepair: deferPendingRepair,
     );
   }
 
@@ -113,6 +116,8 @@ class GroupKeyUpdateListener {
     bool authorityPhaseHeld = false,
     Map<String, dynamic>? decodedKeyData,
     VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
+    void Function(GroupPendingKeyRepairRetryRequest request)?
+    deferPendingRepair,
   }) async {
     try {
       late final Map<String, dynamic> keyData;
@@ -154,6 +159,7 @@ class GroupKeyUpdateListener {
 
       final groupId = keyData['groupId'] as String;
       if (!authorityPhaseHeld) {
+        GroupPendingKeyRepairRetryRequest? pendingRepair;
         await runGroupAuthorityPhase<void>(
           groupId: groupId,
           action: () => _handleMessage(
@@ -161,8 +167,18 @@ class GroupKeyUpdateListener {
             authorityPhaseHeld: true,
             decodedKeyData: keyData,
             protectedAuthorityReplay: protectedAuthorityReplay,
+            deferPendingRepair: (request) => pendingRepair = request,
           ),
         );
+        final request = pendingRepair;
+        if (request != null) {
+          final defer = deferPendingRepair;
+          if (defer != null) {
+            defer(request);
+          } else {
+            await _retryPendingGroupKeyRepairs?.call(request);
+          }
+        }
         return;
       }
       final keyGeneration = keyData['keyGeneration'] as int;
@@ -569,32 +585,42 @@ class GroupKeyUpdateListener {
             verifiedAudit.auditHash;
       }
 
-      try {
-        await callGroupUpdateKey(
-          _bridge,
-          groupId: groupId,
-          groupKey: encryptedKey,
-          keyEpoch: keyGeneration,
-        );
-      } catch (e) {
+      Object? updateKeyError;
+      await runGroupMembershipActionLocked<void>(
+        groupId: groupId,
+        action: () async {
+          try {
+            await callGroupUpdateKey(
+              _bridge,
+              groupId: groupId,
+              groupKey: encryptedKey,
+              keyEpoch: keyGeneration,
+            );
+          } catch (error) {
+            updateKeyError = error;
+            return;
+          }
+          await _groupRepo.saveKey(keyInfo);
+        },
+      );
+      final updateError = updateKeyError;
+      if (updateError != null) {
         emitFlowEvent(
           layer: 'FL',
           event: 'GROUP_KEY_UPDATE_LISTENER_UPDATE_KEY_FAILED',
           details: {
             'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
             'keyGeneration': keyGeneration,
-            'error': e.toString(),
+            'error': updateError.toString(),
           },
         );
         await _requestRepairAfterUpdateKeyFailure(
           groupId: groupId,
           keyGeneration: keyGeneration,
-          error: e.toString(),
+          error: updateError.toString(),
         );
         return;
       }
-
-      await _groupRepo.saveKey(keyInfo);
 
       emitFlowEvent(
         layer: 'FL',
@@ -604,7 +630,7 @@ class GroupKeyUpdateListener {
           'keyGeneration': keyGeneration,
         },
       );
-      await _retryPendingGroupKeyRepairs?.call(
+      deferPendingRepair?.call(
         GroupPendingKeyRepairRetryRequest(
           groupId: groupId,
           keyEpoch: keyGeneration,

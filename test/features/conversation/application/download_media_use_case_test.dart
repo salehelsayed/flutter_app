@@ -8,7 +8,9 @@ import 'package:flutter_app/core/database/direct_media_blob_custody.dart'
     show
         DirectMediaBlobCustodyDirection,
         DirectMediaBlobCustodyRow,
-        DirectMediaBlobCustodyState;
+        DirectMediaBlobCustodyState,
+        MediaBlobCustodyOwnerLane,
+        kGroupMediaBlobCustodyKind;
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart'
     show kDirectMediaBlobCustodyTable;
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
@@ -18,6 +20,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_blob_custody.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -39,6 +42,7 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/application/strict_group_media_blob_download_ack_owner.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
@@ -4409,6 +4413,209 @@ void main() {
         },
       );
     });
+  });
+
+  test('TC-365-03a strict group blob ACK follows durable plaintext', () async {
+    final fixture = await MediaRepositoryRealDbFixture.create();
+    addTearDown(fixture.dispose);
+    const groupId = 'tc365-download-group';
+    const messageId = 'tc365-download-message';
+    const attachmentId = 'tc365-download-attachment';
+    const custodyBlobId = 'gmb1_tc365_download_blob';
+    const expiresAtMs = 1_930_000_000_000;
+    final encrypted = _encryptedBytes(_jpegBytes);
+    final contentHash = _hashBytes(encrypted);
+    final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      custodyBlobId: custodyBlobId,
+      contentHash: contentHash,
+      ciphertextSize: encrypted.length,
+      recipientPeerIds: const <String>['device-self', 'device-sibling'],
+    );
+    final attachment = MediaAttachment(
+      id: attachmentId,
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: _jpegBytes.length,
+      mediaType: 'image',
+      downloadStatus: kMediaDownloadStatusPending,
+      createdAt: '2026-08-14T08:00:00.000Z',
+      contentHash: contentHash,
+      encryptionKeyBase64: _mediaKey,
+      encryptionNonce: _mediaNonce,
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      groupMediaBlobCustodyFingerprint: fingerprint,
+      ownerLane: MediaOwnerLane.group,
+    );
+    final custody = DirectMediaBlobCustodyRow(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      ownerLane: MediaBlobCustodyOwnerLane.group,
+      groupId: groupId,
+      custodyBlobId: custodyBlobId,
+      direction: DirectMediaBlobCustodyDirection.incoming,
+      state: DirectMediaBlobCustodyState.incomingCommitted,
+      inboxCustodyIncarnationId: null,
+      recipientPeerId: null,
+      ciphertextRelativePath: null,
+      custodyKind: kGroupMediaBlobCustodyKind,
+      contentHash: contentHash,
+      ciphertextSize: encrypted.length,
+      expiresAtMs: expiresAtMs,
+      custodyRelayPeerId: null,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: '2026-08-14T08:00:00.000Z',
+      updatedAt: '2026-08-14T08:00:00.000Z',
+    );
+    await fixture.seedGroupParent(messageId, groupId: groupId);
+    await fixture.repo.saveAttachment(attachment, owner: MediaOwnerLane.group);
+    await fixture.db.insert(kDirectMediaBlobCustodyTable, custody.toMap());
+    final groupMessages = InMemoryGroupMessageRepository();
+    await groupMessages.saveMessage(
+      GroupMessage(
+        id: messageId,
+        groupId: groupId,
+        senderPeerId: 'sender-tc365',
+        text: '',
+        timestamp: DateTime.utc(2026, 8, 14, 8),
+        status: 'delivered',
+        isIncoming: true,
+        createdAt: DateTime.utc(2026, 8, 14, 8),
+      ),
+    );
+    final manager = _CanonicalPathFakeMediaFileManager(tempDir.path);
+    bridge
+      ..downloadedBytes = encrypted
+      ..downloadResponse = <String, dynamic>{
+        'ok': true,
+        'id': custodyBlobId,
+        'custodyKind': kGroupMediaBlobCustodyKind,
+        'custodyContract': kDirectMediaBlobCustodyContract,
+        'contentHash': contentHash,
+        'size': encrypted.length,
+        'mime': kDirectMediaBlobTransportMime,
+        'expiresAtMs': expiresAtMs,
+        'custodyRelayPeerId': 'relay-source-tc365',
+      }
+      ..deleteResponse = <String, dynamic>{'ok': false}
+      ..onDeleteRequest = () async {
+        final persisted = (await fixture.repo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+        expect(persisted.downloadStatus, kMediaDownloadStatusDone);
+        expect(persisted.localPath, isNotNull);
+        final pending = await (fixture.repo as GroupMediaBlobCustodyRepository)
+            .loadGroupMediaBlobCustodyForTarget(
+              groupId: groupId,
+              attachmentId: attachmentId,
+              custodyBlobId: custodyBlobId,
+              direction: DirectMediaBlobCustodyDirection.incoming,
+            );
+        expect(pending, isNotNull);
+        expect(pending!.state, DirectMediaBlobCustodyState.incomingAckPending);
+        expect(pending.custodyRelayPeerId, 'relay-source-tc365');
+        final absolute = await manager.resolveStoredPath(persisted.localPath!);
+        expect(await File(absolute).readAsBytes(), _jpegBytes);
+      };
+
+    final downloaded = await downloadMedia(
+      bridge: bridge,
+      mediaAttachmentRepo: fixture.repo,
+      mediaFileManager: manager,
+      attachment: attachment,
+      contactPeerId: groupId,
+      owner: MediaOwnerLane.group,
+      groupMessageRepo: groupMessages,
+      enforceGroupMediaPolicy: true,
+      nowMs: () => expiresAtMs - 10000,
+    );
+    expect(downloaded, isNotNull);
+    expect(downloaded!.downloadStatus, kMediaDownloadStatusDone);
+    expect(bridge.commandLog, <String>[
+      'media:download',
+      'blob:decrypt',
+      'media:delete',
+    ]);
+    final retained = await (fixture.repo as GroupMediaBlobCustodyRepository)
+        .loadGroupMediaBlobCustodyForTarget(
+          groupId: groupId,
+          attachmentId: attachmentId,
+          custodyBlobId: custodyBlobId,
+          direction: DirectMediaBlobCustodyDirection.incoming,
+        );
+    expect(retained, isNotNull);
+    expect(retained!.state, DirectMediaBlobCustodyState.incomingAckPending);
+    expect(retained.retryCount, 1);
+    expect(retained.custodyRelayPeerId, 'relay-source-tc365');
+
+    // A fresh lifecycle owner sees no pending attachment (plaintext is
+    // already DONE); it drains the independent ACK lane and uses only the
+    // source relay persisted by the atomic local commit.
+    bridge.deleteResponse = <String, dynamic>{
+      'ok': true,
+      'id': custodyBlobId,
+      'ackStatus': 'already_acked',
+      'custodyKind': kGroupMediaBlobCustodyKind,
+      'custodyContract': kDirectMediaBlobCustodyContract,
+      'contentHash': contentHash,
+      'size': encrypted.length,
+      'mime': kDirectMediaBlobTransportMime,
+      'expiresAtMs': expiresAtMs,
+      'custodyRelayPeerId': 'relay-source-tc365',
+    };
+    expect(
+      await StrictGroupMediaBlobDownloadAckOwner(
+        bridge: bridge,
+        mediaAttachmentRepository: fixture.repo,
+        mediaFileManager: manager,
+        now: () => DateTime.fromMillisecondsSinceEpoch(
+          expiresAtMs - 7000,
+          isUtc: true,
+        ),
+      ).retryPendingAcknowledgements(),
+      1,
+    );
+    expect(
+      bridge.deleteRequests.last['payload'],
+      containsPair('custodyRelayPeerId', 'relay-source-tc365'),
+    );
+    expect(
+      await (fixture.repo as GroupMediaBlobCustodyRepository)
+          .loadGroupMediaBlobCustodyForTarget(
+            groupId: groupId,
+            attachmentId: attachmentId,
+            custodyBlobId: custodyBlobId,
+            direction: DirectMediaBlobCustodyDirection.incoming,
+          ),
+      isNull,
+    );
+
+    // The local fingerprint survives row retirement. Even a stale caller
+    // that drops it cannot demote this attachment to legacy group download.
+    final callsBeforeDemotionProbe = bridge.commandLog.length;
+    expect(
+      await downloadMedia(
+        bridge: bridge,
+        mediaAttachmentRepo: fixture.repo,
+        mediaFileManager: manager,
+        attachment: attachment.copyWith(
+          clearGroupMediaBlobCustodyFingerprint: true,
+          clearLocalPath: true,
+          downloadStatus: kMediaDownloadStatusPending,
+        ),
+        contactPeerId: groupId,
+        owner: MediaOwnerLane.group,
+        groupMessageRepo: groupMessages,
+        enforceGroupMediaPolicy: true,
+        nowMs: () => expiresAtMs - 999,
+      ),
+      isNull,
+    );
+    expect(bridge.commandLog, hasLength(callsBeforeDemotionProbe));
   });
 
   group('Plan 347 strict ordinary direct media download', () {

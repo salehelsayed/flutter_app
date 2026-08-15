@@ -612,6 +612,11 @@ void main() {
               callOrder.add('startMessageDeletionListener'),
           startDeliveryReceiptListener: () =>
               callOrder.add('startDeliveryReceiptListener'),
+          startLinkedTransport: () async {
+            await Future<void>.delayed(Duration.zero);
+            callOrder.add('startLinkedTransport');
+            return true;
+          },
           drainOfflineInbox: () => recordAwaited('drainOfflineInbox'),
           drainExactBlobFreeFanoutOutboxes: () async {
             await Future<void>.delayed(Duration.zero);
@@ -634,6 +639,7 @@ void main() {
             'startReactionListener',
             'startMessageDeletionListener',
             'startDeliveryReceiptListener',
+            'startLinkedTransport',
             'drainOfflineInbox',
             'drainDirectBlobFreeLinkedOutboxes',
             'cleanupLinkedDirectMediaBlobCustodyLocally',
@@ -662,6 +668,10 @@ void main() {
               baselineOrder.add('startMessageDeletionListener'),
           startDeliveryReceiptListener: () =>
               baselineOrder.add('startDeliveryReceiptListener'),
+          startLinkedTransport: () async {
+            baselineOrder.add('startLinkedTransport');
+            return true;
+          },
           drainOfflineInbox: () async => baselineOrder.add('drainOfflineInbox'),
           drainExactBlobFreeFanoutOutboxes: () async {
             baselineOrder.add('drainDirectBlobFreeLinkedOutboxes');
@@ -674,6 +684,69 @@ void main() {
           'drainDirectBlobFreeLinkedOutboxes',
           reason: 'without the 362 convergers the 361 drain stays terminal',
         );
+      },
+    );
+
+    test(
+      'TC-365-04a linked resume reaches a strict group content and blob fixed point before refresh',
+      () async {
+        final order = <String>[];
+        var pass = 0;
+        final services = DirectBlobFreeLinkedServices(
+          initializeBridge: () async {},
+          startMessageRouter: () {},
+          startChatMessageListener: () {},
+          startReactionListener: () {},
+          startMessageDeletionListener: () {},
+          startDeliveryReceiptListener: () {},
+          startLinkedTransport: () async => true,
+          drainOfflineInbox: () async => order.add('inbox'),
+          materializeLinkedGroupBootstrap: () async => order.add('bootstrap'),
+          replayLinkedGroupAuthority: () async => order.add('authority'),
+          replayLinkedGroupContent: () async {
+            order.add('content:$pass');
+            return pass == 0 ? 1 : 0;
+          },
+          drainLinkedGroupOutgoingMedia: () async {
+            order.add('outgoing:$pass');
+            return pass == 0 ? 2 : 0;
+          },
+          retryLinkedGroupContent: () async {
+            order.add('retry:$pass');
+            return pass == 0 ? 1 : 0;
+          },
+          drainLinkedGroupIncomingMedia: () async {
+            order.add('incoming:$pass');
+            final progress = pass == 0 ? 2 : 0;
+            pass += 1;
+            return progress;
+          },
+          drainLinkedGroupNotificationDisplayCustody: () async =>
+              order.add('notification'),
+          refreshLinkedGroupList: () async => order.add('refresh'),
+          drainExactBlobFreeFanoutOutboxes: () async {
+            order.add('direct');
+            return 0;
+          },
+        );
+
+        expect(await services.start(), isTrue);
+        expect(order, <String>[
+          'inbox',
+          'bootstrap',
+          'authority',
+          'content:0',
+          'outgoing:0',
+          'retry:0',
+          'incoming:0',
+          'content:1',
+          'outgoing:1',
+          'retry:1',
+          'incoming:1',
+          'notification',
+          'refresh',
+          'direct',
+        ]);
       },
     );
   });

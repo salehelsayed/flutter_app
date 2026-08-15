@@ -123,6 +123,7 @@ void main() {
             'await ensurePrivateMediaColdRecovery();',
         'direct_media_blob_local_cleanup':
             'cleanupDirectMediaBlobCustodyLocally',
+        'group_media_blob_local_cleanup': 'cleanupGroupMediaBlobCustodyLocally',
         'group_context_backfill': 'await groupContextBackfill;',
         'group_reaction_comparand_backfill':
             'await groupReactionComparandBackfill;',
@@ -412,6 +413,7 @@ void main() {
       'startReactionListener: reactionListener.start,',
       'startMessageDeletionListener: messageDeletionListener.start,',
       'startDeliveryReceiptListener: deliveryReceiptListener.start,',
+      'startLinkedTransport: () async {',
       'drainOfflineInbox: p2pService.drainOfflineInbox,',
       'drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,',
     ]) {
@@ -478,18 +480,37 @@ void main() {
       lessThan(resumedGeneric),
       reason: 'the linked filter must precede private-media recovery',
     );
-    final resumedReturn = applicationRootSource.indexOf(
-      'return;',
+    final resumedBranchEnd = applicationRootSource.indexOf(
+      '// Private lifecycle recovery has its own generation/queue.',
       resumedLinkedCheck,
     );
+    expect(resumedBranchEnd, greaterThan(resumedLinkedCheck));
     final resumedBranch = applicationRootSource.substring(
       resumedLinkedCheck,
-      resumedReturn,
+      resumedBranchEnd,
     );
     expect(resumedBranch, contains('markResumeStarted()'));
     expect(
       resumedBranch,
       contains('drainDirectBlobFreeLinkedOutboxes?.call()'),
+    );
+    expect(
+      resumedBranch,
+      contains('drainLinkedGroupNotificationDisplayCustody?.call()'),
+    );
+    expect(
+      resumedBranch.indexOf('retryLinkedGroupContent?.call()'),
+      lessThan(
+        resumedBranch.indexOf(
+          'drainLinkedGroupNotificationDisplayCustody?.call()',
+        ),
+      ),
+    );
+    expect(
+      resumedBranch.indexOf(
+        'drainLinkedGroupNotificationDisplayCustody?.call()',
+      ),
+      lessThan(resumedBranch.indexOf('refreshLinkedGroupList?.call()')),
     );
     expect(resumedBranch, contains('checkResumeAlreadyOnline()'));
     expect(resumedBranch, isNot(contains('handleAppResumed(')));

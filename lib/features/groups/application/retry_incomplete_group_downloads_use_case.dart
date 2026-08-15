@@ -136,7 +136,12 @@ typedef RetryIncompleteGroupDownloads = Future<int> Function();
 
 typedef AllowsGroupMediaDownloadNetworkSideEffects = Future<bool> Function();
 
+typedef RetryPendingStrictGroupMediaBlobAcknowledgements =
+    Future<int> Function();
+
 Future<bool> _allowGroupMediaDownloadNetworkSideEffects() async => true;
+
+Future<int> _retryNoStrictGroupMediaBlobAcknowledgements() async => 0;
 
 /// Production-facing coordinator type shared by all automatic entry points.
 typedef GroupMediaDownloadCoordinator = RetryIncompleteGroupDownloadsUseCase;
@@ -153,11 +158,14 @@ class RetryIncompleteGroupDownloadsUseCase {
     required this.loadCurrentGroup,
     required this.autoDownloadDecider,
     required this.transfer,
+    TransferRecoveredGroupDownload? strictTransfer,
+    this.retryPendingStrictAcknowledgements =
+        _retryNoStrictGroupMediaBlobAcknowledgements,
     this.allowsNetworkSideEffects = _allowGroupMediaDownloadNetworkSideEffects,
     this.pageSize = 25,
     this.scanLimit = 200,
     this.transferLimit = 10,
-  }) {
+  }) : strictTransfer = strictTransfer ?? transfer {
     if (pageSize <= 0) {
       throw ArgumentError.value(pageSize, 'pageSize', 'must be positive');
     }
@@ -179,6 +187,14 @@ class RetryIncompleteGroupDownloadsUseCase {
   final LoadCurrentGroupDownloadGroup loadCurrentGroup;
   final MediaAutoDownloadDecider autoDownloadDecider;
   final TransferRecoveredGroupDownload transfer;
+
+  /// Exact Plan-365 owner for fingerprinted group rows. Production defaults
+  /// to the same `downloadMedia` adapter, whose durable discriminator routes
+  /// into strict custody; tests and restricted runtimes may inject the narrow
+  /// owner directly. A fingerprinted row never calls [transfer].
+  final TransferRecoveredGroupDownload strictTransfer;
+  final RetryPendingStrictGroupMediaBlobAcknowledgements
+  retryPendingStrictAcknowledgements;
   final AllowsGroupMediaDownloadNetworkSideEffects allowsNetworkSideEffects;
 
   /// Maximum number of rows requested from the repository at once.
@@ -192,12 +208,14 @@ class RetryIncompleteGroupDownloadsUseCase {
 
   Future<GroupMediaDownloadRecoveryResult>? _inFlightRecovery;
   Future<int>? _inFlightCount;
+  Future<int>? _inFlightStrictCount;
   bool _activeDrainIncludesSweep = false;
   bool _pendingSweep = false;
   RecoverableGroupDownloadCursor? _nextSweepCursor;
+  RecoverableGroupDownloadCursor? _nextStrictSweepCursor;
   final Map<String, Set<String>> _pendingTargets = <String, Set<String>>{};
 
-  bool get isIdle => _inFlightRecovery == null;
+  bool get isIdle => _inFlightRecovery == null && _inFlightStrictCount == null;
 
   /// Runs one bounded pass, or joins the pass already owned by this instance.
   Future<int> call() {
@@ -213,6 +231,27 @@ class RetryIncompleteGroupDownloadsUseCase {
           }
         });
     _inFlightCount = tracked;
+    return tracked;
+  }
+
+  /// Restricted linked-runtime drain for Plan-365 custody only.
+  ///
+  /// It first retries the independent ACK_PENDING lane, then cursor-pages the
+  /// incumbent recoverable attachment query while invoking [strictTransfer]
+  /// only for rows carrying the durable group custody fingerprint. Ordinary
+  /// legacy candidates may consume bounded scan budget but can never reach
+  /// [transfer] or any proof-less bridge path from this entry point.
+  Future<int> callStrictGroupMediaCustodyOnly() {
+    final existing = _inFlightStrictCount;
+    if (existing != null) return existing;
+
+    late final Future<int> tracked;
+    tracked = _runStrictCustodyOnlyPass().whenComplete(() {
+      if (identical(_inFlightStrictCount, tracked)) {
+        _inFlightStrictCount = null;
+      }
+    });
+    _inFlightStrictCount = tracked;
     return tracked;
   }
 
@@ -259,9 +298,9 @@ class RetryIncompleteGroupDownloadsUseCase {
 
   /// Completes after the current shared sweep and any merged targeted tail.
   Future<void> waitForIdle() {
-    final active = _inFlightRecovery;
-    if (active == null) return Future<void>.value();
-    return active.then<void>((_) {});
+    final active = <Future<Object?>>[?_inFlightRecovery, ?_inFlightStrictCount];
+    if (active.isEmpty) return Future<void>.value();
+    return Future.wait<Object?>(active).then<void>((_) {});
   }
 
   Future<GroupMediaDownloadRecoveryResult> _startDrain() {
@@ -278,6 +317,14 @@ class RetryIncompleteGroupDownloadsUseCase {
 
   Future<GroupMediaDownloadRecoveryResult> _drainRequests() async {
     var aggregate = GroupMediaDownloadRecoveryResult.empty();
+    // ACK_PENDING rows have already committed durable plaintext and are no
+    // longer discoverable through pending-attachment paging. Drain that
+    // independent lane on every lifecycle invocation before scanning new
+    // downloads; a failure is retained by its strict owner and cannot block
+    // ordinary/voice fairness below.
+    try {
+      await retryPendingStrictAcknowledgements();
+    } catch (_) {}
     while (_pendingSweep || _pendingTargets.isNotEmpty) {
       if (_pendingSweep) {
         _pendingSweep = false;
@@ -351,6 +398,56 @@ class RetryIncompleteGroupDownloadsUseCase {
     return result.build();
   }
 
+  Future<int> _runStrictCustodyOnlyPass() async {
+    try {
+      if (!await allowsNetworkSideEffects()) return 0;
+    } catch (_) {
+      return 0;
+    }
+
+    var progress = 0;
+    try {
+      progress += await retryPendingStrictAcknowledgements();
+    } catch (_) {}
+
+    var after = _nextStrictSweepCursor;
+    var exhausted = false;
+    final result = _RecoveryResultBuilder();
+    while (result.scannedCount < scanLimit &&
+        result.attemptedTransferCount < transferLimit) {
+      final requestLimit = math.min(pageSize, scanLimit - result.scannedCount);
+      final page = await loadPage(after: after, limit: requestLimit);
+      if (page.isEmpty) {
+        exhausted = true;
+        break;
+      }
+      var madeCursorProgress = false;
+      for (final candidate in page.take(requestLimit)) {
+        if (result.scannedCount >= scanLimit ||
+            result.attemptedTransferCount >= transferLimit) {
+          break;
+        }
+        final cursor = candidate.cursor;
+        if (after != null && cursor.compareTo(after) <= 0) continue;
+        after = cursor;
+        madeCursorProgress = true;
+        result.scannedCount++;
+        final authority = await _loadCurrentAuthority(candidate);
+        if (authority == null ||
+            authority.attachment.groupMediaBlobCustodyFingerprint == null) {
+          continue;
+        }
+        await _attemptTransfer(authority, result);
+      }
+      if (!madeCursorProgress || page.length < requestLimit) {
+        exhausted = true;
+        break;
+      }
+    }
+    _nextStrictSweepCursor = exhausted ? null : after;
+    return progress + result.successfulTransferCount;
+  }
+
   Future<
     ({
       GroupMediaDownloadRecoveryResult result,
@@ -422,7 +519,11 @@ class RetryIncompleteGroupDownloadsUseCase {
     // exact current row, never the query-time snapshot.
     result.attemptedTransferCount++;
     try {
-      final downloaded = await transfer(
+      final transferOwner =
+          requalified.attachment.groupMediaBlobCustodyFingerprint != null
+          ? strictTransfer
+          : transfer;
+      final downloaded = await transferOwner(
         attachment: requalified.attachment,
         parent: requalified.parent,
         group: requalified.group,

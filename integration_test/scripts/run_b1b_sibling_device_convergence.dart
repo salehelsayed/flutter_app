@@ -5,10 +5,18 @@
 // Drives the availability-bounded physical-Android + Android-emulator pair.
 // The fresh linked installation produces the production Plan-360 QR and starts
 // with no group rows; the ordinary primary selects one group and bootstraps it
-// through protected custody. Signals move only through AndroidAppSignalBroker.
+// through protected custody. The same proof then keeps the linked recipient
+// offline for strict blob-free content and reaction ADD/REMOVE custody before
+// the protected terminal authority. Signals move only through
+// AndroidAppSignalBroker.
 //
 //   dart run integration_test/scripts/run_b1b_sibling_device_convergence.dart \
 //     -d <physicalAndroidId>,<androidEmulatorId>
+//
+// Plan 365's media+voice device leg is intentionally default-off. Activate it
+// only with `--plan365-group-media` (or
+// `MKNOON_B1B_PLAN365_GROUP_MEDIA=true`) after the external S2 relay admission
+// has been configured; this runner never changes relay admission itself.
 
 import 'dart:async';
 import 'dart:convert';
@@ -21,6 +29,14 @@ import '_android_app_package.dart';
 
 const _harnessPath = 'integration_test/group_multi_device_real_harness.dart';
 const _scenario = 'b1b_sibling_device_convergence';
+const _plan365GroupMediaOption = '--plan365-group-media';
+const _plan365GroupMediaEnvironment = 'MKNOON_B1B_PLAN365_GROUP_MEDIA';
+const _plan365GroupMediaDartDefine = 'B1B_ENABLE_PLAN365_GROUP_MEDIA';
+
+bool _isExplicitTrue(String? value) {
+  final normalized = value?.trim().toLowerCase();
+  return normalized == '1' || normalized == 'true' || normalized == 'yes';
+}
 
 List<String> _relayDartDefines() {
   final relayAddresses = Platform.environment['MKNOON_RELAY_ADDRESSES'];
@@ -46,11 +62,24 @@ void _pipeOutput(Stream<List<int>> stream, String tag, IOSink sink) {
   });
 }
 
+void _requireB1bVerdict(
+  String name,
+  Map<String, dynamic> verdict,
+  List<String> requiredTrueFields,
+) {
+  for (final field in requiredTrueFields) {
+    if (verdict[field] != true) {
+      throw StateError('$name missing successful B1b proof field: $field');
+    }
+  }
+}
+
 Future<Process> _startHarnessRole({
   required String role,
   required String deviceId,
   required Directory sharedDir,
   required String runId,
+  required bool plan365GroupMedia,
 }) async {
   final args = <String>[
     'test',
@@ -63,6 +92,7 @@ Future<Process> _startHarnessRole({
     '--dart-define=MD004_ROLE=$role',
     '--dart-define=MD004_RUN_ID=$runId',
     '--dart-define=E2E_DB_NAME=b1b_sibling_convergence_${runId}_$role.db',
+    if (plan365GroupMedia) '--dart-define=$_plan365GroupMediaDartDefine=true',
     ..._relayDartDefines(),
     '-d',
     deviceId,
@@ -166,9 +196,15 @@ Future<void> _preflightTargets(List<String> devices) async {
 }
 
 Future<void> main(List<String> args) async {
+  final plan365GroupMedia =
+      args.contains(_plan365GroupMediaOption) ||
+      _isExplicitTrue(Platform.environment[_plan365GroupMediaEnvironment]);
+  final deviceArgs = args
+      .where((argument) => argument != _plan365GroupMediaOption)
+      .toList(growable: false);
   late final List<String> devices;
   try {
-    devices = _parseDevices(args);
+    devices = _parseDevices(deviceArgs);
     await _preflightTargets(devices);
   } on ArgumentError catch (error) {
     stderr.writeln(error.message);
@@ -214,7 +250,8 @@ Future<void> main(List<String> args) async {
 
   _log(
     'ORCH',
-    'B1b shared dir: ${sharedDir.path}; primary=$primaryDevice sibling=$siblingDevice',
+    'B1b shared dir: ${sharedDir.path}; primary=$primaryDevice '
+        'sibling=$siblingDevice plan365GroupMedia=$plan365GroupMedia',
   );
 
   try {
@@ -223,6 +260,7 @@ Future<void> main(List<String> args) async {
       deviceId: primaryDevice,
       sharedDir: Directory(remoteAbsolute),
       runId: runId,
+      plan365GroupMedia: plan365GroupMedia,
     );
     _pipeOutput(primary.stdout, 'PRIMARY', primaryLog);
     _pipeOutput(primary.stderr, 'PRIMARY-ERR', primaryLog);
@@ -243,6 +281,7 @@ Future<void> main(List<String> args) async {
       deviceId: siblingDevice,
       sharedDir: Directory(remoteAbsolute),
       runId: runId,
+      plan365GroupMedia: plan365GroupMedia,
     );
     _pipeOutput(sibling.stdout, 'SIBLING', siblingLog);
     _pipeOutput(sibling.stderr, 'SIBLING-ERR', siblingLog);
@@ -261,14 +300,81 @@ Future<void> main(List<String> args) async {
       timeout: const Duration(minutes: 2),
     );
 
-    // Surface the two role-qualified proof verdicts.
-    for (final name in ['linked_verdict.json', 'ordinary_verdict.json']) {
-      final file = File('${sharedDir.path}/md004_${runId}_$name');
-      if (file.existsSync()) {
-        _log('VERDICT', '$name => ${file.readAsStringSync()}');
+    final linkedVerdict = await signalDir.waitForJson(
+      'linked_verdict.json',
+      timeout: const Duration(minutes: 2),
+    );
+    final ordinaryVerdict = await signalDir.waitForJson(
+      'ordinary_verdict.json',
+      timeout: const Duration(minutes: 2),
+    );
+    _requireB1bVerdict('linked_verdict.json', linkedVerdict, const <String>[
+      'emptyRepositoryBeforeBootstrap',
+      'bootstrapMaterialized',
+      'preservedStorageReopened',
+      'offlineBlobFreeDiscussionApplied',
+      'strictReactionAddApplied',
+      'strictReactionRemoveApplied',
+      'productionContentIngressGateInvoked',
+      'productionAuthorityReconcileInvoked',
+      'terminalReadOnlyDissolve',
+    ]);
+    _requireB1bVerdict('ordinary_verdict.json', ordinaryVerdict, const <String>[
+      'bootstrapCustodyAccepted',
+      'offlineBlobFreeDiscussionCustodyAccepted',
+      'strictReactionAddCustodyAccepted',
+      'strictReactionRemoveCustodyAccepted',
+      'zeroGroupPubsubForStrictContent',
+      'productionAuthoringResolverInvoked',
+      'localAuthorityReconcileInvoked',
+      'dissolveCustodyAcceptedBeforeTerminalCommit',
+    ]);
+    if (plan365GroupMedia) {
+      _requireB1bVerdict('linked_verdict.json', linkedVerdict, const <String>[
+        'plan365MediaAndVoiceApplied',
+        'plan365FingerprintDescriptorsVerified',
+        'plan365LocalPlaintextVerified',
+        'plan365StrictBlobAckConverged',
+        'plan365ProductionDownloadOwnerInvoked',
+        'plan365RestrictedFixedPointInvoked',
+        'plan365StrictDownloadActionsObserved',
+        'plan365StrictDeleteActionsObserved',
+      ]);
+      _requireB1bVerdict(
+        'ordinary_verdict.json',
+        ordinaryVerdict,
+        const <String>[
+          'plan365MediaAndVoiceCustodyAccepted',
+          'plan365ProductionPreparedCoordinatorInvoked',
+          'plan365StrictUploadActionsObserved',
+          'plan365ZeroLegacyAllowedPeersUploads',
+        ],
+      );
+    }
+    final crossedFields = <String>[
+      'groupId',
+      'linkedTransportPeerId',
+      'contentMessageId',
+      'reactionAddTransitionId',
+      'reactionRemoveTransitionId',
+      if (plan365GroupMedia) 'plan365ImageMessageId',
+      if (plan365GroupMedia) 'plan365VoiceMessageId',
+    ];
+    for (final field in crossedFields) {
+      final linked = linkedVerdict[field];
+      final ordinary = ordinaryVerdict[field];
+      if (linked is! String || linked.isEmpty || ordinary != linked) {
+        throw StateError('B1b role verdicts crossed field: $field');
       }
     }
-    _log('ORCH', 'B1b linked-group bootstrap/reopen/dissolve proof PASSED');
+    _log('VERDICT', 'linked_verdict.json => ${jsonEncode(linkedVerdict)}');
+    _log('VERDICT', 'ordinary_verdict.json => ${jsonEncode(ordinaryVerdict)}');
+    _log(
+      'ORCH',
+      'B1b bootstrap/reopen/offline-content/reaction/'
+          '${plan365GroupMedia ? 'plan365-media-voice/' : ''}'
+          'dissolve proof PASSED',
+    );
     _log('ORCH', 'Primary log: ${sharedDir.path}/primary.log');
     _log('ORCH', 'Sibling log: ${sharedDir.path}/sibling.log');
   } finally {

@@ -2030,7 +2030,12 @@ void main() {
       //    collapsed into `done`.
       final strictBranch = composer.indexOf('if (strictPrivateBlobSelected) {');
       expect(strictBranch, greaterThan(-1));
-      final strictBody = composer.substring(strictBranch, strictBranch + 5200);
+      final strictBranchEnd = composer.indexOf(
+        '} else if (strictBlobSelected) {',
+        strictBranch,
+      );
+      expect(strictBranchEnd, greaterThan(strictBranch));
+      final strictBody = composer.substring(strictBranch, strictBranchEnd);
       expect(
         strictBody.contains('_commitForegroundDirectPrivateCompletion('),
         isTrue,

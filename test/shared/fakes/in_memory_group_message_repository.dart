@@ -48,6 +48,7 @@ class InMemoryGroupMessageRepository
         GroupThreadSummaryRepository,
         GroupThreadPreviewRepository,
         GroupInboxStoreRetryCompletionRepository,
+        GroupMessageStrictReactionTargetRepository,
         GroupMembershipRepairDeletionRepository,
         GroupConversationReadEventSource,
         GroupOutgoingLocalMessageChangeSource,
@@ -75,6 +76,20 @@ class InMemoryGroupMessageRepository
   /// per-pending windows (never the unbounded `limit:200` per-group loop).
   final List<(String, int)> getMessagesPageCallLog = <(String, int)>[];
   int getGroupThreadPreviewsCallCount = 0;
+
+  @override
+  Future<bool> isStrictReactionTargetEligible(GroupMessage expected) async {
+    final current = await getMessage(expected.id);
+    return current != null &&
+        current.groupId == expected.groupId &&
+        current.senderPeerId == expected.senderPeerId &&
+        current.timestamp.toUtc() == expected.timestamp.toUtc() &&
+        current.media.isEmpty &&
+        current.privateMediaPolicy.isOrdinary &&
+        !current.isForwarded &&
+        current.quotedMessageId?.isNotEmpty != true &&
+        !current.text.trimLeft().startsWith(r'{"__sys":');
+  }
 
   Iterable<GroupMessage> get _visibleMessages => _messages.values.where(
     (message) => !isGroupRemovalCutoffMessageId(message.id),
@@ -530,6 +545,8 @@ class InMemoryGroupMessageRepository
   @override
   Future<List<GroupMessage>> getMessagesWithFailedInboxStore({
     int limit = 20,
+    bool strictContentOnly = false,
+    int offset = 0,
   }) async {
     final eligible = _messages.values
         .where(
@@ -543,9 +560,14 @@ class InMemoryGroupMessageRepository
                   m.status == 'queued_offline') &&
               m.inboxRetryPayload != null,
         )
+        .where(
+          (message) =>
+              !strictContentOnly ||
+              message.inboxRetryPayload!.contains('group_content_v1'),
+        )
         .toList();
     eligible.sort(compareGroupMessagesAscending);
-    return eligible.take(limit).toList();
+    return eligible.skip(offset).take(limit).toList();
   }
 
   @override

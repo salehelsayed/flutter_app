@@ -5,6 +5,7 @@ import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart'
     show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/core/debug/transport_metrics.dart';
 import 'dart:async';
 
@@ -278,6 +279,8 @@ class _FanoutComposerMediaRepository extends _StrictComposerMediaRepository
     required List<DirectMediaBlobCustodyRow> custodyRows,
     required String contactAccountPeerId,
     required DirectContactFanoutSnapshot expectedSnapshot,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
   }) async {
     if (fanoutRows.isNotEmpty ||
         contactAccountPeerId != snapshot.contactAccountPeerId ||
@@ -1656,6 +1659,36 @@ void main() {
     });
   }
 
+  Future<void> seedPersistedLinkedContact(
+    MediaRepositoryRealDbFixture fixture,
+  ) async {
+    await seedPersistedIncumbentContact(fixture);
+    final contact = makeContact();
+    const linkedPeerId = '12D3KooWComposerLinkedDevice';
+    const now = '2026-08-14T10:00:00.000Z';
+    await fixture.db
+        .insert('direct_contact_device_roster_metadata', <String, Object?>{
+          'contact_account_peer_id': contact.peerId,
+          'roster_initialized': 1,
+          'legacy_target_state': 'active',
+          'initialized_at': now,
+          'legacy_revoked_at': null,
+          'updated_at': now,
+        });
+    await fixture.db.insert('direct_contact_device_bindings', <String, Object?>{
+      'contact_account_peer_id': contact.peerId,
+      'device_id': 'tc366-composer-linked-device',
+      'verified_account_signing_public_key': contact.publicKey,
+      'transport_peer_id': linkedPeerId,
+      'transport_public_key': 'tc366-composer-transport-key',
+      'device_ml_kem_public_key': 'tc366-composer-linked-mlkem',
+      'binding_fingerprint': '9' * 64,
+      'state': 'active',
+      'staged_at': now,
+      'decided_at': now,
+    });
+  }
+
   group('Plan 343 reaction optimistic attempt authority', () {
     MessageReaction optimistic(
       ReactionOptimisticAttempt attempt,
@@ -1773,6 +1806,7 @@ void main() {
     required MessageRepository messageRepo,
     required ChatMessageListener chatListener,
     required SendChatMessageFn sendFn,
+    SendPrivateMediaFanoutChatMessageFn? sendPrivateMediaFanoutFn,
     EditChatMessageFn? editFn,
     DeleteMessageForMeFn? deleteForMeFn,
     DeleteMessageForEveryoneFn? deleteForEveryoneFn,
@@ -1830,6 +1864,8 @@ void main() {
           notificationTappedAt: notificationTappedAt,
           bridge: bridge,
           sendChatMessageFn: sendFn,
+          sendPrivateMediaFanoutChatMessageFn:
+              sendPrivateMediaFanoutFn ?? sendChatMessage,
           directEventFanout: directEventFanout,
           directLinkedMediaFanoutSelector:
               directLinkedMediaFanoutSelector ??
@@ -2828,7 +2864,344 @@ void main() {
     );
 
     testWidgets(
-      'TC-362-02e media caption edit refuses initialized roster and preserves the draft',
+      'TC-366-01b supported private initials fan out while unsupported shapes '
+      'refuse before effects',
+      (tester) async {
+        final priorFlowLogging = flowEventLoggingEnabled;
+        flowEventLoggingEnabled = true;
+        installPrivateMediaProtectionEventChannelStub(tester);
+        final tempDir = Directory.systemTemp.createTempSync(
+          'tc366_private_composer_fanout_',
+        );
+        addTearDown(() {
+          debugConversationWiredInitialPrivateMediaPolicy = null;
+          flowEventLoggingEnabled = priorFlowLogging;
+          if (tempDir.existsSync()) tempDir.deleteSync(recursive: true);
+        });
+        final image = File('${tempDir.path}/private.png')
+          ..writeAsBytesSync(_tinyPngBytes);
+        final fixture = (await tester.runAsync(
+          MediaRepositoryRealDbFixture.create,
+        ))!;
+        addTearDown(fixture.dispose);
+        await tester.runAsync(() => seedPersistedLinkedContact(fixture));
+        expect(
+          (fixture.repo
+                  as OutgoingDirectPrivateMediaBlobFanoutGenerationRepository)
+              .supportsOutgoingDirectPrivateMediaBlobFanoutGeneration,
+          isTrue,
+        );
+        expect(
+          (fixture.messageRepo
+                  as OutgoingDirectPrivateMediaFanoutInboxCustodyRepository)
+              .supportsOutgoingDirectPrivateMediaFanoutInboxCustody,
+          isTrue,
+        );
+        final seededSnapshot = await tester.runAsync(
+          () => (fixture.repo as OutgoingDirectLinkedMediaBlobFanoutRepository)
+              .readDirectContactFanoutSnapshotForMedia(makeContact().peerId),
+        );
+        expect(seededSnapshot?.rosterInitialized, isTrue);
+        expect(seededSnapshot?.targets, hasLength(2));
+        final strictRecipients = <String>[];
+        final coordinator = strictComposerCoordinator(
+          repository: fixture.repo as DirectMediaBlobCustodyRepository,
+          artifactRoot: tempDir,
+          strictUpload:
+              ({
+                required bridge,
+                required attachmentId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                strictRecipients.add(recipientPeerId);
+                return <String, dynamic>{
+                  'ok': true,
+                  'id': attachmentId,
+                  'storeStatus': 'stored',
+                  'custodyKind': 'direct_media_blob_v1',
+                  'custodyContract': 'ack_or_expiry_v1',
+                  'contentHash': contentHash,
+                  'size': ciphertextSize,
+                  'mime': 'application/octet-stream',
+                  'expiresAtMs': 2100000000000 + strictRecipients.length,
+                  'custodyRelayPeerId': 'relay-tc366-private-composer',
+                };
+              },
+        );
+        var incumbentSendCalls = 0;
+        var privateSendCalls = 0;
+        DirectPrivateMediaFanoutContext? observedContext;
+        List<MediaAttachment>? observedAttachments;
+
+        Future<(SendChatMessageResult, ConversationMessage?)> incumbentSend({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          required bool preassignedMessageIdIsFresh,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
+        }) async {
+          incumbentSendCalls++;
+          return (
+            SendChatMessageResult.success,
+            await messageRepo.getMessage(messageId!),
+          );
+        }
+
+        Future<(SendChatMessageResult, ConversationMessage?)> privateSend({
+          required P2PService p2pService,
+          required MessageRepository messageRepo,
+          required String targetPeerId,
+          required String text,
+          required String senderPeerId,
+          required String senderUsername,
+          String? messageId,
+          required bool preassignedMessageIdIsFresh,
+          String? timestamp,
+          Bridge? bridge,
+          String? recipientMlKemPublicKey,
+          String? quotedMessageId,
+          List<MediaAttachment>? mediaAttachments,
+          PrivateMediaPolicy? privateMediaPolicy,
+          MediaAttachmentRepository? mediaAttachmentRepo,
+          TransportMetrics? transportMetrics,
+          DirectEventFanoutAuthoring? directEventFanout,
+          required DirectPrivateMediaFanoutContext directPrivateMediaFanout,
+        }) async {
+          privateSendCalls++;
+          observedContext = directPrivateMediaFanout;
+          observedAttachments = List<MediaAttachment>.of(
+            mediaAttachments ?? const <MediaAttachment>[],
+          );
+          return (
+            SendChatMessageResult.success,
+            await messageRepo.getMessage(messageId!),
+          );
+        }
+
+        debugConversationWiredInitialPrivateMediaPolicy =
+            const PrivateMediaPolicy.protected();
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: fixture.messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: fixture.messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: incumbentSend,
+          sendPrivateMediaFanoutFn: privateSend,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: fixture.repo,
+          contactRepo: FakeContactRepository(),
+          mediaFileManager: TrackingDurableConversationMediaFileManager(
+            tempDir,
+          ),
+          initialPendingMedia: <PendingComposerMedia>[
+            PendingComposerMedia(file: image, budgetBytes: image.lengthSync()),
+          ],
+          preparedDirectMediaBlobCustodyCoordinator: coordinator,
+          directLinkedMediaFanoutSelector:
+              const DirectLinkedMediaFanoutSelector.enabled(),
+          directMediaBlobCustodyClientEnabled: true,
+          directLinkedEventFanoutEnabled: true,
+        );
+        await tester.pump(const Duration(seconds: 1));
+        final compose = tester.widget<ComposeArea>(find.byType(ComposeArea));
+        expect(
+          compose.privateMediaPolicy,
+          const PrivateMediaPolicy.protected(),
+        );
+        expect(compose.hasAttachments, isTrue);
+        expect(compose.isSending, isFalse);
+        expect(compose.privateMediaEligibility.allowsNewPrivateMedia, isTrue);
+        expect(
+          isPrivateMediaComposerPolicyEligible(
+            selectedPolicy: compose.privateMediaPolicy,
+            eligibility: compose.privateMediaEligibility,
+          ),
+          isTrue,
+        );
+        final directAdmission = await tester.runAsync(
+          () => resolveDirectMediaFanoutAdmission(
+            mediaAttachmentRepository: fixture.repo,
+            contactAccountPeerId: makeContact().peerId,
+            canServeLinkedFanout: true,
+          ),
+        );
+        expect(directAdmission?.requiresLinkedFanout, isTrue);
+        await tester.runAsync(() async {
+          tester.widget<ComposeArea>(find.byType(ComposeArea)).onSend('');
+          final deadline = Stopwatch()..start();
+          while (privateSendCalls == 0 &&
+              deadline.elapsed < const Duration(seconds: 8)) {
+            await Future<void>.delayed(const Duration(milliseconds: 10));
+          }
+        });
+        await tester.pump();
+
+        final diagnosticMessages = await tester.runAsync(
+          () => fixture.db.query('messages'),
+        );
+        final diagnosticAttachments = await tester.runAsync(
+          () => fixture.db.query('media_attachments'),
+        );
+        final diagnosticBlobs = await tester.runAsync(
+          () => fixture.db.query('direct_media_blob_custody'),
+        );
+        expect(
+          privateSendCalls,
+          1,
+          reason:
+              'incumbent=$incumbentSendCalls strict=$strictRecipients '
+              'messages=$diagnosticMessages attachments='
+              '$diagnosticAttachments blobs=$diagnosticBlobs',
+        );
+        expect(incumbentSendCalls, 0);
+        expect(strictRecipients.toSet(), <String>{
+          makeContact().peerId,
+          '12D3KooWComposerLinkedDevice',
+        });
+        expect(observedContext?.snapshot, isNotNull);
+        expect(observedContext?.targetRows, hasLength(2));
+        expect(
+          observedContext?.targetRows.values.every(
+            (rows) =>
+                rows.length == 1 &&
+                rows.single.state == DirectMediaBlobCustodyState.outgoingStored,
+          ),
+          isTrue,
+        );
+        expect(observedAttachments, hasLength(1));
+        expect(observedAttachments!.single.blobCustody?.isValid, isTrue);
+
+        // An unsupported private GIF is rejected at the composer shape gate:
+        // it never exposes the private selector and creates no new row before
+        // the user can initiate any send-owned effect.
+        final messagesBeforeUnsupported = (await tester.runAsync(
+          () => fixture.db.query('messages'),
+        ))!.length;
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+        final gif = File('${tempDir.path}/unsupported.gif')
+          ..writeAsBytesSync(_tinyGifBytes);
+        debugConversationWiredInitialPrivateMediaPolicy =
+            const PrivateMediaPolicy.protected();
+        await pumpScreen(
+          tester,
+          identityRepo: FakeIdentityRepository(makeIdentity()),
+          messageRepo: fixture.messageRepo,
+          chatListener: ChatMessageListener(
+            chatMessageStream: const Stream.empty(),
+            messageRepo: fixture.messageRepo,
+            contactRepo: FakeContactRepository(),
+          ),
+          sendFn: incumbentSend,
+          sendPrivateMediaFanoutFn: privateSend,
+          bridge: FakeBridge(),
+          mediaAttachmentRepo: fixture.repo,
+          contactRepo: FakeContactRepository(),
+          mediaFileManager: TrackingDurableConversationMediaFileManager(
+            tempDir,
+          ),
+          initialPendingMedia: <PendingComposerMedia>[
+            PendingComposerMedia(file: gif, budgetBytes: gif.lengthSync()),
+          ],
+          preparedDirectMediaBlobCustodyCoordinator: coordinator,
+          directLinkedMediaFanoutSelector:
+              const DirectLinkedMediaFanoutSelector.enabled(),
+          directMediaBlobCustodyClientEnabled: true,
+          directLinkedEventFanoutEnabled: true,
+        );
+        expect(
+          find.byKey(const ValueKey('private-media-selector')),
+          findsNothing,
+        );
+        expect(privateSendCalls, 1);
+        expect(strictRecipients, hasLength(2));
+        expect(
+          (await tester.runAsync(() => fixture.db.query('messages')))!.length,
+          messagesBeforeUnsupported,
+        );
+        await pumpUntilAsyncIo(
+          tester,
+          () => find
+              .byKey(const ValueKey('conversation-loading-shell'))
+              .evaluate()
+              .isEmpty,
+        );
+        await tester.pumpWidget(const SizedBox.shrink());
+        await tester.pump();
+      },
+    );
+
+    DirectEventFanoutAuthoring mediaMutationFanoutAuthoring(
+      _FanoutComposerMediaRepository repository,
+    ) {
+      Never unreachable() => throw StateError(
+        'the widget must dispatch once; the use case owns fanout routing',
+      );
+      return DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: makeIdentity().peerId,
+        readSnapshot: repository.readDirectContactFanoutSnapshotForMedia,
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async =>
+                unreachable(),
+        loadTextSiblings: (_) async => unreachable(),
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+        loadEventSiblings: (_) async => unreachable(),
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+      );
+    }
+
+    testWidgets(
+      'TC-366-02a initialized media caption edit dispatches once and preserves draft on custody refusal',
       (tester) async {
         final contact = makeContact();
         const messageId = 'tc362-caption-refusal';
@@ -2872,8 +3245,10 @@ void main() {
             ],
           ),
         )..seed(const <MediaAttachment>[attachment]);
+        final authoring = mediaMutationFanoutAuthoring(media);
         var editCalls = 0;
-        Future<(SendChatMessageResult, ConversationMessage?)> editMustNotRun({
+        DirectEventFanoutAuthoring? dispatchedFanout;
+        Future<(SendChatMessageResult, ConversationMessage?)> refuseEdit({
           required P2PService p2pService,
           required MessageRepository messageRepo,
           required ConversationMessage originalMessage,
@@ -2886,6 +3261,9 @@ void main() {
           DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           editCalls++;
+          dispatchedFanout = directEventFanout;
+          expect(originalMessage.media, hasLength(1));
+          expect(updatedText, 'Edited draft survives');
           return (SendChatMessageResult.sendFailed, null);
         }
 
@@ -2899,9 +3277,10 @@ void main() {
             contactRepo: FakeContactRepository(),
           ),
           sendFn: _instantSuccessSendFn,
-          editFn: editMustNotRun,
+          editFn: refuseEdit,
           mediaAttachmentRepo: media,
           initialMessages: <ConversationMessage>[message],
+          directEventFanout: authoring,
         );
 
         await tester.longPress(find.text('Original media caption'));
@@ -2913,7 +3292,13 @@ void main() {
         await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
         await tester.pump(const Duration(milliseconds: 200));
 
-        expect(editCalls, 0);
+        expect(editCalls, 1);
+        expect(dispatchedFanout, same(authoring));
+        expect(
+          media.snapshotReads,
+          0,
+          reason: 'the use case, not the widget, owns persisted routing',
+        );
         expect(
           tester.widget<TextField>(find.byType(TextField)).controller?.text,
           'Edited draft survives',
@@ -2927,7 +3312,7 @@ void main() {
     );
 
     testWidgets(
-      'TC-362-02e media DFE refuses initialized roster before deletion dispatch',
+      'TC-366-02b initialized media DFE dispatches plural custody once',
       (tester) async {
         final contact = makeContact();
         const messageId = 'tc362-dfe-refusal';
@@ -2971,8 +3356,10 @@ void main() {
             ],
           ),
         )..seed(const <MediaAttachment>[attachment]);
+        final authoring = mediaMutationFanoutAuthoring(media);
         var deleteCalls = 0;
-        Future<(SendChatMessageResult, ConversationMessage?)> deleteMustNotRun({
+        DirectEventFanoutAuthoring? dispatchedFanout;
+        Future<(SendChatMessageResult, ConversationMessage?)> refuseDelete({
           required P2PService p2pService,
           required MessageRepository messageRepo,
           required ConversationMessage originalMessage,
@@ -2985,6 +3372,8 @@ void main() {
           DirectEventFanoutAuthoring? directEventFanout,
         }) async {
           deleteCalls++;
+          dispatchedFanout = directEventFanout;
+          expect(originalMessage.media, hasLength(1));
           return (SendChatMessageResult.sendFailed, null);
         }
 
@@ -2998,9 +3387,10 @@ void main() {
             contactRepo: FakeContactRepository(),
           ),
           sendFn: _instantSuccessSendFn,
-          deleteForEveryoneFn: deleteMustNotRun,
+          deleteForEveryoneFn: refuseDelete,
           mediaAttachmentRepo: media,
           initialMessages: <ConversationMessage>[message],
+          directEventFanout: authoring,
         );
 
         await tester.longPress(find.text('Media DFE refusal'));
@@ -3024,7 +3414,13 @@ void main() {
         await tester.pump();
         await tester.pump(const Duration(milliseconds: 250));
 
-        expect(deleteCalls, 0);
+        expect(deleteCalls, 1);
+        expect(dispatchedFanout, same(authoring));
+        expect(
+          media.snapshotReads,
+          0,
+          reason: 'the widget never preflights or demotes plural custody',
+        );
         expect(messages.store[messageId]?.isDeleted, isFalse);
         expect(find.text('Media DFE refusal'), findsOneWidget);
       },
@@ -3445,6 +3841,7 @@ void main() {
           String? timestamp,
           String? blobId,
           EncryptedMediaArtifact? preparedArtifact,
+          mediaAdmission,
         }) async {
           voiceParentObserved = await messageRepo.getMessage(messageId!);
           final rows = await mediaAttachmentRepo!.getAttachmentsForMessage(
@@ -3833,7 +4230,11 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
-      await pumpUntilAsyncIo(tester, () => completedSends == 1);
+      await pumpUntilAsyncIo(
+        tester,
+        () => completedSends == 1,
+        timeout: const Duration(seconds: 10),
+      );
 
       await pumpUntilAsyncIo(tester, () {
         final attachmentId = privateAttachmentId;
@@ -3891,6 +4292,8 @@ void main() {
         PrivateMediaPolicy.ordinary(),
       ]);
       expect(capturedMediaMimes.last, const ['image/gif']);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
     });
 
     testWidgets('video replacement blocks stale view-once send', (
@@ -10797,6 +11200,7 @@ void main() {
         String? timestamp,
         String? blobId,
         preparedArtifact,
+        mediaAdmission,
       }) async {
         capturedQuotedMessageId = quotedMessageId;
         final delivered = ConversationMessage(
@@ -10883,6 +11287,7 @@ void main() {
         String? timestamp,
         String? blobId,
         preparedArtifact,
+        mediaAdmission,
       }) async {
         sendVoiceCalls += 1;
         final delivered = ConversationMessage(
@@ -11013,7 +11418,7 @@ void main() {
     });
 
     testWidgets(
-      'TC-362-02a widget voice admission refuses initialized roster before durable copy or use-case dispatch',
+      'TC-366-01a voice widget carries one admitted snapshot without a second roster read',
       (tester) async {
         final tempDir = Directory.systemTemp.createTempSync(
           'tc362_widget_voice_admission_',
@@ -11049,6 +11454,7 @@ void main() {
         );
         final manager = TrackingDurableConversationMediaFileManager(tempDir);
         var sendVoiceCalls = 0;
+        DirectMediaFanoutAdmission? carriedAdmission;
         Future<(SendVoiceMessageResult, ConversationMessage?)> neverSendVoice({
           required P2PService p2pService,
           required MessageRepository messageRepo,
@@ -11067,8 +11473,10 @@ void main() {
           String? timestamp,
           String? blobId,
           preparedArtifact,
+          mediaAdmission,
         }) async {
           sendVoiceCalls++;
+          carriedAdmission = mediaAdmission as DirectMediaFanoutAdmission?;
           return (SendVoiceMessageResult.sendFailed, null);
         }
 
@@ -11088,6 +11496,10 @@ void main() {
           mediaFileManager: manager,
           audioRecorderService: recorder,
           sendVoiceMessageFn: neverSendVoice,
+          directLinkedMediaFanoutSelector:
+              const DirectLinkedMediaFanoutSelector.enabled(),
+          directMediaBlobCustodyClientEnabled: true,
+          directLinkedEventFanoutEnabled: true,
         );
         var screen = tester.widget<ConversationScreen>(
           find.byType(ConversationScreen),
@@ -11100,18 +11512,40 @@ void main() {
         screen = tester.widget<ConversationScreen>(
           find.byType(ConversationScreen),
         );
-        await (screen.onReviewSend! as Future<void> Function())();
+        await tester.runAsync(
+          () => (screen.onReviewSend! as Future<void> Function())(),
+        );
         await tester.pump(const Duration(milliseconds: 200));
 
-        expect(sendVoiceCalls, 0);
-        expect(messages.saveMessageCallCount, 0);
-        expect(media.allSavedAttachments, isEmpty);
-        expect(manager.copyCalls, 0);
-        expect(voiceFile.existsSync(), isTrue);
+        expect(sendVoiceCalls, 1);
+        expect(media.snapshotReads, 1);
+        expect(carriedAdmission?.requiresLinkedFanout, isTrue);
+        expect(carriedAdmission?.snapshot, same(media.snapshot));
+        expect(manager.copyCalls, 1);
+        await tester.pump();
+        await tester.pump(const Duration(seconds: 1));
+      },
+    );
+
+    test(
+      'TC-366-01a direct-library batch caller reaches the strict fanout entry',
+      () {
+        final source = File(
+          'lib/features/conversation/presentation/screens/conversation_wired.dart',
+        ).readAsStringSync();
+        final launch = source.indexOf('_launchDirectMediaBatchForward(');
+        expect(launch, greaterThanOrEqualTo(0));
+        final strict = source.indexOf(
+          'ordinary.deliverDirectMediaBatchForwardStrict(',
+          launch < 0 ? 0 : launch,
+        );
+        expect(strict, greaterThan(launch));
         expect(
-          find.byKey(const ValueKey('voice-review-send')),
-          findsOneWidget,
-          reason: 'refusal restores the held recording for user review',
+          source.substring(launch, strict),
+          isNot(contains('ordinary.deliver(')),
+          reason:
+              'the library batch must not bypass the admission-first strict '
+              'entry through the generic share route',
         );
       },
     );
@@ -11355,6 +11789,7 @@ void main() {
           String? timestamp,
           String? blobId,
           preparedArtifact,
+          mediaAdmission,
         }) async {
           capturedBlobId = blobId;
           callOrder.add('sendVoiceMessage');
@@ -11484,6 +11919,7 @@ void main() {
           String? timestamp,
           String? blobId,
           preparedArtifact,
+          mediaAdmission,
         }) async {
           capturedBlobId = blobId;
           if (mediaAttachmentRepo != null && messageId != null) {

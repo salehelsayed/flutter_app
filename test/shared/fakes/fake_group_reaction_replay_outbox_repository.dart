@@ -9,8 +9,10 @@ class FakeGroupReactionReplayOutboxRepository
 
   int saveEntryCallCount = 0;
   int attachBuiltPayloadCallCount = 0;
+
   /// Plan 319: models the group-parent write guard's silent zero-row insert.
   bool guardBlocksInserts = false;
+
   /// Plan 319: fails only the needs_build -> pending promotion.
   bool failAttachBuiltPayload = false;
   int updateEntryStatusCallCount = 0;
@@ -96,6 +98,8 @@ class FakeGroupReactionReplayOutboxRepository
   @override
   Future<List<GroupReactionReplayOutboxEntry>> loadRetryableEntries({
     int limit = 20,
+    bool strictContentOnly = false,
+    int offset = 0,
   }) async {
     return entries
         .where(
@@ -106,6 +110,12 @@ class FakeGroupReactionReplayOutboxRepository
               entry.deliveryStatus ==
                   GroupReactionReplayOutboxStatus.needsBuild,
         )
+        .where(
+          (entry) =>
+              !strictContentOnly ||
+              entry.inboxRetryPayload.contains('group_content_v1'),
+        )
+        .skip(offset)
         .take(limit)
         .toList();
   }

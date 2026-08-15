@@ -161,7 +161,7 @@ void main() {
       'integration_test/group_multi_device_real_harness.dart',
     ).readAsStringSync();
     const constructorStart =
-        'final mediaAttachmentRepo = MediaAttachmentRepositoryImpl(';
+        'mediaAttachmentRepo = MediaAttachmentRepositoryImpl(';
     const nextConstructor = 'final reactionRepo = ReactionRepositoryImpl(';
     final start = source.indexOf(constructorStart);
     expect(start, isNonNegative);

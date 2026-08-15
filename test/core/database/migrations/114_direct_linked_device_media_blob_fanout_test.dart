@@ -109,7 +109,7 @@ void main() {
       databaseFactoryFfi.openDatabase(
         upgradePath,
         options: OpenDatabaseOptions(
-          version: currentIdentityDatabaseVersion,
+          version: 114,
           singleInstance: false,
           onCreate: runProductionOnCreate,
           onUpgrade: runProductionOnUpgrade,
@@ -147,7 +147,7 @@ void main() {
     db = await databaseFactoryFfi.openDatabase(
       upgradePath,
       options: OpenDatabaseOptions(
-        version: currentIdentityDatabaseVersion,
+        version: 114,
         singleInstance: false,
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
@@ -158,11 +158,11 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 114);
+    expect(currentIdentityDatabaseVersion, 115);
     expect(await _userVersion(db), 114);
 
-    // Registered exactly once in both registries, immediately after v113 and
-    // last in the chain.
+    // Registered exactly once in both registries, immediately after v113;
+    // v115 is now the sole successor in the chain.
     for (final registry in <List<ProductionMigrationEntry>>[
       productionCreateMigrations,
       productionUpgradeMigrations,
@@ -174,9 +174,9 @@ void main() {
         entries.single.run,
         same(runDirectLinkedDeviceMediaBlobFanoutMigration),
       );
-      expect(registry.last, same(entries.single));
       final index113 = registry.indexWhere((entry) => entry.version == 113);
       expect(registry.indexOf(entries.single), index113 + 1);
+      expect(registry[registry.indexOf(entries.single) + 1].version, 115);
     }
 
     // The rebuild appends exactly the two nullable linked columns after
@@ -231,7 +231,15 @@ void main() {
     await _expectExactSchema(db);
     await _expectNaturalIdentityAndShapes(db);
     await _expectFingerprintVersionConstraints(db);
-    await _expectTypedNaturalKeyHelpers(db);
+    // The lane-qualified typed helper now targets the current v115 schema and
+    // is exercised by TC-365-01a. This historical migration sentinel remains
+    // pinned to the literal v114 schema it owns.
+    if ((await _columnNames(
+      db,
+      'direct_media_blob_custody',
+    )).contains('owner_lane')) {
+      await _expectTypedNaturalKeyHelpers(db);
+    }
 
     // Run-twice idempotent on the same open database.
     await runDirectLinkedDeviceMediaBlobFanoutMigration(db);
@@ -248,7 +256,7 @@ void main() {
     db = await databaseFactoryFfi.openDatabase(
       upgradePath,
       options: OpenDatabaseOptions(
-        version: currentIdentityDatabaseVersion,
+        version: 114,
         singleInstance: false,
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
@@ -283,7 +291,7 @@ void main() {
     db = await databaseFactoryFfi.openDatabase(
       upgradePath,
       options: OpenDatabaseOptions(
-        version: currentIdentityDatabaseVersion,
+        version: 114,
         singleInstance: false,
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,
@@ -304,7 +312,7 @@ void main() {
     final fresh = await databaseFactoryFfi.openDatabase(
       freshPath,
       options: OpenDatabaseOptions(
-        version: currentIdentityDatabaseVersion,
+        version: 114,
         singleInstance: false,
         onCreate: runProductionOnCreate,
         onUpgrade: runProductionOnUpgrade,

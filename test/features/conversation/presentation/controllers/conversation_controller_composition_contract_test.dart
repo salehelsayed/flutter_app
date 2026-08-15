@@ -66,8 +66,16 @@ const _controllerTestPaths = <String>[
 // const default; the injectable values make the default-build admission and
 // composer-to-retry host proofs causal without a second production route.
 // No controller owner or pure-screen handoff changed.
-const _expectedDirectApiFingerprint = 'f5df142f';
-const _expectedGroupApiFingerprint = '2d8f881b';
+// 365: repinned for exactly one added optional widget field on
+// `GroupConversationWired` — `preparedGroupMediaBlobCustodyCoordinator`, the
+// initialized-authority media/voice producer seam. No controller owner or
+// pure-screen handoff changed.
+// 366: repinned for exactly one added defaulted widget field on
+// `ConversationWired` — `sendPrivateMediaFanoutChatMessageFn`, the separately
+// typed private-fanout Barrier-B dispatch seam. It defaults to the incumbent
+// sender and changes no controller owner or pure-screen handoff.
+const _expectedDirectApiFingerprint = 'd12d6951';
+const _expectedGroupApiFingerprint = '3ffab64f';
 // 301: the direct handoff gained the reviewed `protectionCoordinator`
 // pass-through (the Session-05-qualified shared screenshot-protection
 // coordinator for protected thumbnail bubbles).

@@ -19,6 +19,18 @@ void main() {
   Future<void> pump([Duration d = const Duration(milliseconds: 50)]) =>
       Future.delayed(d);
 
+  Future<void> useLegacyUninitializedCohort(
+    String groupId,
+    Iterable<GroupTestUser> users,
+  ) async {
+    for (final user in users) {
+      final members = await user.groupRepo.getMembers(groupId);
+      for (final member in members) {
+        await user.groupRepo.saveMember(member.copyWith(devices: const []));
+      }
+    }
+  }
+
   test(
     'chat-group reaction roundtrip reaches the original sender through the live listener stream',
     () async {
@@ -52,6 +64,7 @@ void main() {
           ),
         );
       }
+      await useLegacyUninitializedCohort(groupId, [admin, bob]);
 
       admin.start();
       bob.start();
@@ -142,6 +155,7 @@ void main() {
           ),
         );
       }
+      await useLegacyUninitializedCohort(groupId, [alice, bob, charlie]);
 
       alice.start();
       bob.start();
@@ -238,6 +252,7 @@ void main() {
           ),
         );
       }
+      await useLegacyUninitializedCohort(groupId, [alice, bob, charlie]);
 
       alice.start();
       bob.start();
@@ -333,6 +348,7 @@ void main() {
           ),
         );
       }
+      await useLegacyUninitializedCohort(groupId, [alice, bob, charlie]);
 
       alice.start();
       bob.start();
@@ -359,6 +375,7 @@ void main() {
           ),
         );
       }
+      await useLegacyUninitializedCohort(groupId, [alice, bob, charlie]);
       await pump(const Duration(milliseconds: 150));
       for (final user in [alice, bob, charlie]) {
         final member = await user.groupRepo.getMember(group.id, charlie.peerId);
@@ -366,6 +383,10 @@ void main() {
         final latestKey = await user.groupRepo.getLatestKey(group.id);
         expect(latestKey?.keyGeneration, 2, reason: user.peerId);
       }
+      // The membership-added envelopes may repopulate the fake device rosters
+      // after the first reset. Keep this legacy preservation fixture explicitly
+      // uninitialized once the re-add has converged.
+      await useLegacyUninitializedCohort(groupId, [alice, bob, charlie]);
 
       final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
         groupId: group.id,
@@ -457,6 +478,7 @@ void main() {
           ),
         );
       }
+      await useLegacyUninitializedCohort(groupId, [admin, bob]);
 
       admin.start();
       bob.start();

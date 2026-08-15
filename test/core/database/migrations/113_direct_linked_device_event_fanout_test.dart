@@ -99,8 +99,8 @@ void main() {
       if (db.isOpen) await db.close();
     });
 
-    expect(currentIdentityDatabaseVersion, 114);
-    expect(await _userVersion(db), 114);
+    expect(currentIdentityDatabaseVersion, 115);
+    expect(await _userVersion(db), 115);
 
     // Registered exactly once in both registries, immediately after v112.
     // 362: v114 now follows v113, so the ledger claim is positional.
@@ -138,12 +138,12 @@ void main() {
     // Every durable row survives byte-identically: old columns untouched and
     // every new column NULL — historical rows are never promoted or guessed.
     expect(await db.query('contacts'), v112Contacts);
-    // 362: the v114 rebuild appends its two nullable linked columns to v111
-    // rows; everything else stays byte-identical with no promotion.
-    _expectPreservedWithNullNewColumns(
+    // 362/365: v114 appends the nullable linked columns and v115 appends
+    // deterministic direct ownership. The complete v112 projection remains
+    // byte-identical with no inferred linked or group authority.
+    _expectPreservedDirectBlobProjection(
       await db.query('direct_media_blob_custody'),
       v112Blobs,
-      const <String>['contact_account_peer_id', 'recipient_ml_kem_public_key'],
     );
     expect(await db.query('direct_contact_device_bindings'), v112Bindings);
     expect(await db.query('direct_contact_device_roster_metadata'), v112Roster);
@@ -180,7 +180,7 @@ void main() {
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await runDirectLinkedDeviceEventFanoutMigration(db);
     await _expectExactSchema(db);
-    expect(await _userVersion(db), 114);
+    expect(await _userVersion(db), 115);
 
     // Author one real fanout-marked row set, then prove reopen preserves it
     // and that v113 is a one-way floor.
@@ -225,7 +225,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 114);
+    expect(await _userVersion(db), 115);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -265,7 +265,7 @@ void main() {
         onDowngrade: onDatabaseVersionChangeError,
       ),
     );
-    expect(await _userVersion(db), 114);
+    expect(await _userVersion(db), 115);
     expect(
       await db.query('direct_inbox_custody_outbox', orderBy: 'message_id'),
       markedCustody,
@@ -286,7 +286,7 @@ void main() {
     addTearDown(() async {
       if (fresh.isOpen) await fresh.close();
     });
-    expect(await _userVersion(fresh), 114);
+    expect(await _userVersion(fresh), 115);
     expect(
       await _columnNames(fresh, 'messages'),
       containsAll(_newMessageColumns),
@@ -330,6 +330,28 @@ void _expectPreservedWithNullNewColumns(
     }
     final projected = Map<String, Object?>.from(row)
       ..removeWhere((key, _) => newColumns.contains(key));
+    expect(projected, before[index]);
+  }
+}
+
+void _expectPreservedDirectBlobProjection(
+  List<Map<String, Object?>> current,
+  List<Map<String, Object?>> before,
+) {
+  expect(current, hasLength(before.length));
+  for (var index = 0; index < before.length; index++) {
+    final row = current[index];
+    expect(row['contact_account_peer_id'], isNull);
+    expect(row['recipient_ml_kem_public_key'], isNull);
+    expect(row['owner_lane'], 'direct');
+    expect(row['group_id'], isNull);
+    expect(row['custody_blob_id'], row['attachment_id']);
+    final projected = Map<String, Object?>.from(row)
+      ..remove('contact_account_peer_id')
+      ..remove('recipient_ml_kem_public_key')
+      ..remove('owner_lane')
+      ..remove('group_id')
+      ..remove('custody_blob_id');
     expect(projected, before[index]);
   }
 }

@@ -4,6 +4,7 @@ import 'package:sqflite_sqlcipher/sqflite.dart';
 
 import '../../notifications/deterministic_notification_id.dart';
 import '../db_write_transaction.dart';
+import 'protected_group_reaction_display_terminal_db_helpers.dart';
 
 const String _table = 'group_notification_display_outbox';
 const int kGroupNotificationDisplayOutboxCapacity = 512;
@@ -269,6 +270,15 @@ Future<bool> dbCompleteGroupNotificationDisplayOutboxEntryIfExact(
         terminalIdentity,
         expectedGroupId,
       ],
+    );
+    await dbAppendProtectedGroupReactionDisplayTerminalIfExact(
+      txn,
+      groupId: expectedGroupId,
+      transitionId: eventId,
+      messageId: expectedMessageId,
+      actorPeerId: expectedActorPeerId,
+      reactionId: expectedReactionId,
+      eventTimestamp: expectedEventTimestamp,
     );
   }
 

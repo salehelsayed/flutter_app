@@ -261,6 +261,13 @@ typedef ApplyProtectedGroupAuthorityReplay =
       VerifiedProtectedGroupAuthorityReplay authority,
     );
 
+typedef ReconcileProtectedGroupAuthorityContent =
+    Future<bool> Function(
+      ProtectedGroupAuthorityControl control,
+      Map<String, dynamic> replayData,
+      VerifiedProtectedGroupAuthorityReplay authority,
+    );
+
 /// Unforgeable authorization for replaying one exact, historically verified
 /// protected authority transition through the ordinary projection machinery.
 ///
@@ -954,6 +961,7 @@ Future<ProtectedGroupAuthorityHandleResult> handleProtectedGroupAuthority({
   required LoadAuthenticatedGroupAuthorityProof loadAuthorityProof,
   required AppendAuthenticatedGroupAuthorityProof appendAuthorityProof,
   required ApplyProtectedGroupAuthorityReplay applyReplay,
+  ReconcileProtectedGroupAuthorityContent? reconcileContent,
   DateTime Function()? now,
 }) async {
   final recipientTransportPeerId = ownTransportPeerId.trim();
@@ -1071,9 +1079,18 @@ Future<ProtectedGroupAuthorityHandleResult> handleProtectedGroupAuthority({
           eventId: payload.transitionId,
         );
         if (complete != null) {
-          return _sameAuthenticatedProof(complete, proof)
-              ? ProtectedGroupAuthorityHandleResult.duplicate
-              : ProtectedGroupAuthorityHandleResult.terminalRejected;
+          if (!_sameAuthenticatedProof(complete, proof)) {
+            return ProtectedGroupAuthorityHandleResult.terminalRejected;
+          }
+          if (reconcileContent != null &&
+              !await reconcileContent(
+                payload.control,
+                payload.replayData,
+                replayAuthority,
+              )) {
+            return ProtectedGroupAuthorityHandleResult.retryable;
+          }
+          return ProtectedGroupAuthorityHandleResult.duplicate;
         }
 
         final prepared = await loadAuthorityProof(
@@ -1127,6 +1144,14 @@ Future<ProtectedGroupAuthorityHandleResult> handleProtectedGroupAuthority({
           return ProtectedGroupAuthorityHandleResult.terminalRejected;
         }
         if (applied == ProtectedGroupAuthorityApplyResult.retryable) {
+          return ProtectedGroupAuthorityHandleResult.retryable;
+        }
+        if (reconcileContent != null &&
+            !await reconcileContent(
+              payload.control,
+              payload.replayData,
+              replayAuthority,
+            )) {
           return ProtectedGroupAuthorityHandleResult.retryable;
         }
         await appendAuthorityProof(
@@ -1994,7 +2019,11 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
         if (complete != null) {
           return complete.control ==
                   ProtectedGroupAuthorityControl.groupDissolve.wireValue &&
-              (await groupRepository.getGroup(groupId))?.isDissolved == true;
+              (await groupRepository.getGroup(groupId))?.isDissolved == true &&
+              await reconcileCompletedProtectedGroupAuthority(
+                groupRepository,
+                complete,
+              );
         }
 
         final prepared = await loadAuthorityProof(
@@ -2133,7 +2162,11 @@ Future<bool> recoverPreparedProtectedGroupDissolve({
         );
         return storedComplete != null &&
             sameAuthenticatedGroupAuthorityProof(storedComplete, prepared) &&
-            (await groupRepository.getGroup(groupId))?.isDissolved == true;
+            (await groupRepository.getGroup(groupId))?.isDissolved == true &&
+            await reconcileCompletedProtectedGroupAuthority(
+              groupRepository,
+              storedComplete,
+            );
       } catch (_) {
         return false;
       }

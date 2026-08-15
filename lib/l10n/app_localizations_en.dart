@@ -3143,6 +3143,55 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sibling_device_verify_approve => 'Verify & approve';
 
   @override
+  String get contact_profile_linked_devices => 'Linked devices';
+
+  @override
+  String get contact_profile_linked_device_revoke => 'Revoke';
+
+  @override
+  String get contact_profile_linked_device_verify => 'Verify';
+
+  @override
+  String get linked_device_setup_title => 'Link this device';
+
+  @override
+  String get linked_device_setup_recovery_phrase_instruction =>
+      'Enter the 12-word recovery phrase of the account you want this phone to join as an additional device.';
+
+  @override
+  String get linked_group_status_title => 'Groups (read only)';
+
+  @override
+  String get linked_group_status_refresh => 'Refresh group status';
+
+  @override
+  String get linked_group_status_waiting =>
+      'Waiting for a group bootstrap from your primary device.';
+
+  @override
+  String get group_info_link_device_action =>
+      'Link this group to another device';
+
+  @override
+  String get linked_group_confirm_title => 'Link this group?';
+
+  @override
+  String linked_group_confirm_body(String groupName) {
+    return 'Share “$groupName” with the scanned linked device. No other groups or conversations will be shared.';
+  }
+
+  @override
+  String get linked_group_confirm_action => 'Link group';
+
+  @override
+  String get linked_device_media_unavailable =>
+      'Media is not available on this linked device yet';
+
+  @override
+  String get linked_device_voice_unavailable =>
+      'Voice messages are not available on this linked device yet';
+
+  @override
   String get transport_diagnostics_title => 'TRANSPORT DIAGNOSTICS (SESSION)';
 
   @override

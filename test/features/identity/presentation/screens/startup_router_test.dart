@@ -302,6 +302,24 @@ void main() {
         reason: 'tests must be able to inject the persisted role snapshot',
       );
 
+      // The pre-router role-aware latch owns both the exact linked node start
+      // and restricted recovery. The ACTIVE route awaits that one owner and
+      // must not schedule the router's ordinary post-navigation node start a
+      // second time.
+      final activeRouteStart = routerSource.indexOf(
+        'if (isActiveLinkedRoute) {',
+      );
+      final activeRouteEnd = routerSource.indexOf('return;', activeRouteStart);
+      final activeRouteBody = routerSource.substring(
+        activeRouteStart,
+        activeRouteEnd,
+      );
+      expect(
+        activeRouteBody,
+        contains('await widget.ensureRuntimeServicesReady?.call();'),
+      );
+      expect(activeRouteBody, isNot(contains('_startP2PInBackground()')));
+
       final summaryIndex = routerSource.indexOf(
         "StartupTiming.instance.mark('p2p_startup_complete');",
       );

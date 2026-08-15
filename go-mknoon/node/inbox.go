@@ -31,6 +31,7 @@ const (
 	CustodyKindDirectMutationV109 = "direct_mutation_v109"
 	CustodyKindGroupBootstrapV1   = "group_bootstrap_v1"
 	CustodyKindGroupAuthorityV1   = "group_authority_v1"
+	CustodyKindGroupContentV1     = "group_content_v1"
 
 	inboxStoreAckCustodyAction    = "store_custody_v1"
 	inboxRetrieveAckCustodyAction = "retrieve_custody_pending_v1"
@@ -395,7 +396,7 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeToken(
 	)
 }
 
-// InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling is the media-only
+// InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling is the media-bound
 // sibling of InboxStoreAckCustodyDetailedWithWakeToken. The positive ceiling
 // is sent on the existing protected action and the returned relay proof must
 // carry that exact persisted expiry.
@@ -407,9 +408,10 @@ func (n *Node) InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
 	custodyKind string,
 	custodyExpiresAtOrBeforeMs int64,
 ) (InboxStoreOutcome, error) {
-	if custodyKind != CustodyKindDirectTextV108 || custodyExpiresAtOrBeforeMs <= 0 {
+	if (custodyKind != CustodyKindDirectTextV108 && custodyKind != CustodyKindGroupContentV1) ||
+		custodyExpiresAtOrBeforeMs <= 0 {
 		return InboxStoreOutcome{ErrorCode: "CUSTODY_INELIGIBLE"}, fmt.Errorf(
-			"%w: media expiry ceiling requires direct_text_v108 and a positive ceiling",
+			"%w: media expiry ceiling requires direct_text_v108 or group_content_v1 and a positive ceiling",
 			ErrInboxCustodyIneligible,
 		)
 	}
@@ -537,7 +539,8 @@ func isSupportedInboxCustodyKind(kind string) bool {
 		kind == CustodyKindDirectReactionV109 ||
 		kind == CustodyKindDirectMutationV109 ||
 		kind == CustodyKindGroupBootstrapV1 ||
-		kind == CustodyKindGroupAuthorityV1
+		kind == CustodyKindGroupAuthorityV1 ||
+		kind == CustodyKindGroupContentV1
 }
 
 func (n *Node) exchangeInboxRequest(

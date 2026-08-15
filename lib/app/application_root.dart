@@ -110,7 +110,9 @@ import 'package:flutter_app/features/conversation/application/direct_event_fanou
 import 'package:flutter_app/features/conversation/presentation/screens/conversation_wired.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/conversation_route_transition.dart';
 import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
+import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/application/group_conversation_notification_snapshot.dart';
 import 'package:flutter_app/features/orbit/presentation/screens/orbit_wired.dart';
 import 'package:flutter_app/features/orbit/presentation/navigation/orbit_route_transition.dart';
@@ -393,8 +395,23 @@ class MyApp extends StatefulWidget {
   /// start group topics, content listeners, Feed, push, or history owners.
   final Future<void> Function()? drainLinkedGroupBootstrap;
   final Future<void> Function()? replayLinkedGroupAuthority;
+  final Future<int> Function()? replayLinkedGroupContent;
+  final Future<int> Function()? drainLinkedGroupOutgoingMedia;
+  final Future<int> Function()? retryLinkedGroupContent;
+  final Future<int> Function()? drainLinkedGroupIncomingMedia;
+  final Future<void> Function()? drainLinkedGroupNotificationDisplayCustody;
   final Future<void> Function()? refreshLinkedGroupList;
   final Future<void> Function()? flushLinkedGroupAuthorityOnPause;
+
+  /// 364: one runtime-scoped barrier closes strict outgoing linked content and
+  /// inbound replay together, then waits for both custody legs to quiesce.
+  final ProtectedGroupContentPauseLease Function()?
+  pauseLinkedGroupContentAdmission;
+  final Future<bool> Function(ProtectedGroupContentPauseLease lease)?
+  resumeLinkedGroupContentAdmission;
+  final Widget Function(BuildContext context, GroupModel group)?
+  linkedGroupConversationBuilder;
+  final Future<bool> Function(String groupId)? isLinkedGroupAuthoritySettled;
 
   final GroupMediaDeleteForMeCoordinator groupMediaDeleteForMeCoordinator;
 
@@ -536,8 +553,17 @@ class MyApp extends StatefulWidget {
     this.drainLinkedDirectMediaBlobCustody,
     this.drainLinkedGroupBootstrap,
     this.replayLinkedGroupAuthority,
+    this.replayLinkedGroupContent,
+    this.drainLinkedGroupOutgoingMedia,
+    this.retryLinkedGroupContent,
+    this.drainLinkedGroupIncomingMedia,
+    this.drainLinkedGroupNotificationDisplayCustody,
     this.refreshLinkedGroupList,
     this.flushLinkedGroupAuthorityOnPause,
+    this.pauseLinkedGroupContentAdmission,
+    this.resumeLinkedGroupContentAdmission,
+    this.linkedGroupConversationBuilder,
+    this.isLinkedGroupAuthoritySettled,
     required this.groupMediaDeletionCleanup,
     this.privateMediaLifecycleRecovery,
     this.directMediaBlobLocalCleanup,
@@ -2186,8 +2212,16 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // runs the local-only sweep without the media/group repositories and
     // without the FDC-06 pause flush; every generic pause owner stays zero.
     if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
+      // Invoke the runtime barrier before constructing the asynchronous pause
+      // continuation. Its first action is synchronous: close strict outgoing
+      // admission so no send/tap/retry can enter after this lifecycle edge.
+      final linkedGroupContentPause = widget.pauseLinkedGroupContentAdmission
+          ?.call();
       unawaited(
         (() async {
+          if (linkedGroupContentPause != null) {
+            await linkedGroupContentPause.quiesced;
+          }
           final result = await handleAppPaused(
             messageRepo: widget.messageRepository,
             p2pService: widget.p2pService,
@@ -2286,9 +2320,28 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // strict-media custody convergers when they are wired.
     if (widget.isLinkedBlobFreeRuntime?.call() ?? false) {
       widget.p2pService.markResumeStarted();
+      final linkedGroupContentPause = widget.pauseLinkedGroupContentAdmission
+          ?.call();
+      if (linkedGroupContentPause != null) {
+        await linkedGroupContentPause.quiesced;
+      }
       await widget.p2pService.drainOfflineInbox();
       await widget.drainLinkedGroupBootstrap?.call();
       await widget.replayLinkedGroupAuthority?.call();
+      if (linkedGroupContentPause != null &&
+          !(await widget.resumeLinkedGroupContentAdmission?.call(
+                linkedGroupContentPause,
+              ) ??
+              false)) {
+        return;
+      }
+      final groupDrain = await drainProtectedGroupContentMediaFixedPoint(
+        replayContent: widget.replayLinkedGroupContent,
+        drainOutgoingMedia: widget.drainLinkedGroupOutgoingMedia,
+        retryContent: widget.retryLinkedGroupContent,
+        drainIncomingMedia: widget.drainLinkedGroupIncomingMedia,
+      );
+      await widget.drainLinkedGroupNotificationDisplayCustody?.call();
       await widget.refreshLinkedGroupList?.call();
       final drained =
           await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;
@@ -2296,7 +2349,14 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
       emitFlowEvent(
         layer: 'FL',
         event: 'APP_LIFECYCLE_LINKED_RESUME_COMPLETE',
-        details: {'drained': drained},
+        details: {
+          'drained': drained,
+          'groupContentReplayed': groupDrain.contentReplayed,
+          'groupContentRetried': groupDrain.contentRetried,
+          'groupOutgoingMediaProgress': groupDrain.outgoingMedia,
+          'groupIncomingMediaProgress': groupDrain.incomingMedia,
+          'groupMediaFixedPointPasses': groupDrain.passes,
+        },
       );
       widget.p2pService.checkResumeAlreadyOnline();
       return;
@@ -3132,6 +3192,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           reactionListener: widget.reactionListener,
           groupPendingReactionRepository: widget.groupPendingReactionRepository,
           groupRepository: widget.groupRepository,
+          linkedGroupConversationBuilder: widget.linkedGroupConversationBuilder,
+          isLinkedGroupAuthoritySettled: widget.isLinkedGroupAuthoritySettled,
           groupMessageRepository: widget.groupMessageRepository,
           groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
           groupPendingKeyRepairRepository:

@@ -967,7 +967,9 @@ Map<String, Object?> _fileEntryTelemetryDetail({
   bool? writeVerified,
 }) {
   if (manifestItem?['kind'] ==
-      MigrationFileManifestItemKind.directMediaBlobCustody.name) {
+          MigrationFileManifestItemKind.directMediaBlobCustody.name ||
+      manifestItem?['kind'] ==
+          MigrationFileManifestItemKind.groupMediaBlobCustody.name) {
     return <String, Object?>{
       'kind': manifestItem?['kind'],
       'criticality': manifestItem?['criticality'],
@@ -1864,7 +1866,9 @@ class AccountMigrationProductionBundleReceiver
       if (writtenDetails.length < _fileManifestIssueDetailLimit) {
         final isCustodyArtifact =
             manifestItem?['kind'] ==
-            MigrationFileManifestItemKind.directMediaBlobCustody.name;
+                MigrationFileManifestItemKind.directMediaBlobCustody.name ||
+            manifestItem?['kind'] ==
+                MigrationFileManifestItemKind.groupMediaBlobCustody.name;
         writtenDetails.add(
           isCustodyArtifact
               ? <String, Object?>{

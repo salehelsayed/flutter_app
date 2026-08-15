@@ -228,9 +228,7 @@ Future<GroupMediaDeletePrepareResult> dbPrepareGroupMediaDeleteForMe(
     event: 'GROUP_MEDIA_DELETE_PREPARE',
     details: {
       'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-      'messageId': messageId.length > 8
-          ? messageId.substring(0, 8)
-          : messageId,
+      'messageId': messageId.length > 8 ? messageId.substring(0, 8) : messageId,
       'outcome': result.outcome.name,
       'journaled': result.journaledAttachments,
     },
@@ -240,7 +238,8 @@ Future<GroupMediaDeletePrepareResult> dbPrepareGroupMediaDeleteForMe(
 
 /// Loads one bounded journal page in stable `(created_at, attachment_id)`
 /// cursor order (TC-235-08: literal page size 100 at the reconciler).
-Future<List<GroupMediaDeletionJournalEntry>> dbLoadGroupMediaDeletionJournalPage(
+Future<List<GroupMediaDeletionJournalEntry>>
+dbLoadGroupMediaDeletionJournalPage(
   Database db, {
   int limit = 100,
   String? afterCreatedAt,
@@ -305,6 +304,21 @@ Future<bool> dbFinalizeGroupMediaDeletionJournalEntry(
   required String messageId,
 }) async {
   return dbWriteTransaction(db, (txn) async {
+    // DB v115 strict group custody owns the attachment until its source-pinned
+    // relay ACK (or exact expiry) has converged. Journal cleanup must not erase
+    // the descriptor while either incoming state is still durable; otherwise
+    // a cold/resume reconciliation could destroy the only exact fingerprint
+    // before the strict owner can terminalize delete-before-download.
+    final strictCustody = await txn.query(
+      'direct_media_blob_custody',
+      columns: const <String>['attachment_id'],
+      where:
+          "owner_lane = 'group' AND attachment_id = ? AND message_id = ? "
+          "AND direction = 'incoming'",
+      whereArgs: <Object?>[attachmentId, messageId],
+      limit: 1,
+    );
+    if (strictCustody.isNotEmpty) return false;
     await txn.delete(
       'media_attachments',
       where: "id = ? AND message_id = ? AND owner_lane = 'group'",

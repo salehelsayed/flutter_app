@@ -21,6 +21,20 @@ enum _ProtectedMembershipSubjectTimelineState {
   ambiguous,
 }
 
+final class _RemoteMemberRemovalFollowUp {
+  const _RemoteMemberRemovalFollowUp({
+    required this.removedPeerId,
+    required this.removedPeerWasActiveMember,
+    required this.removalAuthorPeerId,
+    required this.snapshotHasNoActiveMembers,
+  });
+
+  final String? removedPeerId;
+  final bool removedPeerWasActiveMember;
+  final String removalAuthorPeerId;
+  final bool snapshotHasNoActiveMembers;
+}
+
 final class _GroupMessageSystemTransitionProcessor {
   _GroupMessageSystemTransitionProcessor({
     required GroupRepository groupRepo,
@@ -313,6 +327,7 @@ final class _GroupMessageSystemTransitionProcessor {
         return;
       }
       SignedGroupTransitionAuditVerification? signedTransitionAudit;
+      String? verifiedOrdinaryPreTransitionStateHash;
       if (_shouldRequireSignedTransitionAudit(sysType, parsed)) {
         final signedAuditHash = signedGroupTransitionAuditHashFromPayload(
           parsed,
@@ -428,6 +443,7 @@ final class _GroupMessageSystemTransitionProcessor {
                 relaxTerminalDissolvePreTransitionHash
             ? null
             : await buildGroupTransitionStateHash(_groupRepo, groupId);
+        verifiedOrdinaryPreTransitionStateHash = preTransitionStateHash;
         final auditCheck = await verifyGroupTransitionAudit(
           bridge: _bridge!,
           containerPayload: parsed,
@@ -505,274 +521,478 @@ final class _GroupMessageSystemTransitionProcessor {
         }
       }
 
+      Future<bool> revalidateMembershipMutationAuthority() async {
+        if (protectedAuthorityReplay != null) {
+          // Protected replay owns the outer authority phase continuously from
+          // verification through this decisive recheck/commit boundary.
+          return true;
+        }
+        if (!await _isBoundSystemEventSenderDevice(
+          groupId: groupId,
+          senderId: senderId,
+          senderDeviceId: senderDeviceId,
+          transportPeerId: transportPeerId,
+          sysType: sysType,
+          parsed: parsed,
+        )) {
+          _emitSignedTransitionAuditRejected(
+            groupId,
+            sysType: sysType,
+            reason: 'sender_device_changed_before_commit',
+          );
+          return false;
+        }
+        if (_requiresMembershipEventAuthorization(sysType) &&
+            !await _isAuthorizedMembershipEventSender(
+              groupId,
+              senderId,
+              sysType: sysType,
+              parsed: parsed,
+            )) {
+          _emitSignedTransitionAuditRejected(
+            groupId,
+            sysType: sysType,
+            reason: 'sender_authority_changed_before_commit',
+          );
+          return false;
+        }
+        if ((sysType == 'member_banned' || sysType == 'member_unbanned') &&
+            !await _isAuthorizedTrustedPrivateMemberModerator(
+              groupId,
+              senderId,
+            )) {
+          _emitSignedTransitionAuditRejected(
+            groupId,
+            sysType: sysType,
+            reason: 'sender_authority_changed_before_commit',
+          );
+          return false;
+        }
+        final currentGroup = await _groupRepo.getGroup(groupId);
+        if (currentGroup == null ||
+            (currentGroup.isDissolved && sysType != 'group_dissolved')) {
+          return false;
+        }
+        final expectedStateHash = verifiedOrdinaryPreTransitionStateHash;
+        if (signedTransitionAudit != null && expectedStateHash != null) {
+          final currentStateHash = await buildGroupTransitionStateHash(
+            _groupRepo,
+            groupId,
+          );
+          if (currentStateHash != expectedStateHash) {
+            _emitSignedTransitionAuditRejected(
+              groupId,
+              sysType: sysType,
+              reason: 'transition_state_changed_before_commit',
+            );
+            return false;
+          }
+        }
+        return true;
+      }
+
       if (sysType == 'member_added') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMembershipEvent(
-            groupId,
-            sysType: sysType,
-            eventAt: membershipVersion.eventAt,
-            allowEqualVersionReplay: true,
-            allowProtectedMembershipProjectionRepair:
-                protectedAuthorityReplay?.control ==
-                ProtectedGroupAuthorityControl.memberAdd,
-            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
-            parsed: parsed,
-            msgRepo: msgRepo,
-          )) {
-            return;
-          }
-          if (protectedAuthorityReplay == null &&
-              await _isDuplicateMembersAddedReplayAlreadyApplied(
-                groupId,
-                parsed,
-                sysType: sysType,
-                senderId: senderId,
-                senderUsername: senderUsername,
-                eventAt: membershipVersion.eventAt,
-                msgRepo: msgRepo,
-              )) {
-            await _recordMembershipEventWatermark(
+        final deferredDistributionPeerIds = <String>{};
+        final membershipDependentPeerIds = <String>{};
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            if (await _shouldIgnoreStaleMembershipEvent(
               groupId,
-              membershipVersion.eventAt,
+              sysType: sysType,
+              eventAt: membershipVersion.eventAt,
+              allowEqualVersionReplay: true,
+              allowProtectedMembershipProjectionRepair:
+                  protectedAuthorityReplay?.control ==
+                  ProtectedGroupAuthorityControl.memberAdd,
+              protectedAuthorityEventId:
+                  protectedAuthorityReplay?.proof.eventId,
+              parsed: parsed,
+              msgRepo: msgRepo,
+            )) {
+              return;
+            }
+            if (protectedAuthorityReplay == null &&
+                await _isDuplicateMembersAddedReplayAlreadyApplied(
+                  groupId,
+                  parsed,
+                  sysType: sysType,
+                  senderId: senderId,
+                  senderUsername: senderUsername,
+                  eventAt: membershipVersion.eventAt,
+                  msgRepo: msgRepo,
+                )) {
+              await _recordMembershipEventWatermark(
+                groupId,
+                membershipVersion.eventAt,
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event:
+                    'GROUP_MESSAGE_LISTENER_DUPLICATE_MEMBERS_ADDED_REPLAY_IGNORED',
+                details: {
+                  'groupId': groupId.length > 8
+                      ? groupId.substring(0, 8)
+                      : groupId,
+                  'type': sysType ?? 'null',
+                },
+              );
+              return;
+            }
+            await appendSystemEventLog();
+            await _handleMemberAdded(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: membershipVersion.eventAt,
+              eventId: auditSourceEventId,
+              msgRepo: msgRepo,
+              requireNativeConfigSync: protectedAuthorityReplay != null,
+              mergeHistoricalMembershipSnapshot:
+                  protectedAuthorityReplay != null,
+              deferredDistributionPeerIds: deferredDistributionPeerIds,
+              membershipDependentPeerIds: membershipDependentPeerIds,
             );
-            emitFlowEvent(
-              layer: 'FL',
-              event:
-                  'GROUP_MESSAGE_LISTENER_DUPLICATE_MEMBERS_ADDED_REPLAY_IGNORED',
-              details: {
-                'groupId': groupId.length > 8
-                    ? groupId.substring(0, 8)
-                    : groupId,
-                'type': sysType ?? 'null',
-              },
-            );
-            return;
-          }
-          await appendSystemEventLog();
-          await _handleMemberAdded(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            eventId: auditSourceEventId,
-            msgRepo: msgRepo,
-            requireNativeConfigSync: protectedAuthorityReplay != null,
-            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
-          );
-        });
+          },
+        );
+        await _runMembershipPostCommitWork(
+          groupId: groupId,
+          authorityPhaseHeld: authorityPhaseHeld,
+          deferredDistributionPeerIds: deferredDistributionPeerIds,
+          membershipDependentPeerIds: membershipDependentPeerIds,
+          msgRepo: msgRepo,
+        );
       } else if (sysType == 'members_added') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMembershipEvent(
-            groupId,
-            sysType: sysType,
-            eventAt: membershipVersion.eventAt,
-            allowEqualVersionReplay: true,
-            allowProtectedMembershipProjectionRepair:
-                protectedAuthorityReplay?.control ==
-                ProtectedGroupAuthorityControl.memberAdd,
-            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
-            parsed: parsed,
-            msgRepo: msgRepo,
-          )) {
-            return;
-          }
-          if (protectedAuthorityReplay == null &&
-              await _isDuplicateMembersAddedReplayAlreadyApplied(
-                groupId,
-                parsed,
-                sysType: sysType,
-                senderId: senderId,
-                senderUsername: senderUsername,
-                eventAt: membershipVersion.eventAt,
-                msgRepo: msgRepo,
-              )) {
-            await _recordMembershipEventWatermark(
+        final deferredDistributionPeerIds = <String>{};
+        final membershipDependentPeerIds = <String>{};
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            if (await _shouldIgnoreStaleMembershipEvent(
               groupId,
-              membershipVersion.eventAt,
+              sysType: sysType,
+              eventAt: membershipVersion.eventAt,
+              allowEqualVersionReplay: true,
+              allowProtectedMembershipProjectionRepair:
+                  protectedAuthorityReplay?.control ==
+                  ProtectedGroupAuthorityControl.memberAdd,
+              protectedAuthorityEventId:
+                  protectedAuthorityReplay?.proof.eventId,
+              parsed: parsed,
+              msgRepo: msgRepo,
+            )) {
+              return;
+            }
+            if (protectedAuthorityReplay == null &&
+                await _isDuplicateMembersAddedReplayAlreadyApplied(
+                  groupId,
+                  parsed,
+                  sysType: sysType,
+                  senderId: senderId,
+                  senderUsername: senderUsername,
+                  eventAt: membershipVersion.eventAt,
+                  msgRepo: msgRepo,
+                )) {
+              await _recordMembershipEventWatermark(
+                groupId,
+                membershipVersion.eventAt,
+              );
+              emitFlowEvent(
+                layer: 'FL',
+                event:
+                    'GROUP_MESSAGE_LISTENER_DUPLICATE_MEMBERS_ADDED_REPLAY_IGNORED',
+                details: {
+                  'groupId': groupId.length > 8
+                      ? groupId.substring(0, 8)
+                      : groupId,
+                  'type': sysType ?? 'null',
+                },
+              );
+              return;
+            }
+            await appendSystemEventLog();
+            await _handleMembersAdded(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: membershipVersion.eventAt,
+              eventId: auditSourceEventId,
+              msgRepo: msgRepo,
+              requireNativeConfigSync: protectedAuthorityReplay != null,
+              mergeHistoricalMembershipSnapshot:
+                  protectedAuthorityReplay != null,
+              deferredDistributionPeerIds: deferredDistributionPeerIds,
+              membershipDependentPeerIds: membershipDependentPeerIds,
             );
-            emitFlowEvent(
-              layer: 'FL',
-              event:
-                  'GROUP_MESSAGE_LISTENER_DUPLICATE_MEMBERS_ADDED_REPLAY_IGNORED',
-              details: {
-                'groupId': groupId.length > 8
-                    ? groupId.substring(0, 8)
-                    : groupId,
-                'type': sysType ?? 'null',
-              },
-            );
-            return;
-          }
-          await appendSystemEventLog();
-          await _handleMembersAdded(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            eventId: auditSourceEventId,
-            msgRepo: msgRepo,
-            requireNativeConfigSync: protectedAuthorityReplay != null,
-            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
-          );
-        });
+          },
+        );
+        await _runMembershipPostCommitWork(
+          groupId: groupId,
+          authorityPhaseHeld: authorityPhaseHeld,
+          deferredDistributionPeerIds: deferredDistributionPeerIds,
+          membershipDependentPeerIds: membershipDependentPeerIds,
+          msgRepo: msgRepo,
+        );
       } else if (sysType == 'member_removed') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMemberRemovedEvent(
+        _RemoteMemberRemovalFollowUp? followUp;
+        final deferredDistributionPeerIds = <String>{};
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            if (await _shouldIgnoreStaleMemberRemovedEvent(
+              groupId,
+              parsed: parsed,
+              sysType: sysType,
+              eventAt: membershipVersion.eventAt,
+              hasExplicitConfigVersion: membershipVersion.hasConfigVersion,
+              msgRepo: msgRepo,
+              allowProtectedProjectionRepair:
+                  protectedAuthorityReplay?.control ==
+                  ProtectedGroupAuthorityControl.memberRemove,
+              protectedAuthorityEventId:
+                  protectedAuthorityReplay?.proof.eventId,
+            )) {
+              return;
+            }
+            followUp = await _handleMemberRemoved(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: membershipVersion.eventAt,
+              explicitRemovalAt: explicitMembershipEventAt,
+              removalEventId:
+                  auditSourceEventId ??
+                  ((sourceEventId?.trim().isNotEmpty ?? false)
+                      ? sourceEventId
+                      : null),
+              msgRepo: msgRepo,
+              appendSystemEventLog: appendSystemEventLog,
+              authorityPhaseHeld: true,
+              requireNativeConfigSync: protectedAuthorityReplay != null,
+              mergeHistoricalMembershipSnapshot:
+                  protectedAuthorityReplay != null,
+              deferredDistributionPeerIds: deferredDistributionPeerIds,
+            );
+          },
+        );
+        await _runMembershipPostCommitWork(
+          groupId: groupId,
+          authorityPhaseHeld: authorityPhaseHeld,
+          deferredDistributionPeerIds: deferredDistributionPeerIds,
+          msgRepo: msgRepo,
+        );
+        final committedRemoval = followUp;
+        if (committedRemoval != null) {
+          await _maybeRotateGroupKeyAfterRemoteRemoval(
             groupId,
-            parsed: parsed,
-            sysType: sysType,
-            eventAt: membershipVersion.eventAt,
-            hasExplicitConfigVersion: membershipVersion.hasConfigVersion,
-            msgRepo: msgRepo,
-            allowProtectedProjectionRepair:
-                protectedAuthorityReplay?.control ==
-                ProtectedGroupAuthorityControl.memberRemove,
-            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
-          )) {
-            return;
-          }
-          await _handleMemberRemoved(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            explicitRemovalAt: explicitMembershipEventAt,
-            removalEventId:
-                auditSourceEventId ??
-                ((sourceEventId?.trim().isNotEmpty ?? false)
-                    ? sourceEventId
-                    : null),
-            msgRepo: msgRepo,
-            appendSystemEventLog: appendSystemEventLog,
-            authorityPhaseHeld: authorityPhaseHeld,
-            requireNativeConfigSync: protectedAuthorityReplay != null,
-            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
+            removedPeerId: committedRemoval.removedPeerId,
+            removedPeerWasActiveMember:
+                committedRemoval.removedPeerWasActiveMember,
+            removalAuthorPeerId: committedRemoval.removalAuthorPeerId,
+            snapshotHasNoActiveMembers:
+                committedRemoval.snapshotHasNoActiveMembers,
           );
-        });
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_MESSAGE_LISTENER_MEMBER_REMOVED',
+            details: {
+              'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+              'removedPeerId': committedRemoval.removedPeerId ?? '?',
+            },
+          );
+        }
       } else if (sysType == 'member_banned') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          await _handleMemberBanned(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: eventAt,
-            removalEventId:
-                auditSourceEventId ??
-                ((sourceEventId?.trim().isNotEmpty ?? false)
-                    ? sourceEventId
-                    : null),
-            msgRepo: msgRepo,
-            appendSystemEventLog: appendSystemEventLog,
-          );
-        });
+        final deferredDistributionPeerIds = <String>{};
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            await _handleMemberBanned(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: eventAt,
+              removalEventId:
+                  auditSourceEventId ??
+                  ((sourceEventId?.trim().isNotEmpty ?? false)
+                      ? sourceEventId
+                      : null),
+              msgRepo: msgRepo,
+              appendSystemEventLog: appendSystemEventLog,
+              authorityPhaseHeld: true,
+              deferredDistributionPeerIds: deferredDistributionPeerIds,
+            );
+          },
+        );
+        await _runMembershipPostCommitWork(
+          groupId: groupId,
+          authorityPhaseHeld: authorityPhaseHeld,
+          deferredDistributionPeerIds: deferredDistributionPeerIds,
+          msgRepo: msgRepo,
+        );
       } else if (sysType == 'member_unbanned') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          await _handleMemberUnbanned(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: eventAt,
-            msgRepo: msgRepo,
-            appendSystemEventLog: appendSystemEventLog,
-          );
-        });
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            await _handleMemberUnbanned(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: eventAt,
+              msgRepo: msgRepo,
+              appendSystemEventLog: appendSystemEventLog,
+            );
+          },
+        );
       } else if (sysType == 'group_message_deleted') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          await _handleGroupMessageDeleted(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: eventAt,
-            msgRepo: msgRepo,
-            appendSystemEventLog: appendSystemEventLog,
-          );
-        });
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: false,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            await _handleGroupMessageDeleted(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: eventAt,
+              msgRepo: msgRepo,
+              appendSystemEventLog: appendSystemEventLog,
+            );
+          },
+        );
       } else if (sysType == 'member_role_updated') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMembershipEvent(
-            groupId,
-            sysType: sysType,
-            eventAt: membershipVersion.eventAt,
-            eventId: auditSourceEventId,
-            allowProtectedRoleProjectionRepair:
-                protectedAuthorityReplay?.control ==
-                ProtectedGroupAuthorityControl.memberRole,
-            protectedAuthorityEventId: protectedAuthorityReplay?.proof.eventId,
-            parsed: parsed,
-            msgRepo: msgRepo,
-          )) {
-            return;
-          }
-          await appendSystemEventLog();
-          await _handleMemberRoleUpdated(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            eventId: auditSourceEventId,
-            msgRepo: msgRepo,
-            requireNativeConfigSync: protectedAuthorityReplay != null,
-            mergeHistoricalMembershipSnapshot: protectedAuthorityReplay != null,
-          );
-        });
+        final deferredDistributionPeerIds = <String>{};
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            if (await _shouldIgnoreStaleMembershipEvent(
+              groupId,
+              sysType: sysType,
+              eventAt: membershipVersion.eventAt,
+              eventId: auditSourceEventId,
+              allowProtectedRoleProjectionRepair:
+                  protectedAuthorityReplay?.control ==
+                  ProtectedGroupAuthorityControl.memberRole,
+              protectedAuthorityEventId:
+                  protectedAuthorityReplay?.proof.eventId,
+              parsed: parsed,
+              msgRepo: msgRepo,
+            )) {
+              return;
+            }
+            await appendSystemEventLog();
+            await _handleMemberRoleUpdated(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: membershipVersion.eventAt,
+              eventId: auditSourceEventId,
+              msgRepo: msgRepo,
+              requireNativeConfigSync: protectedAuthorityReplay != null,
+              mergeHistoricalMembershipSnapshot:
+                  protectedAuthorityReplay != null,
+              deferredDistributionPeerIds: deferredDistributionPeerIds,
+            );
+          },
+        );
+        await _runMembershipPostCommitWork(
+          groupId: groupId,
+          authorityPhaseHeld: authorityPhaseHeld,
+          deferredDistributionPeerIds: deferredDistributionPeerIds,
+          msgRepo: msgRepo,
+        );
       } else if (sysType == 'group_dissolved') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          await _handleGroupDissolved(
-            groupId,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: membershipVersion.eventAt,
-            msgRepo: msgRepo,
-            appendSystemEventLog: appendSystemEventLog,
-            authorityPhaseHeld:
-                protectedAuthorityReplay != null &&
-                authorityPhaseHeld &&
-                isGroupAuthorityPhaseHeld(groupId),
-          );
-        });
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            await _handleGroupDissolved(
+              groupId,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: membershipVersion.eventAt,
+              msgRepo: msgRepo,
+              appendSystemEventLog: appendSystemEventLog,
+              authorityPhaseHeld: true,
+            );
+          },
+        );
       } else if (sysType == 'group_metadata_updated') {
-        await _enqueueGroupConfigWork(groupId, () async {
-          if (await _shouldIgnoreStaleMetadataEvent(
-            groupId,
-            sysType: sysType,
-            eventAt: eventAt,
-            parsed: parsed,
-            requireExactProtectedProjection:
-                protectedAuthorityReplay?.control ==
-                ProtectedGroupAuthorityControl.memberConfig,
-          )) {
-            return;
-          }
-          if (!await _verifyGroupMetadataActorEvent(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            trustedActorPublicKey:
-                protectedAuthorityReplay?.proof.actorAccountPublicKey,
-          )) {
-            return;
-          }
-          await appendSystemEventLog();
-          await _handleGroupMetadataUpdated(
-            groupId,
-            parsed,
-            senderId: senderId,
-            senderUsername: senderUsername,
-            eventAt: eventAt,
-            msgRepo: msgRepo,
-            requireNativeConfigSync:
-                protectedAuthorityReplay?.control ==
-                ProtectedGroupAuthorityControl.memberConfig,
-          );
-        });
+        final deferredDistributionPeerIds = <String>{};
+        await _enqueueGroupConfigWork(
+          groupId,
+          membershipMutation: true,
+          authorityPhaseHeld: authorityPhaseHeld,
+          work: () async {
+            if (!await revalidateMembershipMutationAuthority()) return;
+            if (await _shouldIgnoreStaleMetadataEvent(
+              groupId,
+              sysType: sysType,
+              eventAt: eventAt,
+              parsed: parsed,
+              requireExactProtectedProjection:
+                  protectedAuthorityReplay?.control ==
+                  ProtectedGroupAuthorityControl.memberConfig,
+            )) {
+              return;
+            }
+            if (!await _verifyGroupMetadataActorEvent(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              trustedActorPublicKey:
+                  protectedAuthorityReplay?.proof.actorAccountPublicKey,
+            )) {
+              return;
+            }
+            await appendSystemEventLog();
+            await _handleGroupMetadataUpdated(
+              groupId,
+              parsed,
+              senderId: senderId,
+              senderUsername: senderUsername,
+              eventAt: eventAt,
+              msgRepo: msgRepo,
+              requireNativeConfigSync:
+                  protectedAuthorityReplay?.control ==
+                  ProtectedGroupAuthorityControl.memberConfig,
+              deferredDistributionPeerIds: deferredDistributionPeerIds,
+            );
+          },
+        );
+        await _runMembershipPostCommitWork(
+          groupId: groupId,
+          authorityPhaseHeld: authorityPhaseHeld,
+          deferredDistributionPeerIds: deferredDistributionPeerIds,
+          msgRepo: msgRepo,
+        );
       } else if (sysType == 'member_joined') {
         await appendSystemEventLog();
         await _handleMemberJoined(
@@ -1549,6 +1769,8 @@ final class _GroupMessageSystemTransitionProcessor {
     required GroupMessageRepository msgRepo,
     bool requireNativeConfigSync = false,
     bool mergeHistoricalMembershipSnapshot = false,
+    required Set<String> deferredDistributionPeerIds,
+    required Set<String> membershipDependentPeerIds,
   }) async {
     // Save new member to local DB
     final rawMemberData = parsed['member'];
@@ -1603,10 +1825,7 @@ final class _GroupMessageSystemTransitionProcessor {
             existing: priorMember,
             saved: member,
           )) {
-        await triggerDeferredDistributionDrainForPeer(
-          groupId: groupId,
-          peerId: addedPeerId,
-        );
+        deferredDistributionPeerIds.add(addedPeerId);
       }
     } else if (memberData != null) {
       emitFlowEvent(
@@ -1636,6 +1855,7 @@ final class _GroupMessageSystemTransitionProcessor {
         },
         msgRepo: msgRepo,
         pruneOmittedMembers: false,
+        deferredDistributionPeerIds: deferredDistributionPeerIds,
       );
       final synced = await _syncGroupConfig(
         groupId,
@@ -1674,11 +1894,7 @@ final class _GroupMessageSystemTransitionProcessor {
 
     await _recordMembershipEventWatermark(groupId, eventAt, eventId: eventId);
     if (addedPeerId != null && addedPeerId.isNotEmpty) {
-      await _flushMembershipDependentMessages(
-        groupId: groupId,
-        memberPeerIds: <String>[addedPeerId],
-        msgRepo: msgRepo,
-      );
+      membershipDependentPeerIds.add(addedPeerId);
     }
 
     emitFlowEvent(
@@ -1705,6 +1921,8 @@ final class _GroupMessageSystemTransitionProcessor {
     required GroupMessageRepository msgRepo,
     bool requireNativeConfigSync = false,
     bool mergeHistoricalMembershipSnapshot = false,
+    required Set<String> deferredDistributionPeerIds,
+    required Set<String> membershipDependentPeerIds,
   }) async {
     final membersList = parsed['members'] as List<dynamic>?;
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
@@ -1786,10 +2004,7 @@ final class _GroupMessageSystemTransitionProcessor {
               existing: priorMember,
               saved: member,
             )) {
-          await triggerDeferredDistributionDrainForPeer(
-            groupId: groupId,
-            peerId: peerId,
-          );
+          deferredDistributionPeerIds.add(peerId);
         }
       }
     }
@@ -1811,6 +2026,7 @@ final class _GroupMessageSystemTransitionProcessor {
         eventMemberPeerIds: addedPeerIds,
         msgRepo: msgRepo,
         pruneOmittedMembers: false,
+        deferredDistributionPeerIds: deferredDistributionPeerIds,
       );
       final synced = await _syncGroupConfig(
         groupId,
@@ -1851,10 +2067,8 @@ final class _GroupMessageSystemTransitionProcessor {
     }
 
     await _recordMembershipEventWatermark(groupId, eventAt, eventId: eventId);
-    await _flushMembershipDependentMessages(
-      groupId: groupId,
-      memberPeerIds: addedMembers.map((member) => member.peerId),
-      msgRepo: msgRepo,
+    membershipDependentPeerIds.addAll(
+      addedMembers.map((member) => member.peerId),
     );
 
     emitFlowEvent(
@@ -1950,7 +2164,7 @@ final class _GroupMessageSystemTransitionProcessor {
   ///
   /// Otherwise, removes the member from the local DB and updates the Go
   /// topic validator config.
-  Future<void> _handleMemberRemoved(
+  Future<_RemoteMemberRemovalFollowUp?> _handleMemberRemoved(
     String groupId,
     Map<String, dynamic> parsed, {
     required String senderId,
@@ -1963,6 +2177,7 @@ final class _GroupMessageSystemTransitionProcessor {
     bool authorityPhaseHeld = false,
     bool requireNativeConfigSync = false,
     bool mergeHistoricalMembershipSnapshot = false,
+    Set<String>? deferredDistributionPeerIds,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final removedPeerId = memberData?['peerId'] as String?;
@@ -1992,7 +2207,7 @@ final class _GroupMessageSystemTransitionProcessor {
               'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
             },
           );
-          return;
+          return null;
         }
 
         emitFlowEvent(
@@ -2033,7 +2248,7 @@ final class _GroupMessageSystemTransitionProcessor {
           // read-only, not destroyed.
           _emitGroupRemovedIfActive(groupId);
         }
-        return;
+        return null;
       }
     }
 
@@ -2087,6 +2302,7 @@ final class _GroupMessageSystemTransitionProcessor {
         eventAt: eventAt,
         msgRepo: msgRepo,
         pruneOmittedMembers: snapshotHasNoActiveMembers,
+        deferredDistributionPeerIds: deferredDistributionPeerIds,
       );
       final syncGroupConfig =
           await _buildLocalGroupConfigSnapshot(groupId) ??
@@ -2138,12 +2354,11 @@ final class _GroupMessageSystemTransitionProcessor {
       msgRepo: msgRepo,
     );
 
-    // Forward secrecy: a remaining group creator re-keys when a member it did
-    // not itself remove departs (the voluntary leaver could not rotate). This
-    // closes the gap left by best-effort leave rotation, mirroring
-    // admin-removal's remover-driven rotation.
-    await _maybeRotateGroupKeyAfterRemoteRemoval(
-      groupId,
+    // Return the post-commit rotation intent so the caller can release the
+    // membership action phase before key preparation and distribution. The
+    // rotation use case reacquires authority and takes the action guard only
+    // for native promotion plus the durable key commit.
+    final followUp = _RemoteMemberRemovalFollowUp(
       removedPeerId: removedPeerId,
       removedPeerWasActiveMember: removedPeerWasActiveMember,
       removalAuthorPeerId: senderId,
@@ -2158,14 +2373,7 @@ final class _GroupMessageSystemTransitionProcessor {
       );
     }
 
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_MESSAGE_LISTENER_MEMBER_REMOVED',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'removedPeerId': removedPeerId ?? '?',
-      },
-    );
+    return followUp;
   }
 
   /// Re-keys a group after a remote member departure the local device did not
@@ -2430,6 +2638,8 @@ final class _GroupMessageSystemTransitionProcessor {
     String? removalEventId,
     required GroupMessageRepository msgRepo,
     required Future<void> Function() appendSystemEventLog,
+    bool authorityPhaseHeld = false,
+    Set<String>? deferredDistributionPeerIds,
   }) async {
     final event = parseTrustedPrivateMemberSystemEvent(
       parsed,
@@ -2513,6 +2723,7 @@ final class _GroupMessageSystemTransitionProcessor {
           removalEventId: removalEventId,
           msgRepo: msgRepo,
           appendSystemEventLog: appendSystemEventLog,
+          authorityPhaseHeld: authorityPhaseHeld,
         );
         if (completed) {
           _emitGroupRemovedIfActive(groupId);
@@ -2539,6 +2750,7 @@ final class _GroupMessageSystemTransitionProcessor {
         // Plan 326 S1: the guard needs BOTH; without msgRepo it is inert
         // and this snapshot resurrects an already-removed member.
         msgRepo: msgRepo,
+        deferredDistributionPeerIds: deferredDistributionPeerIds,
       );
       // Plan 326 S2: override ONLY the roster with ours — otherwise a member
       // the S1 guard just kept out of the local DB is still handed to Go as a
@@ -2740,6 +2952,7 @@ final class _GroupMessageSystemTransitionProcessor {
     required GroupMessageRepository msgRepo,
     bool requireNativeConfigSync = false,
     bool mergeHistoricalMembershipSnapshot = false,
+    required Set<String> deferredDistributionPeerIds,
   }) async {
     final memberData = parsed['member'] as Map<String, dynamic>?;
     final updatedPeerId = memberData?['peerId'] as String?;
@@ -2803,6 +3016,7 @@ final class _GroupMessageSystemTransitionProcessor {
         // Plan 326 S1: the guard needs BOTH; without msgRepo it is inert
         // and this snapshot resurrects an already-removed member.
         msgRepo: msgRepo,
+        deferredDistributionPeerIds: deferredDistributionPeerIds,
       );
       // Plan 326 S2: override ONLY the roster with ours — otherwise a member
       // the S1 guard just kept out of the local DB is still handed to Go as a
@@ -2877,6 +3091,7 @@ final class _GroupMessageSystemTransitionProcessor {
     DateTime? eventAt,
     required GroupMessageRepository msgRepo,
     bool requireNativeConfigSync = false,
+    required Set<String> deferredDistributionPeerIds,
   }) async {
     final groupConfig = parsed['groupConfig'] as Map<String, dynamic>?;
     if (groupConfig == null) {
@@ -2908,6 +3123,7 @@ final class _GroupMessageSystemTransitionProcessor {
       // a null eventAt produced before. joinedAt feeds the signed-transition
       // state hash, so shifting it would risk the very freeze we avoid.
       eventMemberPeerIds: const <String>{},
+      deferredDistributionPeerIds: deferredDistributionPeerIds,
     );
     // Plan 326 S2: override ONLY the roster with ours (see above).
     final syncGroupConfig = _withLocalRoster(
@@ -3150,19 +3366,76 @@ final class _GroupMessageSystemTransitionProcessor {
     }
   }
 
+  Future<void> _runMembershipPostCommitWork({
+    required String groupId,
+    required bool authorityPhaseHeld,
+    required Set<String> deferredDistributionPeerIds,
+    Set<String> membershipDependentPeerIds = const <String>{},
+    required GroupMessageRepository msgRepo,
+  }) async {
+    if (deferredDistributionPeerIds.isEmpty &&
+        membershipDependentPeerIds.isEmpty) {
+      return;
+    }
+
+    if (authorityPhaseHeld) {
+      // Protected replay still owns the outer authority phase. The prompt
+      // distribution drain and membership-dependent flush are latency
+      // optimizations and must not escape ahead of that replay's durable
+      // COMPLETE/reconciliation result. Normal recovery discovers their
+      // already-durable pending work.
+      return;
+    }
+
+    final distributionPeers = deferredDistributionPeerIds.toList()..sort();
+    for (final peerId in distributionPeers) {
+      await triggerDeferredDistributionDrainForPeer(
+        groupId: groupId,
+        peerId: peerId,
+      );
+    }
+
+    if (membershipDependentPeerIds.isNotEmpty) {
+      final membershipPeers = membershipDependentPeerIds.toList()..sort();
+      await _flushMembershipDependentMessages(
+        groupId: groupId,
+        memberPeerIds: membershipPeers,
+        msgRepo: msgRepo,
+      );
+    }
+  }
+
   Future<void> _enqueueGroupConfigWork(
+    String groupId, {
+    required bool membershipMutation,
+    required bool authorityPhaseHeld,
+    required Future<void> Function() work,
+  }) async {
+    if (membershipMutation) {
+      return runGroupMembershipMutationIfNeeded(
+        groupId: groupId,
+        authorityPhaseHeld: authorityPhaseHeld,
+        membershipActionPhaseHeld: isGroupMembershipActionPhaseHeld(groupId),
+        action: () => _enqueueSerializedGroupConfigWork(groupId, work),
+      );
+    }
+    return _enqueueSerializedGroupConfigWork(groupId, work);
+  }
+
+  Future<void> _enqueueSerializedGroupConfigWork(
     String groupId,
     Future<void> Function() work,
   ) async {
     final previousWork = _groupConfigWorkQueue[groupId] ?? Future.value();
     final nextWork = previousWork.catchError((_) {}).then((_) => work());
-
-    _groupConfigWorkQueue[groupId] = nextWork.whenComplete(() {
-      if (_groupConfigWorkQueue[groupId] == nextWork) {
+    late final Future<void> queuedWork;
+    queuedWork = nextWork.whenComplete(() {
+      if (identical(_groupConfigWorkQueue[groupId], queuedWork)) {
         _groupConfigWorkQueue.remove(groupId);
       }
     });
-    await _groupConfigWorkQueue[groupId];
+    _groupConfigWorkQueue[groupId] = queuedWork;
+    await queuedWork;
   }
 
   Future<GroupMessage> _saveTimelineMessagePreservingReadState(
@@ -4285,6 +4558,7 @@ final class _GroupMessageSystemTransitionProcessor {
     Set<String>? eventMemberPeerIds,
     GroupMessageRepository? msgRepo,
     bool pruneOmittedMembers = true,
+    Set<String>? deferredDistributionPeerIds,
   }) async {
     final group = await _groupRepo.getGroup(groupId);
     if (group == null) {
@@ -4373,10 +4647,14 @@ final class _GroupMessageSystemTransitionProcessor {
         existing: existingMember,
         saved: savedMember,
       )) {
-        await triggerDeferredDistributionDrainForPeer(
-          groupId: groupId,
-          peerId: peerId,
-        );
+        if (deferredDistributionPeerIds == null) {
+          await triggerDeferredDistributionDrainForPeer(
+            groupId: groupId,
+            peerId: peerId,
+          );
+        } else {
+          deferredDistributionPeerIds.add(peerId);
+        }
       }
     }
 

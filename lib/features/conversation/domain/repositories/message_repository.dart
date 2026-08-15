@@ -592,6 +592,50 @@ abstract interface class OutgoingDirectPrivateMediaInboxCustodyRepository {
   });
 }
 
+/// Result of the plural private Barrier-B transaction.
+///
+/// [custodies] is the complete per-target v108 projection selected inside the
+/// committing SQL transaction. Callers must not re-read and reconstruct it: a
+/// concurrent exact ACK may already have retired one sibling.
+final class OutgoingDirectPrivateFanoutInboxCustodyResult {
+  const OutgoingDirectPrivateFanoutInboxCustodyResult({
+    required this.outcome,
+    required this.custodies,
+  });
+
+  const OutgoingDirectPrivateFanoutInboxCustodyResult.refused()
+    : outcome = OutgoingDirectPrivateEnvelopeHandoffOutcome.refused,
+      custodies = const <DirectInboxCustodyOutboxEntry>[];
+
+  final OutgoingDirectPrivateEnvelopeHandoffOutcome outcome;
+  final List<DirectInboxCustodyOutboxEntry> custodies;
+
+  bool get authorizesTransport =>
+      outcome.authorizesTransport && custodies.isNotEmpty;
+}
+
+/// Explicit plural Barrier B for initialized linked private-media initials.
+///
+/// The canonical private completion CAS runs once only after every target's
+/// v114 row is stored, then the transaction binds one deterministic v108
+/// sibling per target. The scalar Plan-354 capability remains unchanged.
+abstract interface class OutgoingDirectPrivateMediaFanoutInboxCustodyRepository {
+  bool get supportsOutgoingDirectPrivateMediaFanoutInboxCustody;
+
+  Future<OutgoingDirectPrivateFanoutInboxCustodyResult>
+  commitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required bool hasOwnedPendingCompletion,
+    required String senderTransportPeerId,
+    required String contactAccountPeerId,
+    required DirectPrivateMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
+    required List<DirectPrivateMediaFanoutTargetBinding> targetBindings,
+  });
+}
+
 /// Exact, post-commit signal for physical direct-message removals.
 ///
 /// A removal cannot ride [MessageRepositoryChangeSource.messageChanges]: that

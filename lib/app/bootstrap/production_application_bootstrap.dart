@@ -1,13 +1,19 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/notifications/group_notification_reconciliation_signal.dart';
+import 'package:flutter_app/core/services/protected_group_content_contract.dart';
 import 'package:flutter_app/core/services/share_intent_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
 import 'package:flutter_app/features/contacts/application/direct_contact_device_trust.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_import_precondition.dart';
 import 'package:flutter_app/features/account_migration/application/account_migration_transfer_flow.dart'
     show
@@ -60,6 +66,8 @@ import 'package:flutter_app/core/database/helpers/introductions_db_helpers.dart'
 import 'package:flutter_app/core/database/helpers/introduction_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/inbox_staging_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_reaction_target_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_repairs_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_key_distributions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_pending_membership_messages_db_helpers.dart';
@@ -132,9 +140,19 @@ import 'package:flutter_app/features/conversation/domain/repositories/media_atta
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/conversation/data/repositories/reaction_repository_impl.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/app/bootstrap/direct_blob_free_linked_services.dart';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/config/multi_device_sync_flag.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_authoring_resolver.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/presentation/screens/linked_group_conversation_wired.dart';
 import 'package:flutter_app/features/contacts/application/direct_transport_authority.dart';
 import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart'
     show dbReadDirectContactFanoutSnapshot;
@@ -181,6 +199,9 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_receive.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_reconciliation.dart';
 import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_repository_impl.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
@@ -197,6 +218,7 @@ import 'package:flutter_app/features/groups/data/repositories/group_invite_deliv
 import 'package:flutter_app/features/groups/data/repositories/pending_group_invite_repository_impl.dart';
 import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/features/groups/application/delete_group_media_for_me_use_case.dart';
+import 'package:flutter_app/features/groups/application/strict_group_media_blob_download_ack_owner.dart';
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/delete_group_and_messages_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
@@ -1650,6 +1672,27 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             wireMediaBlobManifestHash: wireMediaBlobManifestHash,
             wireMediaBlobExpiresAtMs: wireMediaBlobExpiresAtMs,
           ),
+      dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody:
+          (
+            completionRow, {
+            required expectedPendingLocalPath,
+            required hasOwnedPendingCompletion,
+            required senderTransportPeerId,
+            required contactAccountPeerId,
+            required authority,
+            required expectedSnapshot,
+            required targetBindings,
+          }) => dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
+            db,
+            completionRow,
+            expectedPendingLocalPath: expectedPendingLocalPath,
+            hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+            senderTransportPeerId: senderTransportPeerId,
+            contactAccountPeerId: contactAccountPeerId,
+            authority: authority,
+            expectedSnapshot: expectedSnapshot,
+            targetBindings: targetBindings,
+          ),
       dbSettleOutgoingDirectPrivateTransport:
           ({
             required messageId,
@@ -2172,6 +2215,23 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             preparedAttachmentRow: preparedAttachmentRow,
             custodyRow: custodyRow,
           ),
+      dbStageOutgoingDirectPrivateMediaBlobFanoutGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRow,
+            required preparedAttachmentRow,
+            required custodyRows,
+            required contactAccountPeerId,
+            required expectedSnapshot,
+          }) => dbStageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRow: expectedAttachmentRow,
+            preparedAttachmentRow: preparedAttachmentRow,
+            custodyRows: custodyRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: expectedSnapshot,
+          ),
       dbReadDirectContactFanoutSnapshotForMedia:
           ({required contactAccountPeerId}) =>
               dbReadDirectContactFanoutSnapshot(
@@ -2186,6 +2246,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             required custodyRows,
             required contactAccountPeerId,
             required expectedSnapshot,
+            allowFreshParent = false,
+            authorizedForwardDedupKey,
           }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
             db,
             expectedParentRow: expectedParentRow,
@@ -2194,6 +2256,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             custodyRows: custodyRows,
             contactAccountPeerId: contactAccountPeerId,
             expectedSnapshot: expectedSnapshot,
+            allowFreshParent: allowFreshParent,
+            authorizedForwardDedupKey: authorizedForwardDedupKey,
           ),
       dbStageOutgoingDirectMediaFanoutInboxCustody:
           ({
@@ -2255,6 +2319,114 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               ),
       dbDeleteDirectMediaBlobCleanupPendingIfExact: ({required expected}) =>
           dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: expected),
+      dbStageFreshOutgoingGroupMediaBlobGeneration:
+          ({
+            required parentRow,
+            required attachmentRows,
+            required custodyRows,
+            required custodyBlobIdsByAttachmentId,
+          }) => dbStageFreshOutgoingGroupMediaBlobGeneration(
+            db,
+            parentRow: parentRow,
+            attachmentRows: attachmentRows,
+            custodyRows: custodyRows,
+            custodyBlobIdsByAttachmentId: custodyBlobIdsByAttachmentId,
+          ),
+      dbLoadGroupMediaBlobCustodyForMessage:
+          ({required groupId, required messageId}) =>
+              dbLoadGroupMediaBlobCustodyForMessage(
+                db,
+                groupId: groupId,
+                messageId: messageId,
+              ),
+      dbLoadGroupMediaBlobCustodyByStates:
+          ({required states, int limit = 50}) =>
+              dbLoadGroupMediaBlobCustodyByStates(
+                db,
+                states: states,
+                limit: limit,
+              ),
+      dbLoadGroupMediaBlobArtifactRelativePaths: () =>
+          dbLoadGroupMediaBlobArtifactRelativePaths(db),
+      dbLoadGroupMediaBlobCustodyForTarget:
+          ({
+            required groupId,
+            required attachmentId,
+            required custodyBlobId,
+            required direction,
+            recipientPeerId,
+          }) => dbLoadGroupMediaBlobCustodyForTarget(
+            db,
+            groupId: groupId,
+            attachmentId: attachmentId,
+            custodyBlobId: custodyBlobId,
+            direction: direction,
+            recipientPeerId: recipientPeerId,
+          ),
+      dbTransitionGroupMediaBlobCustodyIfExact:
+          ({required expected, required next}) =>
+              dbTransitionGroupMediaBlobCustodyIfExact(
+                db,
+                expected: expected,
+                next: next,
+              ),
+      dbDeleteGroupMediaBlobCleanupPendingIfExact: ({required expected}) =>
+          dbDeleteGroupMediaBlobCleanupPendingIfExact(db, expected: expected),
+      dbCommitIncomingGroupMediaBlobLocalPath:
+          ({
+            required expectedAttachmentRow,
+            required expectedCustody,
+            required localPath,
+            required sourceRelayPeerId,
+            required updatedAt,
+            required nowMs,
+          }) => dbCommitIncomingGroupMediaBlobLocalPath(
+            db,
+            expectedAttachmentRow: expectedAttachmentRow,
+            expectedCustody: expectedCustody,
+            localPath: localPath,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: updatedAt,
+            nowMs: nowMs,
+          ),
+      dbTerminalizeIncomingGroupMediaBlobForLocalDeletion:
+          ({
+            required expectedAttachmentRow,
+            required expectedCustody,
+            required sourceRelayPeerId,
+            required updatedAt,
+          }) => dbTerminalizeIncomingGroupMediaBlobForLocalDeletion(
+            db,
+            expectedAttachmentRow: expectedAttachmentRow,
+            expectedCustody: expectedCustody,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: updatedAt,
+          ),
+      dbDeleteIncomingGroupMediaBlobAckPendingIfExact: ({required expected}) =>
+          dbDeleteIncomingGroupMediaBlobAckPendingIfExact(
+            db,
+            expected: expected,
+          ),
+      dbDeleteIncomingGroupMediaBlobIfExpired:
+          ({required expected, required nowMs}) =>
+              dbDeleteIncomingGroupMediaBlobIfExpired(
+                db,
+                expected: expected,
+                nowMs: nowMs,
+              ),
+      dbCountOtherGroupMediaBlobCustodyRowsReferencingArtifact:
+          ({
+            required ciphertextRelativePath,
+            required contentHash,
+            required ciphertextSize,
+            required excluding,
+          }) => dbCountOtherGroupMediaBlobCustodyRowsReferencingArtifact(
+            db,
+            ciphertextRelativePath: ciphertextRelativePath,
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            excluding: excluding,
+          ),
       dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact:
           ({required expectedRows, required reason, required nowMs}) =>
               dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
@@ -2854,6 +3026,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           MediaFileManager().resolveStoredPath(relativePath),
       secureKeyStore: secureKeyStore,
     );
+    // Constructed later in this bootstrap method. Delete-for-me only invokes
+    // its strict network callback after the app runtime has initialized it.
+    late final Bridge bridge;
     final deleteGroupMediaForMeUseCase = DeleteGroupMediaForMeUseCase(
       prepare:
           ({
@@ -2869,6 +3044,16 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       runCleanup: () async {
         await groupMediaDeletionReconciler.runBounded();
       },
+      terminalizeStrictCustody:
+          ({required String groupId, required String messageId}) =>
+              StrictGroupMediaBlobDownloadAckOwner(
+                bridge: bridge,
+                mediaAttachmentRepository: mediaAttachmentRepository,
+                mediaFileManager: MediaFileManager(),
+              ).terminalizeLocallyDeletedMessage(
+                groupId: groupId,
+                messageId: messageId,
+              ),
     );
     // Process-wide default (229 decider pattern): every group-conversation
     // entry path (orbit, feed, list, picker, notification route) gets the real
@@ -3129,8 +3314,14 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                     messageId: messageId,
                     senderPeerId: senderPeerId,
                   ),
-          dbLoadRetryableGroupReactionReplayOutboxEntries: ({limit = 20}) =>
-              dbLoadRetryableGroupReactionReplayOutboxEntries(db, limit: limit),
+          dbLoadRetryableGroupReactionReplayOutboxEntries:
+              ({limit = 20, strictContentOnly = false, offset = 0}) =>
+                  dbLoadRetryableGroupReactionReplayOutboxEntries(
+                    db,
+                    limit: limit,
+                    strictContentOnly: strictContentOnly,
+                    offset: offset,
+                  ),
           dbUpdateGroupReactionReplayOutboxEntryStatus:
               (
                 reactionId, {
@@ -3157,6 +3348,97 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 lastError: lastError,
                 updatedAt: updatedAt,
               ),
+          dbReplaceGroupReactionReplayOutboxPayloadIfExact:
+              ({required expected, required replacement, required updatedAt}) =>
+                  dbReplaceGroupReactionReplayOutboxPayloadIfExact(
+                    db,
+                    expected: expected,
+                    replacement: replacement,
+                    updatedAt: updatedAt,
+                  ),
+          dbCompleteGroupReactionContentIfExact:
+              ({
+                required expected,
+                required reactionRow,
+                required action,
+                required transitionId,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+                required updatedAt,
+              }) => dbCompleteGroupReactionContentIfExact(
+                db,
+                expected: expected,
+                reactionRow: reactionRow,
+                action: action,
+                transitionId: transitionId,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+                updatedAt: updatedAt,
+              ),
+          dbStageAndCompleteLocalGroupReactionContentFn:
+              ({
+                required expected,
+                required reactionRow,
+                required action,
+                required transitionId,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+              }) => dbStageAndCompleteLocalGroupReactionContent(
+                db,
+                expected: expected,
+                reactionRow: reactionRow,
+                action: action,
+                transitionId: transitionId,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+              ),
+          dbStagePreparedLocalGroupReactionContentFn:
+              ({
+                required expected,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required preparedEventPayload,
+              }) => dbStagePreparedLocalGroupReactionContent(
+                db,
+                expected: expected,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                preparedEventPayload: preparedEventPayload,
+              ),
+          dbTerminalizePreparedLocalGroupReactionIfExactFn:
+              ({
+                required expected,
+                required preparedEventPayload,
+                required terminalSourcePeerId,
+                required terminalSourceEventId,
+                required terminalSourceTimestamp,
+                required terminalEventPayload,
+              }) => dbTerminalizePreparedLocalGroupReactionIfExact(
+                db,
+                expected: expected,
+                preparedEventPayload: preparedEventPayload,
+                terminalSourcePeerId: terminalSourcePeerId,
+                terminalSourceEventId: terminalSourceEventId,
+                terminalSourceTimestamp: terminalSourceTimestamp,
+                terminalEventPayload: terminalEventPayload,
+              ),
+          dbHasExactPreparedLocalGroupReactionFn:
+              ({required expected, required eventPayload}) =>
+                  dbHasExactPreparedLocalGroupReaction(
+                    db,
+                    expected: expected,
+                    eventPayload: eventPayload,
+                  ),
           dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
               dbDeleteGroupReactionReplayOutboxEntry(db, reactionId),
         );
@@ -3993,8 +4275,17 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                     attachments: attachments,
                   )
             : null,
-        dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
-            dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
+        dbLoadGroupMessagesWithFailedInboxStore:
+            ({
+              int limit = 50,
+              bool strictContentOnly = false,
+              int offset = 0,
+            }) => dbLoadGroupMessagesWithFailedInboxStore(
+              executor,
+              limit: limit,
+              strictContentOnly: strictContentOnly,
+              offset: offset,
+            ),
         dbUpdateGroupMessageInboxStoredFn: (id, {required bool stored}) =>
             dbUpdateGroupMessageInboxStored(executor, id, stored: stored),
         dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
@@ -4003,6 +4294,89 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             dbUpdateGroupMessageWireEnvelope(executor, id, envelope),
         dbCompleteGroupInboxStoreRetryFn: executor is Database
             ? (expected) => dbCompleteGroupInboxStoreRetry(executor, expected)
+            : null,
+        dbCompleteGroupContentInboxStoreRetryIfExactFn: executor is Database
+            ? ({
+                required expected,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+              }) => dbCompleteGroupContentInboxStoreRetryIfExact(
+                executor,
+                expected: expected,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+              )
+            : null,
+        dbStageAndCompleteLocalGroupContentMessageFn: executor is Database
+            ? ({
+                required expected,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+              }) => dbStageAndCompleteLocalGroupContentMessage(
+                executor,
+                expected: expected,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+              )
+            : null,
+        dbStagePreparedLocalGroupContentMessageFn: executor is Database
+            ? ({
+                required expected,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required preparedEventPayload,
+              }) => dbStagePreparedLocalGroupContentMessage(
+                executor,
+                expected: expected,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                preparedEventPayload: preparedEventPayload,
+              )
+            : null,
+        dbTerminalizePreparedLocalGroupContentMessageIfExactFn:
+            executor is Database
+            ? ({
+                required expected,
+                required preparedEventPayload,
+                required terminalSourcePeerId,
+                required terminalSourceEventId,
+                required terminalSourceTimestamp,
+                required terminalEventPayload,
+              }) => dbTerminalizePreparedLocalGroupContentMessageIfExact(
+                executor,
+                expected: expected,
+                preparedEventPayload: preparedEventPayload,
+                terminalSourcePeerId: terminalSourcePeerId,
+                terminalSourceEventId: terminalSourceEventId,
+                terminalSourceTimestamp: terminalSourceTimestamp,
+                terminalEventPayload: terminalEventPayload,
+              )
+            : null,
+        dbHasExactPreparedLocalGroupContentMessageFn:
+            ({required expected, required eventPayload}) =>
+                dbHasExactPreparedLocalGroupContentMessage(
+                  executor,
+                  expected: expected,
+                  eventPayload: eventPayload,
+                ),
+        dbIsStrictGroupReactionTargetEligibleFn: (expected) =>
+            dbIsStrictGroupReactionTargetEligible(executor, expected),
+        dbReplaceGroupInboxRetryPayloadIfExactFn: executor is Database
+            ? (expected, replacement) => dbReplaceGroupInboxRetryPayloadIfExact(
+                executor,
+                expected,
+                replacement,
+              )
             : null,
         dbRecordGroupMessageRetryFailureFn:
             (id, {required nextEligibleAtMs, required markTerminal}) =>
@@ -4463,6 +4837,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
 
     // Create media file manager
     final mediaFileManager = MediaFileManager();
+    final preparedGroupMediaBlobCustodyCoordinator =
+        PreparedGroupMediaBlobCustodyCoordinator(
+          artifactStore: GroupMediaBlobArtifactStore(),
+        );
     // A new process cannot have a live forward snapshot from its predecessor.
     // Reclaim only app-owned snapshot children before this process can create a
     // live one. The pass is bounded and fail-safe, and awaiting it avoids a
@@ -4577,7 +4955,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         ?.initializePrivateMediaController();
 
     // Create and initialize the bridge (Go native)
-    final Bridge bridge = GoBridgeClient();
+    bridge = GoBridgeClient();
     // Declared before the linked-media drain closure that captures it. The
     // service is assigned later in this composition phase, before any runtime
     // owner can invoke that closure.
@@ -4721,6 +5099,22 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         },
       );
       return result.completed;
+    }
+
+    Future<int> cleanupGroupMediaBlobCustodyLocally() async {
+      final identity = await repository.loadIdentity();
+      if (identity == null) return 0;
+      final completed = await preparedGroupMediaBlobCustodyCoordinator
+          .drainOutgoingCleanupAndOrphans(
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            identityPeerId: identity.peerId,
+          );
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_MEDIA_BLOB_CUSTODY_LOCAL_DRAIN_RESULT',
+        details: <String, Object?>{'completed': completed},
+      );
+      return completed;
     }
 
     Future<int> drainDirectMediaBlobCustody() async {
@@ -5323,6 +5717,17 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             (await repository.loadIdentity())?.mlKemSecretKey,
         loadOwnMlKemSecretKeyRing: () => loadMlKemSecretKeyRing(secureKeyStore),
       ),
+    );
+    // 364: one owner per production bootstrap/runtime. It spans inbound
+    // protected replay plus every strict linked outgoing custody operation;
+    // no process-global pause bit can leak between runtime instances.
+    final linkedGroupContentQuiescence = ProtectedGroupContentRuntimeQuiescence(
+      pauseInboundAdmission: p2pService.pauseProtectedGroupContentAdmission,
+      resumeInboundAdmission: p2pService.resumeProtectedGroupContentAdmission,
+      quiesceOutgoingMedia: () => mediaAttachmentRepository
+          .runGroupMediaBlobCustodyLifecycle<void>(() async {}),
+      quiesceIncomingMedia: () => mediaAttachmentRepository
+          .runGroupMediaBlobCustodyLifecycle<void>(() async {}),
     );
     nearbyLocationService = NearbyLocationServiceImpl(
       settingsRepository: postsPrivacySettingsRepository,
@@ -6106,6 +6511,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           'group_media_download_recovery',
         );
       },
+      retryPendingStrictAcknowledgements: () =>
+          StrictGroupMediaBlobDownloadAckOwner(
+            bridge: bridge,
+            mediaAttachmentRepository: mediaAttachmentRepository,
+            mediaFileManager: mediaFileManager,
+          ).retryPendingAcknowledgements(),
       transfer: ({required attachment, required parent, required group}) async {
         return downloadMedia(
           bridge: bridge,
@@ -6530,11 +6941,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     ) async {
       final control = ProtectedGroupAuthorityControl.fromWire(expected.control);
       if (control == null) return false;
+      late final bool completed;
       if (control == ProtectedGroupAuthorityControl.memberAdd ||
           control == ProtectedGroupAuthorityControl.memberRole ||
           control == ProtectedGroupAuthorityControl.memberRemove ||
           control == ProtectedGroupAuthorityControl.memberConfig) {
-        return recoverLocalPreparedProtectedSystemAuthority(
+        completed = await recoverLocalPreparedProtectedSystemAuthority(
           proof: expected,
           groupRepository: groupRepository,
           verifyAuthorityProof:
@@ -6556,23 +6968,29 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
               appendLocalAuthorityProof(phase: phase, proof: proof),
           applyReplay: applyLocalProtectedSystemAuthorityReplay,
         );
+      } else {
+        completed = await ensureLocalProtectedGroupAuthorityComplete(
+          groupId: expected.groupId,
+          eventId: expected.eventId,
+          expectedControl: control,
+          expectedProof: expected,
+          groupRepository: groupRepository,
+          loadAuthorityProof:
+              ({required groupId, required phase, required eventId}) =>
+                  loadLocalAuthorityProof(
+                    groupId: groupId,
+                    phase: phase,
+                    eventId: eventId,
+                  ),
+          appendAuthorityProof: ({required phase, required proof}) =>
+              appendLocalAuthorityProof(phase: phase, proof: proof),
+        );
       }
-      return ensureLocalProtectedGroupAuthorityComplete(
-        groupId: expected.groupId,
-        eventId: expected.eventId,
-        expectedControl: control,
-        expectedProof: expected,
-        groupRepository: groupRepository,
-        loadAuthorityProof:
-            ({required groupId, required phase, required eventId}) =>
-                loadLocalAuthorityProof(
-                  groupId: groupId,
-                  phase: phase,
-                  eventId: eventId,
-                ),
-        appendAuthorityProof: ({required phase, required proof}) =>
-            appendLocalAuthorityProof(phase: phase, proof: proof),
-      );
+      return completed &&
+          await reconcileCompletedProtectedGroupAuthority(
+            groupRepository,
+            expected,
+          );
     }
 
     Future<List<ProtectedGroupAuthorityPreparation>>
@@ -7662,7 +8080,469 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           ),
     );
 
-    // 363: the protected P2P coordinator owns stage-before-handler and
+    Future<ProtectedGroupContentAuthority?> loadProtectedContentAuthority(
+      String groupId,
+      GroupContentAuthorityVersion version,
+    ) {
+      return loadProtectedGroupContentAuthorityFromHistory(
+        groupId: groupId,
+        version: version,
+        loadExact: ({required groupId, required phase, required eventId}) =>
+            loadAuthenticatedGroupAuthorityProofFromEventLog(
+              loadRow: ({required groupId, required sourceEventId}) =>
+                  dbLoadGroupEventLogEntryExact(
+                    db,
+                    groupId: groupId,
+                    sourceEventId: sourceEventId,
+                  ),
+              groupId: groupId,
+              phase: phase,
+              eventId: eventId,
+              verify:
+                  ({required publicKey, required data, required signature}) =>
+                      callVerifyPayload(
+                        bridge: bridge,
+                        publicKey: publicKey,
+                        data: data,
+                        signature: signature,
+                      ),
+            ),
+        loadCompleteRows:
+            ({
+              required groupId,
+              required eventType,
+              afterSourceTimestamp,
+              afterSourceEventId,
+              throughSourceTimestamp,
+              required limit,
+            }) => dbLoadGroupEventLogTypePage(
+              db,
+              groupId: groupId,
+              eventType: eventType,
+              afterSourceTimestamp: afterSourceTimestamp,
+              afterSourceEventId: afterSourceEventId,
+              throughSourceTimestamp: throughSourceTimestamp,
+              newestFirst: true,
+              limit: limit,
+            ),
+        loadGenesisRows:
+            ({
+              required groupId,
+              required eventType,
+              afterSourceTimestamp,
+              afterSourceEventId,
+              throughSourceTimestamp,
+              required limit,
+            }) => dbLoadGroupEventLogTypePage(
+              db,
+              groupId: groupId,
+              eventType: eventType,
+              afterSourceTimestamp: afterSourceTimestamp,
+              afterSourceEventId: afterSourceEventId,
+              throughSourceTimestamp: throughSourceTimestamp,
+              newestFirst: true,
+              limit: limit,
+            ),
+        verify: ({required publicKey, required data, required signature}) =>
+            callVerifyPayload(
+              bridge: bridge,
+              publicKey: publicKey,
+              data: data,
+              signature: signature,
+            ),
+      );
+    }
+
+    Future<bool> reconcileCompletedContentAuthority(
+      AuthenticatedGroupAuthorityProof authority, {
+      bool allowDominatingProjection = false,
+    }) => runGroupAuthorityPhaseIfNeeded(
+      groupId: authority.groupId,
+      authorityPhaseHeld: isGroupAuthorityPhaseHeld(authority.groupId),
+      action: () => reconcileProtectedGroupContentForAuthority(
+        db: db,
+        groupRepository: groupRepository,
+        authority: authority,
+        allowDominatingProjection: allowDominatingProjection,
+        terminalizePreparedContent:
+            ({
+              required txn,
+              required groupId,
+              required payloadType,
+              required contentEventId,
+              required ownerKind,
+              required ownerId,
+              required eventPayload,
+              required terminalSourcePeerId,
+              required terminalSourceEventId,
+              required terminalSourceTimestamp,
+              required terminalEventPayload,
+            }) async {
+              if (ownerId != contentEventId) return false;
+              if (payloadType == groupOfflineReplayPayloadTypeMessage &&
+                  ownerKind == 'group_message') {
+                final rows = await txn.query(
+                  'group_messages',
+                  where: 'id = ? AND group_id = ?',
+                  whereArgs: <Object?>[ownerId, groupId],
+                  limit: 1,
+                );
+                return rows.isNotEmpty &&
+                    await dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
+                      txn,
+                      expected: rows.single,
+                      preparedEventPayload: eventPayload,
+                      terminalSourcePeerId: terminalSourcePeerId,
+                      terminalSourceEventId: terminalSourceEventId,
+                      terminalSourceTimestamp: terminalSourceTimestamp,
+                      terminalEventPayload: terminalEventPayload,
+                    );
+              }
+              if (payloadType == groupOfflineReplayPayloadTypeReaction &&
+                  ownerKind == 'group_reaction') {
+                final rows = await txn.query(
+                  'group_reaction_replay_outbox',
+                  where: 'reaction_id = ? AND group_id = ?',
+                  whereArgs: <Object?>[ownerId, groupId],
+                  limit: 1,
+                );
+                return rows.isNotEmpty &&
+                    await dbTerminalizePreparedLocalGroupReactionIfExactInTransaction(
+                      txn,
+                      expected: rows.single,
+                      preparedEventPayload: eventPayload,
+                      terminalSourcePeerId: terminalSourcePeerId,
+                      terminalSourceEventId: terminalSourceEventId,
+                      terminalSourceTimestamp: terminalSourceTimestamp,
+                      terminalEventPayload: terminalEventPayload,
+                    );
+              }
+              return false;
+            },
+        validateHistoricalAuthority:
+            ({
+              required groupId,
+              required payloadType,
+              required contentEventId,
+              required eventAt,
+              required authorityVersion,
+              required logicalSenderPeerId,
+              required senderDeviceId,
+              required senderTransportPeerId,
+              required senderPublicKey,
+            }) async {
+              final historical = await loadProtectedContentAuthority(
+                groupId,
+                authorityVersion,
+              );
+              return historical?.authorizesHistoricalContent(
+                    payloadType: payloadType,
+                    contentEventId: contentEventId,
+                    eventAt: eventAt,
+                    logicalSenderPeerId: logicalSenderPeerId,
+                    senderDeviceId: senderDeviceId,
+                    senderTransportPeerId: senderTransportPeerId,
+                    senderPublicKey: senderPublicKey,
+                  ) ==
+                  true;
+            },
+      ),
+    );
+
+    // Local producers may commit authority COMPLETE atomically with their
+    // projection. Repair the content frontier immediately after that commit;
+    // the pending-authority scan below invokes the same seam for upgrade or
+    // crash histories that predate this runtime.
+    setReconcileCompletedProtectedGroupAuthority(
+      groupRepository,
+      reconcileCompletedContentAuthority,
+    );
+
+    Future<bool> hasUnfinishedProtectedContentAuthority(String groupId) async {
+      return hasPendingProtectedGroupContentAuthority(
+        groupId: groupId,
+        loadPreparedPage:
+            ({afterSourceTimestamp, afterSourceEventId, required limit}) =>
+                loadAuthenticatedGroupAuthorityProofPage(
+                  loadRows:
+                      ({
+                        required groupId,
+                        required eventType,
+                        afterSourceTimestamp,
+                        afterSourceEventId,
+                        throughSourceTimestamp,
+                        required limit,
+                      }) => dbLoadGroupEventLogTypePage(
+                        db,
+                        groupId: groupId,
+                        eventType: eventType,
+                        afterSourceTimestamp: afterSourceTimestamp,
+                        afterSourceEventId: afterSourceEventId,
+                        throughSourceTimestamp: throughSourceTimestamp,
+                        newestFirst: true,
+                        limit: limit,
+                      ),
+                  groupId: groupId,
+                  phase: AuthenticatedGroupAuthorityPhase.prepared,
+                  verify:
+                      ({
+                        required publicKey,
+                        required data,
+                        required signature,
+                      }) => callVerifyPayload(
+                        bridge: bridge,
+                        publicKey: publicKey,
+                        data: data,
+                        signature: signature,
+                      ),
+                  afterSourceTimestamp: afterSourceTimestamp,
+                  afterSourceEventId: afterSourceEventId,
+                  limit: limit,
+                ),
+        loadExactPhase: ({required phase, required eventId}) =>
+            loadAuthenticatedGroupAuthorityProofFromEventLog(
+              loadRow: ({required groupId, required sourceEventId}) =>
+                  dbLoadGroupEventLogEntryExact(
+                    db,
+                    groupId: groupId,
+                    sourceEventId: sourceEventId,
+                  ),
+              groupId: groupId,
+              phase: phase,
+              eventId: eventId,
+              verify:
+                  ({required publicKey, required data, required signature}) =>
+                      callVerifyPayload(
+                        bridge: bridge,
+                        publicKey: publicKey,
+                        data: data,
+                        signature: signature,
+                      ),
+            ),
+        loadReconciliationRow: (authorityEventId) =>
+            dbLoadGroupEventLogEntryExact(
+              db,
+              groupId: groupId,
+              sourceEventId:
+                  protectedGroupContentReconciliationCompleteSourceEventId(
+                    authorityEventId,
+                  ),
+            ),
+        repairCompletedAuthority: (authority) =>
+            reconcileCompletedContentAuthority(
+              authority,
+              allowDominatingProjection: true,
+            ),
+      );
+    }
+
+    Future<ProtectedGroupContentRetryAuthorityDisposition>
+    classifyStrictGroupContentRetryAuthority({
+      required String groupId,
+      required GroupContentAuthorityVersion observedAuthority,
+      required DateTime contentAt,
+      required String contentEventId,
+    }) => classifyProtectedGroupContentRetryAuthority(
+      groupId: groupId,
+      observedAuthority: observedAuthority,
+      contentAt: contentAt,
+      contentEventId: contentEventId,
+      loadPreparedPage:
+          ({afterSourceTimestamp, afterSourceEventId, required limit}) =>
+              loadAuthenticatedGroupAuthorityProofPage(
+                loadRows:
+                    ({
+                      required groupId,
+                      required eventType,
+                      afterSourceTimestamp,
+                      afterSourceEventId,
+                      throughSourceTimestamp,
+                      required limit,
+                    }) => dbLoadGroupEventLogTypePage(
+                      db,
+                      groupId: groupId,
+                      eventType: eventType,
+                      afterSourceTimestamp: afterSourceTimestamp,
+                      afterSourceEventId: afterSourceEventId,
+                      throughSourceTimestamp: throughSourceTimestamp,
+                      newestFirst: true,
+                      limit: limit,
+                    ),
+                groupId: groupId,
+                phase: AuthenticatedGroupAuthorityPhase.prepared,
+                verify:
+                    ({required publicKey, required data, required signature}) =>
+                        callVerifyPayload(
+                          bridge: bridge,
+                          publicKey: publicKey,
+                          data: data,
+                          signature: signature,
+                        ),
+                afterSourceTimestamp: afterSourceTimestamp,
+                afterSourceEventId: afterSourceEventId,
+                limit: limit,
+              ),
+      loadExactPhase: ({required phase, required eventId}) =>
+          loadAuthenticatedGroupAuthorityProofFromEventLog(
+            loadRow: ({required groupId, required sourceEventId}) =>
+                dbLoadGroupEventLogEntryExact(
+                  db,
+                  groupId: groupId,
+                  sourceEventId: sourceEventId,
+                ),
+            groupId: groupId,
+            phase: phase,
+            eventId: eventId,
+            verify: ({required publicKey, required data, required signature}) =>
+                callVerifyPayload(
+                  bridge: bridge,
+                  publicKey: publicKey,
+                  data: data,
+                  signature: signature,
+                ),
+          ),
+      loadReconciliationRow: (authorityEventId) =>
+          dbLoadGroupEventLogEntryExact(
+            db,
+            groupId: groupId,
+            sourceEventId:
+                protectedGroupContentReconciliationCompleteSourceEventId(
+                  authorityEventId,
+                ),
+          ),
+    );
+
+    Future<AuthenticatedGroupAuthorityProof?>
+    loadLatestSettledProtectedContentAuthority(String groupId) async {
+      if (await hasUnfinishedProtectedContentAuthority(groupId)) return null;
+      Future<AuthenticatedGroupAuthorityProof?> latest(
+        AuthenticatedGroupAuthorityPhase phase,
+      ) async {
+        final page = await loadAuthenticatedGroupAuthorityProofPage(
+          loadRows:
+              ({
+                required groupId,
+                required eventType,
+                afterSourceTimestamp,
+                afterSourceEventId,
+                throughSourceTimestamp,
+                required limit,
+              }) => dbLoadGroupEventLogTypePage(
+                db,
+                groupId: groupId,
+                eventType: eventType,
+                afterSourceTimestamp: afterSourceTimestamp,
+                afterSourceEventId: afterSourceEventId,
+                throughSourceTimestamp: throughSourceTimestamp,
+                newestFirst: true,
+                limit: limit,
+              ),
+          groupId: groupId,
+          phase: phase,
+          verify: ({required publicKey, required data, required signature}) =>
+              callVerifyPayload(
+                bridge: bridge,
+                publicKey: publicKey,
+                data: data,
+                signature: signature,
+              ),
+          limit: 1,
+        );
+        return page.isEmpty ? null : page.single;
+      }
+
+      final complete = await latest(AuthenticatedGroupAuthorityPhase.complete);
+      final genesis = await latest(AuthenticatedGroupAuthorityPhase.genesis);
+      var selected = complete;
+      if (selected == null ||
+          (genesis != null &&
+              (genesis.eventAt.isAfter(selected.eventAt) ||
+                  (genesis.eventAt == selected.eventAt &&
+                      genesis.eventId.compareTo(selected.eventId) > 0)))) {
+        selected = genesis;
+      }
+      if (selected == null) return null;
+      if (complete != null && identical(selected, complete)) {
+        final reconciliation = await dbLoadGroupEventLogEntryExact(
+          db,
+          groupId: groupId,
+          sourceEventId:
+              protectedGroupContentReconciliationCompleteSourceEventId(
+                selected.eventId,
+              ),
+        );
+        if (!isProtectedGroupContentReconciliationCompleteRow(
+          reconciliation,
+          authority: selected,
+        )) {
+          return null;
+        }
+      }
+      final currentKey = await groupRepository.getLatestKey(groupId);
+      return currentKey?.keyGeneration == selected.keyEpoch ? selected : null;
+    }
+
+    Future<bool> isLinkedGroupAuthoritySettled(String groupId) async =>
+        await loadLatestSettledProtectedContentAuthority(groupId) != null;
+
+    final resolveGroupContentAuthoringForSend =
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async {
+            final identity = await repository.loadIdentity();
+            return identity == null
+                ? null
+                : (peerId: identity.peerId, publicKey: identity.publicKey);
+          },
+          loadMember: groupRepository.getMember,
+          loadInstallationAuthority: (expectedAccountPeerId) =>
+              linkedInstallationAuthority.load(
+                expectedAccountPeerId: expectedAccountPeerId,
+              ),
+          loadLatestSettledAuthority:
+              loadLatestSettledProtectedContentAuthority,
+          readCurrentTransportPeerId: () => p2pService.currentState.peerId,
+          inboxStore: p2pService,
+          directLinkedDeviceSelector: const DirectLinkedDeviceSelector(),
+          multiDeviceSyncEnabled: kMultiDeviceSyncEnabled,
+        );
+
+    setGroupContentAuthoringResolver(
+      groupRepository,
+      resolveGroupContentAuthoringForSend,
+    );
+
+    Future<List<Map<String, Object?>>> loadLinkedProtectedEventRows(
+      String groupId,
+      String eventType,
+    ) async {
+      final rows = <Map<String, Object?>>[];
+      String? afterAt;
+      String? afterId;
+      while (true) {
+        final next = await dbLoadGroupEventLogTypePage(
+          db,
+          groupId: groupId,
+          eventType: eventType,
+          afterSourceTimestamp: afterAt,
+          afterSourceEventId: afterId,
+          newestFirst: true,
+          limit: 200,
+        );
+        rows.addAll(next);
+        if (next.length < 200) return rows;
+        final nextAt = next.last['source_timestamp'] as String?;
+        final nextId = next.last['source_event_id'] as String?;
+        if (nextAt == null ||
+            nextId == null ||
+            (nextAt == afterAt && nextId == afterId)) {
+          throw StateError('linked protected event history cursor stalled');
+        }
+        afterAt = nextAt;
+        afterId = nextId;
+      }
+    }
+
+    // 363/364: the protected P2P coordinator owns stage-before-handler and
     // handler-before-ACK. Installing this callback does not start group topic,
     // history, invite, notification, or content listeners on a linked role.
     p2pService.setProtectedGroupReplayHandler((message) async {
@@ -7679,6 +8559,177 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       final authority = await linkedInstallationAuthority.load(
         expectedAccountPeerId: identity.peerId,
       );
+      Map<String, dynamic>? contentOuter;
+      try {
+        final decoded = jsonDecode(message.content);
+        if (decoded is Map) {
+          contentOuter = Map<String, dynamic>.from(decoded);
+        }
+      } catch (_) {
+        contentOuter = null;
+      }
+      final contentWireClassification = classifyProtectedGroupContentWire(
+        message.content,
+      );
+      if (contentWireClassification !=
+          ProtectedGroupContentWireClassification.unrelated) {
+        final contentGroupId = contentOuter?['groupId'];
+        if (contentGroupId is String &&
+            contentGroupId.isNotEmpty &&
+            await hasUnfinishedProtectedContentAuthority(contentGroupId)) {
+          return (
+            disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
+            reasonCode: 'authority_reconciliation_pending',
+            reasonDetail: null,
+          );
+        }
+        final localTransportPeerId = authority.isActiveLinkedSecondary
+            ? authority.credential!.transportPeerId
+            : identity.peerId;
+        final result = await handleProtectedGroupContentReplay(
+          bridge: bridge,
+          groupRepository: groupRepository,
+          message: message,
+          localLogicalPeerId: identity.peerId,
+          localTransportPeerId: localTransportPeerId,
+          loadAuthority: loadProtectedContentAuthority,
+          hasPendingAuthority: hasUnfinishedProtectedContentAuthority,
+          hasTerminal:
+              ({
+                required groupId,
+                required payloadType,
+                required contentEventId,
+              }) => hasProtectedGroupContentTerminalEvidence(
+                groupId: groupId,
+                payloadType: payloadType,
+                contentEventId: contentEventId,
+                loadRows:
+                    ({
+                      required groupId,
+                      required eventType,
+                      afterSourceTimestamp,
+                      afterSourceEventId,
+                      throughSourceTimestamp,
+                      required limit,
+                    }) => dbLoadGroupEventLogTypePage(
+                      db,
+                      groupId: groupId,
+                      eventType: eventType,
+                      afterSourceTimestamp: afterSourceTimestamp,
+                      afterSourceEventId: afterSourceEventId,
+                      throughSourceTimestamp: throughSourceTimestamp,
+                      newestFirst: true,
+                      limit: limit,
+                    ),
+              ),
+          commitMessage:
+              ({
+                required groupId,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+                required messageRow,
+                required mediaAttachmentRows,
+                required incomingMediaCustodyRows,
+                readyDisplayOutboxRow,
+              }) => dbCommitProtectedGroupMessage(
+                db,
+                groupId: groupId,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+                messageRow: messageRow,
+                mediaAttachmentRows: mediaAttachmentRows,
+                incomingMediaCustodyRows: incomingMediaCustodyRows,
+                readyDisplayOutboxRow: readyDisplayOutboxRow,
+              ),
+          commitReaction:
+              ({
+                required groupId,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+                required reactionRow,
+                required transitionId,
+                required action,
+                readyDisplayOutboxRow,
+              }) => dbCommitProtectedGroupReaction(
+                db,
+                groupId: groupId,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+                reactionRow: reactionRow,
+                transitionId: transitionId,
+                action: action,
+                readyDisplayOutboxRow: readyDisplayOutboxRow,
+              ),
+          commitTerminal:
+              ({
+                required groupId,
+                required sourcePeerId,
+                required sourceEventId,
+                required sourceTimestamp,
+                required eventPayload,
+              }) => dbCommitProtectedGroupContentTerminal(
+                db,
+                groupId: groupId,
+                sourcePeerId: sourcePeerId,
+                sourceEventId: sourceEventId,
+                sourceTimestamp: sourceTimestamp,
+                eventPayload: eventPayload,
+              ),
+          resolveReactionTarget: (groupId, messageId) =>
+              dbClassifyProtectedGroupReactionTargetWithEvidence(
+                db,
+                groupId: groupId,
+                messageId: messageId,
+              ),
+          buildMessageDisplayRow:
+              groupMessageListener.buildProtectedMessageDisplayReadyRow,
+          buildReactionDisplayRow:
+              groupMessageListener.buildProtectedReactionDisplayReadyRow,
+          publishMessage: groupMessageListener.publishProtectedGroupMessage,
+          publishReaction:
+              groupMessageListener.publishProtectedGroupReactionChange,
+        );
+        return switch (result.disposition) {
+          ProtectedGroupContentApplyDisposition.applied => (
+            disposition: ProtectedGroupReplayDisposition.applied,
+            reasonCode: result.reasonCode,
+            reasonDetail: result.reasonDetail,
+          ),
+          ProtectedGroupContentApplyDisposition.exactDuplicate => (
+            disposition: ProtectedGroupReplayDisposition.duplicate,
+            reasonCode: result.reasonCode,
+            reasonDetail: result.reasonDetail,
+          ),
+          ProtectedGroupContentApplyDisposition.terminalReject => (
+            disposition: ProtectedGroupReplayDisposition.terminalRejected,
+            reasonCode: result.reasonCode,
+            reasonDetail: result.reasonDetail,
+          ),
+          ProtectedGroupContentApplyDisposition.unverifiedReject => (
+            disposition: ProtectedGroupReplayDisposition.unverifiedRejected,
+            reasonCode: result.reasonCode,
+            reasonDetail: result.reasonDetail,
+          ),
+          ProtectedGroupContentApplyDisposition.prerequisiteWaiting => (
+            disposition: ProtectedGroupReplayDisposition.prerequisiteWaiting,
+            reasonCode: result.reasonCode,
+            reasonDetail: result.reasonDetail,
+          ),
+          ProtectedGroupContentApplyDisposition.retryableFailure => (
+            disposition: ProtectedGroupReplayDisposition.retryable,
+            reasonCode: result.reasonCode,
+            reasonDetail: result.reasonDetail,
+          ),
+        };
+      }
       final envelope = ProtectedGroupEnvelope.tryParse(message.content);
       if (envelope?.type == linkedGroupBootstrapEnvelopeType) {
         final result = await handleLinkedGroupBootstrapEnvelope(
@@ -7739,6 +8790,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           reasonDetail: null,
         );
       }
+      GroupPendingKeyRepairRetryRequest? deferredKeyRepair;
       final result = await handleProtectedGroupAuthority(
         message: message,
         ownTransportPeerId: authority.isActiveLinkedSecondary
@@ -7847,6 +8899,9 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
                 ),
                 authority: authority,
                 authorityPhaseHeld: true,
+                deferPendingRepair: (request) {
+                  deferredKeyRepair = request;
+                },
               );
             } else if (strictMembershipReplay) {
               return applyLocalProtectedSystemAuthorityReplay(
@@ -7880,7 +8935,30 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             return ProtectedGroupAuthorityApplyResult.retryable;
           }
         },
+        reconcileContent: (control, replayData, authority) =>
+            reconcileCompletedContentAuthority(authority.proof),
       );
+      final pendingRepair = deferredKeyRepair;
+      if (pendingRepair != null &&
+          result == ProtectedGroupAuthorityHandleResult.applied) {
+        try {
+          await groupPendingKeyRepairRunner.retryPendingRepairsForRequest(
+            pendingRepair,
+          );
+        } catch (error) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'PROTECTED_GROUP_KEY_REPAIR_RETRY_ERROR',
+            details: {
+              'groupId': pendingRepair.groupId.length > 8
+                  ? pendingRepair.groupId.substring(0, 8)
+                  : pendingRepair.groupId,
+              'keyEpoch': pendingRepair.keyEpoch,
+              'error': error.toString(),
+            },
+          );
+        }
+      }
       return switch (result) {
         ProtectedGroupAuthorityHandleResult.applied => (
           disposition: ProtectedGroupReplayDisposition.applied,
@@ -8037,6 +9115,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         );
 
     // Create pending message retrier
+    final groupInboxRetryFairnessCursor = GroupInboxRetryFairnessCursor();
     final pendingMessageRetrier = PendingMessageRetrier(
       p2pService: p2pService,
       messageRepo: messageRepository,
@@ -8226,6 +9305,18 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
           groupRepo: groupRepository,
           identityRepo: repository,
+          groupContentInboxStore: p2pService,
+          classifyStrictContentAuthority:
+              classifyStrictGroupContentRetryAuthority,
+          classifyStrictReactionTarget:
+              ({required groupId, required messageId}) =>
+                  dbClassifyProtectedGroupReactionTargetWithEvidence(
+                    db,
+                    groupId: groupId,
+                    messageId: messageId,
+                  ),
+          fairnessCursor: groupInboxRetryFairnessCursor,
+          inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
         ),
       ),
       // Finding 05 Phase 4: reconnect re-arms backed-off failed group rows (local
@@ -8384,6 +9475,10 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       await liveServiceStartupSteps.runAsync(
         'direct_media_blob_local_cleanup',
         cleanupDirectMediaBlobCustodyLocally,
+      );
+      await liveServiceStartupSteps.runAsync(
+        'group_media_blob_local_cleanup',
+        cleanupGroupMediaBlobCustodyLocally,
       );
       final groupContextBackfill = keychainMirrorBackfill;
       if (groupContextBackfill != null) {
@@ -8579,6 +9674,41 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       return liveServicesStarted;
     }
 
+    Future<int> drainLinkedGroupOutgoingMediaCustody() =>
+        linkedGroupContentQuiescence.runOutgoing(
+          blockedValue: 0,
+          operation: () => runAccountRuntimeNetworkAction(
+            operation: 'linked_group_media_blob_outgoing_drain',
+            blockedValue: 0,
+            action: () => retryIncompleteGroupUploads(
+              groupRepo: groupRepository,
+              groupMsgRepo: groupMessageRepository,
+              mediaAttachmentRepo: mediaAttachmentRepository,
+              bridge: bridge,
+              p2pService: p2pService,
+              identityRepo: repository,
+              mediaFileManager: mediaFileManager,
+              inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+              tryClaimUploadLease: (attachmentIds) =>
+                  mediaUploadInFlightTracker.tryClaimAll(
+                    attachmentIds,
+                    source: MediaUploadTriggerSource.resume,
+                  ),
+              releaseUploadLease: mediaUploadInFlightTracker.release,
+              preparedGroupMediaBlobCustodyCoordinator:
+                  preparedGroupMediaBlobCustodyCoordinator,
+              strictGroupCustodyOnly: true,
+            ),
+          ),
+        );
+
+    Future<int> drainLinkedGroupIncomingMediaCustody() =>
+        runAccountRuntimeNetworkAction(
+          operation: 'linked_group_media_blob_incoming_drain',
+          blockedValue: 0,
+          action: groupMediaDownloadCoordinator.callStrictGroupMediaCustodyOnly,
+        );
+
     // 360: the deferred runtime start is decided by persisted installation
     // ROLE, before the router. An ordinary primary keeps calling
     // `startLiveServicesIfAllowed` unchanged; an active linked secondary
@@ -8616,11 +9746,78 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
           startReactionListener: reactionListener.start,
           startMessageDeletionListener: messageDeletionListener.start,
           startDeliveryReceiptListener: deliveryReceiptListener.start,
+          startLinkedTransport: () async {
+            final identity = await repository.loadIdentity();
+            if (identity == null) return false;
+            final authority = await linkedInstallationAuthority.load(
+              expectedAccountPeerId: identity.peerId,
+            );
+            // The role-aware owner selected this branch from an ACTIVE snapshot,
+            // but authority is storage-backed and can change before node start.
+            // Re-read and refuse rather than ever falling back to the account
+            // transport on a linked-runtime path.
+            if (!authority.isActiveLinkedSecondary) return false;
+            final expectedTransportPeerId =
+                authority.credential?.transportPeerId;
+            final currentNode = p2pService.currentState;
+            if (expectedTransportPeerId != null &&
+                currentNode.isStarted &&
+                currentNode.peerId == expectedTransportPeerId) {
+              return true;
+            }
+            final result = await startP2PNode(
+              identityRepo: repository,
+              p2pService: p2pService,
+              accountMigrationNetworkGate: accountMigrationRuntimeNetworkGate
+                  .allowsAccountNetworkSideEffects,
+              linkedAuthority: authority,
+            );
+            return result == StartNodeResult.success;
+          },
           drainOfflineInbox: p2pService.drainOfflineInbox,
           drainExactBlobFreeFanoutOutboxes: drainDirectBlobFreeLinkedOutboxes,
           drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
           materializeLinkedGroupBootstrap: p2pService.drainOfflineInbox,
           replayLinkedGroupAuthority: p2pService.drainOfflineInbox,
+          pauseLinkedGroupContentAdmission: linkedGroupContentQuiescence.pause,
+          resumeLinkedGroupContentAdmission: (contentPause) =>
+              contentPause.resume(),
+          replayLinkedGroupContent:
+              p2pService.drainProtectedGroupContentFixedPoint,
+          drainLinkedGroupOutgoingMedia: drainLinkedGroupOutgoingMediaCustody,
+          drainLinkedGroupIncomingMedia: drainLinkedGroupIncomingMediaCustody,
+          retryLinkedGroupContent: () =>
+              linkedGroupContentQuiescence.runOutgoing<int>(
+                blockedValue: 0,
+                operation: () => runAccountRuntimeNetworkAction(
+                  operation: 'linked_group_content_retry',
+                  blockedValue: 0,
+                  action: () => retryFailedGroupInboxStores(
+                    bridge: bridge,
+                    msgRepo: groupMessageRepository,
+                    reactionReplayOutboxRepo:
+                        groupReactionReplayOutboxRepository,
+                    groupRepo: groupRepository,
+                    identityRepo: repository,
+                    groupContentInboxStore: p2pService,
+                    classifyStrictContentAuthority:
+                        classifyStrictGroupContentRetryAuthority,
+                    classifyStrictReactionTarget:
+                        ({required groupId, required messageId}) =>
+                            dbClassifyProtectedGroupReactionTargetWithEvidence(
+                              db,
+                              groupId: groupId,
+                              messageId: messageId,
+                            ),
+                    fairnessCursor: groupInboxRetryFairnessCursor,
+                    inviteDeliveryAttemptRepo:
+                        groupInviteDeliveryAttemptRepository,
+                    strictContentOnly: true,
+                  ),
+                ),
+              ),
+          drainLinkedGroupNotificationDisplayCustody:
+              groupMessageListener.retryPendingNotificationDisplays,
           refreshLinkedGroupList: refreshLinkedGroupStatusProjection,
         );
         return linkedServices.start();
@@ -8701,6 +9898,37 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             hasMorePages: result.hasMorePages,
           );
         },
+      );
+
+      final linkedGroupMediaVoiceActionOwner = LinkedGroupMediaVoiceActionOwner(
+        bridge: bridge,
+        groupRepository: groupRepository,
+        messageRepository: groupMessageRepository,
+        mediaAttachmentRepository: mediaAttachmentRepository,
+        preparedCustodyCoordinator: preparedGroupMediaBlobCustodyCoordinator,
+        inviteDeliveryAttemptRepository: groupInviteDeliveryAttemptRepository,
+        imageProcessor: imageProcessor,
+        audioRecorderService: audioRecorderService,
+        loadIdentity: () async {
+          final identity = await repository.loadIdentity();
+          return identity == null
+              ? null
+              : LinkedGroupMediaAuthorIdentity(
+                  peerId: identity.peerId,
+                  publicKey: identity.publicKey,
+                  privateKey: identity.privateKey,
+                  username: identity.username,
+                );
+        },
+        retryStrictOutgoing: drainLinkedGroupOutgoingMediaCustody,
+        retryStrictIncoming: drainLinkedGroupIncomingMediaCustody,
+        refreshProjection: refreshLinkedGroupStatusProjection,
+      );
+      Future<bool> runLinkedGroupMediaAuthorAction(
+        Future<bool> Function() operation,
+      ) => linkedGroupContentQuiescence.runOutgoing(
+        blockedValue: false,
+        operation: operation,
       );
 
       return MyApp(
@@ -8792,6 +10020,298 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         drainLinkedDirectMediaBlobCustody: drainLinkedDirectMediaBlobCustody,
         drainLinkedGroupBootstrap: p2pService.drainOfflineInbox,
         replayLinkedGroupAuthority: p2pService.drainOfflineInbox,
+        pauseLinkedGroupContentAdmission: linkedGroupContentQuiescence.pause,
+        resumeLinkedGroupContentAdmission: (contentPause) =>
+            contentPause.resume(),
+        replayLinkedGroupContent:
+            p2pService.drainProtectedGroupContentFixedPoint,
+        drainLinkedGroupOutgoingMedia: drainLinkedGroupOutgoingMediaCustody,
+        drainLinkedGroupIncomingMedia: drainLinkedGroupIncomingMediaCustody,
+        retryLinkedGroupContent: () =>
+            linkedGroupContentQuiescence.runOutgoing<int>(
+              blockedValue: 0,
+              operation: () => runAccountRuntimeNetworkAction(
+                operation: 'linked_group_content_retry',
+                blockedValue: 0,
+                action: () => retryFailedGroupInboxStores(
+                  bridge: bridge,
+                  msgRepo: groupMessageRepository,
+                  reactionReplayOutboxRepo: groupReactionReplayOutboxRepository,
+                  groupRepo: groupRepository,
+                  identityRepo: repository,
+                  groupContentInboxStore: p2pService,
+                  classifyStrictContentAuthority:
+                      classifyStrictGroupContentRetryAuthority,
+                  classifyStrictReactionTarget:
+                      ({required groupId, required messageId}) =>
+                          dbClassifyProtectedGroupReactionTargetWithEvidence(
+                            db,
+                            groupId: groupId,
+                            messageId: messageId,
+                          ),
+                  fairnessCursor: groupInboxRetryFairnessCursor,
+                  inviteDeliveryAttemptRepo:
+                      groupInviteDeliveryAttemptRepository,
+                  strictContentOnly: true,
+                ),
+              ),
+            ),
+        isLinkedGroupAuthoritySettled: isLinkedGroupAuthoritySettled,
+        linkedGroupConversationBuilder: (context, group) =>
+            LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: groupRepository.getGroup,
+              backgroundPreference: appShellController.backgroundPreference,
+              groupConversationTracker: groupConversationTracker,
+              isAuthoritySettled: isLinkedGroupAuthoritySettled,
+              canAuthorProtectedContent: (groupId) async {
+                final identity = await repository.loadIdentity();
+                if (identity == null) return false;
+                final resolution = await resolveGroupContentAuthoringForSend(
+                  groupId: groupId,
+                  senderPeerId: identity.peerId,
+                  senderPublicKey: identity.publicKey,
+                  senderDeviceId: null,
+                  senderTransportPeerId: null,
+                );
+                final authoring = resolution.context;
+                return resolution.kind ==
+                        GroupContentAuthoringResolutionKind.strict &&
+                    authoring != null &&
+                    authoring.requireLinkedTransportCredential &&
+                    authoring.linkedTransportCredential?.state ==
+                        LinkedTransportCredentialState.active &&
+                    authoring
+                        .directLinkedDeviceSelector
+                        .allowsLinkedDeviceAuthoring &&
+                    authoring.multiDeviceSyncEnabled &&
+                    authoring.authorityVersion != null &&
+                    authoring.inboxStore != null;
+              },
+              loadProtectedMessages: (groupId) async {
+                final terminalRows = await loadLinkedProtectedEventRows(
+                  groupId,
+                  protectedGroupContentTerminalEventType,
+                );
+                final messages = await groupMessageRepository.getMessagesPage(
+                  groupId,
+                  limit: 100,
+                );
+                final protected = <GroupMessage>[];
+                for (final message in messages) {
+                  final attachments = await mediaAttachmentRepository
+                      .getAttachmentsForMessage(
+                        message.id,
+                        owner: MediaOwnerLane.group,
+                      );
+                  final evidence = await dbLoadGroupEventLogEntryExact(
+                    db,
+                    groupId: groupId,
+                    sourceEventId: protectedGroupMessageSourceEventId(
+                      message.id,
+                    ),
+                  );
+                  if (isExactLinkedProtectedMessageEvidence(
+                    groupId: groupId,
+                    message: message,
+                    evidenceRow: evidence,
+                    terminalRows: terminalRows,
+                    media: attachments,
+                  )) {
+                    protected.add(message);
+                  }
+                }
+                return protected;
+              },
+              loadProtectedMedia: (messageIds) async {
+                final terminalRows = await loadLinkedProtectedEventRows(
+                  group.id,
+                  protectedGroupContentTerminalEventType,
+                );
+                final protected = <String, List<MediaAttachment>>{};
+                for (final messageId in messageIds.toSet()) {
+                  final message = await groupMessageRepository.getMessage(
+                    messageId,
+                  );
+                  if (message == null || message.groupId != group.id) continue;
+                  final attachments = await mediaAttachmentRepository
+                      .getAttachmentsForMessage(
+                        messageId,
+                        owner: MediaOwnerLane.group,
+                      );
+                  if (attachments.isEmpty) continue;
+                  final evidence = await dbLoadGroupEventLogEntryExact(
+                    db,
+                    groupId: group.id,
+                    sourceEventId: protectedGroupMessageSourceEventId(
+                      messageId,
+                    ),
+                  );
+                  if (isExactLinkedProtectedMessageEvidence(
+                    groupId: group.id,
+                    message: message,
+                    evidenceRow: evidence,
+                    terminalRows: terminalRows,
+                    media: attachments,
+                  )) {
+                    protected[messageId] = attachments;
+                  }
+                }
+                return protected;
+              },
+              loadProtectedReactions: (messageIds) async {
+                final loaded = await reactionRepository.getReactionsForMessages(
+                  messageIds,
+                );
+                final evidenceRows = await loadLinkedProtectedEventRows(
+                  group.id,
+                  protectedGroupReactionEventType,
+                );
+                final terminalRows = await loadLinkedProtectedEventRows(
+                  group.id,
+                  protectedGroupContentTerminalEventType,
+                );
+                return <String, List<MessageReaction>>{
+                  for (final entry in loaded.entries)
+                    entry.key: entry.value
+                        .where(
+                          (reaction) => isExactLinkedProtectedReactionEvidence(
+                            groupId: group.id,
+                            reaction: reaction,
+                            evidenceRows: evidenceRows,
+                            terminalRows: terminalRows,
+                          ),
+                        )
+                        .toList(growable: false),
+                };
+              },
+              markVisibleMessagesRead: (groupId, messageIds) async {
+                final exactIds = messageIds
+                    .map((messageId) => messageId.trim())
+                    .where((messageId) => messageId.isNotEmpty)
+                    .toSet()
+                    .toList(growable: false);
+                if (exactIds.isEmpty) return;
+                final placeholders = List.filled(
+                  exactIds.length,
+                  '?',
+                ).join(',');
+                await db.rawUpdate(
+                  'UPDATE group_messages '
+                  'SET read_at = COALESCE(read_at, ?) '
+                  'WHERE group_id = ? AND is_incoming = 1 '
+                  'AND read_at IS NULL AND id IN ($placeholders)',
+                  <Object?>[
+                    DateTime.now().toUtc().toIso8601String(),
+                    groupId,
+                    ...exactIds,
+                  ],
+                );
+                emitGroupNotificationReconciliationSignal(groupId);
+                // The generic group listener owner is intentionally not started
+                // on linked installations. Drive the durable reconciliation
+                // explicitly so opening this narrow route retires its OS card.
+                await groupMessageListener.retryPendingNotificationDisplays();
+                await refreshLinkedGroupStatusProjection();
+              },
+              sendProtectedText: (groupId, text) =>
+                  linkedGroupContentQuiescence.runOutgoing<bool>(
+                    blockedValue: false,
+                    operation: () async {
+                      final identity = await repository.loadIdentity();
+                      if (identity == null) return false;
+                      final result = await sendGroupMessage(
+                        bridge: bridge,
+                        groupRepo: groupRepository,
+                        msgRepo: groupMessageRepository,
+                        groupId: groupId,
+                        text: text,
+                        senderPeerId: identity.peerId,
+                        senderPublicKey: identity.publicKey,
+                        senderPrivateKey: identity.privateKey,
+                        senderUsername: identity.username,
+                        inviteDeliveryAttemptRepo:
+                            groupInviteDeliveryAttemptRepository,
+                      );
+                      await refreshLinkedGroupStatusProjection();
+                      return result.$2 != null;
+                    },
+                  ),
+              attachOrdinaryMedia: (groupId) => runLinkedGroupMediaAuthorAction(
+                () => linkedGroupMediaVoiceActionOwner.attachOrdinaryMedia(
+                  groupId,
+                ),
+              ),
+              startVoiceRecording: (groupId) => runLinkedGroupMediaAuthorAction(
+                () => linkedGroupMediaVoiceActionOwner.startVoiceRecording(
+                  groupId,
+                ),
+              ),
+              stopVoiceRecording: (groupId) => runLinkedGroupMediaAuthorAction(
+                () => linkedGroupMediaVoiceActionOwner.stopVoiceRecording(
+                  groupId,
+                ),
+              ),
+              cancelVoiceRecording:
+                  linkedGroupMediaVoiceActionOwner.cancelVoiceRecording,
+              retryOrdinaryMedia:
+                  linkedGroupMediaVoiceActionOwner.retryOrdinaryMedia,
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) => linkedGroupContentQuiescence.runOutgoing<bool>(
+                    blockedValue: false,
+                    operation: () async {
+                      final identity = await repository.loadIdentity();
+                      if (identity == null) return false;
+                      if (remove) {
+                        final result = await removeGroupReaction(
+                          bridge: bridge,
+                          groupRepo: groupRepository,
+                          reactionRepo: reactionRepository,
+                          reactionReplayOutboxRepo:
+                              groupReactionReplayOutboxRepository,
+                          groupId: groupId,
+                          messageId: message.id,
+                          emoji: emoji,
+                          senderPeerId: identity.peerId,
+                          senderPublicKey: identity.publicKey,
+                          senderPrivateKey: identity.privateKey,
+                          msgRepo: groupMessageRepository,
+                          inviteDeliveryAttemptRepo:
+                              groupInviteDeliveryAttemptRepository,
+                          targetMessage: message,
+                        );
+                        await refreshLinkedGroupStatusProjection();
+                        return result == RemoveGroupReactionResult.success ||
+                            result == RemoveGroupReactionResult.queuedForRetry;
+                      }
+                      final result = await sendGroupReaction(
+                        bridge: bridge,
+                        groupRepo: groupRepository,
+                        msgRepo: groupMessageRepository,
+                        reactionRepo: reactionRepository,
+                        reactionReplayOutboxRepo:
+                            groupReactionReplayOutboxRepository,
+                        groupId: groupId,
+                        messageId: message.id,
+                        emoji: emoji,
+                        senderPeerId: identity.peerId,
+                        senderPublicKey: identity.publicKey,
+                        senderPrivateKey: identity.privateKey,
+                        inviteDeliveryAttemptRepo:
+                            groupInviteDeliveryAttemptRepository,
+                      );
+                      await refreshLinkedGroupStatusProjection();
+                      return result.$2 != null;
+                    },
+                  ),
+            ),
+        drainLinkedGroupNotificationDisplayCustody:
+            groupMessageListener.retryPendingNotificationDisplays,
         refreshLinkedGroupList: refreshLinkedGroupStatusProjection,
         flushLinkedGroupAuthorityOnPause: () async {
           await groupPendingBroadcastRunner.drainProtectedAll();

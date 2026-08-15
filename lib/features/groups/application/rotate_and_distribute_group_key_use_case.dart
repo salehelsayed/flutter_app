@@ -681,77 +681,100 @@ Future<RotateGroupKeyOutcome> rotateAndDistributeGroupKey({
 
       // 3. Promote the admin's own validator and local key. Prepared protected
       // bytes already exist, so a crash after this point cannot lose authority.
-      try {
-        await callGroupUpdateKey(
-          bridge,
-          groupId: groupId,
-          groupKey: newKey,
-          keyEpoch: newEpoch,
-        );
-      } catch (e) {
-        final rowsAborted = await _cancelCommonProtectedKeyAuthority(
-          protectedPreparations.values,
-        );
-        final authorityOnlyAborted = await cancelProtectedGroupAuthority(
-          authorityOnlyPreparation,
-        );
-        if ((!rowsAborted && protectedPreparations.isNotEmpty) ||
-            !authorityOnlyAborted) {
-          throw StateError(
-            'key promotion failed ($e) and protected authority abort was refused',
-          );
-        }
-        if (protectedPreparations.isNotEmpty ||
-            authorityOnlyPreparation != null) {
-          // ABORTED permanently fences this proof/event address. Retaining its
-          // deterministic draft would cause every restart to request the same
-          // now-unusable authority version, so only a proven durable abort may
-          // retire the draft and let the next attempt mint fresh bytes.
-          await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
-        }
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
-          details: {'error': e.toString()},
-        );
-        return RotateGroupKeyOutcome.notRotated;
-      }
-
+      // Legacy group sends share the narrow membership-action guard, so their
+      // snapshotted epoch cannot race native promotion plus the durable key
+      // commit. Long recipient distribution remains outside this guard.
       final keyInfo = GroupKeyInfo(
         groupId: groupId,
         keyGeneration: newEpoch,
         encryptedKey: newKey,
         createdAt: generatedAt,
       );
-      final proof = sharedAuthorityProof;
-      if (proof != null &&
-          groupRepo is AtomicProtectedGroupKeyAuthorityRepository) {
-        final atomicKeyRepository =
-            groupRepo as AtomicProtectedGroupKeyAuthorityRepository;
-        await atomicKeyRepository.commitProtectedGroupKeyAuthority(
-          key: keyInfo,
-          authorityComplete: ProtectedGroupAuthorityCompleteFact(
-            sourcePeerId: proof.actorAccountPeerId,
-            sourceEventId: authenticatedGroupAuthoritySourceEventId(
-              AuthenticatedGroupAuthorityPhase.complete,
-              proof.eventId,
-            ),
-            sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
-            payload: authenticatedGroupAuthorityFactPayload(proof),
-          ),
-        );
-      } else {
-        // Lightweight repositories keep the incumbent projection write; their
-        // injected authority adapter completes immediately after this point.
-        await groupRepo.saveKey(keyInfo);
-      }
-      await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
+      final promoted = await runGroupMembershipActionIfNeeded<bool>(
+        groupId: groupId,
+        membershipActionPhaseHeld: isGroupMembershipActionPhaseHeld(groupId),
+        action: () async {
+          try {
+            await callGroupUpdateKey(
+              bridge,
+              groupId: groupId,
+              groupKey: newKey,
+              keyEpoch: newEpoch,
+            );
+          } catch (e) {
+            final rowsAborted = await _cancelCommonProtectedKeyAuthority(
+              protectedPreparations.values,
+            );
+            final authorityOnlyAborted = await cancelProtectedGroupAuthority(
+              authorityOnlyPreparation,
+            );
+            if ((!rowsAborted && protectedPreparations.isNotEmpty) ||
+                !authorityOnlyAborted) {
+              throw StateError(
+                'key promotion failed ($e) and protected authority abort was refused',
+              );
+            }
+            if (protectedPreparations.isNotEmpty ||
+                authorityOnlyPreparation != null) {
+              // ABORTED permanently fences this proof/event address. Retaining
+              // its deterministic draft would make every restart reuse the
+              // now-unusable authority version.
+              await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
+            }
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_ROTATE_KEY_PROMOTE_ERROR',
+              details: {'error': e.toString()},
+            );
+            return false;
+          }
 
-      emitFlowEvent(
-        layer: 'FL',
-        event: 'GROUP_ROTATE_KEY_SAVED',
-        details: {'newEpoch': newEpoch},
+          final proof = sharedAuthorityProof;
+          if (proof != null &&
+              groupRepo is AtomicProtectedGroupKeyAuthorityRepository) {
+            final atomicKeyRepository =
+                groupRepo as AtomicProtectedGroupKeyAuthorityRepository;
+            await atomicKeyRepository.commitProtectedGroupKeyAuthority(
+              key: keyInfo,
+              authorityComplete: ProtectedGroupAuthorityCompleteFact(
+                sourcePeerId: proof.actorAccountPeerId,
+                sourceEventId: authenticatedGroupAuthoritySourceEventId(
+                  AuthenticatedGroupAuthorityPhase.complete,
+                  proof.eventId,
+                ),
+                sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+                payload: authenticatedGroupAuthorityFactPayload(proof),
+              ),
+            );
+          } else {
+            // Lightweight repositories keep the incumbent projection write;
+            // their injected authority adapter completes immediately after.
+            await groupRepo.saveKey(keyInfo);
+          }
+          if (proof != null &&
+              !await reconcileCompletedProtectedGroupAuthority(
+                groupRepo,
+                proof,
+              )) {
+            // Promotion is durable and cannot be reported as unrotated. Keep
+            // content fail-closed until startup repair converges this seam.
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'GROUP_ROTATE_KEY_CONTENT_RECONCILIATION_PENDING',
+              details: {'groupId': _diagnosticPrefix(groupId)},
+            );
+          }
+          await draftRepo?.clearPendingKeyRotation(groupId, newEpoch);
+
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'GROUP_ROTATE_KEY_SAVED',
+            details: {'newEpoch': newEpoch},
+          );
+          return true;
+        },
       );
+      if (!promoted) return RotateGroupKeyOutcome.notRotated;
 
       if (authorityOnlyPreparation != null) {
         await activateProtectedGroupAuthority(

@@ -5,7 +5,9 @@ import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/incoming_ordinary_text_mutation.dart';
 import 'package:flutter_app/core/database/direct_inbox_event_envelope.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart'
-    show OutgoingDirectPrivateInboxCustodyDbResult;
+    show
+        OutgoingDirectPrivateFanoutInboxCustodyDbResult,
+        OutgoingDirectPrivateInboxCustodyDbResult;
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
@@ -48,6 +50,7 @@ class MessageRepositoryImpl
         IncomingDirectDeletionApplyRepository,
         OutgoingDirectPrivateEnvelopeCustodyRepository,
         OutgoingDirectPrivateMediaInboxCustodyRepository,
+        OutgoingDirectPrivateMediaFanoutInboxCustodyRepository,
         IncomingDirectMessagePublicationRepository,
         MessageRepositoryChangeSource,
         MessageRepositoryRemovalSource,
@@ -308,6 +311,17 @@ class MessageRepositoryImpl
     required int wireMediaBlobExpiresAtMs,
   })?
   dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody;
+  final Future<OutgoingDirectPrivateFanoutInboxCustodyDbResult> Function(
+    Map<String, Object?> completionRow, {
+    required String expectedPendingLocalPath,
+    required bool hasOwnedPendingCompletion,
+    required String senderTransportPeerId,
+    required String contactAccountPeerId,
+    required DirectPrivateMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
+    required List<DirectPrivateMediaFanoutTargetBinding> targetBindings,
+  })?
+  dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody;
   final Future<OutgoingDirectPrivateTransportSettlementOutcome> Function({
     required String messageId,
     required String? attachmentId,
@@ -499,6 +513,7 @@ class MessageRepositoryImpl
     this.dbMarkOutgoingDirectPrivateUploadHandoffFailed,
     this.dbCommitOutgoingDirectPrivateWireEnvelope,
     this.dbCommitOutgoingDirectPrivateWireEnvelopeWithInboxCustody,
+    this.dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody,
     this.dbSettleOutgoingDirectPrivateTransport,
     this.dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstone,
     this.dbStageOutgoingDirectPrivateDeleteForEveryoneRetryEnvelope,
@@ -1585,6 +1600,133 @@ class MessageRepositoryImpl
     return OutgoingDirectPrivateInboxCustodyResult(
       outcome: result.outcome,
       custody: DirectInboxCustodyOutboxEntry.fromMap(custodyRow),
+    );
+  }
+
+  @override
+  bool get supportsOutgoingDirectPrivateMediaFanoutInboxCustody =>
+      dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody != null;
+
+  @override
+  Future<OutgoingDirectPrivateFanoutInboxCustodyResult>
+  commitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required bool hasOwnedPendingCompletion,
+    required String senderTransportPeerId,
+    required String contactAccountPeerId,
+    required DirectPrivateMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
+    required List<DirectPrivateMediaFanoutTargetBinding> targetBindings,
+  }) async {
+    final commit =
+        dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody;
+    final targetPeers = targetBindings
+        .map((binding) => binding.recipientPeerId)
+        .toSet();
+    final snapshotPeers = expectedSnapshot?.targets
+        .map((target) => target.peerId)
+        .toList(growable: false);
+    final persistedPeers = targetPeers.whereType<String>().toList()..sort();
+    if (persistedPeers.remove(contactAccountPeerId)) {
+      persistedPeers.insert(0, contactAccountPeerId);
+    }
+    final exactAuthorityShape = switch (authority) {
+      DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot =>
+        expectedSnapshot != null &&
+            expectedSnapshot.contactAccountPeerId == contactAccountPeerId &&
+            snapshotPeers!.length == targetBindings.length &&
+            List<bool>.generate(
+              targetBindings.length,
+              (index) =>
+                  targetBindings[index].recipientPeerId ==
+                      snapshotPeers[index] &&
+                  targetBindings[index].recipientMlKemPublicKey ==
+                      expectedSnapshot.targets[index].mlKemPublicKey,
+            ).every((matches) => matches),
+      DirectPrivateMediaFanoutStageAuthority.persistedV114Survivors =>
+        expectedSnapshot == null &&
+            persistedPeers.length == targetBindings.length &&
+            List<bool>.generate(
+              targetBindings.length,
+              (index) =>
+                  targetBindings[index].recipientPeerId ==
+                  persistedPeers[index],
+            ).every((matches) => matches),
+    };
+    if (commit == null ||
+        messageId.isEmpty ||
+        messageId.trim() != messageId ||
+        completedAttachment.messageId != messageId ||
+        (completedAttachment.ownerLane != null &&
+            completedAttachment.ownerLane != MediaOwnerLane.direct) ||
+        senderTransportPeerId.isEmpty ||
+        senderTransportPeerId.trim() != senderTransportPeerId ||
+        contactAccountPeerId.isEmpty ||
+        contactAccountPeerId.trim() != contactAccountPeerId ||
+        targetBindings.isEmpty ||
+        targetPeers.length != targetBindings.length ||
+        targetPeers.contains('') ||
+        targetBindings.any(
+          (binding) =>
+              binding.recipientPeerId.trim() != binding.recipientPeerId ||
+              binding.recipientMlKemPublicKey.trim().isEmpty ||
+              binding.recipientMlKemPublicKey.trim() !=
+                  binding.recipientMlKemPublicKey ||
+              binding.wireEnvelope.trim().isEmpty ||
+              binding.wireMediaBlobManifestHash.trim().isEmpty ||
+              binding.wireMediaBlobExpiresAtMs <= 0,
+        ) ||
+        !exactAuthorityShape) {
+      return const OutgoingDirectPrivateFanoutInboxCustodyResult.refused();
+    }
+    final result = await commit(
+      completedAttachment.copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+      expectedPendingLocalPath: expectedPendingLocalPath,
+      hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+      senderTransportPeerId: senderTransportPeerId,
+      contactAccountPeerId: contactAccountPeerId,
+      authority: authority,
+      expectedSnapshot: expectedSnapshot,
+      targetBindings: targetBindings,
+    );
+    if (!result.outcome.authorizesTransport ||
+        result.custodyRows.length != targetBindings.length) {
+      return const OutgoingDirectPrivateFanoutInboxCustodyResult.refused();
+    }
+    late final List<DirectInboxCustodyOutboxEntry> custodies;
+    try {
+      custodies = result.custodyRows
+          .map(DirectInboxCustodyOutboxEntry.fromMap)
+          .toList(growable: false);
+    } on Object {
+      return const OutgoingDirectPrivateFanoutInboxCustodyResult.refused();
+    }
+    final custodyByPeer = <String, DirectInboxCustodyOutboxEntry>{
+      for (final custody in custodies) custody.recipientPeerId: custody,
+    };
+    final exactRows =
+        custodyByPeer.length == targetBindings.length &&
+        targetBindings.every((binding) {
+          final custody = custodyByPeer[binding.recipientPeerId];
+          return custody != null &&
+              custody.messageId == messageId &&
+              custody.contactAccountPeerId == contactAccountPeerId &&
+              custody.wireEnvelope == binding.wireEnvelope &&
+              custody.mediaBlobManifestHash ==
+                  binding.wireMediaBlobManifestHash &&
+              custody.mediaBlobExpiresAtMs == binding.wireMediaBlobExpiresAtMs;
+        });
+    if (!exactRows) {
+      return const OutgoingDirectPrivateFanoutInboxCustodyResult.refused();
+    }
+    // Refresh only the canonical parent cache. The exact plural custody result
+    // above remains the transaction's authority and is never re-read.
+    await _loadAndRememberMessage(messageId);
+    return OutgoingDirectPrivateFanoutInboxCustodyResult(
+      outcome: result.outcome,
+      custodies: List<DirectInboxCustodyOutboxEntry>.unmodifiable(custodies),
     );
   }
 

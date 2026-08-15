@@ -17,6 +17,7 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/direct_media_fanout_admission.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -348,6 +349,8 @@ class _FanoutCapableVoiceRepository
     required List<DirectMediaBlobCustodyRow> custodyRows,
     required String contactAccountPeerId,
     required DirectContactFanoutSnapshot expectedSnapshot,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
   }) => throw StateError('fresh voice must refuse before the fanout owner');
 
   @override
@@ -362,6 +365,73 @@ class _FanoutCapableVoiceRepository
     required DirectContactFanoutSnapshot? expectedSnapshot,
     required List<DirectMediaFanoutTargetBinding> targetBindings,
   }) => throw StateError('fresh voice must refuse before the fanout stage');
+}
+
+/// Advertises the linked-roster surface without acquiring the base blob
+/// custody authority required by the plural coordinator. This deliberately
+/// malformed composition proves that an already-authorized linked admission
+/// can never fall through to the legacy uploader.
+class _LinkedOnlyVoiceRepository extends _FakeMediaAttachmentRepository
+    implements OutgoingDirectLinkedMediaBlobFanoutRepository {
+  int snapshotReads = 0;
+
+  @override
+  bool get supportsDirectLinkedMediaBlobFanout => true;
+
+  @override
+  Future<DirectContactFanoutSnapshot?> readDirectContactFanoutSnapshotForMedia(
+    String contactAccountPeerId,
+  ) async {
+    snapshotReads++;
+    return DirectContactFanoutSnapshot(
+      contactAccountPeerId: contactAccountPeerId,
+      contactAccountSigningPublicKey: 'voice-signing-key',
+      rosterInitialized: true,
+      targets: <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(
+          peerId: contactAccountPeerId,
+          mlKemPublicKey: 'mlkem-legacy',
+          isLegacyAccountTarget: true,
+          fingerprint: 'f' * 64,
+        ),
+        const DirectContactFanoutTargetFact(
+          peerId: 'peer-voice-linked-device',
+          mlKemPublicKey: 'mlkem-linked',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4a1b2c3d4',
+          deviceId: 'voice-device-a',
+          transportPublicKey: 'transport-key-voice-a',
+        ),
+      ],
+    );
+  }
+
+  @override
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectLinkedMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required List<MediaAttachment> expectedAttachments,
+    required List<MediaAttachment> preparedAttachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
+  }) => throw StateError('the malformed composition has no plural owner');
+
+  @override
+  Future<DirectMediaFanoutInboxCustodyStageResult>
+  stageOutgoingDirectMediaFanoutInboxCustody({
+    required ConversationMessage expected,
+    required ConversationMessage staged,
+    required List<MediaAttachment> attachments,
+    required String senderTransportPeerId,
+    required String contactAccountPeerId,
+    required DirectMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
+    required List<DirectMediaFanoutTargetBinding> targetBindings,
+  }) => throw StateError('the malformed composition has no plural owner');
 }
 
 class _PreparedVoiceCustodyRepository extends _FakeMediaAttachmentRepository
@@ -1471,7 +1541,7 @@ void main() {
       );
 
       test(
-        'TC-362-02a fresh voice fails closed on an initialized roster before '
+        'TC-362-02a selector-disabled voice fails closed on an initialized roster before '
         'any coordinator work',
         () async {
           final messages = FakeMessageRepository();
@@ -1554,11 +1624,11 @@ void main() {
             timestamp: prepared.timestamp,
             blobId: attachmentId,
             directMediaBlobCustodyCoordinator: coordinator,
-            directMediaBlobCustodyClientEnabled: true,
+            directMediaBlobCustodyClientEnabled: false,
           );
 
-          // 362: an initialized roster forbids the singular fresh voice path
-          // — the refusal precedes media crypto, artifact persistence,
+          // A producer whose linked selector is disabled still refuses an
+          // initialized roster before media crypto, artifact persistence,
           // upload and network, and demotes nothing.
           expect(result, SendVoiceMessageResult.sendFailed);
           expect(message, isNull);
@@ -1572,6 +1642,97 @@ void main() {
           );
           expect(p2p.sendCallCount, 0);
           expect(p2p.storeInInboxCallCount, 0);
+        },
+      );
+
+      test(
+        'TC-366-01a fresh voice stages exact linked targets before upload and settlement',
+        () {
+          final source = File(
+            'lib/features/conversation/application/send_voice_message_use_case.dart',
+          ).readAsStringSync();
+
+          expect(
+            source,
+            isNot(contains('canServeLinkedFanout: false')),
+            reason:
+                'fresh voice must admit the initialized exact roster instead '
+                'of selecting the singular refusal branch',
+          );
+          expect(
+            source,
+            contains('prepareAndUploadFreshFanout('),
+            reason:
+                'one encrypted voice artifact must be published as the exact '
+                'target x attachment v114 generation',
+          );
+          expect(
+            source,
+            contains('directLinkedMediaFanout:'),
+            reason:
+                'the same admitted snapshot and stored target rows must reach '
+                'the plural v108 settlement owner',
+          );
+        },
+      );
+
+      test(
+        'TC-366-01a linked voice admission without plural custody refuses before legacy upload',
+        () async {
+          final media = _LinkedOnlyVoiceRepository();
+          final p2p = FakeP2PService();
+          var legacyUploadCalls = 0;
+          Future<UploadMediaOutcome> legacyMustNotRun({
+            required Bridge bridge,
+            required String localFilePath,
+            required String mime,
+            required String recipientPeerId,
+            MediaFileManager? mediaFileManager,
+            int? width,
+            int? height,
+            int? durationMs,
+            List<double>? waveform,
+            List<String>? allowedPeers,
+            String? blobId,
+            bool deleteSourceWhenDone = false,
+            EncryptedMediaArtifact? preparedArtifact,
+          }) async {
+            legacyUploadCalls++;
+            return const UploadMediaFailed(
+              stage: UploadMediaStage.transport,
+              disposition: UploadMediaDisposition.terminal,
+              errorCode: 'LEGACY_UPLOAD_MUST_NOT_RUN',
+            );
+          }
+
+          final snapshot = await media.readDirectContactFanoutSnapshotForMedia(
+            'target-peer',
+          );
+          final (result, message) = await sendVoiceMessage(
+            p2pService: p2p,
+            messageRepo: FakeMessageRepository(),
+            targetPeerId: 'target-peer',
+            senderPeerId: 'my-peer',
+            senderUsername: 'Me',
+            recording: createRecording(),
+            bridge: bridge,
+            recipientMlKemPublicKey: mlKemKey,
+            mediaAttachmentRepo: media,
+            mediaFileManager: FakeMediaFileManager(),
+            uploadMediaFn: legacyMustNotRun,
+            mediaAdmission: DirectMediaFanoutAdmission.linkedFanout(snapshot!),
+            directMediaBlobCustodyClientEnabled: true,
+          );
+
+          expect(result, SendVoiceMessageResult.sendFailed);
+          expect(message, isNull);
+          expect(media.snapshotReads, 1);
+          expect(legacyUploadCalls, 0);
+          expect(media.saved, isEmpty);
+          expect(p2p.sendCallCount, 0);
+          expect(p2p.storeInInboxCallCount, 0);
+          expect(bridge.commandLog, isNot(contains('media:upload')));
+          expect(bridge.commandLog, isNot(contains('message.encrypt')));
         },
       );
 

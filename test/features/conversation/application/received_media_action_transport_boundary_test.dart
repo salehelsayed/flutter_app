@@ -175,13 +175,19 @@ void main() {
     // upload/download owner and no received-media action route. Plan 362 adds
     // one more bridge reference for the mutually exclusive all-target branch
     // of that same strict coordinator; it is not another transport owner and
-    // remains outside the received-media action routes guarded below.
+    // remains outside the received-media action routes guarded below. Plan 366
+    // adds one P2P argument at the separately typed private-fanout send seam;
+    // it is mutually exclusive with the incumbent send callback and supplies
+    // that same sender use case rather than creating a raw transport owner. Its
+    // two bridge references are likewise bounded: one prepares the private
+    // fanout generation and one supplies that mutually exclusive send seam.
     // Save/Share/Info remain local-only Plan 231 actions. These exact counts
     // keep the exceptions bounded and prevent an unreviewed delivery seam.
     const wiredTransportBaseline = <String, int>{
-      'widget.p2pService': 23,
-      'widget.bridge': 34,
+      'widget.p2pService': 24,
+      'widget.bridge': 36,
       'widget.sendChatMessageFn(': 1,
+      'widget.sendPrivateMediaFanoutChatMessageFn(': 1,
       'widget.editChatMessageFn(': 1,
       'widget.deleteMessageForMeFn(': 1,
       'widget.deleteMessageForEveryoneFn(': 1,
@@ -189,6 +195,7 @@ void main() {
       'widget.uploadMediaFn(': 0,
       'widget.downloadMediaFn(': 2,
       'prepareEncryptedMediaArtifactFn': 6,
+      '.prepareAndUploadPrivateFanout(': 1,
       '.sendMessageWithReply(': 0,
       '.storeInInbox(': 0,
       'ShareTargetPicker': 1,
@@ -203,7 +210,7 @@ void main() {
             'conversation_wired.dart transport call-site inventory drifted '
             'for "${entry.key}" — media actions must not add or reuse a '
             'delivery seam outside the reviewed Plan 232 / Plan 249 / Plan '
-            '347 routes',
+            '347 / Plan 366 routes',
       );
     }
 

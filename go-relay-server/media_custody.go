@@ -21,6 +21,7 @@ import (
 
 const (
 	directMediaBlobCustodyKind        = "direct_media_blob_v1"
+	groupMediaBlobCustodyKind         = "group_media_blob_v1"
 	directMediaBlobCustodyContract    = "ack_or_expiry_v1"
 	mediaCustodyUploadAction          = "upload_custody_v1"
 	mediaCustodyAckAction             = "ack_custody_v1"
@@ -272,7 +273,8 @@ func validLegacyMediaSegment(value string) bool {
 }
 
 func validateDirectMediaBlobCustodyIdentity(req *mediaRequest) *mediaCustodyFailure {
-	if req == nil || req.CustodyKind != directMediaBlobCustodyKind ||
+	if req == nil ||
+		(req.CustodyKind != directMediaBlobCustodyKind && req.CustodyKind != groupMediaBlobCustodyKind) ||
 		req.CustodyContract != directMediaBlobCustodyContract ||
 		!mediaCustodyBlobIDPattern.MatchString(req.ID) ||
 		!mediaCustodyHashPattern.MatchString(req.ContentHash) ||

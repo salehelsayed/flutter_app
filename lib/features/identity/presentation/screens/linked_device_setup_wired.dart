@@ -15,6 +15,7 @@ import 'package:flutter_app/features/groups/domain/repositories/group_repository
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/features/qr_code/presentation/screens/qr_display_wired.dart';
 import 'package:flutter_app/features/settings/domain/models/background_preference.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 
 /// The RESTRICTED linked-secondary setup and status route.
 ///
@@ -38,6 +39,8 @@ class LinkedDeviceSetupWired extends StatefulWidget {
     this.selector = const DirectLinkedDeviceSelector(),
     this.backgroundPreference = BackgroundPreference.defaultBackground,
     this.groupRepository,
+    this.linkedGroupConversationBuilder,
+    this.isLinkedGroupAuthoritySettled,
     this.onSetupSuccess,
   });
 
@@ -52,6 +55,9 @@ class LinkedDeviceSetupWired extends StatefulWidget {
   final DirectLinkedDeviceSelector selector;
   final BackgroundPreference backgroundPreference;
   final GroupRepository? groupRepository;
+  final Widget Function(BuildContext context, GroupModel group)?
+  linkedGroupConversationBuilder;
+  final Future<bool> Function(String groupId)? isLinkedGroupAuthoritySettled;
   final Future<void> Function()? onSetupSuccess;
 
   @override
@@ -145,6 +151,7 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     if (_linked) {
       // Status route: the dedicated dual-signed device QR, nothing else.
       return QRDisplayWired(
@@ -158,21 +165,20 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
         ),
         footer: LinkedGroupReadOnlyStatus(
           groupRepository: widget.groupRepository,
+          linkedGroupConversationBuilder: widget.linkedGroupConversationBuilder,
+          isLinkedGroupAuthoritySettled: widget.isLinkedGroupAuthoritySettled,
         ),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Link this device')),
+      appBar: AppBar(title: Text(l10n.linked_device_setup_title)),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            const Text(
-              'Enter the 12-word recovery phrase of the account you want this '
-              'phone to join as an additional device.',
-            ),
+            Text(l10n.linked_device_setup_recovery_phrase_instruction),
             const SizedBox(height: 16),
             TextField(
               key: const Key('linked-device-setup-mnemonic'),
@@ -199,9 +205,17 @@ class _LinkedDeviceSetupWiredState extends State<LinkedDeviceSetupWired> {
 }
 
 class LinkedGroupReadOnlyStatus extends StatefulWidget {
-  const LinkedGroupReadOnlyStatus({super.key, required this.groupRepository});
+  const LinkedGroupReadOnlyStatus({
+    super.key,
+    required this.groupRepository,
+    this.linkedGroupConversationBuilder,
+    this.isLinkedGroupAuthoritySettled,
+  });
 
   final GroupRepository? groupRepository;
+  final Widget Function(BuildContext context, GroupModel group)?
+  linkedGroupConversationBuilder;
+  final Future<bool> Function(String groupId)? isLinkedGroupAuthoritySettled;
 
   @override
   State<LinkedGroupReadOnlyStatus> createState() =>
@@ -241,6 +255,7 @@ class _LinkedGroupReadOnlyStatusState extends State<LinkedGroupReadOnlyStatus> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final l10n = AppLocalizations.of(context)!;
     return Card(
       key: const Key('linked-group-status-list'),
       child: Padding(
@@ -252,7 +267,7 @@ class _LinkedGroupReadOnlyStatusState extends State<LinkedGroupReadOnlyStatus> {
               children: [
                 Expanded(
                   child: Text(
-                    'Groups (read only)',
+                    l10n.linked_group_status_title,
                     style: theme.textTheme.titleMedium,
                   ),
                 ),
@@ -260,20 +275,21 @@ class _LinkedGroupReadOnlyStatusState extends State<LinkedGroupReadOnlyStatus> {
                   key: const Key('linked-group-status-refresh'),
                   onPressed: _load,
                   icon: const Icon(Icons.refresh),
-                  tooltip: 'Refresh group status',
+                  tooltip: l10n.linked_group_status_refresh,
                 ),
               ],
             ),
             if (_loading)
               const LinearProgressIndicator()
             else if (_groups.isEmpty)
-              const Text(
-                'Waiting for a group bootstrap from your primary device.',
-                key: Key('linked-group-status-waiting'),
+              Text(
+                l10n.linked_group_status_waiting,
+                key: const Key('linked-group-status-waiting'),
               )
             else
               for (final group in _groups)
                 ListTile(
+                  key: Key('linked-group-open-${group.id}'),
                   dense: true,
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(
@@ -285,6 +301,28 @@ class _LinkedGroupReadOnlyStatusState extends State<LinkedGroupReadOnlyStatus> {
                         ? 'Dissolved · read only'
                         : '${group.myRole.name} · read only',
                   ),
+                  onTap:
+                      widget.linkedGroupConversationBuilder == null ||
+                          widget.isLinkedGroupAuthoritySettled == null ||
+                          group.isDissolved ||
+                          group.selfRemovedAt != null ||
+                          group.type == GroupType.qa
+                      ? null
+                      : () async {
+                          final settled = await widget
+                              .isLinkedGroupAuthoritySettled!(group.id);
+                          if (!settled || !context.mounted) return;
+                          await Navigator.of(context).push<void>(
+                            MaterialPageRoute<void>(
+                              builder: (context) =>
+                                  widget.linkedGroupConversationBuilder!(
+                                    context,
+                                    group,
+                                  ),
+                            ),
+                          );
+                          await _load();
+                        },
                 ),
           ],
         ),

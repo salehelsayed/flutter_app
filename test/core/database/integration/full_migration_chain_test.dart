@@ -99,6 +99,7 @@ import 'package:flutter_app/core/database/migrations/111_direct_media_blob_custo
 import 'package:flutter_app/core/database/migrations/112_direct_linked_device_addressing.dart';
 import 'package:flutter_app/core/database/migrations/113_direct_linked_device_event_fanout.dart';
 import 'package:flutter_app/core/database/migrations/114_direct_linked_device_media_blob_fanout.dart';
+import 'package:flutter_app/core/database/migrations/115_group_media_blob_custody.dart';
 import 'package:flutter_app/core/secure_storage/migrate_secrets_to_secure_storage.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/data/repositories/message_repository_impl.dart';
@@ -1479,7 +1480,7 @@ void main() {
     test(
       'production registries contain one ordered direct forwarded v97 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 114);
+        expect(currentIdentityDatabaseVersion, 115);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1499,7 +1500,7 @@ void main() {
     test(
       'production registries contain one ordered deletion journal v98 entry',
       () {
-        expect(currentIdentityDatabaseVersion, 114);
+        expect(currentIdentityDatabaseVersion, 115);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1514,9 +1515,9 @@ void main() {
       },
     );
     test(
-      'production registries preserve v100-v114 and end with linked media blob fanout v114',
+      'production registries preserve v100-v115 and end with group media blob custody v115',
       () {
-        expect(currentIdentityDatabaseVersion, 114);
+        expect(currentIdentityDatabaseVersion, 115);
         for (final registry in [
           productionCreateMigrations,
           productionUpgradeMigrations,
@@ -1550,6 +1551,8 @@ void main() {
           expect(registry.where((entry) => entry.version == 111), hasLength(1));
           expect(registry.where((entry) => entry.version == 112), hasLength(1));
           expect(registry.where((entry) => entry.version == 113), hasLength(1));
+          expect(registry.where((entry) => entry.version == 114), hasLength(1));
+          expect(registry.where((entry) => entry.version == 115), hasLength(1));
           expect(index99, greaterThanOrEqualTo(0));
           expect(index100, index99 + 1);
           expect(index101, index100 + 1);
@@ -1567,7 +1570,9 @@ void main() {
           expect(index113, index112 + 1);
           final index114 = registry.indexWhere((entry) => entry.version == 114);
           expect(index114, index113 + 1);
-          expect(index114, registry.length - 1);
+          final index115 = registry.indexWhere((entry) => entry.version == 115);
+          expect(index115, index114 + 1);
+          expect(index115, registry.length - 1);
           expect(registry[index100].name, '100_direct_private_media_lifecycle');
           expect(
             registry[index100].run,
@@ -1651,6 +1656,11 @@ void main() {
           expect(
             registry[index114].run,
             same(runDirectLinkedDeviceMediaBlobFanoutMigration),
+          );
+          expect(registry[index115].name, '115_group_media_blob_custody');
+          expect(
+            registry[index115].run,
+            same(runGroupMediaBlobCustodyMigration),
           );
         }
       },
@@ -2049,7 +2059,7 @@ void main() {
     test('production create and v95 upgrade registries include media library '
         'state v96', () async {
       // TC-228-13: v96 appears exactly once in both registry branches.
-      expect(currentIdentityDatabaseVersion, 114);
+      expect(currentIdentityDatabaseVersion, 115);
       expect(
         productionCreateMigrations.where((e) => e.version == 96).length,
         1,

@@ -1,4 +1,7 @@
+import 'dart:async';
+
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
@@ -67,6 +70,65 @@ GroupMessage _makeGroupSendingMessage({
 }
 
 void main() {
+  test(
+    'TC-365-04a pause quiesces strict group media and resumes only the exact lease',
+    () async {
+      final outgoingGate = Completer<void>();
+      final outgoingMediaGate = Completer<void>();
+      final incomingMediaGate = Completer<void>();
+      final events = <String>[];
+      final owner = ProtectedGroupContentRuntimeQuiescence(
+        pauseInboundAdmission: () async => events.add('inbound-paused'),
+        resumeInboundAdmission: () => events.add('inbound-resumed'),
+        quiesceOutgoingMedia: () async {
+          events.add('outgoing-media-quiescing');
+          await outgoingMediaGate.future;
+        },
+        quiesceIncomingMedia: () async {
+          events.add('incoming-media-quiescing');
+          await incomingMediaGate.future;
+        },
+        resumeMedia: () => events.add('media-resumed'),
+      );
+      final admitted = owner.runOutgoing<int>(
+        blockedValue: -1,
+        operation: () async {
+          events.add('outgoing-admitted');
+          await outgoingGate.future;
+          return 1;
+        },
+      );
+      final lease = owner.pause();
+      expect(
+        await owner.runOutgoing<int>(
+          blockedValue: -1,
+          operation: () async => fail('paused admission must stay closed'),
+        ),
+        -1,
+      );
+      var quiesced = false;
+      final barrier = lease.quiesced.then((_) => quiesced = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(quiesced, isFalse);
+      outgoingGate.complete();
+      outgoingMediaGate.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(quiesced, isFalse);
+      incomingMediaGate.complete();
+      await barrier;
+      expect(await admitted, 1);
+      expect(await lease.resume(), isTrue);
+      expect(events, <String>[
+        'outgoing-admitted',
+        'inbound-paused',
+        'outgoing-media-quiescing',
+        'incoming-media-quiescing',
+        'inbound-resumed',
+        'media-resumed',
+      ]);
+    },
+  );
+
   group('handleAppPaused for groups', () {
     test('recovers only stale group sends alongside 1:1', () async {
       final messageRepo = InMemoryMessageRepository();

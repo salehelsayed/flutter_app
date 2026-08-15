@@ -29,6 +29,10 @@ const _incomingMediaRetrySearchLimit = 200;
 typedef IncomingGroupMessageDisplayCustodyCallback =
     Future<void> Function(GroupMessage message);
 
+/// An exceptional local projection policy for an otherwise authenticated
+/// incoming group message. Ordinary live/replay callers omit this value.
+enum GroupMessageDeliveryDisposition { historyRepair }
+
 sealed class IncomingGroupMessageDetailedOutcome {
   const IncomingGroupMessageDetailedOutcome();
 
@@ -124,6 +128,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   bool enforceSelfJoinedAtLowerBound = false,
   String deliverySource = 'direct',
+  GroupMessageDeliveryDisposition? deliveryDisposition,
   DateTime Function()? nowUtc,
   IncomingGroupMessageDisplayCustodyCallback? stageNotificationDisplayCustody,
   IncomingGroupMessageDisplayCustodyCallback?
@@ -151,6 +156,7 @@ Future<GroupMessage?> handleIncomingGroupMessage({
     appendGroupEventLogEntry: appendGroupEventLogEntry,
     enforceSelfJoinedAtLowerBound: enforceSelfJoinedAtLowerBound,
     deliverySource: deliverySource,
+    deliveryDisposition: deliveryDisposition,
     nowUtc: nowUtc,
     stageNotificationDisplayCustody: stageNotificationDisplayCustody,
     markNotificationDisplayCustodyReady: markNotificationDisplayCustodyReady,
@@ -182,6 +188,7 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
   AppendGroupEventLogEntry? appendGroupEventLogEntry,
   bool enforceSelfJoinedAtLowerBound = false,
   String deliverySource = 'direct',
+  GroupMessageDeliveryDisposition? deliveryDisposition,
   DateTime Function()? nowUtc,
   IncomingGroupMessageDisplayCustodyCallback? stageNotificationDisplayCustody,
   IncomingGroupMessageDisplayCustodyCallback?
@@ -938,6 +945,9 @@ Future<IncomingGroupMessageDetailedOutcome> handleIncomingGroupMessageDetailed({
     status: isSelfDelivery ? 'sent' : 'delivered',
     isIncoming: !isSelfDelivery,
     isForwarded: isForwarded,
+    readAt: deliveryDisposition == GroupMessageDeliveryDisposition.historyRepair
+        ? now
+        : null,
     createdAt: now,
     privateMediaPolicy: privateMediaPolicy,
     mediaReceivedAt: mediaReceivedAt,

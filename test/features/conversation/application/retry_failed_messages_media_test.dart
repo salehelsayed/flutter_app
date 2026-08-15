@@ -172,9 +172,9 @@ void main() {
           mediaAttachmentRepo: mediaAttachmentRepo,
         );
 
-        // One query resolves retry attachments. Atomic attempt staging returns
-        // the authoritative media projection without a post-settlement read.
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 1);
+        // One read qualifies the owner/v114-survivor boundary; the second
+        // independently resolves the current attachments used by the retry.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 2);
         expect(mediaAttachmentRepo.lastQueriedMessageId, msg.id);
       },
     );
@@ -230,8 +230,9 @@ void main() {
         );
 
         expect(count, 1);
-        // Queried but found nothing
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 1);
+        // Both the owner/survivor qualification and retry-resolution reads
+        // observe the same empty projection without mutating it.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 2);
 
         // Message was still sent (text-only)
         expect(p2pService.lastStoreInInboxMessage, isNotNull);
@@ -399,9 +400,9 @@ void main() {
         // msg1 (done attachments) → sent, msg2 (text-only) → sent,
         // msg3 (only pending) → skipped (re-upload branch, no local files)
         expect(count, 2);
-        // Each row is queried once for retry resolution. Atomic staging
-        // returns msg1's committed media without a resend-persistence read.
-        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 3);
+        // Each row has one owner/v114-survivor qualification read and one
+        // independent attachment-resolution read; neither is a network effect.
+        expect(mediaAttachmentRepo.getAttachmentsForMessageCallCount, 6);
       },
     );
 

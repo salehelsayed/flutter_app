@@ -39,6 +39,35 @@ typedef AppendAuthenticatedGroupAuthorityProof =
       required AuthenticatedGroupAuthorityProof proof,
     });
 
+/// Repairs the protected-content projection frontier for one durable COMPLETE
+/// authority fact. Production installs this once its database-backed content
+/// adapter is available. Registration is keyed by repository/runtime owner so
+/// two bootstraps in one isolate cannot cross databases. Missing registration
+/// fails closed for a protected producer.
+typedef ReconcileCompletedProtectedGroupAuthority =
+    Future<bool> Function(AuthenticatedGroupAuthorityProof authority);
+
+final Expando<ReconcileCompletedProtectedGroupAuthority>
+_reconcileCompletedProtectedGroupAuthorityByOwner =
+    Expando<ReconcileCompletedProtectedGroupAuthority>(
+      'protected-group-content-reconciliation',
+    );
+
+void setReconcileCompletedProtectedGroupAuthority(
+  Object owner,
+  ReconcileCompletedProtectedGroupAuthority? reconcile,
+) {
+  _reconcileCompletedProtectedGroupAuthorityByOwner[owner] = reconcile;
+}
+
+Future<bool> reconcileCompletedProtectedGroupAuthority(
+  Object owner,
+  AuthenticatedGroupAuthorityProof authority,
+) async {
+  final reconcile = _reconcileCompletedProtectedGroupAuthorityByOwner[owner];
+  return reconcile != null && await reconcile(authority);
+}
+
 typedef VerifyAuthenticatedGroupAuthorityProof =
     Future<bool> Function({
       required String publicKey,
@@ -170,7 +199,7 @@ class AuthenticatedGroupAuthorityProof {
           groupId == null ||
           eventAt == null ||
           keyEpoch is! int ||
-          keyEpoch <= 0 ||
+          keyEpoch < 0 ||
           control == null ||
           actorAccountPeerId == null ||
           actorAccountPublicKey == null ||

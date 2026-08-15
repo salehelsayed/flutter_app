@@ -460,13 +460,14 @@ if grep -Fq '==>' "$b1b_missing_run"; then
   fail 'Plan 363 B1b without device env reached Dart/device execution'
 fi
 
-# Plans 342/345/347/361/362 share exactly one device-proof discovery row; it
+# Plans 342/345/347/361/362/365 share exactly one device-proof discovery row; it
 # is not a host test and covers the direct-text, direct-media, blob-custody,
-# linked-event and linked-media-fanout SQLCipher proofs the file carries.
+# linked-event, linked-media-fanout and group-media-custody SQLCipher proofs the
+# file carries.
 custody_path=integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart
 assert_record_once 1to1 test "$custody_path"
-grep -Fq $'1to1\ttest\t'$custody_path$'\t342/345/347/361/362 TC-342-11 direct-text, TC-345-11 direct-media, TC-347-01 blob custody, TC-361-04a linked event fanout and TC-362-05a linked media fanout Android SQLCipher durability device proofs' \
-  "$records" || fail 'TC-342/345 discovery record lost its exact Android proof label'
+grep -Fq $'1to1\ttest\t'$custody_path$'\t342/345/347/361/362/365 TC-342-11 direct-text, TC-345-11 direct-media, TC-347-01 blob custody, TC-361-04a linked event fanout, TC-362-05a linked media fanout and TC-365-01a group-media custody Android SQLCipher durability device proofs' \
+  "$records" || fail 'TC-342/345/347/361/362/365 discovery record lost its exact Android proof label'
 
 unset RELIABILITY_SINGLE_DEVICE_ID FLUTTER_DEVICE_ID
 missing_custody_device_list="$tmp_dir/tc342-missing-device.list"

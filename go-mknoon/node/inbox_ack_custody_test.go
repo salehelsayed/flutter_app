@@ -38,6 +38,24 @@ func TestTC363GroupProtectedCustodyKinds(t *testing.T) {
 	}
 }
 
+func TestTC364GroupContentProtectedCustody(t *testing.T) {
+	t.Parallel()
+
+	if !isSupportedInboxCustodyKind(CustodyKindGroupContentV1) {
+		t.Fatalf("group content custody kind %q is not registered", CustodyKindGroupContentV1)
+	}
+	for _, kind := range []string{
+		"group_message",
+		"group_reaction",
+		"group_content",
+		"group_content_v2",
+	} {
+		if isSupportedInboxCustodyKind(kind) {
+			t.Fatalf("unsupported group content kind %q was admitted", kind)
+		}
+	}
+}
+
 type ackCustodyTestRelay struct {
 	host host.Host
 

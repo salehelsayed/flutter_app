@@ -225,7 +225,8 @@ dbPurgeDirectContactConversationAndContact(
         if (await tableExists('direct_media_blob_custody')) {
           await txn.rawUpdate(
             "UPDATE direct_media_blob_custody SET state = ?, updated_at = ? "
-            "WHERE direction = 'outgoing' AND state IN (?, ?) "
+            "WHERE owner_lane = 'direct' AND direction = 'outgoing' "
+            "AND state IN (?, ?) "
             'AND COALESCE(contact_account_peer_id, recipient_peer_id) = ?',
             <Object?>[
               'outgoing_cleanup_pending',

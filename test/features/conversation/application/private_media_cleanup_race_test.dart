@@ -2,7 +2,10 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_reaction_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
@@ -11,6 +14,7 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_lifecycle_engine.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/application/delete_message_use_case.dart';
+import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/direct_private_media_lifecycle.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
@@ -18,6 +22,7 @@ import 'package:flutter_app/features/conversation/domain/models/media_attachment
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
+import 'package:sqflite_sqlcipher/sqflite.dart' show ConflictAlgorithm;
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
@@ -1407,6 +1412,317 @@ void main() {
       'direct_inbox_custody_outbox',
       where: 'message_id = ?',
       whereArgs: <Object?>[messageId],
+    );
+
+    Future<void> seedInitializedMutationRoster(
+      MediaRepositoryRealDbFixture target,
+    ) async {
+      await target.db.insert('contacts', const <String, Object?>{
+        'peer_id': recipient,
+        'public_key': 'tc366-contact-signing-key',
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'TC366 Contact',
+        'signature': 'tc366-signature',
+        'scanned_at': '2026-08-14T12:00:00.000Z',
+        'ml_kem_public_key': 'tc366-legacy-mlkem',
+      }, conflictAlgorithm: ConflictAlgorithm.ignore);
+      await target.db.insert(
+        'direct_contact_device_roster_metadata',
+        const <String, Object?>{
+          'contact_account_peer_id': recipient,
+          'roster_initialized': 1,
+          'legacy_target_state': 'revoked',
+          'initialized_at': '2026-08-14T12:00:00.000Z',
+          'legacy_revoked_at': '2026-08-14T12:00:00.000Z',
+          'updated_at': '2026-08-14T12:00:00.000Z',
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      for (final device in const <(String, String, String, String)>[
+        (
+          'tc366-device-a',
+          'tc366-transport-a',
+          'tc366-mlkem-a',
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        ),
+        (
+          'tc366-device-b',
+          'tc366-transport-b',
+          'tc366-mlkem-b',
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        ),
+      ]) {
+        await target.db.insert(
+          'direct_contact_device_bindings',
+          <String, Object?>{
+            'contact_account_peer_id': recipient,
+            'device_id': device.$1,
+            'verified_account_signing_public_key': 'tc366-contact-signing-key',
+            'transport_peer_id': device.$2,
+            'transport_public_key': 'transport-key-${device.$1}',
+            'device_ml_kem_public_key': device.$3,
+            'binding_fingerprint': device.$4,
+            'state': 'active',
+            'staged_at': '2026-08-14T12:00:00.000Z',
+            'decided_at': '2026-08-14T12:00:00.000Z',
+          },
+          conflictAlgorithm: ConflictAlgorithm.ignore,
+        );
+      }
+    }
+
+    DirectEventFanoutAuthoring mutationFanout(
+      MediaRepositoryRealDbFixture target, {
+      Future<void> Function()? beforeFirstEncrypt,
+      Future<void> Function()? beforeStage,
+    }) {
+      var encryptHookRan = false;
+      Never unreachable() => throw StateError(
+        'private deletion fanout reached an unrelated event owner',
+      );
+      return DirectEventFanoutAuthoring(
+        selector: const DirectLinkedEventFanoutSelector.enabled(),
+        linkedOrigin: false,
+        senderTransportPeerId: sender,
+        readSnapshot: (contactAccountPeerId) =>
+            dbReadDirectContactFanoutSnapshot(
+              target.db,
+              contactAccountPeerId: contactAccountPeerId,
+            ),
+        encrypt:
+            ({required recipientMlKemPublicKey, required plaintext}) async {
+              if (!encryptHookRan) {
+                encryptHookRan = true;
+                await beforeFirstEncrypt?.call();
+              }
+              return (
+                kem: 'kem-$recipientMlKemPublicKey',
+                ciphertext: plaintext,
+                nonce: 'nonce-$recipientMlKemPublicKey',
+              );
+            },
+        loadTextSiblings: (_) async => unreachable(),
+        stageTextFanout:
+            ({
+              required stagedRow,
+              required messageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+        loadEventSiblings: (eventId) =>
+            dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+              target.db,
+              eventId: eventId,
+            ),
+        stageMutationFanout:
+            ({
+              required expectedRow,
+              required stagedRow,
+              required kind,
+              required eventId,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async {
+              await beforeStage?.call();
+              return dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+                target.db,
+                expectedRow: expectedRow,
+                stagedRow: stagedRow,
+                kind: kind,
+                eventId: eventId,
+                parentMessageId: parentMessageId,
+                contactAccountPeerId: contactAccountPeerId,
+                senderTransportPeerId: senderTransportPeerId,
+                expectedSnapshot: expectedSnapshot,
+                candidates: candidates,
+              );
+            },
+        stageReactionFanout:
+            ({
+              required reactionRow,
+              required action,
+              required parentMessageId,
+              required contactAccountPeerId,
+              required senderTransportPeerId,
+              required expectedSnapshot,
+              required candidates,
+            }) async => unreachable(),
+      );
+    }
+
+    Future<List<Map<String, Object?>>> fanoutRowsFor(
+      MediaRepositoryRealDbFixture target,
+      String messageId,
+    ) => target.db.query(
+      'direct_reaction_inbox_custody_outbox',
+      where: 'parent_message_id = ?',
+      whereArgs: <Object?>[messageId],
+      orderBy: 'recipient_peer_id ASC',
+    );
+
+    test(
+      'TC-366-02b private DFE fanout stages or performs zero cleanup under the lease',
+      () async {
+        // Applied arm: N physical events commit before cleanup, and an
+        // incumbent per-attachment contender cannot enter between them.
+        final appliedLock = _SignallingLifecycleLock();
+        final applied = await MediaRepositoryRealDbFixture.create(
+          lifecycleLock: appliedLock,
+        );
+        addTearDown(applied.dispose);
+        await seedInitializedMutationRoster(applied);
+        const appliedMessageId = 'tc366-02b-private-applied';
+        const appliedAttachmentId = '$appliedMessageId-att';
+        final appliedParent = await seedLivePrivateParent(
+          applied,
+          appliedMessageId,
+          appliedAttachmentId,
+        );
+        final cleanupEntered = Completer<void>();
+        final releaseCleanup = Completer<void>();
+        addTearDown(() {
+          if (!releaseCleanup.isCompleted) releaseCleanup.complete();
+        });
+        final appliedManager = _GatedCleanupMediaFileManager(
+          onFirstDelete: () async {
+            expect(
+              await fanoutRowsFor(applied, appliedMessageId),
+              hasLength(2),
+              reason: 'every target is durable before private cleanup',
+            );
+            if (!cleanupEntered.isCompleted) cleanupEntered.complete();
+            await releaseCleanup.future;
+          },
+        );
+        final appliedNetwork = FakeP2PNetwork();
+        // Keep the staged siblings in sender custody after the lease releases
+        // so the final assertion observes the stage itself. The integration
+        // fake otherwise accepts protected inbox custody for offline peers and
+        // the production drain correctly retires both v109 rows.
+        appliedNetwork.inboxDisabled = true;
+        final appliedService = _StoppedPrivateDeleteP2PService(
+          peerId: sender,
+          network: appliedNetwork,
+        );
+        addTearDown(appliedService.dispose);
+        final deletion = deleteMessageForEveryone(
+          p2pService: appliedService,
+          messageRepo: applied.messageRepo,
+          originalMessage: appliedParent,
+          mediaAttachmentRepo: applied.repo,
+          mediaFileManager: appliedManager,
+          directEventFanout: mutationFanout(applied),
+        );
+        await cleanupEntered.future.timeout(const Duration(seconds: 10));
+
+        var contenderEntered = false;
+        final contenderAttempted = appliedLock.nextSharedAttempt();
+        final contender = Zone.root.run(
+          () => appliedLock.synchronized(appliedAttachmentId, () async {
+            contenderEntered = true;
+          }),
+        );
+        await contenderAttempted.timeout(const Duration(seconds: 10));
+        expect(
+          contenderEntered,
+          isFalse,
+          reason: 'stage and cleanup share the incumbent exclusive lease',
+        );
+        expect(appliedNetwork.deliverCallCount, 0);
+
+        releaseCleanup.complete();
+        final (appliedResult, appliedTombstone) = await deletion.timeout(
+          const Duration(seconds: 10),
+        );
+        await contender.timeout(const Duration(seconds: 10));
+        expect(appliedResult, SendChatMessageResult.success);
+        expect(appliedTombstone?.isDeleted, isTrue);
+        expect(contenderEntered, isTrue);
+        expect(await fanoutRowsFor(applied, appliedMessageId), hasLength(2));
+
+        // Refused arm: introduce a durable race after route qualification but
+        // before the locked stage. The DB refuses the stale parent; no private
+        // cleanup, v109 row, or network effect is allowed.
+        final refusedLock = _SignallingLifecycleLock();
+        final refused = await MediaRepositoryRealDbFixture.create(
+          lifecycleLock: refusedLock,
+        );
+        addTearDown(refused.dispose);
+        await seedInitializedMutationRoster(refused);
+        const refusedMessageId = 'tc366-02b-private-refused';
+        const refusedAttachmentId = '$refusedMessageId-att';
+        final refusedParent = await seedLivePrivateParent(
+          refused,
+          refusedMessageId,
+          refusedAttachmentId,
+        );
+        var refusedCleanupCalls = 0;
+        final refusedManager = _GatedCleanupMediaFileManager(
+          onFirstDelete: () async => refusedCleanupCalls++,
+        );
+        var stageContenderEntered = false;
+        Future<void>? stageContender;
+        final refusedNetwork = FakeP2PNetwork();
+        final refusedService = _StoppedPrivateDeleteP2PService(
+          peerId: sender,
+          network: refusedNetwork,
+        );
+        addTearDown(refusedService.dispose);
+        final refusedAuthoring = mutationFanout(
+          refused,
+          beforeFirstEncrypt: () => refused.db.update(
+            'messages',
+            const <String, Object?>{'status': 'failed'},
+            where: 'id = ?',
+            whereArgs: const <Object?>[refusedMessageId],
+          ),
+          beforeStage: () async {
+            final attempted = refusedLock.nextSharedAttempt();
+            stageContender = Zone.root.run(
+              () => refusedLock.synchronized(refusedAttachmentId, () async {
+                stageContenderEntered = true;
+              }),
+            );
+            await attempted;
+            expect(
+              stageContenderEntered,
+              isFalse,
+              reason: 'even a refusing DB stage executes under the lease',
+            );
+          },
+        );
+
+        final (
+          refusedResult,
+          refusedTombstone,
+        ) = await deleteMessageForEveryone(
+          p2pService: refusedService,
+          messageRepo: refused.messageRepo,
+          originalMessage: refusedParent,
+          mediaAttachmentRepo: refused.repo,
+          mediaFileManager: refusedManager,
+          directEventFanout: refusedAuthoring,
+        ).timeout(const Duration(seconds: 10));
+        await stageContender?.timeout(const Duration(seconds: 10));
+        expect(refusedResult, SendChatMessageResult.sendFailed);
+        expect(refusedTombstone, isNull);
+        expect(stageContenderEntered, isTrue);
+        expect(refusedCleanupCalls, 0);
+        expect(await fanoutRowsFor(refused, refusedMessageId), isEmpty);
+        expect(
+          await refused.repo.getAttachmentsForMessage(
+            refusedMessageId,
+            owner: MediaOwnerLane.direct,
+          ),
+          hasLength(1),
+        );
+        expect(refusedNetwork.deliverCallCount, 0);
+      },
     );
 
     test('TC-356-02 private initial and deletion custody converge in both '

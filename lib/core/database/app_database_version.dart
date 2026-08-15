@@ -60,4 +60,8 @@
 // target-specific digest; 2 = sender-local target-independent generation
 // digest). Historical rows are never promoted; v114 remains a one-way schema
 // floor.
-const int currentIdentityDatabaseVersion = 114;
+// 365: DB v115 generalizes the v114 physical blob ledger with explicit direct
+// and group ownership, an exact relay blob ID, a separate group artifact root,
+// and a durable group no-demotion fingerprint. Historical rows retain their
+// exact v114 projection and receive deterministic direct defaults.
+const int currentIdentityDatabaseVersion = 115;

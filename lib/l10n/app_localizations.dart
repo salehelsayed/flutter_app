@@ -5240,6 +5240,90 @@ abstract class AppLocalizations {
   /// **'Verify & approve'**
   String get sibling_device_verify_approve;
 
+  /// No description provided for @contact_profile_linked_devices.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked devices'**
+  String get contact_profile_linked_devices;
+
+  /// No description provided for @contact_profile_linked_device_revoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get contact_profile_linked_device_revoke;
+
+  /// No description provided for @contact_profile_linked_device_verify.
+  ///
+  /// In en, this message translates to:
+  /// **'Verify'**
+  String get contact_profile_linked_device_verify;
+
+  /// No description provided for @linked_device_setup_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Link this device'**
+  String get linked_device_setup_title;
+
+  /// No description provided for @linked_device_setup_recovery_phrase_instruction.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the 12-word recovery phrase of the account you want this phone to join as an additional device.'**
+  String get linked_device_setup_recovery_phrase_instruction;
+
+  /// No description provided for @linked_group_status_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Groups (read only)'**
+  String get linked_group_status_title;
+
+  /// No description provided for @linked_group_status_refresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh group status'**
+  String get linked_group_status_refresh;
+
+  /// No description provided for @linked_group_status_waiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for a group bootstrap from your primary device.'**
+  String get linked_group_status_waiting;
+
+  /// No description provided for @group_info_link_device_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Link this group to another device'**
+  String get group_info_link_device_action;
+
+  /// No description provided for @linked_group_confirm_title.
+  ///
+  /// In en, this message translates to:
+  /// **'Link this group?'**
+  String get linked_group_confirm_title;
+
+  /// No description provided for @linked_group_confirm_body.
+  ///
+  /// In en, this message translates to:
+  /// **'Share “{groupName}” with the scanned linked device. No other groups or conversations will be shared.'**
+  String linked_group_confirm_body(String groupName);
+
+  /// No description provided for @linked_group_confirm_action.
+  ///
+  /// In en, this message translates to:
+  /// **'Link group'**
+  String get linked_group_confirm_action;
+
+  /// No description provided for @linked_device_media_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Media is not available on this linked device yet'**
+  String get linked_device_media_unavailable;
+
+  /// No description provided for @linked_device_voice_unavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice messages are not available on this linked device yet'**
+  String get linked_device_voice_unavailable;
+
   /// No description provided for @transport_diagnostics_title.
   ///
   /// In en, this message translates to:

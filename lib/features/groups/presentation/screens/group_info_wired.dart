@@ -2939,23 +2939,21 @@ class _GroupInfoWiredState extends State<GroupInfoWired> {
       // the explicit, selected-group confirmation is owned by this route.
       await Future<void>.delayed(Duration.zero);
       if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
       final confirmed = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
-          title: const Text('Link this group?'),
-          content: Text(
-            'Share “${_group.name}” with the scanned linked device. '
-            'No other groups or conversations will be shared.',
-          ),
+          title: Text(l10n.linked_group_confirm_title),
+          content: Text(l10n.linked_group_confirm_body(_group.name)),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('Cancel'),
+              child: Text(l10n.btn_cancel),
             ),
             FilledButton(
               key: const ValueKey('group-link-device-confirm'),
               onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text('Link group'),
+              child: Text(l10n.linked_group_confirm_action),
             ),
           ],
         ),

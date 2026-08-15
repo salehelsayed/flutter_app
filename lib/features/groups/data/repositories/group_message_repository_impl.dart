@@ -44,6 +44,12 @@ class GroupMessageRepositoryImpl
         GroupUploadRetryCompletionRepository,
         GroupManualUploadRetryRearmRepository,
         GroupInboxStoreRetryCompletionRepository,
+        GroupInboxStoreRetryPayloadCasRepository,
+        GroupMessageStrictContentCompletionRepository,
+        GroupMessageStrictLocalTerminalRepository,
+        GroupMessageStrictPreparedRepository,
+        GroupMessageStrictPreparedTerminalRepository,
+        GroupMessageStrictReactionTargetRepository,
         GroupMembershipRepairDeletionRepository,
         GroupMessageLocalDeletionAuthority,
         GroupPrivateMediaLifecycleRepository,
@@ -126,7 +132,11 @@ class GroupMessageRepositoryImpl
     required MediaAttachment completedAttachment,
   })?
   completeGroupUploadRetrySecurelyFn;
-  final Future<List<Map<String, dynamic>>> Function({int limit})?
+  final Future<List<Map<String, dynamic>>> Function({
+    int limit,
+    bool strictContentOnly,
+    int offset,
+  })?
   dbLoadGroupMessagesWithFailedInboxStore;
   final Future<void> Function(String id, {required bool stored})?
   dbUpdateGroupMessageInboxStoredFn;
@@ -136,6 +146,51 @@ class GroupMessageRepositoryImpl
   dbUpdateGroupMessageWireEnvelopeFn;
   final Future<bool> Function(Map<String, Object?> expected)?
   dbCompleteGroupInboxStoreRetryFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  })?
+  dbCompleteGroupContentInboxStoreRetryIfExactFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  })?
+  dbStageAndCompleteLocalGroupContentMessageFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  })?
+  dbStagePreparedLocalGroupContentMessageFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required Map<String, Object?> preparedEventPayload,
+    required String terminalSourcePeerId,
+    required String terminalSourceEventId,
+    required String terminalSourceTimestamp,
+    required Map<String, Object?> terminalEventPayload,
+  })?
+  dbTerminalizePreparedLocalGroupContentMessageIfExactFn;
+  final Future<bool> Function({
+    required Map<String, Object?> expected,
+    required Map<String, Object?> eventPayload,
+  })?
+  dbHasExactPreparedLocalGroupContentMessageFn;
+  final Future<bool> Function(Map<String, Object?> expected)?
+  dbIsStrictGroupReactionTargetEligibleFn;
+  final Future<bool> Function(
+    Map<String, Object?> expected,
+    String replacement,
+  )?
+  dbReplaceGroupInboxRetryPayloadIfExactFn;
   final Future<void> Function(
     String id, {
     required int nextEligibleAtMs,
@@ -222,6 +277,13 @@ class GroupMessageRepositoryImpl
     this.dbUpdateGroupMessageInboxRetryPayloadFn,
     this.dbUpdateGroupMessageWireEnvelopeFn,
     this.dbCompleteGroupInboxStoreRetryFn,
+    this.dbCompleteGroupContentInboxStoreRetryIfExactFn,
+    this.dbReplaceGroupInboxRetryPayloadIfExactFn,
+    this.dbStageAndCompleteLocalGroupContentMessageFn,
+    this.dbStagePreparedLocalGroupContentMessageFn,
+    this.dbTerminalizePreparedLocalGroupContentMessageIfExactFn,
+    this.dbHasExactPreparedLocalGroupContentMessageFn,
+    this.dbIsStrictGroupReactionTargetEligibleFn,
     this.dbRecordGroupMessageRetryFailureFn,
     this.dbClearGroupMessageRetryBackoffFn,
     this.dbResetGroupMessageRetryStateFn,
@@ -1140,10 +1202,16 @@ class GroupMessageRepositoryImpl
   @override
   Future<List<GroupMessage>> getMessagesWithFailedInboxStore({
     int limit = 20,
+    bool strictContentOnly = false,
+    int offset = 0,
   }) async {
     final fn = dbLoadGroupMessagesWithFailedInboxStore;
     if (fn == null) return const [];
-    final rows = await fn(limit: limit);
+    final rows = await fn(
+      limit: limit,
+      strictContentOnly: strictContentOnly,
+      offset: offset,
+    );
     return rows.map((row) => GroupMessage.fromMap(row)).toList();
   }
 
@@ -1180,6 +1248,162 @@ class GroupMessageRepositoryImpl
           .millisecondsSinceEpoch,
     };
     final applied = await complete(expectedRow);
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
+  }
+
+  @override
+  Future<bool> completeStrictContentIfExact(
+    GroupMessage expected, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final complete = dbCompleteGroupContentInboxStoreRetryIfExactFn;
+    if (complete == null) return false;
+    final expectedRow = <String, Object?>{
+      ...expected.toMap(),
+      'retry_attempt_count': expected.retryAttemptCount,
+      'next_eligible_at': expected.nextEligibleAt
+          ?.toUtc()
+          .millisecondsSinceEpoch,
+    };
+    final applied = await complete(
+      expected: expectedRow,
+      sourcePeerId: sourcePeerId,
+      sourceEventId: sourceEventId,
+      sourceTimestamp: sourceTimestamp,
+      eventPayload: eventPayload,
+    );
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
+  }
+
+  @override
+  Future<bool> stageAndCompleteStrictLocalContent(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final stage = dbStageAndCompleteLocalGroupContentMessageFn;
+    if (stage == null) return false;
+    final expected = <String, Object?>{
+      ...message.toMap(),
+      'retry_attempt_count': message.retryAttemptCount,
+      'next_eligible_at': message.nextEligibleAt
+          ?.toUtc()
+          .millisecondsSinceEpoch,
+    };
+    final applied = await stage(
+      expected: expected,
+      sourcePeerId: sourcePeerId,
+      sourceEventId: sourceEventId,
+      sourceTimestamp: sourceTimestamp,
+      eventPayload: eventPayload,
+    );
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
+  }
+
+  @override
+  Future<bool> isStrictReactionTargetEligible(GroupMessage expected) async {
+    final check = dbIsStrictGroupReactionTargetEligibleFn;
+    if (check == null) return false;
+    return check(expected.toMap());
+  }
+
+  @override
+  Future<bool> stageStrictContentPrepared(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  }) async {
+    final stage = dbStagePreparedLocalGroupContentMessageFn;
+    if (stage == null) return false;
+    final expected = <String, Object?>{
+      ...message.toMap(),
+      'retry_attempt_count': message.retryAttemptCount,
+      'next_eligible_at': message.nextEligibleAt
+          ?.toUtc()
+          .millisecondsSinceEpoch,
+    };
+    final applied = await stage(
+      expected: expected,
+      sourcePeerId: sourcePeerId,
+      sourceEventId: sourceEventId,
+      sourceTimestamp: sourceTimestamp,
+      preparedEventPayload: preparedEventPayload,
+    );
+    _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
+    return applied;
+  }
+
+  @override
+  Future<bool> hasExactStrictContentPrepared(
+    GroupMessage expected, {
+    required Map<String, Object?> eventPayload,
+  }) {
+    final check = dbHasExactPreparedLocalGroupContentMessageFn;
+    if (check == null) return Future<bool>.value(false);
+    return check(
+      expected: <String, Object?>{
+        ...expected.toMap(),
+        'retry_attempt_count': expected.retryAttemptCount,
+        'next_eligible_at': expected.nextEligibleAt
+            ?.toUtc()
+            .millisecondsSinceEpoch,
+      },
+      eventPayload: eventPayload,
+    );
+  }
+
+  @override
+  Future<bool> terminalizeStrictContentPreparedIfExact(
+    GroupMessage expected, {
+    required Map<String, Object?> preparedEventPayload,
+    required String terminalSourcePeerId,
+    required String terminalSourceEventId,
+    required String terminalSourceTimestamp,
+    required Map<String, Object?> terminalEventPayload,
+  }) {
+    final terminalize = dbTerminalizePreparedLocalGroupContentMessageIfExactFn;
+    if (terminalize == null) return Future<bool>.value(false);
+    return terminalize(
+      expected: <String, Object?>{
+        ...expected.toMap(),
+        'retry_attempt_count': expected.retryAttemptCount,
+        'next_eligible_at': expected.nextEligibleAt
+            ?.toUtc()
+            .millisecondsSinceEpoch,
+      },
+      preparedEventPayload: preparedEventPayload,
+      terminalSourcePeerId: terminalSourcePeerId,
+      terminalSourceEventId: terminalSourceEventId,
+      terminalSourceTimestamp: terminalSourceTimestamp,
+      terminalEventPayload: terminalEventPayload,
+    );
+  }
+
+  @override
+  Future<bool> replaceInboxRetryPayloadIfExact(
+    GroupMessage expected,
+    String replacement,
+  ) async {
+    final replace = dbReplaceGroupInboxRetryPayloadIfExactFn;
+    if (replace == null) return false;
+    final expectedRow = <String, Object?>{
+      ...expected.toMap(),
+      'retry_attempt_count': expected.retryAttemptCount,
+      'next_eligible_at': expected.nextEligibleAt
+          ?.toUtc()
+          .millisecondsSinceEpoch,
+    };
+    final applied = await replace(expectedRow, replacement);
     _emitOutgoingRowsChangedIfNeeded(applied ? 1 : 0);
     return applied;
   }

@@ -182,7 +182,11 @@ abstract class GroupMessageRepository {
   /// `status IN ('sent', 'pending', 'queued_offline')`, and
   /// `inbox_retry_payload IS NOT NULL` (210b: the repush lane also self-heals
   /// queued-offline rows, settling them to 'sent').
-  Future<List<GroupMessage>> getMessagesWithFailedInboxStore({int limit = 20});
+  Future<List<GroupMessage>> getMessagesWithFailedInboxStore({
+    int limit = 20,
+    bool strictContentOnly = false,
+    int offset = 0,
+  });
 
   /// Updates the inbox_stored flag for a message.
   Future<void> updateInboxStored(String id, {required bool stored});
@@ -227,6 +231,72 @@ abstract class GroupMessageRepository {
 /// after removal terminalization or a later accepted re-entry.
 abstract interface class GroupInboxStoreRetryCompletionRepository {
   Future<bool> completeInboxStoreRetry(GroupMessage expected);
+}
+
+abstract interface class GroupInboxStoreRetryPayloadCasRepository {
+  Future<bool> replaceInboxRetryPayloadIfExact(
+    GroupMessage expected,
+    String replacement,
+  );
+}
+
+/// Atomic finalization for locally-authored protected content. Event evidence
+/// and the outgoing projection transition either both commit or both roll
+/// back when the exact retry owner changed.
+abstract interface class GroupMessageStrictContentCompletionRepository {
+  Future<bool> completeStrictContentIfExact(
+    GroupMessage expected, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  });
+}
+
+/// Atomic zero-target strict authoring. The outgoing owner is never observable
+/// without its final protected event/projection evidence.
+abstract interface class GroupMessageStrictLocalTerminalRepository {
+  Future<bool> stageAndCompleteStrictLocalContent(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  });
+}
+
+/// Atomic nonempty-ACL owner preparation before the first network store.
+abstract interface class GroupMessageStrictPreparedRepository {
+  Future<bool> stageStrictContentPrepared(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  });
+}
+
+abstract interface class GroupMessageStrictPreparedTerminalRepository {
+  Future<bool> hasExactStrictContentPrepared(
+    GroupMessage expected, {
+    required Map<String, Object?> eventPayload,
+  });
+
+  Future<bool> terminalizeStrictContentPreparedIfExact(
+    GroupMessage expected, {
+    required Map<String, Object?> preparedEventPayload,
+    required String terminalSourcePeerId,
+    required String terminalSourceEventId,
+    required String terminalSourceTimestamp,
+    required Map<String, Object?> terminalEventPayload,
+  });
+}
+
+/// Production-backed eligibility check for a protected reaction target. This
+/// includes attachment rows that are intentionally not hydrated on the group
+/// message model.
+abstract interface class GroupMessageStrictReactionTargetRepository {
+  Future<bool> isStrictReactionTargetEligible(GroupMessage expected);
 }
 
 /// Narrow durable authority for device-local group private-media lifecycle.

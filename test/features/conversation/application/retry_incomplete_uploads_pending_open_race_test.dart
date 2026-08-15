@@ -1033,6 +1033,18 @@ Future<({String pendingRelative, String pendingAbsolute})> _seedPending(
   // and is covered by the immediate-commit case instead.
   String privateMode = 'protected',
 }) async {
+  // The resolver-absent incumbent retry path is authorized only by a durable
+  // contact snapshot. Keep this real-DB race fixture aligned with production
+  // admission instead of relying on a process-local contact stub.
+  await fixture.db.insert('contacts', const <String, Object?>{
+    'peer_id': _contactPeerId,
+    'public_key': 'contact-public-key',
+    'rendezvous': '/dns4/relay/tcp/443/p2p/relay',
+    'username': 'Alice',
+    'signature': 'signature',
+    'scanned_at': '2026-07-20T09:00:00.000Z',
+    'ml_kem_public_key': 'contact-ml-kem-public',
+  });
   await fixture.seedDirectParent(messageId, contactPeerId: _contactPeerId);
   await fixture.db.update(
     'messages',

@@ -1,15 +1,37 @@
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:crypto/crypto.dart';
+import 'package:flutter_app/core/database/helpers/group_reaction_replay_outbox_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
+import 'package:flutter_app/core/database/migrations/016_message_reactions.dart';
+import 'package:flutter_app/core/database/migrations/010_media_attachments.dart';
+import 'package:flutter_app/core/database/migrations/017_groups_tables.dart';
 import 'package:flutter_app/core/database/migrations/018_group_messages_tables.dart';
 import 'package:flutter_app/core/database/migrations/026_group_quoted_message_id.dart';
 import 'package:flutter_app/core/database/migrations/041_group_message_reliability_columns.dart';
+import 'package:flutter_app/core/database/migrations/054_group_reaction_replay_outbox.dart';
+import 'package:flutter_app/core/database/migrations/060_group_event_log.dart';
 import 'package:flutter_app/core/database/migrations/061_group_message_transport_peer_id.dart';
+import 'package:flutter_app/core/database/migrations/069_group_message_local_deletions.dart';
 import 'package:flutter_app/core/database/migrations/073_group_message_last_send_attempt_at.dart';
+import 'package:flutter_app/core/database/migrations/074_group_message_logical_delivery_id.dart';
+import 'package:flutter_app/core/database/migrations/082_message_reaction_tombstone.dart';
 import 'package:flutter_app/core/database/migrations/087_group_message_retry_backoff_columns.dart';
+import 'package:flutter_app/core/database/migrations/099_group_messages_is_forwarded.dart';
+import 'package:flutter_app/core/database/migrations/101_group_private_media_lifecycle.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
+
+import '../../bridge/fake_bridge.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
 
 void main() {
   late Database db;
@@ -26,6 +48,7 @@ void main() {
     await runGroupMessageReliabilityColumnsMigration(db);
     await runGroupMessageTransportPeerIdMigration(db);
     await runGroupMessageLastSendAttemptAtMigration(db);
+    await runGroupMessageLogicalDeliveryIdMigration(db);
     await runGroupMessageRetryBackoffColumnsMigration(db);
   });
 
@@ -824,6 +847,44 @@ void main() {
       final results = await dbLoadGroupMessagesWithFailedInboxStore(db);
       expect(results, isEmpty);
     });
+
+    test('legacy media inbox retry completion remains eligible', () async {
+      await runMediaAttachmentsMigration(db);
+      await dbInsertGroupMessage(
+        db,
+        makeRow(
+          id: 'legacy-media-inbox-retry',
+          status: 'pending',
+          isIncoming: 0,
+          inboxStored: 0,
+          inboxRetryPayload: '{"groupId":"group-1","message":"legacy"}',
+        ),
+      );
+      await db.insert('media_attachments', <String, Object?>{
+        'id': 'legacy-media-attachment',
+        'message_id': 'legacy-media-inbox-retry',
+        'mime': 'image/jpeg',
+        'size': 42,
+        'media_type': 'image',
+        'download_status': 'done',
+        'created_at': '2026-01-15T12:00:00.000Z',
+      });
+      final expected = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>['legacy-media-inbox-retry'],
+      )).single;
+
+      expect(await dbCompleteGroupInboxStoreRetry(db, expected), isTrue);
+      final completed = (await db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>['legacy-media-inbox-retry'],
+      )).single;
+      expect(completed['status'], 'sent');
+      expect(completed['inbox_stored'], 1);
+      expect(completed['inbox_retry_payload'], isNull);
+    });
   });
 
   // ─── dbTransitionGroupSendingToFailed Tests (21-25) ──────────────────
@@ -1520,4 +1581,1364 @@ CREATE TABLE groups (
       expect(cleared.lastSendAttemptAt, isNull);
     });
   });
+
+  group('protected local sender completion', () {
+    test(
+      'prepared stage exact-binds owner and rejects media target races before evidence',
+      () async {
+        final fixture = await _ProtectedSenderFixture.create();
+        addTearDown(fixture.dispose);
+        const messageId = 'strict-prepared-media-collision';
+        const messageAt = '2026-08-13T09:30:00.000000Z';
+        final messageFixture = await _buildStrictPreparedMessageFixture(
+          messageId: messageId,
+          timestamp: messageAt,
+        );
+        final messageExpected = <String, Object?>{
+          ...GroupMessage(
+            id: messageId,
+            groupId: _protectedGroupId,
+            senderPeerId: _protectedActor,
+            transportPeerId: 'transport-local',
+            senderUsername: 'Local',
+            text: 'strict prepared fixture',
+            timestamp: DateTime.parse(messageAt),
+            logicalDeliveryId: messageId,
+            keyGeneration: 7,
+            status: GroupMessage.statusQueuedOffline,
+            isIncoming: false,
+            createdAt: DateTime.parse(messageAt),
+            wireEnvelope: jsonEncode(<String, Object?>{
+              'messageId': messageId,
+              'timestamp': messageAt,
+            }),
+            inboxStored: false,
+            inboxRetryPayload: messageFixture.retry,
+          ).toMap(),
+          'retry_attempt_count': 0,
+          'next_eligible_at': null,
+        };
+        final preparedMessagePayload =
+            buildLocalProtectedGroupContentPreparedEventPayload(
+              eventPayload: messageFixture.eventPayload,
+              ownerKind: 'group_message',
+              ownerId: messageId,
+              ownerStatus: GroupMessage.statusQueuedOffline,
+              inboxRetryPayload: messageFixture.retry,
+            );
+        expect(
+          isExactProtectedGroupContentPreparedStage(
+            groupId: _protectedGroupId,
+            payloadType: 'group_message',
+            contentEventId: messageId,
+            ownerKind: 'group_message',
+            ownerId: messageId,
+            ownerStatus: GroupMessage.statusQueuedOffline,
+            retryWrapper: messageFixture.retry,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+              messageId,
+            ),
+            sourceTimestamp: messageAt,
+            preparedEventPayload: preparedMessagePayload,
+          ),
+          isTrue,
+        );
+        String mutateRetry(
+          String raw,
+          void Function(Map<String, Object?> wrapper) mutate,
+        ) {
+          final wrapper = Map<String, Object?>.from(
+            (jsonDecode(raw) as Map).cast<String, Object?>(),
+          );
+          mutate(wrapper);
+          return jsonEncode(wrapper);
+        }
+
+        Map<String, Object?> preparedMessageFor(String retry) {
+          final wrapper = (jsonDecode(retry) as Map).cast<String, Object?>();
+          return <String, Object?>{
+            ...preparedMessagePayload,
+            'replayEnvelopeHash': sha256
+                .convert(utf8.encode(wrapper['message']! as String))
+                .toString(),
+          };
+        }
+
+        final messagePoisonedWrappers = <String>[
+          mutateRetry(messageFixture.retry, (wrapper) {
+            wrapper['custodyContract'] = 'future_contract';
+          }),
+          mutateRetry(messageFixture.retry, (wrapper) {
+            wrapper['recipientPeerIds'] = const <String>['transport-a'];
+          }),
+          mutateRetry(messageFixture.retry, (wrapper) {
+            final envelope = Map<String, Object?>.from(
+              (jsonDecode(wrapper['message']! as String) as Map)
+                  .cast<String, Object?>(),
+            );
+            final signed = Map<String, Object?>.from(
+              (jsonDecode(envelope['signedPayload']! as String) as Map)
+                  .cast<String, Object?>(),
+            )..['futureField'] = 'unsigned-extension';
+            envelope['signedPayload'] = canonicalizeGroupEventLogPayload(
+              signed,
+            );
+            wrapper['message'] = jsonEncode(envelope);
+          }),
+        ];
+        for (final poisoned in messagePoisonedWrappers) {
+          expect(
+            await dbStagePreparedLocalGroupContentMessage(
+              fixture.db,
+              expected: <String, Object?>{
+                ...messageExpected,
+                'inbox_retry_payload': poisoned,
+              },
+              sourcePeerId: _protectedActor,
+              sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+                messageId,
+              ),
+              sourceTimestamp: messageAt,
+              preparedEventPayload: preparedMessageFor(poisoned),
+            ),
+            isFalse,
+          );
+        }
+        for (final crossedPayload in <Map<String, Object?>>[
+          <String, Object?>{
+            ...preparedMessagePayload,
+            'senderDeviceId': 'crossed-device',
+          },
+          <String, Object?>{
+            ...preparedMessagePayload,
+            'payload': <String, Object?>{
+              ...(preparedMessagePayload['payload'] as Map)
+                  .cast<String, Object?>(),
+              'text': 'crossed local projection',
+            },
+          },
+        ]) {
+          expect(
+            await dbStagePreparedLocalGroupContentMessage(
+              fixture.db,
+              expected: messageExpected,
+              sourcePeerId: _protectedActor,
+              sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+                messageId,
+              ),
+              sourceTimestamp: messageAt,
+              preparedEventPayload: crossedPayload,
+            ),
+            isFalse,
+          );
+        }
+        await fixture.db.insert('media_attachments', <String, Object?>{
+          'id': 'collision-media',
+          'message_id': messageId,
+          'mime': 'image/jpeg',
+          'media_type': 'image',
+          'created_at': messageAt,
+        });
+        expect(
+          await dbStagePreparedLocalGroupContentMessage(
+            fixture.db,
+            expected: messageExpected,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+              messageId,
+            ),
+            sourceTimestamp: messageAt,
+            preparedEventPayload: preparedMessagePayload,
+          ),
+          isFalse,
+        );
+        expect(
+          await fixture.db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[messageId],
+          ),
+          isEmpty,
+        );
+
+        final reactionAt = DateTime.utc(2026, 8, 13, 9, 31);
+        final transitionId = _protectedTransition(
+          action: 'add',
+          emoji: '🧭',
+          at: reactionAt,
+        );
+        final reactionFixture = await _buildStrictPreparedReactionFixture(
+          transitionId: transitionId,
+          timestamp: fixedGroupContentUtc(reactionAt),
+          targetMessageId: _protectedMessageId,
+        );
+        final reactionExpected = GroupReactionReplayOutboxEntry(
+          reactionId: transitionId,
+          groupId: _protectedGroupId,
+          messageId: _protectedMessageId,
+          senderPeerId: _protectedActor,
+          emoji: '🧭',
+          action: 'add',
+          inboxRetryPayload: reactionFixture.retry,
+          deliveryStatus: GroupReactionReplayOutboxStatus.pending,
+          createdAt: fixedGroupContentUtc(reactionAt),
+          updatedAt: fixedGroupContentUtc(reactionAt),
+        ).toMap();
+        final preparedReactionPayload =
+            buildLocalProtectedGroupContentPreparedEventPayload(
+              eventPayload: reactionFixture.eventPayload,
+              ownerKind: 'group_reaction',
+              ownerId: transitionId,
+              ownerStatus: GroupReactionReplayOutboxStatus.pending,
+              inboxRetryPayload: reactionFixture.retry,
+            );
+        Map<String, Object?> preparedReactionFor(String retry) {
+          final wrapper = (jsonDecode(retry) as Map).cast<String, Object?>();
+          return <String, Object?>{
+            ...preparedReactionPayload,
+            'replayEnvelopeHash': sha256
+                .convert(utf8.encode(wrapper['message']! as String))
+                .toString(),
+          };
+        }
+
+        final reactionPoisonedWrappers = <String>[
+          mutateRetry(reactionFixture.retry, (wrapper) {
+            wrapper['custodyContract'] = 'future_contract';
+          }),
+          mutateRetry(reactionFixture.retry, (wrapper) {
+            wrapper['recipientPeerIds'] = const <String>['transport-a'];
+          }),
+          mutateRetry(reactionFixture.retry, (wrapper) {
+            final envelope = Map<String, Object?>.from(
+              (jsonDecode(wrapper['message']! as String) as Map)
+                  .cast<String, Object?>(),
+            );
+            final extension = Map<String, Object?>.from(
+              (envelope['notificationExtension']! as Map)
+                  .cast<String, Object?>(),
+            )..['futureField'] = 'unsigned-extension';
+            envelope['notificationExtension'] = extension;
+            wrapper['message'] = jsonEncode(envelope);
+          }),
+        ];
+        for (final poisoned in reactionPoisonedWrappers) {
+          expect(
+            await dbStagePreparedLocalGroupReactionContent(
+              fixture.db,
+              expected: <String, Object?>{
+                ...reactionExpected,
+                'inbox_retry_payload': poisoned,
+              },
+              sourcePeerId: _protectedActor,
+              sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
+                transitionId,
+              ),
+              sourceTimestamp: fixedGroupContentUtc(reactionAt),
+              preparedEventPayload: preparedReactionFor(poisoned),
+            ),
+            isFalse,
+          );
+        }
+        for (final crossedOwner in <Map<String, Object?>>[
+          <String, Object?>{
+            ...reactionExpected,
+            'message_id': 'crossed-target',
+          },
+          <String, Object?>{...reactionExpected, 'action': 'remove'},
+          <String, Object?>{...reactionExpected, 'emoji': '❌'},
+        ]) {
+          expect(
+            await dbStagePreparedLocalGroupReactionContent(
+              fixture.db,
+              expected: crossedOwner,
+              sourcePeerId: _protectedActor,
+              sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
+                transitionId,
+              ),
+              sourceTimestamp: fixedGroupContentUtc(reactionAt),
+              preparedEventPayload: preparedReactionPayload,
+            ),
+            isFalse,
+          );
+        }
+        await fixture.db.insert('media_attachments', <String, Object?>{
+          'id': 'target-media-race',
+          'message_id': _protectedMessageId,
+          'mime': 'image/jpeg',
+          'media_type': 'image',
+          'created_at': fixedGroupContentUtc(reactionAt),
+        });
+        expect(
+          await dbStagePreparedLocalGroupReactionContent(
+            fixture.db,
+            expected: reactionExpected,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
+              transitionId,
+            ),
+            sourceTimestamp: fixedGroupContentUtc(reactionAt),
+            preparedEventPayload: preparedReactionPayload,
+          ),
+          isFalse,
+        );
+        expect(
+          await fixture.db.query(
+            'group_reaction_replay_outbox',
+            where: 'reaction_id = ?',
+            whereArgs: <Object?>[transitionId],
+          ),
+          isEmpty,
+        );
+        expect(
+          await fixture.db.query(
+            'group_event_log',
+            where: 'event_type = ?',
+            whereArgs: const <Object?>[protectedGroupContentPreparedEventType],
+          ),
+          isEmpty,
+        );
+      },
+    );
+
+    test(
+      'strict pending-recipient CAS removes one recipient and final completion requires one survivor',
+      () async {
+        final fixture = await _ProtectedSenderFixture.create();
+        addTearDown(fixture.dispose);
+        const recipients = <String>[
+          'transport-a',
+          'transport-b',
+          'transport-c',
+        ];
+        const messageId = 'strict-cas-message';
+        const messageAt = '2026-08-13T09:40:00.000000Z';
+        final messageFixture = await _buildStrictPreparedMessageFixture(
+          messageId: messageId,
+          timestamp: messageAt,
+          recipients: recipients,
+        );
+        final messageExpected = <String, Object?>{
+          ...GroupMessage(
+            id: messageId,
+            groupId: _protectedGroupId,
+            senderPeerId: _protectedActor,
+            transportPeerId: 'transport-local',
+            senderUsername: 'Local',
+            text: 'strict prepared fixture',
+            timestamp: DateTime.parse(messageAt),
+            logicalDeliveryId: messageId,
+            keyGeneration: 7,
+            status: GroupMessage.statusQueuedOffline,
+            isIncoming: false,
+            createdAt: DateTime.parse(messageAt),
+            wireEnvelope: '{}',
+            inboxStored: false,
+            inboxRetryPayload: messageFixture.retry,
+          ).toMap(),
+          'retry_attempt_count': 0,
+          'next_eligible_at': null,
+        };
+        final messagePrepared =
+            buildLocalProtectedGroupContentPreparedEventPayload(
+              eventPayload: messageFixture.eventPayload,
+              ownerKind: 'group_message',
+              ownerId: messageId,
+              ownerStatus: GroupMessage.statusQueuedOffline,
+              inboxRetryPayload: messageFixture.retry,
+            );
+        expect(
+          await dbStagePreparedLocalGroupContentMessage(
+            fixture.db,
+            expected: messageExpected,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localPreparedProtectedGroupMessageSourceEventId(
+              messageId,
+            ),
+            sourceTimestamp: messageAt,
+            preparedEventPayload: messagePrepared,
+          ),
+          isTrue,
+        );
+        var currentMessage = (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        final messageRetry = GroupContentRetryPayload.decode(
+          messageFixture.retry,
+        );
+        expect(
+          await dbReplaceGroupInboxRetryPayloadIfExact(
+            fixture.db,
+            currentMessage,
+            messageRetry.encodeWithPending(const <String>['transport-c']),
+          ),
+          isFalse,
+        );
+        expect(
+          await dbReplaceGroupInboxRetryPayloadIfExact(
+            fixture.db,
+            currentMessage,
+            'legacy retry bytes',
+          ),
+          isFalse,
+        );
+        final crossedMessage = await _buildStrictPreparedMessageFixture(
+          messageId: 'strict-cas-message-crossed',
+          timestamp: messageAt,
+          recipients: recipients,
+        );
+        expect(
+          await dbReplaceGroupInboxRetryPayloadIfExact(
+            fixture.db,
+            currentMessage,
+            GroupContentRetryPayload.decode(
+              crossedMessage.retry,
+            ).encodeWithPending(const <String>['transport-b', 'transport-c']),
+          ),
+          isFalse,
+        );
+        final messageSurvivor = messageRetry.encodeWithPending(const <String>[
+          'transport-b',
+          'transport-c',
+        ]);
+        expect(
+          await dbReplaceGroupInboxRetryPayloadIfExact(
+            fixture.db,
+            currentMessage,
+            messageSurvivor,
+          ),
+          isTrue,
+        );
+        currentMessage = (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(
+          await dbReplaceGroupInboxRetryPayloadIfExact(
+            fixture.db,
+            currentMessage,
+            messageFixture.retry,
+          ),
+          isFalse,
+        );
+        final twoRecipientMessage = Map<String, Object?>.from(currentMessage);
+        final messageEventsBefore = await fixture.db.query(
+          'group_event_log',
+          orderBy: 'sequence ASC',
+        );
+        expect(
+          await dbCompleteGroupContentInboxStoreRetryIfExact(
+            fixture.db,
+            expected: currentMessage,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localProtectedGroupMessageSourceEventId(messageId),
+            sourceTimestamp: messageAt,
+            eventPayload: messageFixture.eventPayload,
+          ),
+          isFalse,
+          reason: 'two pending recipients are not a final receipt',
+        );
+        expect(
+          (await fixture.db.query(
+            'group_messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[messageId],
+          )).single,
+          twoRecipientMessage,
+        );
+        expect(
+          await fixture.db.query('group_event_log', orderBy: 'sequence ASC'),
+          messageEventsBefore,
+          reason: 'refusal must not append completion evidence',
+        );
+
+        expect(
+          await dbReplaceGroupInboxRetryPayloadIfExact(
+            fixture.db,
+            currentMessage,
+            messageRetry.encodeWithPending(const <String>['transport-c']),
+          ),
+          isTrue,
+        );
+        currentMessage = (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(
+          await dbCompleteGroupContentInboxStoreRetryIfExact(
+            fixture.db,
+            expected: currentMessage,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localProtectedGroupMessageSourceEventId(messageId),
+            sourceTimestamp: messageAt,
+            eventPayload: messageFixture.eventPayload,
+          ),
+          isTrue,
+        );
+        final completedMessage = (await fixture.db.query(
+          'group_messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(completedMessage['status'], 'sent');
+        expect(completedMessage['wire_envelope'], isNull);
+        expect(completedMessage['inbox_stored'], 1);
+        expect(completedMessage['inbox_retry_payload'], isNull);
+
+        final reactionAt = DateTime.utc(2026, 8, 13, 9, 41);
+        final transitionId = _protectedTransition(
+          action: 'add',
+          emoji: '🧭',
+          at: reactionAt,
+        );
+        final reactionFixture = await _buildStrictPreparedReactionFixture(
+          transitionId: transitionId,
+          timestamp: fixedGroupContentUtc(reactionAt),
+          targetMessageId: _protectedMessageId,
+          recipients: recipients,
+        );
+        final reactionExpected = GroupReactionReplayOutboxEntry(
+          reactionId: transitionId,
+          groupId: _protectedGroupId,
+          messageId: _protectedMessageId,
+          senderPeerId: _protectedActor,
+          emoji: '🧭',
+          action: 'add',
+          inboxRetryPayload: reactionFixture.retry,
+          deliveryStatus: GroupReactionReplayOutboxStatus.pending,
+          createdAt: fixedGroupContentUtc(reactionAt),
+          updatedAt: fixedGroupContentUtc(reactionAt),
+        ).toMap();
+        final reactionPrepared =
+            buildLocalProtectedGroupContentPreparedEventPayload(
+              eventPayload: reactionFixture.eventPayload,
+              ownerKind: 'group_reaction',
+              ownerId: transitionId,
+              ownerStatus: GroupReactionReplayOutboxStatus.pending,
+              inboxRetryPayload: reactionFixture.retry,
+            );
+        expect(
+          await dbStagePreparedLocalGroupReactionContent(
+            fixture.db,
+            expected: reactionExpected,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
+              transitionId,
+            ),
+            sourceTimestamp: fixedGroupContentUtc(reactionAt),
+            preparedEventPayload: reactionPrepared,
+          ),
+          isTrue,
+        );
+        var currentReaction = (await fixture.db.query(
+          'group_reaction_replay_outbox',
+          where: 'reaction_id = ?',
+          whereArgs: <Object?>[transitionId],
+        )).single;
+        final reactionRetry = GroupContentRetryPayload.decode(
+          reactionFixture.retry,
+        );
+        Future<bool> replaceReaction(String replacement, int second) =>
+            dbReplaceGroupReactionReplayOutboxPayloadIfExact(
+              fixture.db,
+              expected: currentReaction,
+              replacement: replacement,
+              updatedAt: fixedGroupContentUtc(
+                reactionAt.add(Duration(seconds: second)),
+              ),
+            );
+        expect(
+          await replaceReaction(
+            reactionRetry.encodeWithPending(const <String>['transport-c']),
+            1,
+          ),
+          isFalse,
+        );
+        expect(await replaceReaction('legacy retry bytes', 1), isFalse);
+        final crossedTransition = _protectedTransition(
+          action: 'add',
+          emoji: '🪢',
+          at: reactionAt.add(const Duration(microseconds: 1)),
+        );
+        final crossedReaction = await _buildStrictPreparedReactionFixture(
+          transitionId: crossedTransition,
+          timestamp: fixedGroupContentUtc(
+            reactionAt.add(const Duration(microseconds: 1)),
+          ),
+          targetMessageId: _protectedMessageId,
+          recipients: recipients,
+        );
+        expect(
+          await replaceReaction(
+            GroupContentRetryPayload.decode(
+              crossedReaction.retry,
+            ).encodeWithPending(const <String>['transport-b', 'transport-c']),
+            1,
+          ),
+          isFalse,
+        );
+        final reactionSurvivor = reactionRetry.encodeWithPending(const <String>[
+          'transport-b',
+          'transport-c',
+        ]);
+        expect(await replaceReaction(reactionSurvivor, 1), isTrue);
+        currentReaction = (await fixture.db.query(
+          'group_reaction_replay_outbox',
+          where: 'reaction_id = ?',
+          whereArgs: <Object?>[transitionId],
+        )).single;
+        expect(await replaceReaction(reactionFixture.retry, 2), isFalse);
+        final twoRecipientReaction = Map<String, Object?>.from(currentReaction);
+        final reactionEventsBefore = await fixture.db.query(
+          'group_event_log',
+          orderBy: 'sequence ASC',
+        );
+        final reactionProjectionBefore = await fixture.db.query(
+          'message_reactions',
+          where: 'message_id = ? AND sender_peer_id = ?',
+          whereArgs: const <Object?>[_protectedMessageId, _protectedActor],
+        );
+        expect(
+          await dbCompleteGroupReactionContentIfExact(
+            fixture.db,
+            expected: currentReaction,
+            reactionRow: _protectedReactionRow(
+              action: 'add',
+              emoji: '🧭',
+              timestamp: fixedGroupContentUtc(reactionAt),
+            ),
+            action: 'add',
+            transitionId: transitionId,
+            sourcePeerId: _protectedActor,
+            sourceEventId: localProtectedGroupReactionSourceEventId(
+              transitionId,
+            ),
+            sourceTimestamp: fixedGroupContentUtc(reactionAt),
+            eventPayload: reactionFixture.eventPayload,
+            updatedAt: fixedGroupContentUtc(
+              reactionAt.add(const Duration(seconds: 2)),
+            ),
+          ),
+          isFalse,
+          reason: 'two pending recipients are not a final receipt',
+        );
+        expect(
+          (await fixture.db.query(
+            'group_reaction_replay_outbox',
+            where: 'reaction_id = ?',
+            whereArgs: <Object?>[transitionId],
+          )).single,
+          twoRecipientReaction,
+        );
+        expect(
+          await fixture.db.query('group_event_log', orderBy: 'sequence ASC'),
+          reactionEventsBefore,
+          reason: 'refusal must not append reaction completion evidence',
+        );
+        expect(
+          await fixture.db.query(
+            'message_reactions',
+            where: 'message_id = ? AND sender_peer_id = ?',
+            whereArgs: const <Object?>[_protectedMessageId, _protectedActor],
+          ),
+          reactionProjectionBefore,
+        );
+      },
+    );
+
+    test('strict message and ADD evidence survive database restart', () async {
+      final fixture = await _ProtectedSenderFixture.create();
+      addTearDown(fixture.dispose);
+      const messageAt = '2026-08-13T10:00:00.000000Z';
+      final localMessage = <String, Object?>{
+        ...GroupMessage(
+          id: 'strict-empty-acl-message',
+          groupId: _protectedGroupId,
+          senderPeerId: _protectedActor,
+          senderUsername: 'Local',
+          text: 'empty ACL still has local evidence',
+          timestamp: DateTime.parse(messageAt),
+          keyGeneration: 7,
+          status: GroupMessage.statusQueuedOffline,
+          isIncoming: false,
+          createdAt: DateTime.parse(messageAt),
+          wireEnvelope: '{"custodyKind":"group_content_v1"}',
+          inboxStored: false,
+        ).toMap(),
+        'retry_attempt_count': 0,
+        'next_eligible_at': null,
+      };
+      final messageSourceEventId = localProtectedGroupMessageSourceEventId(
+        'strict-empty-acl-message',
+      );
+      expect(
+        await dbStageAndCompleteLocalGroupContentMessage(
+          fixture.db,
+          expected: localMessage,
+          sourcePeerId: _protectedActor,
+          sourceEventId: messageSourceEventId,
+          sourceTimestamp: messageAt,
+          eventPayload: _protectedEventPayload(
+            payloadType: 'group_message',
+            contentEventId: 'strict-empty-acl-message',
+            timestamp: messageAt,
+            recipients: const <String>[],
+          ),
+        ),
+        isTrue,
+      );
+      // Exact duplicate is idempotent; a conflicting owner is rejected.
+      expect(
+        await dbStageAndCompleteLocalGroupContentMessage(
+          fixture.db,
+          expected: localMessage,
+          sourcePeerId: _protectedActor,
+          sourceEventId: messageSourceEventId,
+          sourceTimestamp: messageAt,
+          eventPayload: _protectedEventPayload(
+            payloadType: 'group_message',
+            contentEventId: 'strict-empty-acl-message',
+            timestamp: messageAt,
+            recipients: const <String>[],
+          ),
+        ),
+        isTrue,
+      );
+
+      final addAt = DateTime.utc(2026, 8, 13, 10, 1);
+      final addTransition = _protectedTransition(
+        action: 'add',
+        emoji: '❤️',
+        at: addAt,
+      );
+      final addExpected = _protectedReactionOutboxRow(
+        transitionId: addTransition,
+        action: 'add',
+        emoji: '❤️',
+        timestamp: fixedGroupContentUtc(addAt),
+        emptyAcl: true,
+      );
+      expect(
+        await dbStageAndCompleteLocalGroupReactionContent(
+          fixture.db,
+          expected: addExpected,
+          reactionRow: _protectedReactionRow(
+            action: 'add',
+            emoji: '❤️',
+            timestamp: fixedGroupContentUtc(addAt),
+          ),
+          transitionId: addTransition,
+          action: 'add',
+          sourcePeerId: _protectedActor,
+          sourceEventId: localProtectedGroupReactionSourceEventId(
+            addTransition,
+          ),
+          sourceTimestamp: fixedGroupContentUtc(addAt),
+          eventPayload: _protectedEventPayload(
+            payloadType: 'group_reaction',
+            contentEventId: addTransition,
+            timestamp: fixedGroupContentUtc(addAt),
+            recipients: const <String>[],
+          ),
+        ),
+        isTrue,
+      );
+
+      await fixture.reopen();
+      expect(
+        await fixture.db.query(
+          'group_event_log',
+          columns: const <String>['event_type', 'source_event_id'],
+          where: 'group_id = ?',
+          whereArgs: const <Object?>[_protectedGroupId],
+          orderBy: 'sequence ASC',
+        ),
+        <Map<String, Object?>>[
+          <String, Object?>{
+            'event_type': protectedGroupMessageEventType,
+            'source_event_id': messageSourceEventId,
+          },
+          <String, Object?>{
+            'event_type': protectedGroupReactionEventType,
+            'source_event_id': localProtectedGroupReactionSourceEventId(
+              addTransition,
+            ),
+          },
+        ],
+      );
+      final message = (await fixture.db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: const <Object?>['strict-empty-acl-message'],
+      )).single;
+      expect(message['status'], 'sent');
+      expect(message['wire_envelope'], isNull);
+      expect(message['inbox_stored'], 1);
+      final reaction = await _loadProtectedReaction(fixture.db);
+      expect(reaction['emoji'], '❤️');
+      expect(reaction['removed_at'], isNull);
+    });
+
+    test('newer REMOVE remains after older ADD completion', () async {
+      final fixture = await _ProtectedSenderFixture.create();
+      addTearDown(fixture.dispose);
+      final removeAt = DateTime.utc(2026, 8, 13, 11, 2);
+      final addAt = DateTime.utc(2026, 8, 13, 11, 1);
+      final removeTransition = _protectedTransition(
+        action: 'remove',
+        emoji: '👍',
+        at: removeAt,
+      );
+      final addTransition = _protectedTransition(
+        action: 'add',
+        emoji: '👍',
+        at: addAt,
+      );
+      final removeExpected = await _seedProtectedReactionOutbox(
+        fixture.db,
+        transitionId: removeTransition,
+        action: 'remove',
+        emoji: '👍',
+        timestamp: fixedGroupContentUtc(removeAt),
+      );
+      expect(
+        await _completeProtectedReaction(
+          fixture.db,
+          expected: removeExpected,
+          transitionId: removeTransition,
+          action: 'remove',
+          emoji: '👍',
+          timestamp: fixedGroupContentUtc(removeAt),
+        ),
+        isTrue,
+      );
+      final addExpected = await _seedProtectedReactionOutbox(
+        fixture.db,
+        transitionId: addTransition,
+        action: 'add',
+        emoji: '👍',
+        timestamp: fixedGroupContentUtc(addAt),
+      );
+      expect(
+        await _completeProtectedReaction(
+          fixture.db,
+          expected: addExpected,
+          transitionId: addTransition,
+          action: 'add',
+          emoji: '👍',
+          timestamp: fixedGroupContentUtc(addAt),
+        ),
+        isTrue,
+      );
+      final reaction = await _loadProtectedReaction(fixture.db);
+      expect(reaction['timestamp'], fixedGroupContentUtc(removeAt));
+      expect(reaction['removed_at'], fixedGroupContentUtc(removeAt));
+      expect(await _protectedReactionEventCount(fixture.db), 2);
+    });
+
+    test('equal epoch uses transition ID as the LWW tie-break', () async {
+      final fixture = await _ProtectedSenderFixture.create();
+      addTearDown(fixture.dispose);
+      final at = DateTime.utc(2026, 8, 13, 11, 30);
+      final timestamp = fixedGroupContentUtc(at);
+      final candidates = <({String action, String emoji, String id})>[
+        (
+          action: 'add',
+          emoji: '👍',
+          id: _protectedTransition(action: 'add', emoji: '👍', at: at),
+        ),
+        (
+          action: 'remove',
+          emoji: '❤️',
+          id: _protectedTransition(action: 'remove', emoji: '❤️', at: at),
+        ),
+      ]..sort((a, b) => compareGroupReactionTransitionIds(a.id, b.id));
+      final loser = candidates.first;
+      final winner = candidates.last;
+      for (final candidate in <({String action, String emoji, String id})>[
+        winner,
+        loser,
+      ]) {
+        final expected = await _seedProtectedReactionOutbox(
+          fixture.db,
+          transitionId: candidate.id,
+          action: candidate.action,
+          emoji: candidate.emoji,
+          timestamp: timestamp,
+        );
+        expect(
+          await _completeProtectedReaction(
+            fixture.db,
+            expected: expected,
+            transitionId: candidate.id,
+            action: candidate.action,
+            emoji: candidate.emoji,
+            timestamp: timestamp,
+          ),
+          isTrue,
+        );
+      }
+      final reaction = await _loadProtectedReaction(fixture.db);
+      expect(reaction['emoji'], winner.emoji);
+      expect(
+        reaction['removed_at'],
+        winner.action == 'remove' ? timestamp : isNull,
+      );
+      expect(await _protectedReactionEventCount(fixture.db), 2);
+    });
+
+    test('owner CAS miss rolls projection and event evidence back', () async {
+      final fixture = await _ProtectedSenderFixture.create();
+      addTearDown(fixture.dispose);
+      final baselineAt = DateTime.utc(2026, 8, 13, 12);
+      final baselineTransition = _protectedTransition(
+        action: 'add',
+        emoji: '👍',
+        at: baselineAt,
+      );
+      final baselineExpected = await _seedProtectedReactionOutbox(
+        fixture.db,
+        transitionId: baselineTransition,
+        action: 'add',
+        emoji: '👍',
+        timestamp: fixedGroupContentUtc(baselineAt),
+      );
+      expect(
+        await _completeProtectedReaction(
+          fixture.db,
+          expected: baselineExpected,
+          transitionId: baselineTransition,
+          action: 'add',
+          emoji: '👍',
+          timestamp: fixedGroupContentUtc(baselineAt),
+        ),
+        isTrue,
+      );
+
+      final losingAt = DateTime.utc(2026, 8, 13, 12, 1);
+      final losingTransition = _protectedTransition(
+        action: 'remove',
+        emoji: '👍',
+        at: losingAt,
+      );
+      final losingExpected = await _seedProtectedReactionOutbox(
+        fixture.db,
+        transitionId: losingTransition,
+        action: 'remove',
+        emoji: '👍',
+        timestamp: fixedGroupContentUtc(losingAt),
+      );
+      await fixture.db.execute('''
+        CREATE TRIGGER force_reaction_owner_cas_miss
+        BEFORE UPDATE OF delivery_status ON group_reaction_replay_outbox
+        WHEN OLD.reaction_id = '$losingTransition'
+        BEGIN SELECT RAISE(IGNORE); END
+      ''');
+      expect(
+        await _completeProtectedReaction(
+          fixture.db,
+          expected: losingExpected,
+          transitionId: losingTransition,
+          action: 'remove',
+          emoji: '👍',
+          timestamp: fixedGroupContentUtc(losingAt),
+        ),
+        isFalse,
+      );
+      final reaction = await _loadProtectedReaction(fixture.db);
+      expect(reaction['timestamp'], fixedGroupContentUtc(baselineAt));
+      expect(reaction['removed_at'], isNull);
+      expect(
+        await fixture.db.query(
+          'group_event_log',
+          where: 'group_id = ? AND source_event_id = ?',
+          whereArgs: <Object?>[
+            _protectedGroupId,
+            localProtectedGroupReactionSourceEventId(losingTransition),
+          ],
+        ),
+        isEmpty,
+      );
+    });
+  });
 }
+
+const _protectedGroupId = 'protected-local-group';
+const _protectedActor = 'peer-local';
+const _protectedMessageId = 'protected-local-message';
+
+class _ProtectedSenderFixture {
+  _ProtectedSenderFixture(this.directory, this.path, this.db);
+
+  final Directory directory;
+  final String path;
+  Database db;
+
+  static Future<_ProtectedSenderFixture> create() async {
+    final directory = await Directory.systemTemp.createTemp(
+      'protected_group_sender_completion_',
+    );
+    final path = p.join(directory.path, 'identity.db');
+    final db = await openDatabase(path, version: 1);
+    await runMediaAttachmentsMigration(db);
+    await runGroupsTablesMigration(db);
+    await runGroupMessagesTablesMigration(db);
+    await runGroupQuotedMessageIdMigration(db);
+    await runGroupMessageReliabilityColumnsMigration(db);
+    await runGroupMessageTransportPeerIdMigration(db);
+    await runGroupMessageLastSendAttemptAtMigration(db);
+    await runGroupMessageLogicalDeliveryIdMigration(db);
+    await runGroupMessageRetryBackoffColumnsMigration(db);
+    await runGroupMessagesIsForwardedMigration(db);
+    await runGroupPrivateMediaLifecycleMigration(db);
+    await runMessageReactionsMigration(db);
+    await runMessageReactionTombstoneMigration(db);
+    await runGroupReactionReplayOutboxMigration(db);
+    await runGroupEventLogMigration(db);
+    await runGroupMessageLocalDeletionsMigration(db);
+    const createdAt = '2026-08-13T09:00:00.000000Z';
+    await db.insert('groups', <String, Object?>{
+      'id': _protectedGroupId,
+      'name': 'Protected local group',
+      'type': 'chat',
+      'topic_name': 'protected-local-topic',
+      'created_at': createdAt,
+      'created_by': _protectedActor,
+      'my_role': 'admin',
+    });
+    await db.insert('group_messages', <String, Object?>{
+      'id': _protectedMessageId,
+      'group_id': _protectedGroupId,
+      'sender_peer_id': 'peer-remote',
+      'sender_username': 'Remote',
+      'text': 'reaction target',
+      'timestamp': createdAt,
+      'key_generation': 7,
+      'status': 'sent',
+      'is_incoming': 1,
+      'created_at': createdAt,
+      'inbox_stored': 1,
+    });
+    return _ProtectedSenderFixture(directory, path, db);
+  }
+
+  Future<void> reopen() async {
+    await db.close();
+    db = await openDatabase(path, version: 1);
+  }
+
+  Future<void> dispose() async {
+    if (db.isOpen) await db.close();
+    if (await directory.exists()) await directory.delete(recursive: true);
+  }
+}
+
+String _protectedTransition({
+  required String action,
+  required String emoji,
+  required DateTime at,
+}) => buildGroupReactionTransitionId(
+  groupId: _protectedGroupId,
+  messageId: _protectedMessageId,
+  logicalActorPeerId: _protectedActor,
+  action: action,
+  emoji: emoji,
+  timestamp: at,
+);
+
+Future<({String retry, Map<String, Object?> eventPayload})>
+_buildStrictPreparedMessageFixture({
+  required String messageId,
+  required String timestamp,
+  List<String> recipients = const <String>['transport-a', 'transport-b'],
+}) async {
+  final groupRepo = InMemoryGroupRepository();
+  await groupRepo.saveKey(
+    GroupKeyInfo(
+      groupId: _protectedGroupId,
+      keyGeneration: 7,
+      encryptedKey: 'protected-group-key',
+      createdAt: DateTime.utc(2026, 8, 13, 8),
+    ),
+  );
+  final plaintext = <String, Object?>{
+    'groupId': _protectedGroupId,
+    'senderId': _protectedActor,
+    'senderUsername': 'Local',
+    'senderDeviceId': 'device-local',
+    'transportPeerId': 'transport-local',
+    'messageId': messageId,
+    'logicalDeliveryId': messageId,
+    'keyEpoch': 7,
+    'text': 'strict prepared fixture',
+    'timestamp': timestamp,
+  };
+  final retry = await buildGroupOfflineReplayInboxRetryPayload(
+    bridge: FakeBridge(),
+    groupRepo: groupRepo,
+    groupId: _protectedGroupId,
+    payloadType: groupOfflineReplayPayloadTypeMessage,
+    plaintext: jsonEncode(plaintext),
+    senderPeerId: _protectedActor,
+    senderPublicKey: 'device-pk-local',
+    senderPrivateKey: 'device-sk-local',
+    senderDeviceId: 'device-local',
+    senderTransportPeerId: 'transport-local',
+    recipientPeerIds: recipients,
+    messageId: messageId,
+    contentEventId: messageId,
+    contentAuthorityVersion: GroupContentAuthorityVersion(
+      eventAt: DateTime.utc(2026, 8, 13, 9),
+      eventId: 'authority.prepared.fixture',
+      keyEpoch: 7,
+    ),
+  );
+  final replay =
+      (jsonDecode(retry) as Map<String, Object?>)['message'] as String;
+  return (
+    retry: retry,
+    eventPayload: buildLocalProtectedGroupContentEventPayload(
+      replayEnvelope: replay,
+      payload: plaintext,
+    ),
+  );
+}
+
+Future<({String retry, Map<String, Object?> eventPayload})>
+_buildStrictPreparedReactionFixture({
+  required String transitionId,
+  required String timestamp,
+  required String targetMessageId,
+  String action = 'add',
+  String emoji = '🧭',
+  List<String> recipients = const <String>['transport-a', 'transport-b'],
+}) async {
+  final groupRepo = InMemoryGroupRepository();
+  await groupRepo.saveKey(
+    GroupKeyInfo(
+      groupId: _protectedGroupId,
+      keyGeneration: 7,
+      encryptedKey: 'protected-group-key',
+      createdAt: DateTime.utc(2026, 8, 13, 8),
+    ),
+  );
+  final plaintext = <String, Object?>{
+    'id': 'protected-reaction-state',
+    'messageId': targetMessageId,
+    'emoji': emoji,
+    'action': action,
+    'senderPeerId': _protectedActor,
+    'timestamp': timestamp,
+    'eventId': transitionId,
+  };
+  final retry = await buildGroupOfflineReplayInboxRetryPayload(
+    bridge: FakeBridge(),
+    groupRepo: groupRepo,
+    groupId: _protectedGroupId,
+    payloadType: groupOfflineReplayPayloadTypeReaction,
+    plaintext: jsonEncode(plaintext),
+    senderPeerId: _protectedActor,
+    senderPublicKey: 'device-pk-local',
+    senderPrivateKey: 'device-sk-local',
+    senderDeviceId: 'device-local',
+    senderTransportPeerId: 'transport-local',
+    recipientPeerIds: recipients,
+    messageId: transitionId,
+    contentEventId: transitionId,
+    contentAuthorityVersion: GroupContentAuthorityVersion(
+      eventAt: DateTime.utc(2026, 8, 13, 9),
+      eventId: 'authority.prepared.fixture',
+      keyEpoch: 7,
+    ),
+    reactionNotificationExtension: GroupReactionNotificationExtensionInput(
+      transitionId: transitionId,
+      action: action,
+      targetMessageId: targetMessageId,
+      reactorPeerId: _protectedActor,
+      reactorTransportPeerId: 'transport-local',
+      notificationRecipientTransportPeerIds: recipients,
+    ),
+  );
+  final replay =
+      (jsonDecode(retry) as Map<String, Object?>)['message'] as String;
+  return (
+    retry: retry,
+    eventPayload: buildLocalProtectedGroupContentEventPayload(
+      replayEnvelope: replay,
+      payload: plaintext,
+    ),
+  );
+}
+
+Future<Map<String, Object?>> _seedProtectedReactionOutbox(
+  Database db, {
+  required String transitionId,
+  required String action,
+  required String emoji,
+  required String timestamp,
+}) async {
+  final strict = await _buildStrictPreparedReactionFixture(
+    transitionId: transitionId,
+    timestamp: timestamp,
+    targetMessageId: _protectedMessageId,
+    action: action,
+    emoji: emoji,
+    recipients: const <String>['peer-remote-device'],
+  );
+  await db.insert(
+    'group_reaction_replay_outbox',
+    _protectedReactionOutboxRow(
+      transitionId: transitionId,
+      action: action,
+      emoji: emoji,
+      timestamp: timestamp,
+      retryPayload: strict.retry,
+    ),
+  );
+  return (await db.query(
+    'group_reaction_replay_outbox',
+    where: 'reaction_id = ?',
+    whereArgs: <Object?>[transitionId],
+  )).single;
+}
+
+Map<String, Object?> _protectedReactionOutboxRow({
+  required String transitionId,
+  required String action,
+  required String emoji,
+  required String timestamp,
+  bool emptyAcl = false,
+  String? retryPayload,
+}) => <String, Object?>{
+  'reaction_id': transitionId,
+  'group_id': _protectedGroupId,
+  'message_id': _protectedMessageId,
+  'sender_peer_id': _protectedActor,
+  'emoji': emoji,
+  'action': action,
+  'inbox_retry_payload': emptyAcl ? '' : retryPayload,
+  'delivery_status': emptyAcl ? 'stored' : 'pending',
+  'last_error': null,
+  'created_at': timestamp,
+  'updated_at': timestamp,
+};
+
+Map<String, Object?> _protectedReactionRow({
+  required String action,
+  required String emoji,
+  required String timestamp,
+}) => <String, Object?>{
+  'id': 'protected-reaction-state',
+  'message_id': _protectedMessageId,
+  'emoji': emoji,
+  'sender_peer_id': _protectedActor,
+  'timestamp': timestamp,
+  'created_at': timestamp,
+  'removed_at': action == 'remove' ? timestamp : null,
+};
+
+Future<bool> _completeProtectedReaction(
+  Database db, {
+  required Map<String, Object?> expected,
+  required String transitionId,
+  required String action,
+  required String emoji,
+  required String timestamp,
+}) async {
+  final wrapper =
+      (jsonDecode(expected['inbox_retry_payload']! as String) as Map)
+          .cast<String, Object?>();
+  final eventPayload = buildLocalProtectedGroupContentEventPayload(
+    replayEnvelope: wrapper['message']! as String,
+    payload: <String, Object?>{
+      'id': 'protected-reaction-state',
+      'messageId': _protectedMessageId,
+      'emoji': emoji,
+      'action': action,
+      'senderPeerId': _protectedActor,
+      'timestamp': timestamp,
+      'eventId': transitionId,
+    },
+  );
+  await dbAppendGroupEventLogEntry(
+    db,
+    groupId: _protectedGroupId,
+    eventType: protectedGroupContentPreparedEventType,
+    sourcePeerId: _protectedActor,
+    sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
+      transitionId,
+    ),
+    sourceTimestamp: timestamp,
+    payload: <String, Object?>{
+      ...eventPayload,
+      'preparedOwnerKind': 'group_reaction',
+      'preparedOwnerId': transitionId,
+      'preparedOwnerStatus': expected['delivery_status'] as String,
+      'replayEnvelopeHash': sha256
+          .convert(utf8.encode(wrapper['message']! as String))
+          .toString(),
+    },
+  );
+  return dbCompleteGroupReactionContentIfExact(
+    db,
+    expected: expected,
+    reactionRow: _protectedReactionRow(
+      action: action,
+      emoji: emoji,
+      timestamp: timestamp,
+    ),
+    action: action,
+    transitionId: transitionId,
+    sourcePeerId: _protectedActor,
+    sourceEventId: localProtectedGroupReactionSourceEventId(transitionId),
+    sourceTimestamp: timestamp,
+    eventPayload: eventPayload,
+    updatedAt: timestamp,
+  );
+}
+
+Future<Map<String, Object?>> _loadProtectedReaction(Database db) async =>
+    (await db.query(
+      'message_reactions',
+      where: 'message_id = ? AND sender_peer_id = ?',
+      whereArgs: const <Object?>[_protectedMessageId, _protectedActor],
+    )).single;
+
+Future<int> _protectedReactionEventCount(Database db) async {
+  final rows = await db.rawQuery(
+    'SELECT COUNT(*) AS count FROM group_event_log '
+    'WHERE group_id = ? AND event_type = ?',
+    const <Object?>[_protectedGroupId, protectedGroupReactionEventType],
+  );
+  return (rows.single['count'] as num).toInt();
+}
+
+Map<String, Object?> _protectedEventPayload({
+  required String payloadType,
+  required String contentEventId,
+  required String timestamp,
+  required List<String> recipients,
+}) => <String, Object?>{
+  'custodyKind': groupContentCustodyKind,
+  'groupId': _protectedGroupId,
+  'payloadType': payloadType,
+  'contentEventId': contentEventId,
+  'authorityEventAt': '2026-08-13T09:30:00.000000Z',
+  'authorityEventId': 'authority-event-7',
+  'authorityKeyEpoch': 7,
+  'logicalSenderPeerId': _protectedActor,
+  'senderDeviceId': 'local-device',
+  'senderTransportPeerId': 'local-transport',
+  'senderPublicKey': 'local-public-key',
+  'recipientPeerIds': recipients,
+  'payload': <String, Object?>{
+    if (payloadType == 'group_message') 'messageId': contentEventId,
+    if (payloadType == 'group_reaction') 'eventId': contentEventId,
+    'timestamp': timestamp,
+  },
+};

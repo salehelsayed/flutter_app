@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -33,6 +34,12 @@ func main() {
 			return
 		case "generate-key":
 			generateAndPrintKey()
+			return
+		case "push-token-vault":
+			if err := runPushTokenVaultCLI(os.Args[2:]); err != nil {
+				fmt.Fprintf(os.Stderr, "push-token-vault: %v\n", err)
+				os.Exit(2)
+			}
 			return
 		}
 	}
@@ -267,6 +274,43 @@ func main() {
 		log.Printf("[NODE] Error during shutdown: %v", err)
 	}
 	log.Println("Node stopped.")
+}
+
+func runPushTokenVaultCLI(args []string) error {
+	if len(args) == 0 {
+		return errors.New("expected migrate or cleanup-legacy")
+	}
+	config := loadBackendConfigFromEnv()
+	if config.Kind != backendKindRedis {
+		return errors.New("push token vault commands require RELAY_BACKEND=redis")
+	}
+	if config.RedisURL == "" {
+		return errors.New("REDIS_URL is required for push token vault commands")
+	}
+	client, err := newRedisClientFromURL(config.RedisURL)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	backend := newRedisPushTokenBackend(client, config.RedisPrefix)
+
+	switch args[0] {
+	case "migrate":
+		if len(args) != 3 || args[1] != "--fleet-receipt-sha256" {
+			return errors.New("usage: push-token-vault migrate --fleet-receipt-sha256 <64hex>")
+		}
+		return backend.Migrate(args[2])
+	case "cleanup-legacy":
+		if len(args) != 1 {
+			return errors.New("usage: push-token-vault cleanup-legacy")
+		}
+		if err := backend.ValidateStartup(); err != nil {
+			return err
+		}
+		return backend.CleanupLegacy()
+	default:
+		return errors.New("unknown push token vault command")
+	}
 }
 
 func logPeerConnected(p peer.ID, inbox *InboxStore, total int64) {

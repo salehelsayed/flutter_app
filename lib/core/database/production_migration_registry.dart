@@ -114,6 +114,7 @@ import 'migrations/111_direct_media_blob_custody.dart';
 import 'migrations/112_direct_linked_device_addressing.dart';
 import 'migrations/113_direct_linked_device_event_fanout.dart';
 import 'migrations/114_direct_linked_device_media_blob_fanout.dart';
+import 'migrations/115_group_media_blob_custody.dart';
 
 /// One ordered production migration step: the schema version it belongs to,
 /// its migration-file stem, and the migration function itself.
@@ -661,6 +662,11 @@ productionCreateMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     '114_direct_linked_device_media_blob_fanout',
     runDirectLinkedDeviceMediaBlobFanoutMigration,
   ),
+  ProductionMigrationEntry(
+    115,
+    '115_group_media_blob_custody',
+    runGroupMediaBlobCustodyMigration,
+  ),
 ]);
 
 /// The EXACT ordered upgrade (onUpgrade) guard sequence from main.dart.
@@ -1197,6 +1203,11 @@ productionUpgradeMigrations = List.unmodifiable(<ProductionMigrationEntry>[
     114,
     '114_direct_linked_device_media_blob_fanout',
     runDirectLinkedDeviceMediaBlobFanoutMigration,
+  ),
+  ProductionMigrationEntry(
+    115,
+    '115_group_media_blob_custody',
+    runGroupMediaBlobCustodyMigration,
   ),
 ]);
 

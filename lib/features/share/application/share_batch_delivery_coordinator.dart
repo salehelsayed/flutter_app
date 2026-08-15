@@ -11,6 +11,7 @@ import 'package:flutter_app/features/conversation/application/direct_event_fanou
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
@@ -39,9 +40,11 @@ import 'package:flutter_app/features/groups/application/group_media_forward_inte
 import 'package:flutter_app/features/groups/application/group_media_forward_policy.dart';
 import 'package:flutter_app/features/groups/application/announcement_media_forward_request.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
@@ -357,6 +360,8 @@ class DefaultShareBatchDeliveryCoordinator
   final String shareStoredOfflinePromise;
   final bool directMediaBlobCustodyClientEnabled;
   final DirectEventFanoutAuthoring? Function()? directEventFanoutResolver;
+  final PreparedGroupMediaBlobCustodyCoordinator?
+  preparedGroupMediaBlobCustodyCoordinator;
   final DateTime Function() _forwardNow;
   final Map<String, DateTime> _forwardTimestampByOperationKey = {};
 
@@ -380,6 +385,7 @@ class DefaultShareBatchDeliveryCoordinator
     this.mediaUploadProgressEvents,
     bool? directMediaBlobCustodyClientEnabled,
     this.directEventFanoutResolver,
+    this.preparedGroupMediaBlobCustodyCoordinator,
     String? shareStoredOfflinePromise,
     DateTime Function()? forwardNow,
   }) : shareStoredOfflinePromise =
@@ -394,6 +400,39 @@ class DefaultShareBatchDeliveryCoordinator
     final peerId = p2pService.currentState.peerId?.trim();
     return peerId == null || peerId.isEmpty ? null : peerId;
   }
+
+  PreparedGroupMediaBlobCustodyCoordinator get _strictGroupMediaOwner =>
+      preparedGroupMediaBlobCustodyCoordinator ??
+      PreparedGroupMediaBlobCustodyCoordinator(
+        artifactStore: GroupMediaBlobArtifactStore(),
+      );
+
+  bool get _canServeFreshDirectMediaLinkedFanout =>
+      directMediaBlobCustodyClientEnabled &&
+      mediaAttachmentRepository is DirectMediaBlobCustodyRepository &&
+      (mediaAttachmentRepository as DirectMediaBlobCustodyRepository)
+          .supportsDirectMediaBlobCustody &&
+      mediaAttachmentRepository
+          is FreshOutgoingDirectMediaBlobGenerationRepository &&
+      (mediaAttachmentRepository
+              as FreshOutgoingDirectMediaBlobGenerationRepository)
+          .supportsFreshOutgoingDirectMediaBlobGeneration &&
+      mediaAttachmentRepository
+          is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+      (mediaAttachmentRepository
+              as OutgoingDirectLinkedMediaBlobFanoutRepository)
+          .supportsDirectLinkedMediaBlobFanout &&
+      mediaAttachmentRepository
+          is OutgoingDirectMediaInboxCustodyStagingRepository &&
+      (mediaAttachmentRepository
+              as OutgoingDirectMediaInboxCustodyStagingRepository)
+          .supportsDirectMediaInboxCustody &&
+      messageRepository is OutgoingDirectTextInboxCustodyRepository &&
+      (messageRepository as OutgoingDirectTextInboxCustodyRepository)
+          .supportsDirectTextInboxCustody &&
+      messageRepository is OutgoingTransportMutationRepository &&
+      p2pService is AckOrExpiryInboxStore &&
+      p2pService is MediaExpiryBoundedInboxStore;
 
   /// Resolves every direct-media destination before an entry may preprocess,
   /// copy, encrypt, persist, or upload a source file.
@@ -416,9 +455,36 @@ class DefaultShareBatchDeliveryCoordinator
       admissions[peerId] = await resolveDirectMediaFanoutAdmission(
         mediaAttachmentRepository: mediaAttachmentRepository,
         contactAccountPeerId: peerId,
-        // Share/forward still has no plural blob owner. An initialized roster
-        // therefore refuses at this pre-authoring boundary.
-        canServeLinkedFanout: false,
+        canServeLinkedFanout: _canServeFreshDirectMediaLinkedFanout,
+      );
+    }
+    return admissions;
+  }
+
+  Future<Map<String, GroupContentAuthoringAdmission>>
+  _preflightGroupMediaAdmissions({
+    required bool hasFiles,
+    required IdentityModel identity,
+    required Iterable<ShareTargetSelection> targets,
+  }) async {
+    if (!hasFiles) return const <String, GroupContentAuthoringAdmission>{};
+    final groupRepo = groupRepository;
+    if (groupRepo == null) {
+      return const <String, GroupContentAuthoringAdmission>{};
+    }
+    final admissions = <String, GroupContentAuthoringAdmission>{};
+    for (final target in targets) {
+      if (target.kind != ShareTargetSelectionKind.group) continue;
+      final groupId = target.requireGroup.id;
+      if (admissions.containsKey(groupId)) continue;
+      admissions[groupId] = await prepareGroupContentAuthoringAdmission(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderDeviceId: _currentSenderDeviceId,
+        senderTransportPeerId: _currentSenderDeviceId,
+        inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
       );
     }
     return admissions;
@@ -432,13 +498,24 @@ class DefaultShareBatchDeliveryCoordinator
     required bool hasFiles,
     required List<_InternalForwardTargetResolution> targetPlan,
     required Map<String, DirectMediaFanoutAdmission> contactAdmissions,
+    required Map<String, GroupContentAuthoringAdmission> groupAdmissions,
+    required bool allowStrictFreshGroupMedia,
   }) {
     if (!hasFiles) return null;
     for (final planned in targetPlan) {
       final target = planned.current;
       if (target == null) continue;
-      if (target.kind == ShareTargetSelectionKind.group ||
-          contactAdmissions[target.requireContact.peerId]?.refuses == false) {
+      if (target.kind == ShareTargetSelectionKind.group) {
+        final admission = groupAdmissions[target.requireGroup.id];
+        if (admission?.kind ==
+                GroupContentAuthoringResolutionKind.legacyUninitialized ||
+            (allowStrictFreshGroupMedia &&
+                admission?.kind ==
+                    GroupContentAuthoringResolutionKind.strict)) {
+          return null;
+        }
+      } else if (contactAdmissions[target.requireContact.peerId]?.refuses ==
+          false) {
         return null;
       }
     }
@@ -556,10 +633,19 @@ class DefaultShareBatchDeliveryCoordinator
           .where((resolution) => resolution.isReady)
           .map((resolution) => resolution.current!),
     );
+    final groupAdmissions = await _preflightGroupMediaAdmissions(
+      hasFiles: shareIntent.hasFiles,
+      identity: identity,
+      targets: targetResolutions
+          .where((resolution) => resolution.isReady)
+          .map((resolution) => resolution.current!),
+    );
     final preflightRefusal = _refuseBeforeMediaPreprocessingIfNoTargetAdmitted(
       hasFiles: shareIntent.hasFiles,
       targetPlan: targetResolutions,
       contactAdmissions: contactAdmissions,
+      groupAdmissions: groupAdmissions,
+      allowStrictFreshGroupMedia: true,
     );
     if (preflightRefusal != null) return preflightRefusal;
 
@@ -598,6 +684,7 @@ class DefaultShareBatchDeliveryCoordinator
         // contact destination read this entry's reviewed operation token.
         sourceGatedInternalForward: true,
         precomputedContactAdmissions: contactAdmissions,
+        precomputedGroupMediaAdmissions: groupAdmissions,
       );
     } finally {
       await lease.dispose();
@@ -613,6 +700,8 @@ class DefaultShareBatchDeliveryCoordinator
     bool externalOrdinaryShare = false,
     bool sourceGatedInternalForward = false,
     Map<String, DirectMediaFanoutAdmission>? precomputedContactAdmissions,
+    Map<String, GroupContentAuthoringAdmission>?
+    precomputedGroupMediaAdmissions,
   }) async {
     final identity =
         preloadedIdentity ?? await identityRepository.loadIdentity();
@@ -648,10 +737,21 @@ class DefaultShareBatchDeliveryCoordinator
               .where((item) => item.isReady)
               .map((item) => item.current!),
         );
+    final groupAdmissions =
+        precomputedGroupMediaAdmissions ??
+        await _preflightGroupMediaAdmissions(
+          hasFiles: shareIntent.hasFiles,
+          identity: identity,
+          targets: targetPlan
+              .where((item) => item.isReady)
+              .map((item) => item.current!),
+        );
     final preflightRefusal = _refuseBeforeMediaPreprocessingIfNoTargetAdmitted(
       hasFiles: shareIntent.hasFiles,
       targetPlan: targetPlan,
       contactAdmissions: contactAdmissions,
+      groupAdmissions: groupAdmissions,
+      allowStrictFreshGroupMedia: externalOrdinaryShare,
     );
     if (preflightRefusal != null) return preflightRefusal;
     final processedBatch = await (processSharedMediaFn ?? _processSharedMedia)(
@@ -722,6 +822,27 @@ class DefaultShareBatchDeliveryCoordinator
             );
             continue;
           }
+          final groupMediaAdmission =
+              target.kind == ShareTargetSelectionKind.group
+              ? groupAdmissions[target.requireGroup.id]
+              : null;
+          if (shareIntent.hasFiles &&
+              target.kind == ShareTargetSelectionKind.group &&
+              (groupMediaAdmission == null ||
+                  groupMediaAdmission.kind ==
+                      GroupContentAuthoringResolutionKind.refuse ||
+                  (!externalOrdinaryShare &&
+                      groupMediaAdmission.kind ==
+                          GroupContentAuthoringResolutionKind.strict))) {
+            results.add(
+              ShareBatchTargetResult(
+                target: target,
+                status: ShareBatchTargetStatus.failed,
+                detail: 'Media preparation failed.',
+              ),
+            );
+            continue;
+          }
           result = switch (target.kind) {
             ShareTargetSelectionKind.contact =>
               sendToContactFn != null
@@ -747,13 +868,22 @@ class DefaultShareBatchDeliveryCoordinator
                           : null,
                     ),
             ShareTargetSelectionKind.group =>
-              await (sendToGroupFn ?? _sendToGroup)(
-                identity: identity,
-                shareIntent: targetIntent,
-                group: target.requireGroup,
-                processedMedia: processedMedia,
-                uploadHooks: uploadHooks,
-              ),
+              sendToGroupFn != null
+                  ? await sendToGroupFn!(
+                      identity: identity,
+                      shareIntent: targetIntent,
+                      group: target.requireGroup,
+                      processedMedia: processedMedia,
+                      uploadHooks: uploadHooks,
+                    )
+                  : await _sendToGroup(
+                      identity: identity,
+                      shareIntent: targetIntent,
+                      group: target.requireGroup,
+                      processedMedia: processedMedia,
+                      uploadHooks: uploadHooks,
+                      groupMediaAdmission: groupMediaAdmission,
+                    ),
           };
         } catch (_) {
           uploadHooks.settled(succeeded: false);
@@ -1084,10 +1214,19 @@ class DefaultShareBatchDeliveryCoordinator
           .where((resolution) => resolution.isReady)
           .map((resolution) => resolution.current!),
     );
+    final groupAdmissions = await _preflightGroupMediaAdmissions(
+      hasFiles: true,
+      identity: identity,
+      targets: targetResolutions
+          .where((resolution) => resolution.isReady)
+          .map((resolution) => resolution.current!),
+    );
     final preflightRefusal = _refuseBeforeMediaPreprocessingIfNoTargetAdmitted(
       hasFiles: true,
       targetPlan: targetResolutions,
       contactAdmissions: contactAdmissions,
+      groupAdmissions: groupAdmissions,
+      allowStrictFreshGroupMedia: true,
     );
     if (preflightRefusal != null) return preflightRefusal;
 
@@ -1177,6 +1316,10 @@ class DefaultShareBatchDeliveryCoordinator
                 planned.current!.kind == ShareTargetSelectionKind.contact
                 ? contactAdmissions[planned.current!.requireContact.peerId]
                 : null,
+            groupMediaAdmission:
+                planned.current!.kind == ShareTargetSelectionKind.group
+                ? groupAdmissions[planned.current!.requireGroup.id]
+                : null,
           ),
         );
       }
@@ -1203,6 +1346,7 @@ class DefaultShareBatchDeliveryCoordinator
     required bool allowAnnouncementTarget,
     bool sourceGatedInternalForward = false,
     DirectMediaFanoutAdmission? mediaAdmission,
+    GroupContentAuthoringAdmission? groupMediaAdmission,
   }) async {
     ShareBatchTargetResult failed(String detail) {
       return ShareBatchTargetResult(
@@ -1257,6 +1401,11 @@ class DefaultShareBatchDeliveryCoordinator
                       : null,
                 );
         case ShareTargetSelectionKind.group:
+          if (groupMediaAdmission == null ||
+              groupMediaAdmission.kind ==
+                  GroupContentAuthoringResolutionKind.refuse) {
+            return failed('Media preparation failed.');
+          }
           final groupRepo = groupRepository!;
           final current = await groupRepo.getGroup(target.requireGroup.id);
           if (current == null) {
@@ -1289,6 +1438,7 @@ class DefaultShareBatchDeliveryCoordinator
               uploadHooks: ShareBatchUploadHooks.none,
               allowAnnouncementTarget: allowAnnouncementTarget,
               sourceGroupIdToExclude: sourceGroupIdToExclude,
+              groupMediaAdmission: groupMediaAdmission,
             );
           }
           final authority = await _loadForwardGroupAuthority(
@@ -1438,6 +1588,7 @@ class DefaultShareBatchDeliveryCoordinator
     required List<PendingComposerMedia> processedMedia,
     required ShareBatchUploadHooks uploadHooks,
     required DirectMediaBlobCustodyRepository repository,
+    required DirectMediaFanoutAdmission mediaAdmission,
     required String? authorizedForwardDedupKey,
   }) async {
     final isForwardedParent = authorizedForwardDedupKey != null;
@@ -1464,7 +1615,9 @@ class DefaultShareBatchDeliveryCoordinator
     var hasDurableAuthority = false;
     var progressStarted = false;
     var progressSettled = false;
-    PreparedDirectMediaBlobUploadResult? uploadResult;
+    var uploadCompleted = false;
+    var completedAttachments = const <MediaAttachment>[];
+    DirectLinkedMediaFanoutContext? linkedMediaFanout;
     ConversationMessage? attemptedParent;
     List<MediaAttachment> attemptedAttachments = const <MediaAttachment>[];
     try {
@@ -1545,51 +1698,102 @@ class DefaultShareBatchDeliveryCoordinator
         repository: repository,
         artifactStore: DirectMediaBlobArtifactStore(),
       );
-      uploadResult = await coordinator.prepareAndUploadFreshMessage(
-        bridge: bridge,
-        identityPeerId: identity.peerId,
-        recipientPeerId: contact.peerId,
-        parent: parent,
-        sources: sources,
-        authorizedForwardDedupKey: authorizedForwardDedupKey,
-        onAuthorityReady: (winnerAttachments) =>
-            _copyFreshDirectMediaPreviewAfterAuthority(
-              messageId: messageId,
-              processedMedia: processedMedia,
-              expectedAttachments: expectedAttachments,
-              winnerAttachments: winnerAttachments,
-            ),
-        onGenerationReady: p2pService.isLocalPeer(contact.peerId)
-            ? (artifacts) async {
-                for (final artifact in artifacts) {
-                  await p2pService.sendLocalMedia(
-                    peerId: contact.peerId,
-                    filePath: artifact.absoluteCiphertextPath,
-                    mime: kOpaqueMediaTransportMime,
-                    mediaId: artifact.attachment.id,
-                    fromPeerId: identity.peerId,
-                    durationMs: artifact.attachment.durationMs,
-                    enc: true,
-                    encScheme: artifact.attachment.encryptionScheme,
-                  );
+      if (mediaAdmission.requiresLinkedFanout) {
+        final snapshot = mediaAdmission.snapshot!;
+        final fanoutResult = await coordinator.prepareAndUploadFreshFanout(
+          bridge: bridge,
+          identityPeerId: identity.peerId,
+          contactAccountPeerId: contact.peerId,
+          snapshot: snapshot,
+          expectedParent: parent,
+          sources: sources,
+          allowFreshParent: true,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
+          onAuthorityReady: (winnerAttachments) =>
+              _copyFreshDirectMediaPreviewAfterAuthority(
+                messageId: messageId,
+                processedMedia: processedMedia,
+                expectedAttachments: expectedAttachments,
+                winnerAttachments: winnerAttachments,
+              ),
+          onGenerationReady: p2pService.isLocalPeer(contact.peerId)
+              ? (artifacts) async {
+                  for (final artifact in artifacts) {
+                    await p2pService.sendLocalMedia(
+                      peerId: contact.peerId,
+                      filePath: artifact.absoluteCiphertextPath,
+                      mime: kOpaqueMediaTransportMime,
+                      mediaId: artifact.attachment.id,
+                      fromPeerId: identity.peerId,
+                      durationMs: artifact.attachment.durationMs,
+                      enc: true,
+                      encScheme: artifact.attachment.encryptionScheme,
+                    );
+                  }
                 }
-              }
-            : null,
-      );
-      hasDurableAuthority = uploadResult.hasDurableAuthority;
+              : null,
+        );
+        uploadCompleted = fanoutResult.isComplete;
+        completedAttachments = fanoutResult.attachments;
+        hasDurableAuthority = fanoutResult.hasDurableAuthority;
+        if (uploadCompleted) {
+          linkedMediaFanout = DirectLinkedMediaFanoutContext(
+            contactAccountPeerId: contact.peerId,
+            snapshot: snapshot,
+            targetRows: fanoutResult.targetRows,
+          );
+        }
+      } else {
+        final uploadResult = await coordinator.prepareAndUploadFreshMessage(
+          bridge: bridge,
+          identityPeerId: identity.peerId,
+          recipientPeerId: contact.peerId,
+          parent: parent,
+          sources: sources,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
+          onAuthorityReady: (winnerAttachments) =>
+              _copyFreshDirectMediaPreviewAfterAuthority(
+                messageId: messageId,
+                processedMedia: processedMedia,
+                expectedAttachments: expectedAttachments,
+                winnerAttachments: winnerAttachments,
+              ),
+          onGenerationReady: p2pService.isLocalPeer(contact.peerId)
+              ? (artifacts) async {
+                  for (final artifact in artifacts) {
+                    await p2pService.sendLocalMedia(
+                      peerId: contact.peerId,
+                      filePath: artifact.absoluteCiphertextPath,
+                      mime: kOpaqueMediaTransportMime,
+                      mediaId: artifact.attachment.id,
+                      fromPeerId: identity.peerId,
+                      durationMs: artifact.attachment.durationMs,
+                      enc: true,
+                      encScheme: artifact.attachment.encryptionScheme,
+                    );
+                  }
+                }
+              : null,
+        );
+        uploadCompleted = uploadResult.isComplete;
+        completedAttachments = uploadResult.attachments;
+        hasDurableAuthority = uploadResult.hasDurableAuthority;
+      }
       for (final _ in attachmentIds) {
-        uploadHooks.settled(succeeded: uploadResult.isComplete);
+        uploadHooks.settled(succeeded: uploadCompleted);
       }
       progressSettled = true;
-      if (!uploadResult.isComplete) {
+      if (!uploadCompleted) {
         hasDurableAuthority =
             hasDurableAuthority ||
-            await _hasExactFreshDirectMediaAuthority(
-              parent: parent,
-              expectedAttachments: expectedAttachments,
-              repository: repository,
-              authorizedForwardDedupKey: authorizedForwardDedupKey,
-            );
+            (mediaAdmission.requiresLinkedFanout
+                ? false
+                : await _hasExactFreshDirectMediaAuthority(
+                    parent: parent,
+                    expectedAttachments: expectedAttachments,
+                    repository: repository,
+                    authorizedForwardDedupKey: authorizedForwardDedupKey,
+                  ));
         return ShareBatchTargetResult(
           target: ShareTargetSelection.contact(contact),
           status: hasDurableAuthority
@@ -1617,8 +1821,9 @@ class DefaultShareBatchDeliveryCoordinator
           isForwarded: isForwardedParent,
           bridge: bridge,
           recipientMlKemPublicKey: contact.mlKemPublicKey,
-          mediaAttachments: uploadResult.attachments,
+          mediaAttachments: completedAttachments,
           mediaAttachmentRepo: mediaAttachmentRepository,
+          directLinkedMediaFanout: linkedMediaFanout,
         );
         return ShareBatchTargetResult(
           target: ShareTargetSelection.contact(contact),
@@ -1661,9 +1866,8 @@ class DefaultShareBatchDeliveryCoordinator
       );
     } finally {
       if (progressStarted && !progressSettled) {
-        final succeeded = uploadResult?.isComplete == true;
         for (final _ in attachmentIds) {
-          uploadHooks.settled(succeeded: succeeded);
+          uploadHooks.settled(succeeded: uploadCompleted);
         }
       }
       mediaUploadInFlightTracker.release(lease);
@@ -1918,7 +2122,14 @@ class DefaultShareBatchDeliveryCoordinator
     // Admission was resolved by the entry BEFORE preprocessing/copying. A
     // media sender that reaches this private sink without that decision is a
     // wiring defect and fails closed; it never performs a late roster read.
-    if (processedMedia.isNotEmpty && mediaAdmission?.refuses != false) {
+    // The linked route is immutable too: contact/key/capability drift may make
+    // the strict owner unavailable, but can never demote the captured linked
+    // snapshot to the legacy singular uploader below.
+    final linkedAdmissionCannotUseStrictOwner =
+        mediaAdmission?.requiresLinkedFanout == true && !strictFreshSelected;
+    if (processedMedia.isNotEmpty &&
+        (mediaAdmission?.refuses != false ||
+            linkedAdmissionCannotUseStrictOwner)) {
       return ShareBatchTargetResult(
         target: ShareTargetSelection.contact(contact),
         status: ShareBatchTargetStatus.failed,
@@ -1933,6 +2144,7 @@ class DefaultShareBatchDeliveryCoordinator
         processedMedia: processedMedia,
         uploadHooks: uploadHooks,
         repository: directBlobRepository,
+        mediaAdmission: mediaAdmission!,
         authorizedForwardDedupKey: internalForwardAuthorized
             ? authorizedForwardDedupKey
             : null,
@@ -2053,6 +2265,7 @@ class DefaultShareBatchDeliveryCoordinator
     required ShareBatchUploadHooks uploadHooks,
     bool allowAnnouncementTarget = true,
     String? sourceGroupIdToExclude,
+    GroupContentAuthoringAdmission? groupMediaAdmission,
   }) async {
     final groupRepo = groupRepository;
     final msgRepo = groupMessageRepository;
@@ -2061,6 +2274,29 @@ class DefaultShareBatchDeliveryCoordinator
         target: ShareTargetSelection.group(group),
         status: ShareBatchTargetStatus.failed,
         detail: 'Group sharing is unavailable.',
+      );
+    }
+
+    var exactMediaAdmission = groupMediaAdmission;
+    if (processedMedia.isNotEmpty && exactMediaAdmission == null) {
+      exactMediaAdmission = await prepareGroupContentAuthoringAdmission(
+        groupRepo: groupRepo,
+        groupId: group.id,
+        senderPeerId: identity.peerId,
+        senderPublicKey: identity.publicKey,
+        senderDeviceId: _currentSenderDeviceId,
+        senderTransportPeerId: _currentSenderDeviceId,
+        inviteDeliveryAttemptRepo: groupInviteDeliveryAttemptRepository,
+      );
+    }
+    if (processedMedia.isNotEmpty &&
+        (exactMediaAdmission == null ||
+            exactMediaAdmission.kind ==
+                GroupContentAuthoringResolutionKind.refuse)) {
+      return ShareBatchTargetResult(
+        target: ShareTargetSelection.group(group),
+        status: ShareBatchTargetStatus.failed,
+        detail: 'Media preparation failed.',
       );
     }
 
@@ -2116,6 +2352,111 @@ class DefaultShareBatchDeliveryCoordinator
               ? ShareBatchTargetStatus.sent
               : ShareBatchTargetStatus.queued,
           detail: alreadySent ? 'Sent.' : 'Saved locally for existing retry.',
+        );
+      }
+      if (processedMedia.isNotEmpty &&
+          exactMediaAdmission!.kind ==
+              GroupContentAuthoringResolutionKind.strict) {
+        final now = _forwardNow();
+        final messageId = stableOperationKey ?? _shareBatchUuid.v4();
+        final sources = <PreparedGroupMediaBlobSource>[];
+        for (final media in processedMedia) {
+          final attachmentId = _shareBatchUuid.v4();
+          final mime = _mimeFromPath(media.file.path);
+          final size = await media.file.length();
+          uploadHooks.started(
+            blobId: attachmentId,
+            budgetBytes: media.budgetBytes,
+          );
+          sources.add(
+            PreparedGroupMediaBlobSource(
+              attachment: MediaAttachment(
+                id: attachmentId,
+                messageId: messageId,
+                mime: mime,
+                size: size,
+                mediaType: MediaAttachment.mediaTypeFromMime(mime),
+                width: media.width,
+                height: media.height,
+                durationMs: media.durationMs,
+                localPath: media.file.path,
+                downloadStatus: 'upload_pending',
+                createdAt: now.toUtc().toIso8601String(),
+                ownerLane: MediaOwnerLane.group,
+              ),
+              plaintextPath: media.file.path,
+            ),
+          );
+        }
+        uploadHooks.sending();
+        final strict = await _strictGroupMediaOwner.prepareAndSend(
+          bridge: bridge,
+          groupRepository: groupRepo,
+          messageRepository: msgRepo,
+          mediaAttachmentRepository: mediaAttachmentRepository,
+          identityPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
+          senderUsername: identity.username,
+          senderDeviceId: _currentSenderDeviceId,
+          senderTransportPeerId: _currentSenderDeviceId,
+          inviteDeliveryAttemptRepository: groupInviteDeliveryAttemptRepository,
+          parent: GroupMessage(
+            id: messageId,
+            groupId: resolvedGroup.id,
+            senderPeerId: identity.peerId,
+            senderUsername: identity.username,
+            text: shareIntent.text ?? '',
+            timestamp: now,
+            status: GroupMessage.statusQueuedOffline,
+            isIncoming: false,
+            createdAt: now,
+            logicalDeliveryId: messageId,
+            isForwarded: shareIntent.forwardProvenance != null,
+          ),
+          sources: sources,
+        );
+        for (final _ in processedMedia) {
+          uploadHooks.settled(succeeded: strict.preparation.isComplete);
+        }
+        if (!strict.preparation.isComplete) {
+          return ShareBatchTargetResult(
+            target: ShareTargetSelection.group(resolvedGroup),
+            status: strict.preparation.hasDurableAuthority
+                ? ShareBatchTargetStatus.queued
+                : ShareBatchTargetStatus.failed,
+            detail: strict.preparation.hasDurableAuthority
+                ? 'Saved locally for later retry.'
+                : 'Media preparation failed.',
+          );
+        }
+        final result = strict.sendResult;
+        final message = strict.message;
+        final pendingCompletion =
+            result == SendGroupMessageResult.success &&
+            message?.status == 'pending';
+        return ShareBatchTargetResult(
+          target: ShareTargetSelection.group(resolvedGroup),
+          status: switch (result) {
+            SendGroupMessageResult.success when pendingCompletion =>
+              ShareBatchTargetStatus.queued,
+            SendGroupMessageResult.success => ShareBatchTargetStatus.sent,
+            SendGroupMessageResult.successNoPeers ||
+            SendGroupMessageResult.queuedOffline =>
+              ShareBatchTargetStatus.queued,
+            _ when strict.preparation.hasDurableAuthority =>
+              ShareBatchTargetStatus.queued,
+            _ => ShareBatchTargetStatus.failed,
+          },
+          detail: switch (result) {
+            SendGroupMessageResult.success when pendingCompletion =>
+              'Stored while group delivery finishes.',
+            SendGroupMessageResult.success => 'Sent.',
+            SendGroupMessageResult.successNoPeers ||
+            SendGroupMessageResult.queuedOffline =>
+              'Saved locally for later retry.',
+            _ => 'Share failed.',
+          },
         );
       }
       var mediaUploadFailed = false;

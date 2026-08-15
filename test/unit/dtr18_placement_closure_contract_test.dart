@@ -60,7 +60,13 @@ const _relocations = <String, List<String>>{
     // The Plan-362 Task-10 body landed with this formatted digest; the prior
     // lock still carried its pre-final-format value even though the adapter
     // itself is unchanged by Plan 363.
-    '16f57af5f0c2a4a27799d6d12246c3e2c419822d3762b187c07fd06ad06c3737',
+    // Plan 365 adds lane-qualified group custody staging/load/CAS/cleanup and
+    // its read-only crash-orphan path inventory to this same relocated media
+    // adapter; nothing moves.
+    // Plan 366 adds the plural direct-private generation stage and the exact
+    // fresh-share/authorized-forward inputs to that adapter; placement and
+    // dependency direction stay unchanged.
+    'cf565a40d732b59394efedfcb9ce40a1a841ae3ba2f5f28df808fbe5534bb992',
   ],
   'lib/features/conversation/domain/repositories/'
       'message_repository_impl.dart': <String>[
@@ -77,7 +83,10 @@ const _relocations = <String, List<String>>{
     // Plan 361 threads the fanout-generation receipt settlement expectation
     // through the already-wired upload settle delegate; the adapter remains
     // in data with nothing relocated.
-    'cc6402c85bb27a22e601ac21c3cd8dc326746e242e1b108201bed1d282cd2051',
+    // Plan 366 adds the plural private Barrier-B delegate and its exact
+    // current-snapshot/persisted-survivor validation to this same data
+    // adapter; no repository responsibility changes layer.
+    '79c4335ba5182596d8cdc9399b646fa4a3474cd322db7de51664adaa0ca27642',
   ],
   'lib/features/conversation/domain/repositories/'
       'reaction_repository_impl.dart': <String>[
@@ -114,7 +123,9 @@ const _relocations = <String, List<String>>{
   'lib/features/groups/domain/repositories/'
       'group_message_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/group_message_repository_impl.dart',
-    '370bc07e12068d0491f868b88e63493d8aa0eafe604a704b2c8e668b15de7ed0',
+    // Plan 364 adds the narrow protected-content prepared-owner/CAS
+    // capabilities to this already-relocated adapter; placement is unchanged.
+    '501a42e834c6ef2cb6af583819bbbddf6d2ea60bed43288f50f31a4c87e5eaf9',
   ],
   'lib/features/groups/domain/repositories/'
       'group_pending_broadcast_repository_impl.dart': <String>[
@@ -156,7 +167,9 @@ const _relocations = <String, List<String>>{
       'group_reaction_replay_outbox_repository_impl.dart': <String>[
     'lib/features/groups/data/repositories/'
         'group_reaction_replay_outbox_repository_impl.dart',
-    'c323a1410410d7e238ad8e4f451211910d8b745b54a4a81c0a13245050b0e2bc',
+    // Plan 364 extends this existing data adapter with exact protected-content
+    // prepared-owner, survivor-CAS, and terminal-completion capabilities.
+    'b4d961f80b8529cf7cd68a8d500eeae5d30037ffa7ed1bba5386453cf53b0a6c',
   ],
   'lib/features/groups/domain/repositories/'
       'group_repository_impl.dart': <String>[

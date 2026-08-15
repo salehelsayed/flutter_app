@@ -7,6 +7,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -22,7 +23,9 @@ bool? _isTextOnlyInboxRetryPayload(String retryPayload) {
 
     final message = jsonDecode(messageRaw) as Map<String, dynamic>;
     final media = message['media'];
-    return media is! List || media.isEmpty;
+    final strictManifest = message['mediaManifest'];
+    return (media is! List || media.isEmpty) &&
+        (strictManifest is! String || strictManifest.isEmpty);
   } catch (_) {
     return null;
   }
@@ -32,7 +35,9 @@ bool? _isTextOnlyWireEnvelope(String wireEnvelope) {
   try {
     final parsed = jsonDecode(wireEnvelope) as Map<String, dynamic>;
     final media = parsed['media'];
-    return media is! List || media.isEmpty;
+    final strictManifest = parsed['mediaManifest'];
+    return (media is! List || media.isEmpty) &&
+        (strictManifest is! String || strictManifest.isEmpty);
   } catch (_) {
     return null;
   }
@@ -193,6 +198,18 @@ Future<int> retryFailedGroupMessage({
       // A user-initiated retry of a terminal `send_failed` row re-arms it with
       // a fresh attempt budget before the normal send path re-attempts it.
       if (message.status == GroupMessage.statusSendFailed) {
+        final attachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+          message.id,
+          owner: MediaOwnerLane.group,
+        );
+        if (attachments.any(
+          (attachment) => attachment.groupMediaBlobCustodyFingerprint != null,
+        )) {
+          // The strict blob/content owners retain this terminal row exactly as
+          // persisted. Manual retry must classify it before mutating backoff
+          // state or the generic sender could remint its target set.
+          return <GroupMessage>[message];
+        }
         await groupMsgRepo.resetRetryStateForManualRetry(message.id);
         final rearmed = await groupMsgRepo.getMessage(message.id);
         return rearmed != null
@@ -289,6 +306,13 @@ Future<int> _retryFailedGroupMessagesInternal({
   var skippedCount = 0;
 
   for (final msg in failedMessages) {
+    // Strict custody rows are immutable, state-driven work owned exclusively
+    // by retryFailedGroupInboxStores. Never rebuild them from identity,
+    // current roster, key state, or authoring selectors.
+    if (declaresGroupContentRetryPayload(msg.inboxRetryPayload)) {
+      skippedCount++;
+      continue;
+    }
     final outcome = await _retryFailedGroupMessageCandidate(
       msg: msg,
       groupMsgRepo: groupMsgRepo,
@@ -384,6 +408,19 @@ _retryFailedGroupMessageCandidate({
     msg.id,
     owner: MediaOwnerLane.group,
   );
+  if (attachments.any(
+    (attachment) => attachment.groupMediaBlobCustodyFingerprint != null,
+  )) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'RETRY_FAILED_GROUP_MESSAGES_MESSAGE_SKIPPED_UNSUPPORTED',
+      details: {
+        'messageId': _shortId(msg.id),
+        'reason': 'strict_group_media_owned_by_custody_drain',
+      },
+    );
+    return (retried: false, skippedUnsupported: true);
+  }
   final hasPendingUploadAttachments = attachments.any(
     (attachment) => attachment.downloadStatus == 'upload_pending',
   );

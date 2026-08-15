@@ -2859,6 +2859,199 @@ END
         reason: 'a bound target row stays byte-identical',
       );
     });
+
+    test(
+      'TC-366-02b media DFE atomically qualifies ordinary private and disappearing parents for N v109 siblings',
+      () async {
+        final snap = await snapshot();
+
+        Future<void> expectPolicyStages({
+          required String suffix,
+          required int policyVersion,
+          required String mode,
+          required String state,
+          required int? durationSeconds,
+          required String initialText,
+          int? receivedAtMs,
+          int? clockHighWaterMs,
+        }) async {
+          final messageId = 'tc366-02b-$suffix-parent';
+          final attachmentId = '$messageId-att';
+          final eventId = 'tc366-02b-$suffix-d1';
+          await current.insert('messages', <String, Object?>{
+            'id': messageId,
+            'contact_peer_id': _fanoutContact,
+            'sender_peer_id': _sender,
+            'text': initialText,
+            'timestamp': _t0,
+            'status': 'delivered',
+            'is_incoming': 0,
+            'created_at': _t0,
+            'private_media_policy_version': policyVersion,
+            'private_media_mode': mode,
+            'private_media_duration_seconds': durationSeconds,
+            'private_media_state': state,
+            'private_media_received_at_ms': receivedAtMs,
+            'private_media_clock_high_water_ms': clockHighWaterMs,
+          });
+          await tc362SeedDirectAttachment(
+            messageId: messageId,
+            attachmentId: attachmentId,
+            contentHash: suffix.codeUnitAt(0).toRadixString(16) * 64,
+          );
+          final expected = await parentRow(messageId);
+          final candidates = candidatesOf(
+            snap,
+            (peer) => deletionEnvelope(eventId, 'cipher-$suffix-$peer'),
+          );
+          final stage =
+              await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+                current,
+                expectedRow: expected,
+                stagedRow: <String, Object?>{
+                  ...expected,
+                  'text': '',
+                  'status': 'sending',
+                  'transport': null,
+                  'deleted_at': _t1,
+                  'deleted_by_peer_id': _sender,
+                  'wire_envelope': candidates.first.wireEnvelope,
+                  'relay_expires_at': null,
+                  'custody_checked_at': null,
+                },
+                kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+                eventId: eventId,
+                parentMessageId: messageId,
+                contactAccountPeerId: _fanoutContact,
+                senderTransportPeerId: _sender,
+                expectedSnapshot: snap,
+                candidates: candidates,
+              );
+
+          expect(
+            stage.outcome,
+            DirectEventFanoutStageOutcome.applied,
+            reason: '$mode is an exact media DFE owner',
+          );
+          expect(stage.rows, hasLength(snap.targets.length));
+          expect(
+            stage.rows!.map((row) => row['recipient_peer_id']),
+            snap.targets.map((target) => target.peerId),
+          );
+          final parent = await parentRow(messageId);
+          expect(parent['direct_event_fanout_generation_id'], eventId);
+          expect(parent['deleted_at'], _t1);
+          expect(parent['text'], '');
+          expect(parent['private_media_policy_version'], policyVersion);
+          expect(parent['private_media_mode'], mode);
+          expect(parent['private_media_duration_seconds'], durationSeconds);
+          expect(parent['private_media_state'], state);
+          expect(parent['private_media_received_at_ms'], receivedAtMs);
+          expect(parent['private_media_clock_high_water_ms'], clockHighWaterMs);
+          expect(
+            await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+              current,
+              eventId: eventId,
+            ),
+            hasLength(snap.targets.length),
+          );
+        }
+
+        await expectPolicyStages(
+          suffix: 'ordinary',
+          policyVersion: 0,
+          mode: 'ordinary',
+          state: 'none',
+          durationSeconds: null,
+          initialText: 'ordinary media caption',
+        );
+        for (final mode in const <String>['protected', 'view_once']) {
+          await expectPolicyStages(
+            suffix: mode,
+            policyVersion: 1,
+            mode: mode,
+            state: 'available',
+            durationSeconds: null,
+            initialText: 'private caption',
+            receivedAtMs: 1000,
+            clockHighWaterMs: 1000,
+          );
+        }
+        await expectPolicyStages(
+          suffix: 'disappearing',
+          policyVersion: 1,
+          mode: 'disappearing',
+          state: 'available',
+          durationSeconds: 3600,
+          initialText: '',
+        );
+
+        // A crossed disappearing lifecycle is close in shape but cannot gain
+        // either the parent generation marker or any physical v109 sibling.
+        const refusedId = 'tc366-02b-crossed-disappearing-parent';
+        const refusedEventId = 'tc366-02b-crossed-disappearing-d1';
+        await current.insert('messages', const <String, Object?>{
+          'id': refusedId,
+          'contact_peer_id': _fanoutContact,
+          'sender_peer_id': _sender,
+          'text': '',
+          'timestamp': _t0,
+          'status': 'delivered',
+          'is_incoming': 0,
+          'created_at': _t0,
+          'private_media_policy_version': 1,
+          'private_media_mode': 'disappearing',
+          'private_media_duration_seconds': 3600,
+          'private_media_state': 'consumed',
+        });
+        await tc362SeedDirectAttachment(
+          messageId: refusedId,
+          attachmentId: '$refusedId-att',
+          contentHash: 'ef' * 32,
+        );
+        final refusedExpected = await parentRow(refusedId);
+        final refusedCandidates = candidatesOf(
+          snap,
+          (peer) => deletionEnvelope(
+            refusedEventId,
+            'cipher-crossed-disappearing-$peer',
+          ),
+        );
+        expect(
+          (await dbStageOutgoingDirectTextMutationFanoutInboxCustody(
+            current,
+            expectedRow: refusedExpected,
+            stagedRow: <String, Object?>{
+              ...refusedExpected,
+              'text': '',
+              'status': 'sending',
+              'transport': null,
+              'deleted_at': _t1,
+              'deleted_by_peer_id': _sender,
+              'wire_envelope': refusedCandidates.first.wireEnvelope,
+              'relay_expires_at': null,
+              'custody_checked_at': null,
+            },
+            kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+            eventId: refusedEventId,
+            parentMessageId: refusedId,
+            contactAccountPeerId: _fanoutContact,
+            senderTransportPeerId: _sender,
+            expectedSnapshot: snap,
+            candidates: refusedCandidates,
+          )).outcome,
+          DirectEventFanoutStageOutcome.refused,
+        );
+        expect(await parentRow(refusedId), refusedExpected);
+        expect(
+          await dbLoadDirectReactionInboxCustodyOutboxRowsForEventId(
+            current,
+            eventId: refusedEventId,
+          ),
+          isEmpty,
+        );
+      },
+    );
   });
 }
 

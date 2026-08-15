@@ -124,7 +124,7 @@ func requireDirectMediaCustodyProof(
 	t.Helper()
 	if resp.Status != "OK" || resp.Error != "" || resp.ErrorCode != "" ||
 		resp.ID != req.ID || resp.Mime != req.Mime || resp.Size != req.Size ||
-		resp.ContentHash != req.ContentHash || resp.CustodyKind != directMediaBlobCustodyKind ||
+		resp.ContentHash != req.ContentHash || resp.CustodyKind != req.CustodyKind ||
 		resp.CustodyContract != directMediaBlobCustodyContract || resp.ExpiresAtMs <= 0 ||
 		resp.StoreStatus != storeStatus || resp.AckStatus != ackStatus {
 		t.Fatalf("inexact media custody proof: %#v for request %#v", resp, req)

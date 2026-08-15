@@ -12202,6 +12202,176 @@ void main() {
       expect(incapableService.sendCallCount, 0);
       expect(incapable.directMutationCustodyRows, isEmpty);
     });
+
+    test(
+      'TC-366-02a persisted media caption edit stages per-target v109 without touching blobs',
+      () async {
+        const transportA = 'linked-caption-a';
+        const transportB = 'linked-caption-b';
+        final service = FakeP2PService();
+        final owners = buildOwners(service: service);
+        final attachmentSnapshot = owners.media.canonicalAttachments
+            .map((attachment) => attachment.toMap().toString())
+            .toList(growable: false);
+        final plaintexts = <String>[];
+        var snapshotReads = 0;
+        var fanoutStages = 0;
+        final authoring = DirectEventFanoutAuthoring(
+          selector: const DirectLinkedEventFanoutSelector.enabled(),
+          linkedOrigin: false,
+          senderTransportPeerId: selfPeer,
+          readSnapshot: (contact) async {
+            snapshotReads++;
+            expect(
+              owners.media.qualifyCalls,
+              1,
+              reason: 'durable media classification precedes roster routing',
+            );
+            return DirectContactFanoutSnapshot(
+              contactAccountPeerId: target,
+              contactAccountSigningPublicKey: 'contact-signing-key',
+              rosterInitialized: true,
+              targets: const <DirectContactFanoutTargetFact>[
+                DirectContactFanoutTargetFact(
+                  peerId: transportA,
+                  mlKemPublicKey: 'mlkem-caption-a',
+                  isLegacyAccountTarget: false,
+                  fingerprint: 'aaaaaaaa',
+                  deviceId: 'device-a',
+                ),
+                DirectContactFanoutTargetFact(
+                  peerId: transportB,
+                  mlKemPublicKey: 'mlkem-caption-b',
+                  isLegacyAccountTarget: false,
+                  fingerprint: 'bbbbbbbb',
+                  deviceId: 'device-b',
+                ),
+              ],
+            );
+          },
+          encrypt:
+              ({required recipientMlKemPublicKey, required plaintext}) async {
+                plaintexts.add(plaintext);
+                return (
+                  kem: 'kem-$recipientMlKemPublicKey',
+                  ciphertext: plaintext,
+                  nonce: 'nonce-$recipientMlKemPublicKey',
+                );
+              },
+          loadTextSiblings: (_) async => const [],
+          stageTextFanout:
+              ({
+                required stagedRow,
+                required messageId,
+                required contactAccountPeerId,
+                required senderTransportPeerId,
+                required expectedSnapshot,
+                required candidates,
+              }) async => throw StateError('caption EDIT is not fresh text'),
+          loadEventSiblings: (_) async => const [],
+          stageMutationFanout:
+              ({
+                required expectedRow,
+                required stagedRow,
+                required kind,
+                required eventId,
+                required parentMessageId,
+                required contactAccountPeerId,
+                required senderTransportPeerId,
+                required expectedSnapshot,
+                required candidates,
+              }) async {
+                fanoutStages++;
+                expect(service.sendCallCount, 0);
+                expect(kind, OutgoingOrdinaryAttemptKind.edit);
+                expect(candidates.map((c) => c.recipientPeerId), <String>[
+                  transportA,
+                  transportB,
+                ]);
+                final staged = ConversationMessage.fromMap(
+                  Map<String, dynamic>.from(stagedRow),
+                ).copyWith(media: owners.media.canonicalAttachments);
+                owners.messages.forceCurrent(staged);
+                final rows = <Map<String, Object?>>[
+                  for (final candidate in candidates)
+                    <String, Object?>{
+                      'recipient_peer_id': candidate.recipientPeerId,
+                      'event_id': eventId,
+                      'wire_envelope': candidate.wireEnvelope,
+                      'retry_count': 0,
+                      'last_attempt_at': null,
+                      'last_error_code': null,
+                      'contact_account_peer_id': contactAccountPeerId,
+                      'parent_message_id': parentMessageId,
+                      'created_at': t0,
+                      'updated_at': t0,
+                    },
+                ];
+                for (final row in rows) {
+                  final entry = DirectReactionInboxCustodyOutboxEntry.fromMap(
+                    row,
+                  );
+                  owners
+                          .messages
+                          .directMutationCustodyRows['${entry.recipientPeerId}\u0000${entry.eventId}'] =
+                      entry;
+                }
+                return DbDirectEventFanoutStageResult(
+                  outcome: DirectEventFanoutStageOutcome.applied,
+                  rows: rows,
+                );
+              },
+          stageReactionFanout:
+              ({
+                required reactionRow,
+                required action,
+                required parentMessageId,
+                required contactAccountPeerId,
+                required senderTransportPeerId,
+                required expectedSnapshot,
+                required candidates,
+              }) async => throw StateError('caption EDIT is not a reaction'),
+        );
+
+        final (result, _) = await sendChatMessage(
+          p2pService: service,
+          messageRepo: owners.messages,
+          mediaAttachmentRepo: owners.media,
+          targetPeerId: target,
+          text: 'linked caption',
+          senderPeerId: selfPeer,
+          senderUsername: 'Me',
+          action: MessagePayload.actionEdit,
+          messageId: messageId,
+          timestamp: t0,
+          createdAt: t0,
+          editedAt: t1,
+          // A forged attachmentless caller cannot turn the durable parent into
+          // a text EDIT or bypass persisted classification.
+          mediaAttachments: const <MediaAttachment>[],
+          directEventFanout: authoring,
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(snapshotReads, 1);
+        expect(fanoutStages, 1);
+        expect(owners.media.stageCalls, 0, reason: 'no singular v109 stage');
+        expect(owners.messages.directMutationCustodyRows, hasLength(2));
+        expect(plaintexts, hasLength(2));
+        for (final plaintext in plaintexts) {
+          final payload = jsonDecode(plaintext) as Map<String, dynamic>;
+          expect(payload['action'], MessagePayload.actionEdit);
+          expect((payload['media'] as List), hasLength(2));
+        }
+        expect(
+          owners.media.canonicalAttachments
+              .map((attachment) => attachment.toMap().toString())
+              .toList(growable: false),
+          attachmentSnapshot,
+          reason: 'caption fanout never mutates the persisted blob generation',
+        );
+      },
+    );
   });
 
   group('Plan 359 unsupported private EDIT disposition', () {
@@ -12655,6 +12825,150 @@ void main() {
       },
     );
 
+    test('TC-366-01b protected and view-once settle exact per-target siblings '
+        'with final-only projection', () async {
+      for (final privateCase in <({String suffix, PrivateMediaPolicy policy})>[
+        (suffix: 'protected', policy: const PrivateMediaPolicy.protected()),
+        (suffix: 'view-once', policy: const PrivateMediaPolicy.viewOnce()),
+      ]) {
+        final messageId = 'tc366-01b-${privateCase.suffix}';
+        final attachmentId = '$messageId-att';
+        final nowMs = DateTime.now().toUtc().millisecondsSinceEpoch;
+        final legacyExpiry = nowMs + const Duration(days: 7).inMilliseconds;
+        final deviceExpiry = legacyExpiry + 60000;
+        final parent = ConversationMessage(
+          id: messageId,
+          contactPeerId: contactAccount,
+          senderPeerId: 'my-peer',
+          text: '',
+          timestamp: authoredAt,
+          status: 'sending',
+          isIncoming: false,
+          createdAt: authoredAt,
+          privateMediaPolicy: privateCase.policy,
+          privateMediaState: PrivateMediaLifecycleState.available,
+        ).copyWith(directEventFanoutGenerationId: messageId);
+        final attachment = MediaAttachment(
+          id: attachmentId,
+          messageId: messageId,
+          mime: 'image/jpeg',
+          size: 24,
+          mediaType: 'image',
+          localPath: 'media/peer/$attachmentId.jpg',
+          downloadStatus: 'done',
+          createdAt: authoredAt,
+          contentHash: contentHash,
+          encryptionKeyBase64: 'tc366-private-key',
+          encryptionNonce: 'tc366-private-nonce',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.direct,
+          blobCustody: DirectMediaBlobCustodyCommitment(
+            contentHash: contentHash,
+            ciphertextSize: 64,
+            expiresAtMs: legacyExpiry,
+          ),
+        );
+        final targetRows = <String, List<DirectMediaBlobCustodyRow>>{
+          contactAccount: <DirectMediaBlobCustodyRow>[
+            storedLinkedRow(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              recipientPeerId: contactAccount,
+              recipientMlKemPublicKey: legacyKey,
+              expiresAtMs: legacyExpiry,
+            ),
+          ],
+          deviceTransport: <DirectMediaBlobCustodyRow>[
+            storedLinkedRow(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              recipientPeerId: deviceTransport,
+              recipientMlKemPublicKey: deviceKey,
+              expiresAtMs: deviceExpiry,
+            ),
+          ],
+        };
+        final messages = _PrivateFanoutCustodyMessageRepository(parent);
+        final media = _PrivateMutationMediaRepository()
+          ..seed(<MediaAttachment>[attachment]);
+        final bridge = _RecipientRecordingCryptoBridge();
+        final service = FakeP2PService(
+          currentState: const NodeState(
+            peerId: 'my-linked-transport',
+            isStarted: true,
+          ),
+        );
+
+        final (result, durable) = await chat_use_case.sendChatMessage(
+          p2pService: service,
+          messageRepo: messages,
+          targetPeerId: contactAccount,
+          text: '',
+          senderPeerId: 'my-peer',
+          senderUsername: 'Me',
+          messageId: messageId,
+          preassignedMessageIdIsFresh: false,
+          timestamp: authoredAt,
+          createdAt: authoredAt,
+          bridge: bridge,
+          recipientMlKemPublicKey: legacyKey,
+          mediaAttachments: <MediaAttachment>[attachment],
+          privateMediaPolicy: privateCase.policy,
+          mediaAttachmentRepo: media,
+          storeInAckCustodyInboxDetailed:
+              (peer, envelope, {required custodyKind, timeoutMs}) async =>
+                  const InboxStoreOutcome(status: InboxStoreStatus.failed),
+          storeInMediaExpiryBoundedInboxDetailed:
+              (
+                peer,
+                envelope, {
+                required custodyExpiresAtOrBeforeMs,
+                timeoutMs,
+              }) async => InboxStoreOutcome(
+                status: InboxStoreStatus.stored,
+                storeStatus: 'stored',
+                custodyContract: ackOrExpiryInboxCustodyContract,
+                expiresAtMs: custodyExpiresAtOrBeforeMs - 1,
+              ),
+          directPrivateMediaFanout: DirectPrivateMediaFanoutContext(
+            contactAccountPeerId: contactAccount,
+            snapshot: fanoutSnapshot,
+            targetRows: targetRows,
+          ),
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(durable?.status, 'inboxed', reason: privateCase.suffix);
+        expect(messages.pluralHandoffCalls, 1, reason: privateCase.suffix);
+        expect(messages.strictHandoffCalls, 0, reason: privateCase.suffix);
+        expect(
+          messages.observedAuthority,
+          DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot,
+        );
+        expect(messages.observedSnapshot, same(fanoutSnapshot));
+        expect(
+          messages.observedBindings
+              .map((binding) => binding.recipientPeerId)
+              .toList(growable: false),
+          const <String>[contactAccount, deviceTransport],
+        );
+        expect(bridge.encryptRecipientKeys, const <String>[
+          legacyKey,
+          deviceKey,
+        ]);
+        expect(
+          messages.completionStatuses,
+          const <String>['sending', 'inboxed'],
+          reason:
+              'the first exact sibling preserves the canonical parent; '
+              'only the final sibling projects completion',
+        );
+        expect(messages.directCustodyRows, isEmpty);
+        await Future<void>.delayed(Duration.zero);
+        expect(service.sendCallCount, 2);
+      }
+    });
+
     test(
       'TC-362-02b a marked plural generation refuses singular settlement',
       () async {
@@ -12765,6 +13079,7 @@ class _CaptionEditCustodyFakeRepository extends FakeMediaAttachmentRepository
   bool supportsCaptionEditCustody = true;
 
   int stageCalls = 0;
+  int qualifyCalls = 0;
   int blobTransportCalls = 0;
   List<MediaAttachment>? stagedAttachments;
   bool? v109ExistedBeforeFirstTransport;
@@ -12778,12 +13093,14 @@ class _CaptionEditCustodyFakeRepository extends FakeMediaAttachmentRepository
 
   @override
   Future<OutgoingDirectMediaCaptionEditAuthority>
-  qualifyOutgoingDirectMediaCaptionEdit(String messageId) async =>
-      OutgoingDirectMediaCaptionEditAuthority(
-        lane: lane,
-        parent: canonicalParent,
-        attachments: canonicalAttachments,
-      );
+  qualifyOutgoingDirectMediaCaptionEdit(String messageId) async {
+    qualifyCalls++;
+    return OutgoingDirectMediaCaptionEditAuthority(
+      lane: lane,
+      parent: canonicalParent,
+      attachments: canonicalAttachments,
+    );
+  }
 
   @override
   Future<OutgoingDirectMediaCaptionEditCustodyStageResult>
@@ -13490,6 +13807,111 @@ class _PrivateStrictCustodyMessageRepository extends FakeMessageRepository
   }
 }
 
+/// Plan 366 plural private Barrier-B fake. It retains the canonical parent
+/// until the final physical v108 sibling settles, mirroring the real SQL
+/// completion contract while exposing every per-target binding to the test.
+class _PrivateFanoutCustodyMessageRepository
+    extends _PrivateStrictCustodyMessageRepository
+    implements OutgoingDirectPrivateMediaFanoutInboxCustodyRepository {
+  _PrivateFanoutCustodyMessageRepository(super.current);
+
+  int pluralHandoffCalls = 0;
+  DirectPrivateMediaFanoutStageAuthority? observedAuthority;
+  DirectContactFanoutSnapshot? observedSnapshot;
+  List<DirectPrivateMediaFanoutTargetBinding> observedBindings =
+      const <DirectPrivateMediaFanoutTargetBinding>[];
+  final List<String> completionStatuses = <String>[];
+
+  @override
+  bool get supportsOutgoingDirectPrivateMediaFanoutInboxCustody => true;
+
+  @override
+  Future<OutgoingDirectPrivateFanoutInboxCustodyResult>
+  commitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody({
+    required String messageId,
+    required MediaAttachment completedAttachment,
+    required String expectedPendingLocalPath,
+    required bool hasOwnedPendingCompletion,
+    required String senderTransportPeerId,
+    required String contactAccountPeerId,
+    required DirectPrivateMediaFanoutStageAuthority authority,
+    required DirectContactFanoutSnapshot? expectedSnapshot,
+    required List<DirectPrivateMediaFanoutTargetBinding> targetBindings,
+  }) async {
+    pluralHandoffCalls++;
+    observedAuthority = authority;
+    observedSnapshot = expectedSnapshot;
+    observedBindings = List<DirectPrivateMediaFanoutTargetBinding>.unmodifiable(
+      targetBindings,
+    );
+    current = current.copyWith(wireEnvelope: targetBindings.first.wireEnvelope);
+    final custodies = <DirectInboxCustodyOutboxEntry>[];
+    for (final binding in targetBindings) {
+      final custody = DirectInboxCustodyOutboxEntry(
+        recipientPeerId: binding.recipientPeerId,
+        messageId: messageId,
+        incarnationId: computeDirectEventFanoutIncarnation(
+          messageId: messageId,
+          recipientPeerId: binding.recipientPeerId,
+        ),
+        wireEnvelope: binding.wireEnvelope,
+        retryCount: 0,
+        lastAttemptAt: null,
+        lastErrorCode: null,
+        mediaBlobManifestHash: binding.wireMediaBlobManifestHash,
+        mediaBlobExpiresAtMs: binding.wireMediaBlobExpiresAtMs,
+        contactAccountPeerId: contactAccountPeerId,
+        createdAt: current.createdAt,
+        updatedAt: current.createdAt,
+      );
+      directCustodyRows[_custodyKey(binding.recipientPeerId, messageId)] =
+          custody;
+      custodies.add(custody);
+    }
+    return OutgoingDirectPrivateFanoutInboxCustodyResult(
+      outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+      custodies: custodies,
+    );
+  }
+
+  @override
+  Future<DirectInboxCustodyCompletionResult>
+  completeAcceptedDirectInboxCustodyIfExact({
+    required DirectInboxCustodyOutboxEntry expected,
+    required int? relayExpiresAt,
+  }) async {
+    final key = _custodyKey(expected.recipientPeerId, expected.messageId);
+    final incumbent = directCustodyRows[key];
+    if (incumbent?.incarnationId != expected.incarnationId) {
+      return const DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.stale,
+        message: null,
+      );
+    }
+    directCustodyRows.remove(key);
+    final hasSibling = directCustodyRows.values.any(
+      (entry) => entry.messageId == expected.messageId,
+    );
+    if (hasSibling) {
+      completionStatuses.add(current.status);
+      return DirectInboxCustodyCompletionResult(
+        outcome: DirectInboxCustodyCompletionOutcome.messagePreserved,
+        message: current,
+      );
+    }
+    current = current.copyWith(
+      status: 'inboxed',
+      transport: 'inbox',
+      relayExpiresAt: relayExpiresAt,
+    );
+    completionStatuses.add(current.status);
+    return DirectInboxCustodyCompletionResult(
+      outcome: DirectInboxCustodyCompletionOutcome.messageAdvanced,
+      message: current,
+    );
+  }
+}
+
 /// 362: recording crypto bridge that mints a DISTINCT ciphertext per
 /// `message.encrypt` call and records the exact recipient public key each
 /// envelope was encrypted with (the per-target fanout proof).
@@ -13647,6 +14069,8 @@ class _LinkedMediaFanoutFakeRepository extends FakeMediaAttachmentRepository
     required List<DirectMediaBlobCustodyRow> custodyRows,
     required String contactAccountPeerId,
     required DirectContactFanoutSnapshot expectedSnapshot,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
   }) async => const DirectMediaBlobGenerationStageResult.refused();
 
   @override

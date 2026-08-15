@@ -21,6 +21,7 @@ import 'package:flutter_app/features/groups/application/retry_incomplete_group_d
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_diagnostic_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
@@ -282,6 +283,13 @@ class StartupRouter extends StatefulWidget {
   /// The group repository for group persistence.
   final GroupRepository? groupRepository;
 
+  /// 364: the only route allowed from the linked group status list. The
+  /// composition is intentionally a widget builder so this router never gains
+  /// broad group runtime callbacks.
+  final Widget Function(BuildContext context, GroupModel group)?
+  linkedGroupConversationBuilder;
+  final Future<bool> Function(String groupId)? isLinkedGroupAuthoritySettled;
+
   /// The group message repository for group message persistence.
   final GroupMessageRepository? groupMessageRepository;
 
@@ -453,6 +461,8 @@ class StartupRouter extends StatefulWidget {
     this.reactionRepository,
     this.reactionListener,
     this.groupRepository,
+    this.linkedGroupConversationBuilder,
+    this.isLinkedGroupAuthoritySettled,
     this.groupMessageRepository,
     this.groupExitDiagnosticRepository,
     this.groupInviteDeliveryAttemptRepository,
@@ -604,7 +614,13 @@ class _StartupRouterState extends State<StartupRouter> {
                   await LinkedInstallationAuthority(
                     secureKeyStore: widget.secureKeyStore,
                   ).load(expectedAccountPeerId: identity.peerId);
-        if (linkedAuthority?.isActiveLinkedSecondary == true) {
+        final isActiveLinkedRoute =
+            linkedAuthority?.isActiveLinkedSecondary == true;
+        if (isActiveLinkedRoute) {
+          // The role-aware latch is the sole ACTIVE-linked cold owner. It
+          // starts/qualifies the persisted transport before its restricted
+          // recovery, so this route must await it and must not also schedule
+          // the ordinary router-owned P2P start below.
           await widget.ensureRuntimeServicesReady?.call();
           if (!mounted) return;
           emitFlowEvent(
@@ -623,6 +639,10 @@ class _StartupRouterState extends State<StartupRouter> {
               callIdentityGenerateForTransport: () =>
                   callIdentityGenerate(bridge),
               groupRepository: widget.groupRepository,
+              linkedGroupConversationBuilder:
+                  widget.linkedGroupConversationBuilder,
+              isLinkedGroupAuthoritySettled:
+                  widget.isLinkedGroupAuthoritySettled,
               onSetupSuccess: widget.ensureRuntimeServicesReady,
               backgroundPreference:
                   widget.appShellController.backgroundPreference,
@@ -863,6 +883,10 @@ class _StartupRouterState extends State<StartupRouter> {
                       callIdentityGenerateForTransport: () =>
                           callIdentityGenerate(bridge),
                       groupRepository: widget.groupRepository,
+                      linkedGroupConversationBuilder:
+                          widget.linkedGroupConversationBuilder,
+                      isLinkedGroupAuthoritySettled:
+                          widget.isLinkedGroupAuthoritySettled,
                       onSetupSuccess: widget.ensureRuntimeServicesReady,
                       backgroundPreference:
                           widget.appShellController.backgroundPreference,
@@ -1826,6 +1850,8 @@ class _StartupRouterState extends State<StartupRouter> {
       reactionRepository: widget.reactionRepository,
       reactionListener: widget.reactionListener,
       groupRepository: widget.groupRepository,
+      linkedGroupConversationBuilder: widget.linkedGroupConversationBuilder,
+      isLinkedGroupAuthoritySettled: widget.isLinkedGroupAuthoritySettled,
       groupMessageRepository: widget.groupMessageRepository,
       groupExitDiagnosticRepository: widget.groupExitDiagnosticRepository,
       groupInviteDeliveryAttemptRepository:

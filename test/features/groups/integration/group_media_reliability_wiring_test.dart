@@ -2,12 +2,28 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 
+bool _isDartIdentifierContinuation(int codeUnit) =>
+    (codeUnit >= 0x30 && codeUnit <= 0x39) ||
+    (codeUnit >= 0x41 && codeUnit <= 0x5a) ||
+    codeUnit == 0x5f ||
+    codeUnit == 0x24 ||
+    (codeUnit >= 0x61 && codeUnit <= 0x7a);
+
 List<String> _balancedInvocations(String source, String token) {
   final invocations = <String>[];
   var searchFrom = 0;
   while (true) {
     final tokenIndex = source.indexOf(token, searchFrom);
     if (tokenIndex < 0) break;
+    // Match an exact invocation identifier. In particular, the deliberately
+    // narrow `LinkedGroupConversationWired` capability must not be mistaken
+    // for the full `GroupConversationWired` owner merely because its class
+    // name has that suffix.
+    if (tokenIndex > 0 &&
+        _isDartIdentifierContinuation(source.codeUnitAt(tokenIndex - 1))) {
+      searchFrom = tokenIndex + token.length;
+      continue;
+    }
     final openIndex = tokenIndex + token.length - 1;
     var depth = 0;
     var quote = 0;
@@ -503,7 +519,8 @@ void main() {
         expect(
           invocations,
           isNotEmpty,
-          reason: '$path no longer calls acceptPendingGroupInvite — re-derive '
+          reason:
+              '$path no longer calls acceptPendingGroupInvite — re-derive '
               'this census',
         );
 
@@ -530,9 +547,10 @@ void main() {
       final source = File(
         'lib/features/identity/presentation/startup_router.dart',
       ).readAsStringSync();
-      final rebuilds = _balancedInvocations(source, 'StartupRouter(')
-          .where((invocation) => invocation.contains('groupRepository:'))
-          .toList();
+      final rebuilds = _balancedInvocations(
+        source,
+        'StartupRouter(',
+      ).where((invocation) => invocation.contains('groupRepository:')).toList();
 
       expect(rebuilds, isNotEmpty);
       for (final rebuild in rebuilds) {

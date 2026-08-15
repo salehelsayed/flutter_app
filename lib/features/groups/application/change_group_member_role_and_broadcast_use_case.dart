@@ -72,7 +72,7 @@ changeGroupMemberRoleAndBroadcast({
   Future<void> Function(GroupPendingBroadcast broadcast)? enqueuePending,
   Future<List<GroupPendingBroadcast>> Function(String groupId)? loadPending,
   Future<void> Function(String id)? removePending,
-}) => _runGroupRoleBroadcastAuthorityLocked(groupId, () async {
+}) => _runGroupRoleBroadcastActionLocked(groupId, () async {
   final identity = await identityRepo.loadIdentity();
   if (identity == null) throw StateError('No identity found');
 
@@ -168,27 +168,372 @@ changeGroupMemberRoleAndBroadcast({
   if (recipients.isEmpty) {
     throw StateError('Role transition requires at least one recipient');
   }
-  ProtectedGroupAuthorityPreparation? protectedPreparation;
-  if (hasProtectedGroupAuthorityAdapter &&
-      hasProtectedGroupPhysicalAuthority(members)) {
-    final actor = members.singleWhere(
-      (member) => member.peerId == identity.peerId,
-    );
-    final senderDevice = resolveProtectedGroupSenderDevice(
-      actor: actor,
-      senderPublicKey: senderBinding.devicePublicKey ?? identity.publicKey,
-      senderDeviceId: senderBinding.deviceId,
-      senderTransportPeerId: senderBinding.transportPeerId ?? identity.peerId,
-    );
-    if (senderDevice == null) {
-      throw StateError('Role transition sender device is not authoritative');
-    }
-    protectedPreparation = await prepareProtectedGroupAuthority(
-      ProtectedGroupAuthorityPrepareRequest(
+  // Signing and candidate construction are intentionally outside the shared
+  // authority phase. They may involve bridge crypto and must not prevent a
+  // competing terminal membership transition from committing. Everything
+  // from durable PREPARED authority through the local/native role commit stays
+  // in one membership mutation phase. The established final pre-commit state
+  // recheck below either commits the signed transition or durably ABORTS every
+  // prepared owner.
+  return runGroupMembershipMutationLocked(
+    groupId: groupId,
+    action: () async {
+      ProtectedGroupAuthorityPreparation? protectedPreparation;
+      if (hasProtectedGroupAuthorityAdapter &&
+          hasProtectedGroupPhysicalAuthority(members)) {
+        final actor = members.singleWhere(
+          (member) => member.peerId == identity.peerId,
+        );
+        final senderDevice = resolveProtectedGroupSenderDevice(
+          actor: actor,
+          senderPublicKey: senderBinding.devicePublicKey ?? identity.publicKey,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId:
+              senderBinding.transportPeerId ?? identity.peerId,
+        );
+        if (senderDevice == null) {
+          throw StateError(
+            'Role transition sender device is not authoritative',
+          );
+        }
+        protectedPreparation = await prepareProtectedGroupAuthority(
+          ProtectedGroupAuthorityPrepareRequest(
+            groupId: groupId,
+            transitionId: sourceEventId,
+            control: ProtectedGroupAuthorityControl.memberRole,
+            replayData: <String, dynamic>{
+              'groupId': groupId,
+              'senderId': identity.peerId,
+              'senderUsername': identity.username,
+              if (senderBinding.deviceId != null)
+                'senderDeviceId': senderBinding.deviceId,
+              if (senderBinding.transportPeerId != null)
+                'transportPeerId': senderBinding.transportPeerId,
+              'text': sysText,
+              'timestamp': eventAt.toUtc().toIso8601String(),
+              'messageId': sourceEventId,
+            },
+            actorAccountPeerId: identity.peerId,
+            actorAccountPublicKey: identity.publicKey,
+            actorAccountPrivateKey: identity.privateKey,
+            senderDevice: senderDevice,
+            frozenRecipients: freezeProtectedGroupPhysicalRecipients(members),
+          ),
+        );
+        if (protectedPreparation == null ||
+            !protectedPreparation.hasAuthenticatedAuthority) {
+          throw StateError('Role transition protected preparation failed');
+        }
+      }
+      final createdAt = DateTime.now().toUtc();
+      final pendingId = 'pending_group_broadcast:$groupId:$sourceEventId';
+      final preparedPendingRow = GroupPendingBroadcast(
+        id: pendingId,
         groupId: groupId,
-        transitionId: sourceEventId,
-        control: ProtectedGroupAuthorityControl.memberRole,
-        replayData: <String, dynamic>{
+        kind: groupPendingBroadcastKindMemberRolePrepared,
+        sysText: sysText,
+        recipientPeerIds: recipients,
+        eventAt: eventAt,
+        sourceMessageId: sourceEventId,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+      final pendingRow = GroupPendingBroadcast(
+        id: pendingId,
+        groupId: groupId,
+        kind: groupPendingBroadcastKindMemberRoleUpdated,
+        sysText: sysText,
+        recipientPeerIds: recipients,
+        eventAt: eventAt,
+        sourceMessageId: sourceEventId,
+        createdAt: createdAt,
+        updatedAt: createdAt,
+      );
+
+      // Production always wires this outbox. A prepared row is durable before the
+      // role/config commit and becomes the ordinary retry row after commit. A
+      // concurrent runner retains it while this process is preparing; after a
+      // restart it sends only when local role state proves the commit happened.
+      final usesDurableOutbox =
+          enqueuePending != null || hasGroupPendingBroadcastEnqueueSink;
+      if (usesDurableOutbox) {
+        markGroupRolePreparationInFlight(pendingId);
+        try {
+          await runGroupAuthorityPhaseIfNeeded(
+            groupId: groupId,
+            authorityPhaseHeld: isGroupAuthorityPhaseHeld(groupId),
+            action: () async {
+              // The prepared row is the decisive role-transition claim. Serialize
+              // it with exit enqueue and Dissolve's final preflight. A winner that
+              // already dissolved the group is also rejected before custom/fake
+              // outbox implementations can persist an orphan row.
+              final currentGroup = await groupRepo.getGroup(groupId);
+              if (currentGroup == null || currentGroup.isDissolved) {
+                throw StateError(groupMembershipMutationDissolvedMessage);
+              }
+              await _enqueueAndVerifyPending(
+                preparedPendingRow,
+                enqueuePending: enqueuePending,
+                loadPending: loadPending,
+              );
+            },
+          );
+        } catch (queueError) {
+          // Verification failure does not prove that the row at this deterministic
+          // id belongs to this invocation. Preserve any collision rather than
+          // deleting another durable transition; no role/config write has occurred.
+          try {
+            await _requireProtectedRoleAbort(protectedPreparation);
+          } catch (abortError) {
+            throw StateError(
+              'Role transition was not committed because its durable prepared row '
+              'could not be verified ($queueError), and its protected preparation '
+              'could not be durably aborted ($abortError)',
+            );
+          } finally {
+            clearGroupRolePreparationInFlight(pendingId);
+          }
+          throw StateError(
+            'Role transition was not committed because its durable prepared row '
+            'could not be verified: $queueError',
+          );
+        }
+        // From this point the exact ordinary PREPARED row is a proven durable
+        // owner of the same transition. Include it in a future protected abort so
+        // ABORTED and retirement of every owner commit in one transaction.
+        protectedPreparation = protectedPreparation?.withAbortRows(
+          <GroupPendingBroadcast>[preparedPendingRow],
+        );
+      }
+
+      ({DateTime eventAt, String eventId})? committed;
+      try {
+        committed = await updateGroupMemberRole(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          memberPeerId: memberPeerId,
+          role: role,
+          selfPeerId: identity.peerId,
+          eventAt: eventAt,
+          beforeCommit: () async {
+            if (isPromotion &&
+                !await _isCurrentPromotionCandidate(
+                  groupRepo: groupRepo,
+                  messageRepo: messageRepo,
+                  inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+                  groupId: groupId,
+                  selfPeerId: identity.peerId,
+                  memberPeerId: memberPeerId,
+                )) {
+              throw StateError(groupRoleCandidateNoLongerEligibleMessage);
+            }
+            // The signed audit and groupConfig above describe one exact pre-state.
+            // Fail closed if membership, metadata, dissolution, or key generation
+            // changed while signing or durably preparing the outbox row; otherwise
+            // native config could commit a fresh state beside a stale signed audit.
+            // Keep this as the final awaited check before the first local write.
+            final currentPreTransitionStateHash =
+                await buildGroupTransitionStateHash(groupRepo, groupId);
+            if (currentPreTransitionStateHash != preTransitionStateHash) {
+              throw StateError(groupRoleTransitionStateChangedMessage);
+            }
+          },
+        );
+      } catch (commitError) {
+        Object? abortError;
+        Object? discardError;
+        final commitIsAmbiguous = commitError is GroupMemberRoleCommitAmbiguous;
+        final protectedAbortOwnsOrdinary =
+            protectedPreparation?.abortRows.any(
+              (row) => sameExactGroupPendingBroadcast(row, preparedPendingRow),
+            ) ??
+            false;
+        if (commitIsAmbiguous) {
+          // Native may already enforce the signed config. Keep the exact ordinary
+          // and protected PREPARED owners as the durable convergence / exit fence;
+          // only a proven pre-native failure is safe to abort.
+          if (usesDurableOutbox) {
+            clearGroupRolePreparationInFlight(pendingId);
+          }
+        } else {
+          // ABORTED is the durable negative fact that prevents a surviving
+          // authenticated PREPARED fact from being rediscovered as recoverable.
+          // Establish it before retiring the ordinary owner; if abort cannot be
+          // proven, leave that owner in place and fail closed.
+          try {
+            await _requireProtectedRoleAbort(protectedPreparation);
+          } catch (error) {
+            abortError = error;
+          }
+          if (abortError == null &&
+              usesDurableOutbox &&
+              !protectedAbortOwnsOrdinary) {
+            try {
+              await (removePending ?? removeGroupPendingBroadcast)(pendingId);
+            } catch (error) {
+              discardError = error;
+            }
+          }
+          if (usesDurableOutbox) {
+            clearGroupRolePreparationInFlight(pendingId);
+          }
+        }
+        if (abortError != null) {
+          throw StateError(
+            'Role transition commit failed ($commitError) and its protected '
+            'preparation could not be durably aborted ($abortError); the exact '
+            'ordinary prepared row was retained',
+          );
+        }
+        if (discardError != null) {
+          throw StateError(
+            'Role transition commit failed ($commitError) and its prepared row '
+            'could not be removed ($discardError)',
+          );
+        }
+        rethrow;
+      }
+      if (committed == null) {
+        Object? abortError;
+        final protectedAbortOwnsOrdinary =
+            protectedPreparation?.abortRows.any(
+              (row) => sameExactGroupPendingBroadcast(row, preparedPendingRow),
+            ) ??
+            false;
+        try {
+          await _requireProtectedRoleAbort(protectedPreparation);
+        } catch (error) {
+          abortError = error;
+        }
+        if (abortError == null &&
+            usesDurableOutbox &&
+            !protectedAbortOwnsOrdinary) {
+          try {
+            await (removePending ?? removeGroupPendingBroadcast)(pendingId);
+          } catch (error) {
+            clearGroupRolePreparationInFlight(pendingId);
+            throw StateError(
+              'No role transition was committed, its protected preparation was '
+              'aborted, but its ordinary prepared row could not be removed '
+              '($error)',
+            );
+          }
+        }
+        if (usesDurableOutbox) {
+          clearGroupRolePreparationInFlight(pendingId);
+        }
+        if (abortError != null) {
+          throw StateError(
+            'No role transition was committed and its protected preparation could '
+            'not be durably aborted ($abortError); the exact ordinary prepared row '
+            'was retained',
+          );
+        }
+        final current = await groupRepo.getMember(groupId, memberPeerId);
+        return ChangeGroupMemberRoleAndBroadcastResult(
+          outcome: ChangeGroupMemberRoleAndBroadcastOutcome.unchanged,
+          updatedMember: current ?? proposedMember,
+        );
+      }
+      if (!committed.eventAt.isAtSameMomentAs(eventAt) ||
+          committed.eventId != sourceEventId) {
+        if (usesDurableOutbox) {
+          clearGroupRolePreparationInFlight(pendingId);
+        }
+        throw StateError('Committed role event did not match its signed event');
+      }
+
+      var protectedActivated = protectedPreparation == null;
+      try {
+        protectedActivated = await activateProtectedGroupAuthority(
+          protectedPreparation,
+          requireAllCustody: false,
+        );
+      } catch (error) {
+        // The durable protected row remains retryable. The role transition is
+        // already committed, so a transport failure cannot turn into a caller-
+        // visible mutation failure that invites a conflicting retry.
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'GROUP_ROLE_PROTECTED_ACTIVATION_DEFERRED',
+          details: {
+            'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
+            'memberPeerId': memberPeerId.length > 8
+                ? memberPeerId.substring(0, 8)
+                : memberPeerId,
+            'error': error.toString(),
+          },
+        );
+      }
+      if (!protectedActivated) {
+        if (usesDurableOutbox) {
+          clearGroupRolePreparationInFlight(pendingId);
+        }
+        return ChangeGroupMemberRoleAndBroadcastResult(
+          outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+          updatedMember: proposedMember,
+          eventAt: eventAt,
+          sourceEventId: sourceEventId,
+        );
+      }
+
+      // Keep the ordinary row in PREPARED while protected activation verifies or
+      // repairs the exact local projection and advances authenticated COMPLETE.
+      // Otherwise a false/failed activation could expose the role transition via
+      // the generic publish/inbox runner before protected recovery owns it.
+      if (usesDurableOutbox) {
+        try {
+          await _enqueueAndVerifyPending(
+            pendingRow,
+            enqueuePending: enqueuePending,
+            loadPending: loadPending,
+          );
+        } catch (_) {
+          clearGroupRolePreparationInFlight(pendingId);
+          return ChangeGroupMemberRoleAndBroadcastResult(
+            outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+            updatedMember: proposedMember,
+            eventAt: eventAt,
+            sourceEventId: sourceEventId,
+          );
+        }
+        clearGroupRolePreparationInFlight(pendingId);
+      }
+
+      Map<String, dynamic>? publishResult;
+      try {
+        final roleTimelineMessage = buildMemberRoleUpdatedTimelineMessage(
+          groupId: groupId,
+          updatedPeerId: proposedMember.peerId,
+          updatedUsername: proposedMember.username,
+          previousRole: targetMember.role,
+          newRole: proposedMember.role,
+          senderId: identity.peerId,
+          senderUsername: identity.username,
+          eventAt: eventAt,
+        );
+        await messageRepo?.saveMessage(roleTimelineMessage);
+
+        publishResult = await callGroupPublish(
+          bridge,
+          groupId: groupId,
+          text: sysText,
+          senderPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
+          senderUsername: identity.username,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
+          senderDevicePublicKey: senderBinding.devicePublicKey,
+          senderKeyPackageId: senderBinding.keyPackageId,
+          messageId: sourceEventId,
+        );
+        if (publishResult['ok'] != true) {
+          throw StateError('Role transition publish did not complete');
+        }
+
+        final inboxPayload = jsonEncode({
           'groupId': groupId,
           'senderId': identity.peerId,
           'senderUsername': identity.username,
@@ -199,448 +544,102 @@ changeGroupMemberRoleAndBroadcast({
           'text': sysText,
           'timestamp': eventAt.toUtc().toIso8601String(),
           'messageId': sourceEventId,
-        },
-        actorAccountPeerId: identity.peerId,
-        actorAccountPublicKey: identity.publicKey,
-        actorAccountPrivateKey: identity.privateKey,
-        senderDevice: senderDevice,
-        frozenRecipients: freezeProtectedGroupPhysicalRecipients(members),
-      ),
-    );
-    if (protectedPreparation == null ||
-        !protectedPreparation.hasAuthenticatedAuthority) {
-      throw StateError('Role transition protected preparation failed');
-    }
-  }
-  final createdAt = DateTime.now().toUtc();
-  final pendingId = 'pending_group_broadcast:$groupId:$sourceEventId';
-  final preparedPendingRow = GroupPendingBroadcast(
-    id: pendingId,
-    groupId: groupId,
-    kind: groupPendingBroadcastKindMemberRolePrepared,
-    sysText: sysText,
-    recipientPeerIds: recipients,
-    eventAt: eventAt,
-    sourceMessageId: sourceEventId,
-    createdAt: createdAt,
-    updatedAt: createdAt,
-  );
-  final pendingRow = GroupPendingBroadcast(
-    id: pendingId,
-    groupId: groupId,
-    kind: groupPendingBroadcastKindMemberRoleUpdated,
-    sysText: sysText,
-    recipientPeerIds: recipients,
-    eventAt: eventAt,
-    sourceMessageId: sourceEventId,
-    createdAt: createdAt,
-    updatedAt: createdAt,
-  );
+        });
+        final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          groupId: groupId,
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: inboxPayload,
+          senderPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderPrivateKey: identity.privateKey,
+          senderDeviceId: senderBinding.deviceId,
+          senderTransportPeerId: senderBinding.transportPeerId,
+          senderKeyPackageId: senderBinding.keyPackageId,
+          messageId: roleTimelineMessage.id,
+          recipientPeerIds: recipients,
+        );
+        await callGroupInboxStore(
+          bridge,
+          groupId,
+          replayEnvelope,
+          recipientPeerIds: recipients,
+          preserveRecipientPeerIds: true,
+        );
 
-  // Production always wires this outbox. A prepared row is durable before the
-  // role/config commit and becomes the ordinary retry row after commit. A
-  // concurrent runner retains it while this process is preparing; after a
-  // restart it sends only when local role state proves the commit happened.
-  final usesDurableOutbox =
-      enqueuePending != null || hasGroupPendingBroadcastEnqueueSink;
-  if (usesDurableOutbox) {
-    markGroupRolePreparationInFlight(pendingId);
-    try {
-      await runGroupAuthorityPhaseIfNeeded(
-        groupId: groupId,
-        authorityPhaseHeld: isGroupAuthorityPhaseHeld(groupId),
-        action: () async {
-          // The prepared row is the decisive role-transition claim. Serialize
-          // it with exit enqueue and Dissolve's final preflight. A winner that
-          // already dissolved the group is also rejected before custom/fake
-          // outbox implementations can persist an orphan row.
-          final currentGroup = await groupRepo.getGroup(groupId);
-          if (currentGroup == null || currentGroup.isDissolved) {
-            throw StateError(groupMembershipMutationDissolvedMessage);
+        if (sendP2PMessage != null) {
+          final directTargets = groupMembershipUpdateDirectTargets(
+            members: proposedMembers,
+            excludingPeerId: identity.peerId,
+          );
+          for (final target in directTargets) {
+            unawaited(
+              sendGroupMembershipUpdateDirect(
+                sendP2PMessage: sendP2PMessage,
+                recipientPeerId: target.deliveryPeerId,
+                groupId: groupId,
+                senderPeerId: identity.peerId,
+                replayEnvelope: replayEnvelope,
+                timestamp: eventAt,
+                messageId: sourceEventId,
+              ),
+            );
           }
+        }
+      } catch (_) {
+        if (!usesDurableOutbox) {
           await _enqueueAndVerifyPending(
-            preparedPendingRow,
+            pendingRow,
             enqueuePending: enqueuePending,
             loadPending: loadPending,
           );
-        },
-      );
-    } catch (queueError) {
-      // Verification failure does not prove that the row at this deterministic
-      // id belongs to this invocation. Preserve any collision rather than
-      // deleting another durable transition; no role/config write has occurred.
-      try {
-        await _requireProtectedRoleAbort(protectedPreparation);
-      } catch (abortError) {
-        throw StateError(
-          'Role transition was not committed because its durable prepared row '
-          'could not be verified ($queueError), and its protected preparation '
-          'could not be durably aborted ($abortError)',
-        );
-      } finally {
-        clearGroupRolePreparationInFlight(pendingId);
-      }
-      throw StateError(
-        'Role transition was not committed because its durable prepared row '
-        'could not be verified: $queueError',
-      );
-    }
-    // From this point the exact ordinary PREPARED row is a proven durable
-    // owner of the same transition. Include it in a future protected abort so
-    // ABORTED and retirement of every owner commit in one transaction.
-    protectedPreparation = protectedPreparation?.withAbortRows(
-      <GroupPendingBroadcast>[preparedPendingRow],
-    );
-  }
-
-  ({DateTime eventAt, String eventId})? committed;
-  try {
-    committed = await updateGroupMemberRole(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      memberPeerId: memberPeerId,
-      role: role,
-      selfPeerId: identity.peerId,
-      eventAt: eventAt,
-      beforeCommit: () async {
-        if (isPromotion &&
-            !await _isCurrentPromotionCandidate(
-              groupRepo: groupRepo,
-              messageRepo: messageRepo,
-              inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
-              groupId: groupId,
-              selfPeerId: identity.peerId,
-              memberPeerId: memberPeerId,
-            )) {
-          throw StateError(groupRoleCandidateNoLongerEligibleMessage);
         }
-        // The signed audit and groupConfig above describe one exact pre-state.
-        // Fail closed if membership, metadata, dissolution, or key generation
-        // changed while signing or durably preparing the outbox row; otherwise
-        // native config could commit a fresh state beside a stale signed audit.
-        // Keep this as the final awaited check before the first local write.
-        final currentPreTransitionStateHash =
-            await buildGroupTransitionStateHash(groupRepo, groupId);
-        if (currentPreTransitionStateHash != preTransitionStateHash) {
-          throw StateError(groupRoleTransitionStateChangedMessage);
-        }
-      },
-    );
-  } catch (commitError) {
-    Object? abortError;
-    Object? discardError;
-    final commitIsAmbiguous = commitError is GroupMemberRoleCommitAmbiguous;
-    final protectedAbortOwnsOrdinary =
-        protectedPreparation?.abortRows.any(
-          (row) => sameExactGroupPendingBroadcast(row, preparedPendingRow),
-        ) ??
-        false;
-    if (commitIsAmbiguous) {
-      // Native may already enforce the signed config. Keep the exact ordinary
-      // and protected PREPARED owners as the durable convergence / exit fence;
-      // only a proven pre-native failure is safe to abort.
-      if (usesDurableOutbox) {
-        clearGroupRolePreparationInFlight(pendingId);
-      }
-    } else {
-      // ABORTED is the durable negative fact that prevents a surviving
-      // authenticated PREPARED fact from being rediscovered as recoverable.
-      // Establish it before retiring the ordinary owner; if abort cannot be
-      // proven, leave that owner in place and fail closed.
-      try {
-        await _requireProtectedRoleAbort(protectedPreparation);
-      } catch (error) {
-        abortError = error;
-      }
-      if (abortError == null &&
-          usesDurableOutbox &&
-          !protectedAbortOwnsOrdinary) {
-        try {
-          await (removePending ?? removeGroupPendingBroadcast)(pendingId);
-        } catch (error) {
-          discardError = error;
-        }
-      }
-      if (usesDurableOutbox) {
-        clearGroupRolePreparationInFlight(pendingId);
-      }
-    }
-    if (abortError != null) {
-      throw StateError(
-        'Role transition commit failed ($commitError) and its protected '
-        'preparation could not be durably aborted ($abortError); the exact '
-        'ordinary prepared row was retained',
-      );
-    }
-    if (discardError != null) {
-      throw StateError(
-        'Role transition commit failed ($commitError) and its prepared row '
-        'could not be removed ($discardError)',
-      );
-    }
-    rethrow;
-  }
-  if (committed == null) {
-    Object? abortError;
-    final protectedAbortOwnsOrdinary =
-        protectedPreparation?.abortRows.any(
-          (row) => sameExactGroupPendingBroadcast(row, preparedPendingRow),
-        ) ??
-        false;
-    try {
-      await _requireProtectedRoleAbort(protectedPreparation);
-    } catch (error) {
-      abortError = error;
-    }
-    if (abortError == null &&
-        usesDurableOutbox &&
-        !protectedAbortOwnsOrdinary) {
-      try {
-        await (removePending ?? removeGroupPendingBroadcast)(pendingId);
-      } catch (error) {
-        clearGroupRolePreparationInFlight(pendingId);
-        throw StateError(
-          'No role transition was committed, its protected preparation was '
-          'aborted, but its ordinary prepared row could not be removed '
-          '($error)',
+        return ChangeGroupMemberRoleAndBroadcastResult(
+          outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+          updatedMember: proposedMember,
+          eventAt: eventAt,
+          sourceEventId: sourceEventId,
+          publishResult: publishResult,
         );
       }
-    }
-    if (usesDurableOutbox) {
-      clearGroupRolePreparationInFlight(pendingId);
-    }
-    if (abortError != null) {
-      throw StateError(
-        'No role transition was committed and its protected preparation could '
-        'not be durably aborted ($abortError); the exact ordinary prepared row '
-        'was retained',
-      );
-    }
-    final current = await groupRepo.getMember(groupId, memberPeerId);
-    return ChangeGroupMemberRoleAndBroadcastResult(
-      outcome: ChangeGroupMemberRoleAndBroadcastOutcome.unchanged,
-      updatedMember: current ?? proposedMember,
-    );
-  }
-  if (!committed.eventAt.isAtSameMomentAs(eventAt) ||
-      committed.eventId != sourceEventId) {
-    if (usesDurableOutbox) {
-      clearGroupRolePreparationInFlight(pendingId);
-    }
-    throw StateError('Committed role event did not match its signed event');
-  }
 
-  var protectedActivated = protectedPreparation == null;
-  try {
-    protectedActivated = await activateProtectedGroupAuthority(
-      protectedPreparation,
-      requireAllCustody: false,
-    );
-  } catch (error) {
-    // The durable protected row remains retryable. The role transition is
-    // already committed, so a transport failure cannot turn into a caller-
-    // visible mutation failure that invites a conflicting retry.
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'GROUP_ROLE_PROTECTED_ACTIVATION_DEFERRED',
-      details: {
-        'groupId': groupId.length > 8 ? groupId.substring(0, 8) : groupId,
-        'memberPeerId': memberPeerId.length > 8
-            ? memberPeerId.substring(0, 8)
-            : memberPeerId,
-        'error': error.toString(),
-      },
-    );
-  }
-  if (!protectedActivated) {
-    if (usesDurableOutbox) {
-      clearGroupRolePreparationInFlight(pendingId);
-    }
-    return ChangeGroupMemberRoleAndBroadcastResult(
-      outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
-      updatedMember: proposedMember,
-      eventAt: eventAt,
-      sourceEventId: sourceEventId,
-    );
-  }
-
-  // Keep the ordinary row in PREPARED while protected activation verifies or
-  // repairs the exact local projection and advances authenticated COMPLETE.
-  // Otherwise a false/failed activation could expose the role transition via
-  // the generic publish/inbox runner before protected recovery owns it.
-  if (usesDurableOutbox) {
-    try {
-      await _enqueueAndVerifyPending(
-        pendingRow,
-        enqueuePending: enqueuePending,
-        loadPending: loadPending,
-      );
-    } catch (_) {
-      clearGroupRolePreparationInFlight(pendingId);
+      List<GroupPendingBroadcast> pendingAfterSuccess;
+      try {
+        if (usesDurableOutbox) {
+          await (removePending ?? removeGroupPendingBroadcast)(pendingRow.id);
+        }
+        pendingAfterSuccess = await (loadPending ?? loadGroupPendingBroadcasts)(
+          groupId,
+        );
+      } catch (_) {
+        return ChangeGroupMemberRoleAndBroadcastResult(
+          outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+          updatedMember: proposedMember,
+          eventAt: eventAt,
+          sourceEventId: sourceEventId,
+          publishResult: publishResult,
+        );
+      }
+      if (_containsExactRoleRow(pendingAfterSuccess, sourceEventId)) {
+        return ChangeGroupMemberRoleAndBroadcastResult(
+          outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+          updatedMember: proposedMember,
+          eventAt: eventAt,
+          sourceEventId: sourceEventId,
+          publishResult: publishResult,
+        );
+      }
       return ChangeGroupMemberRoleAndBroadcastResult(
-        outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
+        outcome: ChangeGroupMemberRoleAndBroadcastOutcome.readyToLeave,
         updatedMember: proposedMember,
         eventAt: eventAt,
         sourceEventId: sourceEventId,
+        publishResult: publishResult,
       );
-    }
-    clearGroupRolePreparationInFlight(pendingId);
-  }
-
-  Map<String, dynamic>? publishResult;
-  try {
-    final roleTimelineMessage = buildMemberRoleUpdatedTimelineMessage(
-      groupId: groupId,
-      updatedPeerId: proposedMember.peerId,
-      updatedUsername: proposedMember.username,
-      previousRole: targetMember.role,
-      newRole: proposedMember.role,
-      senderId: identity.peerId,
-      senderUsername: identity.username,
-      eventAt: eventAt,
-    );
-    await messageRepo?.saveMessage(roleTimelineMessage);
-
-    publishResult = await callGroupPublish(
-      bridge,
-      groupId: groupId,
-      text: sysText,
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderUsername: identity.username,
-      senderDeviceId: senderBinding.deviceId,
-      senderTransportPeerId: senderBinding.transportPeerId,
-      senderDevicePublicKey: senderBinding.devicePublicKey,
-      senderKeyPackageId: senderBinding.keyPackageId,
-      messageId: sourceEventId,
-    );
-    if (publishResult['ok'] != true) {
-      throw StateError('Role transition publish did not complete');
-    }
-
-    final inboxPayload = jsonEncode({
-      'groupId': groupId,
-      'senderId': identity.peerId,
-      'senderUsername': identity.username,
-      if (senderBinding.deviceId != null)
-        'senderDeviceId': senderBinding.deviceId,
-      if (senderBinding.transportPeerId != null)
-        'transportPeerId': senderBinding.transportPeerId,
-      'text': sysText,
-      'timestamp': eventAt.toUtc().toIso8601String(),
-      'messageId': sourceEventId,
-    });
-    final replayEnvelope = await buildGroupOfflineReplayEnvelope(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      groupId: groupId,
-      payloadType: groupOfflineReplayPayloadTypeMessage,
-      plaintext: inboxPayload,
-      senderPeerId: identity.peerId,
-      senderPublicKey: identity.publicKey,
-      senderPrivateKey: identity.privateKey,
-      senderDeviceId: senderBinding.deviceId,
-      senderTransportPeerId: senderBinding.transportPeerId,
-      senderKeyPackageId: senderBinding.keyPackageId,
-      messageId: roleTimelineMessage.id,
-      recipientPeerIds: recipients,
-    );
-    await callGroupInboxStore(
-      bridge,
-      groupId,
-      replayEnvelope,
-      recipientPeerIds: recipients,
-      preserveRecipientPeerIds: true,
-    );
-
-    if (sendP2PMessage != null) {
-      final directTargets = groupMembershipUpdateDirectTargets(
-        members: proposedMembers,
-        excludingPeerId: identity.peerId,
-      );
-      for (final target in directTargets) {
-        unawaited(
-          sendGroupMembershipUpdateDirect(
-            sendP2PMessage: sendP2PMessage,
-            recipientPeerId: target.deliveryPeerId,
-            groupId: groupId,
-            senderPeerId: identity.peerId,
-            replayEnvelope: replayEnvelope,
-            timestamp: eventAt,
-            messageId: sourceEventId,
-          ),
-        );
-      }
-    }
-  } catch (_) {
-    if (!usesDurableOutbox) {
-      await _enqueueAndVerifyPending(
-        pendingRow,
-        enqueuePending: enqueuePending,
-        loadPending: loadPending,
-      );
-    }
-    return ChangeGroupMemberRoleAndBroadcastResult(
-      outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
-      updatedMember: proposedMember,
-      eventAt: eventAt,
-      sourceEventId: sourceEventId,
-      publishResult: publishResult,
-    );
-  }
-
-  List<GroupPendingBroadcast> pendingAfterSuccess;
-  try {
-    if (usesDurableOutbox) {
-      await (removePending ?? removeGroupPendingBroadcast)(pendingRow.id);
-    }
-    pendingAfterSuccess = await (loadPending ?? loadGroupPendingBroadcasts)(
-      groupId,
-    );
-  } catch (_) {
-    return ChangeGroupMemberRoleAndBroadcastResult(
-      outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
-      updatedMember: proposedMember,
-      eventAt: eventAt,
-      sourceEventId: sourceEventId,
-      publishResult: publishResult,
-    );
-  }
-  if (_containsExactRoleRow(pendingAfterSuccess, sourceEventId)) {
-    return ChangeGroupMemberRoleAndBroadcastResult(
-      outcome: ChangeGroupMemberRoleAndBroadcastOutcome.pendingSync,
-      updatedMember: proposedMember,
-      eventAt: eventAt,
-      sourceEventId: sourceEventId,
-      publishResult: publishResult,
-    );
-  }
-  return ChangeGroupMemberRoleAndBroadcastResult(
-    outcome: ChangeGroupMemberRoleAndBroadcastOutcome.readyToLeave,
-    updatedMember: proposedMember,
-    eventAt: eventAt,
-    sourceEventId: sourceEventId,
-    publishResult: publishResult,
+    },
   );
 });
-
-Future<T> _runGroupRoleBroadcastAuthorityLocked<T>(
-  String groupId,
-  Future<T> Function() action,
-) {
-  // PREPARED history is visible to the restart runner as soon as protected
-  // preparation returns. Keep that fact, its ordinary outbox owner, the
-  // local/native role commit, authenticated activation, and ordinary-row
-  // promotion in one authority phase so recovery cannot overtake its live
-  // producer in the same process.
-  return runGroupAuthorityPhaseIfNeeded(
-    groupId: groupId,
-    authorityPhaseHeld: isGroupAuthorityPhaseHeld(groupId),
-    action: () => _runGroupRoleBroadcastActionLocked(groupId, action),
-  );
-}
 
 Future<T> _runGroupRoleBroadcastActionLocked<T>(
   String groupId,

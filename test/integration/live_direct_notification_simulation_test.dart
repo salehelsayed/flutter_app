@@ -83,139 +83,127 @@ void main() {
     fail(reason);
   }
 
-  test(
-    'relay direct message, recipient resumed-not-viewing -> one audible '
-    'notification + sender confirmed',
-    () async {
-      final (:id, :nonce) = await DirectMessageRouter.deliver(
-        bob,
-        alice,
-        'hello over relay',
-        transport: 'relay',
-        messageId: 'msg-relay-1',
-      );
+  test('relay direct message, recipient resumed-not-viewing -> one audible '
+      'notification + sender confirmed', () async {
+    final (:id, :nonce) = await DirectMessageRouter.deliver(
+      bob,
+      alice,
+      'hello over relay',
+      transport: 'relay',
+      messageId: 'msg-relay-1',
+    );
 
-      await waitFor(
-        () => alice.notificationService.shown.isNotEmpty,
-        reason: 'a live relay direct message should notify',
-      );
+    await waitFor(
+      () => alice.notificationService.shown.isNotEmpty,
+      reason: 'a live relay direct message should notify',
+    );
 
-      // Notify + ack coexist on the live path.
-      expect(alice.notificationService.shown, hasLength(1));
-      expect(alice.notificationService.shown.single.silent, isFalse);
-      expect(alice.notificationService.shown.single.contactPeerId, bobId);
+    // Notify + ack coexist on the live path.
+    expect(alice.notificationService.shown, hasLength(1));
+    expect(alice.notificationService.shown.single.silent, isFalse);
+    expect(alice.notificationService.shown.single.contactPeerId, bobId);
 
-      final confirms = alice.bridge.payloadsFor('message:confirm');
-      expect(confirms, hasLength(1));
-      expect(confirms.single, equals({'nonce': nonce, 'ok': true}));
+    final confirms = alice.bridge.payloadsFor('message:confirm');
+    expect(confirms, hasLength(1));
+    expect(confirms.single, equals({'nonce': nonce, 'ok': true}));
 
-      // The message took the live-direct path with transport == 'relay'
-      // (mirrors p2p_service_impl_test.dart:1107), never the suppressing
-      // recovery callback.
-      expect(alice.liveDirectTransports, equals(['relay']));
-      expect(alice.recoveredReplayCount, 0);
-      expect(alice.messageRepo.lastSavedMessage?.id, id);
-      await waitFor(
-        () => alice.stagingRepo.entry('direct:$nonce') == null,
-        reason: 'committed live direct entry should be deleted',
-      );
-    },
-  );
+    // The message took the live-direct path with transport == 'relay'
+    // (mirrors p2p_service_impl_test.dart:1107), never the suppressing
+    // recovery callback.
+    expect(alice.liveDirectTransports, equals(['relay']));
+    expect(alice.recoveredReplayCount, 0);
+    expect((await alice.messageRepo.getMessage(id))?.id, id);
+    await waitFor(
+      () => alice.stagingRepo.entry('direct:$nonce') == null,
+      reason: 'committed live direct entry should be deleted',
+    );
+  });
 
-  test(
-    'direct transport behaves identically to relay (confirmNonce-gated, not '
-    'transport-gated)',
-    () async {
-      await DirectMessageRouter.deliver(
-        bob,
-        alice,
-        'hello over direct',
-        transport: 'direct',
-        messageId: 'msg-direct-1',
-      );
+  test('direct transport behaves identically to relay (confirmNonce-gated, not '
+      'transport-gated)', () async {
+    await DirectMessageRouter.deliver(
+      bob,
+      alice,
+      'hello over direct',
+      transport: 'direct',
+      messageId: 'msg-direct-1',
+    );
 
-      await waitFor(
-        () => alice.notificationService.shown.isNotEmpty,
-        reason: 'a live direct-transport message should notify identically',
-      );
+    await waitFor(
+      () => alice.notificationService.shown.isNotEmpty,
+      reason: 'a live direct-transport message should notify identically',
+    );
 
-      expect(alice.notificationService.shown, hasLength(1));
-      expect(alice.notificationService.shown.single.silent, isFalse);
+    expect(alice.notificationService.shown, hasLength(1));
+    expect(alice.notificationService.shown.single.silent, isFalse);
 
-      // Confirmed AND took the live-direct path showing transport == 'direct'.
-      expect(alice.bridge.payloadsFor('message:confirm'), hasLength(1));
-      expect(alice.liveDirectTransports, equals(['direct']));
-      expect(alice.recoveredReplayCount, 0);
-    },
-  );
+    // Confirmed AND took the live-direct path showing transport == 'direct'.
+    expect(alice.bridge.payloadsFor('message:confirm'), hasLength(1));
+    expect(alice.liveDirectTransports, equals(['direct']));
+    expect(alice.recoveredReplayCount, 0);
+  });
 
-  test(
-    'resumed + viewing the sender\'s conversation -> suppressed',
-    () async {
-      alice.conversationTracker.setActive(bobId);
+  test('resumed + viewing the sender\'s conversation -> suppressed', () async {
+    alice.conversationTracker.setActive(bobId);
 
-      await DirectMessageRouter.deliver(
-        bob,
-        alice,
-        'while viewing',
-        transport: 'relay',
-        messageId: 'msg-viewing-1',
-      );
+    await DirectMessageRouter.deliver(
+      bob,
+      alice,
+      'while viewing',
+      transport: 'relay',
+      messageId: 'msg-viewing-1',
+    );
 
-      // The message still routes through the live-direct (notify-capable) path
-      // and confirms; the notification is suppressed by viewing_conversation.
-      await waitFor(
-        () => alice.bridge.payloadsFor('message:confirm').isNotEmpty,
-        reason: 'a viewed-conversation message should still confirm the sender',
-      );
-      // Settle the fire-and-forget notification path before asserting absence.
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+    // The message still routes through the live-direct (notify-capable) path
+    // and confirms; the notification is suppressed by viewing_conversation.
+    await waitFor(
+      () => alice.bridge.payloadsFor('message:confirm').isNotEmpty,
+      reason: 'a viewed-conversation message should still confirm the sender',
+    );
+    // Settle the fire-and-forget notification path before asserting absence.
+    await Future<void>.delayed(const Duration(milliseconds: 50));
 
-      expect(alice.notificationService.shown, isEmpty);
-      expect(alice.liveDirectTransports, equals(['relay']));
-      expect(alice.recoveredReplayCount, 0);
-    },
-  );
+    expect(alice.notificationService.shown, isEmpty);
+    expect(alice.liveDirectTransports, equals(['relay']));
+    expect(alice.recoveredReplayCount, 0);
+  });
 
-  test(
-    'burst within the window -> one tone then silent',
-    () async {
-      await DirectMessageRouter.deliver(
-        bob,
-        alice,
-        'burst one',
-        transport: 'relay',
-        messageId: 'msg-burst-1',
-      );
-      await waitFor(
-        () => alice.notificationService.shown.length == 1,
-        reason: 'first burst message should notify',
-      );
-      expect(alice.notificationService.shown.last.silent, isFalse);
+  test('burst within the window -> one tone then silent', () async {
+    await DirectMessageRouter.deliver(
+      bob,
+      alice,
+      'burst one',
+      transport: 'relay',
+      messageId: 'msg-burst-1',
+    );
+    await waitFor(
+      () => alice.notificationService.shown.length == 1,
+      reason: 'first burst message should notify',
+    );
+    expect(alice.notificationService.shown.last.silent, isFalse);
 
-      // Second message from the same sender, still inside the 30s window.
-      now = now.add(const Duration(seconds: 5));
-      await DirectMessageRouter.deliver(
-        bob,
-        alice,
-        'burst two',
-        transport: 'relay',
-        messageId: 'msg-burst-2',
-      );
-      await waitFor(
-        () => alice.notificationService.shown.length == 2,
-        reason: 'second burst message should still update the notification',
-      );
+    // Second message from the same sender, still inside the 30s window.
+    now = now.add(const Duration(seconds: 5));
+    await DirectMessageRouter.deliver(
+      bob,
+      alice,
+      'burst two',
+      transport: 'relay',
+      messageId: 'msg-burst-2',
+    );
+    await waitFor(
+      () => alice.notificationService.shown.length == 2,
+      reason: 'second burst message should still update the notification',
+    );
 
-      // [audible, silent] — at most one tone per conversation per window.
-      expect(
-        alice.notificationService.shown.map((n) => n.silent).toList(),
-        equals([false, true]),
-      );
-      // Both messages were still confirmed to the sender.
-      expect(alice.bridge.payloadsFor('message:confirm'), hasLength(2));
-    },
-  );
+    // [audible, silent] — at most one tone per conversation per window.
+    expect(
+      alice.notificationService.shown.map((n) => n.silent).toList(),
+      equals([false, true]),
+    );
+    // Both messages were still confirmed to the sender.
+    expect(alice.bridge.payloadsFor('message:confirm'), hasLength(2));
+  });
 
   test(
     'LAN (wifi) takes the live-lan path, not the direct staging path',
@@ -242,7 +230,7 @@ void main() {
       expect(alice.liveDirectTransports, isEmpty);
       expect(alice.recoveredReplayCount, 0);
       expect(alice.bridge.payloadsFor('message:confirm'), isEmpty);
-      expect(alice.messageRepo.lastSavedMessage?.id, id);
+      expect((await alice.messageRepo.getMessage(id))?.id, id);
       await waitFor(
         () => alice.stagingRepo.entry('lan:$nonce') == null,
         reason: 'committed live LAN entry should be deleted',

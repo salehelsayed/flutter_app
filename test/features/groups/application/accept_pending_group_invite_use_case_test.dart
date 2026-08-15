@@ -4553,7 +4553,13 @@ class _CommandSchedulingBridge extends FakeBridge {
     final response = await super.send(message);
     if (!_used && decoded['cmd'] == command) {
       _used = true;
-      unawaited(onCommandReturn?.call());
+      // Model a bridge/event-loop completion arriving independently from the
+      // guarded lifecycle leaf. Calling the hook in this bridge invocation's
+      // Zone would make a genuinely concurrent membership mutation look like
+      // forbidden same-stack authority re-entry.
+      Zone.root.run(() {
+        unawaited(onCommandReturn?.call());
+      });
     }
     return response;
   }

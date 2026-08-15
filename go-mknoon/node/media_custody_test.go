@@ -118,6 +118,182 @@ func exactMediaCustodyTestResponse(
 	}
 }
 
+func TestTC365GroupMediaBlobCustody(t *testing.T) {
+	payloads := map[string][]byte{
+		"group-blob-a": []byte("group custody bytes A"),
+		"group-blob-b": []byte("group custody bytes B"),
+	}
+	expiries := map[string]int64{
+		"group-blob-a": 2_000_000_100_001,
+		"group-blob-b": 2_000_000_200_002,
+	}
+	relay := startMediaCustodyTestRelay(t, func(stream network.Stream, request mediaRequest) {
+		payload := payloads[request.ID]
+		expiresAtMs := expiries[request.ID]
+		if request.CustodyKind != CustodyKindGroupMediaBlobV1 ||
+			request.CustodyContract != AckOrExpiryCustodyContract ||
+			len(payload) == 0 || expiresAtMs <= 0 {
+			writeMediaCustodyTestResponse(t, stream, mediaResponse{
+				Status: "ERROR", ErrorCode: MediaCustodyIneligibleCode,
+			})
+			return
+		}
+		switch request.Action {
+		case mediaUploadCustodyAction:
+			writeMediaCustodyTestResponse(t, stream, mediaResponse{Status: "READY"})
+			body := make([]byte, request.Size)
+			if _, err := io.ReadFull(stream, body); err != nil {
+				t.Errorf("read group upload body: %v", err)
+				return
+			}
+			if !bytes.Equal(body, payload) {
+				t.Errorf("group upload %s body=%q, want %q", request.ID, body, payload)
+				return
+			}
+			writeMediaCustodyTestResponse(
+				t,
+				stream,
+				exactMediaCustodyTestResponse(request, "stored", "", expiresAtMs),
+			)
+		case "download":
+			writeMediaCustodyTestResponse(
+				t,
+				stream,
+				exactMediaCustodyTestResponse(request, "", "", expiresAtMs),
+			)
+			if _, err := stream.Write(payload); err != nil {
+				t.Errorf("write group download body: %v", err)
+			}
+		case mediaAckCustodyAction:
+			writeMediaCustodyTestResponse(
+				t,
+				stream,
+				exactMediaCustodyTestResponse(request, "", "acked", expiresAtMs),
+			)
+		default:
+			writeMediaCustodyTestResponse(t, stream, mediaResponse{
+				Status: "ERROR", ErrorCode: MediaCustodyUnsupportedCode,
+			})
+		}
+	})
+	n := startLocalNodeForMultiRelayTest(t)
+	configureMediaCustodyTestRelays(t, n, relay.addr(t))
+
+	results := make(map[string]MediaCustodyResult, len(payloads))
+	for _, id := range []string{"group-blob-a", "group-blob-b"} {
+		path := filepath.Join(t.TempDir(), id+".enc")
+		if err := os.WriteFile(path, payloads[id], 0o600); err != nil {
+			t.Fatalf("write %s fixture: %v", id, err)
+		}
+		hash := mediaCustodyTestHash(payloads[id])
+		result, err := n.MediaUploadCustody(
+			id,
+			"recipient-"+id,
+			"application/octet-stream",
+			path,
+			CustodyKindGroupMediaBlobV1,
+			AckOrExpiryCustodyContract,
+			hash,
+		)
+		if err != nil || result.ID != id || result.CustodyKind != CustodyKindGroupMediaBlobV1 ||
+			result.ExpiresAtMs != expiries[id] || result.StoreStatus != "stored" {
+			t.Fatalf("group upload %s outcome=%#v err=%v", id, result, err)
+		}
+		results[id] = result
+	}
+	if results["group-blob-a"].ExpiresAtMs == results["group-blob-b"].ExpiresAtMs {
+		t.Fatal("distinct group blob receipts collapsed to one expiry")
+	}
+
+	proof := results["group-blob-a"]
+	outputPath := filepath.Join(t.TempDir(), "group-blob-a.download")
+	download, err := n.MediaDownloadCustody(
+		proof.ID,
+		outputPath,
+		proof.CustodyKind,
+		proof.CustodyContract,
+		proof.ContentHash,
+		proof.Size,
+		proof.Mime,
+		proof.ExpiresAtMs,
+	)
+	if err != nil || download.CustodyKind != CustodyKindGroupMediaBlobV1 ||
+		download.ExpiresAtMs != proof.ExpiresAtMs {
+		t.Fatalf("group download=%#v err=%v", download, err)
+	}
+	gotBody, err := os.ReadFile(outputPath)
+	if err != nil || !bytes.Equal(gotBody, payloads[proof.ID]) {
+		t.Fatalf("downloaded group bytes=%q err=%v", gotBody, err)
+	}
+	acked, err := n.MediaAckCustody(
+		proof.ID,
+		proof.CustodyKind,
+		proof.CustodyContract,
+		proof.ContentHash,
+		proof.Size,
+		proof.Mime,
+		proof.ExpiresAtMs,
+		proof.CustodyRelayPeerId,
+	)
+	if err != nil || acked.AckStatus != "acked" ||
+		acked.CustodyKind != CustodyKindGroupMediaBlobV1 {
+		t.Fatalf("group ACK=%#v err=%v", acked, err)
+	}
+
+	if err := validateMediaCustodyContract(
+		CustodyKindDirectMediaBlobV1,
+		AckOrExpiryCustodyContract,
+	); err != nil {
+		t.Fatalf("incumbent direct kind changed: %v", err)
+	}
+	for _, kind := range []string{"group_media_blob", "group_media_blob_v2"} {
+		if err := validateMediaCustodyContract(kind, AckOrExpiryCustodyContract); !errors.Is(err, ErrMediaCustodyIneligible) {
+			t.Fatalf("crossed group kind %q error=%v", kind, err)
+		}
+	}
+
+	t.Run("group content exact recipient ceilings use the existing inbox action", func(t *testing.T) {
+		const ceilingA int64 = 2_000_000_300_003
+		const ceilingB int64 = 2_000_000_400_004
+		targetA := generatePeerIDStr(t)
+		targetB := generatePeerIDStr(t)
+		wantByTarget := map[string]int64{targetA: ceilingA, targetB: ceilingB}
+		ackRelay := startAckCustodyTestRelay(t, func(req inboxRequest) string {
+			want, exists := wantByTarget[req.To]
+			if !exists {
+				t.Fatalf("unknown group content target: %#v", req)
+			}
+			if req.Action != inboxStoreAckCustodyAction ||
+				req.CustodyKind != CustodyKindGroupContentV1 ||
+				req.CustodyExpiresAtOrBeforeMs != want {
+				t.Fatalf("group content ceiling request=%#v want=%d", req, want)
+			}
+			return fmt.Sprintf(
+				`{"status":"OK","storeStatus":"stored","custodyContract":"ack_or_expiry_v1","expiresAtMs":%d}`,
+				want,
+			)
+		})
+		contentNode := startLocalNodeForMultiRelayTest(t)
+		configureAckCustodyTestRelays(t, contentNode, ackRelay)
+		for _, target := range []struct {
+			to      string
+			ceiling int64
+		}{{to: targetA, ceiling: ceilingA}, {to: targetB, ceiling: ceilingB}} {
+			outcome, err := contentNode.InboxStoreAckCustodyDetailedWithWakeTokenAndExpiryCeiling(
+				target.to,
+				"group-media-envelope",
+				1000,
+				"",
+				CustodyKindGroupContentV1,
+				target.ceiling,
+			)
+			if err != nil || outcome.ExpiresAtMs != target.ceiling {
+				t.Fatalf("target %s outcome=%#v err=%v", target.to, outcome, err)
+			}
+		}
+	})
+}
+
 func TestMediaCustodyUploadPhaseAwareRelaySelection(t *testing.T) {
 	t.Run("unsupported pre-body relay advances to an exact accepting relay", func(t *testing.T) {
 		payload := []byte("strict upload bytes")

@@ -90,6 +90,12 @@ class MediaAttachment {
   /// Never serialized onto wire JSON.
   final String? directMediaBlobCustodyFingerprint;
 
+  /// LOCAL-ONLY one-way digest proving that this group attachment was adopted
+  /// through target-qualified strict blob custody. It survives retirement of
+  /// the independent custody rows so a later replay cannot demote to the
+  /// legacy shared-blob path. Never serialized onto wire JSON.
+  final String? groupMediaBlobCustodyFingerprint;
+
   /// LOCAL-ONLY (228): which message lane owns this attachment. Null means
   /// the row is legacy `'unresolved'` (or wire-parsed) and has no trusted
   /// owner. Never serialized onto wire JSON.
@@ -125,6 +131,7 @@ class MediaAttachment {
     this.encryptionScheme,
     this.blobCustody,
     this.directMediaBlobCustodyFingerprint,
+    this.groupMediaBlobCustodyFingerprint,
     this.ownerLane,
     this.isBookmarked = false,
     this.lastPlaybackPositionMs = 0,
@@ -193,6 +200,8 @@ class MediaAttachment {
       encryptionScheme: map['encryption_scheme'] as String?,
       directMediaBlobCustodyFingerprint:
           map['direct_media_blob_custody_fingerprint'] as String?,
+      groupMediaBlobCustodyFingerprint:
+          map['group_media_blob_custody_fingerprint'] as String?,
       ownerLane: mediaOwnerLaneFromDbValue(map['owner_lane'] as String?),
       isBookmarked: ((map['is_bookmarked'] as num?)?.toInt() ?? 0) != 0,
       lastPlaybackPositionMs:
@@ -226,6 +235,9 @@ class MediaAttachment {
       if (directMediaBlobCustodyFingerprint != null)
         'direct_media_blob_custody_fingerprint':
             directMediaBlobCustodyFingerprint,
+      if (groupMediaBlobCustodyFingerprint != null)
+        'group_media_blob_custody_fingerprint':
+            groupMediaBlobCustodyFingerprint,
       // LOCAL-ONLY columns (228) — DB map only, never wire JSON.
       'owner_lane': ownerLane?.dbValue ?? kMediaOwnerLaneUnresolved,
       'is_bookmarked': isBookmarked ? 1 : 0,
@@ -324,6 +336,8 @@ class MediaAttachment {
     bool clearBlobCustody = false,
     String? directMediaBlobCustodyFingerprint,
     bool clearDirectMediaBlobCustodyFingerprint = false,
+    String? groupMediaBlobCustodyFingerprint,
+    bool clearGroupMediaBlobCustodyFingerprint = false,
     MediaOwnerLane? ownerLane,
     bool? isBookmarked,
     int? lastPlaybackPositionMs,
@@ -361,6 +375,10 @@ class MediaAttachment {
           ? null
           : (directMediaBlobCustodyFingerprint ??
                 this.directMediaBlobCustodyFingerprint),
+      groupMediaBlobCustodyFingerprint: clearGroupMediaBlobCustodyFingerprint
+          ? null
+          : (groupMediaBlobCustodyFingerprint ??
+                this.groupMediaBlobCustodyFingerprint),
       ownerLane: ownerLane ?? this.ownerLane,
       isBookmarked: isBookmarked ?? this.isBookmarked,
       lastPlaybackPositionMs:

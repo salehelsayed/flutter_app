@@ -2,6 +2,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_sink.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
@@ -163,72 +164,75 @@ Future<RejoinGroupTopicsResult> rejoinGroupTopics({
           >(
             groupRepo: groupRepo,
             groupId: group.id,
-            action: (currentGroup) async {
-              final canRejoin = canRejoinForExitIntent;
-              if (canRejoin != null && !await canRejoin(group.id)) {
-                return (
-                  outcome: RejoinOutcome.skippedExitInProgress,
-                  keyEpoch: null,
-                  memberCount: 0,
-                  dissolvedAt: null,
-                );
-              }
-              if (currentGroup.isDissolved) {
-                return (
-                  outcome: RejoinOutcome.skippedDissolved,
-                  keyEpoch: null,
-                  memberCount: 0,
-                  dissolvedAt: currentGroup.dissolvedAt,
-                );
-              }
+            action: (currentGroup) => runGroupMembershipActionLocked(
+              groupId: group.id,
+              action: () async {
+                final canRejoin = canRejoinForExitIntent;
+                if (canRejoin != null && !await canRejoin(group.id)) {
+                  return (
+                    outcome: RejoinOutcome.skippedExitInProgress,
+                    keyEpoch: null,
+                    memberCount: 0,
+                    dissolvedAt: null,
+                  );
+                }
+                if (currentGroup.isDissolved) {
+                  return (
+                    outcome: RejoinOutcome.skippedDissolved,
+                    keyEpoch: null,
+                    memberCount: 0,
+                    dissolvedAt: currentGroup.dissolvedAt,
+                  );
+                }
 
-              final keyInfo = await groupRepo.getLatestKey(group.id);
-              if (keyInfo == null) {
-                return (
-                  outcome: RejoinOutcome.skippedNoKey,
-                  keyEpoch: null,
-                  memberCount: 0,
-                  dissolvedAt: null,
-                );
-              }
+                final keyInfo = await groupRepo.getLatestKey(group.id);
+                if (keyInfo == null) {
+                  return (
+                    outcome: RejoinOutcome.skippedNoKey,
+                    keyEpoch: null,
+                    memberCount: 0,
+                    dissolvedAt: null,
+                  );
+                }
 
-              // Finding 05 Phase 3: skip a group still inside its rejoin-backoff
-              // window. The shortlist is batch-loaded, but the external join still
-              // owns a fresh lifecycle read in this per-group phase.
-              if (rejoinState?.nextEligibleAt != null &&
-                  rejoinState!.nextEligibleAt!.isAfter(nowUtc)) {
-                return (
-                  outcome: RejoinOutcome.deferred,
+                // Finding 05 Phase 3: skip a group still inside its rejoin-backoff
+                // window. The shortlist is batch-loaded, but the external join still
+                // owns a fresh lifecycle read in this per-group phase.
+                if (rejoinState?.nextEligibleAt != null &&
+                    rejoinState!.nextEligibleAt!.isAfter(nowUtc)) {
+                  return (
+                    outcome: RejoinOutcome.deferred,
+                    keyEpoch: keyInfo.keyGeneration,
+                    memberCount: 0,
+                    dissolvedAt: null,
+                  );
+                }
+
+                final members = await groupRepo.getMembers(group.id);
+                final groupConfig = buildGroupConfigPayload(
+                  currentGroup,
+                  members,
+                );
+                await callGroupJoinWithConfig(
+                  bridge,
+                  groupId: group.id,
+                  groupConfig: groupConfig,
+                  groupKey: keyInfo.encryptedKey,
                   keyEpoch: keyInfo.keyGeneration,
-                  memberCount: 0,
+                );
+                if (rejoinState != null) {
+                  try {
+                    await groupRepo.clearGroupRejoinState(group.id);
+                  } catch (_) {}
+                }
+                return (
+                  outcome: RejoinOutcome.joined,
+                  keyEpoch: keyInfo.keyGeneration,
+                  memberCount: members.length,
                   dissolvedAt: null,
                 );
-              }
-
-              final members = await groupRepo.getMembers(group.id);
-              final groupConfig = buildGroupConfigPayload(
-                currentGroup,
-                members,
-              );
-              await callGroupJoinWithConfig(
-                bridge,
-                groupId: group.id,
-                groupConfig: groupConfig,
-                groupKey: keyInfo.encryptedKey,
-                keyEpoch: keyInfo.keyGeneration,
-              );
-              if (rejoinState != null) {
-                try {
-                  await groupRepo.clearGroupRejoinState(group.id);
-                } catch (_) {}
-              }
-              return (
-                outcome: RejoinOutcome.joined,
-                keyEpoch: keyInfo.keyGeneration,
-                memberCount: members.length,
-                dissolvedAt: null,
-              );
-            },
+              },
+            ),
           );
 
       if (!guarded.didRun) {

@@ -1455,6 +1455,7 @@ class GroupMessageListener {
     bool rethrowOnError = false,
     bool allowMembershipBuffer = false,
     bool membershipPhaseHeld = false,
+    GroupMessageDeliveryDisposition? deliveryDisposition,
   }) async {
     if (!await _allowsInboundAccountSideEffects(
       operation: 'group_replay_message',
@@ -1467,42 +1468,12 @@ class GroupMessageListener {
       msgRepoOverride: msgRepoOverride,
       rethrowOnError: rethrowOnError,
       allowMembershipBuffer: allowMembershipBuffer,
-      deliverySource: 'replay',
+      deliverySource:
+          deliveryDisposition == GroupMessageDeliveryDisposition.historyRepair
+          ? 'historyRepair'
+          : 'replay',
+      deliveryDisposition: deliveryDisposition,
       membershipPhaseHeld: membershipPhaseHeld,
-    );
-  }
-
-  /// Replays one exact system transition under a capability minted only after
-  /// its protected authority proof and durable PREPARED fact were verified.
-  /// Mutable current-member authorization must not invalidate that historical
-  /// authority while an interrupted projection is being repaired.
-  Future<void> handleAuthenticatedAuthorityReplayEnvelope(
-    Map<String, dynamic> data, {
-    required VerifiedProtectedGroupAuthorityReplay authority,
-    GroupMessageRepository? msgRepoOverride,
-    bool rethrowOnError = false,
-    bool membershipPhaseHeld = false,
-  }) async {
-    final replayData = Map<String, dynamic>.unmodifiable(
-      Map<String, dynamic>.from(data),
-    );
-    if (!authority.authorizesSystemReplay(replayData)) {
-      throw StateError('protected authority replay capability mismatch');
-    }
-    if (!await _allowsInboundAccountSideEffects(
-      operation: 'group_replay_message',
-      data: replayData,
-    )) {
-      throw StateError('protected authority replay account gate closed');
-    }
-    return _handleQueuedUserMessage(
-      replayData,
-      msgRepoOverride: msgRepoOverride,
-      rethrowOnError: rethrowOnError,
-      allowMembershipBuffer: false,
-      deliverySource: 'protectedAuthorityReplay',
-      membershipPhaseHeld: membershipPhaseHeld,
-      protectedAuthorityReplay: authority,
     );
   }
 
@@ -1807,6 +1778,7 @@ class GroupMessageListener {
     bool allowMembershipBuffer = true,
     bool requestRecoveryOnError = false,
     String deliverySource = 'listener',
+    GroupMessageDeliveryDisposition? deliveryDisposition,
     bool membershipPhaseHeld = false,
     VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
   }) {
@@ -1819,6 +1791,7 @@ class GroupMessageListener {
         allowMembershipBuffer: allowMembershipBuffer,
         requestRecoveryOnError: requestRecoveryOnError,
         deliverySource: deliverySource,
+        deliveryDisposition: deliveryDisposition,
         membershipPhaseHeld: membershipPhaseHeld,
         deferKeyRepairRequest: membershipPhaseHeld,
         protectedAuthorityReplay: protectedAuthorityReplay,
@@ -1837,6 +1810,7 @@ class GroupMessageListener {
             allowMembershipBuffer: allowMembershipBuffer,
             requestRecoveryOnError: requestRecoveryOnError,
             deliverySource: deliverySource,
+            deliveryDisposition: deliveryDisposition,
             membershipPhaseHeld: membershipPhaseHeld,
             deferKeyRepairRequest: membershipPhaseHeld,
             protectedAuthorityReplay: protectedAuthorityReplay,
@@ -2096,6 +2070,7 @@ class GroupMessageListener {
     bool allowMembershipBuffer = true,
     bool requestRecoveryOnError = false,
     String deliverySource = 'listener',
+    GroupMessageDeliveryDisposition? deliveryDisposition,
     bool membershipPhaseHeld = false,
     bool deferKeyRepairRequest = false,
     VerifiedProtectedGroupAuthorityReplay? protectedAuthorityReplay,
@@ -2148,6 +2123,8 @@ class GroupMessageListener {
 
       final wireMessageId = data['messageId'] as String?;
       final wireLogicalDeliveryId = data['logicalDeliveryId'] as String?;
+      final isHistoryRepair =
+          deliveryDisposition == GroupMessageDeliveryDisposition.historyRepair;
       final isSystemPayload = text.startsWith('{"__sys":');
       if (isSystemPayload) {
         if (allowMembershipBuffer &&
@@ -2287,15 +2264,19 @@ class GroupMessageListener {
         mediaAttachmentRepo: _mediaAttachmentRepo,
         appendGroupEventLogEntry: _appendGroupEventLogEntry,
         deliverySource: deliverySource,
-        stageNotificationDisplayCustody: _notificationDisplayOutbox == null
+        deliveryDisposition: deliveryDisposition,
+        stageNotificationDisplayCustody:
+            isHistoryRepair || _notificationDisplayOutbox == null
             ? null
             : _stageMessageNotificationDisplayCustody,
-        markNotificationDisplayCustodyReady: _notificationDisplayOutbox == null
+        markNotificationDisplayCustodyReady:
+            isHistoryRepair || _notificationDisplayOutbox == null
             ? null
             : (message) => _markNotificationDisplayCustodyReady(message.id),
       );
 
-      if (outcome is IncomingGroupMessageIgnored &&
+      if (!isHistoryRepair &&
+          outcome is IncomingGroupMessageIgnored &&
           outcome.canonicalMessage != null &&
           _notificationDisplayOutbox != null &&
           wireMessageId?.trim() == outcome.canonicalMessage!.id) {
@@ -2312,7 +2293,7 @@ class GroupMessageListener {
       if (outcome is IncomingGroupMessageDuplicate) {
         final canonicalMessage = outcome.canonicalMessage;
         final displayOutbox = _notificationDisplayOutbox;
-        if (displayOutbox != null) {
+        if (!isHistoryRepair && displayOutbox != null) {
           final aliasEventId = wireMessageId?.trim().isNotEmpty == true
               ? wireMessageId!.trim()
               : canonicalMessage.id;
@@ -2352,6 +2333,7 @@ class GroupMessageListener {
         await _reactionIngressProcessor._flushPendingReactionsForMessage(
           result,
           membershipPhaseHeld: membershipPhaseHeld,
+          notificationInert: isHistoryRepair,
         );
         // A real live delivery for this group+epoch supersedes any synthetic
         // `live:` decryption-failure placeholder from the same sender — clears
@@ -2401,13 +2383,14 @@ class GroupMessageListener {
         // The durable path projects the ready marker through the same keyed
         // lane as read cancellation. Plugin failure is retained in SQLCipher
         // and no longer controls relay cursor progress.
-        if (_notificationDisplayOutbox != null) {
+        if (!isHistoryRepair && _notificationDisplayOutbox != null) {
           await retryPendingNotificationDisplays();
         }
 
         // Compatibility path for tests/non-production compositions without
         // the v106 outbox.
-        if (_notificationDisplayOutbox == null &&
+        if (!isHistoryRepair &&
+            _notificationDisplayOutbox == null &&
             senderId != selfPeerId &&
             _notificationService != null &&
             _groupConversationTracker != null &&
@@ -2692,5 +2675,135 @@ class GroupMessageListener {
     if (!_reactionChangeController.isClosed) {
       unawaited(_reactionChangeController.close());
     }
+  }
+}
+
+/// Non-virtual composition seam for protected-content custody.
+///
+/// These adapters intentionally live outside [GroupMessageListener]'s stable,
+/// subclassable facade. They reuse its canonical persistence, notification,
+/// and stream owners without widening the DTR-16 override contract.
+extension GroupMessageListenerProtectedContentAdapter on GroupMessageListener {
+  /// Builds identifier-only READY custody for the typed protected-content
+  /// transaction. No row is written here: the adapter commits this map with
+  /// the event log and canonical projection in one SQL transaction.
+  Future<Map<String, Object?>?> buildProtectedMessageDisplayReadyRow(
+    GroupMessage message,
+  ) async {
+    if (_notificationDisplayOutbox == null ||
+        _notificationService == null ||
+        _groupConversationTracker == null ||
+        _getAppLifecycleState == null ||
+        !message.isIncoming ||
+        _isViewingGroupConversation(message.groupId)) {
+      return null;
+    }
+    final selfPeerId = await _resolveSelfPeerId();
+    if (selfPeerId == null ||
+        selfPeerId.isEmpty ||
+        message.senderPeerId == selfPeerId ||
+        !(await _resolveGroupNotificationDisplayEligibility(
+          message.groupId,
+          selfPeerId,
+        )).shouldDisplay) {
+      return null;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    return GroupNotificationDisplayOutboxEntry.message(
+      eventId: message.id,
+      groupId: message.groupId,
+      messageId: message.id,
+      actorPeerId: message.senderPeerId,
+      eventTimestamp: message.timestamp.toUtc().toIso8601String(),
+      readiness: GroupNotificationDisplayOutboxReadiness.ready,
+      createdAt: now,
+      updatedAt: now,
+    ).toMap();
+  }
+
+  Future<Map<String, Object?>?> buildProtectedReactionDisplayReadyRow(
+    String groupId,
+    GroupReactionPayload payload,
+  ) async {
+    if (_notificationDisplayOutbox == null ||
+        _notificationService == null ||
+        _groupConversationTracker == null ||
+        _getAppLifecycleState == null ||
+        payload.action != GroupReactionPayload.actionAdd ||
+        _isViewingGroupConversation(groupId)) {
+      return null;
+    }
+    final selfPeerId = await _resolveSelfPeerId();
+    final target = await _msgRepo.getMessage(payload.messageId);
+    if (selfPeerId == null ||
+        selfPeerId.isEmpty ||
+        payload.senderPeerId == selfPeerId ||
+        target == null ||
+        target.groupId != groupId ||
+        target.senderPeerId != selfPeerId ||
+        target.isIncoming ||
+        !target.privateMediaPolicy.isOrdinary ||
+        !(await _resolveGroupNotificationDisplayEligibility(
+          groupId,
+          selfPeerId,
+        )).shouldDisplay) {
+      return null;
+    }
+    final now = DateTime.now().toUtc().toIso8601String();
+    return GroupNotificationDisplayOutboxEntry.reaction(
+      eventId: payload.notificationTransitionId,
+      groupId: groupId,
+      messageId: payload.messageId,
+      actorPeerId: payload.senderPeerId,
+      eventTimestamp: payload.timestamp,
+      reactionId: payload.id,
+      reactionAction: payload.action,
+      reactionTombstone: false,
+      readiness: GroupNotificationDisplayOutboxReadiness.ready,
+      createdAt: now,
+      updatedAt: now,
+    ).toMap();
+  }
+
+  void publishProtectedGroupMessage(GroupMessage message) {
+    _emitGroupMessage(message);
+  }
+
+  void publishProtectedGroupReactionChange(ReactionChange change) {
+    _emitReactionChange(change);
+  }
+
+  /// Replays one exact system transition under a capability minted only after
+  /// its protected authority proof and durable PREPARED fact were verified.
+  /// Mutable current-member authorization must not invalidate that historical
+  /// authority while an interrupted projection is being repaired.
+  Future<void> handleAuthenticatedAuthorityReplayEnvelope(
+    Map<String, dynamic> data, {
+    required VerifiedProtectedGroupAuthorityReplay authority,
+    GroupMessageRepository? msgRepoOverride,
+    bool rethrowOnError = false,
+    bool membershipPhaseHeld = false,
+  }) async {
+    final replayData = Map<String, dynamic>.unmodifiable(
+      Map<String, dynamic>.from(data),
+    );
+    if (!authority.authorizesSystemReplay(replayData)) {
+      throw StateError('protected authority replay capability mismatch');
+    }
+    if (!await _allowsInboundAccountSideEffects(
+      operation: 'group_replay_message',
+      data: replayData,
+    )) {
+      throw StateError('protected authority replay account gate closed');
+    }
+    return _handleQueuedUserMessage(
+      replayData,
+      msgRepoOverride: msgRepoOverride,
+      rethrowOnError: rethrowOnError,
+      allowMembershipBuffer: false,
+      deliverySource: 'protectedAuthorityReplay',
+      membershipPhaseHeld: membershipPhaseHeld,
+      protectedAuthorityReplay: authority,
+    );
   }
 }

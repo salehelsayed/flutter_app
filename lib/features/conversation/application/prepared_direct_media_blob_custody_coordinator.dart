@@ -388,6 +388,217 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     }
   }
 
+  /// Plan 366 initialized-roster private entry.
+  ///
+  /// The supported Protected/View-Once attachment is encrypted and persisted
+  /// once, while the private fanout generation publishes one v114 addressing
+  /// row per exact snapshot target under the incumbent private lifecycle
+  /// lease. No v110 intent is minted.
+  Future<PreparedDirectMediaBlobFanoutUploadResult>
+  prepareAndUploadPrivateFanout({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot snapshot,
+    required ConversationMessage expectedParent,
+    required PreparedDirectMediaBlobSource source,
+    DirectMediaBlobGenerationReadyFn? onGenerationReady,
+  }) async {
+    final privateFanoutRepository = _privateFanoutRepository;
+    final targetPeerIds = snapshot.targets
+        .map((target) => target.peerId)
+        .toSet();
+    if (!_repository.supportsDirectMediaBlobCustody ||
+        privateFanoutRepository == null ||
+        identityPeerId.isEmpty ||
+        identityPeerId.trim() != identityPeerId ||
+        contactAccountPeerId.isEmpty ||
+        contactAccountPeerId.trim() != contactAccountPeerId ||
+        snapshot.contactAccountPeerId != contactAccountPeerId ||
+        snapshot.targets.isEmpty ||
+        targetPeerIds.length != snapshot.targets.length ||
+        expectedParent.id.isEmpty ||
+        expectedParent.isIncoming ||
+        expectedParent.isDeleted ||
+        expectedParent.isHidden ||
+        expectedParent.senderPeerId != identityPeerId ||
+        expectedParent.contactPeerId != contactAccountPeerId ||
+        expectedParent.directMediaCustodyIntentId != null ||
+        expectedParent.directEventFanoutGenerationId != null ||
+        !privateMediaInitialProducerMatrixAllows(
+          policyVersion: expectedParent.privateMediaPolicy.version,
+          mode: expectedParent.privateMediaMode,
+          mime: source.attachment.mime,
+          mediaType: source.attachment.mediaType,
+        ) ||
+        source.attachment.messageId != expectedParent.id ||
+        source.attachment.ownerLane != MediaOwnerLane.direct ||
+        source.attachment.downloadStatus != 'upload_pending' ||
+        source.attachment.contentHash != null ||
+        source.attachment.encryptionKeyBase64 != null ||
+        source.attachment.encryptionNonce != null ||
+        source.attachment.encryptionScheme != null ||
+        source.plaintextPath.isEmpty) {
+      return const PreparedDirectMediaBlobFanoutUploadResult.refused();
+    }
+
+    var hasDurableAuthority = false;
+    try {
+      return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
+        final publication = await _publishPrivateFanoutGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          contactAccountPeerId: contactAccountPeerId,
+          snapshot: snapshot,
+          expectedParent: expectedParent,
+          source: source,
+          repository: privateFanoutRepository,
+        );
+        hasDurableAuthority = publication.hasDurableAuthority;
+        final generation = publication.generation;
+        if (generation == null) {
+          return hasDurableAuthority
+              ? const PreparedDirectMediaBlobFanoutUploadResult.retained()
+              : const PreparedDirectMediaBlobFanoutUploadResult.refused();
+        }
+        return _uploadPublishedFanoutGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          generation: generation,
+          lanAccelerationRecipientPeerId:
+              snapshot.targets.first.isLegacyAccountTarget
+              ? snapshot.targets.first.peerId
+              : null,
+          commitmentRecipientPeerId: _commitmentRecipientForSnapshot(snapshot),
+          onGenerationReady: onGenerationReady,
+        );
+      });
+    } on Object {
+      return hasDurableAuthority
+          ? const PreparedDirectMediaBlobFanoutUploadResult.retained()
+          : const PreparedDirectMediaBlobFanoutUploadResult.refused();
+    }
+  }
+
+  /// Roster-free reopen of the exact persisted private v114 target set.
+  ///
+  /// This path never creates a generation and never resolves live contact
+  /// authority. Complete persisted rows (including a partial stored/pending
+  /// upload matrix) are the retry obligation under the same lifecycle lease.
+  Future<PreparedDirectMediaBlobFanoutUploadResult>
+  reopenAndUploadPrivateFanout({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String contactAccountPeerId,
+    required ConversationMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    DirectMediaBlobGenerationReadyFn? onGenerationReady,
+  }) async {
+    if (!_repository.supportsDirectMediaBlobCustody ||
+        _privateFanoutRepository == null ||
+        identityPeerId.isEmpty ||
+        identityPeerId.trim() != identityPeerId ||
+        contactAccountPeerId.isEmpty ||
+        contactAccountPeerId.trim() != contactAccountPeerId ||
+        expectedParent.id.isEmpty ||
+        expectedParent.isIncoming ||
+        expectedParent.isDeleted ||
+        expectedParent.isHidden ||
+        expectedParent.contactPeerId != contactAccountPeerId ||
+        expectedParent.directMediaCustodyIntentId != null ||
+        expectedParent.directEventFanoutGenerationId != expectedParent.id ||
+        !privateMediaInitialProducerMatrixAllows(
+          policyVersion: expectedParent.privateMediaPolicy.version,
+          mode: expectedParent.privateMediaMode,
+          mime: expectedAttachment.mime,
+          mediaType: expectedAttachment.mediaType,
+        ) ||
+        expectedAttachment.messageId != expectedParent.id ||
+        expectedAttachment.ownerLane != MediaOwnerLane.direct ||
+        expectedAttachment.contentHash == null ||
+        expectedAttachment.encryptionKeyBase64 == null ||
+        expectedAttachment.encryptionNonce == null ||
+        expectedAttachment.encryptionScheme == null) {
+      return const PreparedDirectMediaBlobFanoutUploadResult.refused();
+    }
+    try {
+      return await _repository.runDirectMediaBlobCustodyLifecycle(() async {
+        final rows = await _repository.loadDirectMediaBlobCustodyForMessage(
+          expectedParent.id,
+        );
+        if (rows.isEmpty) {
+          return const PreparedDirectMediaBlobFanoutUploadResult.refused();
+        }
+        final recipientPeerIds = rows
+            .map((row) => row.recipientPeerId)
+            .whereType<String>()
+            .toSet();
+        if (recipientPeerIds.isEmpty ||
+            rows.length != recipientPeerIds.length ||
+            rows.any(
+              (row) =>
+                  row.attachmentId != expectedAttachment.id ||
+                  row.messageId != expectedParent.id ||
+                  row.direction != DirectMediaBlobCustodyDirection.outgoing ||
+                  !row.isLinkedFanoutRow ||
+                  row.contactAccountPeerId != contactAccountPeerId ||
+                  row.recipientMlKemPublicKey == null,
+            )) {
+          return const PreparedDirectMediaBlobFanoutUploadResult.refused(
+            hasDurableAuthority: true,
+          );
+        }
+        final orderedRecipients = recipientPeerIds.toList()..sort();
+        if (orderedRecipients.remove(contactAccountPeerId)) {
+          orderedRecipients.insert(0, contactAccountPeerId);
+        }
+        final keyByRecipient = <String, String>{
+          for (final row in rows)
+            if (row.recipientPeerId != null &&
+                row.recipientMlKemPublicKey != null)
+              row.recipientPeerId!: row.recipientMlKemPublicKey!,
+        };
+        if (keyByRecipient.length != orderedRecipients.length) {
+          return const PreparedDirectMediaBlobFanoutUploadResult.refused(
+            hasDurableAuthority: true,
+          );
+        }
+        final generation = await _reopenCompleteFanoutGeneration(
+          identityPeerId: identityPeerId,
+          contactAccountPeerId: contactAccountPeerId,
+          orderedTargets: orderedRecipients
+              .map(
+                (peerId) => (
+                  peerId: peerId,
+                  requiredMlKemPublicKey: keyByRecipient[peerId],
+                ),
+              )
+              .toList(growable: false),
+          messageId: expectedParent.id,
+          attachments: <MediaAttachment>[expectedAttachment],
+          rows: rows,
+        );
+        if (generation == null) {
+          return const PreparedDirectMediaBlobFanoutUploadResult.refused(
+            hasDurableAuthority: true,
+          );
+        }
+        return _uploadPublishedFanoutGeneration(
+          bridge: bridge,
+          identityPeerId: identityPeerId,
+          generation: generation,
+          lanAccelerationRecipientPeerId: null,
+          commitmentRecipientPeerId: orderedRecipients.first,
+          onGenerationReady: onGenerationReady,
+        );
+      });
+    } on Object {
+      return const PreparedDirectMediaBlobFanoutUploadResult.refused(
+        hasDurableAuthority: true,
+      );
+    }
+  }
+
   /// Plan 354 private failed/incomplete retry entry.
   ///
   /// This never mints a generation and never re-encrypts: it revalidates the
@@ -612,6 +823,144 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     }
   }
 
+  Future<_FanoutGenerationPublication> _publishPrivateFanoutGeneration({
+    required Bridge bridge,
+    required String identityPeerId,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot snapshot,
+    required ConversationMessage expectedParent,
+    required PreparedDirectMediaBlobSource source,
+    required OutgoingDirectPrivateMediaBlobFanoutGenerationRepository
+    repository,
+  }) async {
+    _CandidateGenerationEntry? candidate;
+    var stageAttempted = false;
+    var hasDurableAuthority = false;
+    try {
+      // Private fanout still owns one canonical ciphertext. Only its durable
+      // recipient/key addressing rows are plural.
+      final encrypted =
+          source.preparedArtifact ??
+          await _prepareArtifact(
+            bridge: bridge,
+            localFilePath: source.plaintextPath,
+          );
+      final persisted = await _artifactStore.persistCandidate(
+        identityPeerId: identityPeerId,
+        attachmentId: source.attachment.id,
+        encryptedSourcePath: encrypted.encryptedPath,
+        expectedContentHash: encrypted.contentHash,
+      );
+      candidate = _CandidateGenerationEntry(
+        source: source,
+        encrypted: encrypted,
+        artifact: persisted,
+      );
+
+      final now = _clock().toUtc().toIso8601String();
+      final prepared = source.attachment.copyWith(
+        contentHash: persisted.contentHash,
+        encryptionKeyBase64: encrypted.keyBase64,
+        encryptionNonce: encrypted.nonce,
+        encryptionScheme: encrypted.scheme,
+        downloadStatus: 'upload_pending',
+        ownerLane: MediaOwnerLane.direct,
+      );
+      final custodyRows = snapshot.targets
+          .map(
+            (target) => DirectMediaBlobCustodyRow(
+              attachmentId: source.attachment.id,
+              messageId: expectedParent.id,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: DirectMediaBlobCustodyState.outgoingPrepared,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: target.peerId,
+              contactAccountPeerId: contactAccountPeerId,
+              recipientMlKemPublicKey: target.mlKemPublicKey,
+              ciphertextRelativePath: persisted.relativePath,
+              contentHash: persisted.contentHash,
+              ciphertextSize: persisted.ciphertextSize,
+              expiresAtMs: null,
+              custodyRelayPeerId: null,
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: now,
+              updatedAt: now,
+            ),
+          )
+          .toList(growable: false);
+      stageAttempted = true;
+      final staged = await repository
+          .stageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+            expectedParent: expectedParent,
+            expectedAttachment: source.attachment,
+            preparedAttachment: prepared,
+            custodyRows: custodyRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: snapshot,
+          );
+      hasDurableAuthority = staged.authorizesStrictUpload;
+      final idempotent =
+          staged.outcome == DirectMediaBlobGenerationStageOutcome.idempotent;
+      if (!staged.authorizesStrictUpload) {
+        await _deleteOnlyProvablyUnreferencedCandidates(
+          identityPeerId: identityPeerId,
+          messageId: expectedParent.id,
+          candidates: <_CandidateGenerationEntry>[candidate],
+        );
+        await _deleteEncryptedTemps(<_CandidateGenerationEntry>[candidate]);
+        return _FanoutGenerationPublication(
+          generation: null,
+          hasDurableAuthority: hasDurableAuthority,
+        );
+      }
+      if (idempotent) {
+        await _deleteCandidates(identityPeerId, <_CandidateGenerationEntry>[
+          candidate,
+        ]);
+      }
+      await _deleteEncryptedTemps(<_CandidateGenerationEntry>[candidate]);
+      final generation = await _reopenCompleteFanoutGeneration(
+        identityPeerId: identityPeerId,
+        contactAccountPeerId: contactAccountPeerId,
+        orderedTargets: snapshot.targets
+            .map(
+              (target) => (
+                peerId: target.peerId,
+                requiredMlKemPublicKey: target.mlKemPublicKey,
+              ),
+            )
+            .toList(growable: false),
+        messageId: expectedParent.id,
+        attachments: staged.attachments,
+        rows: staged.custodyRows,
+      );
+      return _FanoutGenerationPublication(
+        generation: generation,
+        hasDurableAuthority: true,
+      );
+    } on Object {
+      final candidates = <_CandidateGenerationEntry>[?candidate];
+      if (stageAttempted) {
+        await _deleteOnlyProvablyUnreferencedCandidates(
+          identityPeerId: identityPeerId,
+          messageId: expectedParent.id,
+          candidates: candidates,
+        );
+      } else {
+        await _deleteCandidates(identityPeerId, candidates);
+      }
+      await _deleteEncryptedTemps(candidates);
+      if (hasDurableAuthority) {
+        return const _FanoutGenerationPublication(
+          generation: null,
+          hasDurableAuthority: true,
+        );
+      }
+      rethrow;
+    }
+  }
+
   Future<PreparedDirectMediaBlobUploadResult> reopenAndUpload({
     required Bridge bridge,
     required String identityPeerId,
@@ -718,14 +1067,27 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required DirectContactFanoutSnapshot snapshot,
     required ConversationMessage expectedParent,
     required List<PreparedDirectMediaBlobSource> sources,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
+    DirectMediaBlobAuthorityReadyFn? onAuthorityReady,
     DirectMediaBlobGenerationReadyFn? onGenerationReady,
   }) async {
     final fanoutRepository = _fanoutRepository;
     final targetPeerIds = snapshot.targets
         .map((target) => target.peerId)
         .toSet();
+    final freshParentIdentityIsCanonical = !allowFreshParent
+        ? authorizedForwardDedupKey == null
+        : authorizedForwardDedupKey == null
+        ? expectedParent.id == expectedParent.dedupKey &&
+              !expectedParent.isForwarded
+        : authorizedForwardDedupKey.trim().isNotEmpty &&
+              authorizedForwardDedupKey.trim() == authorizedForwardDedupKey &&
+              expectedParent.isForwarded &&
+              expectedParent.dedupKey == authorizedForwardDedupKey;
     if (!_repository.supportsDirectMediaBlobCustody ||
         fanoutRepository == null ||
+        !freshParentIdentityIsCanonical ||
         snapshot.targets.isEmpty ||
         targetPeerIds.length != snapshot.targets.length ||
         snapshot.contactAccountPeerId != contactAccountPeerId ||
@@ -750,6 +1112,8 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           expectedParent: expectedParent,
           sources: sources,
           fanoutRepository: fanoutRepository,
+          allowFreshParent: allowFreshParent,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
         );
         hasDurableAuthority = publication.hasDurableAuthority;
         final generation = publication.generation;
@@ -759,6 +1123,23 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
           return hasDurableAuthority
               ? const PreparedDirectMediaBlobFanoutUploadResult.retained()
               : const PreparedDirectMediaBlobFanoutUploadResult.refused();
+        }
+        if (onAuthorityReady != null) {
+          bool previewReady;
+          try {
+            previewReady = await onAuthorityReady(
+              List<MediaAttachment>.unmodifiable(
+                generation.artifactsByRecipient.values.first
+                    .map((artifact) => artifact.attachment)
+                    .toList(growable: false),
+              ),
+            );
+          } on Object {
+            previewReady = false;
+          }
+          if (!previewReady) {
+            return const PreparedDirectMediaBlobFanoutUploadResult.retained();
+          }
         }
         return _uploadPublishedFanoutGeneration(
           bridge: bridge,
@@ -1020,6 +1401,15 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
         _ => null,
       };
 
+  OutgoingDirectPrivateMediaBlobFanoutGenerationRepository?
+  get _privateFanoutRepository => switch (_repository) {
+    OutgoingDirectPrivateMediaBlobFanoutGenerationRepository repository
+        when repository
+            .supportsOutgoingDirectPrivateMediaBlobFanoutGeneration =>
+      repository,
+    _ => null,
+  };
+
   static String _commitmentRecipientForSnapshot(
     DirectContactFanoutSnapshot snapshot,
   ) => snapshot.targets
@@ -1037,6 +1427,8 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
     required ConversationMessage expectedParent,
     required List<PreparedDirectMediaBlobSource> sources,
     required OutgoingDirectLinkedMediaBlobFanoutRepository fanoutRepository,
+    required bool allowFreshParent,
+    required String? authorizedForwardDedupKey,
   }) async {
     final candidates = <_CandidateGenerationEntry>[];
     var stageAttempted = false;
@@ -1118,6 +1510,8 @@ final class PreparedDirectMediaBlobCustodyCoordinator {
             custodyRows: custodyRows,
             contactAccountPeerId: contactAccountPeerId,
             expectedSnapshot: snapshot,
+            allowFreshParent: allowFreshParent,
+            authorizedForwardDedupKey: authorizedForwardDedupKey,
           );
       hasDurableAuthority = staged.authorizesStrictUpload;
       final idempotent =

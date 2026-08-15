@@ -1,6 +1,9 @@
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/database/direct_reaction_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart'
+    show OutgoingDirectPrivateFanoutInboxCustodyDbResult;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
@@ -29,6 +32,20 @@ void main() {
   late bool removeAfterAppliedSettlement;
   late int privateDeletionStageCallCount;
   late DbDirectPrivateDeletionCustodyStageResult nextPrivateDeletionStage;
+  late int privateFanoutBarrierCallCount;
+  late OutgoingDirectPrivateFanoutInboxCustodyDbResult
+  nextPrivateFanoutBarrierResult;
+  ({
+    Map<String, Object?> completionRow,
+    String expectedPendingLocalPath,
+    bool hasOwnedPendingCompletion,
+    String senderTransportPeerId,
+    String contactAccountPeerId,
+    DirectPrivateMediaFanoutStageAuthority authority,
+    DirectContactFanoutSnapshot? expectedSnapshot,
+    List<DirectPrivateMediaFanoutTargetBinding> targetBindings,
+  })?
+  lastPrivateFanoutBarrierArgs;
   ({
     Map<String, Object?> expectedRow,
     Map<String, Object?> tombstoneRow,
@@ -53,6 +70,10 @@ void main() {
     lastPrivateDeletionStageArgs = null;
     nextPrivateDeletionStage =
         const DbDirectPrivateDeletionCustodyStageResult.refused();
+    privateFanoutBarrierCallCount = 0;
+    nextPrivateFanoutBarrierResult =
+        const OutgoingDirectPrivateFanoutInboxCustodyDbResult.refused();
+    lastPrivateFanoutBarrierArgs = null;
     directReactionProjection = DirectReactionNotificationProjection(
       store: _MemorySecureKeyStore(),
     );
@@ -311,6 +332,30 @@ void main() {
               wireEnvelope: wireEnvelope,
             );
             return nextPrivateDeletionStage;
+          },
+      dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody:
+          (
+            completionRow, {
+            required expectedPendingLocalPath,
+            required hasOwnedPendingCompletion,
+            required senderTransportPeerId,
+            required contactAccountPeerId,
+            required authority,
+            required expectedSnapshot,
+            required targetBindings,
+          }) async {
+            privateFanoutBarrierCallCount++;
+            lastPrivateFanoutBarrierArgs = (
+              completionRow: completionRow,
+              expectedPendingLocalPath: expectedPendingLocalPath,
+              hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+              senderTransportPeerId: senderTransportPeerId,
+              contactAccountPeerId: contactAccountPeerId,
+              authority: authority,
+              expectedSnapshot: expectedSnapshot,
+              targetBindings: targetBindings,
+            );
+            return nextPrivateFanoutBarrierResult;
           },
       dbStageOutgoingOrdinaryAttempt:
           ({required expectedRow, required stagedRow, required kind}) async {
@@ -1336,6 +1381,208 @@ void main() {
       expect(crossed.authorizesTransport, isFalse);
       expect(privateDeletionStageCallCount, 2);
     });
+  });
+
+  test('TC-366-01b message repository forwards plural private Barrier B without '
+      'singular collapse', () async {
+    const messageId = 'tc366-01b-private-fanout';
+    const senderTransportPeerId = 'peer-self-device';
+    const contactAccountPeerId = 'peer-contact-account';
+    const pendingLocalPath = '/private/tc366-01b.pending';
+    const completedAttachment = MediaAttachment(
+      id: 'tc366-01b-attachment',
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: 366,
+      mediaType: 'image',
+      localPath: '/private/tc366-01b.enc',
+      downloadStatus: 'done',
+      createdAt: '2026-08-14T12:00:00.000Z',
+      contentHash:
+          'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      ownerLane: MediaOwnerLane.direct,
+    );
+    const snapshot = DirectContactFanoutSnapshot(
+      contactAccountPeerId: contactAccountPeerId,
+      contactAccountSigningPublicKey: 'contact-signing-key',
+      rosterInitialized: true,
+      targets: <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(
+          peerId: 'peer-device-a',
+          mlKemPublicKey: 'mlkem-device-a',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+          deviceId: 'device-a',
+        ),
+        DirectContactFanoutTargetFact(
+          peerId: 'peer-device-b',
+          mlKemPublicKey: 'mlkem-device-b',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          deviceId: 'device-b',
+        ),
+      ],
+    );
+    final targetBindings = <DirectPrivateMediaFanoutTargetBinding>[
+      const DirectPrivateMediaFanoutTargetBinding(
+        recipientPeerId: 'peer-device-a',
+        recipientMlKemPublicKey: 'mlkem-device-a',
+        wireEnvelope: 'wire-envelope-a',
+        wireMediaBlobManifestHash:
+            '1111111111111111111111111111111111111111111111111111111111111111',
+        wireMediaBlobExpiresAtMs: 1770000000001,
+      ),
+      const DirectPrivateMediaFanoutTargetBinding(
+        recipientPeerId: 'peer-device-b',
+        recipientMlKemPublicKey: 'mlkem-device-b',
+        wireEnvelope: 'wire-envelope-b',
+        wireMediaBlobManifestHash:
+            '2222222222222222222222222222222222222222222222222222222222222222',
+        wireMediaBlobExpiresAtMs: 1770000000002,
+      ),
+    ];
+    Map<String, Object?> custodyRow(
+      DirectPrivateMediaFanoutTargetBinding binding,
+      String incarnationId,
+    ) => <String, Object?>{
+      'recipient_peer_id': binding.recipientPeerId,
+      'message_id': messageId,
+      'incarnation_id': incarnationId,
+      'wire_envelope': binding.wireEnvelope,
+      'retry_count': 0,
+      'last_attempt_at': null,
+      'last_error_code': null,
+      'media_blob_manifest_hash': binding.wireMediaBlobManifestHash,
+      'media_blob_expires_at_ms': binding.wireMediaBlobExpiresAtMs,
+      'contact_account_peer_id': contactAccountPeerId,
+      'created_at': '2026-08-14T12:00:01.000Z',
+      'updated_at': '2026-08-14T12:00:01.000Z',
+    };
+
+    store[messageId] = makeMessage(
+      id: messageId,
+      contactPeerId: contactAccountPeerId,
+      senderPeerId: senderTransportPeerId,
+      status: 'sending',
+    ).toMap();
+    nextPrivateFanoutBarrierResult =
+        OutgoingDirectPrivateFanoutInboxCustodyDbResult(
+          outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+          custodyRows: <Map<String, Object?>>[
+            custodyRow(targetBindings[0], 'incarnation-a'),
+            custodyRow(targetBindings[1], 'incarnation-b'),
+          ],
+        );
+
+    Future<OutgoingDirectPrivateFanoutInboxCustodyResult> commit({
+      DirectPrivateMediaFanoutStageAuthority authority =
+          DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot,
+      DirectContactFanoutSnapshot? expectedSnapshot = snapshot,
+      List<DirectPrivateMediaFanoutTargetBinding>? bindings,
+    }) => repo.commitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
+      messageId: messageId,
+      completedAttachment: completedAttachment,
+      expectedPendingLocalPath: pendingLocalPath,
+      hasOwnedPendingCompletion: true,
+      senderTransportPeerId: senderTransportPeerId,
+      contactAccountPeerId: contactAccountPeerId,
+      authority: authority,
+      expectedSnapshot: expectedSnapshot,
+      targetBindings: bindings ?? targetBindings,
+    );
+
+    expect(repo.supportsOutgoingDirectPrivateMediaFanoutInboxCustody, isTrue);
+    final committed = await commit();
+
+    expect(privateFanoutBarrierCallCount, 1);
+    final forwarded = lastPrivateFanoutBarrierArgs!;
+    expect(
+      forwarded.completionRow,
+      completedAttachment.copyWith(ownerLane: MediaOwnerLane.direct).toMap(),
+    );
+    expect(forwarded.expectedPendingLocalPath, pendingLocalPath);
+    expect(forwarded.hasOwnedPendingCompletion, isTrue);
+    expect(forwarded.senderTransportPeerId, senderTransportPeerId);
+    expect(forwarded.contactAccountPeerId, contactAccountPeerId);
+    expect(
+      forwarded.authority,
+      DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot,
+    );
+    expect(forwarded.expectedSnapshot, same(snapshot));
+    expect(forwarded.targetBindings, same(targetBindings));
+    expect(
+      forwarded.targetBindings.map((binding) => binding.recipientPeerId),
+      <String>['peer-device-a', 'peer-device-b'],
+    );
+    expect(committed.authorizesTransport, isTrue);
+    expect(
+      committed.outcome,
+      OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+    );
+    expect(committed.custodies, hasLength(2));
+    expect(
+      committed.custodies.map((custody) => custody.recipientPeerId),
+      <String>['peer-device-a', 'peer-device-b'],
+    );
+    expect(
+      committed.custodies.map((custody) => custody.incarnationId),
+      <String>['incarnation-a', 'incarnation-b'],
+    );
+    expect(committed.custodies.map((custody) => custody.wireEnvelope), <String>[
+      'wire-envelope-a',
+      'wire-envelope-b',
+    ]);
+    expect(dbLoadMessageCallCount, 1, reason: 'refresh the parent cache once');
+
+    nextPrivateFanoutBarrierResult =
+        OutgoingDirectPrivateFanoutInboxCustodyDbResult(
+          outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+          custodyRows: <Map<String, Object?>>[
+            custodyRow(targetBindings[0], 'partial-incarnation-a'),
+          ],
+        );
+    final partial = await commit();
+    expect(partial.authorizesTransport, isFalse);
+    expect(partial.custodies, isEmpty);
+    expect(privateFanoutBarrierCallCount, 2);
+    expect(dbLoadMessageCallCount, 1);
+
+    nextPrivateFanoutBarrierResult =
+        OutgoingDirectPrivateFanoutInboxCustodyDbResult(
+          outcome: OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+          custodyRows: <Map<String, Object?>>[
+            custodyRow(targetBindings[0], 'malformed-incarnation-a'),
+            <String, Object?>{
+              ...custodyRow(targetBindings[1], 'malformed-incarnation-b'),
+              'incarnation_id': null,
+            },
+          ],
+        );
+    final malformed = await commit();
+    expect(malformed.authorizesTransport, isFalse);
+    expect(malformed.custodies, isEmpty);
+    expect(privateFanoutBarrierCallCount, 3);
+    expect(dbLoadMessageCallCount, 1);
+
+    final duplicateTargets = <DirectPrivateMediaFanoutTargetBinding>[
+      targetBindings[0],
+      targetBindings[0],
+    ];
+    final duplicate = await commit(
+      authority: DirectPrivateMediaFanoutStageAuthority.persistedV114Survivors,
+      expectedSnapshot: null,
+      bindings: duplicateTargets,
+    );
+    expect(duplicate.authorizesTransport, isFalse);
+    expect(duplicate.custodies, isEmpty);
+    expect(
+      privateFanoutBarrierCallCount,
+      3,
+      reason: 'duplicate physical targets must fail before the DB delegate',
+    );
+    expect(dbLoadMessageCallCount, 1);
   });
 
   test('TC-361-02a the fanout capability is all-or-nothing and the adapters '

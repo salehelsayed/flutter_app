@@ -26,6 +26,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
+import 'package:flutter_app/core/media/group_media_blob_custody.dart';
 import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -42,6 +43,7 @@ import 'package:flutter_app/features/conversation/domain/models/direct_media_blo
 import 'package:flutter_app/features/conversation/domain/models/media_library.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import '../../../../shared/fixtures/media_repository_real_db_fixture.dart';
@@ -163,6 +165,252 @@ void main() {
 
   Future<void> saveDirect(MediaAttachment attachment) =>
       fixture.repo.saveAttachment(attachment, owner: MediaOwnerLane.direct);
+
+  test(
+    'TC-365-01a direct drains cannot observe or retire group custody',
+    () async {
+      const messageId = 'tc365-direct-isolation-message';
+      const attachmentId = 'tc365-direct-isolation-attachment';
+      final groupRow = DirectMediaBlobCustodyRow(
+        attachmentId: attachmentId,
+        messageId: messageId,
+        ownerLane: MediaBlobCustodyOwnerLane.group,
+        groupId: 'tc365-direct-isolation-group',
+        direction: DirectMediaBlobCustodyDirection.outgoing,
+        state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+        inboxCustodyIncarnationId: null,
+        recipientPeerId: 'tc365-physical-target',
+        ciphertextRelativePath:
+            'group_media_blob_custody_v1/identity-scope/group-scope/blob.blob',
+        custodyKind: kGroupMediaBlobCustodyKind,
+        contentHash: 'ef' * 32,
+        ciphertextSize: 4096,
+        expiresAtMs: null,
+        custodyRelayPeerId: null,
+        lastAttemptAt: null,
+        nextAttemptAt: null,
+        createdAt: '2026-08-14T12:00:00.000Z',
+        updatedAt: '2026-08-14T12:00:00.000Z',
+      );
+      await fixture.db.insert('direct_media_blob_custody', groupRow.toMap());
+
+      final direct = fixture.repo as DirectMediaBlobCustodyRepository;
+      expect(
+        await direct.loadDirectMediaBlobCustodyForMessage(messageId),
+        isEmpty,
+      );
+      expect(
+        await direct.loadDirectMediaBlobCustodyByStates(
+          const <DirectMediaBlobCustodyState>{
+            DirectMediaBlobCustodyState.outgoingCleanupPending,
+          },
+        ),
+        everyElement(
+          isA<DirectMediaBlobCustodyRow>().having(
+            (row) => row.ownerLane,
+            'owner lane',
+            MediaBlobCustodyOwnerLane.direct,
+          ),
+        ),
+      );
+      expect(
+        await direct.deleteDirectMediaBlobCleanupPendingIfExact(groupRow),
+        isFalse,
+      );
+      expect(
+        await fixture.db.query(
+          'direct_media_blob_custody',
+          where: 'owner_lane = ? AND group_id = ? AND message_id = ?',
+          whereArgs: const <Object?>[
+            'group',
+            'tc365-direct-isolation-group',
+            messageId,
+          ],
+        ),
+        hasLength(1),
+      );
+    },
+  );
+
+  test('TC-365-01a sole-group fresh custody stores secure references and '
+      'compensates a refused SQL stage', () async {
+    const groupId = 'tc365-sole-group';
+    const messageId = 'tc365-sole-message';
+    const attachmentId = 'tc365-sole-attachment';
+    const custodyBlobId = 'gmb1-tc365-sole-blob';
+    const rawKey = 'tc365-sole-raw-key';
+    const hash =
+        'abababababababababababababababababababababababababababababababab';
+    const createdAt = '2026-08-14T12:00:00.000Z';
+    await fixture.db.insert('groups', <String, Object?>{
+      'id': groupId,
+      'name': 'Sole group',
+      'type': 'chat',
+      'topic_name': 'topic-$groupId',
+      'created_at': createdAt,
+      'created_by': 'peer-self',
+      'my_role': 'member',
+    });
+    final parent = GroupMessage(
+      id: messageId,
+      groupId: groupId,
+      senderPeerId: 'peer-self',
+      senderUsername: 'Self',
+      text: '',
+      timestamp: DateTime.parse(createdAt),
+      status: 'sending',
+      isIncoming: false,
+      createdAt: DateTime.parse(createdAt),
+    );
+    final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      custodyBlobId: custodyBlobId,
+      contentHash: hash,
+      ciphertextSize: 48,
+      recipientPeerIds: const <String>[],
+    );
+    final attachment = MediaAttachment(
+      id: attachmentId,
+      messageId: messageId,
+      mime: 'image/jpeg',
+      size: 32,
+      mediaType: 'image',
+      localPath: 'pending_uploads/$messageId/$attachmentId.jpg',
+      downloadStatus: 'upload_pending',
+      createdAt: createdAt,
+      contentHash: hash,
+      encryptionKeyBase64: rawKey,
+      encryptionNonce: 'bm9uY2U=',
+      encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+      groupMediaBlobCustodyFingerprint: fingerprint,
+      ownerLane: MediaOwnerLane.group,
+    );
+    final repository = fixture.repo as GroupMediaBlobCustodyRepository;
+    expect(repository.supportsGroupMediaBlobCustody, isTrue);
+    expect(
+      await repository.stageFreshOutgoingGroupMediaBlobGeneration(
+        parent: parent,
+        attachments: <MediaAttachment>[attachment],
+        custodyRows: const <DirectMediaBlobCustodyRow>[],
+        custodyBlobIdsByAttachmentId: const <String, String>{
+          attachmentId: custodyBlobId,
+        },
+      ),
+      GroupMediaBlobCustodyStageOutcome.applied,
+    );
+    final raw = (await fixture.rawAttachmentRow(attachmentId))!;
+    final secureKeyName = mediaAttachmentEncryptionKeyStoreName(attachmentId);
+    expect(
+      raw['encryption_key_base64'],
+      secureStoreReferenceForKey(secureKeyName),
+    );
+    expect(raw['encryption_key_base64'], isNot(rawKey));
+    expect(await fixture.secureKeyStore.read(secureKeyName), rawKey);
+    final writesAfterFirstStage = fixture.secureKeyStore.writtenKeys.length;
+    expect(
+      await repository.stageFreshOutgoingGroupMediaBlobGeneration(
+        parent: parent,
+        attachments: <MediaAttachment>[attachment],
+        custodyRows: const <DirectMediaBlobCustodyRow>[],
+        custodyBlobIdsByAttachmentId: const <String, String>{
+          attachmentId: custodyBlobId,
+        },
+      ),
+      GroupMediaBlobCustodyStageOutcome.idempotent,
+    );
+    expect(
+      fixture.secureKeyStore.writtenKeys,
+      hasLength(writesAfterFirstStage),
+    );
+
+    const crossedMessageId = 'tc365-crossed-parent';
+    const crossedAttachmentId = 'tc365-crossed-attachment';
+    const previousKey = 'tc365-previous-stable-key';
+    await fixture.seedGroupParent(crossedMessageId, groupId: groupId);
+    final crossedKeyName = mediaAttachmentEncryptionKeyStoreName(
+      crossedAttachmentId,
+    );
+    await fixture.secureKeyStore.write(crossedKeyName, previousKey);
+    final crossedParent = GroupMessage(
+      id: crossedMessageId,
+      groupId: groupId,
+      senderPeerId: 'peer-self',
+      senderUsername: 'Self',
+      text: 'crossed candidate',
+      timestamp: DateTime.parse(createdAt),
+      status: 'sending',
+      isIncoming: false,
+      createdAt: DateTime.parse(createdAt),
+    );
+    final crossedFingerprint = computeGroupMediaBlobCustodyFingerprint(
+      groupId: groupId,
+      messageId: crossedMessageId,
+      attachmentId: crossedAttachmentId,
+      custodyBlobId: 'gmb1-crossed',
+      contentHash: hash,
+      ciphertextSize: 48,
+      recipientPeerIds: const <String>[],
+    );
+    final crossedAttachment = attachment.copyWith(
+      id: crossedAttachmentId,
+      messageId: crossedMessageId,
+      encryptionKeyBase64: 'tc365-losing-raw-key',
+      groupMediaBlobCustodyFingerprint: crossedFingerprint,
+    );
+    expect(
+      await repository.stageFreshOutgoingGroupMediaBlobGeneration(
+        parent: crossedParent,
+        attachments: <MediaAttachment>[crossedAttachment],
+        custodyRows: const <DirectMediaBlobCustodyRow>[],
+        custodyBlobIdsByAttachmentId: const <String, String>{
+          crossedAttachmentId: 'gmb1-crossed',
+        },
+      ),
+      GroupMediaBlobCustodyStageOutcome.refused,
+    );
+    expect(await fixture.secureKeyStore.read(crossedKeyName), previousKey);
+    expect(await fixture.rawAttachmentRow(crossedAttachmentId), isNull);
+  });
+
+  test('TC-365-01a group strict fingerprint refuses legacy fallback after '
+      'custody retirement', () async {
+    const groupId = 'tc365-no-demotion-group';
+    const messageId = 'tc365-no-demotion-message';
+    const attachmentId = 'tc365-no-demotion-attachment';
+    await fixture.seedGroupParent(messageId, groupId: groupId);
+    await fixture.repo.saveAttachment(
+      makeAttachment(
+        id: attachmentId,
+        messageId: messageId,
+        downloadStatus: kMediaDownloadStatusPending,
+      ),
+      owner: MediaOwnerLane.group,
+    );
+    await fixture.db.update(
+      'media_attachments',
+      <String, Object?>{'group_media_blob_custody_fingerprint': 'cd' * 32},
+      where: 'id = ? AND message_id = ? AND owner_lane = ?',
+      whereArgs: const <Object?>[attachmentId, messageId, 'group'],
+    );
+
+    final legacyRecovery =
+        fixture.repo as RecoverableGroupMediaDownloadRepository;
+    expect(
+      await legacyRecovery.loadRecoverableGroupDownloadPage(limit: 25),
+      isEmpty,
+      reason:
+          'the durable fingerprint stays a no-demotion boundary after the '
+          'strict custody row has retired',
+    );
+    expect(
+      (await fixture.rawAttachmentRow(
+        attachmentId,
+      ))!['group_media_blob_custody_fingerprint'],
+      'cd' * 32,
+    );
+  });
 
   Future<
     ({
@@ -7953,13 +8201,14 @@ END
       String mode = 'protected',
       String mime = 'image/jpeg',
       String mediaType = 'image',
+      String? contactPeerId,
     }) {
       final messageId = 'tc354-repo-$suffix';
       final attachmentId = 'tc354-repo-$suffix-attachment';
       final extension = mime == 'video/mp4' ? 'mp4' : 'jpg';
       final parent = ConversationMessage(
         id: messageId,
-        contactPeerId: 'tc354-repo-recipient-$suffix',
+        contactPeerId: contactPeerId ?? 'tc354-repo-recipient-$suffix',
         senderPeerId: 'tc354-repo-local',
         text: '',
         timestamp: createdAt,
@@ -8126,6 +8375,278 @@ END
             whereArgs: <Object?>[refusedCandidate.pending.id],
           )).single['content_hash'],
           isNull,
+        );
+      },
+    );
+
+    test(
+      'TC-366-01b private fanout atomically publishes N v114 rows without a v110 token',
+      () async {
+        const contactAccountPeerId = 'tc366-private-contact-account';
+        const contactSigningKey = 'tc366-private-contact-signing-key';
+        await fixture.db.insert('contacts', <String, Object?>{
+          'peer_id': contactAccountPeerId,
+          'public_key': contactSigningKey,
+          'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+          'username': 'TC366 Private Contact',
+          'signature': 'sig-base64',
+          'scanned_at': createdAt,
+          'ml_kem_public_key': 'mlkem-tc366-legacy-account',
+        });
+        await fixture.db
+            .insert('direct_contact_device_roster_metadata', <String, Object?>{
+              'contact_account_peer_id': contactAccountPeerId,
+              'roster_initialized': 1,
+              'legacy_target_state': 'active',
+              'initialized_at': createdAt,
+              'legacy_revoked_at': null,
+              'updated_at': createdAt,
+            });
+        await fixture.db
+            .insert('direct_contact_device_bindings', <String, Object?>{
+              'contact_account_peer_id': contactAccountPeerId,
+              'device_id': 'tc366-device-b',
+              'verified_account_signing_public_key': contactSigningKey,
+              'transport_peer_id': 'tc366-transport-b',
+              'transport_public_key': 'tc366-transport-key-b',
+              'device_ml_kem_public_key': 'mlkem-tc366-device-b',
+              'binding_fingerprint': '366b' * 16,
+              'state': 'active',
+              'staged_at': createdAt,
+              'decided_at': createdAt,
+            });
+        final snapshot =
+            await (fixture.repo
+                    as OutgoingDirectLinkedMediaBlobFanoutRepository)
+                .readDirectContactFanoutSnapshotForMedia(contactAccountPeerId);
+        expect(snapshot, isNotNull);
+        expect(
+          snapshot!.targets
+              .map((target) => target.peerId)
+              .toList(growable: false),
+          const <String>[contactAccountPeerId, 'tc366-transport-b'],
+          reason: 'the proof requires two independently addressed v114 rows',
+        );
+
+        List<DirectMediaBlobCustodyRow> rowsFor({
+          required ConversationMessage parent,
+          required MediaAttachment prepared,
+        }) => <DirectMediaBlobCustodyRow>[
+          for (final target in snapshot.targets)
+            DirectMediaBlobCustodyRow(
+              attachmentId: prepared.id,
+              messageId: parent.id,
+              direction: DirectMediaBlobCustodyDirection.outgoing,
+              state: DirectMediaBlobCustodyState.outgoingPrepared,
+              inboxCustodyIncarnationId: null,
+              recipientPeerId: target.peerId,
+              contactAccountPeerId: contactAccountPeerId,
+              recipientMlKemPublicKey: target.mlKemPublicKey,
+              ciphertextRelativePath:
+                  'direct_media_blob_custody_v1/'
+                  '${prepared.contentHash}/${prepared.id}.blob',
+              contentHash: prepared.contentHash!,
+              ciphertextSize: 47,
+              expiresAtMs: null,
+              custodyRelayPeerId: null,
+              lastAttemptAt: null,
+              nextAttemptAt: null,
+              createdAt: createdAt,
+              updatedAt: createdAt,
+            ),
+        ];
+
+        final candidate = privateCandidate(
+          suffix: 'tc366-private-fanout',
+          contactPeerId: contactAccountPeerId,
+        );
+        await seedPrivatePending(candidate);
+        final custodyRows = rowsFor(
+          parent: candidate.parent,
+          prepared: candidate.prepared,
+        );
+        final repository =
+            fixture.repo
+                as OutgoingDirectPrivateMediaBlobFanoutGenerationRepository;
+        expect(
+          repository.supportsOutgoingDirectPrivateMediaBlobFanoutGeneration,
+          isTrue,
+        );
+
+        final staged = await repository
+            .stageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+              expectedParent: candidate.parent,
+              expectedAttachment: candidate.pending,
+              preparedAttachment: candidate.prepared,
+              custodyRows: custodyRows,
+              contactAccountPeerId: contactAccountPeerId,
+              expectedSnapshot: snapshot,
+            );
+        expect(staged.outcome, DirectMediaBlobGenerationStageOutcome.applied);
+        expect(staged.attachments, hasLength(1));
+        expect(staged.custodyRows, hasLength(2));
+        expect(
+          staged.custodyRows.map((row) => row.recipientPeerId).toSet(),
+          snapshot.targets.map((target) => target.peerId).toSet(),
+        );
+
+        final durableRows = await fixture.db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'owner_lane = ? AND message_id = ?',
+          whereArgs: <Object?>[
+            MediaBlobCustodyOwnerLane.direct.dbValue,
+            candidate.parent.id,
+          ],
+          orderBy: 'recipient_peer_id ASC',
+        );
+        expect(durableRows, hasLength(2));
+        for (final target in snapshot.targets) {
+          final durable = durableRows.singleWhere(
+            (row) => row['recipient_peer_id'] == target.peerId,
+          );
+          expect(durable['attachment_id'], candidate.pending.id);
+          expect(durable['contact_account_peer_id'], contactAccountPeerId);
+          expect(durable['recipient_ml_kem_public_key'], target.mlKemPublicKey);
+          expect(durable['content_hash'], candidate.prepared.contentHash);
+          expect(durable['state'], 'outgoing_prepared');
+        }
+        final durableParent = (await fixture.db.query(
+          'messages',
+          columns: const <String>[
+            'direct_media_custody_intent_id',
+            'direct_event_fanout_generation_id',
+          ],
+          where: 'id = ?',
+          whereArgs: <Object?>[candidate.parent.id],
+        )).single;
+        expect(
+          durableParent['direct_media_custody_intent_id'],
+          isNull,
+          reason: 'private pending/completion authority must not mint v110',
+        );
+        expect(
+          durableParent['direct_event_fanout_generation_id'],
+          candidate.parent.id,
+          reason: 'the v114 no-remint marker commits with the complete batch',
+        );
+        final keyName = mediaAttachmentEncryptionKeyStoreName(
+          candidate.pending.id,
+        );
+        expect(
+          await fixture.secureKeyStore.read(keyName),
+          candidate.prepared.encryptionKeyBase64,
+        );
+        expect(
+          (await fixture.rawAttachmentRow(
+            candidate.pending.id,
+          ))!['encryption_key_base64'],
+          secureStoreReferenceForKey(keyName),
+        );
+
+        final writesBeforeReplay = fixture.secureKeyStore.writtenKeys.length;
+        final replay = await repository
+            .stageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+              expectedParent: candidate.parent,
+              expectedAttachment: candidate.pending,
+              preparedAttachment: candidate.prepared,
+              custodyRows: custodyRows,
+              contactAccountPeerId: contactAccountPeerId,
+              expectedSnapshot: snapshot,
+            );
+        expect(
+          replay.outcome,
+          DirectMediaBlobGenerationStageOutcome.idempotent,
+        );
+        expect(replay.custodyRows, hasLength(2));
+        expect(
+          fixture.secureKeyStore.writtenKeys,
+          hasLength(writesBeforeReplay),
+          reason: 'exact winner adoption must not rewrite the stable key slot',
+        );
+
+        final incomplete = privateCandidate(
+          suffix: 'tc366-private-incomplete',
+          hashDigit: 'b',
+          contactPeerId: contactAccountPeerId,
+        );
+        await seedPrivatePending(incomplete);
+        final incompleteRows = rowsFor(
+          parent: incomplete.parent,
+          prepared: incomplete.prepared,
+        );
+        final refusedIncomplete = await repository
+            .stageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+              expectedParent: incomplete.parent,
+              expectedAttachment: incomplete.pending,
+              preparedAttachment: incomplete.prepared,
+              custodyRows: incompleteRows.take(1).toList(growable: false),
+              contactAccountPeerId: contactAccountPeerId,
+              expectedSnapshot: snapshot,
+            );
+        expect(
+          refusedIncomplete.outcome,
+          DirectMediaBlobGenerationStageOutcome.refused,
+        );
+        expect(
+          await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[incomplete.parent.id],
+          ),
+          isEmpty,
+          reason: 'an incomplete A/B batch must publish neither sibling',
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(incomplete.pending.id),
+          ),
+          isFalse,
+          reason: 'batch-shape refusal happens before the stable key write',
+        );
+
+        final tokenCandidate = privateCandidate(
+          suffix: 'tc366-private-v110-cross',
+          hashDigit: 'c',
+          contactPeerId: contactAccountPeerId,
+        );
+        final tokenParent = tokenCandidate.parent.copyWith(
+          directMediaCustodyIntentId: 'f' * 32,
+        );
+        await fixture.db.insert('messages', tokenParent.toMap());
+        await fixture.db.insert(
+          'media_attachments',
+          tokenCandidate.pending.toMap(),
+        );
+        final refusedToken = await repository
+            .stageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+              expectedParent: tokenParent,
+              expectedAttachment: tokenCandidate.pending,
+              preparedAttachment: tokenCandidate.prepared,
+              custodyRows: rowsFor(
+                parent: tokenParent,
+                prepared: tokenCandidate.prepared,
+              ),
+              contactAccountPeerId: contactAccountPeerId,
+              expectedSnapshot: snapshot,
+            );
+        expect(
+          refusedToken.outcome,
+          DirectMediaBlobGenerationStageOutcome.refused,
+          reason: 'token-bearing authority is mutually exclusive with private',
+        );
+        expect(
+          await fixture.db.query(
+            kDirectMediaBlobCustodyTable,
+            where: 'message_id = ?',
+            whereArgs: <Object?>[tokenParent.id],
+          ),
+          isEmpty,
+        );
+        expect(
+          await fixture.secureKeyStore.containsKey(
+            mediaAttachmentEncryptionKeyStoreName(tokenCandidate.pending.id),
+          ),
+          isFalse,
         );
       },
     );
@@ -8986,7 +9507,7 @@ END
         );
         expect(
           reloaded
-              .map((row) => '${row.attachmentId} ${row.recipientPeerId}')
+              .map((row) => '${row.attachmentId}\\u0000${row.recipientPeerId}')
               .toSet(),
           hasLength(170),
           reason: 'every (attachment, target) pair loads back exactly once',
@@ -9407,6 +9928,11 @@ END
       }) => <String, Object?>{
         'attachment_id': attachmentId,
         'message_id': messageId,
+        // Plan 365 lane-generalizes the physical custody table. This
+        // Plan-362 preservation fixture remains an exact direct-lane row.
+        'owner_lane': 'direct',
+        'group_id': null,
+        'custody_blob_id': attachmentId,
         'direction': 'outgoing',
         'state': state,
         'inbox_custody_incarnation_id': null,

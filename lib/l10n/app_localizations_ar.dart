@@ -3205,6 +3205,54 @@ class AppLocalizationsAr extends AppLocalizations {
   String get sibling_device_verify_approve => 'تحقّق ووافق';
 
   @override
+  String get contact_profile_linked_devices => 'الأجهزة المرتبطة';
+
+  @override
+  String get contact_profile_linked_device_revoke => 'إلغاء الربط';
+
+  @override
+  String get contact_profile_linked_device_verify => 'تحقّق';
+
+  @override
+  String get linked_device_setup_title => 'ربط هذا الجهاز';
+
+  @override
+  String get linked_device_setup_recovery_phrase_instruction =>
+      'أدخل عبارة الاسترداد المؤلفة من 12 كلمة للحساب الذي تريد أن ينضم إليه هذا الهاتف كجهاز إضافي.';
+
+  @override
+  String get linked_group_status_title => 'المجموعات (للقراءة فقط)';
+
+  @override
+  String get linked_group_status_refresh => 'تحديث حالة المجموعات';
+
+  @override
+  String get linked_group_status_waiting =>
+      'بانتظار إعداد مجموعة من جهازك الأساسي.';
+
+  @override
+  String get group_info_link_device_action => 'ربط هذه المجموعة بجهاز آخر';
+
+  @override
+  String get linked_group_confirm_title => 'ربط هذه المجموعة؟';
+
+  @override
+  String linked_group_confirm_body(String groupName) {
+    return 'شارك «$groupName» مع الجهاز المرتبط الذي تم مسحه. لن تتم مشاركة أي مجموعات أو محادثات أخرى.';
+  }
+
+  @override
+  String get linked_group_confirm_action => 'ربط المجموعة';
+
+  @override
+  String get linked_device_media_unavailable =>
+      'الوسائط غير متاحة بعد على هذا الجهاز المرتبط';
+
+  @override
+  String get linked_device_voice_unavailable =>
+      'الرسائل الصوتية غير متاحة بعد على هذا الجهاز المرتبط';
+
+  @override
   String get transport_diagnostics_title => 'تشخيص النقل (الجلسة)';
 
   @override

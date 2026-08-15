@@ -10,9 +10,11 @@ import 'package:flutter_app/core/database/migrations/110_direct_media_custody_in
 import 'package:flutter_app/core/database/migrations/111_direct_media_blob_custody.dart';
 import 'package:flutter_app/core/database/migrations/113_direct_linked_device_event_fanout.dart';
 import 'package:flutter_app/core/database/migrations/114_direct_linked_device_media_blob_fanout.dart';
+import 'package:flutter_app/core/database/migrations/115_group_media_blob_custody.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/group_media_blob_custody.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
@@ -34,6 +36,38 @@ const _v111AttachmentId = 'tc347-durable-attachment';
 const _v111IncarnationId = 'abcdef0123456789abcdef0123456789';
 const _v111ContentHash =
     'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+const _v115GroupContentHash =
+    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+const _v115GroupId = 'tc365-group';
+const _v115GroupMessageId = 'tc365-group-message';
+const _v115GroupAttachmentId = 'tc365-group-attachment';
+const _v115GroupCustodyBlobId = 'gmb1-tc365-group-custody-blob';
+const _v115GroupCiphertextPath =
+    'group_media_blob_custody_v1/identity-scope/group-scope/'
+    'tc365-group.blob';
+const _v114MediaBlobCustodyColumns = <String>[
+  'attachment_id',
+  'message_id',
+  'direction',
+  'state',
+  'inbox_custody_incarnation_id',
+  'recipient_peer_id',
+  'contact_account_peer_id',
+  'recipient_ml_kem_public_key',
+  'ciphertext_relative_path',
+  'custody_kind',
+  'custody_contract',
+  'content_hash',
+  'ciphertext_size',
+  'transport_mime',
+  'expires_at_ms',
+  'custody_relay_peer_id',
+  'retry_count',
+  'last_attempt_at',
+  'next_attempt_at',
+  'created_at',
+  'updated_at',
+];
 const _wireEnvelope =
     '{"type":"chat_message","version":"2","id":"tc342-message",'
     '"senderPeerId":"self-peer",'
@@ -221,6 +255,170 @@ DirectMediaBlobCustodyRow _v111PreparedBlobCustodyRow() =>
       updatedAt: _at,
     );
 
+List<Map<String, Object?>> _v114DirectMediaBlobCustodyRows() =>
+    <Map<String, Object?>>[
+      _v114DirectMediaBlobCustodyRow(
+        attachmentId: 'tc365-direct-prepared',
+        state: 'outgoing_prepared',
+      ),
+      _v114DirectMediaBlobCustodyRow(
+        attachmentId: 'tc365-direct-stored',
+        state: 'outgoing_stored',
+        expiresAtMs: 4102444800000,
+        relayPeerId: 'tc365-relay-stored',
+      ),
+      _v114DirectMediaBlobCustodyRow(
+        attachmentId: 'tc365-direct-cleanup',
+        state: 'outgoing_cleanup_pending',
+        incarnationId: 'dddddddddddddddddddddddddddddddd',
+        expiresAtMs: 4102444800000,
+        relayPeerId: 'tc365-relay-cleanup',
+      ),
+      _v114DirectMediaBlobCustodyRow(
+        attachmentId: 'tc365-direct-incoming-committed',
+        state: 'incoming_committed',
+        incoming: true,
+        expiresAtMs: 4102444800000,
+      ),
+      _v114DirectMediaBlobCustodyRow(
+        attachmentId: 'tc365-direct-incoming-ack',
+        state: 'incoming_ack_pending',
+        incoming: true,
+        expiresAtMs: 4102444800000,
+        relayPeerId: 'tc365-relay-incoming',
+      ),
+    ];
+
+Map<String, Object?> _v114DirectMediaBlobCustodyRow({
+  required String attachmentId,
+  required String state,
+  bool incoming = false,
+  String? incarnationId,
+  int? expiresAtMs,
+  String? relayPeerId,
+}) => <String, Object?>{
+  'attachment_id': attachmentId,
+  'message_id': 'message-$attachmentId',
+  'direction': incoming ? 'incoming' : 'outgoing',
+  'state': state,
+  'inbox_custody_incarnation_id': incarnationId,
+  'recipient_peer_id': incoming ? null : 'recipient-$attachmentId',
+  'contact_account_peer_id': null,
+  'recipient_ml_kem_public_key': null,
+  'ciphertext_relative_path': incoming
+      ? null
+      : 'direct_media_blob_custody_v1/identity-scope/$attachmentId.blob',
+  'custody_kind': 'direct_media_blob_v1',
+  'custody_contract': 'ack_or_expiry_v1',
+  'content_hash': _v111ContentHash,
+  'ciphertext_size': 512,
+  'transport_mime': 'application/octet-stream',
+  'expires_at_ms': expiresAtMs,
+  'custody_relay_peer_id': relayPeerId,
+  'retry_count': 0,
+  'last_attempt_at': null,
+  'next_attempt_at': null,
+  'created_at': _at,
+  'updated_at': _at,
+};
+
+Map<String, Object?> _v115GroupMessageRow() => const <String, Object?>{
+  'id': _v115GroupMessageId,
+  'group_id': _v115GroupId,
+  'sender_peer_id': 'tc365-sender',
+  'sender_username': 'TC365 Sender',
+  'text': '',
+  'timestamp': _at,
+  'key_generation': 1,
+  'status': 'pending',
+  'is_incoming': 0,
+  'created_at': _at,
+};
+
+Map<String, Object?> _v115GroupAttachmentRow(String fingerprint) =>
+    <String, Object?>{
+      'id': _v115GroupAttachmentId,
+      'message_id': _v115GroupMessageId,
+      'mime': 'image/jpeg',
+      'size': 32,
+      'media_type': 'image',
+      'width': null,
+      'height': null,
+      'duration_ms': null,
+      'local_path': _v115GroupCiphertextPath,
+      'download_status': 'upload_pending',
+      'created_at': _at,
+      'waveform': null,
+      'upload_retry_count': 0,
+      'download_retry_count': 0,
+      'content_hash': _v115GroupContentHash,
+      'thumbnail_hash': null,
+      'encryption_key_base64': secureStoreReferenceForKey(
+        mediaAttachmentEncryptionKeyStoreName(_v115GroupAttachmentId),
+      ),
+      'encryption_nonce': 'dGMzNjUtbm9uY2U=',
+      'encryption_scheme': 'blob_aes_256_gcm_v1',
+      'owner_lane': 'group',
+      'is_bookmarked': 0,
+      'last_playback_position_ms': 0,
+      'group_media_blob_custody_fingerprint': fingerprint,
+    };
+
+List<DirectMediaBlobCustodyRow> _v115GroupCustodyRows() =>
+    const <String>['tc365-device-a', 'tc365-device-b']
+        .map(
+          (recipient) => DirectMediaBlobCustodyRow(
+            attachmentId: _v115GroupAttachmentId,
+            messageId: _v115GroupMessageId,
+            ownerLane: MediaBlobCustodyOwnerLane.group,
+            groupId: _v115GroupId,
+            custodyBlobId: _v115GroupCustodyBlobId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingPrepared,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: recipient,
+            ciphertextRelativePath: _v115GroupCiphertextPath,
+            custodyKind: kGroupMediaBlobCustodyKind,
+            contentHash: _v115GroupContentHash,
+            ciphertextSize: 48,
+            expiresAtMs: null,
+            custodyRelayPeerId: null,
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: _at,
+            updatedAt: _at,
+          ),
+        )
+        .toList(growable: false);
+
+Map<String, Object?> _v114Projection(Map<String, Object?> row) =>
+    <String, Object?>{
+      for (final column in _v114MediaBlobCustodyColumns) column: row[column],
+    };
+
+Future<Map<String, Object?>> _v115AuthoritySnapshot(
+  sqlcipher.Database db,
+) async => <String, Object?>{
+  'custody': await db.query(
+    kDirectMediaBlobCustodyTable,
+    orderBy: 'owner_lane, attachment_id, recipient_peer_id',
+  ),
+  'group_message': await db.query(
+    'group_messages',
+    where: 'id = ?',
+    whereArgs: const <Object?>[_v115GroupMessageId],
+  ),
+  'group_attachment': await db.query(
+    'media_attachments',
+    where: 'id = ? AND message_id = ? AND owner_lane = ?',
+    whereArgs: const <Object?>[
+      _v115GroupAttachmentId,
+      _v115GroupMessageId,
+      'group',
+    ],
+  ),
+};
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -232,7 +430,7 @@ void main() {
         isTrue,
         reason: 'TC-342-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 114);
+      expect(currentIdentityDatabaseVersion, 115);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_inbox_custody_sqlcipher_',
@@ -278,7 +476,7 @@ void main() {
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(await db.query('direct_inbox_custody_outbox'), isEmpty);
         expect(
@@ -492,7 +690,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await _authoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-342-11 failed at $proofStage: $error\n$stackTrace');
@@ -511,7 +709,7 @@ END
         isTrue,
         reason: 'TC-345-11 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 114);
+      expect(currentIdentityDatabaseVersion, 115);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_custody_sqlcipher_',
@@ -575,7 +773,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await _cipherVersion(db), isNotEmpty);
         expect(
           (await db.query(
@@ -787,7 +985,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await _tc345AuthoritySnapshot(db), beforeDowngradeRefusal);
       } catch (error, stackTrace) {
         fail('TC-345-11 failed at $proofStage: $error\n$stackTrace');
@@ -806,7 +1004,7 @@ END
         isTrue,
         reason: 'TC-347-01 is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 114);
+      expect(currentIdentityDatabaseVersion, 115);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_blob_custody_sqlcipher_',
@@ -859,7 +1057,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         final historical = (await db.query(
           'direct_inbox_custody_outbox',
           where: 'message_id = ?',
@@ -931,7 +1129,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(
           DirectMediaBlobCustodyRow.fromMap(
             (await db.query('direct_media_blob_custody')).single,
@@ -990,7 +1188,7 @@ END
         isTrue,
         reason: 'TC-361-04a is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 114);
+      expect(currentIdentityDatabaseVersion, 115);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_event_fanout_sqlcipher_',
@@ -1058,7 +1256,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         final historicalText = (await db.query(
           'direct_inbox_custody_outbox',
         )).single;
@@ -1156,7 +1354,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await _tc345AuthoritySnapshot(db), committedSnapshot);
         await db.close();
         db = null;
@@ -1185,7 +1383,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await _tc345AuthoritySnapshot(db), committedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-361-04a failed at $proofStage: $error\n$stackTrace');
@@ -1204,7 +1402,7 @@ END
         isTrue,
         reason: 'TC-362-05a is an Android SQLCipher plugin boundary proof',
       );
-      expect(currentIdentityDatabaseVersion, 114);
+      expect(currentIdentityDatabaseVersion, 115);
 
       final temp = await Directory.systemTemp.createTemp(
         'direct_media_fanout_sqlcipher_',
@@ -1267,6 +1465,9 @@ END
         'next_attempt_at': null,
         'created_at': _at,
         'updated_at': _at,
+        'owner_lane': 'direct',
+        'group_id': null,
+        'custody_blob_id': fanoutAttachment,
       };
       Future<List<Map<String, Object?>>> custodySnapshot(
         sqlcipher.Database database,
@@ -1300,7 +1501,8 @@ END
         await db.close();
         db = null;
 
-        proofStage = 'upgrade-v113-to-v114-preserves-legacy-untouched';
+        proofStage =
+            'upgrade-v113-through-v114-to-current-preserves-legacy-untouched';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -1310,22 +1512,31 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         final upgraded = await custodySnapshot(db);
         expect(upgraded, hasLength(v113Legacy.length));
         for (var index = 0; index < upgraded.length; index++) {
           expect(upgraded[index]['contact_account_peer_id'], isNull);
           expect(upgraded[index]['recipient_ml_kem_public_key'], isNull);
+          expect(upgraded[index]['owner_lane'], 'direct');
+          expect(upgraded[index]['group_id'], isNull);
+          expect(
+            upgraded[index]['custody_blob_id'],
+            upgraded[index]['attachment_id'],
+          );
           final projected = Map<String, Object?>.from(upgraded[index])
             ..remove('contact_account_peer_id')
-            ..remove('recipient_ml_kem_public_key');
+            ..remove('recipient_ml_kem_public_key')
+            ..remove('owner_lane')
+            ..remove('group_id')
+            ..remove('custody_blob_id');
           expect(projected, v113Legacy[index]);
         }
 
         proofStage = 'idempotent-v114-migration';
         await runDirectLinkedDeviceMediaBlobFanoutMigration(db);
         await runDirectLinkedDeviceMediaBlobFanoutMigration(db);
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
 
         proofStage = 'persist-two-same-attachment-target-rows';
         await db.insert('messages', <String, Object?>{
@@ -1371,7 +1582,7 @@ END
         }(), throwsA(anything));
         if (wrong != null && wrong!.isOpen) await wrong!.close();
 
-        proofStage = 'v114-reopen-retains-exact-fanout-authority';
+        proofStage = 'current-reopen-retains-exact-fanout-authority';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -1381,7 +1592,7 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await custodySnapshot(db), committedSnapshot);
 
         proofStage = 'rerun-v114-migration-preserves-fanout-rows';
@@ -1390,7 +1601,7 @@ END
         await db.close();
         db = null;
 
-        proofStage = 'v114-to-v113-downgrade-refusal';
+        proofStage = 'current-to-v113-downgrade-refusal';
         await expectLater(
           sqlcipher.openDatabase(
             path,
@@ -1404,7 +1615,7 @@ END
           throwsA(anything),
         );
 
-        proofStage = 'reopen-v114-unchanged-after-downgrade-refusal';
+        proofStage = 'reopen-current-unchanged-after-downgrade-refusal';
         db = await sqlcipher.openDatabase(
           path,
           password: password,
@@ -1414,10 +1625,234 @@ END
           onUpgrade: runProductionOnUpgrade,
           onDowngrade: sqlcipher.onDatabaseVersionChangeError,
         );
-        expect(await _userVersion(db), 114);
+        expect(await _userVersion(db), 115);
         expect(await custodySnapshot(db), committedSnapshot);
       } catch (error, stackTrace) {
         fail('TC-362-05a failed at $proofStage: $error\n$stackTrace');
+      } finally {
+        if (db != null && db.isOpen) await db.close();
+        if (await temp.exists()) await temp.delete(recursive: true);
+      }
+    },
+  );
+
+  testWidgets(
+    'TC-365-01a Android SQLCipher v114-to-v115 group media custody survives reopen',
+    (_) async {
+      expect(
+        Platform.isAndroid,
+        isTrue,
+        reason: 'TC-365-01a is an Android SQLCipher plugin boundary proof',
+      );
+      expect(currentIdentityDatabaseVersion, 115);
+
+      final temp = await Directory.systemTemp.createTemp(
+        'group_media_blob_custody_sqlcipher_',
+      );
+      final path = '${temp.path}/identity.db';
+      const password = 'tc365-sqlcipher-password';
+      sqlcipher.Database? db;
+      var proofStage = 'create-v114';
+
+      try {
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: 114,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 114);
+        expect(await _cipherVersion(db), isNotEmpty);
+        expect(
+          (await db.rawQuery(
+            'PRAGMA table_info($kDirectMediaBlobCustodyTable)',
+          )).where((column) => column['name'] == 'owner_lane'),
+          isEmpty,
+        );
+        expect(
+          (await db.rawQuery('PRAGMA table_info(media_attachments)')).where(
+            (column) =>
+                column['name'] == 'group_media_blob_custody_fingerprint',
+          ),
+          isEmpty,
+        );
+
+        proofStage = 'seed-every-legal-v114-direct-state-family';
+        for (final row in _v114DirectMediaBlobCustodyRows()) {
+          await db.insert(kDirectMediaBlobCustodyTable, row);
+        }
+        final v114Projection = await db.query(
+          kDirectMediaBlobCustodyTable,
+          orderBy: 'attachment_id',
+        );
+        expect(v114Projection, hasLength(5));
+        await db.close();
+        db = null;
+
+        proofStage = 'upgrade-v114-to-v115-preserves-direct-projection';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 115);
+        expect(await _cipherVersion(db), isNotEmpty);
+        final upgradedDirect = await db.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'owner_lane = ?',
+          whereArgs: const <Object?>['direct'],
+          orderBy: 'attachment_id',
+        );
+        expect(upgradedDirect, hasLength(v114Projection.length));
+        for (var index = 0; index < v114Projection.length; index++) {
+          expect(_v114Projection(upgradedDirect[index]), v114Projection[index]);
+          expect(upgradedDirect[index]['owner_lane'], 'direct');
+          expect(upgradedDirect[index]['group_id'], isNull);
+          expect(
+            upgradedDirect[index]['custody_blob_id'],
+            upgradedDirect[index]['attachment_id'],
+          );
+        }
+
+        proofStage = 'atomically-stage-group-parent-attachment-and-targets';
+        final groupRows = _v115GroupCustodyRows();
+        final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+          groupId: _v115GroupId,
+          messageId: _v115GroupMessageId,
+          attachmentId: _v115GroupAttachmentId,
+          custodyBlobId: _v115GroupCustodyBlobId,
+          contentHash: _v115GroupContentHash,
+          ciphertextSize: 48,
+          recipientPeerIds: groupRows.map((row) => row.recipientPeerId!),
+        );
+        expect(
+          await dbStageFreshOutgoingGroupMediaBlobGeneration(
+            db,
+            parentRow: _v115GroupMessageRow(),
+            attachmentRows: <Map<String, Object?>>[
+              _v115GroupAttachmentRow(fingerprint),
+            ],
+            custodyRows: groupRows,
+            custodyBlobIdsByAttachmentId: const <String, String>{
+              _v115GroupAttachmentId: _v115GroupCustodyBlobId,
+            },
+          ),
+          DirectMediaBlobCustodyBatchStageOutcome.applied,
+        );
+        expect(
+          (await db.query(
+            'media_attachments',
+            columns: const <String>['group_media_blob_custody_fingerprint'],
+            where: 'id = ? AND message_id = ? AND owner_lane = ?',
+            whereArgs: const <Object?>[
+              _v115GroupAttachmentId,
+              _v115GroupMessageId,
+              'group',
+            ],
+          )).single['group_media_blob_custody_fingerprint'],
+          fingerprint,
+        );
+        final persistedGroup = await dbLoadGroupMediaBlobCustodyForMessage(
+          db,
+          groupId: _v115GroupId,
+          messageId: _v115GroupMessageId,
+        );
+        expect(persistedGroup, hasLength(2));
+        expect(
+          persistedGroup,
+          everyElement(
+            isA<DirectMediaBlobCustodyRow>()
+                .having(
+                  (row) => row.ownerLane,
+                  'owner lane',
+                  MediaBlobCustodyOwnerLane.group,
+                )
+                .having(
+                  (row) => row.custodyBlobId,
+                  'custody blob ID',
+                  _v115GroupCustodyBlobId,
+                ),
+          ),
+        );
+        expect(
+          await dbLoadDirectMediaBlobCustodyRowsForAttachment(
+            db,
+            attachmentId: _v115GroupAttachmentId,
+          ),
+          isEmpty,
+          reason: 'the incumbent direct loader remains lane-isolated',
+        );
+        final committedSnapshot = await _v115AuthoritySnapshot(db);
+        await db.close();
+        db = null;
+
+        proofStage = 'wrong-key-refusal';
+        sqlcipher.Database? wrong;
+        await expectLater(() async {
+          wrong = await sqlcipher.openDatabase(
+            path,
+            password: 'wrong-tc365-password',
+            singleInstance: false,
+          );
+          await wrong!.rawQuery(
+            'SELECT COUNT(*) FROM $kDirectMediaBlobCustodyTable',
+          );
+        }(), throwsA(anything));
+        if (wrong != null && wrong!.isOpen) await wrong!.close();
+
+        proofStage = 'reopen-v115-and-rerun-migration-idempotently';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 115);
+        expect(await _v115AuthoritySnapshot(db), committedSnapshot);
+        await runGroupMediaBlobCustodyMigration(db);
+        await runGroupMediaBlobCustodyMigration(db);
+        expect(await _v115AuthoritySnapshot(db), committedSnapshot);
+        await db.close();
+        db = null;
+
+        proofStage = 'v115-to-v114-downgrade-refusal';
+        await expectLater(
+          sqlcipher.openDatabase(
+            path,
+            password: password,
+            version: 114,
+            singleInstance: false,
+            onCreate: runProductionOnCreate,
+            onUpgrade: runProductionOnUpgrade,
+            onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+          ),
+          throwsA(anything),
+        );
+
+        proofStage = 'reopen-v115-unchanged-after-downgrade-refusal';
+        db = await sqlcipher.openDatabase(
+          path,
+          password: password,
+          version: currentIdentityDatabaseVersion,
+          singleInstance: false,
+          onCreate: runProductionOnCreate,
+          onUpgrade: runProductionOnUpgrade,
+          onDowngrade: sqlcipher.onDatabaseVersionChangeError,
+        );
+        expect(await _userVersion(db), 115);
+        expect(await _v115AuthoritySnapshot(db), committedSnapshot);
+      } catch (error, stackTrace) {
+        fail('TC-365-01a failed at $proofStage: $error\n$stackTrace');
       } finally {
         if (db != null && db.isOpen) await db.close();
         if (await temp.exists()) await temp.delete(recursive: true);

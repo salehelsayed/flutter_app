@@ -84,7 +84,12 @@ type PushService struct {
 	tokenBackend PushTokenBackend
 	sender       func(context.Context, *messaging.Message) (string, error)
 	retryDelays  []time.Duration
+	now          func() time.Time
 }
+
+type pushMessageFactory func() *messaging.Message
+
+type resolvedPushMessageFactory func(platform string) (*messaging.Message, error)
 
 type tokenEntry struct {
 	Token        string
@@ -105,23 +110,24 @@ func newPushServiceWithTokenBackend(
 	ps := &PushService{
 		tokenBackend: tokenBackend,
 		retryDelays:  defaultPushRetryDelays(),
+		now:          time.Now,
 	}
 
 	opt := option.WithCredentialsFile(serviceAccountPath)
 	app, err := firebase.NewApp(ctx, nil, opt)
 	if err != nil {
-		log.Printf("[PUSH] Firebase not initialized — push disabled: %v", err)
+		log.Printf("[PUSH] outcome=provider_init_failed stage=firebase_app")
 		return ps
 	}
 
 	client, err := app.Messaging(ctx)
 	if err != nil {
-		log.Printf("[PUSH] Firebase messaging init failed — push disabled: %v", err)
+		log.Printf("[PUSH] outcome=provider_init_failed stage=messaging_client")
 		return ps
 	}
 
 	ps.client = client
-	log.Println("[PUSH] Firebase Admin SDK initialized")
+	log.Println("[PUSH] outcome=provider_initialized")
 	return ps
 }
 
@@ -130,6 +136,7 @@ func NewPushServiceWithBackend(tokenBackend PushTokenBackend) *PushService {
 	return &PushService{
 		tokenBackend: tokenBackend,
 		retryDelays:  defaultPushRetryDelays(),
+		now:          time.Now,
 	}
 }
 
@@ -149,35 +156,182 @@ func (ps *PushService) RegisterToken(
 	if err := ps.tokenBackend.RegisterToken(peerId, token, platform, capabilities...); err != nil {
 		return fmt.Errorf("persist push token: %w", err)
 	}
-	log.Printf("[PUSH] Token registered for %s (%s)", peerId[:min(20, len(peerId))], platform)
+	log.Printf("[PUSH] outcome=registered")
 	return nil
 }
 
-func (ps *PushService) UnregisterToken(peerId string) {
-	ps.tokenBackend.UnregisterToken(peerId)
-	log.Printf("[PUSH] Token unregistered for %s", peerId[:min(20, len(peerId))])
+func (ps *PushService) UnregisterToken(peerId string) error {
+	if err := ps.tokenBackend.UnregisterToken(peerId); err != nil {
+		return fmt.Errorf("delete push route: %w", err)
+	}
+	log.Printf("[PUSH] outcome=unregistered")
+	return nil
+}
+
+func (ps *PushService) selectPushRoute(peerID, requiredCapability string) (*pushRouteLease, error) {
+	if ps == nil || ps.tokenBackend == nil {
+		return nil, errors.New("push route backend unavailable")
+	}
+	route, err := ps.tokenBackend.LookupRoute(peerID)
+	if err != nil || route == nil {
+		return route, err
+	}
+	if requiredCapability != "" && !route.hasCapability(requiredCapability) {
+		return nil, nil
+	}
+	copy := copyPushRouteLease(*route)
+	return &copy, nil
+}
+
+// sendPushRouteThroughGateway is the sole production resolver of provider
+// material. Both rich compatibility sends and fixed mailbox-dirty sends enter
+// with an immutable opaque lease; provider token/platform values exist only
+// inside this function and its message factory.
+func (ps *PushService) sendPushRouteThroughGateway(
+	ctx context.Context,
+	route pushRouteLease,
+	buildMessage resolvedPushMessageFactory,
+	allowStrictFallback bool,
+) error {
+	if ps == nil || ps.tokenBackend == nil {
+		return errors.New("push route backend unavailable")
+	}
+	target, err := ps.tokenBackend.ResolveRoute(route)
+	if err != nil {
+		return err
+	}
+	if target == nil {
+		return errors.New("push route resolved without a provider target")
+	}
+	draft, err := buildMessage(target.Platform)
+	if err != nil {
+		return err
+	}
+	if draft == nil {
+		ps.sendWithRetry(ctx, nil, target.Route, allowStrictFallback)
+		return nil
+	}
+	providerMessage := *draft
+	providerMessage.Token = target.Token
+	ps.sendWithRetry(ctx, &providerMessage, target.Route, allowStrictFallback)
+	return nil
+}
+
+func (ps *PushService) sendRichPushThroughGateway(
+	ctx context.Context,
+	route pushRouteLease,
+	buildMessage pushMessageFactory,
+) error {
+	return ps.sendPushRouteThroughGateway(
+		ctx,
+		route,
+		func(platform string) (*messaging.Message, error) {
+			var draft *messaging.Message
+			if buildMessage != nil {
+				draft = buildMessage()
+			}
+			if draft == nil {
+				return nil, nil
+			}
+			return projectPushMessageForPlatform(draft, platform), nil
+		},
+		true,
+	)
+}
+
+func classifySelectedPushRoute(route pushRouteLease, requiredCapability string) (opaque bool, eligible bool) {
+	if requiredCapability != "" && !route.hasCapability(requiredCapability) {
+		return false, false
+	}
+	if route.hasCapability(opaqueWakeCapability) {
+		return true, route.Handle != ""
+	}
+	return false, true
+}
+
+// sendSelectedPushThroughGateway owns the single bounded stale
+// re-lookup/re-selection shared by all four adapters. Once an attempt selects
+// opaque wake it may remain opaque or stop; it can never downgrade to rich.
+func (ps *PushService) sendSelectedPushThroughGateway(
+	ctx context.Context,
+	peerID string,
+	initialRoute pushRouteLease,
+	requiredCapability string,
+	buildRichMessage pushMessageFactory,
+) {
+	route := copyPushRouteLease(initialRoute)
+	initialOpaque, eligible := classifySelectedPushRoute(route, requiredCapability)
+	if !eligible {
+		pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
+		if initialOpaque {
+			log.Printf("[PUSH] outcome=opaque_route_invalid")
+		}
+		return
+	}
+	opaqueLocked := initialOpaque
+
+	for selectionAttempt := 0; selectionAttempt < 2; selectionAttempt++ {
+		selectedOpaque, selectedEligible := classifySelectedPushRoute(route, requiredCapability)
+		if !selectedEligible || (opaqueLocked && !selectedOpaque) {
+			pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
+			return
+		}
+
+		var err error
+		if selectedOpaque {
+			err = ps.mailboxDirty(ctx, route)
+		} else {
+			err = ps.sendRichPushThroughGateway(ctx, route, buildRichMessage)
+		}
+		if errors.Is(err, ErrPushRouteStale) {
+			if selectionAttempt == 1 {
+				pushSentCounter.WithLabelValues("route_stale").Inc()
+				return
+			}
+			refreshed, lookupErr := ps.selectPushRoute(peerID, requiredCapability)
+			if lookupErr != nil {
+				pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+				return
+			}
+			if refreshed == nil {
+				pushSentCounter.WithLabelValues("route_refresh_ineligible").Inc()
+				return
+			}
+			route = copyPushRouteLease(*refreshed)
+			continue
+		}
+		if errors.Is(err, errOpaqueWakeUnsupportedPlatform) {
+			pushSentCounter.WithLabelValues("unsupported_platform").Inc()
+			log.Printf("[PUSH] outcome=unsupported_platform")
+			return
+		}
+		if err != nil {
+			pushSentCounter.WithLabelValues("route_resolution_failed").Inc()
+			return
+		}
+		return
+	}
 }
 
 func (ps *PushService) SendNotification(ctx context.Context, toPeerId, fromPeerId, message string) {
-	entry := ps.tokenBackend.LookupToken(toPeerId)
-	if entry == nil {
+	route, err := ps.selectPushRoute(toPeerId, "")
+	if err != nil {
+		pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+		return
+	}
+	if route == nil {
 		pushSentCounter.WithLabelValues("missing_token").Inc()
-		log.Printf("[PUSH] Skip chat push to %s: no registered token",
-			toPeerId[:min(20, len(toPeerId))])
+		log.Printf("[PUSH] outcome=missing_route")
 		return
 	}
 
-	msg := buildPushMessage(entry.Token, fromPeerId, message)
-	msg = projectPushMessageForPlatform(msg, entry.Platform)
-	ps.sendWithRetry(ctx, toPeerId, msg, "chat", "")
-}
-
-func (ps *PushService) recipientSupportsCapability(peerID, capability string) bool {
-	if ps == nil || ps.tokenBackend == nil {
-		return false
-	}
-	entry := ps.tokenBackend.LookupToken(peerID)
-	return entry != nil && entry.hasCapability(capability)
+	ps.sendSelectedPushThroughGateway(
+		ctx,
+		toPeerId,
+		*route,
+		"",
+		func() *messaging.Message { return buildPushMessage("", fromPeerId, message) },
+	)
 }
 
 func (ps *PushService) SendReactionNotification(
@@ -186,18 +340,38 @@ func (ps *PushService) SendReactionNotification(
 	authenticatedFromPeerID string,
 	message string,
 ) {
-	entry := ps.tokenBackend.LookupToken(toPeerID)
-	if entry == nil || !entry.hasCapability(directReactionCapability) {
+	route, err := ps.selectPushRoute(toPeerID, directReactionCapability)
+	if err != nil {
+		pushSentCounter.WithLabelValues("reaction_route_error").Inc()
+		return
+	}
+	if route == nil {
 		pushSentCounter.WithLabelValues("reaction_incapable").Inc()
 		return
 	}
-	msg := buildReactionPushMessage(entry.Token, authenticatedFromPeerID, message)
-	if msg == nil {
-		pushSentCounter.WithLabelValues("reaction_invalid").Inc()
-		return
-	}
-	msg = projectPushMessageForPlatform(msg, entry.Platform)
-	ps.sendWithRetry(ctx, toPeerID, msg, "reaction", "")
+	ps.sendReactionNotificationForRoute(ctx, toPeerID, *route, authenticatedFromPeerID, message)
+}
+
+func (ps *PushService) sendReactionNotificationForRoute(
+	ctx context.Context,
+	toPeerID string,
+	route pushRouteLease,
+	authenticatedFromPeerID string,
+	message string,
+) {
+	ps.sendSelectedPushThroughGateway(
+		ctx,
+		toPeerID,
+		route,
+		directReactionCapability,
+		func() *messaging.Message {
+			msg := buildReactionPushMessage("", authenticatedFromPeerID, message)
+			if msg == nil {
+				pushSentCounter.WithLabelValues("reaction_invalid").Inc()
+			}
+			return msg
+		},
+	)
 }
 
 func (ps *PushService) SendGroupReactionNotification(
@@ -207,18 +381,39 @@ func (ps *PushService) SendGroupReactionNotification(
 	message string,
 	metadata groupReactionPushMetadata,
 ) {
-	entry := ps.tokenBackend.LookupToken(toPeerID)
-	if entry == nil || !entry.hasCapability(groupReactionCapability) {
+	route, err := ps.selectPushRoute(toPeerID, groupReactionCapability)
+	if err != nil {
+		pushSentCounter.WithLabelValues("group_reaction_route_error").Inc()
+		return
+	}
+	if route == nil {
 		pushSentCounter.WithLabelValues("group_reaction_incapable").Inc()
 		return
 	}
-	msg := buildGroupReactionPushMessage(entry.Token, groupID, message, metadata)
-	if msg == nil {
-		pushSentCounter.WithLabelValues("group_reaction_invalid").Inc()
-		return
-	}
-	msg = projectGroupReactionPushMessageForPlatform(msg, entry.Platform)
-	ps.sendWithRetry(ctx, toPeerID, msg, "group_reaction", groupID)
+	ps.sendGroupReactionNotificationForRoute(ctx, toPeerID, *route, groupID, message, metadata)
+}
+
+func (ps *PushService) sendGroupReactionNotificationForRoute(
+	ctx context.Context,
+	toPeerID string,
+	route pushRouteLease,
+	groupID string,
+	message string,
+	metadata groupReactionPushMetadata,
+) {
+	ps.sendSelectedPushThroughGateway(
+		ctx,
+		toPeerID,
+		route,
+		groupReactionCapability,
+		func() *messaging.Message {
+			msg := buildGroupReactionPushMessage("", groupID, message, metadata)
+			if msg == nil {
+				pushSentCounter.WithLabelValues("group_reaction_invalid").Inc()
+			}
+			return msg
+		},
+	)
 }
 
 func (ps *PushService) SendGroupNotification(
@@ -229,24 +424,32 @@ func (ps *PushService) SendGroupNotification(
 	messageID string,
 	message string,
 ) {
-	entry := ps.tokenBackend.LookupToken(toPeerId)
-	if entry == nil {
+	route, err := ps.selectPushRoute(toPeerId, "")
+	if err != nil {
+		pushSentCounter.WithLabelValues("route_lookup_failed").Inc()
+		return
+	}
+	if route == nil {
 		pushSentCounter.WithLabelValues("missing_token").Inc()
-		log.Printf("[PUSH] Skip group push to %s for group %s: no registered token",
-			toPeerId[:min(20, len(toPeerId))],
-			groupId[:min(20, len(groupId))])
+		log.Printf("[PUSH] outcome=missing_route")
 		return
 	}
 
-	msg := buildGroupPushMessage(
-		entry.Token,
-		groupId,
-		senderTransportPeerID,
-		messageID,
-		message,
+	ps.sendSelectedPushThroughGateway(
+		ctx,
+		toPeerId,
+		*route,
+		"",
+		func() *messaging.Message {
+			return buildGroupPushMessage(
+				"",
+				groupId,
+				senderTransportPeerID,
+				messageID,
+				message,
+			)
+		},
 	)
-	msg = projectPushMessageForPlatform(msg, entry.Platform)
-	ps.sendWithRetry(ctx, toPeerId, msg, "group", groupId)
 }
 
 // send returns the provider error VERBATIM. Do not wrap it: messaging.Is* uses
@@ -267,23 +470,18 @@ func (ps *PushService) send(ctx context.Context, msg *messaging.Message) error {
 
 func (ps *PushService) sendWithRetry(
 	ctx context.Context,
-	toPeerId string,
 	msg *messaging.Message,
-	pushKind string,
-	groupId string,
+	route pushRouteLease,
+	allowStrictFallback bool,
 ) {
 	if ps.sender == nil && ps.client == nil {
 		pushSentCounter.WithLabelValues("provider_unavailable").Inc()
-		log.Printf("[PUSH] Skip %s push to %s: provider unavailable",
-			pushKind,
-			toPeerId[:min(20, len(toPeerId))])
+		log.Printf("[PUSH] provider unavailable outcome=provider_unavailable")
 		return
 	}
 	if msg == nil {
 		pushSentCounter.WithLabelValues("invalid_payload").Inc()
-		log.Printf("[PUSH] Refusing %s push to %s: required routing cannot fit provider budget",
-			pushKind,
-			toPeerId[:min(20, len(toPeerId))])
+		log.Printf("[PUSH] outcome=invalid_payload")
 		return
 	}
 	totalAttempts := len(ps.retryDelays) + 1
@@ -292,33 +490,26 @@ func (ps *PushService) sendWithRetry(
 		err := ps.send(ctx, msg)
 		if err == nil {
 			pushSentCounter.WithLabelValues("success").Inc()
-			if pushKind == "group" {
-				log.Printf("[PUSH] Group notification sent to %s for group %s (attempt %d/%d)",
-					toPeerId[:min(20, len(toPeerId))],
-					groupId[:min(20, len(groupId))],
-					attempt,
-					totalAttempts)
-			} else {
-				log.Printf("[PUSH] Notification sent to %s (attempt %d/%d)",
-					toPeerId[:min(20, len(toPeerId))],
-					attempt,
-					totalAttempts)
-			}
+			log.Printf("[PUSH] outcome=success attempt=%d total_attempts=%d", attempt, totalAttempts)
 			return
 		}
 
 		if reason := permanentPushErrorReason(err); reason != "" {
-			ps.tokenBackend.UnregisterToken(toPeerId)
+			_, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
 			pushSentCounter.WithLabelValues("invalid_token").Inc()
-			log.Printf("[PUSH] Removed invalid token for %s after %s push error (reason=%s): %v",
-				toPeerId[:min(20, len(toPeerId))],
-				pushKind,
-				reason,
-				err)
+			if revokeErr != nil {
+				log.Printf("[PUSH] outcome=revoke_failed reason=%s", reason)
+			}
+			log.Printf("[PUSH] outcome=invalid_token reason=%s", reason)
 			return
 		}
 
 		if isPayloadTooLargeError(err) {
+			if !allowStrictFallback {
+				pushSentCounter.WithLabelValues("payload_too_large").Inc()
+				log.Printf("[PUSH] outcome=payload_too_large fallback=disabled")
+				return
+			}
 			// A provider size rejection is permanent for this exact object. Rebuild
 			// once from authenticated routing fields only, then make exactly one
 			// final send attempt; never burn the transient retry budget resending the
@@ -326,9 +517,7 @@ func (ps *PushService) sendWithRetry(
 			strict := buildStrictMinimalFallbackPushMessage(msg)
 			if strict == nil {
 				pushSentCounter.WithLabelValues("payload_too_large").Inc()
-				log.Printf("[PUSH] Refusing oversized %s push to %s: no smaller valid routing payload",
-					pushKind,
-					toPeerId[:min(20, len(toPeerId))])
+				log.Printf("[PUSH] outcome=payload_too_large fallback=unavailable")
 				return
 			}
 
@@ -336,68 +525,35 @@ func (ps *PushService) sendWithRetry(
 			if fallbackErr == nil {
 				pushSentCounter.WithLabelValues("success").Inc()
 				pushSentCounter.WithLabelValues("payload_too_large_fallback").Inc()
-				log.Printf("[PUSH] Strict routing fallback sent to %s after provider rejected %s payload size (provider error: %v)",
-					toPeerId[:min(20, len(toPeerId))],
-					pushKind,
-					err)
+				log.Printf("[PUSH] outcome=success fallback=strict")
 				return
 			}
 			if reason := permanentPushErrorReason(fallbackErr); reason != "" {
-				ps.tokenBackend.UnregisterToken(toPeerId)
+				_, revokeErr := ps.tokenBackend.RevokeIfCurrent(route)
 				pushSentCounter.WithLabelValues("invalid_token").Inc()
-				log.Printf("[PUSH] Removed invalid token for %s after strict fallback (reason=%s)",
-					toPeerId[:min(20, len(toPeerId))],
-					reason)
+				if revokeErr != nil {
+					log.Printf("[PUSH] outcome=revoke_failed reason=%s", reason)
+				}
+				log.Printf("[PUSH] outcome=invalid_token reason=%s fallback=strict", reason)
 			} else {
 				pushSentCounter.WithLabelValues("failed").Inc()
 			}
-			log.Printf("[PUSH] Strict routing fallback to %s failed after provider rejected %s payload size: %v",
-				toPeerId[:min(20, len(toPeerId))],
-				pushKind,
-				fallbackErr)
+			log.Printf("[PUSH] outcome=fallback_failed fallback=strict")
 			return
 		}
 
 		if attempt == totalAttempts {
 			pushSentCounter.WithLabelValues("failed").Inc()
-			if pushKind == "group" {
-				log.Printf("[PUSH] Failed to send group push to %s for group %s after %d attempt(s): %v",
-					toPeerId[:min(20, len(toPeerId))],
-					groupId[:min(20, len(groupId))],
-					attempt,
-					err)
-			} else {
-				log.Printf("[PUSH] Failed to send push to %s after %d attempt(s): %v",
-					toPeerId[:min(20, len(toPeerId))],
-					attempt,
-					err)
-			}
+			log.Printf("[PUSH] outcome=failed attempts=%d", attempt)
 			return
 		}
 
 		delay := ps.retryDelays[attempt-1]
-		if pushKind == "group" {
-			log.Printf("[PUSH] Group push to %s for group %s failed on attempt %d/%d: %v; retrying in %s",
-				toPeerId[:min(20, len(toPeerId))],
-				groupId[:min(20, len(groupId))],
-				attempt,
-				totalAttempts,
-				err,
-				delay)
-		} else {
-			log.Printf("[PUSH] Push to %s failed on attempt %d/%d: %v; retrying in %s",
-				toPeerId[:min(20, len(toPeerId))],
-				attempt,
-				totalAttempts,
-				err,
-				delay)
-		}
+		log.Printf("[PUSH] outcome=retrying attempt=%d total_attempts=%d", attempt, totalAttempts)
 
 		if !waitForRetryDelay(ctx, delay) {
 			pushSentCounter.WithLabelValues("failed").Inc()
-			log.Printf("[PUSH] Aborting %s push retry to %s: context canceled",
-				pushKind,
-				toPeerId[:min(20, len(toPeerId))])
+			log.Printf("[PUSH] outcome=context_canceled")
 			return
 		}
 	}
@@ -1581,13 +1737,23 @@ func (is *InboxStore) recordStoredAndLaunchPush(toPeerId string, entry inboxMess
 			pushSentCounter.WithLabelValues("reaction_unauthorized").Inc()
 			return
 		}
-		if is.push == nil || !is.push.recipientSupportsCapability(toPeerId, directReactionCapability) {
+		if is.push == nil {
 			pushSentCounter.WithLabelValues("reaction_incapable").Inc()
 			return
 		}
-		go is.push.SendReactionNotification(
+		route, err := is.push.selectPushRoute(toPeerId, directReactionCapability)
+		if err != nil {
+			pushSentCounter.WithLabelValues("reaction_route_error").Inc()
+			return
+		}
+		if route == nil {
+			pushSentCounter.WithLabelValues("reaction_incapable").Inc()
+			return
+		}
+		go is.push.sendReactionNotificationForRoute(
 			context.Background(),
 			toPeerId,
+			*route,
 			entry.From,
 			entry.Message,
 		)
@@ -1790,12 +1956,7 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 	if result == GroupInboxStoreResultDuplicate {
 		if recognizedReaction && validReaction {
 			groupReactionWakeCounter.WithLabelValues("duplicate_suppressed").Inc()
-			log.Printf(
-				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=duplicate_suppressed group=%s from=%s transition=%s",
-				groupId[:min(20, len(groupId))],
-				from[:min(20, len(from))],
-				reaction.TransitionID[:min(24, len(reaction.TransitionID))],
-			)
+			log.Printf("[GROUP_REACTION_WAKE] outcome=duplicate_suppressed")
 		}
 		return nil
 	}
@@ -1806,13 +1967,7 @@ func (s *GroupInboxStore) StoreWithPushRecipients(
 			// Plan 320 P3: this decline used to be entirely silent, so a wake lost
 			// here was invisible to every counter and journal line.
 			groupReactionWakeCounter.WithLabelValues("invalid_or_disabled").Inc()
-			log.Printf(
-				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=invalid_or_disabled group=%s valid=%t action=%s enabled=%t",
-				groupId[:min(20, len(groupId))],
-				validReaction,
-				reaction.Action,
-				s.groupReactionPushEnabled,
-			)
+			log.Printf("[GROUP_REACTION_WAKE] outcome=invalid_or_disabled")
 			return nil
 		}
 		s.fanOutGroupReactionPush(groupId, from, message, reaction)
@@ -1836,19 +1991,12 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 	if s.push == nil {
 		// Plan 320 P3: previously a silent return.
 		groupReactionWakeCounter.WithLabelValues("push_unavailable").Inc()
-		log.Printf(
-			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=push_unavailable group=%s",
-			groupID[:min(20, len(groupID))],
-		)
+		log.Printf("[GROUP_REACTION_WAKE] outcome=push_unavailable")
 		return
 	}
 	if len(metadata.NotificationRecipientTransportPeerIDs) == 0 {
 		groupReactionWakeCounter.WithLabelValues("no_wake_recipients").Inc()
-		log.Printf(
-			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=no_wake_recipients group=%s from=%s",
-			groupID[:min(20, len(groupID))],
-			from[:min(20, len(from))],
-		)
+		log.Printf("[GROUP_REACTION_WAKE] outcome=no_wake_recipients")
 		return
 	}
 	for _, peerID := range metadata.NotificationRecipientTransportPeerIDs {
@@ -1859,25 +2007,22 @@ func (s *GroupInboxStore) fanOutGroupReactionPush(
 			groupReactionWakeCounter.WithLabelValues("self_or_empty_skipped").Inc()
 			continue
 		}
-		if !s.push.recipientSupportsCapability(peerID, groupReactionCapability) {
+		route, err := s.push.selectPushRoute(peerID, groupReactionCapability)
+		if err != nil {
+			groupReactionWakeCounter.WithLabelValues("route_error").Inc()
+			continue
+		}
+		if route == nil {
 			groupReactionWakeCounter.WithLabelValues("incapable_skipped").Inc()
-			log.Printf(
-				"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=incapable_skipped group=%s recipient=%s",
-				groupID[:min(20, len(groupID))],
-				peerID[:min(20, len(peerID))],
-			)
+			log.Printf("[GROUP_REACTION_WAKE] outcome=incapable_skipped")
 			continue
 		}
 		groupReactionWakeCounter.WithLabelValues("attempted").Inc()
-		log.Printf(
-			"[GROUP_REACTION_WAKE] remote_type=group_reaction outcome=dispatched group=%s recipient=%s transition=%s",
-			groupID[:min(20, len(groupID))],
-			peerID[:min(20, len(peerID))],
-			metadata.TransitionID[:min(24, len(metadata.TransitionID))],
-		)
-		go s.push.SendGroupReactionNotification(
+		log.Printf("[GROUP_REACTION_WAKE] outcome=dispatched")
+		go s.push.sendGroupReactionNotificationForRoute(
 			context.Background(),
 			peerID,
+			*route,
 			groupID,
 			message,
 			metadata,
@@ -2473,6 +2618,9 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				req.CustodyKind,
 				req.CustodyExpiresAtOrBeforeMs,
 				storeNow,
+				req.Message,
+				remotePeer,
+				req.To,
 			) {
 			recordAckCustodyStoreResult(ackCustodyStoreMetricIneligible)
 			resp = inboxResponse{
@@ -2656,8 +2804,7 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 				req.Capabilities...,
 			)
 			if err != nil {
-				log.Printf("[PUSH] Token registration persistence failed for %s: %v",
-					remotePeer[:min(20, len(remotePeer))], err)
+				log.Printf("[PUSH] outcome=registration_failed")
 				resp = inboxResponse{Status: "ERROR", Error: "Push token persistence failed"}
 			} else {
 				resp = inboxResponse{Status: "OK"}
@@ -2665,9 +2812,13 @@ func HandleInboxStream(s network.Stream, inbox *InboxStore, groupInbox *GroupInb
 		}
 
 	case "unregister_token":
-		inbox.push.UnregisterToken(remotePeer)
-		inbox.ClearWakeTokens(remotePeer) // FDC-09 §12: no orphaned wake authorization
-		resp = inboxResponse{Status: "OK"}
+		if err := inbox.push.UnregisterToken(remotePeer); err != nil {
+			log.Printf("[PUSH] outcome=unregistration_failed")
+			resp = inboxResponse{Status: "ERROR", Error: "Push token deletion failed"}
+		} else {
+			inbox.ClearWakeTokens(remotePeer) // FDC-09 §12: no orphaned wake authorization
+			resp = inboxResponse{Status: "OK"}
+		}
 
 	case "register_wake_tokens":
 		// FDC-09 §12: the recipient registers the opaque wake-token SET it minted

@@ -506,24 +506,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     return (SendChatMessageResult.nodeNotRunning, null);
   }
 
-  final recipientKey = recipientMlKemPublicKey?.trim();
-  if (bridge == null || recipientKey == null || recipientKey.isEmpty) {
-    emitFlowEvent(
-      layer: 'FL',
-      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPTION_REQUIRED',
-      details: {
-        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
-      },
-    );
-    emitDeleteTiming(
-      outcome: 'encryption_required',
-      details: {
-        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
-      },
-    );
-    return (SendChatMessageResult.encryptionRequired, null);
-  }
-
   final deletedAt = clock.now().toUtc().toIso8601String();
   // Identity is minted only after a v109-owning lane has been selected. A
   // legacy or historical parent must never carry an event id its transport
@@ -531,35 +513,6 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
   final mutationEventId = ownsDirectMutationInboxCustody
       ? _deletionUuid.v4()
       : null;
-
-  // 361: the v113 fanout owner may claim the pure blob-free text DFE lane
-  // before any single-target crypto. Media/private lanes remain Plan 362.
-  if (directEventFanout != null && ownsDirectTextMutationInboxCustody) {
-    final routing = await directEventFanout.decideRoute(
-      currentMessage.contactPeerId,
-    );
-    switch (routing.route) {
-      case DirectEventFanoutRoute.incumbentLegacy:
-        break;
-      case DirectEventFanoutRoute.refusedSelectorOff:
-      case DirectEventFanoutRoute.refusedUnavailable:
-        emitDeleteTiming(outcome: 'fanout_refused_${routing.route.name}');
-        return (SendChatMessageResult.sendFailed, null);
-      case DirectEventFanoutRoute.fanout:
-        return _authorDirectBlobFreeDeletionFanout(
-          directEventFanout: directEventFanout,
-          routing: routing,
-          p2pService: p2pService,
-          messageRepo: messageRepo,
-          mutationCustodyRepository: mutationCustodyRepository!,
-          storeInAckCustodyInboxDetailed: availableStrictMutationStore,
-          currentMessage: currentMessage,
-          deletedAt: deletedAt,
-          mutationEventId: mutationEventId!,
-          emitDeleteTiming: emitDeleteTiming,
-        );
-    }
-  }
 
   final privateLifecycleRepository =
       messageRepo is DirectPrivateMediaLifecycleRepository
@@ -592,6 +545,86 @@ Future<(SendChatMessageResult, ConversationMessage?)> deleteMessageForEveryone({
     );
     emitDeleteTiming(outcome: 'private_cleanup_unavailable');
     return (SendChatMessageResult.sendFailed, null);
+  }
+
+  // 366: every supported v109-owning DFE is a blob-free event fanout. Media
+  // shape comes from the persisted lane selection, never the UI snapshot. A
+  // media fanout holds the incumbent global lifecycle lease across the atomic
+  // N-sibling stage and cleanup; the helper releases it before any network.
+  if (directEventFanout != null && ownsDirectMutationInboxCustody) {
+    final routing = await directEventFanout.decideRoute(
+      currentMessage.contactPeerId,
+    );
+    switch (routing.route) {
+      case DirectEventFanoutRoute.incumbentLegacy:
+        break;
+      case DirectEventFanoutRoute.refusedSelectorOff:
+      case DirectEventFanoutRoute.refusedUnavailable:
+        emitDeleteTiming(outcome: 'fanout_refused_${routing.route.name}');
+        return (SendChatMessageResult.sendFailed, null);
+      case DirectEventFanoutRoute.fanout:
+        final isMediaMutation =
+            ownsDirectMediaDeletionInboxCustody ||
+            ownsDirectPrivateDeletionInboxCustody;
+        if (mutationLifecycleRepository == null ||
+            (isMediaMutation && privateCleanupRuntime == null)) {
+          emitDeleteTiming(outcome: 'fanout_lifecycle_unavailable');
+          return (SendChatMessageResult.sendFailed, null);
+        }
+        Future<void> Function(ConversationMessage)? cleanupAfterStage;
+        if (isMediaMutation) {
+          cleanupAfterStage = requiresPrivateTerminalCleanup
+              ? (tombstone) => _privateTerminalCleanupBestEffort(
+                  tombstone: tombstone,
+                  reactionRepo: reactionRepo,
+                  privateLifecycleRepository: privateLifecycleRepository!,
+                  mediaAttachmentRepo: mediaAttachmentRepo!,
+                  mediaFileManager: mediaFileManager!,
+                  privateCleanupRuntime: privateCleanupRuntime!,
+                )
+              : (tombstone) => _bestEffortCleanup(
+                  message: tombstone,
+                  reactionRepo: reactionRepo,
+                  mediaAttachmentRepo: mediaAttachmentRepo,
+                  mediaFileManager: mediaFileManager,
+                );
+        }
+        return _authorDirectBlobFreeDeletionFanout(
+          directEventFanout: directEventFanout,
+          routing: routing,
+          p2pService: p2pService,
+          messageRepo: messageRepo,
+          mutationCustodyRepository: mutationLifecycleRepository,
+          storeInAckCustodyInboxDetailed: availableStrictMutationStore,
+          currentMessage: currentMessage,
+          deletedAt: deletedAt,
+          mutationEventId: mutationEventId!,
+          mediaCleanupRuntime: isMediaMutation ? privateCleanupRuntime : null,
+          cleanupAfterStage: cleanupAfterStage,
+          emitDeleteTiming: emitDeleteTiming,
+        );
+    }
+  }
+
+  // The incumbent singular route still needs its one legacy recipient key.
+  // Fanout encryption above uses the exact per-target snapshot and never
+  // depends on this caller projection.
+  final recipientKey = recipientMlKemPublicKey?.trim();
+  if (bridge == null || recipientKey == null || recipientKey.isEmpty) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_DELETE_FOR_EVERYONE_ENCRYPTION_REQUIRED',
+      details: {
+        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
+      },
+    );
+    emitDeleteTiming(
+      outcome: 'encryption_required',
+      details: {
+        'reason': bridge == null ? 'missing_bridge' : 'missing_recipient_key',
+      },
+    );
+    return (SendChatMessageResult.encryptionRequired, null);
   }
   String jsonString;
   try {
@@ -1842,12 +1875,14 @@ _authorDirectBlobFreeDeletionFanout({
   required DirectEventFanoutRouting routing,
   required P2PService p2pService,
   required MessageRepository messageRepo,
-  required OutgoingDirectTextMutationInboxCustodyRepository
+  required DirectMutationInboxCustodyLifecycleRepository
   mutationCustodyRepository,
   required StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
   required ConversationMessage currentMessage,
   required String deletedAt,
   required String mutationEventId,
+  DirectPrivateMediaCleanupRuntime? mediaCleanupRuntime,
+  Future<void> Function(ConversationMessage tombstone)? cleanupAfterStage,
   required void Function({
     required String outcome,
     Map<String, dynamic> details,
@@ -1899,17 +1934,33 @@ _authorDirectBlobFreeDeletionFanout({
         .toMap(),
     'direct_event_fanout_generation_id': mutationEventId,
   };
-  final staged = await directEventFanout.stageMutationFanout(
-    expectedRow: expectedRow,
-    stagedRow: stagedRow,
-    kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
-    eventId: mutationEventId,
-    parentMessageId: currentMessage.id,
-    contactAccountPeerId: currentMessage.contactPeerId,
-    senderTransportPeerId: directEventFanout.senderTransportPeerId,
-    expectedSnapshot: snapshot,
-    candidates: candidates,
-  );
+  Future<DbDirectEventFanoutStageResult> stageAndCleanup() async {
+    final result = await directEventFanout.stageMutationFanout(
+      expectedRow: expectedRow,
+      stagedRow: stagedRow,
+      kind: OutgoingOrdinaryAttemptKind.tombstoneInitial,
+      eventId: mutationEventId,
+      parentMessageId: currentMessage.id,
+      contactAccountPeerId: currentMessage.contactPeerId,
+      senderTransportPeerId: directEventFanout.senderTransportPeerId,
+      expectedSnapshot: snapshot,
+      candidates: candidates,
+    );
+    if (result.outcome != DirectEventFanoutStageOutcome.refused &&
+        cleanupAfterStage != null) {
+      await cleanupAfterStage(
+        ConversationMessage.fromMap(Map<String, dynamic>.from(stagedRow)),
+      );
+    }
+    return result;
+  }
+
+  // The lease surrounds only durable stage + cleanup. Candidate encryption is
+  // read-only and every live/protected-store leg below begins after release.
+  final staged = mediaCleanupRuntime == null
+      ? await stageAndCleanup()
+      : await mediaCleanupRuntime.directPrivateMediaLifecycleLock
+            .synchronizedAll(stageAndCleanup);
   switch (staged.outcome) {
     case DirectEventFanoutStageOutcome.refused:
       emitDeleteTiming(outcome: 'fanout_stage_refused', details: const {});

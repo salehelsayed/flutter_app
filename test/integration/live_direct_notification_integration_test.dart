@@ -112,15 +112,16 @@ void main() {
     service = P2PServiceImpl(
       bridge: bridge,
       inboxStagingRepository: stagingRepo,
-      replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
-        recoveredReplayCount++;
-        final outcome = await listener.processIncomingMessage(
-          message,
-          suppressNotification: true,
-          stagedEntryId: stagedEntryId,
-        );
-        return mapChatReplayOutcomeToDisposition(outcome);
-      },
+      replayRecoveredInboxChatMessage:
+          (message, {String? stagedEntryId}) async {
+            recoveredReplayCount++;
+            final outcome = await listener.processIncomingMessage(
+              message,
+              suppressNotification: true,
+              stagedEntryId: stagedEntryId,
+            );
+            return mapChatReplayOutcomeToDisposition(outcome);
+          },
       replayLiveLanChatMessage: (message, {String? stagedEntryId}) async {
         final outcome = await listener.processIncomingMessage(
           message,
@@ -217,7 +218,7 @@ void main() {
       expect(confirms.single, equals({'nonce': 'nonce-1', 'ok': true}));
 
       // The message was stored and the staged row committed/deleted.
-      expect(messageRepo.lastSavedMessage?.id, 'msg-live-1');
+      expect((await messageRepo.getMessage('msg-live-1'))?.id, 'msg-live-1');
       await waitFor(
         () => stagingRepo.entry('direct:nonce-1') == null,
         reason: 'committed live direct entry should be deleted',
@@ -291,51 +292,51 @@ void main() {
       // Routed through the SUPPRESSING recovery callback — no notification.
       expect(recoveredReplayCount, 1);
       expect(notificationService.shown, isEmpty);
-      expect(messageRepo.lastSavedMessage?.id, 'msg-recovered-1');
+      expect(
+        (await messageRepo.getMessage('msg-recovered-1'))?.id,
+        'msg-recovered-1',
+      );
     },
   );
 
-  test(
-    'a retried-but-live direct: entry swept on resume still notifies '
-    '(Phase 1B end-to-end)',
-    () async {
-      stagingRepo.seed(
-        InboxStagingEntry(
-          entryId: 'direct:nonce-retry-sweep',
-          ownerPeerId: 'self-peer',
-          senderPeerId: peerId,
-          messageType: 'chat_message',
-          relayTimestamp: '2026-06-13T12:00:00.000Z',
-          envelope: jsonEncode({
-            'type': 'chat_message',
-            'version': '1',
-            'payload': {
-              'id': 'msg-retry-sweep',
-              'text': 'retried but live',
-              'senderPeerId': peerId,
-              'senderUsername': 'Alice',
-              'timestamp': '2026-06-13T12:00:00.000Z',
-            },
-          }),
-          stagedAt: '2026-06-13T12:00:01.000Z',
-        ),
-      );
+  test('a retried-but-live direct: entry swept on resume still notifies '
+      '(Phase 1B end-to-end)', () async {
+    stagingRepo.seed(
+      InboxStagingEntry(
+        entryId: 'direct:nonce-retry-sweep',
+        ownerPeerId: 'self-peer',
+        senderPeerId: peerId,
+        messageType: 'chat_message',
+        relayTimestamp: '2026-06-13T12:00:00.000Z',
+        envelope: jsonEncode({
+          'type': 'chat_message',
+          'version': '1',
+          'payload': {
+            'id': 'msg-retry-sweep',
+            'text': 'retried but live',
+            'senderPeerId': peerId,
+            'senderUsername': 'Alice',
+            'timestamp': '2026-06-13T12:00:00.000Z',
+          },
+        }),
+        stagedAt: '2026-06-13T12:00:01.000Z',
+      ),
+    );
 
-      await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
-      await service.drainOfflineInbox();
+    await service.startNodeCore('cHJpdmF0ZWtleXRlc3Q=', 'self-peer');
+    await service.drainOfflineInbox();
 
-      // Routed through the notify-capable live-direct callback — NOT suppressed.
-      // (The notification is fire-and-forget, so wait for it to land.)
-      await waitFor(
-        () => notificationService.shown.isNotEmpty,
-        reason: 'swept direct: entry should still notify (Phase 1B)',
-      );
-      expect(recoveredReplayCount, 0);
-      expect(notificationService.shown, hasLength(1));
-      expect(notificationService.shown.single.silent, isFalse);
-      expect(stagingRepo.entry('direct:nonce-retry-sweep'), isNull);
-    },
-  );
+    // Routed through the notify-capable live-direct callback — NOT suppressed.
+    // (The notification is fire-and-forget, so wait for it to land.)
+    await waitFor(
+      () => notificationService.shown.isNotEmpty,
+      reason: 'swept direct: entry should still notify (Phase 1B)',
+    );
+    expect(recoveredReplayCount, 0);
+    expect(notificationService.shown, hasLength(1));
+    expect(notificationService.shown.single.silent, isFalse);
+    expect(stagingRepo.entry('direct:nonce-retry-sweep'), isNull);
+  });
 }
 
 /// Minimal fake bridge: records commands and returns configured responses.

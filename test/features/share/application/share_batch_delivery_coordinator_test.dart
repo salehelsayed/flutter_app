@@ -11,6 +11,7 @@ import 'package:plugin_platform_interface/plugin_platform_interface.dart';
 import 'package:flutter_app/core/constants/media_constants.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/config/direct_linked_event_fanout_flag.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/config/direct_media_blob_custody_client_flag.dart';
 import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
@@ -19,6 +20,7 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
     show DirectMediaFanoutStageAuthority, DirectMediaFanoutTargetBinding;
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/image_processor.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
@@ -30,6 +32,7 @@ import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/share_intent_model.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
+import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
@@ -38,6 +41,10 @@ import 'package:flutter_app/features/conversation/domain/models/outgoing_direct_
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_forward_intent.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
@@ -99,6 +106,8 @@ class _AdmissionFirstMediaRepository extends InMemoryMediaAttachmentRepository
     required List<DirectMediaBlobCustodyRow> custodyRows,
     required String contactAccountPeerId,
     required DirectContactFanoutSnapshot expectedSnapshot,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
   }) => throw StateError('admission refusal must precede generation staging');
 
   @override
@@ -156,23 +165,28 @@ class _DissolveAfterFirstGroupUploadBridge extends PassthroughCryptoBridge {
     final decoded = jsonDecode(message) as Map<String, dynamic>;
     final response = await super.send(message);
     if (decoded['cmd'] == 'media:upload' && ++_uploadCalls == 1) {
-      unawaited(
-        runGroupMembershipMutationLocked<void>(
-          groupId: groupId,
-          action: () async {
-            final current = await groupRepo.getGroup(groupId);
-            if (current != null) {
-              await groupRepo.updateGroup(
-                current.copyWith(
-                  isDissolved: true,
-                  dissolvedAt: DateTime.utc(2026, 7, 22, 13, 5),
-                  dissolvedBy: 'peer-remote-admin',
-                ),
-              );
-            }
-          },
-        ),
-      );
+      // A remote dissolve is delivered by an independent event-loop owner. Do
+      // not inherit the upload leaf's authority Zone in this single-process
+      // bridge fake, or the test creates artificial same-stack re-entry.
+      Zone.root.run(() {
+        unawaited(
+          runGroupMembershipMutationLocked<void>(
+            groupId: groupId,
+            action: () async {
+              final current = await groupRepo.getGroup(groupId);
+              if (current != null) {
+                await groupRepo.updateGroup(
+                  current.copyWith(
+                    isDissolved: true,
+                    dissolvedAt: DateTime.utc(2026, 7, 22, 13, 5),
+                    dissolvedBy: 'peer-remote-admin',
+                  ),
+                );
+              }
+            },
+          ),
+        );
+      });
     }
     return response;
   }
@@ -714,6 +728,707 @@ void main() {
   );
 
   test(
+    'TC-365-02a group share admission precedes preprocessing and excludes forwarded private or quoted media',
+    () async {
+      final groups = InMemoryGroupRepository();
+      final discussion = _makeGroup(
+        'group-tc365-discussion',
+        'TC365 Discussion',
+      );
+      final announcementAdmin = _makeGroup(
+        'group-tc365-announcement-admin',
+        'TC365 Announcement Admin',
+      ).copyWith(type: GroupType.announcement, myRole: GroupRole.admin);
+      final announcementMember = _makeGroup(
+        'group-tc365-announcement-member',
+        'TC365 Announcement Member',
+      ).copyWith(type: GroupType.announcement, myRole: GroupRole.member);
+      final joinedAt = DateTime.utc(2026, 8, 14, 8);
+      Future<void> seedAuthority(
+        GroupModel group, {
+        required MemberRole senderRole,
+      }) async {
+        await groups.saveGroup(group);
+        await _saveLatestGroupKey(groups, group.id);
+        await groups.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'my-peer-id-12345',
+            username: 'Me',
+            role: senderRole,
+            publicKey: 'my-public-key',
+            mlKemPublicKey: 'mlkem-public',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'transport-tc365-current',
+                transportPeerId: 'transport-tc365-current',
+                deviceSigningPublicKey: 'my-public-key',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-tc365-sibling',
+                transportPeerId: 'transport-tc365-sibling',
+                deviceSigningPublicKey: 'my-sibling-key',
+              ),
+            ],
+            joinedAt: joinedAt,
+          ),
+        );
+        await groups.saveMember(
+          GroupMember(
+            groupId: group.id,
+            peerId: 'peer-tc365-remote',
+            username: 'Remote',
+            role: MemberRole.writer,
+            publicKey: 'pk-tc365-remote',
+            mlKemPublicKey: 'mlkem-tc365-remote',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-tc365-remote',
+                transportPeerId: 'transport-tc365-remote',
+                deviceSigningPublicKey: 'signing-tc365-remote',
+              ),
+            ],
+            joinedAt: joinedAt.add(const Duration(seconds: 1)),
+          ),
+        );
+      }
+
+      await seedAuthority(discussion, senderRole: MemberRole.writer);
+      await seedAuthority(announcementAdmin, senderRole: MemberRole.admin);
+      await seedAuthority(announcementMember, senderRole: MemberRole.writer);
+
+      final p2p = _DirectMediaCustodyFakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'transport-tc365-current',
+        ),
+      );
+      setGroupContentAuthoringResolver(
+        groups,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 8, 14, 7),
+              eventId: 'authority.tc365.share.$groupId',
+              keyEpoch: 1,
+            ),
+            inboxStore: p2p,
+          ),
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(groups, null));
+
+      var processCalls = 0;
+      var groupSendCalls = 0;
+      var contactSendCalls = 0;
+      final contact = _makeMlKemContact(
+        'peer-tc365-mixed-contact',
+        'TC365 Mixed Contact',
+      );
+      final contacts = InMemoryContactRepository()..addTestContact(contact);
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: contacts,
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groups,
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: p2p,
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async {
+          processCalls += 1;
+          return ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: File('/tmp/tc365-share-source.jpg'),
+                budgetBytes: 32,
+              ),
+            ],
+          );
+        },
+        sendToGroupFn:
+            ({
+              required identity,
+              required shareIntent,
+              required group,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              groupSendCalls += 1;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.group(group),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+        sendToContactFn:
+            ({
+              required identity,
+              required shareIntent,
+              required contact,
+              required processedMedia,
+              required uploadHooks,
+            }) async {
+              contactSendCalls += 1;
+              return ShareBatchTargetResult(
+                target: ShareTargetSelection.contact(contact),
+                status: ShareBatchTargetStatus.sent,
+                detail: 'Sent.',
+              );
+            },
+      );
+
+      final scenarios =
+          <
+            ({
+              String label,
+              ShareIntent intent,
+              List<ShareTargetSelection> targets,
+              int sent,
+              int failed,
+              int processDelta,
+              int groupSendDelta,
+              int contactSendDelta,
+            })
+          >[
+            (
+              label: 'forwarded strict group is all-zero',
+              intent: const ShareIntent(
+                type: ShareIntentType.files,
+                filePaths: <String>['/tmp/tc365-share-source.jpg'],
+                forwardProvenance: ForwardProvenance(
+                  operationDedupKey: 'tc365-forwarded-media',
+                ),
+              ),
+              targets: <ShareTargetSelection>[
+                ShareTargetSelection.group(discussion),
+              ],
+              sent: 0,
+              failed: 1,
+              processDelta: 0,
+              groupSendDelta: 0,
+              contactSendDelta: 0,
+            ),
+            (
+              label: 'fresh sole discussion group',
+              intent: const ShareIntent(
+                type: ShareIntentType.files,
+                filePaths: <String>['/tmp/tc365-share-source.jpg'],
+              ),
+              targets: <ShareTargetSelection>[
+                ShareTargetSelection.group(discussion),
+              ],
+              sent: 1,
+              failed: 0,
+              processDelta: 1,
+              groupSendDelta: 1,
+              contactSendDelta: 0,
+            ),
+            (
+              label: 'fresh sole announcement admin group',
+              intent: const ShareIntent(
+                type: ShareIntentType.files,
+                filePaths: <String>['/tmp/tc365-share-source.jpg'],
+              ),
+              targets: <ShareTargetSelection>[
+                ShareTargetSelection.group(announcementAdmin),
+              ],
+              sent: 1,
+              failed: 0,
+              processDelta: 1,
+              groupSendDelta: 1,
+              contactSendDelta: 0,
+            ),
+            (
+              label: 'fresh mixed strict group and contact preprocess once',
+              intent: const ShareIntent(
+                type: ShareIntentType.files,
+                filePaths: <String>['/tmp/tc365-share-source.jpg'],
+              ),
+              targets: <ShareTargetSelection>[
+                ShareTargetSelection.group(discussion),
+                ShareTargetSelection.contact(contact),
+              ],
+              sent: 2,
+              failed: 0,
+              processDelta: 1,
+              groupSendDelta: 1,
+              contactSendDelta: 1,
+            ),
+            (
+              label:
+                  'fresh mixed refused group cannot borrow contact admission',
+              intent: const ShareIntent(
+                type: ShareIntentType.files,
+                filePaths: <String>['/tmp/tc365-share-source.jpg'],
+              ),
+              targets: <ShareTargetSelection>[
+                ShareTargetSelection.group(announcementMember),
+                ShareTargetSelection.contact(contact),
+              ],
+              sent: 1,
+              failed: 1,
+              processDelta: 1,
+              groupSendDelta: 0,
+              contactSendDelta: 1,
+            ),
+          ];
+
+      for (final scenario in scenarios) {
+        final processBefore = processCalls;
+        final groupBefore = groupSendCalls;
+        final contactBefore = contactSendCalls;
+        final result = await coordinator.deliver(
+          shareIntent: scenario.intent,
+          targets: scenario.targets,
+        );
+        expect(result.sentCount, scenario.sent, reason: scenario.label);
+        expect(result.failureCount, scenario.failed, reason: scenario.label);
+        expect(
+          processCalls - processBefore,
+          scenario.processDelta,
+          reason: scenario.label,
+        );
+        expect(
+          groupSendCalls - groupBefore,
+          scenario.groupSendDelta,
+          reason: scenario.label,
+        );
+        expect(
+          contactSendCalls - contactBefore,
+          scenario.contactSendDelta,
+          reason: scenario.label,
+        );
+      }
+    },
+  );
+
+  test(
+    'TC-366-03b all-strict group forward reaches source verification and preparation',
+    () async {
+      final groups = InMemoryGroupRepository();
+      final target = _makeGroup('group-tc366-strict-target', 'Strict target');
+      await groups.saveGroup(target);
+      await _saveLatestGroupKey(groups, target.id);
+      await groups.saveMember(
+        GroupMember(
+          groupId: target.id,
+          peerId: 'my-peer-id-12345',
+          username: 'Me',
+          role: MemberRole.writer,
+          publicKey: 'my-public-key',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'my-peer-id-12345',
+              transportPeerId: 'my-peer-id-12345',
+              deviceSigningPublicKey: 'my-public-key',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 14, 8),
+        ),
+      );
+      final p2p = _DirectMediaCustodyFakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'my-peer-id-12345',
+        ),
+      );
+      setGroupContentAuthoringResolver(
+        groups,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 8, 14, 7),
+              eventId: 'authority.tc366.03b.pre-source',
+              keyEpoch: 1,
+            ),
+            inboxStore: p2p,
+          ),
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(groups, null));
+      var preprocessingCalls = 0;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
+        groupRepository: groups,
+        groupMessageRepository: InMemoryGroupMessageRepository(),
+        bridge: FakeBridge(),
+        p2pService: p2p,
+        mediaFileManager: FakeMediaFileManager(),
+        imageProcessor: _imageProcessor(),
+        processSharedMediaFn: (_) async {
+          preprocessingCalls++;
+          return const ProcessedShareMediaBatch(processedMedia: []);
+        },
+      );
+
+      final result = await coordinator.deliverGroupMediaForward(
+        request: GroupMediaForwardRequest(
+          groupId: 'missing-source-group',
+          messageId: 'missing-source-message',
+          attachmentId: 'missing-source-attachment',
+          initialCaption: 'missing',
+          provenance: const ForwardProvenance(
+            operationDedupKey: 'tc366-pre-source-operation',
+          ),
+        ),
+        targets: <ShareTargetSelection>[ShareTargetSelection.group(target)],
+      );
+
+      expect(result.failureCount, 1);
+      expect(
+        result.results.single.detail,
+        'This media can no longer be forwarded.',
+      );
+      expect(preprocessingCalls, 0);
+    },
+  );
+
+  test(
+    'TC-366-03b admitted strict group forward preserves provenance through dispatch',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'tc366-strict-group-forward-',
+      );
+      addTearDown(() => root.delete(recursive: true));
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      final identity = _makeIdentity();
+      final groups = InMemoryGroupRepository();
+      final messages = InMemoryGroupMessageRepository();
+      final sourceGroup = _makeGroup(
+        'group-tc366-forward-source',
+        'Forward source',
+      );
+      final targetGroup = _makeGroup(
+        'group-tc366-forward-target',
+        'Forward target',
+      );
+      for (final group in <GroupModel>[sourceGroup, targetGroup]) {
+        await groups.saveGroup(group);
+        await _saveLatestGroupKey(groups, group.id);
+      }
+      await _seedGroupMembers(groups, sourceGroup.id);
+      await groups.saveMember(
+        GroupMember(
+          groupId: targetGroup.id,
+          peerId: identity.peerId,
+          username: identity.username,
+          role: MemberRole.admin,
+          publicKey: identity.publicKey,
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'transport-current',
+              transportPeerId: 'transport-current',
+              deviceSigningPublicKey: 'my-public-key',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 14, 8),
+        ),
+      );
+      await groups.saveMember(
+        GroupMember(
+          groupId: targetGroup.id,
+          peerId: 'peer-tc366-remote',
+          username: 'Remote',
+          role: MemberRole.writer,
+          publicKey: 'pk-tc366-remote',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-tc366-remote',
+              transportPeerId: 'transport-tc366-remote',
+              deviceSigningPublicKey: 'signing-tc366-remote',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 14, 8, 1),
+        ),
+      );
+
+      const sourceMessageId = 'msg-tc366-forward-source';
+      const sourceAttachmentId = 'att-tc366-forward-source';
+      final sourceBytes = File(
+        'integration_test/fixtures/received_media_egress_fixture.jpg',
+      ).readAsBytesSync();
+      final fileManager = FakeMediaFileManager();
+      final sourceFile = File(
+        await fileManager.localPathForAttachment(
+          contactPeerId: sourceGroup.id,
+          blobId: sourceAttachmentId,
+          mime: 'image/jpeg',
+        ),
+      )..writeAsBytesSync(sourceBytes);
+      addTearDown(() async {
+        if (await sourceFile.exists()) await sourceFile.delete();
+      });
+      await messages.saveMessage(
+        GroupMessage(
+          id: sourceMessageId,
+          groupId: sourceGroup.id,
+          senderPeerId: 'peer-source-author',
+          senderUsername: 'Source',
+          text: 'source caption',
+          timestamp: DateTime.utc(2026, 8, 14, 9),
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 8, 14, 9),
+        ),
+      );
+      await fixture.repo.saveAttachment(
+        MediaAttachment(
+          id: sourceAttachmentId,
+          messageId: sourceMessageId,
+          mime: 'image/jpeg',
+          size: sourceBytes.length,
+          mediaType: 'image',
+          localPath: sourceFile.path,
+          downloadStatus: 'done',
+          createdAt: '2026-08-14T09:00:00.000Z',
+          contentHash: sha256.convert(<int>[...sourceBytes, 0xa5]).toString(),
+          encryptionKeyBase64: 'source-key-not-reused',
+          encryptionNonce: 'source-nonce-not-reused',
+          encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+          ownerLane: MediaOwnerLane.group,
+        ),
+        owner: MediaOwnerLane.group,
+      );
+
+      final p2p = _DirectMediaCustodyFakeP2PService(
+        initialState: const NodeState(
+          isStarted: true,
+          peerId: 'transport-current',
+        ),
+      );
+      setGroupContentAuthoringResolver(
+        groups,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 8, 14, 7),
+              eventId: 'authority.tc366.03b.dispatch.$groupId',
+              keyEpoch: 1,
+            ),
+            inboxStore: p2p,
+            authoringDeviceId: 'transport-current',
+            authoringTransportPeerId: 'transport-current',
+            authoringPublicKey: identity.publicKey,
+          ),
+        ),
+      );
+      addTearDown(() => setGroupContentAuthoringResolver(groups, null));
+
+      final encryptedTemps = <File>[];
+      final strictRecipients = <String>[];
+      final strictOwner = PreparedGroupMediaBlobCustodyCoordinator(
+        artifactStore: GroupMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => root,
+        ),
+        prepareArtifact:
+            ({required Bridge bridge, required String localFilePath}) async {
+              final bytes = await File(localFilePath).readAsBytes();
+              final encrypted = File(
+                '${root.path}/prepared-${encryptedTemps.length}.enc',
+              );
+              await encrypted.writeAsBytes(<int>[
+                ...List<int>.filled(16, 0x5a),
+                ...bytes,
+              ]);
+              encryptedTemps.add(encrypted);
+              final ciphertext = await encrypted.readAsBytes();
+              return EncryptedMediaArtifact(
+                encryptedPath: encrypted.path,
+                keyBase64: 'fresh-forward-key',
+                nonce: 'fresh-forward-nonce',
+                scheme: groupMediaBlobEncryptionScheme,
+                contentHash: sha256.convert(ciphertext).toString(),
+                plaintextSize: bytes.length,
+              );
+            },
+        strictUpload:
+            ({
+              required bridge,
+              required custodyBlobId,
+              required recipientPeerId,
+              required ciphertextPath,
+              required contentHash,
+              required ciphertextSize,
+            }) async {
+              strictRecipients.add(recipientPeerId);
+              return <String, dynamic>{
+                'ok': true,
+                'id': custodyBlobId,
+                'storeStatus': 'stored',
+                'custodyKind': groupMediaBlobCustodyKind,
+                'custodyContract': groupMediaBlobCustodyContract,
+                'contentHash': contentHash,
+                'size': ciphertextSize,
+                'mime': groupMediaBlobTransportMime,
+                'expiresAtMs': DateTime.utc(2036, 8, 14).millisecondsSinceEpoch,
+                'custodyRelayPeerId': 'relay-tc366',
+              };
+            },
+        clock: () => DateTime.utc(2026, 8, 14, 10),
+      );
+      final bridge = PassthroughCryptoBridge();
+      var preprocessingCalls = 0;
+      final coordinator = DefaultShareBatchDeliveryCoordinator(
+        identityRepository: FakeIdentityRepository()..seed(identity),
+        contactRepository: InMemoryContactRepository(),
+        messageRepository: InMemoryMessageRepository(),
+        mediaAttachmentRepository: fixture.repo,
+        groupRepository: groups,
+        groupMessageRepository: messages,
+        bridge: bridge,
+        p2pService: p2p,
+        mediaFileManager: fileManager,
+        imageProcessor: _imageProcessor(),
+        preparedGroupMediaBlobCustodyCoordinator: strictOwner,
+        forwardNow: () => DateTime.utc(2026, 8, 14, 10),
+        processSharedMediaFn: (intent) async {
+          preprocessingCalls++;
+          final immutable = File(intent.filePaths.single);
+          expect(await immutable.readAsBytes(), sourceBytes);
+          return ProcessedShareMediaBatch(
+            processedMedia: <PendingComposerMedia>[
+              PendingComposerMedia(
+                file: immutable,
+                budgetBytes: sourceBytes.length,
+              ),
+            ],
+          );
+        },
+      );
+      const provenance = ForwardProvenance(
+        operationDedupKey: 'tc366-forward-operation',
+      );
+      final expectedOperation = groupForwardProvenanceForGroup(
+        base: provenance,
+        groupId: targetGroup.id,
+      ).operationDedupKey;
+
+      final result = await coordinator.deliverGroupMediaForward(
+        request: GroupMediaForwardRequest(
+          groupId: sourceGroup.id,
+          messageId: sourceMessageId,
+          attachmentId: sourceAttachmentId,
+          initialCaption: 'source caption',
+          provenance: provenance,
+        ),
+        caption: 'forwarded caption',
+        targets: <ShareTargetSelection>[
+          ShareTargetSelection.group(targetGroup),
+        ],
+      );
+
+      expect(result.failureCount, 0, reason: result.results.single.detail);
+      expect(result.sentCount + result.queuedCount, 1);
+      expect(preprocessingCalls, 1);
+      expect(strictRecipients, <String>['transport-tc366-remote']);
+      final savedRows = await fixture.db.query(
+        'group_messages',
+        where: 'id = ?',
+        whereArgs: <Object?>[expectedOperation],
+      );
+      expect(savedRows, hasLength(1));
+      final saved = savedRows.single;
+      expect(saved['id'], expectedOperation);
+      expect(saved['logical_delivery_id'], expectedOperation);
+      expect(saved['is_forwarded'], 1);
+      expect(saved['text'], 'forwarded caption');
+      final coordinatorSource = File(
+        'lib/features/share/application/share_batch_delivery_coordinator.dart',
+      ).readAsStringSync();
+      expect(
+        coordinatorSource,
+        contains('isForwarded: shareIntent.forwardProvenance != null,'),
+        reason: 'the strict prepared parent must carry admitted provenance',
+      );
+      final attachments = await fixture.repo.getAttachmentsForMessage(
+        expectedOperation,
+        owner: MediaOwnerLane.group,
+      );
+      expect(attachments, hasLength(1));
+      expect(attachments.single.groupMediaBlobCustodyFingerprint, isNotEmpty);
+      final rows = await fixture.repo.loadGroupMediaBlobCustodyForMessage(
+        groupId: targetGroup.id,
+        messageId: expectedOperation,
+      );
+      expect(rows, hasLength(1));
+      expect(rows.single.recipientPeerId, 'transport-tc366-remote');
+      expect(
+        bridge.sentMessages
+            .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
+            .where((request) => request['cmd'] == 'media:upload')
+            .any(
+              (request) =>
+                  (request['payload'] as Map<String, dynamic>?)?.containsKey(
+                    'allowedPeers',
+                  ) ==
+                  true,
+            ),
+        isFalse,
+      );
+
+      await messages.saveMessage(
+        (await messages.getMessage(sourceMessageId))!.copyWith(
+          privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
+        ),
+      );
+      final preprocessingBeforeDenied = preprocessingCalls;
+      final denied = await coordinator.deliverGroupMediaForward(
+        request: GroupMediaForwardRequest(
+          groupId: sourceGroup.id,
+          messageId: sourceMessageId,
+          attachmentId: sourceAttachmentId,
+          initialCaption: 'source caption',
+          provenance: const ForwardProvenance(
+            operationDedupKey: 'tc366-private-denied-operation',
+          ),
+        ),
+        targets: <ShareTargetSelection>[
+          ShareTargetSelection.group(targetGroup),
+        ],
+      );
+      expect(denied.failureCount, 1);
+      expect(preprocessingCalls, preprocessingBeforeDenied);
+    },
+  );
+
+  test(
     'processes shared media once before fanout across target kinds',
     () async {
       final identityRepository = FakeIdentityRepository()
@@ -724,13 +1439,18 @@ void main() {
       var processCallCount = 0;
       List<PendingComposerMedia>? contactMedia;
       List<PendingComposerMedia>? groupMedia;
+      final groupRepository = InMemoryGroupRepository();
+      final group = _makeGroup('group-1', 'Writers');
+      await groupRepository.saveGroup(group);
+      await _saveLatestGroupKey(groupRepository, group.id);
+      await _seedGroupMembers(groupRepository, group.id);
 
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: identityRepository,
         contactRepository: InMemoryContactRepository(),
         messageRepository: InMemoryMessageRepository(),
         mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
-        groupRepository: InMemoryGroupRepository(),
+        groupRepository: groupRepository,
         groupMessageRepository: InMemoryGroupMessageRepository(),
         bridge: FakeBridge(),
         p2pService: FakeP2PService(),
@@ -773,7 +1493,6 @@ void main() {
       );
 
       final contact = _makeContact('peer-alice', 'Alice');
-      final group = _makeGroup('group-1', 'Writers');
 
       await coordinator.deliver(
         shareIntent: ShareIntent(
@@ -806,13 +1525,21 @@ void main() {
         PendingComposerMedia(file: File('/tmp/second.jpg'), budgetBytes: 200),
       ];
       final observed = <ShareBatchDeliveryProgress>[];
+      final groupRepository = InMemoryGroupRepository();
+      final progressGroup = _makeGroup('progress-group', 'Group');
+      final partialGroup = _makeGroup('partial-group', 'Group');
+      for (final group in <GroupModel>[progressGroup, partialGroup]) {
+        await groupRepository.saveGroup(group);
+        await _saveLatestGroupKey(groupRepository, group.id);
+        await _seedGroupMembers(groupRepository, group.id);
+      }
 
       final coordinator = DefaultShareBatchDeliveryCoordinator(
         identityRepository: identityRepository,
         contactRepository: InMemoryContactRepository(),
         messageRepository: InMemoryMessageRepository(),
         mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
-        groupRepository: InMemoryGroupRepository(),
+        groupRepository: groupRepository,
         groupMessageRepository: InMemoryGroupMessageRepository(),
         bridge: FakeBridge(),
         p2pService: FakeP2PService(),
@@ -877,7 +1604,7 @@ void main() {
           ShareTargetSelection.contact(
             _makeContact('progress-contact', 'Contact'),
           ),
-          ShareTargetSelection.group(_makeGroup('progress-group', 'Group')),
+          ShareTargetSelection.group(progressGroup),
         ],
         onProgress: observed.add,
       );
@@ -910,7 +1637,7 @@ void main() {
         contactRepository: InMemoryContactRepository(),
         messageRepository: InMemoryMessageRepository(),
         mediaAttachmentRepository: InMemoryMediaAttachmentRepository(),
-        groupRepository: InMemoryGroupRepository(),
+        groupRepository: groupRepository,
         groupMessageRepository: InMemoryGroupMessageRepository(),
         bridge: FakeBridge(),
         p2pService: FakeP2PService(),
@@ -960,7 +1687,7 @@ void main() {
           ShareTargetSelection.contact(
             _makeContact('partial-contact', 'Contact'),
           ),
-          ShareTargetSelection.group(_makeGroup('partial-group', 'Group')),
+          ShareTargetSelection.group(partialGroup),
         ],
         onProgress: partialObserved.add,
       );
@@ -2017,160 +2744,300 @@ void main() {
       expect(await v111Rows(unGatedInternalForward.fixture), isEmpty);
     });
 
-    test('TC-362-02a external share fails closed on an initialized roster and '
-        'never demotes to one target', () async {
-      final previousPathProvider = PathProviderPlatform.instance;
-      final root = Directory.systemTemp.createTempSync(
-        'external_share_362_primary_',
-      );
-      mediaUploadInFlightTracker.clearAll();
-      addTearDown(() async {
+    test(
+      'TC-366-01a four direct media entries share one artifact across exact linked targets',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final root = Directory.systemTemp.createTempSync(
+          'external_share_362_primary_',
+        );
         mediaUploadInFlightTracker.clearAll();
-        PathProviderPlatform.instance = previousPathProvider;
-        if (root.existsSync()) root.deleteSync(recursive: true);
-      });
-      final documents = Directory('${root.path}/scenario')
-        ..createSync(recursive: true);
-      PathProviderPlatform.instance = _SharePathProvider(documents.path);
-      final fixture = await MediaRepositoryRealDbFixture.create(
-        databasePath: '${documents.path}/identity.sqlite',
-      );
-      addTearDown(fixture.dispose);
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        });
+        final documents = Directory('${root.path}/scenario')
+          ..createSync(recursive: true);
+        PathProviderPlatform.instance = _SharePathProvider(documents.path);
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${documents.path}/identity.sqlite',
+        );
+        addTearDown(fixture.dispose);
 
-      // The destination contact owns an initialized linked-device roster:
-      // the external OS-share entry has no plural fanout owner wired, so
-      // it must REFUSE this destination before media crypto, file write,
-      // upload or network — never silently ride the singular
-      // legacy-primary lane and never demote the generation to one target.
-      const seededAt = '2026-08-10T12:00:00.000Z';
-      final contact = _makeMlKemContact(
-        'peer-share-362-linked-roster',
-        'Linked Roster Contact',
-      );
-      final contacts = InMemoryContactRepository();
-      await contacts.addContact(contact);
-      await fixture.db.insert('contacts', <String, Object?>{
-        'peer_id': contact.peerId,
-        'public_key': contact.publicKey,
-        'rendezvous': contact.rendezvous,
-        'username': contact.username,
-        'signature': contact.signature,
-        'scanned_at': seededAt,
-        'ml_kem_public_key': contact.mlKemPublicKey,
-      });
-      await fixture.db
-          .insert('direct_contact_device_roster_metadata', <String, Object?>{
-            'contact_account_peer_id': contact.peerId,
-            'roster_initialized': 1,
-            'legacy_target_state': 'active',
-            'initialized_at': seededAt,
-            'legacy_revoked_at': null,
-            'updated_at': seededAt,
-          });
-      await fixture.db
-          .insert('direct_contact_device_bindings', <String, Object?>{
-            'contact_account_peer_id': contact.peerId,
-            'device_id': 'device-a',
-            'verified_account_signing_public_key': contact.publicKey,
-            'transport_peer_id': 'peer-transport-device-a',
-            'transport_public_key': 'transport-key-device-a',
-            'device_ml_kem_public_key': 'mlkem-device-a',
-            'binding_fingerprint': 'a1b2' * 16,
-            'state': 'active',
-            'staged_at': seededAt,
-            'decided_at': seededAt,
-          });
-      final fanoutRepository =
-          fixture.repo as OutgoingDirectLinkedMediaBlobFanoutRepository;
-      expect(fanoutRepository.supportsDirectLinkedMediaBlobFanout, isTrue);
-      final linkedSnapshot = await fanoutRepository
-          .readDirectContactFanoutSnapshotForMedia(contact.peerId);
-      expect(
-        linkedSnapshot!.targets,
-        hasLength(2),
-        reason:
-            'the linked roster is real and visible to the fanout reader — '
-            'exactly the authority that forbids the singular lane',
-      );
+        // The external entry and the three reviewed forward entries converge on
+        // this same strict sink. Prove the sink publishes one artifact and one
+        // exact custody row per captured target; the neighboring entry test
+        // proves all four callers resolve admission before source work.
+        const seededAt = '2026-08-10T12:00:00.000Z';
+        final contact = _makeMlKemContact(
+          'peer-share-362-linked-roster',
+          'Linked Roster Contact',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(contact);
+        await fixture.db.insert('contacts', <String, Object?>{
+          'peer_id': contact.peerId,
+          'public_key': contact.publicKey,
+          'rendezvous': contact.rendezvous,
+          'username': contact.username,
+          'signature': contact.signature,
+          'scanned_at': seededAt,
+          'ml_kem_public_key': contact.mlKemPublicKey,
+        });
+        await fixture.db
+            .insert('direct_contact_device_roster_metadata', <String, Object?>{
+              'contact_account_peer_id': contact.peerId,
+              'roster_initialized': 1,
+              'legacy_target_state': 'active',
+              'initialized_at': seededAt,
+              'legacy_revoked_at': null,
+              'updated_at': seededAt,
+            });
+        await fixture.db
+            .insert('direct_contact_device_bindings', <String, Object?>{
+              'contact_account_peer_id': contact.peerId,
+              'device_id': 'device-a',
+              'verified_account_signing_public_key': contact.publicKey,
+              'transport_peer_id': 'peer-transport-device-a',
+              'transport_public_key': 'transport-key-device-a',
+              'device_ml_kem_public_key': 'mlkem-device-a',
+              'binding_fingerprint': 'a1b2' * 16,
+              'state': 'active',
+              'staged_at': seededAt,
+              'decided_at': seededAt,
+            });
+        final fanoutRepository =
+            fixture.repo as OutgoingDirectLinkedMediaBlobFanoutRepository;
+        expect(fanoutRepository.supportsDirectLinkedMediaBlobFanout, isTrue);
+        final linkedSnapshot = await fanoutRepository
+            .readDirectContactFanoutSnapshotForMedia(contact.peerId);
+        expect(
+          linkedSnapshot!.targets,
+          hasLength(2),
+          reason:
+              'the linked roster is real and visible to the fanout reader — '
+              'exactly the authority that forbids the singular lane',
+        );
 
-      final source = File('${documents.path}/primary.jpg')
-        ..writeAsBytesSync(List<int>.generate(48, (index) => index));
-      final uploads = <Map<String, dynamic>>[];
-      final bridge = _AuthorityObservingShareBridge(
-        onFirstMediaUpload: (payload) async {
-          uploads.add(Map<String, dynamic>.from(payload));
-        },
-      );
-      final p2pService = _DirectMediaCustodyFakeP2PService(
-        initialState: const NodeState(
-          isStarted: true,
-          peerId: 'my-peer-id-12345',
-        ),
-      )..isConnectedToPeerResult = false;
-      var processCalls = 0;
-      final coordinator = DefaultShareBatchDeliveryCoordinator(
-        identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
-        contactRepository: contacts,
-        messageRepository: fixture.messageRepo,
-        mediaAttachmentRepository: fixture.repo,
-        groupRepository: InMemoryGroupRepository(),
-        groupMessageRepository: InMemoryGroupMessageRepository(),
-        bridge: bridge,
-        p2pService: p2pService,
-        mediaFileManager: MediaFileManager(),
-        imageProcessor: _imageProcessor(),
-        directMediaBlobCustodyClientEnabled: true,
-        processSharedMediaFn: (_) async {
-          processCalls++;
-          return ProcessedShareMediaBatch(
-            processedMedia: <PendingComposerMedia>[
-              PendingComposerMedia(
-                file: source,
-                budgetBytes: source.lengthSync(),
-              ),
-            ],
-          );
-        },
-      );
+        final source = File('${documents.path}/primary.jpg')
+          ..writeAsBytesSync(List<int>.generate(48, (index) => index));
+        final uploads = <Map<String, dynamic>>[];
+        final bridge = _AuthorityObservingShareBridge(
+          onFirstMediaUpload: (payload) async {
+            uploads.add(Map<String, dynamic>.from(payload));
+          },
+        );
+        var stagedInboxSiblingCount = 0;
+        final p2pService = _FanoutStageObservingP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+          onFirstEnvelopeStore: () async {
+            stagedInboxSiblingCount =
+                (await fixture.messageRepo.loadDirectInboxCustody()).length;
+          },
+        )..isConnectedToPeerResult = false;
+        var processCalls = 0;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: MediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          directMediaBlobCustodyClientEnabled: true,
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            return ProcessedShareMediaBatch(
+              processedMedia: <PendingComposerMedia>[
+                PendingComposerMedia(
+                  file: source,
+                  budgetBytes: source.lengthSync(),
+                ),
+              ],
+            );
+          },
+        );
 
-      final result = await coordinator.deliver(
-        shareIntent: ShareIntent(
-          type: ShareIntentType.files,
-          filePaths: <String>[source.path],
-        ),
-        targets: <ShareTargetSelection>[ShareTargetSelection.contact(contact)],
-      );
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(contact),
+          ],
+        );
 
-      expect(
-        result.failureCount,
-        1,
-        reason: 'the initialized-roster destination fails closed',
-      );
-      expect(
-        processCalls,
-        0,
-        reason:
-            'admission is a pre-authoring boundary: even preprocessing or '
-            'copying the shared file is too late',
-      );
-      expect(
-        uploads,
-        isEmpty,
-        reason:
-            'zero network: the refusal precedes media crypto, file write '
-            'and upload',
-      );
-      expect(
-        await fixture.db.query(kDirectMediaBlobCustodyTable),
-        isEmpty,
-        reason: 'no singular or linked generation is minted',
-      );
-      expect(
-        await fixture.db.query('messages'),
-        isEmpty,
-        reason: 'the refusal precedes the fresh parent stage',
-      );
-    });
+        expect(result.failureCount, 0, reason: result.results.single.detail);
+        expect(processCalls, 1);
+        expect(
+          uploads.map((payload) => payload['to']).toSet(),
+          linkedSnapshot.targets.map((target) => target.peerId).toSet(),
+        );
+        final parentRows = await fixture.db.query('messages');
+        expect(parentRows, hasLength(1));
+        final parent = ConversationMessage.fromMap(parentRows.single);
+        final attachments = await fixture.repo.getAttachmentsForMessage(
+          parent.id,
+          owner: MediaOwnerLane.direct,
+        );
+        expect(attachments, hasLength(1));
+        final blobRows = await fixture.repo
+            .loadDirectMediaBlobCustodyForMessage(parent.id);
+        expect(blobRows, hasLength(linkedSnapshot.targets.length));
+        expect(
+          blobRows.map((row) => row.recipientPeerId).toSet(),
+          linkedSnapshot.targets.map((target) => target.peerId).toSet(),
+        );
+        expect(
+          blobRows.map((row) => row.ciphertextRelativePath).toSet(),
+          hasLength(1),
+        );
+        expect(blobRows.map((row) => row.contentHash).toSet(), hasLength(1));
+        expect(stagedInboxSiblingCount, linkedSnapshot.targets.length);
+        expect(parent.directMediaCustodyIntentId, isNull);
+        expect(parent.directEventFanoutGenerationId, parent.id);
+      },
+    );
+
+    test(
+      'TC-366-01a external linked admission refuses contact drift before legacy effects',
+      () async {
+        final previousPathProvider = PathProviderPlatform.instance;
+        final root = Directory.systemTemp.createTempSync(
+          'external_share_366_contact_drift_',
+        );
+        mediaUploadInFlightTracker.clearAll();
+        addTearDown(() async {
+          mediaUploadInFlightTracker.clearAll();
+          PathProviderPlatform.instance = previousPathProvider;
+          if (root.existsSync()) root.deleteSync(recursive: true);
+        });
+        PathProviderPlatform.instance = _SharePathProvider(root.path);
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          databasePath: '${root.path}/identity.sqlite',
+        );
+        addTearDown(fixture.dispose);
+
+        const seededAt = '2026-08-15T12:00:00.000Z';
+        final contact = _makeMlKemContact(
+          'peer-share-366-contact-drift',
+          'Drifting Linked Contact',
+        );
+        final contacts = InMemoryContactRepository();
+        await contacts.addContact(contact);
+        await fixture.db.insert('contacts', <String, Object?>{
+          'peer_id': contact.peerId,
+          'public_key': contact.publicKey,
+          'rendezvous': contact.rendezvous,
+          'username': contact.username,
+          'signature': contact.signature,
+          'scanned_at': seededAt,
+          'ml_kem_public_key': contact.mlKemPublicKey,
+        });
+        await fixture.db
+            .insert('direct_contact_device_roster_metadata', <String, Object?>{
+              'contact_account_peer_id': contact.peerId,
+              'roster_initialized': 1,
+              'legacy_target_state': 'active',
+              'initialized_at': seededAt,
+              'legacy_revoked_at': null,
+              'updated_at': seededAt,
+            });
+        await fixture.db
+            .insert('direct_contact_device_bindings', <String, Object?>{
+              'contact_account_peer_id': contact.peerId,
+              'device_id': 'device-b',
+              'verified_account_signing_public_key': contact.publicKey,
+              'transport_peer_id': 'peer-transport-device-b',
+              'transport_public_key': 'transport-key-device-b',
+              'device_ml_kem_public_key': 'mlkem-device-b',
+              'binding_fingerprint': 'b2c3' * 16,
+              'state': 'active',
+              'staged_at': seededAt,
+              'decided_at': seededAt,
+            });
+        final snapshot =
+            await (fixture.repo
+                    as OutgoingDirectLinkedMediaBlobFanoutRepository)
+                .readDirectContactFanoutSnapshotForMedia(contact.peerId);
+        expect(snapshot?.targets, hasLength(2));
+
+        final source = File('${root.path}/drift.jpg')
+          ..writeAsBytesSync(List<int>.generate(48, (index) => index));
+        final uploads = <Map<String, dynamic>>[];
+        var processCalls = 0;
+        final bridge = _AuthorityObservingShareBridge(
+          onFirstMediaUpload: (payload) async {
+            uploads.add(Map<String, dynamic>.from(payload));
+          },
+        );
+        final p2pService = _DirectMediaCustodyFakeP2PService(
+          initialState: const NodeState(
+            isStarted: true,
+            peerId: 'my-peer-id-12345',
+          ),
+        )..isConnectedToPeerResult = false;
+        final coordinator = DefaultShareBatchDeliveryCoordinator(
+          identityRepository: FakeIdentityRepository()..seed(_makeIdentity()),
+          contactRepository: contacts,
+          messageRepository: fixture.messageRepo,
+          mediaAttachmentRepository: fixture.repo,
+          groupRepository: InMemoryGroupRepository(),
+          groupMessageRepository: InMemoryGroupMessageRepository(),
+          bridge: bridge,
+          p2pService: p2pService,
+          mediaFileManager: MediaFileManager(),
+          imageProcessor: _imageProcessor(),
+          directMediaBlobCustodyClientEnabled: true,
+          processSharedMediaFn: (_) async {
+            processCalls++;
+            await contacts.blockContact(contact.peerId);
+            return ProcessedShareMediaBatch(
+              processedMedia: <PendingComposerMedia>[
+                PendingComposerMedia(
+                  file: source,
+                  budgetBytes: source.lengthSync(),
+                ),
+              ],
+            );
+          },
+        );
+
+        final result = await coordinator.deliver(
+          shareIntent: ShareIntent(
+            type: ShareIntentType.files,
+            filePaths: <String>[source.path],
+          ),
+          targets: <ShareTargetSelection>[
+            ShareTargetSelection.contact(contact),
+          ],
+        );
+
+        expect(processCalls, 1, reason: 'drift occurs after linked preflight');
+        expect(result.results.single.status, ShareBatchTargetStatus.failed);
+        expect(
+          uploads,
+          isEmpty,
+          reason: 'linked admission can never demote to the legacy uploader',
+        );
+        expect(bridge.sendCallCount, 0);
+        expect(p2pService.sendLocalMediaCallCount, 0);
+        expect(p2pService.sendMessageCallCount, 0);
+        expect(p2pService.sendMessageWithReplyCallCount, 0);
+        expect(p2pService.dialPeerCallCount, 0);
+        expect(p2pService.storeInInboxCallCount, 0);
+        expect(await fixture.db.query('messages'), isEmpty);
+        expect(await fixture.db.query(kDirectMediaBlobCustodyTable), isEmpty);
+      },
+    );
 
     test(
       'TC-362-02a external share direct forward and group-to-contact forward all admit before source work',
@@ -5527,6 +6394,36 @@ class _FanoutAuthorityP2PService extends _DirectMediaCustodyFakeP2PService {
   }) {
     if (toPeerId == queuedPeerId) {
       throw StateError('injected post-authority envelope-store failure');
+    }
+    return super.storeInMediaExpiryBoundedInboxDetailed(
+      toPeerId,
+      message,
+      custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+      timeoutMs: timeoutMs,
+    );
+  }
+}
+
+class _FanoutStageObservingP2PService
+    extends _DirectMediaCustodyFakeP2PService {
+  _FanoutStageObservingP2PService({
+    required this.onFirstEnvelopeStore,
+    required super.initialState,
+  });
+
+  final Future<void> Function() onFirstEnvelopeStore;
+  bool _observed = false;
+
+  @override
+  Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) async {
+    if (!_observed) {
+      _observed = true;
+      await onFirstEnvelopeStore();
     }
     return super.storeInMediaExpiryBoundedInboxDetailed(
       toPeerId,

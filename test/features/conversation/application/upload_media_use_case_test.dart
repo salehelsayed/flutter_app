@@ -7,23 +7,37 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_media_blob_generation_result.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/media_attachment_repository.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
+import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 
 import '../../../shared/fakes/fake_media_file_manager.dart';
+import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 
 /// Fake bridge that responds to media:upload commands.
 class _FakeBridge implements Bridge {
@@ -1532,6 +1546,936 @@ void main() {
         expect(groupPayload, isNot(contains('custodyContract')));
       },
     );
+
+    test(
+      'TC-366-00a Dart group manifest scheme matches the relay validator',
+      () {
+        final manifest = ProtectedGroupMediaManifest(
+          groupId: 'group-366-parity',
+          messageId: 'message-366-parity',
+          attachments: <ProtectedGroupMediaAttachmentCommitment>[
+            ProtectedGroupMediaAttachmentCommitment(
+              attachmentId: 'attachment-366-parity',
+              custodyBlobId: 'group-blob-366-parity',
+              ciphertextSha256: 'a' * 64,
+              ciphertextSize: 64,
+              mime: 'image/jpeg',
+              mediaType: 'image',
+              encryptionKeyBase64: 'a2V5LTM2Ng==',
+              encryptionNonce: 'bm9uY2UtMzY2',
+              targets: <GroupMediaBlobTargetCommitment>[
+                GroupMediaBlobTargetCommitment(
+                  recipientPeerId: 'transport-366',
+                  expiresAtMs: 2_000_000_000_000,
+                ),
+              ],
+            ),
+          ],
+        );
+        final wire = jsonDecode(manifest.encode()) as Map<String, dynamic>;
+        final attachment =
+            (wire['attachments'] as List<dynamic>).single
+                as Map<String, dynamic>;
+
+        expect(groupMediaBlobEncryptionScheme, 'blob_aes_256_gcm_v1');
+        expect(attachment['encryptionScheme'], 'blob_aes_256_gcm_v1');
+        expect(
+          () => ProtectedGroupMediaAttachmentCommitment(
+            attachmentId: 'attachment-obsolete',
+            custodyBlobId: 'group-blob-obsolete',
+            ciphertextSha256: 'b' * 64,
+            ciphertextSize: 64,
+            mime: 'image/jpeg',
+            mediaType: 'image',
+            encryptionScheme: 'blob_aes_gcm_v1',
+            encryptionKeyBase64: 'a2V5LW9ic29sZXRl',
+            encryptionNonce: 'bm9uY2Utb2Jzb2xldGU=',
+            targets: <GroupMediaBlobTargetCommitment>[
+              GroupMediaBlobTargetCommitment(
+                recipientPeerId: 'transport-366',
+                expiresAtMs: 2_000_000_000_000,
+              ),
+            ],
+          ),
+          throwsArgumentError,
+        );
+      },
+    );
+
+    test(
+      'TC-365-02a strict group upload stores exact recipient custody without allowedPeers',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'tc365-group-upload-',
+        );
+        addTearDown(() => root.delete(recursive: true));
+        final plaintext = File('${root.path}/source.jpg');
+        await plaintext.writeAsBytes(<int>[
+          0xff,
+          0xd8,
+          0xff,
+          ...List<int>.generate(61, (index) => index),
+        ]);
+        final ciphertextBytes = <int>[
+          ...List<int>.filled(16, 0xa5),
+          ...await plaintext.readAsBytes(),
+        ];
+        final ciphertext = File('${root.path}/ciphertext.bin');
+        await ciphertext.writeAsBytes(ciphertextBytes);
+        final ciphertextHash = sha256.convert(ciphertextBytes).toString();
+
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'group-365',
+            name: 'Plan 365',
+            type: GroupType.chat,
+            topicName: 'group-365-topic',
+            createdAt: DateTime.utc(2026, 8, 14, 9),
+            createdBy: 'account-local',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-365',
+            keyGeneration: 7,
+            encryptedKey: 'group-key-365',
+            createdAt: DateTime.utc(2026, 8, 14, 9),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-365',
+            peerId: 'account-local',
+            role: MemberRole.writer,
+            publicKey: 'account-public-key',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-current',
+                transportPeerId: 'transport-current',
+                deviceSigningPublicKey: 'device-current-key',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-sibling',
+                transportPeerId: 'transport-sibling',
+                deviceSigningPublicKey: 'device-sibling-key',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 14, 9),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-365',
+            peerId: 'account-remote',
+            role: MemberRole.writer,
+            publicKey: 'remote-account-key',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-remote',
+                transportPeerId: 'transport-remote',
+                deviceSigningPublicKey: 'device-remote-key',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 14, 9),
+          ),
+        );
+
+        final repository = _StrictGroupBlobRepository();
+        final uploadedBodies = <List<int>>[];
+        final uploadedRecipients = <String>[];
+        final artifactStore = GroupMediaBlobArtifactStore(
+          documentsDirectoryProvider: () async => root,
+        );
+        final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+          artifactStore: artifactStore,
+          clock: () => DateTime.utc(2026, 8, 14, 10),
+          strictUpload:
+              ({
+                required bridge,
+                required custodyBlobId,
+                required recipientPeerId,
+                required ciphertextPath,
+                required contentHash,
+                required ciphertextSize,
+              }) async {
+                expect(
+                  repository.stageCompleted,
+                  isTrue,
+                  reason: 'every target row must exist before network',
+                );
+                final bytes = await File(ciphertextPath).readAsBytes();
+                uploadedBodies.add(bytes);
+                uploadedRecipients.add(recipientPeerId);
+                final expiresAtMs = recipientPeerId == 'transport-remote'
+                    ? DateTime.utc(2026, 8, 20).millisecondsSinceEpoch
+                    : DateTime.utc(2026, 8, 21).millisecondsSinceEpoch;
+                return <String, dynamic>{
+                  'ok': true,
+                  'id': custodyBlobId,
+                  'storeStatus': 'stored',
+                  'custodyKind': groupMediaBlobCustodyKind,
+                  'custodyContract': groupMediaBlobCustodyContract,
+                  'contentHash': contentHash,
+                  'size': ciphertextSize,
+                  'mime': groupMediaBlobTransportMime,
+                  'expiresAtMs': expiresAtMs,
+                  'custodyRelayPeerId': 'relay-$recipientPeerId',
+                };
+              },
+        );
+        final parent = GroupMessage(
+          id: 'message-365',
+          groupId: 'group-365',
+          senderPeerId: 'account-local',
+          senderUsername: 'Local',
+          text: 'caption',
+          timestamp: DateTime.utc(2026, 8, 14, 10),
+          status: GroupMessage.statusQueuedOffline,
+          isIncoming: false,
+          createdAt: DateTime.utc(2026, 8, 14, 10),
+        );
+        final attachment = MediaAttachment(
+          id: 'attachment-365',
+          messageId: parent.id,
+          mime: 'image/jpeg',
+          size: await plaintext.length(),
+          mediaType: 'image',
+          width: 8,
+          height: 8,
+          localPath: plaintext.path,
+          downloadStatus: 'upload_pending',
+          createdAt: parent.createdAt.toIso8601String(),
+          ownerLane: MediaOwnerLane.group,
+        );
+        final authoringContext = GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 14, 9, 30),
+            eventId: 'authority-365',
+            keyEpoch: 7,
+          ),
+          inboxStore: _NoopAckCustodyInboxStore(),
+        );
+
+        final result = await coordinator.prepareAndUploadFresh(
+          bridge: _FakeBridge(),
+          groupRepository: groupRepo,
+          mediaAttachmentRepository: repository,
+          identityPeerId: 'account-local',
+          senderPublicKey: 'device-current-key',
+          senderDeviceId: 'device-current',
+          senderTransportPeerId: 'transport-current',
+          parent: parent,
+          sources: <PreparedGroupMediaBlobSource>[
+            PreparedGroupMediaBlobSource(
+              attachment: attachment,
+              plaintextPath: plaintext.path,
+              preparedArtifact: EncryptedMediaArtifact(
+                encryptedPath: ciphertext.path,
+                keyBase64: 'group-media-key',
+                nonce: 'group-media-nonce',
+                scheme: groupMediaBlobEncryptionScheme,
+                contentHash: ciphertextHash,
+                plaintextSize: await plaintext.length(),
+              ),
+            ),
+          ],
+          groupContentAuthoring: authoringContext,
+        );
+
+        expect(result.isComplete, isTrue);
+        expect(uploadedRecipients, <String>[
+          'transport-remote',
+          'transport-sibling',
+        ]);
+        expect(uploadedBodies, hasLength(2));
+        expect(uploadedBodies[0], uploadedBodies[1]);
+        expect(uploadedBodies.singleOrNull, isNull);
+        expect(repository.rows, hasLength(2));
+        expect(
+          repository.rows.map((row) => row.state).toSet(),
+          <DirectMediaBlobCustodyState>{
+            DirectMediaBlobCustodyState.outgoingStored,
+          },
+        );
+        expect(
+          repository.rows.map((row) => row.recipientPeerId).toSet(),
+          <String>{'transport-remote', 'transport-sibling'},
+        );
+        expect(
+          result.preparedManifest!.manifest.recipientPeerIds,
+          <String>['transport-remote', 'transport-sibling'],
+          reason:
+              'the current authoring transport is excluded, not its sibling',
+        );
+        final files = await root
+            .list(recursive: true)
+            .where((entry) => entry is File && entry.path.endsWith('.blob'))
+            .toList();
+        expect(files, hasLength(1), reason: 'one ciphertext owns both targets');
+
+        // A refused atomic stage owns no DB reference. The just-published
+        // candidate must be removed without touching the surviving generation.
+        final refusedCiphertext = File('${root.path}/refused-ciphertext.bin');
+        await refusedCiphertext.writeAsBytes(ciphertextBytes);
+        final refusedParent = parent.copyWith(id: 'message-365-refused');
+        final refusedAttachment = attachment.copyWith(
+          id: 'attachment-365-refused',
+          messageId: refusedParent.id,
+        );
+        final refused = await coordinator.prepareAndUploadFresh(
+          bridge: _FakeBridge(),
+          groupRepository: groupRepo,
+          mediaAttachmentRepository: repository,
+          identityPeerId: 'account-local',
+          senderPublicKey: 'device-current-key',
+          senderDeviceId: 'device-current',
+          senderTransportPeerId: 'transport-current',
+          parent: refusedParent,
+          sources: <PreparedGroupMediaBlobSource>[
+            PreparedGroupMediaBlobSource(
+              attachment: refusedAttachment,
+              plaintextPath: plaintext.path,
+              preparedArtifact: EncryptedMediaArtifact(
+                encryptedPath: refusedCiphertext.path,
+                keyBase64: 'group-media-key-refused',
+                nonce: 'group-media-nonce-refused',
+                scheme: groupMediaBlobEncryptionScheme,
+                contentHash: ciphertextHash,
+                plaintextSize: await plaintext.length(),
+              ),
+            ),
+          ],
+          groupContentAuthoring: authoringContext,
+        );
+        expect(refused.state, PreparedGroupMediaBlobState.refused);
+        expect(
+          await root
+              .list(recursive: true)
+              .where((entry) => entry is File && entry.path.endsWith('.blob'))
+              .length,
+          1,
+          reason: 'stage refusal must delete only its unreferenced candidate',
+        );
+
+        // Content completion leaves exact cleanup rows. The same lifecycle
+        // owner retires them and also sweeps crash artifacts with no DB owner.
+        for (var index = 0; index < repository.rows.length; index++) {
+          repository.rows[index] = repository.rows[index].copyWith(
+            state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+            updatedAt: '2026-08-14T11:00:00.000Z',
+          );
+        }
+        final orphanCiphertext = File('${root.path}/orphan-ciphertext.bin');
+        await orphanCiphertext.writeAsBytes(ciphertextBytes);
+        await artifactStore.persistCandidate(
+          identityPeerId: 'account-local',
+          groupId: 'group-365',
+          attachmentId: 'attachment-365-orphan',
+          encryptedSourcePath: orphanCiphertext.path,
+          expectedContentHash: ciphertextHash,
+        );
+        final cleanupProgress = await coordinator
+            .drainOutgoingCleanupAndOrphans(
+              mediaAttachmentRepository: repository,
+              identityPeerId: 'account-local',
+            );
+        expect(cleanupProgress, greaterThanOrEqualTo(4));
+        expect(repository.rows, isEmpty);
+        expect(
+          await root
+              .list(recursive: true)
+              .where((entry) => entry is File && entry.path.endsWith('.blob'))
+              .toList(),
+          isEmpty,
+        );
+
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-365',
+            peerId: 'account-remote',
+            role: MemberRole.writer,
+            publicKey: 'remote-account-key',
+            devices: List<GroupMemberDeviceIdentity>.generate(
+              protectedGroupMediaMaxPhysicalRecipients,
+              (index) => GroupMemberDeviceIdentity(
+                deviceId: 'device-overflow-$index',
+                transportPeerId: 'transport-overflow-$index',
+                deviceSigningPublicKey: 'device-overflow-key-$index',
+              ),
+              growable: false,
+            ),
+            joinedAt: DateTime.utc(2026, 8, 14, 9),
+          ),
+        );
+        final overLimitRepository = _StrictGroupBlobRepository();
+        var overLimitPrepareCalls = 0;
+        final overLimitCoordinator = PreparedGroupMediaBlobCustodyCoordinator(
+          artifactStore: artifactStore,
+          prepareArtifact: ({required bridge, required localFilePath}) async {
+            overLimitPrepareCalls++;
+            throw StateError('over-limit ACL must refuse before preprocessing');
+          },
+        );
+        final overLimitParent = parent.copyWith(id: 'message-365-over-limit');
+        final overLimit = await overLimitCoordinator.prepareAndUploadFresh(
+          bridge: _FakeBridge(),
+          groupRepository: groupRepo,
+          mediaAttachmentRepository: overLimitRepository,
+          identityPeerId: 'account-local',
+          senderPublicKey: 'device-current-key',
+          senderDeviceId: 'device-current',
+          senderTransportPeerId: 'transport-current',
+          parent: overLimitParent,
+          sources: <PreparedGroupMediaBlobSource>[
+            PreparedGroupMediaBlobSource(
+              attachment: attachment.copyWith(
+                id: 'attachment-365-over-limit',
+                messageId: overLimitParent.id,
+              ),
+              plaintextPath: plaintext.path,
+            ),
+          ],
+          groupContentAuthoring: authoringContext,
+        );
+        expect(overLimit.state, PreparedGroupMediaBlobState.refused);
+        expect(overLimit.hasDurableAuthority, isFalse);
+        expect(overLimitPrepareCalls, 0);
+        expect(overLimitRepository.stageCalls, 0);
+        expect(overLimitRepository.rows, isEmpty);
+      },
+    );
+
+    test(
+      'TC-365-02a strict group authoring preserves GIF video audio and voice descriptors across discussion and admin policy',
+      () async {
+        final cases =
+            <
+              ({
+                String label,
+                GroupType groupType,
+                GroupRole groupRole,
+                MemberRole senderRole,
+                String mime,
+                String mediaType,
+                List<int> bytes,
+                int? width,
+                int? height,
+                int? durationMs,
+                List<double>? waveform,
+              })
+            >[
+              (
+                label: 'discussion-gif',
+                groupType: GroupType.chat,
+                groupRole: GroupRole.member,
+                senderRole: MemberRole.writer,
+                mime: 'image/gif',
+                mediaType: 'image',
+                bytes: <int>[
+                  ...utf8.encode('GIF89a'),
+                  ...List<int>.filled(40, 1),
+                ],
+                width: 24,
+                height: 18,
+                durationMs: null,
+                waveform: null,
+              ),
+              (
+                label: 'announcement-admin-video',
+                groupType: GroupType.announcement,
+                groupRole: GroupRole.admin,
+                senderRole: MemberRole.admin,
+                mime: 'video/mp4',
+                mediaType: 'video',
+                bytes: <int>[
+                  0,
+                  0,
+                  0,
+                  24,
+                  ...utf8.encode('ftypisom'),
+                  ...List<int>.filled(40, 2),
+                ],
+                width: 640,
+                height: 360,
+                durationMs: 12_500,
+                waveform: null,
+              ),
+              (
+                label: 'discussion-audio',
+                groupType: GroupType.chat,
+                groupRole: GroupRole.member,
+                senderRole: MemberRole.writer,
+                mime: 'audio/mpeg',
+                mediaType: 'audio',
+                bytes: <int>[...utf8.encode('ID3'), ...List<int>.filled(40, 3)],
+                width: null,
+                height: null,
+                durationMs: 48_000,
+                waveform: null,
+              ),
+              (
+                label: 'announcement-admin-voice',
+                groupType: GroupType.announcement,
+                groupRole: GroupRole.admin,
+                senderRole: MemberRole.admin,
+                mime: 'audio/mp4',
+                mediaType: 'audio',
+                bytes: <int>[
+                  0,
+                  0,
+                  0,
+                  24,
+                  ...utf8.encode('ftypM4A '),
+                  ...List<int>.filled(40, 4),
+                ],
+                width: null,
+                height: null,
+                durationMs: 3200,
+                waveform: const <double>[0.1, 0.55, 0.9, 0.25],
+              ),
+            ];
+
+        for (final testCase in cases) {
+          final root = await Directory.systemTemp.createTemp(
+            'tc365-${testCase.label}-',
+          );
+          addTearDown(() async {
+            if (await root.exists()) await root.delete(recursive: true);
+          });
+          final groupId = 'group-${testCase.label}';
+          final messageId = 'message-${testCase.label}';
+          final attachmentId = 'attachment-${testCase.label}';
+          final plaintext = File('${root.path}/source.bin');
+          await plaintext.writeAsBytes(testCase.bytes);
+          final ciphertextBytes = <int>[
+            ...List<int>.filled(16, 0xa5),
+            ...testCase.bytes,
+          ];
+          final ciphertext = File('${root.path}/ciphertext.bin');
+          await ciphertext.writeAsBytes(ciphertextBytes);
+          final ciphertextHash = sha256.convert(ciphertextBytes).toString();
+
+          final groupRepo = InMemoryGroupRepository();
+          await groupRepo.saveGroup(
+            GroupModel(
+              id: groupId,
+              name: testCase.label,
+              type: testCase.groupType,
+              topicName: '$groupId-topic',
+              createdAt: DateTime.utc(2026, 8, 14, 9),
+              createdBy: 'account-local',
+              myRole: testCase.groupRole,
+            ),
+          );
+          await groupRepo.saveKey(
+            GroupKeyInfo(
+              groupId: groupId,
+              keyGeneration: 7,
+              encryptedKey: 'group-key-${testCase.label}',
+              createdAt: DateTime.utc(2026, 8, 14, 9),
+            ),
+          );
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: groupId,
+              peerId: 'account-local',
+              role: testCase.senderRole,
+              publicKey: 'account-public-key',
+              devices: const <GroupMemberDeviceIdentity>[
+                GroupMemberDeviceIdentity(
+                  deviceId: 'device-current',
+                  transportPeerId: 'transport-current',
+                  deviceSigningPublicKey: 'device-current-key',
+                ),
+                GroupMemberDeviceIdentity(
+                  deviceId: 'device-sibling',
+                  transportPeerId: 'transport-sibling',
+                  deviceSigningPublicKey: 'device-sibling-key',
+                ),
+              ],
+              joinedAt: DateTime.utc(2026, 8, 14, 9),
+            ),
+          );
+          await groupRepo.saveMember(
+            GroupMember(
+              groupId: groupId,
+              peerId: 'account-remote',
+              role: MemberRole.writer,
+              publicKey: 'remote-account-key',
+              devices: const <GroupMemberDeviceIdentity>[
+                GroupMemberDeviceIdentity(
+                  deviceId: 'device-remote',
+                  transportPeerId: 'transport-remote',
+                  deviceSigningPublicKey: 'device-remote-key',
+                ),
+              ],
+              joinedAt: DateTime.utc(2026, 8, 14, 9, 0, 1),
+            ),
+          );
+
+          final repository = _StrictGroupBlobRepository();
+          final uploadedRecipients = <String>[];
+          final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+            artifactStore: GroupMediaBlobArtifactStore(
+              documentsDirectoryProvider: () async => root,
+            ),
+            clock: () => DateTime.utc(2026, 8, 14, 10),
+            strictUpload:
+                ({
+                  required bridge,
+                  required custodyBlobId,
+                  required recipientPeerId,
+                  required ciphertextPath,
+                  required contentHash,
+                  required ciphertextSize,
+                }) async {
+                  expect(repository.stageCompleted, isTrue);
+                  expect(contentHash, ciphertextHash);
+                  expect(ciphertextSize, ciphertextBytes.length);
+                  expect(
+                    await File(ciphertextPath).readAsBytes(),
+                    ciphertextBytes,
+                  );
+                  uploadedRecipients.add(recipientPeerId);
+                  return <String, dynamic>{
+                    'ok': true,
+                    'id': custodyBlobId,
+                    'storeStatus': 'stored',
+                    'custodyKind': groupMediaBlobCustodyKind,
+                    'custodyContract': groupMediaBlobCustodyContract,
+                    'contentHash': contentHash,
+                    'size': ciphertextSize,
+                    'mime': groupMediaBlobTransportMime,
+                    'expiresAtMs': recipientPeerId == 'transport-remote'
+                        ? DateTime.utc(2026, 8, 20).millisecondsSinceEpoch
+                        : DateTime.utc(2026, 8, 21).millisecondsSinceEpoch,
+                    'custodyRelayPeerId': 'relay-$recipientPeerId',
+                  };
+                },
+          );
+          final parent = GroupMessage(
+            id: messageId,
+            groupId: groupId,
+            senderPeerId: 'account-local',
+            senderUsername: 'Local',
+            text: 'caption ${testCase.label}',
+            timestamp: DateTime.utc(2026, 8, 14, 10),
+            status: GroupMessage.statusQueuedOffline,
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 8, 14, 10),
+          );
+          final attachment = MediaAttachment(
+            id: attachmentId,
+            messageId: messageId,
+            mime: testCase.mime,
+            size: testCase.bytes.length,
+            mediaType: testCase.mediaType,
+            width: testCase.width,
+            height: testCase.height,
+            durationMs: testCase.durationMs,
+            waveform: testCase.waveform,
+            localPath: plaintext.path,
+            downloadStatus: 'upload_pending',
+            createdAt: parent.createdAt.toIso8601String(),
+            ownerLane: MediaOwnerLane.group,
+          );
+          final result = await coordinator.prepareAndUploadFresh(
+            bridge: _FakeBridge(),
+            groupRepository: groupRepo,
+            mediaAttachmentRepository: repository,
+            identityPeerId: 'account-local',
+            senderPublicKey: 'device-current-key',
+            senderDeviceId: 'device-current',
+            senderTransportPeerId: 'transport-current',
+            parent: parent,
+            sources: <PreparedGroupMediaBlobSource>[
+              PreparedGroupMediaBlobSource(
+                attachment: attachment,
+                plaintextPath: plaintext.path,
+                preparedArtifact: EncryptedMediaArtifact(
+                  encryptedPath: ciphertext.path,
+                  keyBase64: 'key-${testCase.label}',
+                  nonce: 'nonce-${testCase.label}',
+                  scheme: groupMediaBlobEncryptionScheme,
+                  contentHash: ciphertextHash,
+                  plaintextSize: testCase.bytes.length,
+                ),
+              ),
+            ],
+            groupContentAuthoring: GroupContentAuthoringContext(
+              directLinkedDeviceSelector:
+                  const DirectLinkedDeviceSelector.enabled(),
+              multiDeviceSyncEnabled: true,
+              authorityVersion: GroupContentAuthorityVersion(
+                eventAt: DateTime.utc(2026, 8, 14, 9, 30),
+                eventId: 'authority-${testCase.label}',
+                keyEpoch: 7,
+              ),
+              inboxStore: _NoopAckCustodyInboxStore(),
+            ),
+          );
+
+          expect(result.isComplete, isTrue, reason: testCase.label);
+          expect(uploadedRecipients, <String>[
+            'transport-remote',
+            'transport-sibling',
+          ], reason: testCase.label);
+          expect(repository.rows, hasLength(2), reason: testCase.label);
+          expect(
+            repository.rows.map((row) => row.recipientPeerId).toSet(),
+            <String>{'transport-remote', 'transport-sibling'},
+            reason:
+                '${testCase.label}: strict custody targets physical recipients only',
+          );
+          expect(
+            repository.rows.every(
+              (row) =>
+                  row.ownerLane == MediaBlobCustodyOwnerLane.group &&
+                  row.direction == DirectMediaBlobCustodyDirection.outgoing &&
+                  row.state == DirectMediaBlobCustodyState.outgoingStored &&
+                  row.custodyKind == groupMediaBlobCustodyKind &&
+                  row.custodyContract == groupMediaBlobCustodyContract,
+            ),
+            isTrue,
+            reason: testCase.label,
+          );
+          final completed = result.attachments.single;
+          final commitment =
+              result.preparedManifest!.manifest.attachments.single;
+          expect(completed.mime, testCase.mime, reason: testCase.label);
+          expect(
+            completed.mediaType,
+            testCase.mediaType,
+            reason: testCase.label,
+          );
+          expect(completed.width, testCase.width, reason: testCase.label);
+          expect(completed.height, testCase.height, reason: testCase.label);
+          expect(
+            completed.durationMs,
+            testCase.durationMs,
+            reason: testCase.label,
+          );
+          expect(completed.waveform, testCase.waveform, reason: testCase.label);
+          expect(commitment.mime, testCase.mime, reason: testCase.label);
+          expect(
+            commitment.mediaType,
+            testCase.mediaType,
+            reason: testCase.label,
+          );
+          expect(commitment.width, testCase.width, reason: testCase.label);
+          expect(commitment.height, testCase.height, reason: testCase.label);
+          expect(
+            commitment.durationMs,
+            testCase.durationMs,
+            reason: testCase.label,
+          );
+          expect(
+            commitment.waveform,
+            testCase.waveform ?? const <double>[],
+            reason: testCase.label,
+          );
+          expect(commitment.recipientPeerIds, <String>{
+            'transport-remote',
+            'transport-sibling',
+          }, reason: testCase.label);
+        }
+      },
+    );
+
+    test(
+      'TC-365-02a initialized private group media refuses before preprocessing',
+      () async {
+        final root = await Directory.systemTemp.createTemp(
+          'tc365-group-exclusions-',
+        );
+        addTearDown(() async {
+          if (await root.exists()) await root.delete(recursive: true);
+        });
+        final groupRepo = InMemoryGroupRepository();
+        await groupRepo.saveGroup(
+          GroupModel(
+            id: 'group-365-exclusions',
+            name: 'Plan 365 exclusions',
+            type: GroupType.chat,
+            topicName: 'group-365-exclusions-topic',
+            createdAt: DateTime.utc(2026, 8, 14, 9),
+            createdBy: 'account-local',
+            myRole: GroupRole.member,
+          ),
+        );
+        await groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: 'group-365-exclusions',
+            keyGeneration: 7,
+            encryptedKey: 'group-key-365-exclusions',
+            createdAt: DateTime.utc(2026, 8, 14, 9),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-365-exclusions',
+            peerId: 'account-local',
+            role: MemberRole.writer,
+            publicKey: 'account-public-key',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-current',
+                transportPeerId: 'transport-current',
+                deviceSigningPublicKey: 'device-current-key',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-sibling',
+                transportPeerId: 'transport-sibling',
+                deviceSigningPublicKey: 'device-sibling-key',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 14, 9),
+          ),
+        );
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-365-exclusions',
+            peerId: 'account-remote',
+            role: MemberRole.writer,
+            publicKey: 'remote-account-key',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-remote',
+                transportPeerId: 'transport-remote',
+                deviceSigningPublicKey: 'device-remote-key',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 14, 9, 0, 1),
+          ),
+        );
+        final authoringContext = GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 14, 9, 30),
+            eventId: 'authority-365-exclusions',
+            keyEpoch: 7,
+          ),
+          inboxStore: _NoopAckCustodyInboxStore(),
+        );
+
+        for (final exclusion
+            in <({String label, GroupMessage Function(GroupMessage) mutate})>[
+              (
+                label: 'private',
+                mutate: (parent) => parent.copyWith(
+                  privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
+                ),
+              ),
+            ]) {
+          final source = File('${root.path}/${exclusion.label}.jpg');
+          await source.writeAsBytes(<int>[
+            0xff,
+            0xd8,
+            0xff,
+            ...List<int>.filled(40, 0x36),
+          ]);
+          final bridge = _FakeBridge();
+          final repository = _StrictGroupBlobRepository();
+          var prepareCalls = 0;
+          var uploadCalls = 0;
+          final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+            artifactStore: GroupMediaBlobArtifactStore(
+              documentsDirectoryProvider: () async => root,
+            ),
+            prepareArtifact: ({required bridge, required localFilePath}) async {
+              prepareCalls += 1;
+              throw StateError('excluded media must not preprocess');
+            },
+            strictUpload:
+                ({
+                  required bridge,
+                  required custodyBlobId,
+                  required recipientPeerId,
+                  required ciphertextPath,
+                  required contentHash,
+                  required ciphertextSize,
+                }) async {
+                  uploadCalls += 1;
+                  throw StateError('excluded media must not upload');
+                },
+          );
+          final baseParent = GroupMessage(
+            id: 'message-365-${exclusion.label}',
+            groupId: 'group-365-exclusions',
+            senderPeerId: 'account-local',
+            text: '',
+            timestamp: DateTime.utc(2026, 8, 14, 10),
+            status: GroupMessage.statusQueuedOffline,
+            isIncoming: false,
+            createdAt: DateTime.utc(2026, 8, 14, 10),
+          );
+          final parent = exclusion.mutate(baseParent);
+          final result = await coordinator.prepareAndUploadFresh(
+            bridge: bridge,
+            groupRepository: groupRepo,
+            mediaAttachmentRepository: repository,
+            identityPeerId: 'account-local',
+            senderPublicKey: 'device-current-key',
+            senderDeviceId: 'device-current',
+            senderTransportPeerId: 'transport-current',
+            parent: parent,
+            sources: <PreparedGroupMediaBlobSource>[
+              PreparedGroupMediaBlobSource(
+                attachment: MediaAttachment(
+                  id: 'attachment-365-${exclusion.label}',
+                  messageId: parent.id,
+                  mime: 'image/jpeg',
+                  size: await source.length(),
+                  mediaType: 'image',
+                  width: 8,
+                  height: 8,
+                  localPath: source.path,
+                  downloadStatus: 'upload_pending',
+                  createdAt: parent.createdAt.toIso8601String(),
+                  ownerLane: MediaOwnerLane.group,
+                ),
+                plaintextPath: source.path,
+              ),
+            ],
+            groupContentAuthoring: authoringContext,
+          );
+
+          expect(
+            result.state,
+            PreparedGroupMediaBlobState.refused,
+            reason: exclusion.label,
+          );
+          expect(prepareCalls, 0, reason: exclusion.label);
+          expect(uploadCalls, 0, reason: exclusion.label);
+          expect(bridge.sendCallCount, 0, reason: exclusion.label);
+          expect(repository.stageCompleted, isFalse, reason: exclusion.label);
+          expect(repository.rows, isEmpty, reason: exclusion.label);
+          expect(
+            await repository.getAttachmentsForMessage(
+              parent.id,
+              owner: MediaOwnerLane.group,
+            ),
+            isEmpty,
+            reason: exclusion.label,
+          );
+          expect(await source.exists(), isTrue, reason: exclusion.label);
+        }
+        expect(
+          await root
+              .list(recursive: true)
+              .where((entry) => entry is File && entry.path.endsWith('.blob'))
+              .toList(),
+          isEmpty,
+        );
+      },
+    );
   });
 }
 
@@ -1576,6 +2520,167 @@ Map<String, dynamic> _exactStrictReceipt(Map<String, dynamic> payload) =>
       'expiresAtMs': DateTime.utc(2036, 8, 9).millisecondsSinceEpoch,
       'custodyRelayPeerId': 'relay-347',
     };
+
+final class _NoopAckCustodyInboxStore implements AckOrExpiryInboxStore {
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async => const InboxStoreOutcome(
+    status: InboxStoreStatus.stored,
+    storeStatus: 'stored',
+    custodyContract: ackOrExpiryInboxCustodyContract,
+  );
+}
+
+final class _StrictGroupBlobRepository extends InMemoryMediaAttachmentRepository
+    implements
+        GroupMediaBlobCustodyRepository,
+        GroupMediaBlobArtifactReferenceInventoryRepository {
+  final List<DirectMediaBlobCustodyRow> rows = <DirectMediaBlobCustodyRow>[];
+  bool stageCompleted = false;
+  int stageCalls = 0;
+
+  @override
+  bool get supportsGroupMediaBlobCustody => true;
+
+  @override
+  Future<T> runGroupMediaBlobCustodyLifecycle<T>(Future<T> Function() action) =>
+      action();
+
+  @override
+  Future<GroupMediaBlobCustodyStageOutcome>
+  stageFreshOutgoingGroupMediaBlobGeneration({
+    required GroupMessage parent,
+    required List<MediaAttachment> attachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required Map<String, String> custodyBlobIdsByAttachmentId,
+  }) async {
+    stageCalls++;
+    if (rows.isNotEmpty) return GroupMediaBlobCustodyStageOutcome.refused;
+    expect(
+      custodyBlobIdsByAttachmentId.keys.toSet(),
+      attachments.map((attachment) => attachment.id).toSet(),
+    );
+    for (final attachment in attachments) {
+      await saveAttachment(attachment, owner: MediaOwnerLane.group);
+    }
+    rows.addAll(custodyRows);
+    stageCompleted = true;
+    return GroupMediaBlobCustodyStageOutcome.applied;
+  }
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyForMessage({
+    required String groupId,
+    required String messageId,
+  }) async => rows
+      .where((row) => row.groupId == groupId && row.messageId == messageId)
+      .toList(growable: false);
+
+  @override
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  }) async => rows
+      .where((row) => states.contains(row.state))
+      .take(limit)
+      .toList(growable: false);
+
+  @override
+  Future<DirectMediaBlobCustodyRow?> loadGroupMediaBlobCustodyForTarget({
+    required String groupId,
+    required String attachmentId,
+    required String custodyBlobId,
+    required DirectMediaBlobCustodyDirection direction,
+    String? recipientPeerId,
+  }) async {
+    for (final row in rows) {
+      if (row.groupId == groupId &&
+          row.attachmentId == attachmentId &&
+          row.custodyBlobId == custodyBlobId &&
+          row.direction == direction &&
+          row.recipientPeerId == recipientPeerId) {
+        return row;
+      }
+    }
+    return null;
+  }
+
+  @override
+  Future<bool> transitionGroupMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  }) async {
+    final index = rows.indexWhere(
+      (row) => row.exactDatabaseProjectionMatches(expected),
+    );
+    if (index < 0 || !expected.canTransitionTo(next)) return false;
+    rows[index] = next;
+    return true;
+  }
+
+  @override
+  Future<bool> deleteGroupMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async {
+    final index = rows.indexWhere(
+      (row) => row.exactDatabaseProjectionMatches(expected),
+    );
+    if (index < 0 ||
+        expected.state != DirectMediaBlobCustodyState.outgoingCleanupPending) {
+      return false;
+    }
+    rows.removeAt(index);
+    return true;
+  }
+
+  @override
+  Future<Set<String>> loadGroupMediaBlobArtifactRelativePaths() async =>
+      rows.map((row) => row.ciphertextRelativePath).whereType<String>().toSet();
+
+  @override
+  Future<bool> commitIncomingGroupMediaBlobLocalPath({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String localPath,
+    required String sourceRelayPeerId,
+    required String updatedAt,
+    required int nowMs,
+  }) async => false;
+
+  @override
+  Future<bool> terminalizeIncomingGroupMediaBlobForLocalDeletion({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String sourceRelayPeerId,
+    required String updatedAt,
+  }) async => false;
+
+  @override
+  Future<bool> deleteIncomingGroupMediaBlobAckPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => false;
+
+  @override
+  Future<bool> deleteIncomingGroupMediaBlobIfExpired({
+    required DirectMediaBlobCustodyRow expected,
+    required int nowMs,
+  }) async => false;
+
+  @override
+  Future<int> countOtherGroupMediaBlobCustodyRowsReferencingArtifact(
+    DirectMediaBlobCustodyRow expected,
+  ) async => rows
+      .where(
+        (row) =>
+            !row.exactDatabaseProjectionMatches(expected) &&
+            row.ciphertextRelativePath == expected.ciphertextRelativePath,
+      )
+      .length;
+}
 
 final class _StrictBlobRepository implements DirectMediaBlobCustodyRepository {
   final Map<String, DirectMediaBlobCustodyRow> rows =

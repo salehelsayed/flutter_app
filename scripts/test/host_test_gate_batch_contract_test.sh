@@ -60,6 +60,29 @@ printf '%s\n' \
   '  printf "ARG\t%s\n" "$@"' \
   '  printf "END\n"' \
   '} >>"${FAKE_GO_LOG:?}"' \
+  'push_vault_process=0' \
+  'go_mode=""' \
+  'for arg in "$@"; do' \
+  '  case "$arg" in' \
+  '    *TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff*) push_vault_process=1 ;;' \
+  '    -list) go_mode="list" ;;' \
+  '    -run) go_mode="run" ;;' \
+  '  esac' \
+  'done' \
+  'if [ "$push_vault_process" -eq 1 ]; then' \
+  '  case "$go_mode" in' \
+  '    list)' \
+  '      printf "%s\n" TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff' \
+  '      ;;' \
+  '    run)' \
+  '      printf "%s\n" \' \
+  '        "=== RUN   TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff" \' \
+  '        "--- PASS: TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff (0.01s)" \' \
+  '        "PASS" \' \
+  '        "ok  \tgithub.com/mknoon/relay-server\t0.01s"' \
+  '      ;;' \
+  '  esac' \
+  'fi' \
   'exit "${FAKE_GO_STATUS:-0}"' \
   >"$fake_bin/go"
 
@@ -99,15 +122,15 @@ dry_dart_count="$(
   printf '%s\n' "$dry_output" |
     awk '/^  *[0-9]+\. Flutter batch path / { count++ } END { print count + 0 }'
 )"
-dry_go_count="$(
+dry_synthetic_count="$(
   printf '%s\n' "$dry_output" |
-    awk '/^  *[0-9]+\. .*go test / { count++ } END { print count + 0 }'
+    awk '/^  *[0-9]+\. / && $0 !~ /Flutter batch path / { count++ } END { print count + 0 }'
 )"
 [ "$dry_dart_count" -eq "$expected_dart_count" ] ||
   fail "batch dry-run listed $dry_dart_count Dart paths instead of $expected_dart_count"
-[ "$dry_go_count" -eq 8 ] ||
-  fail "batch dry-run listed $dry_go_count Go legs instead of 8"
-[ $((dry_dart_count + dry_go_count)) -eq $((expected_dart_count + 8)) ] ||
+[ "$dry_synthetic_count" -eq 10 ] ||
+  fail "batch dry-run listed $dry_synthetic_count synthetic rows instead of 10"
+[ $((dry_dart_count + dry_synthetic_count)) -eq $((expected_dart_count + 10)) ] ||
   fail 'batch dry-run did not preserve every indexed planned item'
 grep -Fq 'Host test planned-item inventory: host-all' <<<"$dry_output" ||
   fail 'batch dry-run mislabeled the indexed inventory as serial commands'
@@ -115,15 +138,33 @@ grep -Fq \
   "Batch execution shape: 1 Flutter invocation for $expected_dart_count exact Dart path(s)" \
   <<<"$dry_output" ||
   fail 'batch dry-run omitted the truthful Flutter aggregate shape'
-grep -Fq '8 separate non-Flutter invocation(s)' <<<"$dry_output" ||
-  fail 'batch dry-run omitted the eight separate Go invocations'
+grep -Fq '10 separate non-Flutter invocation(s)' <<<"$dry_output" ||
+  fail 'batch dry-run omitted the ten separate synthetic inventory rows'
+grep -Fq \
+  "go test -tags integration . -list '^TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff$'" \
+  <<<"$dry_output" ||
+  fail 'batch dry-run omitted the exact push-vault process discovery command'
+grep -Fq \
+  "go test -tags integration . -run '^TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff$' -count=1 -v" \
+  <<<"$dry_output" ||
+  fail 'batch dry-run omitted the exact push-vault process execution command'
+grep -Fq \
+  "rg -c '^--- PASS: TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff '" \
+  <<<"$dry_output" ||
+  fail 'batch dry-run omitted the push-vault exact PASS cardinality check'
+grep -Fq \
+  "rg -q '^[[:space:]]*--- SKIP: TestRedisPushRouteVaultEncryptedStateSurvivesProcessHandoff'" \
+  <<<"$dry_output" ||
+  fail 'batch dry-run omitted the push-vault no-skip check'
+[ "$(grep -Ec '^  *[0-9]+\. bash scripts/test/run_relay_all_go_309\.sh$' <<<"$dry_output" || true)" -eq 1 ] ||
+  fail 'batch dry-run did not print the relay-all script through bash exactly once'
 grep -Fq 'planned items, not serial execution commands' <<<"$dry_output" ||
   fail 'batch dry-run did not distinguish inventory rows from execution'
 [ ! -s "$flutter_log" ] || fail 'batch dry-run invoked Flutter'
 [ ! -s "$go_log" ] || fail 'batch dry-run invoked Go'
 
 # RED/GREEN 1b: major sims composes the exact Dart host inventory with its own
-# full-Go lane. --dart-only must therefore remove all eight synthetic Go tails
+# full-Go lane. --dart-only must therefore remove all ten synthetic non-Dart tails
 # without changing a single Dart path or the one-invocation batch shape.
 dart_only_dry_output="$(
   ./scripts/run_test_gates.sh host-all \
@@ -139,8 +180,8 @@ dart_only_dry_paths="$(
 )"
 [ "$dart_only_dry_paths" = "$expected_dart_paths" ] ||
   fail '--dart-only dry-run changed the exact sorted Dart inventory'
-if grep -q 'go test' <<<"$dart_only_dry_output"; then
-  fail '--dart-only dry-run retained a Go command'
+if grep -Eq 'go test|run_relay_all_go_309' <<<"$dart_only_dry_output"; then
+  fail '--dart-only dry-run retained a non-Dart command'
 fi
 grep -Fq '0 separate non-Flutter invocation(s)' <<<"$dart_only_dry_output" ||
   fail '--dart-only dry-run did not report zero trailing Go invocations'
@@ -172,7 +213,8 @@ actual_unit_paths="$(
   fail 'core-host-all omitted or duplicated test/unit paths'
 
 # RED/GREEN 2: the full batch is one exact-path Flutter command followed by the
-# eight existing, separately reset Go commands.
+# ten synthetic rows: nine one-call legs plus the push-vault row's exact
+# discovery and execution pair (eleven Go calls in total).
 batch_output="$(
   ./scripts/run_test_gates.sh host-all \
     --batch-flutter \
@@ -183,8 +225,8 @@ flutter_call_count="$(grep -c '^CALL$' "$flutter_log" || true)"
 go_call_count="$(grep -c '^CALL$' "$go_log" || true)"
 [ "$flutter_call_count" -eq 1 ] ||
   fail "batch mode invoked Flutter $flutter_call_count times instead of once"
-[ "$go_call_count" -eq 8 ] ||
-  fail "batch mode invoked Go $go_call_count times instead of eight"
+[ "$go_call_count" -eq 11 ] ||
+  fail "batch mode invoked Go $go_call_count times instead of eleven"
 
 actual_dart_paths="$({
   awk -F '\t' '$1 == "ARG" && $2 ~ /^test\// { print $2 }' "$flutter_log"
@@ -206,14 +248,26 @@ grep -Fxq $'ARG\t--concurrency=4' "$flutter_log" ||
 grep -Fxq $'ARG\t--reporter=failures-only' "$flutter_log" ||
   fail 'batch Flutter call did not receive --reporter=failures-only'
 
-[ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 8 ] ||
+[ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 11 ] ||
   fail 'one or more Go legs lost the pinned GOTOOLCHAIN'
-[ "$(grep -c $'^ARG\ttest$' "$go_log" || true)" -eq 8 ] ||
-  fail 'the eight Go legs did not remain separate go test invocations'
-[ "$(grep -c $'^ARG\t-run$' "$go_log" || true)" -eq 8 ] ||
+[ "$(grep -c $'^ARG\ttest$' "$go_log" || true)" -eq 11 ] ||
+  fail 'the ten synthetic rows did not retain their eleven separate go test invocations'
+[ "$(grep -c $'^ARG\t-run$' "$go_log" || true)" -eq 9 ] ||
   fail 'one or more separate Go legs lost its -run selector'
-[ "$(grep -c $'^ARG\t-count=1$' "$go_log" || true)" -eq 8 ] ||
+[ "$(grep -c $'^ARG\t-count=1$' "$go_log" || true)" -eq 10 ] ||
   fail 'one or more separate Go legs lost -count=1'
+[ "$(grep -c $'^ARG\t-list$' "$go_log" || true)" -eq 1 ] ||
+  fail 'the push-vault row did not retain its single exact discovery call'
+[ "$(grep -c $'^ARG\t-tags$' "$go_log" || true)" -eq 2 ] ||
+  fail 'the push-vault discovery/execution calls lost -tags integration'
+[ "$(grep -c $'^ARG\tintegration$' "$go_log" || true)" -eq 2 ] ||
+  fail 'the push-vault discovery/execution calls changed the integration tag'
+[ "$(grep -c $'^ARG\t\.$' "$go_log" || true)" -eq 2 ] ||
+  fail 'the push-vault discovery/execution calls changed the relay package target'
+[ "$(grep -c $'^ARG\t-v$' "$go_log" || true)" -eq 1 ] ||
+  fail 'the push-vault execution call lost verbose PASS evidence'
+[ "$(grep -c $'^ARG\t\./\.\.\.$' "$go_log" || true)" -eq 1 ] ||
+  fail 'the relay-all script did not retain its exact unfiltered module target'
 [ "$(grep -c $'^ARG\t./bridge$' "$go_log" || true)" -eq 3 ] ||
   fail 'batch mode did not preserve the three bridge-package Go legs'
 [ "$(grep -c $'^ARG\t./node$' "$go_log" || true)" -eq 4 ] ||
@@ -301,8 +355,8 @@ start_paths="$(
 )"
 [ "$start_paths" = "$last_dart_path" ] ||
   fail 'batch --start-at did not filter before the Flutter batch'
-[ "$(grep -c '^CALL$' "$go_log" || true)" -eq 8 ] ||
-  fail 'batch --start-at did not retain the eight trailing Go legs'
+[ "$(grep -c '^CALL$' "$go_log" || true)" -eq 11 ] ||
+  fail 'batch --start-at did not retain the ten trailing rows and eleven Go calls'
 
 : >"$flutter_log"
 : >"$go_log"
@@ -315,6 +369,22 @@ start_paths="$(
   fail 'Go-only batch selection did not invoke exactly one Go leg'
 grep -Fq 'FeatureFlag' "$go_log" ||
   fail 'Go-only batch selection invoked the wrong leg'
+
+: >"$flutter_log"
+: >"$go_log"
+./scripts/run_host_test_gates.sh host-all \
+  --batch-flutter \
+  --only scripts/test/run_relay_all_go_309.sh \
+  >"$tmp_dir/relay-all.stdout"
+[ ! -s "$flutter_log" ] || fail 'relay-all batch selection invoked Flutter'
+[ "$(grep -c '^CALL$' "$go_log" || true)" -eq 1 ] ||
+  fail 'relay-all batch selection did not invoke Go exactly once'
+expected_relay_all_args="$(printf 'test\n./...\n-count=1')"
+actual_relay_all_args="$(awk -F '\t' '$1 == "ARG" { print $2 }' "$go_log")"
+[ "$actual_relay_all_args" = "$expected_relay_all_args" ] ||
+  fail 'relay-all batch selection changed the exact unfiltered Go command'
+[ "$(grep -c $'^ENV\tgo1.25.0$' "$go_log" || true)" -eq 1 ] ||
+  fail 'relay-all batch selection lost the pinned GOTOOLCHAIN'
 
 # RED/GREEN 5: a failed Flutter batch remains fail-fast by default and
 # --continue-on-failure still runs every trailing Go leg before returning 1.
@@ -346,8 +416,8 @@ continue_status=$?
 set -e
 [ "$continue_status" -eq 1 ] ||
   fail "batch continue returned $continue_status instead of aggregate status 1"
-[ "$(grep -c '^CALL$' "$go_log" || true)" -eq 8 ] ||
-  fail 'batch continue did not execute all eight Go legs'
+[ "$(grep -c '^CALL$' "$go_log" || true)" -eq 11 ] ||
+  fail 'batch continue did not execute all ten synthetic rows and eleven Go calls'
 grep -Fq 'Flutter batch exited with 7' "$tmp_dir/continue.stderr" ||
   fail 'batch continue failure summary omitted the Flutter status'
 

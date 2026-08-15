@@ -145,3 +145,86 @@ func TestDispatchMediaCustodyContract(t *testing.T) {
 		}
 	})
 }
+
+func TestTC365GroupMediaBlobCustody(t *testing.T) {
+	base := mediaCustodyBridgeSelection{
+		CustodyContract: node.AckOrExpiryCustodyContract,
+		CustodyKind:     node.CustodyKindGroupMediaBlobV1,
+		ContentHash:     "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+	}
+	for _, tc := range []struct {
+		name      string
+		operation string
+		selection mediaCustodyBridgeSelection
+	}{
+		{name: "upload", operation: mediaCustodyBridgeUpload, selection: base},
+		{name: "download", operation: mediaCustodyBridgeDownload, selection: func() mediaCustodyBridgeSelection {
+			selection := base
+			selection.Size = 101
+			selection.Mime = "application/octet-stream"
+			selection.ExpiresAtMs = 2_000_000_100_001
+			return selection
+		}()},
+		{name: "ack", operation: mediaCustodyBridgeAck, selection: func() mediaCustodyBridgeSelection {
+			selection := base
+			selection.Size = 202
+			selection.Mime = "audio/ogg"
+			selection.ExpiresAtMs = 2_000_000_200_002
+			selection.CustodyRelayPeerId = "12D3KooWGroupRelay"
+			return selection
+		}()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := 0
+			got, err := dispatchMediaCustodyContract(
+				tc.operation,
+				tc.selection,
+				func() (string, error) { calls++; return "legacy", nil },
+				func() (string, error) { calls++; return "group-strict", nil },
+			)
+			if err != nil || got != "group-strict" || calls != 1 {
+				t.Fatalf("operation=%s got=%q calls=%d err=%v", tc.operation, got, calls, err)
+			}
+		})
+	}
+
+	direct := base
+	direct.CustodyKind = node.CustodyKindDirectMediaBlobV1
+	if got, err := dispatchMediaCustodyContract(
+		mediaCustodyBridgeUpload,
+		direct,
+		func() (string, error) { return "legacy", nil },
+		func() (string, error) { return "direct-strict", nil },
+	); err != nil || got != "direct-strict" {
+		t.Fatalf("incumbent direct selector got=%q err=%v", got, err)
+	}
+	crossed := base
+	crossed.CustodyKind = "group_media_blob_v2"
+	if _, err := dispatchMediaCustodyContract(
+		mediaCustodyBridgeUpload,
+		crossed,
+		func() (string, error) { return "legacy", nil },
+		func() (string, error) { return "strict", nil },
+	); !errors.Is(err, errInvalidMediaCustodyContract) {
+		t.Fatalf("crossed group kind error=%v", err)
+	}
+
+	ceilingA := int64(2_000_000_100_001)
+	ceilingB := int64(2_000_000_200_002)
+	for _, ceiling := range []*int64{&ceilingA, &ceilingB} {
+		if err := validateInboxStoreMediaExpiryCeiling(
+			node.AckOrExpiryCustodyContract,
+			node.CustodyKindGroupContentV1,
+			ceiling,
+		); err != nil {
+			t.Fatalf("group content ceiling %d: %v", *ceiling, err)
+		}
+	}
+	if err := validateInboxStoreMediaExpiryCeiling(
+		node.AckOrExpiryCustodyContract,
+		node.CustodyKindGroupContentV1,
+		nil,
+	); err != nil {
+		t.Fatalf("blob-free group content changed: %v", err)
+	}
+}

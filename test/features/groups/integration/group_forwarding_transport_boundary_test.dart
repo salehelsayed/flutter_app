@@ -111,23 +111,34 @@ void main() {
     );
 
     // --- Dart side: only the approved group/share lane files may carry the
-    // marker into group transport payload maps. (The conversation lane's own
-    // marker is plan 232's contract.)
+    // marker into group transport payload maps or consume it at an explicitly
+    // reviewed eligibility boundary. (The conversation lane's own marker is
+    // plan 232's contract.) Plan 364 must decode the signed marker and exclude
+    // forwarded targets from protected reactions and the linked text-only
+    // surface; Plan 365's strict fresh-blob producer must likewise reject a
+    // forwarded parent before staging custody. Those sites are semantic
+    // consumers, not new transport primitives (the exact command and Go-node
+    // assertions above remain the transport proof).
     const approvedGroupMarkerFiles = {
       'lib/core/bridge/bridge_group_helpers.dart',
       'lib/features/groups/application/send_group_message_use_case.dart',
       'lib/features/groups/application/handle_incoming_group_message_use_case.dart',
       'lib/features/groups/application/group_message_listener.dart',
       'lib/features/groups/application/group_message_listener_membership_dependent_message_buffer.dart',
+      'lib/features/groups/application/protected_group_content_receive.dart',
       'lib/features/groups/application/drain_group_offline_inbox_use_case.dart',
       'lib/features/groups/application/retry_failed_group_messages_use_case.dart',
       'lib/features/groups/application/retry_incomplete_group_uploads_use_case.dart',
+      'lib/features/groups/application/send_group_reaction_use_case.dart',
+      'lib/features/groups/application/remove_group_reaction_use_case.dart',
       'lib/features/groups/application/group_media_forward_intent.dart',
       'lib/features/groups/application/group_media_forward_policy.dart',
       'lib/features/groups/application/announcement_media_forward_request.dart',
+      'lib/features/groups/application/prepared_group_media_blob_custody_coordinator.dart',
       'lib/features/groups/domain/models/group_message.dart',
       'lib/features/groups/presentation/screens/group_conversation_screen.dart',
       'lib/features/groups/presentation/screens/group_conversation_wired.dart',
+      'lib/features/groups/presentation/screens/linked_group_conversation_wired.dart',
       'lib/features/share/application/share_batch_delivery_coordinator.dart',
       'lib/features/share/presentation/screens/share_target_picker_wired.dart',
       'lib/features/share/presentation/navigation/share_target_picker_route.dart',

@@ -1729,7 +1729,7 @@ void main() {
       expect(b1b, isNot(contains('_importGroupShellForB1b')));
       expect(b1b, isNot(contains('callGroupJoinWithConfig')));
       expect(b1b, isNot(contains('announceRestoredDeviceToGroups')));
-      expect(b1b, isNot(contains('sendGroupMessage')));
+      expect(b1b, contains('handleProtectedGroupContentReplay'));
 
       final dispatcher = File(
         'scripts/run_reliability_simulations.sh',
@@ -1741,6 +1741,292 @@ void main() {
         ),
       );
       expect(dispatcher, contains('<required:RELIABILITY_MULTI_DEVICE_IDS>'));
+    },
+  );
+
+  test(
+    'linked runtime B1b contract exercises protected blob-free group content',
+    () {
+      final runner = File(
+        'integration_test/scripts/run_b1b_sibling_device_convergence.dart',
+      ).readAsStringSync();
+      final harness = File(
+        'integration_test/group_multi_device_real_harness.dart',
+      ).readAsStringSync();
+      final b1bStart = harness.indexOf(
+        '// ── Plan 363: availability-bounded B1b linked-group bootstrap proof',
+      );
+      final b1bEnd = harness.indexOf('\nvoid main()', b1bStart);
+      expect(b1bStart, isNonNegative);
+      expect(b1bEnd, greaterThan(b1bStart));
+      final b1b = harness.substring(b1bStart, b1bEnd);
+      final siblingStart = b1b.indexOf(
+        'Future<void> _runB1bConvergenceSibling()',
+      );
+      expect(siblingStart, isNonNegative);
+      final sibling = b1b.substring(siblingStart);
+
+      final message = sibling.indexOf('await sendGroupMessage(');
+      final add = sibling.indexOf('await sendGroupReaction(');
+      final remove = sibling.indexOf('await removeGroupReaction(');
+      final terminal = sibling.indexOf(
+        'await buildProtectedGroupAuthorityRows(',
+      );
+      expect(message, isNonNegative);
+      expect(add, greaterThan(message));
+      expect(remove, greaterThan(add));
+      expect(terminal, greaterThan(remove));
+
+      for (final productionAnchor in const <String>[
+        'buildProtectedGroupContentAuthoringResolver(',
+        'setGroupContentAuthoringResolver(',
+        'handleProtectedGroupContentReplay(',
+        'reconcileProtectedGroupContentForAuthority(',
+        '_b1bHasPendingContentAuthority(',
+        'drainProtectedGroupContentFixedPoint()',
+        "'custodyKind': groupContentCustodyKind",
+        "_b1bBridgeCommandCount(stack, 'group:publish')",
+        "_b1bBridgeCommandCount(stack, 'group:sendReliable')",
+        "'group:publishReaction'",
+        "_signalName('content_recipient_offline')",
+        "_signalName('reaction_add_recipient_offline')",
+        "_signalName('reaction_remove_recipient_offline')",
+        'GroupReactionTransitionOrder.tryParse(',
+        'MediaOwnerLane.group',
+      ]) {
+        expect(
+          b1b,
+          contains(productionAnchor),
+          reason: 'B1b must retain production strict anchor $productionAnchor',
+        );
+      }
+      expect(b1b, isNot(contains('callGroupPublish(')));
+      expect(b1b, isNot(contains('callGroupPublishReaction(')));
+      expect(b1b, isNot(contains('callGroupJoinWithConfig')));
+
+      for (final verdictField in const <String>[
+        'offlineBlobFreeDiscussionApplied',
+        'strictReactionAddApplied',
+        'strictReactionRemoveApplied',
+        'offlineBlobFreeDiscussionCustodyAccepted',
+        'strictReactionAddCustodyAccepted',
+        'strictReactionRemoveCustodyAccepted',
+        'zeroGroupPubsubForStrictContent',
+      ]) {
+        expect(harness, contains("'$verdictField': true"));
+        expect(runner, contains("'$verdictField'"));
+      }
+      for (final causalVerdict in const <String, String>{
+        'productionAuthoringResolverInvoked':
+            'authoringResolverInvocations > 0',
+        'localAuthorityReconcileInvoked':
+            '_b1bLocalAuthorityReconcileInvocations > 0',
+        'productionContentIngressGateInvoked':
+            '_b1bContentIngressAuthorityGateInvocations > 0',
+        'productionAuthorityReconcileInvoked':
+            '_b1bAuthorityReconcileInvocations > 0',
+      }.entries) {
+        expect(harness, contains("'${causalVerdict.key}'"));
+        expect(
+          harness,
+          contains(causalVerdict.value),
+          reason: '${causalVerdict.key} must derive from a causal counter',
+        );
+        expect(runner, contains("'${causalVerdict.key}'"));
+      }
+      expect(runner, contains('_requireB1bVerdict'));
+      expect(
+        runner,
+        contains(
+          'B1b device order must be physical Android first and emulator second',
+        ),
+      );
+      expect(runner.toLowerCase(), isNot(contains('iphone')));
+      expect(runner.toLowerCase(), isNot(contains('xcrun')));
+    },
+  );
+
+  test(
+    'TC-365-04a B1b registers group media and voice before terminal dissolve',
+    () {
+      const physicalId = 'R58M123ABC';
+      const emulatorId = 'emulator-5554';
+      const live = <InviteReliabilityDeviceTarget>[
+        InviteReliabilityDeviceTarget(
+          id: physicalId,
+          targetPlatform: 'android-arm64',
+          isEmulator: false,
+        ),
+        InviteReliabilityDeviceTarget(
+          id: emulatorId,
+          targetPlatform: 'android-x64',
+          isEmulator: true,
+        ),
+      ];
+      expect(
+        validateLinkedGroupBootstrapB1bTopology(
+          selectedDeviceIds: const <String>[physicalId, emulatorId],
+          liveDevices: live,
+        ),
+        isNull,
+      );
+      expect(
+        validateLinkedGroupBootstrapB1bTopology(
+          selectedDeviceIds: const <String>[emulatorId, physicalId],
+          liveDevices: live,
+        ),
+        isNotNull,
+      );
+
+      final runner = File(
+        'integration_test/scripts/run_b1b_sibling_device_convergence.dart',
+      ).readAsStringSync();
+      final harness = File(
+        'integration_test/group_multi_device_real_harness.dart',
+      ).readAsStringSync();
+      final b1bStart = harness.indexOf(
+        '// ── Plan 363: availability-bounded B1b linked-group bootstrap proof',
+      );
+      final b1bEnd = harness.indexOf('\nvoid main()', b1bStart);
+      expect(b1bStart, isNonNegative);
+      expect(b1bEnd, greaterThan(b1bStart));
+      final b1b = harness.substring(b1bStart, b1bEnd);
+
+      // Plan 365 is an explicit extension. The established Plan 363/364 B1b
+      // invocation gets no new define, signal, or verdict requirement.
+      expect(runner, contains("'--plan365-group-media'"));
+      expect(runner, contains("'MKNOON_B1B_PLAN365_GROUP_MEDIA'"));
+      expect(runner, contains("'B1B_ENABLE_PLAN365_GROUP_MEDIA'"));
+      expect(
+        harness,
+        contains(
+          "const configuredB1bPlan365GroupMedia = bool.fromEnvironment(",
+        ),
+      );
+      expect(harness, contains('defaultValue: false'));
+      expect(
+        runner,
+        contains(
+          "if (plan365GroupMedia) "
+          "'--dart-define=\$_plan365GroupMediaDartDefine=true'",
+        ),
+      );
+      expect(
+        runner,
+        isNot(contains('DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED')),
+      );
+      expect(
+        runner,
+        contains(
+          'B1b device order must be physical Android first and emulator second',
+        ),
+      );
+
+      for (final productionAnchor in const <String>[
+        'PreparedGroupMediaBlobCustodyCoordinator(',
+        'GroupMediaBlobArtifactStore()',
+        'StrictGroupMediaBlobDownloadAckOwner(',
+        'drainProtectedGroupContentFixedPoint()',
+        'groupMediaBlobCustodyFingerprint',
+        "'media:upload'",
+        "'media:download'",
+        "'media:delete'",
+        'groupMediaBlobCustodyKind',
+        'groupMediaBlobCustodyContract',
+        'sha256.convert(localBytes).toString()',
+        'loadGroupMediaBlobCustodyForMessage(',
+        'retryPendingAcknowledgements()',
+      ]) {
+        expect(
+          b1b,
+          contains(productionAnchor),
+          reason:
+              'Plan-365 B1b must retain production anchor $productionAnchor',
+        );
+      }
+      expect(
+        harness,
+        contains('dbStageFreshOutgoingGroupMediaBlobGeneration('),
+      );
+      expect(harness, contains('dbCommitIncomingGroupMediaBlobLocalPath('));
+
+      for (final signal in const <String>[
+        'plan365_media_recipient_offline',
+        'plan365_media_custody_stored.json',
+        'plan365_media_applied.json',
+      ]) {
+        expect(b1b, contains("_signalName('$signal')"));
+      }
+
+      final siblingStart = b1b.indexOf(
+        'Future<void> _runB1bConvergenceSibling()',
+      );
+      expect(siblingStart, isNonNegative);
+      final sibling = b1b.substring(siblingStart);
+      final extension = sibling.indexOf('if (configuredB1bPlan365GroupMedia)');
+      final author = sibling.indexOf(
+        'await _b1bAuthorPlan365MediaAndVoice(',
+        extension,
+      );
+      final terminal = sibling.indexOf('final dissolvedAt =', author);
+      expect(extension, isNonNegative);
+      expect(author, greaterThan(extension));
+      expect(terminal, greaterThan(author));
+
+      final primaryStart = b1b.indexOf(
+        'Future<void> _runB1bConvergencePrimary()',
+      );
+      final primaryEnd = b1b.indexOf(
+        'Future<void> _runB1bConvergenceSibling()',
+        primaryStart,
+      );
+      expect(primaryStart, isNonNegative);
+      expect(primaryEnd, greaterThan(primaryStart));
+      final primary = b1b.substring(primaryStart, primaryEnd);
+      final recipientOffline = primary.indexOf(
+        "_signalName('plan365_media_recipient_offline')",
+      );
+      final recovery = primary.indexOf(
+        'await _b1bRecoverPlan365MediaAndVoice(',
+        recipientOffline,
+      );
+      final dissolve = primary.indexOf(
+        "_signalName('dissolve_stored')",
+        recovery,
+      );
+      expect(recipientOffline, isNonNegative);
+      expect(recovery, greaterThan(recipientOffline));
+      expect(dissolve, greaterThan(recovery));
+
+      for (final verdictField in const <String>[
+        'plan365MediaAndVoiceApplied',
+        'plan365FingerprintDescriptorsVerified',
+        'plan365LocalPlaintextVerified',
+        'plan365StrictBlobAckConverged',
+        'plan365ProductionDownloadOwnerInvoked',
+        'plan365RestrictedFixedPointInvoked',
+        'plan365StrictDownloadActionsObserved',
+        'plan365StrictDeleteActionsObserved',
+        'plan365MediaAndVoiceCustodyAccepted',
+        'plan365ProductionPreparedCoordinatorInvoked',
+        'plan365StrictUploadActionsObserved',
+        'plan365ZeroLegacyAllowedPeersUploads',
+      ]) {
+        expect(harness, contains("'$verdictField'"));
+        expect(runner, contains("'$verdictField'"));
+      }
+      final activatedVerdicts = runner.indexOf('if (plan365GroupMedia) {');
+      final plan365LinkedVerdict = runner.indexOf(
+        "'plan365MediaAndVoiceApplied'",
+        activatedVerdicts,
+      );
+      final crossedFields = runner.indexOf(
+        'final crossedFields = <String>[',
+        plan365LinkedVerdict,
+      );
+      expect(activatedVerdicts, isNonNegative);
+      expect(plan365LinkedVerdict, greaterThan(activatedVerdicts));
+      expect(crossedFields, greaterThan(plan365LinkedVerdict));
     },
   );
 }

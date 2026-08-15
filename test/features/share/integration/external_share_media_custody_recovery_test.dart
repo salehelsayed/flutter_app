@@ -80,6 +80,7 @@ void main() {
         scannedAt: '2026-08-08T16:00:00.000Z',
         mlKemPublicKey: 'tc348-recovery-mlkem',
       );
+      await _seedPersistedUninitializedContact(fixture, contact);
       final identityRepository = FakeIdentityRepository()..seed(identity);
       final contacts = InMemoryContactRepository();
       await contacts.addContact(contact);
@@ -351,6 +352,7 @@ void main() {
         scannedAt: '2026-08-09T16:00:00.000Z',
         mlKemPublicKey: 'tc350-recovery-mlkem',
       );
+      await _seedPersistedUninitializedContact(fixture, contact);
       const forwardToken = 'tc350-recovery-forward-token';
       final identityRepository = FakeIdentityRepository()..seed(identity);
       final contacts = InMemoryContactRepository();
@@ -537,6 +539,21 @@ void main() {
       expect(settledParent.dedupKey, forwardToken);
     },
   );
+}
+
+Future<void> _seedPersistedUninitializedContact(
+  MediaRepositoryRealDbFixture fixture,
+  ContactModel contact,
+) async {
+  await fixture.db.insert('contacts', <String, Object?>{
+    'peer_id': contact.peerId,
+    'public_key': contact.publicKey,
+    'rendezvous': contact.rendezvous,
+    'username': contact.username,
+    'signature': contact.signature,
+    'scanned_at': contact.scannedAt,
+    'ml_kem_public_key': contact.mlKemPublicKey,
+  });
 }
 
 ImageProcessor _recoveryImageProcessor() => ImageProcessor(

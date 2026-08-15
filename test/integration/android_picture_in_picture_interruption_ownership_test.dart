@@ -14,8 +14,20 @@ const _helperComponent =
     'com.mknoon.app.pipproof.test/com.mknoon.app.pipproof.'
     'PictureInPictureAudioFocusInterruptionProofActivity';
 const _nonce = '0123456789abcdef0123456789abcdef';
+late final Directory _pythonCacheDirectory;
 
 void main() {
+  setUpAll(() {
+    _pythonCacheDirectory = Directory.systemTemp.createTempSync(
+      'pip-interruption-python-cache-',
+    );
+  });
+  tearDownAll(() {
+    if (_pythonCacheDirectory.existsSync()) {
+      _pythonCacheDirectory.deleteSync(recursive: true);
+    }
+  });
+
   test(
     'accepts one causally bound cross-UID audio-focus interruption',
     () async {
@@ -586,39 +598,43 @@ _runValidator({
     paths[entry.key] = path;
   }
   final output = '${directory.path}/result.txt';
-  final result = await Process.run('python3', [
-    _validator,
-    '--resolved-component',
-    paths['component']!,
-    '--start-output',
-    paths['start']!,
-    '--pre-activities',
-    paths['pre-activities']!,
-    '--pre-audio',
-    paths['pre-audio']!,
-    '--post-activities',
-    paths['post-activities']!,
-    '--post-audio',
-    paths['post-audio']!,
-    '--logcat',
-    paths['logcat']!,
-    '--app-component',
-    _appComponent,
-    '--helper-component',
-    _helperComponent,
-    '--app-package',
-    'com.mknoon.app.pipproof',
-    '--helper-package',
-    'com.mknoon.app.pipproof.test',
-    '--app-uid',
-    appUid,
-    '--helper-uid',
-    helperUid,
-    '--nonce',
-    nonce,
-    '--output',
-    output,
-  ]);
+  final result = await Process.run(
+    'python3',
+    [
+      _validator,
+      '--resolved-component',
+      paths['component']!,
+      '--start-output',
+      paths['start']!,
+      '--pre-activities',
+      paths['pre-activities']!,
+      '--pre-audio',
+      paths['pre-audio']!,
+      '--post-activities',
+      paths['post-activities']!,
+      '--post-audio',
+      paths['post-audio']!,
+      '--logcat',
+      paths['logcat']!,
+      '--app-component',
+      _appComponent,
+      '--helper-component',
+      _helperComponent,
+      '--app-package',
+      'com.mknoon.app.pipproof',
+      '--helper-package',
+      'com.mknoon.app.pipproof.test',
+      '--app-uid',
+      appUid,
+      '--helper-uid',
+      helperUid,
+      '--nonce',
+      nonce,
+      '--output',
+      output,
+    ],
+    environment: {'PYTHONPYCACHEPREFIX': _pythonCacheDirectory.path},
+  );
   return (
     exitCode: result.exitCode,
     stdout: '${result.stdout}',
@@ -634,21 +650,25 @@ _runCleanupValidator(String audio) async {
   final audioPath = '${directory.path}/audio.txt';
   final output = '${directory.path}/result.txt';
   File(audioPath).writeAsStringSync(audio);
-  final result = await Process.run('python3', [
-    _cleanupValidator,
-    '--audio',
-    audioPath,
-    '--app-package',
-    'com.mknoon.app.pipproof',
-    '--helper-package',
-    'com.mknoon.app.pipproof.test',
-    '--app-uid',
-    '10471',
-    '--helper-uid',
-    '10472',
-    '--output',
-    output,
-  ]);
+  final result = await Process.run(
+    'python3',
+    [
+      _cleanupValidator,
+      '--audio',
+      audioPath,
+      '--app-package',
+      'com.mknoon.app.pipproof',
+      '--helper-package',
+      'com.mknoon.app.pipproof.test',
+      '--app-uid',
+      '10471',
+      '--helper-uid',
+      '10472',
+      '--output',
+      output,
+    ],
+    environment: {'PYTHONPYCACHEPREFIX': _pythonCacheDirectory.path},
+  );
   return (
     exitCode: result.exitCode,
     stdout: '${result.stdout}',

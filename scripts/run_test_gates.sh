@@ -544,6 +544,9 @@ readonly GROUP_TESTS=(
   "test/features/groups/integration/group_notification_projection_lifecycle_test.dart"
   "test/features/groups/application/self_removed_group_lifecycle_guard_test.dart"
   "test/features/conversation/domain/repositories/media_attachment_repository_impl_test.dart"
+  # 365: DB v115 lane-generalized direct/group strict media custody. This is
+  # the sole manual registration for the new migration path.
+  "test/core/database/migrations/115_group_media_blob_custody_test.dart"
   "test/features/groups/application/group_pending_broadcast_runner_test.dart"
   # 264: keyed role convergence and restart-safe, membership-scoped exit
   # intents (v103 storage, coordinator/runner, rejoin, and resume ordering).
@@ -1141,7 +1144,7 @@ array_contains() {
 run_group_forwarding_go_bridge_gate() {
   echo "=== Group Forwarding / Private Media Go Bridge Gate ==="
   (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge -run '^TestGMF11ForwardedMarkerMapsToPublishOptions$' -count=1)
-  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363' -count=1)
+  (cd go-mknoon && GOTOOLCHAIN=go1.25.0 go test ./bridge ./node -run 'GPL12|GK030|TC3410|TC363|TC364|TC365' -count=1)
 }
 
 # Notification relay closure: curated 1:1 and group gates run only the focused

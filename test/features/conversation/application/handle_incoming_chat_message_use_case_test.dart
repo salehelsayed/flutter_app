@@ -935,42 +935,39 @@ void main() {
       ).toJson(),
     };
 
-    test(
-      'TC-362-04a linked strict ordinary media stages incoming custody under '
-      'the logical contact',
-      () async {
-        final fixture = await MediaRepositoryRealDbFixture.create();
-        addTearDown(fixture.dispose);
-        const messageId = 'tc362-linked-strict-1';
-        const attachmentId = '$messageId-att';
-        const t0 = '2026-08-12T09:00:00.000Z';
-        final hash = 'ab' * 32;
-        // The durable stage re-runs the reverse transport authorization
-        // INSIDE its transaction, so the persisted logical contact, the
-        // initialized roster and the ACTIVE binding must really exist.
-        await fixture.db.insert('contacts', <String, Object?>{
-          'peer_id': senderPeerId,
-          'public_key': 'tc362-account-signing-key',
-          'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
-          'username': 'Alice',
-          'signature': 'sig-base64',
-          'scanned_at': t0,
-          'ml_kem_public_key': 'legacy-mlkem',
-        });
-        await fixture.db.insert(
-          'direct_contact_device_roster_metadata',
-          const <String, Object?>{
-            'contact_account_peer_id': senderPeerId,
-            'roster_initialized': 1,
-            'legacy_target_state': 'active',
-            'initialized_at': t0,
-            'legacy_revoked_at': null,
-            'updated_at': t0,
-          },
-        );
-        await fixture.db.insert(
-          'direct_contact_device_bindings',
-          <String, Object?>{
+    test('TC-366-01b linked protected receive keeps physical transport and '
+        'logical contact authority', () async {
+      final fixture = await MediaRepositoryRealDbFixture.create();
+      addTearDown(fixture.dispose);
+      const messageId = 'tc362-linked-strict-1';
+      const attachmentId = '$messageId-att';
+      const t0 = '2026-08-12T09:00:00.000Z';
+      final hash = 'ab' * 32;
+      // The durable stage re-runs the reverse transport authorization
+      // INSIDE its transaction, so the persisted logical contact, the
+      // initialized roster and the ACTIVE binding must really exist.
+      await fixture.db.insert('contacts', <String, Object?>{
+        'peer_id': senderPeerId,
+        'public_key': 'tc362-account-signing-key',
+        'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+        'username': 'Alice',
+        'signature': 'sig-base64',
+        'scanned_at': t0,
+        'ml_kem_public_key': 'legacy-mlkem',
+      });
+      await fixture.db.insert(
+        'direct_contact_device_roster_metadata',
+        const <String, Object?>{
+          'contact_account_peer_id': senderPeerId,
+          'roster_initialized': 1,
+          'legacy_target_state': 'active',
+          'initialized_at': t0,
+          'legacy_revoked_at': null,
+          'updated_at': t0,
+        },
+      );
+      await fixture.db
+          .insert('direct_contact_device_bindings', <String, Object?>{
             'contact_account_peer_id': senderPeerId,
             'device_id': 'tc362-linked-device',
             'verified_account_signing_public_key': 'tc362-account-signing-key',
@@ -981,90 +978,94 @@ void main() {
             'state': 'active',
             'staged_at': t0,
             'decided_at': t0,
-          },
-        );
-        final authority = _FakeTransportAuthority({
-          linkedTransportPeerId: linkedResolution(),
-        });
-        final receiptIds = <String>[];
+          });
+      final authority = _FakeTransportAuthority({
+        linkedTransportPeerId: linkedResolution(),
+      });
+      final receiptIds = <String>[];
 
-        final (result, stored, _) = await handleIncomingChatMessage(
-          message: linkedInboxMessage(linkedEnvelope(messageId)),
-          messageRepo: fixture.messageRepo,
-          contactRepo: contactRepo,
-          mediaAttachmentRepo: fixture.repo,
-          predecryptedText: innerJson(
-            id: messageId,
-            media: [
-              strictMedia(id: attachmentId, hash: hash, ciphertextSize: 29),
-            ],
+      final (result, stored, _) = await handleIncomingChatMessage(
+        message: linkedInboxMessage(linkedEnvelope(messageId)),
+        messageRepo: fixture.messageRepo,
+        contactRepo: contactRepo,
+        mediaAttachmentRepo: fixture.repo,
+        predecryptedText: innerJson(
+          id: messageId,
+          media: [
+            strictMedia(id: attachmentId, hash: hash, ciphertextSize: 29),
+          ],
+          privateMedia: const {'version': 1, 'mode': 'protected'},
+        ),
+        transport: 'inbox',
+        stagedEntryId: 'tc362-linked-relay-entry',
+        sendDeliveryReceipt: (id) async => receiptIds.add(id),
+        transportAuthority: authority,
+      );
+      expect(
+        result,
+        HandleChatMessageResult.chatMessage,
+        reason:
+            'a linked-resolved VALID strict ordinary media payload now '
+            'saves and publishes exactly like a legacy origin',
+      );
+      expect(stored, isNotNull);
+      expect(
+        stored!.contactPeerId,
+        senderPeerId,
+        reason: 'the durable row belongs to the LOGICAL contact',
+      );
+      expect(
+        stored.privateMediaPolicy.mode,
+        PrivateMediaMode.protected,
+        reason: 'the linked receive retains the protected logical policy',
+      );
+
+      final custody = (await fixture.db.query(
+        'direct_media_blob_custody',
+        where: 'message_id = ?',
+        whereArgs: const <Object?>[messageId],
+      )).single;
+      expect(custody['state'], 'incoming_committed');
+      expect(
+        custody['contact_account_peer_id'],
+        senderPeerId,
+        reason:
+            'a LINKED origin persists the logical contact as the durable '
+            'discriminator on the newly authored incoming v114 row',
+      );
+      expect(custody['recipient_peer_id'], isNull);
+      expect(custody['recipient_ml_kem_public_key'], isNull);
+
+      final attachment = (await fixture.db.query(
+        'media_attachments',
+        where: 'id = ?',
+        whereArgs: const <Object?>[attachmentId],
+      )).single;
+      expect(
+        attachment['direct_media_blob_custody_fingerprint'],
+        computeDirectMediaBlobCommitmentFingerprint(
+          attachmentId: attachmentId,
+          commitment: DirectMediaBlobCustodyCommitment(
+            contentHash: hash,
+            ciphertextSize: 29,
+            expiresAtMs: expiresAtMs,
           ),
-          transport: 'inbox',
-          stagedEntryId: 'tc362-linked-relay-entry',
-          sendDeliveryReceipt: (id) async => receiptIds.add(id),
-          transportAuthority: authority,
-        );
-        expect(
-          result,
-          HandleChatMessageResult.chatMessage,
-          reason:
-              'a linked-resolved VALID strict ordinary media payload now '
-              'saves and publishes exactly like a legacy origin',
-        );
-        expect(stored, isNotNull);
-        expect(
-          stored!.contactPeerId,
-          senderPeerId,
-          reason: 'the durable row belongs to the LOGICAL contact',
-        );
-
-        final custody = (await fixture.db.query(
-          'direct_media_blob_custody',
-          where: 'message_id = ?',
-          whereArgs: const <Object?>[messageId],
-        )).single;
-        expect(custody['state'], 'incoming_committed');
-        expect(
-          custody['contact_account_peer_id'],
-          senderPeerId,
-          reason:
-              'a LINKED origin persists the logical contact as the durable '
-              'discriminator on the newly authored incoming v114 row',
-        );
-        expect(custody['recipient_peer_id'], isNull);
-        expect(custody['recipient_ml_kem_public_key'], isNull);
-
-        final attachment = (await fixture.db.query(
-          'media_attachments',
-          where: 'id = ?',
-          whereArgs: const <Object?>[attachmentId],
-        )).single;
-        expect(
-          attachment['direct_media_blob_custody_fingerprint'],
-          computeDirectMediaBlobCommitmentFingerprint(
-            attachmentId: attachmentId,
-            commitment: DirectMediaBlobCustodyCommitment(
-              contentHash: hash,
-              ciphertextSize: 29,
-              expiresAtMs: expiresAtMs,
-            ),
-          ),
-          reason: 'incoming keeps the exact v1 target-specific commitment',
-        );
-        expect(
-          attachment['direct_media_blob_custody_fingerprint_version'],
-          isNull,
-          reason: 'incoming strict rows never gain the v2 generation marker',
-        );
-        expect(
-          receiptIds,
-          <String>[messageId],
-          reason:
-              'the delivery receipt hook fires for the authenticated '
-              'PHYSICAL inbox arrival after the durable stage',
-        );
-      },
-    );
+        ),
+        reason: 'incoming keeps the exact v1 target-specific commitment',
+      );
+      expect(
+        attachment['direct_media_blob_custody_fingerprint_version'],
+        isNull,
+        reason: 'incoming strict rows never gain the v2 generation marker',
+      );
+      expect(
+        receiptIds,
+        <String>[messageId],
+        reason:
+            'the delivery receipt hook fires for the authenticated '
+            'PHYSICAL inbox arrival after the durable stage',
+      );
+    });
 
     test('TC-362-04a linked legacy-media and crossed shapes stay terminally '
         'refused', () async {

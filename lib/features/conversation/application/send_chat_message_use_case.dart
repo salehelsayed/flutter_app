@@ -670,6 +670,65 @@ final class DirectLinkedMediaFanoutContext {
   final Map<String, List<DirectMediaBlobCustodyRow>> targetRows;
 }
 
+/// Caller-owned authority for one initialized private-media linked fanout.
+///
+/// Private Protected/View-Once initials deliberately do not mint a v110
+/// intent. Fresh authoring therefore carries the exact pre-effect roster
+/// snapshot into private Barrier B, while restart reconstructs authority only
+/// from the complete persisted v114 survivor set.
+final class DirectPrivateMediaFanoutContext {
+  factory DirectPrivateMediaFanoutContext({
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot snapshot,
+    required Map<String, List<DirectMediaBlobCustodyRow>> targetRows,
+  }) => DirectPrivateMediaFanoutContext._(
+    contactAccountPeerId: contactAccountPeerId,
+    authority: DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot,
+    snapshot: snapshot,
+    targets: snapshot.targets
+        .map(
+          (target) => DirectLinkedMediaFanoutTargetAuthority(
+            peerId: target.peerId,
+            mlKemPublicKey: target.mlKemPublicKey,
+          ),
+        )
+        .toList(growable: false),
+    targetRows: targetRows,
+  );
+
+  const DirectPrivateMediaFanoutContext._({
+    required this.contactAccountPeerId,
+    required this.authority,
+    required this.snapshot,
+    required this.targets,
+    required this.targetRows,
+  });
+
+  static DirectPrivateMediaFanoutContext? fromPersistedV114Survivors({
+    required String contactAccountPeerId,
+    required Map<String, List<DirectMediaBlobCustodyRow>> targetRows,
+  }) {
+    final ordinary = DirectLinkedMediaFanoutContext.fromPersistedV114Survivors(
+      contactAccountPeerId: contactAccountPeerId,
+      targetRows: targetRows,
+    );
+    if (ordinary == null) return null;
+    return DirectPrivateMediaFanoutContext._(
+      contactAccountPeerId: ordinary.contactAccountPeerId,
+      authority: DirectPrivateMediaFanoutStageAuthority.persistedV114Survivors,
+      snapshot: null,
+      targets: ordinary.targets,
+      targetRows: ordinary.targetRows,
+    );
+  }
+
+  final String contactAccountPeerId;
+  final DirectPrivateMediaFanoutStageAuthority authority;
+  final DirectContactFanoutSnapshot? snapshot;
+  final List<DirectLinkedMediaFanoutTargetAuthority> targets;
+  final Map<String, List<DirectMediaBlobCustodyRow>> targetRows;
+}
+
 /// Sends a chat message to a contact via P2P and persists it locally.
 ///
 /// 1. Validates text is non-empty
@@ -724,6 +783,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   void Function(String messageId)? onDirectTextCustodyStaged,
   DirectEventFanoutAuthoring? directEventFanout,
   DirectLinkedMediaFanoutContext? directLinkedMediaFanout,
+  DirectPrivateMediaFanoutContext? directPrivateMediaFanout,
 }) async {
   final sendStopwatch = clock.stopwatch()..start();
   final liveDeadline = OutgoingLiveDeadline(() => sendStopwatch.elapsed);
@@ -855,13 +915,14 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     return (SendChatMessageResult.success, null);
   }
 
-  // 361: blob-free fresh text and text EDIT may be owned by the v113 fanout
-  // coordinator. Anything media/private-shaped never routes here.
+  // 361: fresh blob-free text may be owned by the v113 fanout coordinator.
+  // EDIT routing is deliberately deferred until after the persisted caption
+  // classifier below: caller-supplied attachments (including an empty/stale
+  // snapshot) are not authority for whether the durable parent is media.
   final fanoutEligibleShape =
       directEventFanout != null &&
       !hasAttachments &&
-      (action == MessagePayload.actionSend ||
-          action == MessagePayload.actionEdit) &&
+      action == MessagePayload.actionSend &&
       (privateMediaPolicy == null ||
           privateMediaPolicy.mode == PrivateMediaMode.ordinary);
 
@@ -1155,7 +1216,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       action == MessagePayload.actionSend &&
       !hasAttachments &&
       effectivePrivateMediaPolicy.mode == PrivateMediaMode.ordinary;
-  final ownsDirectTextMutationInboxCustody =
+  final isDirectTextMutationInboxCustodyCandidate =
       !isOutgoingPrivateOneMoreLook &&
       attemptKind == OutgoingOrdinaryAttemptKind.edit &&
       action == MessagePayload.actionEdit &&
@@ -1205,6 +1266,15 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final ownsDirectLinkedMediaFanout =
       directLinkedMediaFanout != null &&
       directLinkedMediaFanoutCapability?.supportsDirectLinkedMediaBlobFanout ==
+          true;
+  final directPrivateMediaFanoutCapability =
+      messageRepo is OutgoingDirectPrivateMediaFanoutInboxCustodyRepository
+      ? messageRepo as OutgoingDirectPrivateMediaFanoutInboxCustodyRepository
+      : null;
+  final ownsDirectPrivateMediaFanout =
+      directPrivateMediaFanout != null &&
+      directPrivateMediaFanoutCapability
+              ?.supportsOutgoingDirectPrivateMediaFanoutInboxCustody ==
           true;
 
   // 353: persisted media authority is consulted BEFORE any caller-derived
@@ -1310,6 +1380,36 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   final effectiveHasCompleteStrictBlobManifest =
       !ownsDirectMediaCaptionEditInboxCustody && hasCompleteStrictBlobManifest;
 
+  // A persisted media classification always defeats the caller's attachment
+  // shape. Only a proven non-media (or a legacy repository without the media
+  // classifier and no media-looking parent) may retain the text-mutation lane.
+  final ownsDirectTextMutationInboxCustody =
+      isDirectTextMutationInboxCustodyCandidate &&
+      (captionEditAuthority == null ||
+          captionEditAuthority.lane ==
+              OutgoingDirectMediaCaptionEditLane.notMedia);
+
+  // 366: resolve EDIT fanout only after durable qualification. Both ordinary
+  // text EDIT and a strict ordinary media-caption EDIT are blob-free mutation
+  // events, but the latter must carry the canonical persisted media descriptor
+  // in every independently encrypted inner payload.
+  if (directEventFanout != null &&
+      action == MessagePayload.actionEdit &&
+      (ownsDirectTextMutationInboxCustody ||
+          ownsDirectMediaCaptionEditInboxCustody)) {
+    final routing = await directEventFanout.decideRoute(targetPeerId);
+    switch (routing.route) {
+      case DirectEventFanoutRoute.incumbentLegacy:
+        fanoutRouting = null;
+      case DirectEventFanoutRoute.refusedSelectorOff:
+      case DirectEventFanoutRoute.refusedUnavailable:
+        emitSendTiming(outcome: 'fanout_refused_${routing.route.name}');
+        return (SendChatMessageResult.sendFailed, null);
+      case DirectEventFanoutRoute.fanout:
+        fanoutRouting = routing;
+    }
+  }
+
   // 354: exactly one newly authored v1 Protected image/video or View-Once
   // image initial carrying a complete strict blob manifest adopts the same
   // exact ACK-or-expiry v108 ownership. Every other private shape (edit,
@@ -1330,9 +1430,10 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
         mime: effectiveMediaAttachments!.single.mime,
         mediaType: effectiveMediaAttachments.single.mediaType,
       ) &&
-      privateInboxCustodyCapability
-              ?.supportsOutgoingDirectPrivateMediaInboxCustody ==
-          true;
+      (ownsDirectPrivateMediaFanout ||
+          privateInboxCustodyCapability
+                  ?.supportsOutgoingDirectPrivateMediaInboxCustody ==
+              true);
   var ownsDirectInboxCustody =
       ownsDirectTextInboxCustody ||
       ownsDirectTextMutationInboxCustody ||
@@ -1412,6 +1513,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
 
   final missingStrictMediaCustodyStore =
       !ownsDirectLinkedMediaFanout &&
+      !ownsDirectPrivateMediaFanout &&
       (ownsDirectMediaInboxCustody || ownsDirectPrivateMediaInboxCustody) &&
       (effectiveStoreInAckCustodyInboxDetailed == null ||
           (effectiveHasCompleteStrictBlobManifest &&
@@ -1475,6 +1577,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       (replayedDirectMediaCustody != null ||
           (bridge != null &&
               (directLinkedMediaFanout != null ||
+                  directPrivateMediaFanout != null ||
                   (recipientKey != null && recipientKey.isNotEmpty))));
 
   // Preserve the historical pre-encryption return for paths that do not own
@@ -1494,6 +1597,7 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
   if (replayedDirectMediaCustody == null &&
       (bridge == null ||
           (directLinkedMediaFanout == null &&
+              directPrivateMediaFanout == null &&
               (recipientKey == null || recipientKey.isEmpty)))) {
     emitFlowEvent(
       layer: 'FL',
@@ -1603,6 +1707,11 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
       resolvedDedupKey: resolvedDedupKey,
       quotedMessageId: effectiveQuotedMessageId,
       isForwarded: effectiveIsForwarded,
+      media: ownsDirectMediaCaptionEditInboxCustody
+          ? canonicalCaptionAttachments!
+                .map((attachment) => attachment.toJson())
+                .toList(growable: false)
+          : null,
       createdAt: createdAt,
       existingOutgoing: existingOutgoing,
       onDirectTextCustodyStaged: onDirectTextCustodyStaged,
@@ -1843,6 +1952,54 @@ Future<(SendChatMessageResult, ConversationMessage?)> sendChatMessage({
     status: 'queued',
     text: sanitizedText,
   );
+
+  // 366: initialized Protected/View-Once initials settle only through the
+  // explicit private plural Barrier B. Supplying this context forbids every
+  // scalar fallback: one malformed target, capability gap, or crossed parent
+  // refuses before encryption/transport and leaves the v114 survivors intact.
+  if (directPrivateMediaFanout != null) {
+    if (!ownsDirectPrivateMediaInboxCustody ||
+        !ownsDirectPrivateMediaFanout ||
+        action != MessagePayload.actionSend ||
+        !effectiveHasCompleteStrictBlobManifest ||
+        normalizedAttachments == null ||
+        normalizedAttachments.length != 1 ||
+        existingOutgoing == null ||
+        bridge == null ||
+        directTextCustodyRepo == null) {
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'CHAT_MSG_SEND_PRIVATE_MEDIA_FANOUT_REFUSED',
+        details: {
+          'id': shortenMessageId(resolvedMessageId),
+          'reason': 'ineligible_shape',
+        },
+      );
+      emitSendTiming(outcome: 'private_media_fanout_shape_refused');
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    return _authorDirectPrivateMediaFanout(
+      fanout: directPrivateMediaFanout,
+      p2pService: p2pService,
+      messageRepo: messageRepo,
+      mediaAttachmentRepo: mediaAttachmentRepo!,
+      directTextCustodyRepo: directTextCustodyRepo,
+      storeInAckCustodyInboxDetailed: effectiveStoreInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          effectiveStoreInMediaExpiryBoundedInboxDetailed,
+      bridge: bridge,
+      targetPeerId: targetPeerId,
+      senderPeerId: senderPeerId,
+      senderUsername: senderUsername,
+      payload: payload,
+      expectedParent: existingOutgoing,
+      completedAttachment: normalizedAttachments.single,
+      resolvedMessageId: resolvedMessageId,
+      onDirectTextCustodyStaged: onDirectTextCustodyStaged,
+      emitSendTiming: emitSendTiming,
+      recordMetrics: recordMetrics,
+    );
+  }
 
   // 362: a caller-proven linked-media fanout settles exclusively through the
   // plural v108 stage. Every mismatch fails closed here — after fanout
@@ -4234,6 +4391,7 @@ _authorDirectBlobFreeTextFanout({
   required String? resolvedDedupKey,
   required String? quotedMessageId,
   required bool isForwarded,
+  required List<Map<String, dynamic>>? media,
   required String? createdAt,
   required ConversationMessage? existingOutgoing,
   required void Function(String messageId)? onDirectTextCustodyStaged,
@@ -4259,7 +4417,7 @@ _authorDirectBlobFreeTextFanout({
     eventId: resolvedEventId,
     editedAt: resolvedEditedAt,
     quotedMessageId: quotedMessageId,
-    media: null,
+    media: media,
     dedupKey: resolvedDedupKey,
     isForwarded: isForwarded,
     privateMediaPolicy: const PrivateMediaPolicy.ordinary(),
@@ -4451,6 +4609,295 @@ _deriveLinkedMediaFanoutContextFromSurvivors({
   return DirectLinkedMediaFanoutContext.fromPersistedV114Survivors(
     contactAccountPeerId: targetPeerId,
     targetRows: targetRows,
+  );
+}
+
+/// 366 private blob-bearing fanout authoring tail.
+///
+/// The one logical private payload is encrypted independently for every
+/// persisted physical target. The incumbent private lifecycle lock performs
+/// the completion compare-and-set once, then the explicit plural Barrier B
+/// atomically binds the complete v114 set to N v108 siblings before egress.
+Future<(SendChatMessageResult, ConversationMessage?)>
+_authorDirectPrivateMediaFanout({
+  required DirectPrivateMediaFanoutContext fanout,
+  required P2PService p2pService,
+  required MessageRepository messageRepo,
+  required MediaAttachmentRepository mediaAttachmentRepo,
+  required OutgoingDirectTextInboxCustodyRepository directTextCustodyRepo,
+  required StoreInAckCustodyInboxDetailedFn? storeInAckCustodyInboxDetailed,
+  required StoreInMediaExpiryBoundedInboxDetailedFn?
+  storeInMediaExpiryBoundedInboxDetailed,
+  required Bridge bridge,
+  required String targetPeerId,
+  required String senderPeerId,
+  required String senderUsername,
+  required MessagePayload payload,
+  required ConversationMessage expectedParent,
+  required MediaAttachment completedAttachment,
+  required String resolvedMessageId,
+  required void Function(String messageId)? onDirectTextCustodyStaged,
+  required void Function({
+    required String outcome,
+    Map<String, dynamic> details,
+  })
+  emitSendTiming,
+  required void Function({required String? transport, required String rung})
+  recordMetrics,
+}) async {
+  (SendChatMessageResult, ConversationMessage?) refuse(String reason) {
+    emitFlowEvent(
+      layer: 'FL',
+      event: 'CHAT_MSG_SEND_PRIVATE_MEDIA_FANOUT_REFUSED',
+      details: {'id': shortenMessageId(resolvedMessageId), 'reason': reason},
+    );
+    emitSendTiming(
+      outcome: 'private_media_fanout_stage_refused',
+      details: const {},
+    );
+    return (SendChatMessageResult.sendFailed, null);
+  }
+
+  final fanoutRepository =
+      messageRepo is OutgoingDirectPrivateMediaFanoutInboxCustodyRepository
+      ? messageRepo as OutgoingDirectPrivateMediaFanoutInboxCustodyRepository
+      : null;
+  final mutationRepository =
+      mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository
+      ? mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository
+      : null;
+  final outerSenderTransportPeerId = p2pService.currentState.peerId;
+  final targets = fanout.targets;
+  final targetPeerIds = targets.map((target) => target.peerId).toSet();
+  final snapshot = fanout.snapshot;
+  final exactAuthorityShape = switch (fanout.authority) {
+    DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot =>
+      snapshot != null &&
+          snapshot.contactAccountPeerId == targetPeerId &&
+          snapshot.targets.length == targets.length &&
+          snapshot.targets.indexed.every((entry) {
+            final (index, target) = entry;
+            return target.peerId == targets[index].peerId &&
+                target.mlKemPublicKey == targets[index].mlKemPublicKey;
+          }),
+    DirectPrivateMediaFanoutStageAuthority.persistedV114Survivors =>
+      snapshot == null,
+  };
+  final commitment = completedAttachment.blobCustody;
+  if (fanoutRepository == null ||
+      !fanoutRepository.supportsOutgoingDirectPrivateMediaFanoutInboxCustody ||
+      mutationRepository == null ||
+      outerSenderTransportPeerId == null ||
+      outerSenderTransportPeerId.trim().isEmpty ||
+      fanout.contactAccountPeerId != targetPeerId ||
+      !exactAuthorityShape ||
+      targets.isEmpty ||
+      targetPeerIds.length != targets.length ||
+      fanout.targetRows.length != targets.length ||
+      expectedParent.id != resolvedMessageId ||
+      expectedParent.contactPeerId != targetPeerId ||
+      expectedParent.senderPeerId != senderPeerId ||
+      expectedParent.directMediaCustodyIntentId != null ||
+      expectedParent.directEventFanoutGenerationId != resolvedMessageId ||
+      !privateMediaInitialProducerMatrixAllows(
+        policyVersion: expectedParent.privateMediaPolicy.version,
+        mode: expectedParent.privateMediaMode,
+        mime: completedAttachment.mime,
+        mediaType: completedAttachment.mediaType,
+      ) ||
+      commitment == null ||
+      !commitment.isValid ||
+      commitment.contentHash != completedAttachment.contentHash) {
+    return refuse('missing_private_fanout_authority');
+  }
+
+  final innerJson = payload.toInnerJson();
+  final targetBindings = <DirectPrivateMediaFanoutTargetBinding>[];
+  for (final target in targets) {
+    final rows = fanout.targetRows[target.peerId];
+    if (rows == null ||
+        rows.length != 1 ||
+        rows.single.messageId != resolvedMessageId ||
+        rows.single.attachmentId != completedAttachment.id ||
+        rows.single.recipientPeerId != target.peerId ||
+        rows.single.contactAccountPeerId != targetPeerId ||
+        rows.single.recipientMlKemPublicKey != target.mlKemPublicKey ||
+        rows.single.direction != DirectMediaBlobCustodyDirection.outgoing ||
+        rows.single.state != DirectMediaBlobCustodyState.outgoingStored ||
+        !rows.single.isLinkedFanoutRow ||
+        rows.single.contentHash != completedAttachment.contentHash ||
+        rows.single.ciphertextSize != commitment.ciphertextSize ||
+        rows.single.expiresAtMs == null) {
+      return refuse('target_rows_incomplete');
+    }
+    final row = rows.single;
+    final String manifestHash;
+    try {
+      manifestHash = computeDirectMediaBlobManifestHash(
+        <DirectMediaBlobManifestProjection>[
+          DirectMediaBlobManifestProjection(
+            attachmentId: row.attachmentId,
+            commitment: DirectMediaBlobCustodyCommitment(
+              contentHash: row.contentHash,
+              ciphertextSize: row.ciphertextSize,
+              expiresAtMs: row.expiresAtMs!,
+            ),
+          ),
+        ],
+      );
+    } on FormatException {
+      return refuse('target_manifest_invalid');
+    }
+    final Map<String, dynamic> encrypted;
+    try {
+      encrypted = await callEncryptMessage(
+        bridge: bridge,
+        recipientMlKemPublicKey: target.mlKemPublicKey,
+        plaintext: innerJson,
+      );
+    } catch (_) {
+      emitSendTiming(
+        outcome: 'private_media_fanout_encrypt_error',
+        details: const {},
+      );
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    if (encrypted['ok'] != true) {
+      emitSendTiming(
+        outcome: 'private_media_fanout_encrypt_failed',
+        details: const {},
+      );
+      return (SendChatMessageResult.sendFailed, null);
+    }
+    targetBindings.add(
+      DirectPrivateMediaFanoutTargetBinding(
+        recipientPeerId: target.peerId,
+        recipientMlKemPublicKey: target.mlKemPublicKey,
+        wireEnvelope: MessagePayload.buildEncryptedEnvelope(
+          id: resolvedMessageId,
+          senderPeerId: outerSenderTransportPeerId,
+          senderUsername: senderUsername,
+          kem: encrypted['kem'] as String,
+          ciphertext: encrypted['ciphertext'] as String,
+          nonce: encrypted['nonce'] as String,
+        ),
+        wireMediaBlobManifestHash: manifestHash,
+        wireMediaBlobExpiresAtMs: row.expiresAtMs!,
+      ),
+    );
+  }
+
+  late final String expectedPendingLocalPath;
+  try {
+    expectedPendingLocalPath =
+        MediaFilePathConvention.relativePathForPendingUpload(
+          messageId: resolvedMessageId,
+          attachmentId: completedAttachment.id,
+          mime: completedAttachment.mime,
+        );
+  } catch (_) {
+    return refuse('invalid_pending_path');
+  }
+  final fingerprint = OutgoingDirectPrivateCompletionFingerprint.fromAttachment(
+    completedAttachment,
+    expectedPendingLocalPath: expectedPendingLocalPath,
+  );
+  if (!fingerprint.isStructurallyComplete) {
+    return refuse('invalid_completion_fingerprint');
+  }
+
+  final coordinator =
+      mutationRepository.outgoingDirectPrivateMutationCoordinator;
+  final OutgoingDirectPrivateFanoutInboxCustodyResult staged;
+  try {
+    staged = await coordinator.lifecycleLock.synchronized(
+      completedAttachment.id,
+      () async {
+        final owned = await coordinator.loadOwnedCompletionFingerprint(
+          messageId: resolvedMessageId,
+          attachmentId: completedAttachment.id,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+        );
+        final hasOwnedPendingCompletion = owned == fingerprint;
+        if (!hasOwnedPendingCompletion) {
+          final durable = await mediaAttachmentRepo.getAttachmentsForMessage(
+            resolvedMessageId,
+            owner: MediaOwnerLane.direct,
+          );
+          if (durable.length != 1 ||
+              !fingerprint.matchesHydratedAttachment(durable.single)) {
+            return const OutgoingDirectPrivateFanoutInboxCustodyResult.refused();
+          }
+        }
+        return fanoutRepository
+            .commitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
+              messageId: resolvedMessageId,
+              completedAttachment: completedAttachment,
+              expectedPendingLocalPath: expectedPendingLocalPath,
+              hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+              senderTransportPeerId: outerSenderTransportPeerId,
+              contactAccountPeerId: targetPeerId,
+              authority: fanout.authority,
+              expectedSnapshot: snapshot,
+              targetBindings: targetBindings,
+            );
+      },
+    );
+  } catch (_) {
+    return refuse('private_barrier_b_error');
+  }
+  final stagedTargets = staged.custodies
+      .map((entry) => entry.recipientPeerId)
+      .toSet();
+  if (!staged.authorizesTransport ||
+      staged.custodies.length != targets.length ||
+      stagedTargets.length != targets.length ||
+      !stagedTargets.containsAll(targetPeerIds)) {
+    return refuse('private_barrier_b_refused');
+  }
+  if (staged.outcome == OutgoingDirectPrivateEnvelopeHandoffOutcome.committed) {
+    try {
+      onDirectTextCustodyStaged?.call(resolvedMessageId);
+    } catch (_) {
+      // Durable authority already committed; an observer cannot revoke it.
+    }
+  }
+
+  var completedRows = 0;
+  for (final entry in staged.custodies) {
+    unawaited(
+      p2pService
+          .sendMessage(entry.recipientPeerId, entry.wireEnvelope)
+          .catchError((_) => false),
+    );
+    if (storeInAckCustodyInboxDetailed == null) continue;
+    final attempt = await drainOwnedDirectInboxCustodyOutboxEntry(
+      entry: entry,
+      custodyRepository: directTextCustodyRepo,
+      storeInAckCustodyInboxDetailed: storeInAckCustodyInboxDetailed,
+      storeInMediaExpiryBoundedInboxDetailed:
+          storeInMediaExpiryBoundedInboxDetailed,
+    );
+    if (attempt.completed) completedRows++;
+  }
+
+  emitFlowEvent(
+    layer: 'FL',
+    event: 'DIRECT_PRIVATE_MEDIA_FANOUT_AUTHORED',
+    details: <String, Object?>{
+      'id': shortenMessageId(resolvedMessageId),
+      'targets': staged.custodies.length,
+      'completed': completedRows,
+      'replayedSurvivors':
+          staged.outcome ==
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent,
+    },
+  );
+  recordMetrics(transport: 'inbox', rung: 'inbox');
+  emitSendTiming(outcome: 'success', details: const {});
+  return (
+    SendChatMessageResult.success,
+    await messageRepo.getMessage(resolvedMessageId),
   );
 }
 

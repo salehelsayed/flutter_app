@@ -5,12 +5,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
@@ -227,6 +232,131 @@ List<String> _inboxStoreMessageIds(FakeBridge bridge) {
       .toList();
 }
 
+class _StrictRetryMessageRepository extends InMemoryGroupMessageRepository
+    implements
+        GroupInboxStoreRetryPayloadCasRepository,
+        GroupMessageStrictContentCompletionRepository,
+        GroupMessageStrictPreparedTerminalRepository {
+  bool failNextPayloadCas = false;
+  final List<Map<String, Object?>> protectedEvidence = [];
+
+  @override
+  Future<bool> hasExactStrictContentPrepared(
+    GroupMessage expected, {
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final current = await getMessage(expected.id);
+    return current != null &&
+        current.inboxRetryPayload == expected.inboxRetryPayload &&
+        current.status == expected.status &&
+        current.inboxStored == expected.inboxStored;
+  }
+
+  @override
+  Future<bool> terminalizeStrictContentPreparedIfExact(
+    GroupMessage expected, {
+    required Map<String, Object?> preparedEventPayload,
+    required String terminalSourcePeerId,
+    required String terminalSourceEventId,
+    required String terminalSourceTimestamp,
+    required Map<String, Object?> terminalEventPayload,
+  }) async {
+    final current = await getMessage(expected.id);
+    if (current == null ||
+        current.inboxRetryPayload != expected.inboxRetryPayload ||
+        current.status != expected.status ||
+        current.inboxStored != expected.inboxStored) {
+      return false;
+    }
+    await saveMessage(
+      current.copyWith(status: 'send_failed', inboxRetryPayload: null),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> replaceInboxRetryPayloadIfExact(
+    GroupMessage expected,
+    String replacement,
+  ) async {
+    final current = await getMessage(expected.id);
+    if (failNextPayloadCas) {
+      failNextPayloadCas = false;
+      return false;
+    }
+    if (current == null ||
+        current.inboxRetryPayload != expected.inboxRetryPayload ||
+        current.status != expected.status ||
+        current.inboxStored != expected.inboxStored) {
+      return false;
+    }
+    await saveMessage(current.copyWith(inboxRetryPayload: replacement));
+    return true;
+  }
+
+  @override
+  Future<bool> completeStrictContentIfExact(
+    GroupMessage expected, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final current = await getMessage(expected.id);
+    if (current == null ||
+        current.inboxRetryPayload != expected.inboxRetryPayload ||
+        current.status != expected.status ||
+        current.inboxStored != expected.inboxStored) {
+      return false;
+    }
+    protectedEvidence.add(<String, Object?>{
+      'sourcePeerId': sourcePeerId,
+      'sourceEventId': sourceEventId,
+      'sourceTimestamp': sourceTimestamp,
+      'eventPayload': eventPayload,
+    });
+    await saveMessage(
+      current.copyWith(
+        status: 'sent',
+        inboxStored: true,
+        inboxRetryPayload: null,
+      ),
+    );
+    return true;
+  }
+}
+
+class _AlternatingStrictInboxStore implements AckOrExpiryInboxStore {
+  final Set<String> available = <String>{};
+  final List<String> recipients = <String>[];
+  final Map<String, int> attempts = <String, int>{};
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    expect(custodyKind, AckCustodyKind.groupContentV1);
+    recipients.add(toPeerId);
+    attempts[toPeerId] = (attempts[toPeerId] ?? 0) + 1;
+    if (!available.contains(toPeerId)) {
+      return const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        storeStatus: 'failed',
+      );
+    }
+    return InboxStoreOutcome(
+      status: attempts[toPeerId] == 1
+          ? InboxStoreStatus.stored
+          : InboxStoreStatus.duplicate,
+      storeStatus: attempts[toPeerId] == 1 ? 'stored' : 'duplicate',
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
+
 Future<List<Map<String, dynamic>>> captureFlowEvents(
   Future<void> Function() action,
 ) async {
@@ -266,6 +396,329 @@ void main() {
     msgRepo = InMemoryGroupMessageRepository();
     reactionReplayOutboxRepo = FakeGroupReactionReplayOutboxRepository();
   });
+
+  test(
+    'TC-364-01b strict survivor retry uses accepted-receipt CAS and bounded progress',
+    () async {
+      final strictRepo = _StrictRetryMessageRepository();
+      final strictStore = _AlternatingStrictInboxStore()
+        ..available.add('transport-a');
+      final strictBridge = FakeBridge();
+      final strictGroupRepo = InMemoryGroupRepository();
+      await strictGroupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 0,
+          encryptedKey: 'strict-group-key',
+          createdAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      await strictGroupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Strict retry group',
+          type: GroupType.chat,
+          topicName: 'strict-retry-topic',
+          createdAt: DateTime.utc(2026, 8, 13, 10),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+        ),
+      );
+      for (final member in <GroupMember>[
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          role: MemberRole.admin,
+          publicKey: 'account-pk',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-current',
+              transportPeerId: 'transport-current',
+              deviceSigningPublicKey: 'pk-current',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 13, 10),
+        ),
+        for (final transport in <String>['transport-a', 'transport-b'])
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-$transport',
+            role: MemberRole.writer,
+            publicKey: 'pk-$transport',
+            devices: <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-$transport',
+                transportPeerId: transport,
+                deviceSigningPublicKey: 'pk-$transport',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 13, 10),
+          ),
+      ]) {
+        await strictGroupRepo.saveMember(member);
+      }
+      final identityRepo = FakeIdentityRepository()
+        ..seed(
+          FakeIdentityRepository.makeIdentity(
+            peerId: 'peer-1',
+            publicKey: 'account-pk',
+          ),
+        );
+      final timestamp = DateTime.utc(2026, 8, 13, 12, 0, 0, 0, 1);
+      final strictPlaintext = jsonEncode(<String, Object?>{
+        'id': 'msg.tc364.01b',
+        'messageId': 'msg.tc364.01b',
+        'text': 'frozen strict content',
+        'timestamp': fixedGroupContentUtc(timestamp),
+        'senderId': 'peer-1',
+      });
+      final retryPayload = await buildGroupOfflineReplayInboxRetryPayload(
+        bridge: strictBridge,
+        groupRepo: strictGroupRepo,
+        groupId: 'group-1',
+        payloadType: groupOfflineReplayPayloadTypeMessage,
+        plaintext: strictPlaintext,
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        recipientPeerIds: const <String>['transport-a', 'transport-b'],
+        messageId: 'msg.tc364.01b',
+        contentEventId: 'msg.tc364.01b',
+        contentAuthorityVersion: GroupContentAuthorityVersion(
+          eventAt: DateTime.utc(2026, 8, 13, 11),
+          eventId: 'authority.tc364.01b',
+          keyEpoch: 0,
+        ),
+      );
+      final frozen = GroupContentRetryPayload.decode(retryPayload);
+      setGroupContentAuthoringResolver(
+        strictGroupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: frozen.authorityVersion,
+            inboxStore: strictStore,
+          ),
+        ),
+      );
+      await strictRepo.saveMessage(
+        GroupMessage(
+          id: 'msg.tc364.01b',
+          groupId: 'group-1',
+          senderPeerId: 'peer-1',
+          senderUsername: 'Alice',
+          text: 'frozen strict content',
+          timestamp: timestamp,
+          keyGeneration: 0,
+          status: 'queued_offline',
+          isIncoming: false,
+          createdAt: timestamp,
+          wireEnvelope: strictPlaintext,
+          inboxStored: false,
+          inboxRetryPayload: retryPayload,
+        ),
+      );
+
+      // Accepted A followed by a simulated crash-before-CAS leaves A+B live.
+      strictRepo.failNextPayloadCas = true;
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: strictRepo,
+          groupRepo: strictGroupRepo,
+          identityRepo: identityRepo,
+          groupContentInboxStore: strictStore,
+          strictContentOnly: true,
+          limit: 2,
+        ),
+        0,
+      );
+      expect(
+        GroupContentRetryPayload.decode(
+          (await strictRepo.getMessage('msg.tc364.01b'))!.inboxRetryPayload!,
+        ).pendingRecipientPeerIds,
+        <String>['transport-a', 'transport-b'],
+      );
+
+      // A duplicate receipt is accepted; only then may CAS retain survivor B.
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: strictRepo,
+          groupRepo: strictGroupRepo,
+          identityRepo: identityRepo,
+          groupContentInboxStore: strictStore,
+          strictContentOnly: true,
+          limit: 2,
+        ),
+        0,
+      );
+      final survivor = GroupContentRetryPayload.decode(
+        (await strictRepo.getMessage('msg.tc364.01b'))!.inboxRetryPayload!,
+      );
+      expect(survivor.pendingRecipientPeerIds, <String>['transport-b']);
+      expect(survivor.fullRecipientPeerIds, frozen.fullRecipientPeerIds);
+      expect(survivor.message, frozen.message);
+
+      // A committed survivor CAS never retargets A; B completes atomically.
+      strictStore.available.add('transport-b');
+      final beforeFinal = strictStore.recipients.length;
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: strictRepo,
+          groupRepo: strictGroupRepo,
+          identityRepo: identityRepo,
+          groupContentInboxStore: strictStore,
+          strictContentOnly: true,
+          limit: 2,
+        ),
+        1,
+      );
+      expect(strictStore.recipients.sublist(beforeFinal), <String>[
+        'transport-b',
+      ]);
+      final completed = await strictRepo.getMessage('msg.tc364.01b');
+      expect(completed!.inboxStored, isTrue);
+      expect(completed.inboxRetryPayload, isNull);
+      expect(completed.status, 'sent');
+      expect(strictRepo.protectedEvidence, hasLength(1));
+      expect(
+        strictRepo.protectedEvidence.single['sourceEventId'],
+        localProtectedGroupMessageSourceEventId('msg.tc364.01b'),
+      );
+      final retryEventPayload =
+          strictRepo.protectedEvidence.single['eventPayload']
+              as Map<String, Object?>;
+      expect(retryEventPayload['custodyKind'], groupContentCustodyKind);
+      expect(retryEventPayload['contentEventId'], 'msg.tc364.01b');
+      expect(
+        retryEventPayload['payload'],
+        containsPair('messageId', 'msg.tc364.01b'),
+      );
+      expect(
+        strictBridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isEmpty,
+      );
+
+      // A malformed declared-strict row never falls through to legacy remint.
+      await strictRepo.saveMessage(
+        _makeRetryEligible(
+          'malformed-strict',
+          inboxRetryPayload: '{"custodyKind":"group_content_v1",',
+        ),
+      );
+      final strictAttempts = strictStore.recipients.length;
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: strictRepo,
+          groupRepo: strictGroupRepo,
+          identityRepo: identityRepo,
+          groupContentInboxStore: strictStore,
+          strictContentOnly: true,
+          limit: 2,
+        ),
+        0,
+      );
+      expect(strictStore.recipients, hasLength(strictAttempts));
+
+      expect(
+        () => survivor.encodeWithPending(const <String>[]),
+        throwsFormatException,
+      );
+
+      // Even a caller quantum of one alternates owners without exceeding the
+      // bound: neither owner can consume every repeated pass.
+      final fairnessOutbox = FakeGroupReactionReplayOutboxRepository();
+      final fairnessCursor = GroupInboxRetryFairnessCursor();
+      await fairnessOutbox.saveEntry(_makeReactionRetryEntry('rx-fairness'));
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: strictRepo,
+          reactionReplayOutboxRepo: fairnessOutbox,
+          groupContentInboxStore: strictStore,
+          limit: 1,
+          fairnessCursor: fairnessCursor,
+        ),
+        0,
+      );
+      expect(
+        (await fairnessOutbox.getEntry('rx-fairness'))!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.failed,
+      );
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: strictRepo,
+          reactionReplayOutboxRepo: fairnessOutbox,
+          groupContentInboxStore: strictStore,
+          limit: 1,
+          fairnessCursor: fairnessCursor,
+        ),
+        1,
+      );
+      expect(
+        (await fairnessOutbox.getEntry('rx-fairness'))!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
+
+      final inverseMessages = InMemoryGroupMessageRepository();
+      await inverseMessages.saveMessage(
+        _makeRetryEligible('msg-fairness-inverse'),
+      );
+      await fairnessOutbox.saveEntry(
+        _makeReactionRetryEntry('rx-fairness-inverse'),
+      );
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: inverseMessages,
+          reactionReplayOutboxRepo: fairnessOutbox,
+          limit: 1,
+          fairnessCursor: fairnessCursor,
+        ),
+        1,
+      );
+      expect(
+        (await inverseMessages.getMessage('msg-fairness-inverse'))!.inboxStored,
+        isTrue,
+      );
+      expect(
+        (await fairnessOutbox.getEntry('rx-fairness-inverse'))!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.failed,
+      );
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: strictBridge,
+          msgRepo: inverseMessages,
+          reactionReplayOutboxRepo: fairnessOutbox,
+          limit: 1,
+          fairnessCursor: fairnessCursor,
+        ),
+        1,
+      );
+      expect(
+        (await fairnessOutbox.getEntry('rx-fairness-inverse'))!.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
+    },
+  );
 
   test(
     'replays the frozen staged recipient set even when the roster is wider',
@@ -313,108 +766,112 @@ void main() {
     },
   );
 
-  test('needs-build row is rebuilt with original identity and stored', () async {
-    // Plan 319 TC-319-05: the retrier rescues an abandoned reaction by
-    // rebuilding its envelope — reusing the ORIGINAL transition id (so every
-    // notification surface dedupes it) and anchoring the plaintext timestamp
-    // to the row's created_at (so a rebuilt ADD cannot out-time a tombstone).
-    final outbox = FakeGroupReactionReplayOutboxRepository();
-    const transitionId = 'group-reaction-event-rescue-1';
-    const createdAt = '2026-08-01T10:00:00.000Z';
-    await outbox.saveEntry(
-      GroupReactionReplayOutboxEntry(
-        reactionId: transitionId,
-        groupId: 'group-1',
-        messageId: 'msg-1',
-        senderPeerId: 'peer-1',
-        emoji: '\u{1F44D}',
-        action: 'add',
-        inboxRetryPayload: '',
-        deliveryStatus: GroupReactionReplayOutboxStatus.needsBuild,
-        createdAt: createdAt,
-        updatedAt: createdAt,
-      ),
-    );
-
-    final groupRepo = InMemoryGroupRepository();
-    await groupRepo.saveGroup(
-      GroupModel(
-        id: 'group-1',
-        name: 'Rescue Group',
-        type: GroupType.chat,
-        topicName: 'topic-1',
-        createdAt: DateTime.utc(2026, 8, 1),
-        createdBy: 'peer-1',
-        myRole: GroupRole.admin,
-      ),
-    );
-    for (final peerId in <String>['peer-1', 'peer-2']) {
-      await groupRepo.saveMember(
-        GroupMember(
+  test(
+    'needs-build row is rebuilt with original identity and stored',
+    () async {
+      // Plan 319 TC-319-05: the retrier rescues an abandoned reaction by
+      // rebuilding its envelope — reusing the ORIGINAL transition id (so every
+      // notification surface dedupes it) and anchoring the plaintext timestamp
+      // to the row's created_at (so a rebuilt ADD cannot out-time a tombstone).
+      final outbox = FakeGroupReactionReplayOutboxRepository();
+      const transitionId = 'group-reaction-event-rescue-1';
+      const createdAt = '2026-08-01T10:00:00.000Z';
+      await outbox.saveEntry(
+        GroupReactionReplayOutboxEntry(
+          reactionId: transitionId,
           groupId: 'group-1',
-          peerId: peerId,
-          username: peerId,
-          role: MemberRole.writer,
-          publicKey: 'pk-$peerId',
-          joinedAt: DateTime.utc(2026, 8, 1),
+          messageId: 'msg-1',
+          senderPeerId: 'peer-1',
+          emoji: '\u{1F44D}',
+          action: 'add',
+          inboxRetryPayload: '',
+          deliveryStatus: GroupReactionReplayOutboxStatus.needsBuild,
+          createdAt: createdAt,
+          updatedAt: createdAt,
         ),
       );
-    }
-    await groupRepo.saveKey(
-      GroupKeyInfo(
-        groupId: 'group-1',
-        keyGeneration: 0,
-        encryptedKey: 'group-key-0',
-        createdAt: DateTime.utc(2026, 8, 1),
-      ),
-    );
-    final messages = InMemoryGroupMessageRepository();
-    await messages.saveMessage(
-      GroupMessage(
-        id: 'msg-1',
-        groupId: 'group-1',
-        senderPeerId: 'peer-2',
-        senderUsername: 'Bob',
-        text: 'target',
-        timestamp: DateTime.utc(2026, 8, 1),
-        keyGeneration: 0,
-        status: 'delivered',
-        isIncoming: true,
-        createdAt: DateTime.utc(2026, 8, 1),
-      ),
-    );
 
-    final identityRepo = FakeIdentityRepository();
-    await identityRepo.saveIdentity(
-      FakeIdentityRepository.makeIdentity(
-        peerId: 'peer-1',
-        publicKey: 'pk-peer-1',
-        privateKey: 'sk-peer-1',
-      ),
-    );
+      final groupRepo = InMemoryGroupRepository();
+      await groupRepo.saveGroup(
+        GroupModel(
+          id: 'group-1',
+          name: 'Rescue Group',
+          type: GroupType.chat,
+          topicName: 'topic-1',
+          createdAt: DateTime.utc(2026, 8, 1),
+          createdBy: 'peer-1',
+          myRole: GroupRole.admin,
+        ),
+      );
+      for (final peerId in <String>['peer-1', 'peer-2']) {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: peerId,
+            username: peerId,
+            role: MemberRole.writer,
+            publicKey: 'pk-$peerId',
+            joinedAt: DateTime.utc(2026, 8, 1),
+          ),
+        );
+      }
+      await groupRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 0,
+          encryptedKey: 'group-key-0',
+          createdAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      final messages = InMemoryGroupMessageRepository();
+      await messages.saveMessage(
+        GroupMessage(
+          id: 'msg-1',
+          groupId: 'group-1',
+          senderPeerId: 'peer-2',
+          senderUsername: 'Bob',
+          text: 'target',
+          timestamp: DateTime.utc(2026, 8, 1),
+          keyGeneration: 0,
+          status: 'delivered',
+          isIncoming: true,
+          createdAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
 
-    await retryFailedGroupInboxStores(
-      bridge: bridge,
-      msgRepo: messages,
-      groupRepo: groupRepo,
-      identityRepo: identityRepo,
-      reactionReplayOutboxRepo: outbox,
-    );
+      final identityRepo = FakeIdentityRepository();
+      await identityRepo.saveIdentity(
+        FakeIdentityRepository.makeIdentity(
+          peerId: 'peer-1',
+          publicKey: 'pk-peer-1',
+          privateKey: 'sk-peer-1',
+        ),
+      );
 
-    final rebuilt = await outbox.getEntry(transitionId);
-    expect(rebuilt, isNotNull);
-    expect(rebuilt!.inboxRetryPayload, isNotEmpty);
-    final retry = jsonDecode(rebuilt.inboxRetryPayload) as Map<String, Object?>;
-    final envelope =
-        jsonDecode(retry['message'] as String) as Map<String, Object?>;
-    final extension =
-        envelope['notificationExtension'] as Map<String, Object?>?;
-    expect(
-      extension?['transitionId'],
-      transitionId,
-      reason: 'the rebuild must reuse the ORIGINAL transition id',
-    );
-  });
+      await retryFailedGroupInboxStores(
+        bridge: bridge,
+        msgRepo: messages,
+        groupRepo: groupRepo,
+        identityRepo: identityRepo,
+        reactionReplayOutboxRepo: outbox,
+      );
+
+      final rebuilt = await outbox.getEntry(transitionId);
+      expect(rebuilt, isNotNull);
+      expect(rebuilt!.inboxRetryPayload, isNotEmpty);
+      final retry =
+          jsonDecode(rebuilt.inboxRetryPayload) as Map<String, Object?>;
+      final envelope =
+          jsonDecode(retry['message'] as String) as Map<String, Object?>;
+      final extension =
+          envelope['notificationExtension'] as Map<String, Object?>?;
+      expect(
+        extension?['transitionId'],
+        transitionId,
+        reason: 'the rebuild must reuse the ORIGINAL transition id',
+      );
+    },
+  );
 
   test('retries eligible sent messages and clears inbox retry state', () async {
     final msg = _makeRetryEligible('msg-1');

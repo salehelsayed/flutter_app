@@ -452,8 +452,8 @@ CREATE TABLE identity (
         );
 
         final manifest = await _manifestFor(stagedDb);
-        expect(currentIdentityDatabaseVersion, 114);
-        expect(manifest.databaseVersion, 114);
+        expect(currentIdentityDatabaseVersion, 115);
+        expect(manifest.databaseVersion, 115);
         final result =
             await MigrationDatabaseActiveImporter(
               activeDatabase: activeDb,
@@ -547,8 +547,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 114);
-        expect(await _userVersion(productionStaged), 114);
+        expect(await _userVersion(productionActive), 115);
+        expect(await _userVersion(productionStaged), 115);
         final activeInventory =
             await MigrationDatabaseSchemaInventory.fromDatabase(
               productionActive,
@@ -588,7 +588,7 @@ CREATE TABLE identity (
           removeRow,
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 114);
+        expect(manifest.databaseVersion, 115);
         expect(manifest.schemaInventory.schemaHash, stagedInventory.schemaHash);
 
         await MigrationDatabaseActiveImporter(
@@ -673,8 +673,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 114);
-        expect(await _userVersion(productionStaged), 114);
+        expect(await _userVersion(productionActive), 115);
+        expect(await _userVersion(productionStaged), 115);
 
         const pendingMessageId = 'tc345-transfer-pending';
         const pendingAttachmentId = 'tc345-transfer-pending-media';
@@ -789,7 +789,7 @@ CREATE TABLE identity (
           orderBy: 'message_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 114);
+        expect(manifest.databaseVersion, 115);
 
         final result =
             await MigrationDatabaseActiveImporter(
@@ -903,8 +903,8 @@ CREATE TABLE identity (
           if (productionStaged.isOpen) await productionStaged.close();
         });
 
-        expect(await _userVersion(productionActive), 114);
-        expect(await _userVersion(productionStaged), 114);
+        expect(await _userVersion(productionActive), 115);
+        expect(await _userVersion(productionStaged), 115);
 
         const incarnation = '34734734734734734734734734734734';
         const manifestHash =
@@ -948,7 +948,7 @@ CREATE TABLE identity (
           orderBy: 'attachment_id',
         );
         final manifest = await _manifestFor(productionStaged);
-        expect(manifest.databaseVersion, 114);
+        expect(manifest.databaseVersion, 115);
         expect(
           manifest.schemaInventory.tables['direct_media_blob_custody'],
           isNotEmpty,
@@ -1043,8 +1043,8 @@ CREATE TABLE identity (
         if (productionStaged.isOpen) await productionStaged.close();
       });
 
-      expect(await _userVersion(productionActive), 114);
-      expect(await _userVersion(productionStaged), 114);
+      expect(await _userVersion(productionActive), 115);
+      expect(await _userVersion(productionStaged), 115);
 
       const contactPeerId =
           '12D3KooWP7CwQswqLKZbwvYd9wrEynnL9F2aKVP1X9huNASBTuqj';
@@ -1100,7 +1100,7 @@ CREATE TABLE identity (
       );
 
       final manifest = await _manifestFor(productionStaged);
-      expect(manifest.databaseVersion, 114);
+      expect(manifest.databaseVersion, 115);
       expect(
         manifest.schemaInventory.tables['direct_contact_device_bindings'],
         isNotEmpty,
@@ -1223,6 +1223,8 @@ Map<String, Object?> _outgoingBlobCustodyRow({
 }) => <String, Object?>{
   'attachment_id': attachmentId,
   'message_id': messageId,
+  'owner_lane': 'direct',
+  'custody_blob_id': attachmentId,
   'direction': 'outgoing',
   'state': 'outgoing_stored',
   'inbox_custody_incarnation_id': incarnationId,
@@ -1250,6 +1252,8 @@ Map<String, Object?> _incomingBlobCustodyRow({
 }) => <String, Object?>{
   'attachment_id': attachmentId,
   'message_id': messageId,
+  'owner_lane': 'direct',
+  'custody_blob_id': attachmentId,
   'direction': 'incoming',
   'state': 'incoming_ack_pending',
   'inbox_custody_incarnation_id': null,

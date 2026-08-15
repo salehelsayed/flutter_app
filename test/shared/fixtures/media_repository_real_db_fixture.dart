@@ -243,6 +243,23 @@ class MediaRepositoryRealDbFixture {
               custodyRow: custodyRow,
             )
           : null,
+      dbStageOutgoingDirectPrivateMediaBlobFanoutGeneration:
+          ({
+            required expectedParentRow,
+            required expectedAttachmentRow,
+            required preparedAttachmentRow,
+            required custodyRows,
+            required contactAccountPeerId,
+            required expectedSnapshot,
+          }) => dbStageOutgoingDirectPrivateMediaBlobFanoutGeneration(
+            db,
+            expectedParentRow: expectedParentRow,
+            expectedAttachmentRow: expectedAttachmentRow,
+            preparedAttachmentRow: preparedAttachmentRow,
+            custodyRows: custodyRows,
+            contactAccountPeerId: contactAccountPeerId,
+            expectedSnapshot: expectedSnapshot,
+          ),
       dbStageIncomingDirectPrivateMediaBlobCustody:
           ({
             required messageRow,
@@ -303,6 +320,8 @@ class MediaRepositoryRealDbFixture {
             required custodyRows,
             required contactAccountPeerId,
             required expectedSnapshot,
+            allowFreshParent = false,
+            authorizedForwardDedupKey,
           }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
             db,
             expectedParentRow: expectedParentRow,
@@ -311,6 +330,8 @@ class MediaRepositoryRealDbFixture {
             custodyRows: custodyRows,
             contactAccountPeerId: contactAccountPeerId,
             expectedSnapshot: expectedSnapshot,
+            allowFreshParent: allowFreshParent,
+            authorizedForwardDedupKey: authorizedForwardDedupKey,
           ),
       dbStageOutgoingDirectMediaFanoutInboxCustody:
           ({
@@ -372,6 +393,114 @@ class MediaRepositoryRealDbFixture {
               ),
       dbDeleteDirectMediaBlobCleanupPendingIfExact: ({required expected}) =>
           dbDeleteDirectMediaBlobCleanupPendingIfExact(db, expected: expected),
+      dbStageFreshOutgoingGroupMediaBlobGeneration:
+          ({
+            required parentRow,
+            required attachmentRows,
+            required custodyRows,
+            required custodyBlobIdsByAttachmentId,
+          }) => dbStageFreshOutgoingGroupMediaBlobGeneration(
+            db,
+            parentRow: parentRow,
+            attachmentRows: attachmentRows,
+            custodyRows: custodyRows,
+            custodyBlobIdsByAttachmentId: custodyBlobIdsByAttachmentId,
+          ),
+      dbLoadGroupMediaBlobCustodyForMessage:
+          ({required groupId, required messageId}) =>
+              dbLoadGroupMediaBlobCustodyForMessage(
+                db,
+                groupId: groupId,
+                messageId: messageId,
+              ),
+      dbLoadGroupMediaBlobCustodyByStates:
+          ({required states, int limit = 50}) =>
+              dbLoadGroupMediaBlobCustodyByStates(
+                db,
+                states: states,
+                limit: limit,
+              ),
+      dbLoadGroupMediaBlobArtifactRelativePaths: () =>
+          dbLoadGroupMediaBlobArtifactRelativePaths(db),
+      dbLoadGroupMediaBlobCustodyForTarget:
+          ({
+            required groupId,
+            required attachmentId,
+            required custodyBlobId,
+            required direction,
+            recipientPeerId,
+          }) => dbLoadGroupMediaBlobCustodyForTarget(
+            db,
+            groupId: groupId,
+            attachmentId: attachmentId,
+            custodyBlobId: custodyBlobId,
+            direction: direction,
+            recipientPeerId: recipientPeerId,
+          ),
+      dbTransitionGroupMediaBlobCustodyIfExact:
+          ({required expected, required next}) =>
+              dbTransitionGroupMediaBlobCustodyIfExact(
+                db,
+                expected: expected,
+                next: next,
+              ),
+      dbDeleteGroupMediaBlobCleanupPendingIfExact: ({required expected}) =>
+          dbDeleteGroupMediaBlobCleanupPendingIfExact(db, expected: expected),
+      dbCommitIncomingGroupMediaBlobLocalPath:
+          ({
+            required expectedAttachmentRow,
+            required expectedCustody,
+            required localPath,
+            required sourceRelayPeerId,
+            required updatedAt,
+            required nowMs,
+          }) => dbCommitIncomingGroupMediaBlobLocalPath(
+            db,
+            expectedAttachmentRow: expectedAttachmentRow,
+            expectedCustody: expectedCustody,
+            localPath: localPath,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: updatedAt,
+            nowMs: nowMs,
+          ),
+      dbTerminalizeIncomingGroupMediaBlobForLocalDeletion:
+          ({
+            required expectedAttachmentRow,
+            required expectedCustody,
+            required sourceRelayPeerId,
+            required updatedAt,
+          }) => dbTerminalizeIncomingGroupMediaBlobForLocalDeletion(
+            db,
+            expectedAttachmentRow: expectedAttachmentRow,
+            expectedCustody: expectedCustody,
+            sourceRelayPeerId: sourceRelayPeerId,
+            updatedAt: updatedAt,
+          ),
+      dbDeleteIncomingGroupMediaBlobAckPendingIfExact: ({required expected}) =>
+          dbDeleteIncomingGroupMediaBlobAckPendingIfExact(
+            db,
+            expected: expected,
+          ),
+      dbDeleteIncomingGroupMediaBlobIfExpired:
+          ({required expected, required nowMs}) =>
+              dbDeleteIncomingGroupMediaBlobIfExpired(
+                db,
+                expected: expected,
+                nowMs: nowMs,
+              ),
+      dbCountOtherGroupMediaBlobCustodyRowsReferencingArtifact:
+          ({
+            required ciphertextRelativePath,
+            required contentHash,
+            required ciphertextSize,
+            required excluding,
+          }) => dbCountOtherGroupMediaBlobCustodyRowsReferencingArtifact(
+            db,
+            ciphertextRelativePath: ciphertextRelativePath,
+            contentHash: contentHash,
+            ciphertextSize: ciphertextSize,
+            excluding: excluding,
+          ),
       dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact:
           ({required expectedRows, required reason, required nowMs}) =>
               dbTerminalizeOutgoingDirectMediaBlobGenerationIfExact(
@@ -1282,6 +1411,27 @@ MessageRepositoryImpl _buildMessageRepository(
           expectedPendingLocalPath: expectedPendingLocalPath,
           envelope: envelope,
           hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+        ),
+    dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody:
+        (
+          completionRow, {
+          required expectedPendingLocalPath,
+          required hasOwnedPendingCompletion,
+          required senderTransportPeerId,
+          required contactAccountPeerId,
+          required authority,
+          required expectedSnapshot,
+          required targetBindings,
+        }) => dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
+          db,
+          completionRow,
+          expectedPendingLocalPath: expectedPendingLocalPath,
+          hasOwnedPendingCompletion: hasOwnedPendingCompletion,
+          senderTransportPeerId: senderTransportPeerId,
+          contactAccountPeerId: contactAccountPeerId,
+          authority: authority,
+          expectedSnapshot: expectedSnapshot,
+          targetBindings: targetBindings,
         ),
     dbSettleOutgoingDirectPrivateTransport:
         ({

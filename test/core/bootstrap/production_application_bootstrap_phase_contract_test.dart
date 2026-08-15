@@ -1,13 +1,29 @@
+import 'dart:async';
 import 'dart:io';
+import 'dart:convert';
 
 import 'package:analyzer/dart/analysis/utilities.dart';
 import 'package:analyzer/dart/ast/ast.dart';
 import 'package:analyzer/dart/ast/visitor.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_app/app/bootstrap/application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/production_application_bootstrap.dart';
 import 'package:flutter_app/app/bootstrap/role_aware_deferred_runtime_start.dart';
+import 'package:flutter_app/app/bootstrap/direct_blob_free_linked_services.dart';
+import 'package:flutter_app/core/application/protected_group_content_runtime_quiescence.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
+import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
+import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_receive.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
+import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
+import 'package:flutter_app/features/groups/presentation/screens/linked_group_conversation_wired.dart';
+import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 const _productionPath =
@@ -97,7 +113,7 @@ const _expectedSendChatMessageCallers =
         ),
         _ExpectedSendChatMessageCaller(
           kind: _SendChatMessageCallerKind.excludedMedia,
-          mediaAttachments: 'uploadResult.attachments',
+          mediaAttachments: 'completedAttachments',
         ),
       ],
     };
@@ -622,22 +638,128 @@ void main() {
     );
   });
 
+  test(
+    'TC-366-01b production composes the plural private generation and Barrier-B delegates',
+    () {
+      final production = File(_productionPath).readAsStringSync();
+      final unit = parseString(content: production, path: _productionPath).unit;
+      final mediaVisitor = _MediaAttachmentRepositoryConstructionVisitor();
+      final messageVisitor = _MessageRepositoryConstructionVisitor();
+      unit.accept(mediaVisitor);
+      unit.accept(messageVisitor);
+
+      expect(
+        mediaVisitor.constructions,
+        hasLength(1),
+        reason: 'production composes exactly one media repository',
+      );
+      expect(
+        messageVisitor.constructions,
+        hasLength(1),
+        reason: 'production composes exactly one message repository',
+      );
+
+      NamedExpression exactDelegate(ArgumentList construction, String name) {
+        final matches = construction.arguments
+            .whereType<NamedExpression>()
+            .where((argument) => argument.name.label.name == name)
+            .toList(growable: false);
+        expect(
+          matches,
+          hasLength(1),
+          reason: 'production must compose exactly one $name delegate',
+        );
+        return matches.single;
+      }
+
+      final privateGeneration = exactDelegate(
+        mediaVisitor.constructions.single,
+        'dbStageOutgoingDirectPrivateMediaBlobFanoutGeneration',
+      );
+      final generationCalls = _InvokedFunctionNameVisitor();
+      privateGeneration.expression.accept(generationCalls);
+      expect(
+        generationCalls.names,
+        contains('dbStageOutgoingDirectPrivateMediaBlobFanoutGeneration'),
+        reason: 'the capability must call the real plural SQLite authority',
+      );
+      final generationSource = privateGeneration.expression.toSource();
+      for (final parameter in const <String>[
+        'expectedParentRow',
+        'expectedAttachmentRow',
+        'preparedAttachmentRow',
+        'custodyRows',
+        'contactAccountPeerId',
+        'expectedSnapshot',
+      ]) {
+        expect(
+          '$parameter: $parameter'.allMatches(generationSource),
+          hasLength(1),
+          reason: '$parameter must pass through the plural generation verbatim',
+        );
+      }
+      expect(
+        RegExp(r'\bcustodyRow\b').hasMatch(generationSource),
+        isFalse,
+        reason: 'production must not collapse N v114 rows to the singular API',
+      );
+
+      final privateBarrierB = exactDelegate(
+        messageVisitor.constructions.single,
+        'dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody',
+      );
+      final barrierCalls = _InvokedFunctionNameVisitor();
+      privateBarrierB.expression.accept(barrierCalls);
+      expect(
+        barrierCalls.names,
+        contains(
+          'dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody',
+        ),
+        reason: 'Barrier B must call the real plural v108 SQLite authority',
+      );
+      final barrierSource = privateBarrierB.expression.toSource();
+      for (final parameter in const <String>[
+        'expectedPendingLocalPath',
+        'hasOwnedPendingCompletion',
+        'senderTransportPeerId',
+        'contactAccountPeerId',
+        'authority',
+        'expectedSnapshot',
+        'targetBindings',
+      ]) {
+        expect(
+          '$parameter: $parameter'.allMatches(barrierSource),
+          hasLength(1),
+          reason: '$parameter must pass through plural Barrier B verbatim',
+        );
+      }
+      expect(
+        RegExp(r'\btargetBinding\b').hasMatch(barrierSource),
+        isFalse,
+        reason: 'production must not select one target before Barrier B',
+      );
+    },
+  );
+
   test('TC-350-02c production wires fresh forward authorization exactly once', () {
     final production = File(_productionPath).readAsStringSync();
 
     expect(
       'authorizedForwardDedupKey'.allMatches(production),
-      hasLength(3),
+      hasLength(6),
       reason:
-          'exactly one declaration plus one verbatim pass-through: production '
-          'must never drop the token and never derive a second one',
+          'exactly two delegate declarations plus one verbatim named '
+          'pass-through per delegate: fresh single-target and fresh linked '
+          'fanout',
     );
     expect(
       'authorizedForwardDedupKey: authorizedForwardDedupKey'.allMatches(
         production,
       ),
-      hasLength(1),
-      reason: 'the token reaches the SQLite helper unmodified',
+      hasLength(2),
+      reason:
+          'both fresh-generation delegates reach their SQLite helper '
+          'unmodified',
     );
     expect(
       production,
@@ -651,6 +773,20 @@ void main() {
       ),
       reason:
           'the wired capability must forward the caller-supplied token verbatim',
+    );
+    expect(
+      production,
+      matches(
+        RegExp(
+          r'dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration:\s*\n?\s*\(\{[\s\S]{0,600}?'
+          r'authorizedForwardDedupKey,\s*\n?\s*\}\)\s*=>\s*'
+          r'dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration\s*\([\s\S]{0,600}?'
+          r'authorizedForwardDedupKey:\s*authorizedForwardDedupKey,',
+        ),
+      ),
+      reason:
+          'the linked-fanout capability must forward the caller-supplied '
+          'token verbatim',
     );
   });
 
@@ -1338,6 +1474,908 @@ void main() {
     });
   });
 
+  testWidgets(
+    'TC-364-04a linked runtime exposes only protected blob-free group content',
+    (tester) async {
+      final phases = <String>[];
+      final phaseQuiescence = ProtectedGroupContentRuntimeQuiescence(
+        pauseInboundAdmission: () async => phases.add('pause'),
+        resumeInboundAdmission: () => phases.add('resume'),
+      );
+      final runtime = DirectBlobFreeLinkedServices(
+        initializeBridge: () async => phases.add('bridge'),
+        startMessageRouter: () => phases.add('router'),
+        startChatMessageListener: () => phases.add('chat'),
+        startReactionListener: () => phases.add('reaction'),
+        startMessageDeletionListener: () => phases.add('deletion'),
+        startDeliveryReceiptListener: () => phases.add('receipt'),
+        startLinkedTransport: () async {
+          phases.add('transport');
+          return true;
+        },
+        pauseLinkedGroupContentAdmission: phaseQuiescence.pause,
+        drainOfflineInbox: () async => phases.add('inbox'),
+        materializeLinkedGroupBootstrap: () async => phases.add('bootstrap'),
+        replayLinkedGroupAuthority: () async => phases.add('authority'),
+        resumeLinkedGroupContentAdmission: (contentPause) =>
+            contentPause.resume(),
+        replayLinkedGroupContent: () async {
+          phases.add('content');
+          return 2;
+        },
+        retryLinkedGroupContent: () async {
+          phases.add('retry');
+          return 1;
+        },
+        drainLinkedGroupNotificationDisplayCustody: () async =>
+            phases.add('notification'),
+        refreshLinkedGroupList: () async => phases.add('refresh'),
+        drainExactBlobFreeFanoutOutboxes: () async {
+          phases.add('direct');
+          return 0;
+        },
+      );
+      expect(await runtime.start(), isTrue);
+      expect(phases, <String>[
+        'bridge',
+        'router',
+        'chat',
+        'reaction',
+        'deletion',
+        'receipt',
+        'transport',
+        'pause',
+        'inbox',
+        'bootstrap',
+        'authority',
+        'resume',
+        'content',
+        'retry',
+        'notification',
+        'refresh',
+        'direct',
+      ]);
+
+      final refusedRecovery = <String>[];
+      final refusedRuntime = DirectBlobFreeLinkedServices(
+        initializeBridge: () async => refusedRecovery.add('bridge'),
+        startMessageRouter: () => refusedRecovery.add('router'),
+        startChatMessageListener: () => refusedRecovery.add('chat'),
+        startReactionListener: () => refusedRecovery.add('reaction'),
+        startMessageDeletionListener: () => refusedRecovery.add('deletion'),
+        startDeliveryReceiptListener: () => refusedRecovery.add('receipt'),
+        startLinkedTransport: () async {
+          refusedRecovery.add('transport-refused');
+          return false;
+        },
+        drainOfflineInbox: () async => refusedRecovery.add('must-not-drain'),
+        drainExactBlobFreeFanoutOutboxes: () async {
+          refusedRecovery.add('must-not-fanout');
+          return 0;
+        },
+      );
+      expect(await refusedRuntime.start(), isFalse);
+      expect(refusedRecovery, <String>[
+        'bridge',
+        'router',
+        'chat',
+        'reaction',
+        'deletion',
+        'receipt',
+        'transport-refused',
+      ]);
+
+      // Pause closes outgoing admission before its first await and then joins
+      // the in-flight protected store/CAS with inbound replay quiescence.
+      final custodyRows = <String>['strict-row'];
+      final storeEntered = Completer<void>();
+      final releaseStore = Completer<void>();
+      final lifecycle = <String>[];
+      var retryStarts = 0;
+      final quiescence = ProtectedGroupContentRuntimeQuiescence(
+        pauseInboundAdmission: () async {
+          lifecycle.add('inbound-paused');
+        },
+        resumeInboundAdmission: () {
+          lifecycle.add('inbound-resumed');
+        },
+      );
+      Future<int> retry() => quiescence.runOutgoing<int>(
+        blockedValue: 0,
+        operation: () async {
+          retryStarts += 1;
+          lifecycle.add('retry-$retryStarts');
+          if (retryStarts == 1) {
+            storeEntered.complete();
+            await releaseStore.future;
+            return 0;
+          }
+          custodyRows.clear();
+          return 1;
+        },
+      );
+
+      final heldRetry = retry();
+      await storeEntered.future;
+      var pauseCompleted = false;
+      var pauseFlushStarts = 0;
+      final pauseLease = quiescence.pause();
+      final pause = pauseLease.quiesced.then<void>((_) async {
+        pauseCompleted = true;
+        pauseFlushStarts += 1;
+      });
+      await tester.pump();
+      expect(lifecycle, contains('inbound-paused'));
+      expect(pauseCompleted, isFalse);
+      expect(pauseFlushStarts, 0, reason: 'pause flush waits for held custody');
+      expect(await retry(), 0, reason: 'paused admission starts no new retry');
+      expect(retryStarts, 1);
+      expect(custodyRows, <String>['strict-row']);
+
+      releaseStore.complete();
+      expect(await heldRetry, 0);
+      await pause;
+      expect(pauseCompleted, isTrue);
+      expect(pauseFlushStarts, 1);
+      expect(await retry(), 0, reason: 'pause stays closed after draining');
+      expect(await pauseLease.resume(), isTrue);
+      expect(lifecycle.last, 'inbound-resumed');
+      expect(await retry(), 1);
+      expect(retryStarts, 2);
+      expect(custodyRows, isEmpty, reason: 'resumed retry converges custody');
+
+      // Lifecycle callbacks are unawaited. A newer background pause must
+      // invalidate an older resume recovery before it can reopen admission.
+      final resumeDrainGate = Completer<void>();
+      final resumeRecoveryPause = quiescence.pause();
+      await resumeRecoveryPause.quiesced;
+      final staleResume = (() async {
+        await resumeDrainGate.future;
+        return resumeRecoveryPause.resume();
+      })();
+      final newerBackgroundPause = quiescence.pause();
+      await newerBackgroundPause.quiesced;
+      resumeDrainGate.complete();
+      expect(await staleResume, isFalse);
+      expect(
+        lifecycle.where((phase) => phase == 'inbound-resumed'),
+        hasLength(1),
+      );
+      expect(await retry(), 0, reason: 'newer pause remains closed');
+      expect(retryStarts, 2);
+
+      final nextResumePause = quiescence.pause();
+      await nextResumePause.quiesced;
+      expect(await nextResumePause.resume(), isTrue);
+      expect(await retry(), 1);
+      expect(retryStarts, 3);
+
+      final independentRuntime = ProtectedGroupContentRuntimeQuiescence(
+        pauseInboundAdmission: () async {},
+        resumeInboundAdmission: () {},
+      );
+      expect(
+        await independentRuntime.runOutgoing<int>(
+          blockedValue: 0,
+          operation: () async => 7,
+        ),
+        7,
+        reason: 'pause state is runtime-local, never process-global',
+      );
+
+      final group = GroupModel(
+        id: 'linked-group',
+        name: 'Linked',
+        type: GroupType.chat,
+        topicName: 'unused-topic',
+        createdAt: DateTime.utc(2026, 8, 13),
+        createdBy: 'peer-a',
+        myRole: GroupRole.member,
+      );
+      final ordinary = GroupMessage(
+        id: 'ordinary',
+        groupId: group.id,
+        senderPeerId: 'peer-a',
+        text: 'ordinary text',
+        timestamp: DateTime.utc(2026, 8, 13),
+        createdAt: DateTime.utc(2026, 8, 13),
+      );
+      var currentProjection = group;
+      final markedReadGroupIds = <String>[];
+      final tracker = ActiveConversationTracker();
+      await tester.pumpWidget(
+        MaterialApp(
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: LinkedGroupConversationWired(
+            group: group,
+            loadCurrentGroup: (_) async => currentProjection,
+            loadProtectedMessages: (_) async => <GroupMessage>[ordinary],
+            loadProtectedReactions: (_) async => const {},
+            markVisibleMessagesRead: (groupId, messageIds) async {
+              expectSync(messageIds, <String>[ordinary.id]);
+              markedReadGroupIds.add(groupId);
+            },
+            groupConversationTracker: tracker,
+            isAuthoritySettled: (_) async => true,
+            canAuthorProtectedContent: (_) async => true,
+            sendProtectedText: (_, _) async => true,
+            toggleProtectedReaction:
+                ({
+                  required groupId,
+                  required message,
+                  required emoji,
+                  required remove,
+                }) async => true,
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump();
+      expect(markedReadGroupIds, <String>[group.id]);
+      expect(find.text('Write something...'), findsOneWidget);
+      currentProjection = group.copyWith(
+        isDissolved: true,
+        dissolvedAt: DateTime.utc(2026, 8, 13, 1),
+        dissolvedBy: 'peer-a',
+      );
+      await refreshLinkedGroupStatusProjection();
+      await tester.pump();
+      await tester.pump();
+      expect(
+        find.byKey(const ValueKey('group-read-only-banner')),
+        findsOneWidget,
+      );
+      expect(find.text('Write something...'), findsNothing);
+      expect(isEligibleLinkedProtectedGroupMessage(group, ordinary), isTrue);
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group.copyWith(type: GroupType.announcement),
+          ordinary,
+        ),
+        isTrue,
+        reason: 'ordinary announcement rows remain reaction eligible',
+      );
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group.copyWith(type: GroupType.qa),
+          ordinary,
+        ),
+        isFalse,
+      );
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group,
+          ordinary.copyWith(text: r'{"__sys":"member_removed"}'),
+        ),
+        isFalse,
+      );
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group,
+          ordinary.copyWith(quotedMessageId: 'parent'),
+        ),
+        isTrue,
+        reason: 'ordinary quoted rows remain protected-content eligible',
+      );
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group,
+          ordinary.copyWith(isForwarded: true),
+        ),
+        isFalse,
+      );
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group,
+          ordinary.copyWith(
+            privateMediaPolicy: const GroupPrivateMediaPolicy.viewOnce(),
+          ),
+        ),
+        isFalse,
+      );
+      expect(
+        isEligibleLinkedProtectedGroupMessage(
+          group,
+          ordinary.copyWith(
+            media: const <MediaAttachment>[
+              MediaAttachment(
+                id: 'blob',
+                messageId: 'ordinary',
+                mime: 'image/jpeg',
+                size: 1,
+                mediaType: 'image',
+                downloadStatus: 'done',
+                createdAt: '2026-08-13T00:00:00.000Z',
+              ),
+            ],
+          ),
+        ),
+        isFalse,
+      );
+
+      final evidencedMessage = ordinary.copyWith(
+        transportPeerId: 'transport-a',
+        logicalDeliveryId: ordinary.id,
+        keyGeneration: 1,
+      );
+      final messageAt = fixedGroupContentUtc(evidencedMessage.timestamp);
+      final messageEvidence = <String, Object?>{
+        'group_id': group.id,
+        'event_type': protectedGroupMessageEventType,
+        'source_peer_id': evidencedMessage.senderPeerId,
+        'source_event_id': protectedGroupMessageSourceEventId(
+          evidencedMessage.id,
+        ),
+        'source_timestamp': messageAt,
+        'canonical_payload': jsonEncode(<String, Object?>{
+          'custodyKind': groupContentCustodyKind,
+          'groupId': group.id,
+          'payloadType': groupOfflineReplayPayloadTypeMessage,
+          'contentEventId': evidencedMessage.id,
+          'logicalSenderPeerId': evidencedMessage.senderPeerId,
+          'senderTransportPeerId': evidencedMessage.transportPeerId,
+          'authorityKeyEpoch': evidencedMessage.keyGeneration,
+          'payload': <String, Object?>{
+            'groupId': group.id,
+            'messageId': evidencedMessage.id,
+            'senderId': evidencedMessage.senderPeerId,
+            'transportPeerId': evidencedMessage.transportPeerId,
+            'logicalDeliveryId': evidencedMessage.logicalDeliveryId,
+            'keyEpoch': evidencedMessage.keyGeneration,
+            'text': evidencedMessage.text,
+            'timestamp': messageAt,
+          },
+        }),
+      };
+      expect(
+        isExactLinkedProtectedMessageEvidence(
+          groupId: group.id,
+          message: evidencedMessage,
+          evidenceRow: messageEvidence,
+          terminalRows: const [],
+        ),
+        isTrue,
+      );
+      expect(
+        isExactLinkedProtectedMessageEvidence(
+          groupId: group.id,
+          message: evidencedMessage.copyWith(text: 'legacy mutation'),
+          evidenceRow: messageEvidence,
+          terminalRows: const [],
+        ),
+        isFalse,
+      );
+      final messageTerminal = <String, Object?>{
+        'group_id': group.id,
+        'event_type': protectedGroupContentTerminalEventType,
+        'canonical_payload': jsonEncode(<String, Object?>{
+          'reasonCode': 'authority_reconciliation_invalidated',
+          'payloadType': groupOfflineReplayPayloadTypeMessage,
+          'contentEventId': evidencedMessage.id,
+        }),
+      };
+      expect(
+        isExactLinkedProtectedMessageEvidence(
+          groupId: group.id,
+          message: evidencedMessage,
+          evidenceRow: messageEvidence,
+          terminalRows: [messageTerminal],
+        ),
+        isFalse,
+      );
+
+      Map<String, Object?> reactionEvidence({
+        required String action,
+        required DateTime authoredAt,
+      }) {
+        final timestamp = fixedGroupContentUtc(authoredAt);
+        final transition = buildGroupReactionTransitionId(
+          groupId: group.id,
+          messageId: evidencedMessage.id,
+          logicalActorPeerId: 'peer-a',
+          action: action,
+          emoji: '👍',
+          timestamp: authoredAt,
+        );
+        final payload = <String, Object?>{
+          'id': deterministicGroupReactionStateId(
+            groupId: group.id,
+            messageId: evidencedMessage.id,
+            logicalActorPeerId: 'peer-a',
+          ),
+          'messageId': evidencedMessage.id,
+          'emoji': '👍',
+          'action': action,
+          'senderPeerId': 'peer-a',
+          'timestamp': timestamp,
+          'eventId': transition,
+        };
+        return <String, Object?>{
+          'group_id': group.id,
+          'event_type': protectedGroupReactionEventType,
+          'source_peer_id': 'peer-a',
+          'source_event_id': protectedGroupReactionSourceEventId(transition),
+          'source_timestamp': timestamp,
+          'canonical_payload': jsonEncode(<String, Object?>{
+            'custodyKind': groupContentCustodyKind,
+            'groupId': group.id,
+            'payloadType': groupOfflineReplayPayloadTypeReaction,
+            'contentEventId': transition,
+            'logicalSenderPeerId': 'peer-a',
+            'payload': payload,
+          }),
+        };
+      }
+
+      final addEvidence = reactionEvidence(
+        action: 'add',
+        authoredAt: DateTime.utc(2026, 8, 13, 12),
+      );
+      final addPayload =
+          jsonDecode(addEvidence['canonical_payload']! as String)['payload']
+              as Map<String, dynamic>;
+      final reaction = MessageReaction(
+        id: addPayload['id'] as String,
+        messageId: addPayload['messageId'] as String,
+        emoji: addPayload['emoji'] as String,
+        senderPeerId: addPayload['senderPeerId'] as String,
+        timestamp: addPayload['timestamp'] as String,
+        createdAt: addPayload['timestamp'] as String,
+      );
+      expect(
+        isExactLinkedProtectedReactionEvidence(
+          groupId: group.id,
+          reaction: reaction,
+          evidenceRows: [addEvidence],
+          terminalRows: const [],
+        ),
+        isTrue,
+      );
+      expect(
+        isExactLinkedProtectedReactionEvidence(
+          groupId: group.id,
+          reaction: reaction,
+          evidenceRows: [
+            addEvidence,
+            reactionEvidence(
+              action: 'remove',
+              authoredAt: DateTime.utc(2026, 8, 13, 12, 0, 1),
+            ),
+          ],
+          terminalRows: const [],
+        ),
+        isFalse,
+        reason: 'the latest exact transition, including REMOVE, owns display',
+      );
+
+      final production = File(_productionPath).readAsStringSync();
+      final root = File(_applicationRootPath).readAsStringSync();
+      final restrictedRuntime = File(
+        'lib/app/bootstrap/direct_blob_free_linked_services.dart',
+      ).readAsStringSync();
+      final list = File(
+        'lib/features/identity/presentation/screens/'
+        'linked_device_setup_wired.dart',
+      ).readAsStringSync();
+      final narrow = File(
+        'lib/features/groups/presentation/screens/'
+        'linked_group_conversation_wired.dart',
+      ).readAsStringSync();
+      expect(
+        'replayLinkedGroupContent:'.allMatches(production),
+        hasLength(2),
+        reason: 'cold and resume composition both reach the fixed point',
+      );
+      expect(
+        'strictContentOnly: true'.allMatches(production),
+        hasLength(2),
+        reason: 'the restricted retry can never drain legacy group work',
+      );
+      expect(
+        'linkedGroupContentQuiescence.runOutgoing<int>('.allMatches(production),
+        hasLength(2),
+        reason: 'cold and resume strict retries share one runtime pause owner',
+      );
+      expect(
+        'linkedGroupContentQuiescence.runOutgoing<bool>('.allMatches(
+          production,
+        ),
+        hasLength(2),
+        reason: 'fresh linked message and reaction custody share that owner',
+      );
+      expect(
+        'linkedGroupContentQuiescence.pause'.allMatches(production),
+        hasLength(2),
+      );
+      expect('contentPause.resume()'.allMatches(production), hasLength(2));
+      final resumeFixedPointStages = <int>[
+        root.indexOf('await widget.replayLinkedGroupAuthority?.call();'),
+        root.indexOf(
+          'final groupDrain = await '
+          'drainProtectedGroupContentMediaFixedPoint(',
+        ),
+        root.indexOf('replayContent: widget.replayLinkedGroupContent,'),
+        root.indexOf(
+          'drainOutgoingMedia: widget.drainLinkedGroupOutgoingMedia,',
+        ),
+        root.indexOf('retryContent: widget.retryLinkedGroupContent,'),
+        root.indexOf(
+          'drainIncomingMedia: widget.drainLinkedGroupIncomingMedia,',
+        ),
+        root.indexOf(
+          'await widget.drainLinkedGroupNotificationDisplayCustody?.call();',
+        ),
+        root.indexOf('await widget.refreshLinkedGroupList?.call();'),
+        root.indexOf(
+          'await widget.drainDirectBlobFreeLinkedOutboxes?.call() ?? 0;',
+        ),
+      ];
+      expect(resumeFixedPointStages, everyElement(greaterThanOrEqualTo(0)));
+      expect(
+        resumeFixedPointStages,
+        orderedEquals(<int>[...resumeFixedPointStages]..sort()),
+        reason:
+            'linked resume uses the shared strict content/media fixed point '
+            'before display, refresh, and the blob-free direct drain',
+      );
+
+      final coldFixedPointStages = <int>[
+        restrictedRuntime.indexOf('await replayLinkedGroupAuthority?.call();'),
+        restrictedRuntime.indexOf(
+          'await drainProtectedGroupContentMediaFixedPoint(',
+        ),
+        restrictedRuntime.indexOf('replayContent: replayLinkedGroupContent,'),
+        restrictedRuntime.indexOf(
+          'drainOutgoingMedia: drainLinkedGroupOutgoingMedia,',
+        ),
+        restrictedRuntime.indexOf('retryContent: retryLinkedGroupContent,'),
+        restrictedRuntime.indexOf(
+          'drainIncomingMedia: drainLinkedGroupIncomingMedia,',
+        ),
+        restrictedRuntime.indexOf(
+          'await drainLinkedGroupNotificationDisplayCustody?.call();',
+        ),
+        restrictedRuntime.indexOf('await refreshLinkedGroupList?.call();'),
+        restrictedRuntime.indexOf('await drainExactBlobFreeFanoutOutboxes();'),
+      ];
+      expect(coldFixedPointStages, everyElement(greaterThanOrEqualTo(0)));
+      expect(
+        coldFixedPointStages,
+        orderedEquals(<int>[...coldFixedPointStages]..sort()),
+        reason:
+            'the restricted cold runtime shares the same fixed-point helper '
+            'and remains blob-free after protected convergence',
+      );
+      final linkedPause = root.indexOf('final linkedGroupContentPause =');
+      final linkedPauseCall = root.indexOf(
+        'widget.pauseLinkedGroupContentAdmission',
+        linkedPause,
+      );
+      final linkedPauseCallEnd = root.indexOf('.call();', linkedPauseCall);
+      final linkedPauseContinuation = root.indexOf('unawaited(', linkedPause);
+      final linkedPauseLocalSweep = root.indexOf(
+        'final result = await handleAppPaused(',
+        linkedPause,
+      );
+      final linkedPauseFlush = root.indexOf(
+        'await widget.flushLinkedGroupAuthorityOnPause?.call();',
+        linkedPause,
+      );
+      expect(linkedPause, greaterThanOrEqualTo(0));
+      expect(linkedPause, lessThan(linkedPauseCall));
+      expect(linkedPauseCall, lessThan(linkedPauseCallEnd));
+      expect(linkedPauseCallEnd, lessThan(linkedPauseContinuation));
+      expect(linkedPauseContinuation, lessThan(linkedPauseLocalSweep));
+      expect(linkedPauseLocalSweep, lessThan(linkedPauseFlush));
+      expect(
+        root,
+        contains('await widget.resumeLinkedGroupContentAdmission?.call('),
+      );
+      expect(
+        root,
+        contains('linkedGroupContentPause,'),
+        reason: 'resume is generation-bound to its exact recovery pause',
+      );
+
+      expect(list, contains('isLinkedGroupAuthoritySettled!(group.id)'));
+      expect(list, contains('linkedGroupConversationBuilder!'));
+      expect(list, contains('group.type == GroupType.qa'));
+      expect(narrow, contains('isEligibleLinkedProtectedGroupMessage'));
+      expect(narrow, contains('message.privateMediaPolicy =='));
+      expect(narrow, contains('message.media.isEmpty'));
+      expect(
+        narrow,
+        isNot(contains('message.quotedMessageId == null')),
+        reason: 'ordinary quote metadata is a protected-content projection',
+      );
+      expect(narrow, contains('!message.isForwarded'));
+      expect(narrow, contains('final generation = ++_reloadGeneration;'));
+      expect(
+        'widget.isAuthoritySettled(widget.group.id)'.allMatches(narrow).length,
+        greaterThanOrEqualTo(3),
+        reason:
+            'slow reload and the shared per-tap requalification both recheck '
+            'settled authority',
+      );
+      expect(narrow, contains('generation != _reloadGeneration'));
+      expect(narrow, contains('widget.loadCurrentGroup(widget.group.id)'));
+      expect(narrow, contains('group: _currentGroup'));
+      expect(narrow, contains('message.isIncoming && message.readAt == null'));
+      expect(narrow, contains('with WidgetsBindingObserver'));
+      expect(narrow, contains('if (_isLifecycleResumed &&'));
+      expect(
+        production,
+        contains('markVisibleMessagesRead: (groupId, messageIds) async {'),
+      );
+      expect(production, contains('AND read_at IS NULL AND id IN ('));
+      expect(narrow, contains('unreadVisibleIds.isNotEmpty'));
+      expect(narrow, contains('groupConversationTracker.isViewing('));
+      expect(narrow, contains('groupConversationTracker.setActive('));
+      expect(narrow, contains('groupConversationTracker.clearIfActive('));
+      expect(
+        'groupMessageListener.retryPendingNotificationDisplays'.allMatches(
+          production,
+        ),
+        hasLength(3),
+        reason:
+            'cold, resume, and exact visible-read retirement drain READY '
+            'protected display custody',
+      );
+      expect(narrow, contains('bool get _canCompose =>'));
+      expect(
+        narrow,
+        contains(
+          'bool get _canReact => _hasActiveAuthority && _authoringQualified;',
+        ),
+      );
+      expect(narrow, contains('widget.canAuthorProtectedContent('));
+      expect(narrow, contains('canWrite: _canCompose'));
+      expect(narrow, contains('onReactionSelected: _canReact'));
+      expect(narrow, contains('onReactionTap: _canReact'));
+      expect(narrow, isNot(contains('onReactionSelected: _canCompose')));
+      expect(narrow, isNot(contains('onReactionTap: _canCompose')));
+      expect(
+        production,
+        contains('loadCurrentGroup: groupRepository.getGroup'),
+      );
+      expect(
+        RegExp(r'(?<!Linked)\bGroupConversationWired\(').hasMatch(narrow),
+        isFalse,
+      );
+      expect(
+        narrow,
+        contains('onAttach: _canCompose && widget.attachOrdinaryMedia != null'),
+        reason:
+            'Plan 365 admits only the narrow strict-media capability through '
+            'the linked protected surface',
+      );
+      expect(
+        narrow,
+        contains(
+          'onRecordStart: _canCompose && '
+          'widget.startVoiceRecording != null',
+        ),
+        reason:
+            'voice remains the same qualified ordinary-media capability, not '
+            'a generic group runtime',
+      );
+      for (final forbidden in const <String>[
+        'onOpenPrivateMedia:',
+        'onMediaShare:',
+        'onQuoteReply:',
+        'onInfo:',
+      ]) {
+        expect(narrow, isNot(contains(forbidden)));
+      }
+      expect(
+        production,
+        contains('reconcileProtectedGroupContentForAuthority('),
+        reason: 'later authority must reconcile before COMPLETE/UI exposure',
+      );
+      expect(
+        production,
+        contains('hasUnfinishedProtectedContentAuthority(groupId)'),
+        reason: 'linked UI and authoring fail closed during reconciliation',
+      );
+      expect(
+        production,
+        contains("reasonCode: 'authority_reconciliation_pending'"),
+        reason: 'strict ingress waits without consuming a retry attempt',
+      );
+      expect(
+        production,
+        contains(
+          'setGroupContentAuthoringResolver(\n'
+          '      groupRepository,\n'
+          '      resolveGroupContentAuthoringForSend,',
+        ),
+        reason: 'every production caller reaches one strict authoring owner',
+      );
+      final authoringResolverSource = File(
+        'lib/features/groups/application/'
+        'protected_group_content_authoring_resolver.dart',
+      ).readAsStringSync();
+      expect(
+        authoringResolverSource,
+        contains('installation.isOrdinaryPrimary'),
+        reason:
+            'the reusable production resolver must support ordinary primary',
+      );
+      final sendSource = File(
+        'lib/features/groups/application/send_group_message_use_case.dart',
+      ).readAsStringSync();
+      expect(
+        sendSource,
+        contains("'strict_group_content_authority_unavailable'"),
+        reason: 'initialized callers never fall through on a null context',
+      );
+      final reactionSource = File(
+        'lib/features/groups/application/send_group_reaction_use_case.dart',
+      ).readAsStringSync();
+      expect(
+        reactionSource.indexOf(
+          'final snapshot = await runGroupAuthorityPhase(',
+        ),
+        lessThan(reactionSource.indexOf('resolveGroupContentAuthoring(')),
+        reason: 'reaction authority resolves inside the keyed snapshot phase',
+      );
+      expect(
+        reactionSource,
+        contains('authorityMatchesAssumingPhase'),
+        reason:
+            'strict reaction staging and completion recheck the exact snapshot',
+      );
+
+      final runner = File(
+        'integration_test/_support/invite_reliability_runner_contract.dart',
+      ).readAsStringSync();
+      expect(runner, contains('physical-Android first'));
+      expect(runner, contains('Android-emulator'));
+    },
+  );
+
+  test(
+    'TC-365-04a linked restricted runtime owns only strict group media',
+    () async {
+      final phases = <String>[];
+      var fixedPointPass = 0;
+      final runtime = DirectBlobFreeLinkedServices(
+        initializeBridge: () async => phases.add('bridge'),
+        startMessageRouter: () => phases.add('router'),
+        startChatMessageListener: () => phases.add('chat'),
+        startReactionListener: () => phases.add('reaction'),
+        startMessageDeletionListener: () => phases.add('deletion'),
+        startDeliveryReceiptListener: () => phases.add('receipt'),
+        startLinkedTransport: () async {
+          phases.add('transport');
+          return true;
+        },
+        drainOfflineInbox: () async => phases.add('inbox'),
+        materializeLinkedGroupBootstrap: () async => phases.add('bootstrap'),
+        replayLinkedGroupAuthority: () async => phases.add('authority'),
+        replayLinkedGroupContent: () async {
+          phases.add('content');
+          return fixedPointPass == 0 ? 1 : 0;
+        },
+        drainLinkedGroupOutgoingMedia: () async {
+          phases.add('group-media-outgoing');
+          return fixedPointPass == 0 ? 2 : 0;
+        },
+        retryLinkedGroupContent: () async {
+          phases.add('content-retry');
+          return fixedPointPass == 0 ? 1 : 0;
+        },
+        drainLinkedGroupIncomingMedia: () async {
+          phases.add('group-media-incoming');
+          final progress = fixedPointPass == 0 ? 3 : 0;
+          fixedPointPass += 1;
+          return progress;
+        },
+        drainLinkedGroupNotificationDisplayCustody: () async =>
+            phases.add('notification'),
+        refreshLinkedGroupList: () async => phases.add('refresh'),
+        drainExactBlobFreeFanoutOutboxes: () async {
+          phases.add('direct');
+          return 0;
+        },
+      );
+      expect(await runtime.start(), isTrue);
+      expect(phases, <String>[
+        'bridge',
+        'router',
+        'chat',
+        'reaction',
+        'deletion',
+        'receipt',
+        'transport',
+        'inbox',
+        'bootstrap',
+        'authority',
+        'content',
+        'group-media-outgoing',
+        'content-retry',
+        'group-media-incoming',
+        'content',
+        'group-media-outgoing',
+        'content-retry',
+        'group-media-incoming',
+        'notification',
+        'refresh',
+        'direct',
+      ]);
+
+      final outgoingQuiesced = Completer<void>();
+      final incomingQuiesced = Completer<void>();
+      final lifecycle = <String>[];
+      final quiescence = ProtectedGroupContentRuntimeQuiescence(
+        pauseInboundAdmission: () async => lifecycle.add('content-paused'),
+        resumeInboundAdmission: () => lifecycle.add('content-resumed'),
+        quiesceOutgoingMedia: () async {
+          lifecycle.add('outgoing-media-quiescing');
+          await outgoingQuiesced.future;
+        },
+        quiesceIncomingMedia: () async {
+          lifecycle.add('incoming-media-quiescing');
+          await incomingQuiesced.future;
+        },
+        resumeMedia: () => lifecycle.add('media-resumed'),
+      );
+      final lease = quiescence.pause();
+      var pauseCompleted = false;
+      final paused = lease.quiesced.then((_) => pauseCompleted = true);
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        lifecycle,
+        containsAll(<String>[
+          'content-paused',
+          'outgoing-media-quiescing',
+          'incoming-media-quiescing',
+        ]),
+      );
+      expect(pauseCompleted, isFalse);
+      outgoingQuiesced.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(pauseCompleted, isFalse);
+      incomingQuiesced.complete();
+      await paused;
+      expect(await lease.resume(), isTrue);
+      expect(lifecycle.sublist(lifecycle.length - 2), <String>[
+        'content-resumed',
+        'media-resumed',
+      ]);
+
+      final production = File(_productionPath).readAsStringSync();
+      final groupCleanup = production.indexOf(
+        "'group_media_blob_local_cleanup'",
+      );
+      final networkBackfill = production.indexOf("'group_context_backfill'");
+      expect(groupCleanup, greaterThanOrEqualTo(0));
+      expect(groupCleanup, lessThan(networkBackfill));
+      expect(
+        production,
+        contains(
+          'preparedGroupMediaBlobCustodyCoordinator\n'
+          '          .drainOutgoingCleanupAndOrphans(',
+        ),
+        reason:
+            'cold startup must retire terminal rows and crash-orphan artifacts '
+            'through the existing strict group-media lifecycle owner',
+      );
+      final uploadRetry = File(
+        'lib/features/groups/application/'
+        'retry_incomplete_group_uploads_use_case.dart',
+      ).readAsStringSync();
+      expect(
+        uploadRetry,
+        contains('.drainOutgoingCleanupAndOrphans('),
+        reason:
+            'automatic upload recovery must keep cleanup convergence alive '
+            'after cold startup without adding another scheduler',
+      );
+    },
+  );
+
   test(
     'TC-363-03a linked startup defers without identity and orders protected recovery before read-only refresh',
     () async {
@@ -1395,21 +2433,55 @@ void main() {
         'await replayLinkedGroupAuthority?.call();',
         coldStart,
       );
+      final coldContent = cold.indexOf(
+        'replayContent: replayLinkedGroupContent,',
+        coldStart,
+      );
+      final coldRetry = cold.indexOf(
+        'retryContent: retryLinkedGroupContent,',
+        coldStart,
+      );
       final coldRefresh = cold.indexOf(
         'await refreshLinkedGroupList?.call();',
+        coldStart,
+      );
+      final coldNotification = cold.indexOf(
+        'await drainLinkedGroupNotificationDisplayCustody?.call();',
         coldStart,
       );
       final coldDirect = cold.indexOf(
         'await drainExactBlobFreeFanoutOutboxes();',
         coldStart,
       );
+      expect(<int>[
+        coldDrain,
+        coldBootstrap,
+        coldAuthority,
+        coldContent,
+        coldRetry,
+        coldNotification,
+        coldRefresh,
+        coldDirect,
+      ], everyElement(isNonNegative));
       expect(
-        <int>[coldDrain, coldBootstrap, coldAuthority, coldRefresh, coldDirect],
+        <int>[
+          coldDrain,
+          coldBootstrap,
+          coldAuthority,
+          coldContent,
+          coldRetry,
+          coldNotification,
+          coldRefresh,
+          coldDirect,
+        ],
         orderedEquals(
           <int>[
             coldDrain,
             coldBootstrap,
             coldAuthority,
+            coldContent,
+            coldRetry,
+            coldNotification,
             coldRefresh,
             coldDirect,
           ]..sort(),
@@ -1433,15 +2505,51 @@ void main() {
         'await widget.replayLinkedGroupAuthority?.call();',
         linkedResume,
       );
+      final resumeContent = root.indexOf(
+        'replayContent: widget.replayLinkedGroupContent,',
+        linkedResume,
+      );
+      final resumeRetry = root.indexOf(
+        'retryContent: widget.retryLinkedGroupContent,',
+        linkedResume,
+      );
       final resumeRefresh = root.indexOf(
         'await widget.refreshLinkedGroupList?.call();',
         linkedResume,
       );
+      final resumeNotification = root.indexOf(
+        'await widget.drainLinkedGroupNotificationDisplayCustody?.call();',
+        linkedResume,
+      );
+      expect(<int>[
+        resumeDrain,
+        resumeBootstrap,
+        resumeAuthority,
+        resumeContent,
+        resumeRetry,
+        resumeNotification,
+        resumeRefresh,
+      ], everyElement(isNonNegative));
       expect(
-        <int>[resumeDrain, resumeBootstrap, resumeAuthority, resumeRefresh],
+        <int>[
+          resumeDrain,
+          resumeBootstrap,
+          resumeAuthority,
+          resumeContent,
+          resumeRetry,
+          resumeNotification,
+          resumeRefresh,
+        ],
         orderedEquals(
-          <int>[resumeDrain, resumeBootstrap, resumeAuthority, resumeRefresh]
-            ..sort(),
+          <int>[
+            resumeDrain,
+            resumeBootstrap,
+            resumeAuthority,
+            resumeContent,
+            resumeRetry,
+            resumeNotification,
+            resumeRefresh,
+          ]..sort(),
         ),
       );
 
@@ -1536,6 +2644,24 @@ void main() {
       reason: 'the restricted linked owner set is composed exactly once',
     );
     expect(
+      'startLinkedTransport: () async {'.allMatches(production),
+      hasLength(1),
+      reason: 'one exact linked transport start owner precedes recovery',
+    );
+    expect(
+      'await startP2PNode('.allMatches(production),
+      hasLength(1),
+      reason:
+          'the restricted cold owner starts the qualified node exactly once',
+    );
+    expect(
+      production,
+      contains('currentNode.peerId == expectedTransportPeerId'),
+      reason:
+          'a recovery retry reuses the already-qualified linked node instead '
+          'of issuing a second start',
+    );
+    expect(
       'Future<int> drainDirectBlobFreeLinkedOutboxes() =>'.allMatches(
         production,
       ),
@@ -1589,6 +2715,34 @@ class _MessageRepositoryConstructionVisitor extends RecursiveAstVisitor<void> {
   void visitMethodInvocation(MethodInvocation node) {
     if (node.target == null &&
         node.methodName.name == 'MessageRepositoryImpl') {
+      constructions.add(node.argumentList);
+    }
+    super.visitMethodInvocation(node);
+  }
+}
+
+/// Collects every `MediaAttachmentRepositoryImpl(...)` construction in a unit.
+///
+/// Mirrors [_MessageRepositoryConstructionVisitor] so the private v114 and
+/// v108 composition proof resolves named delegates structurally instead of
+/// accepting an unrelated source-string occurrence.
+class _MediaAttachmentRepositoryConstructionVisitor
+    extends RecursiveAstVisitor<void> {
+  final List<ArgumentList> constructions = <ArgumentList>[];
+
+  @override
+  void visitInstanceCreationExpression(InstanceCreationExpression node) {
+    if (node.constructorName.type.name.lexeme ==
+        'MediaAttachmentRepositoryImpl') {
+      constructions.add(node.argumentList);
+    }
+    super.visitInstanceCreationExpression(node);
+  }
+
+  @override
+  void visitMethodInvocation(MethodInvocation node) {
+    if (node.target == null &&
+        node.methodName.name == 'MediaAttachmentRepositoryImpl') {
       constructions.add(node.argumentList);
     }
     super.visitMethodInvocation(node);

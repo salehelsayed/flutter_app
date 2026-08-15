@@ -148,6 +148,28 @@ typedef SendChatMessageFn =
       DirectEventFanoutAuthoring? directEventFanout,
     });
 
+typedef SendPrivateMediaFanoutChatMessageFn =
+    Future<(SendChatMessageResult, ConversationMessage?)> Function({
+      required P2PService p2pService,
+      required MessageRepository messageRepo,
+      required String targetPeerId,
+      required String text,
+      required String senderPeerId,
+      required String senderUsername,
+      String? messageId,
+      required bool preassignedMessageIdIsFresh,
+      String? timestamp,
+      Bridge? bridge,
+      String? recipientMlKemPublicKey,
+      String? quotedMessageId,
+      List<MediaAttachment>? mediaAttachments,
+      PrivateMediaPolicy? privateMediaPolicy,
+      MediaAttachmentRepository? mediaAttachmentRepo,
+      TransportMetrics? transportMetrics,
+      DirectEventFanoutAuthoring? directEventFanout,
+      required DirectPrivateMediaFanoutContext directPrivateMediaFanout,
+    });
+
 typedef SendVoiceMessageFn =
     Future<(SendVoiceMessageResult, ConversationMessage?)> Function({
       required P2PService p2pService,
@@ -167,6 +189,7 @@ typedef SendVoiceMessageFn =
       String? timestamp,
       String? blobId,
       EncryptedMediaArtifact? preparedArtifact,
+      DirectMediaFanoutAdmission? mediaAdmission,
     });
 
 typedef SendReactionFn =
@@ -402,6 +425,7 @@ class ConversationWired extends StatefulWidget {
   final P2PService p2pService;
   final Bridge? bridge;
   final SendChatMessageFn sendChatMessageFn;
+  final SendPrivateMediaFanoutChatMessageFn sendPrivateMediaFanoutChatMessageFn;
   final EditChatMessageFn editChatMessageFn;
   final DeleteMessageForMeFn deleteMessageForMeFn;
   final DeleteMessageForEveryoneFn deleteMessageForEveryoneFn;
@@ -529,6 +553,7 @@ class ConversationWired extends StatefulWidget {
     required this.p2pService,
     this.bridge,
     this.sendChatMessageFn = sendChatMessage,
+    this.sendPrivateMediaFanoutChatMessageFn = sendChatMessage,
     this.editChatMessageFn = editChatMessage,
     this.deleteMessageForMeFn = deleteMessageForMe,
     this.deleteMessageForEveryoneFn = deleteMessageForEveryone,
@@ -2791,54 +2816,17 @@ class _ConversationWiredState extends State<ConversationWired>
       return;
     }
 
-    // 362: delete-for-everyone on a MEDIA parent has no plural owner. The v109
-    // blob-free fanout is reachable only through the text lane
-    // (`ownsDirectTextMutationInboxCustody`), and the lane classifier can never
-    // return `text` for a parent that has attachments — so every media parent,
-    // ordinary as well as private, silently single-targets today. Until that
-    // fanout exists, refuse on an initialized roster instead of reaching one
-    // device, and do it BEFORE the composer clearing below so the refusal
-    // leaves the edit draft and active quote intact.
-    if (action == _DeleteMessageAction.forEveryone &&
-        message.media.isNotEmpty) {
-      final deletionAdmission = await resolveDirectMediaFanoutAdmission(
-        mediaAttachmentRepository: widget.mediaAttachmentRepo,
-        contactAccountPeerId: _contact.peerId,
-        canServeLinkedFanout: false,
-      );
-      if (!mounted) return;
-      if (deletionAdmission.refuses) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'CONV_FL_DELETE_FOR_EVERYONE_MEDIA_FANOUT_REFUSED',
-          details: {'reason': deletionAdmission.reason},
-        );
-        ScaffoldMessenger.maybeOf(context)
-          ?..hideCurrentSnackBar()
-          ..showSnackBar(
-            SnackBar(
-              content: Text(
-                AppLocalizations.of(context)!.conversation_delete_failed,
-              ),
-              behavior: SnackBarBehavior.floating,
-            ),
-          );
-        return;
-      }
-    }
-
-    if (_editingMessageId == messageId) {
-      setState(() {
-        _editingMessageId = null;
-        _editingOriginalText = null;
-        _draftText = '';
-      });
-    }
-    if (_activeQuoteMessageId == messageId && mounted) {
-      setState(() => _activeQuoteMessageId = null);
-    }
-
     if (action == _DeleteMessageAction.forMe) {
+      if (_editingMessageId == messageId) {
+        setState(() {
+          _editingMessageId = null;
+          _editingOriginalText = null;
+          _draftText = '';
+        });
+      }
+      if (_activeQuoteMessageId == messageId && mounted) {
+        setState(() => _activeQuoteMessageId = null);
+      }
       final deleted = await _deleteMessageForMeLocally(message);
       if (deleted > 0 && mounted) {
         _removeLocalMessage(messageId);
@@ -2859,8 +2847,18 @@ class _ConversationWiredState extends State<ConversationWired>
     );
 
     if (!mounted) return;
-    if (updatedMessage != null) {
-      setState(() => _upsertMessageById(updatedMessage));
+    if (updatedMessage != null || result == SendChatMessageResult.success) {
+      setState(() {
+        if (_editingMessageId == messageId) {
+          _editingMessageId = null;
+          _editingOriginalText = null;
+          _draftText = '';
+        }
+        if (_activeQuoteMessageId == messageId) {
+          _activeQuoteMessageId = null;
+        }
+        if (updatedMessage != null) _upsertMessageById(updatedMessage);
+      });
       return;
     }
     if (result != SendChatMessageResult.success) {
@@ -3562,44 +3560,6 @@ class _ConversationWiredState extends State<ConversationWired>
 
       setState(() => _isSending = true);
 
-      // 362: a media-parent caption EDIT has the same structural gap as
-      // media-parent delete-for-everyone — `fanoutEligibleShape` excludes
-      // `hasAttachments`, and editChatMessage always supplies the parent's
-      // media, so a media parent can never resolve a fanout route and
-      // single-targets instead. Refuse on an initialized roster here, before
-      // the caller's unconditional draft clear below, so the typed caption
-      // survives the refusal.
-      if (editingMessage.media.isNotEmpty) {
-        final editAdmission = await resolveDirectMediaFanoutAdmission(
-          mediaAttachmentRepository: widget.mediaAttachmentRepo,
-          contactAccountPeerId: _contact.peerId,
-          canServeLinkedFanout: false,
-        );
-        if (!mounted) return;
-        if (editAdmission.refuses) {
-          emitFlowEvent(
-            layer: 'FL',
-            event: 'CONV_FL_CAPTION_EDIT_MEDIA_FANOUT_REFUSED',
-            details: {'reason': editAdmission.reason},
-          );
-          messenger
-            ?..hideCurrentSnackBar()
-            ..showSnackBar(
-              SnackBar(
-                content: Text(AppLocalizations.of(context)!.edit_save_failed),
-                behavior: SnackBarBehavior.floating,
-                margin: _composerClearingSnackBarMargin(),
-              ),
-            );
-          if (mounted) {
-            setState(() {
-              _isSending = false;
-              _draftText = sanitizedText;
-            });
-          }
-          return;
-        }
-      }
       try {
         final (result, message) = await widget.editChatMessageFn(
           p2pService: widget.p2pService,
@@ -3615,20 +3575,18 @@ class _ConversationWiredState extends State<ConversationWired>
 
         if (!mounted) return;
 
-        setState(() {
-          _editingMessageId = null;
-          _editingOriginalText = null;
-          _draftText = '';
-          if (message != null) {
-            _upsertMessageById(message);
-          }
-        });
-
-        if (message != null) {
-          _scrollToBottom();
-        }
-
-        if (result != SendChatMessageResult.success && message == null) {
+        if (result == SendChatMessageResult.success || message != null) {
+          setState(() {
+            _editingMessageId = null;
+            _editingOriginalText = null;
+            _draftText = '';
+            if (message != null) _upsertMessageById(message);
+          });
+          if (message != null) _scrollToBottom();
+        } else {
+          // A custody/fanout refusal is retryable user intent. Keep edit mode
+          // and the exact sanitized draft instead of clearing it optimistically.
+          setState(() => _draftText = sanitizedText);
           messenger
             ?..hideCurrentSnackBar()
             ..showSnackBar(
@@ -3710,17 +3668,28 @@ class _ConversationWiredState extends State<ConversationWired>
             (widget.mediaAttachmentRepo
                     as OutgoingDirectLinkedMediaBlobFanoutRepository)
                 .supportsDirectLinkedMediaBlobFanout;
-        // Protected/View-Once rides the private single-blob owner, which has
-        // no plural counterpart, so it can never serve an initialized roster
-        // and must refuse rather than reach one target.
+        final privateFanoutCapable =
+            widget.mediaAttachmentRepo
+                is OutgoingDirectPrivateMediaBlobFanoutGenerationRepository &&
+            (widget.mediaAttachmentRepo
+                    as OutgoingDirectPrivateMediaBlobFanoutGenerationRepository)
+                .supportsOutgoingDirectPrivateMediaBlobFanoutGeneration &&
+            widget.messageRepo
+                is OutgoingDirectPrivateMediaFanoutInboxCustodyRepository &&
+            (widget.messageRepo
+                    as OutgoingDirectPrivateMediaFanoutInboxCustodyRepository)
+                .supportsOutgoingDirectPrivateMediaFanoutInboxCustody;
+        final linkedOwnersAvailable =
+            _isOutgoingPrivateOneMoreLook(privateMediaPolicy)
+            ? privateFanoutCapable
+            : fanoutCapableRepository;
         final canServeLinkedFanout =
-            !_isOutgoingPrivateOneMoreLook(privateMediaPolicy) &&
             widget.directMediaBlobCustodyClientEnabled &&
             widget.directLinkedEventFanoutEnabled &&
             widget
                 .directLinkedMediaFanoutSelector
                 .allowsDirectLinkedMediaFanoutAuthoring &&
-            fanoutCapableRepository;
+            linkedOwnersAvailable;
         mediaAdmission = await resolveDirectMediaFanoutAdmission(
           mediaAttachmentRepository: widget.mediaAttachmentRepo,
           contactAccountPeerId: _contact.peerId,
@@ -4137,6 +4106,7 @@ class _ConversationWiredState extends State<ConversationWired>
       try {
         // Upload attachments if any
         List<MediaAttachment>? uploadedAttachments;
+        DirectPrivateMediaFanoutContext? privateMediaFanoutContext;
         if (mediaToUpload.isNotEmpty && widget.bridge != null) {
           if (!mounted) return;
           final uploadOperation = _uploadActivityController.beginOperation(
@@ -4201,6 +4171,21 @@ class _ConversationWiredState extends State<ConversationWired>
             // initial may adopt the same strict owner. The producer matrix is
             // re-checked here so a widened composer selection can never reach
             // encryption or network.
+            final privateScalarGenerationAvailable =
+                switch (blobCustodyRepository) {
+                  OutgoingDirectPrivateMediaBlobGenerationRepository
+                  repository =>
+                    repository.supportsOutgoingDirectPrivateMediaBlobGeneration,
+                  _ => false,
+                };
+            final privateFanoutGenerationAvailable =
+                switch (blobCustodyRepository) {
+                  OutgoingDirectPrivateMediaBlobFanoutGenerationRepository
+                  repository =>
+                    repository
+                        .supportsOutgoingDirectPrivateMediaBlobFanoutGeneration,
+                  _ => false,
+                };
             final strictPrivateBlobSelected =
                 widget.directMediaBlobCustodyClientEnabled &&
                 privateTransferLease != null &&
@@ -4209,11 +4194,9 @@ class _ConversationWiredState extends State<ConversationWired>
                 preparedUploads.length == 1 &&
                 mediaToUpload.length == 1 &&
                 blobCustodyRepository != null &&
-                blobCustodyRepository
-                    is OutgoingDirectPrivateMediaBlobGenerationRepository &&
-                (blobCustodyRepository
-                        as OutgoingDirectPrivateMediaBlobGenerationRepository)
-                    .supportsOutgoingDirectPrivateMediaBlobGeneration &&
+                (mediaAdmission?.requiresLinkedFanout == true
+                    ? privateFanoutGenerationAvailable
+                    : privateScalarGenerationAvailable) &&
                 privateMediaInitialProducerMatrixAllows(
                   policyVersion: privateMediaPolicy.version,
                   mode: privateMediaPolicy.mode,
@@ -4239,49 +4222,84 @@ class _ConversationWiredState extends State<ConversationWired>
                     artifactStore: DirectMediaBlobArtifactStore(),
                     prepareArtifact: widget.prepareEncryptedMediaArtifactFn,
                   );
-              // 362: the admission boundary at the top of this send already
-              // refused every initialized roster for a Protected/View-Once
-              // shape, because that shape has no plural owner. Reaching here
-              // therefore proves the incumbent single-target path is
-              // authorized. Re-resolving the roster now would reintroduce the
-              // late refusal this plan removes — one whose rows are already
-              // durable and retryable.
-              if (mediaAdmission != null &&
-                  !mediaAdmission.allowsIncumbentSingleTarget) {
-                throw StateError(
-                  'private strict upload reached after a non-incumbent '
-                  'admission (${mediaAdmission.reason})',
-                );
-              }
-              final strictResult = await coordinator.prepareAndUploadPrivate(
-                bridge: widget.bridge!,
-                identityPeerId: identity.peerId,
-                recipientPeerId: _contact.peerId,
-                expectedParent: privateStrictParent,
-                source: PreparedDirectMediaBlobSource(
-                  attachment: privateStrictAttachment,
-                  plaintextPath: plan.absoluteDurablePath,
-                ),
-                onGenerationReady:
-                    widget.p2pService.isLocalPeer(_contact.peerId)
-                    ? (artifacts) async {
-                        for (final artifact in artifacts) {
-                          await widget.p2pService.sendLocalMedia(
-                            peerId: _contact.peerId,
-                            filePath: artifact.absoluteCiphertextPath,
-                            mime: kOpaqueMediaTransportMime,
-                            mediaId: artifact.attachment.id,
-                            fromPeerId: identity.peerId,
-                            durationMs: artifact.attachment.durationMs,
-                            enc: true,
-                            encScheme: artifact.attachment.encryptionScheme,
-                          );
-                        }
-                      }
-                    : null,
+              final source = PreparedDirectMediaBlobSource(
+                attachment: privateStrictAttachment,
+                plaintextPath: plan.absoluteDurablePath,
               );
-              if (!strictResult.isComplete ||
-                  strictResult.attachments.length != 1) {
+              late final MediaAttachment strictCompletion;
+              if (mediaAdmission?.requiresLinkedFanout == true) {
+                final snapshot = mediaAdmission!.snapshot;
+                if (snapshot == null) {
+                  throw StateError(
+                    'private fanout admission omitted its roster snapshot',
+                  );
+                }
+                final fanoutResult = await coordinator
+                    .prepareAndUploadPrivateFanout(
+                      bridge: widget.bridge!,
+                      identityPeerId: identity.peerId,
+                      contactAccountPeerId: _contact.peerId,
+                      snapshot: snapshot,
+                      expectedParent: privateStrictParent,
+                      source: source,
+                    );
+                if (!fanoutResult.isComplete ||
+                    fanoutResult.attachments.length != 1) {
+                  await _uploadActivityController.complete(uploadOperation);
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) _updateComposerState(isUploading: false);
+                  return;
+                }
+                strictCompletion = fanoutResult.attachments.single;
+                privateMediaFanoutContext = DirectPrivateMediaFanoutContext(
+                  contactAccountPeerId: _contact.peerId,
+                  snapshot: snapshot,
+                  targetRows: fanoutResult.targetRows,
+                );
+              } else {
+                if (mediaAdmission != null &&
+                    !mediaAdmission.allowsIncumbentSingleTarget) {
+                  throw StateError(
+                    'private strict upload reached after an invalid '
+                    'admission (${mediaAdmission.reason})',
+                  );
+                }
+                final strictResult = await coordinator.prepareAndUploadPrivate(
+                  bridge: widget.bridge!,
+                  identityPeerId: identity.peerId,
+                  recipientPeerId: _contact.peerId,
+                  expectedParent: privateStrictParent,
+                  source: source,
+                  onGenerationReady:
+                      widget.p2pService.isLocalPeer(_contact.peerId)
+                      ? (artifacts) async {
+                          for (final artifact in artifacts) {
+                            await widget.p2pService.sendLocalMedia(
+                              peerId: _contact.peerId,
+                              filePath: artifact.absoluteCiphertextPath,
+                              mime: kOpaqueMediaTransportMime,
+                              mediaId: artifact.attachment.id,
+                              fromPeerId: identity.peerId,
+                              durationMs: artifact.attachment.durationMs,
+                              enc: true,
+                              encScheme: artifact.attachment.encryptionScheme,
+                            );
+                          }
+                        }
+                      : null,
+                );
+                if (!strictResult.isComplete ||
+                    strictResult.attachments.length != 1) {
+                  await _uploadActivityController.complete(uploadOperation);
+                  _updateLocalMessageStatus(optimisticMessage.id, 'sending');
+                  await _refreshMessageWithHydratedMedia(optimisticMessage.id);
+                  if (mounted) _updateComposerState(isUploading: false);
+                  return;
+                }
+                strictCompletion = strictResult.attachments.single;
+              }
+              if (strictCompletion.messageId != optimisticMessage.id) {
                 await _uploadActivityController.complete(uploadOperation);
                 _updateLocalMessageStatus(optimisticMessage.id, 'sending');
                 await _refreshMessageWithHydratedMedia(optimisticMessage.id);
@@ -4294,7 +4312,7 @@ class _ConversationWiredState extends State<ConversationWired>
                     await _canonicalizeStrictPrivateCompletion(
                       messageId: optimisticMessage.id,
                       plan: plan,
-                      strict: strictResult.attachments.single,
+                      strict: strictCompletion,
                     );
               } catch (error) {
                 emitFlowEvent(
@@ -4692,25 +4710,47 @@ class _ConversationWiredState extends State<ConversationWired>
           }
         }
 
-        final (result, message) = await widget.sendChatMessageFn(
-          p2pService: widget.p2pService,
-          messageRepo: widget.messageRepo,
-          targetPeerId: _contact.peerId,
-          text: sanitizedText,
-          senderPeerId: identity.peerId,
-          senderUsername: identity.username,
-          messageId: optimisticMessage.id,
-          preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
-          timestamp: optimisticMessage.timestamp,
-          bridge: widget.bridge,
-          recipientMlKemPublicKey: _contact.mlKemPublicKey,
-          quotedMessageId: quotedMessageId,
-          mediaAttachments: uploadedAttachments,
-          privateMediaPolicy: privateMediaPolicy,
-          mediaAttachmentRepo: widget.mediaAttachmentRepo,
-          transportMetrics: widget.transportMetrics,
-          directEventFanout: widget.directEventFanout,
-        );
+        final sendOutcome = privateMediaFanoutContext == null
+            ? await widget.sendChatMessageFn(
+                p2pService: widget.p2pService,
+                messageRepo: widget.messageRepo,
+                targetPeerId: _contact.peerId,
+                text: sanitizedText,
+                senderPeerId: identity.peerId,
+                senderUsername: identity.username,
+                messageId: optimisticMessage.id,
+                preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
+                timestamp: optimisticMessage.timestamp,
+                bridge: widget.bridge,
+                recipientMlKemPublicKey: _contact.mlKemPublicKey,
+                quotedMessageId: quotedMessageId,
+                mediaAttachments: uploadedAttachments,
+                privateMediaPolicy: privateMediaPolicy,
+                mediaAttachmentRepo: widget.mediaAttachmentRepo,
+                transportMetrics: widget.transportMetrics,
+                directEventFanout: widget.directEventFanout,
+              )
+            : await widget.sendPrivateMediaFanoutChatMessageFn(
+                p2pService: widget.p2pService,
+                messageRepo: widget.messageRepo,
+                targetPeerId: _contact.peerId,
+                text: sanitizedText,
+                senderPeerId: identity.peerId,
+                senderUsername: identity.username,
+                messageId: optimisticMessage.id,
+                preassignedMessageIdIsFresh: stagesFreshDirectTextCustody,
+                timestamp: optimisticMessage.timestamp,
+                bridge: widget.bridge,
+                recipientMlKemPublicKey: _contact.mlKemPublicKey,
+                quotedMessageId: quotedMessageId,
+                mediaAttachments: uploadedAttachments,
+                privateMediaPolicy: privateMediaPolicy,
+                mediaAttachmentRepo: widget.mediaAttachmentRepo,
+                transportMetrics: widget.transportMetrics,
+                directEventFanout: widget.directEventFanout,
+                directPrivateMediaFanout: privateMediaFanoutContext,
+              );
+        final (result, message) = sendOutcome;
 
         if (preparedUploads.isNotEmpty &&
             uploadedAttachments != null &&
@@ -5378,8 +5418,10 @@ class _ConversationWiredState extends State<ConversationWired>
         details: const {},
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Media is not available on this linked device yet'),
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.linked_device_media_unavailable,
+          ),
         ),
       );
       return;
@@ -5584,9 +5626,9 @@ class _ConversationWiredState extends State<ConversationWired>
         details: const {},
       );
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
+        SnackBar(
           content: Text(
-            'Voice messages are not available on this linked device yet',
+            AppLocalizations.of(context)!.linked_device_voice_unavailable,
           ),
         ),
       );
@@ -5736,14 +5778,23 @@ class _ConversationWiredState extends State<ConversationWired>
       _restoreVoiceReviewHoldAfterRefusal(recording, waveform);
       return;
     }
-    // Fresh voice has no plural fanout owner, so an initialized roster must
-    // refuse rather than reach a single target. Read through the repository,
-    // not `widget.directEventFanout`: the capability is wired unconditionally
-    // in production, so this holds with every authoring selector off.
+    final fanoutCapableRepository =
+        widget.mediaAttachmentRepo
+            is OutgoingDirectLinkedMediaBlobFanoutRepository &&
+        (widget.mediaAttachmentRepo
+                as OutgoingDirectLinkedMediaBlobFanoutRepository)
+            .supportsDirectLinkedMediaBlobFanout;
+    final canServeLinkedFanout =
+        widget.directMediaBlobCustodyClientEnabled &&
+        widget.directLinkedEventFanoutEnabled &&
+        widget
+            .directLinkedMediaFanoutSelector
+            .allowsDirectLinkedMediaFanoutAuthoring &&
+        fanoutCapableRepository;
     final voiceAdmission = await resolveDirectMediaFanoutAdmission(
       mediaAttachmentRepository: widget.mediaAttachmentRepo,
       contactAccountPeerId: _contact.peerId,
-      canServeLinkedFanout: false,
+      canServeLinkedFanout: canServeLinkedFanout,
     );
     if (voiceAdmission.refuses) {
       emitFlowEvent(
@@ -6006,6 +6057,7 @@ class _ConversationWiredState extends State<ConversationWired>
           quotedMessageId: quotedMessageId,
           blobId: voiceAttachmentId,
           preparedArtifact: voiceArtifact,
+          mediaAdmission: voiceAdmission,
         );
         if (result == SendVoiceMessageResult.success) {
           _uploadActivityController.markUploadCompleted(

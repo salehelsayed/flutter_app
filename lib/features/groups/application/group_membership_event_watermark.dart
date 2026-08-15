@@ -2,13 +2,58 @@ import 'dart:async';
 
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 
-final Map<String, Future<void>> _groupAuthorityPhaseLocks = {};
+typedef _GroupLockAddress = ({Object processScope, String groupId});
+
+final Object _defaultGroupMembershipProcessScope = Object();
+final Object _groupMembershipProcessScopeZoneKey = Object();
+final Map<_GroupLockAddress, Future<void>> _groupAuthorityPhaseLocks = {};
 final Object _groupAuthorityPhaseZoneKey = Object();
+final Map<_GroupLockAddress, Future<void>> _groupMembershipActionLocks = {};
+final Object _groupMembershipActionZoneKey = Object();
+
+Object _currentGroupMembershipProcessScope() =>
+    Zone.current[_groupMembershipProcessScopeZoneKey] ??
+    _defaultGroupMembershipProcessScope;
+
+_GroupLockAddress _groupLockAddress(String normalizedGroupId) => (
+  processScope: _currentGroupMembershipProcessScope(),
+  groupId: normalizedGroupId,
+);
+
+/// Creates a distinct simulated process scope for multi-device host tests.
+///
+/// Production never calls this seam: every ordinary caller shares the private
+/// default scope and therefore retains one process-wide lock per group. Tests
+/// that model independent app processes may run each process's listeners and
+/// mutations in its own returned Zone without disabling non-reentrancy within
+/// either simulated process.
+Zone forkIndependentGroupMembershipProcessZoneForTest() => Zone.current.fork(
+  zoneValues: <Object, Object>{
+    _groupMembershipProcessScopeZoneKey: Object(),
+    _groupAuthorityPhaseZoneKey: <String>{},
+    _groupMembershipActionZoneKey: <String>{},
+  },
+);
 
 bool isGroupAuthorityPhaseHeld(String groupId) {
   final normalizedGroupId = groupId.trim();
   if (normalizedGroupId.isEmpty) return false;
   final held = Zone.current[_groupAuthorityPhaseZoneKey] as Set<String>?;
+  return held?.contains(normalizedGroupId) ?? false;
+}
+
+/// Whether the incumbent membership-action dispatch guard is held.
+///
+/// This guard is intentionally narrower than [runGroupAuthorityPhase]. It
+/// keeps a legacy send's complete network action ordered against membership
+/// B3 commits without forcing it to wait behind long-running key distribution
+/// that owns the protected authority phase. Code holding only this guard must
+/// never acquire the authority phase; dual-phase mutations use the global
+/// authority-then-action order in [runGroupMembershipMutationLocked].
+bool isGroupMembershipActionPhaseHeld(String groupId) {
+  final normalizedGroupId = groupId.trim();
+  if (normalizedGroupId.isEmpty) return false;
+  final held = Zone.current[_groupMembershipActionZoneKey] as Set<String>?;
   return held?.contains(normalizedGroupId) ?? false;
 }
 
@@ -32,12 +77,13 @@ Future<T> runGroupAuthorityPhase<T>({
     );
   }
 
-  final previous = _groupAuthorityPhaseLocks[normalizedGroupId];
+  final lockAddress = _groupLockAddress(normalizedGroupId);
+  final previous = _groupAuthorityPhaseLocks[lockAddress];
   final gate = Completer<void>();
   final current = (previous ?? Future<void>.value())
       .catchError((_) {})
       .then((_) => gate.future);
-  _groupAuthorityPhaseLocks[normalizedGroupId] = current;
+  _groupAuthorityPhaseLocks[lockAddress] = current;
 
   if (previous != null) {
     try {
@@ -58,16 +104,118 @@ Future<T> runGroupAuthorityPhase<T>({
     if (!gate.isCompleted) {
       gate.complete();
     }
-    if (identical(_groupAuthorityPhaseLocks[normalizedGroupId], current)) {
-      _groupAuthorityPhaseLocks.remove(normalizedGroupId);
+    if (identical(_groupAuthorityPhaseLocks[lockAddress], current)) {
+      _groupAuthorityPhaseLocks.remove(lockAddress);
     }
   }
 }
 
+Future<T> runGroupMembershipActionLocked<T>({
+  required String groupId,
+  required Future<T> Function() action,
+}) async {
+  final normalizedGroupId = groupId.trim();
+  if (normalizedGroupId.isEmpty) {
+    throw ArgumentError.value(groupId, 'groupId', 'must not be empty');
+  }
+  final held = Zone.current[_groupMembershipActionZoneKey] as Set<String>?;
+  if (held?.contains(normalizedGroupId) ?? false) {
+    throw StateError(
+      'group membership action phase is non-reentrant for $normalizedGroupId',
+    );
+  }
+
+  final lockAddress = _groupLockAddress(normalizedGroupId);
+  final previous = _groupMembershipActionLocks[lockAddress];
+  final gate = Completer<void>();
+  final current = (previous ?? Future<void>.value())
+      .catchError((_) {})
+      .then((_) => gate.future);
+  _groupMembershipActionLocks[lockAddress] = current;
+
+  if (previous != null) {
+    try {
+      await previous;
+    } catch (_) {
+      // Prior actions release the queue through [gate] even when they fail.
+    }
+  }
+
+  try {
+    return await runZoned(
+      action,
+      zoneValues: <Object, Object>{
+        _groupMembershipActionZoneKey: <String>{...?held, normalizedGroupId},
+      },
+    );
+  } finally {
+    if (!gate.isCompleted) gate.complete();
+    if (identical(_groupMembershipActionLocks[lockAddress], current)) {
+      _groupMembershipActionLocks.remove(lockAddress);
+    }
+  }
+}
+
+Future<T> runGroupMembershipActionIfNeeded<T>({
+  required String groupId,
+  required bool membershipActionPhaseHeld,
+  required Future<T> Function() action,
+}) {
+  if (membershipActionPhaseHeld) return action();
+  return runGroupMembershipActionLocked(groupId: groupId, action: action);
+}
+
+/// Membership B3 work owns both the incumbent action guard and the protected
+/// authority phase. Legacy sends own only the former; strict content owns
+/// short authority phases instead.
 Future<T> runGroupMembershipMutationLocked<T>({
   required String groupId,
   required Future<T> Function() action,
-}) => runGroupAuthorityPhase(groupId: groupId, action: action);
+}) => runGroupAuthorityPhase(
+  groupId: groupId,
+  action: () =>
+      runGroupMembershipActionLocked(groupId: groupId, action: action),
+);
+
+/// Enters the dual membership mutation phase without reacquiring a phase the
+/// caller already owns.
+///
+/// The only valid order is authority then action. Protected replay commonly
+/// arrives with authority already held and therefore acquires only the action
+/// guard here. A caller holding action without authority is rejected because
+/// acquiring authority from that state would create the inverse lock edge.
+Future<T> runGroupMembershipMutationIfNeeded<T>({
+  required String groupId,
+  required bool authorityPhaseHeld,
+  required bool membershipActionPhaseHeld,
+  required Future<T> Function() action,
+}) {
+  final authorityHeldHere = isGroupAuthorityPhaseHeld(groupId);
+  final actionHeldHere = isGroupMembershipActionPhaseHeld(groupId);
+  if (authorityPhaseHeld && !authorityHeldHere) {
+    throw StateError(
+      'group authority phase capability is not held for $groupId',
+    );
+  }
+  if (membershipActionPhaseHeld && !actionHeldHere) {
+    throw StateError(
+      'group membership action capability is not held for $groupId',
+    );
+  }
+  if (authorityPhaseHeld) {
+    return runGroupMembershipActionIfNeeded(
+      groupId: groupId,
+      membershipActionPhaseHeld: membershipActionPhaseHeld,
+      action: action,
+    );
+  }
+  if (membershipActionPhaseHeld || actionHeldHere) {
+    throw StateError(
+      'group membership action phase cannot acquire authority for $groupId',
+    );
+  }
+  return runGroupMembershipMutationLocked(groupId: groupId, action: action);
+}
 
 Future<T> runGroupAuthorityPhaseIfNeeded<T>({
   required String groupId,

@@ -22,6 +22,7 @@ import 'package:flutter_app/core/media/group_media_integrity_policy.dart'
         kMediaDownloadStatusDone,
         kMediaDownloadStatusDownloading,
         kMediaDownloadStatusPending;
+import 'package:flutter_app/core/media/group_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_terminalization.dart';
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
@@ -9072,6 +9073,123 @@ void main() {
         isEmpty,
       );
     });
+  });
+
+  test('TC-365-01a group media custody stages and CASes one exact physical '
+      'target', () async {
+    const groupId = 'tc365-helper-group';
+    const messageId = 'tc365-helper-message';
+    const attachmentId = 'tc365-helper-attachment';
+    const recipient = 'tc365-helper-physical-target';
+    const path =
+        'group_media_blob_custody_v1/identity-scope/group-scope/blob.blob';
+    final contentHash = 'ab' * 32;
+    final fingerprint = computeGroupMediaBlobCustodyFingerprint(
+      groupId: groupId,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      custodyBlobId: attachmentId,
+      contentHash: contentHash,
+      ciphertextSize: 4112,
+      recipientPeerIds: const <String>[recipient],
+    );
+    await db.insert('group_messages', <String, Object?>{
+      'id': messageId,
+      'group_id': groupId,
+      'sender_peer_id': 'tc365-local-sender',
+      'sender_username': 'TC365',
+      'text': '',
+      'timestamp': '2026-08-14T12:00:00.000Z',
+      'key_generation': 1,
+      'status': 'pending',
+      'is_incoming': 0,
+      'created_at': '2026-08-14T12:00:00.000Z',
+    });
+    final attachment = <String, Object?>{
+      ...makeAttachmentRow(
+        id: attachmentId,
+        messageId: messageId,
+        size: 4096,
+        contentHash: contentHash,
+        encryptionKeyBase64: secureStoreReferenceForKey(
+          mediaAttachmentEncryptionKeyStoreName(attachmentId),
+        ),
+        encryptionNonce: 'nonce-tc365',
+        encryptionScheme: 'blob_aes_256_gcm_v1',
+        ownerLane: 'group',
+      ),
+      'group_media_blob_custody_fingerprint': fingerprint,
+    };
+    await db.insert('media_attachments', attachment);
+    final prepared = DirectMediaBlobCustodyRow(
+      attachmentId: attachmentId,
+      messageId: messageId,
+      ownerLane: MediaBlobCustodyOwnerLane.group,
+      groupId: groupId,
+      direction: DirectMediaBlobCustodyDirection.outgoing,
+      state: DirectMediaBlobCustodyState.outgoingPrepared,
+      inboxCustodyIncarnationId: null,
+      recipientPeerId: recipient,
+      ciphertextRelativePath: path,
+      custodyKind: kGroupMediaBlobCustodyKind,
+      contentHash: contentHash,
+      ciphertextSize: 4112,
+      expiresAtMs: null,
+      custodyRelayPeerId: null,
+      lastAttemptAt: null,
+      nextAttemptAt: null,
+      createdAt: '2026-08-14T12:00:00.000Z',
+      updatedAt: '2026-08-14T12:00:00.000Z',
+    );
+    expect(
+      await db.transaction(
+        (txn) => dbStageGroupMediaBlobCustodyWithinTransaction(
+          txn,
+          groupId: groupId,
+          messageId: messageId,
+          attachmentRows: <Map<String, Object?>>[attachment],
+          custodyRows: <DirectMediaBlobCustodyRow>[prepared],
+        ),
+      ),
+      DirectMediaBlobCustodyBatchStageOutcome.applied,
+    );
+
+    final stored = prepared.copyWith(
+      state: DirectMediaBlobCustodyState.outgoingStored,
+      expiresAtMs: 1900000600000,
+      custodyRelayPeerId: 'tc365-relay',
+      updatedAt: '2026-08-14T12:01:00.000Z',
+    );
+    expect(
+      await dbTransitionGroupMediaBlobCustodyIfExact(
+        db,
+        expected: prepared,
+        next: stored,
+      ),
+      isTrue,
+    );
+    expect(
+      await dbLoadGroupMediaBlobCustodyForTarget(
+        db,
+        groupId: groupId,
+        attachmentId: attachmentId,
+        custodyBlobId: attachmentId,
+        direction: DirectMediaBlobCustodyDirection.outgoing,
+        recipientPeerId: recipient,
+      ),
+      isA<DirectMediaBlobCustodyRow>()
+          .having((row) => row.state, 'state', stored.state)
+          .having(
+            (row) => row.ownerLane,
+            'lane',
+            MediaBlobCustodyOwnerLane.group,
+          ),
+    );
+    expect(
+      await dbLoadDirectMediaBlobCustodyForMessage(db, messageId: messageId),
+      isEmpty,
+      reason: 'the incumbent direct loader is explicitly lane-qualified',
+    );
   });
 }
 

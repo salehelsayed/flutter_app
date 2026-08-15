@@ -1,9 +1,9 @@
 # 327 - Content-Free Push (notification-metadata privacy)
 
-Status: planning-draft — **PLANNED, NOT EXECUTED** (user decision 2026-08-02)
+Status: **SUPERSEDED / NOT EXECUTED** (2026-08-15) — replaced by PRD-v1.2 Plans 367 and 368
 Type: Feature Improvement (privacy hardening)
 Spec: free-text intent; successor to the closed content concern in `74-privacy-preserving-notification-previews.md`
-Classification: **evidence-gated** — Stage A is implementation-ready, Stage B is implementation-ready pending one product decision, Stage C is **prerequisite-blocked** on a feasibility spike
+Classification: historical planning input only; do not implement its per-event token map or staged delivery
 Closure tier: relay deploy + host + iOS NSE boundary (per stage; see Gate Cadence)
 
 ## Planning Progress
@@ -11,6 +11,13 @@ Closure tier: relay deploy + host + iOS NSE boundary (per stage; see Gate Cadenc
 |---|---|---|---|---|
 | 2026-08-02 | Evidence Collector | `go-relay-server/inbox.go`, `reaction_push.go`, `ios/NotificationService/*.swift`, `background_message_handler.dart` | Content does NOT leak; metadata + display names DO | Census the exposure precisely |
 | 2026-08-02 | Planner | `74-privacy-preserving-notification-previews.md`, `148-minimum-parity-encrypted-push-spool-tdd-plan.md`, `173-…:39` | 74's concern is closed; 148 is in direct tension; a reduced-payload path already ships | Stage the work by threat-model delta |
+| 2026-08-15 | Supersession audit | PRD v1.2 GAP-N02/WP-02; current token backend and provider send paths; Plans 367/368 | The old per-event opaque-token proposal conflicts with the adopted fixed mailbox-dirty wake and would add a second mapping/lifecycle. Its useful exposure census is retained, but none of its stages is execution authority. | Execute Plan 367, then Plan 368; use no third N02 plan. |
+
+Supersession boundary: Plan 367 owns the opaque push-handle/encrypted provider-token
+vault and bounded migration; Plan 368 owns the fixed provider request and the
+capability-bounded rich compatibility path. Native consumers, activation, and
+retirement remain later work. Historical sections below are retained for audit
+context and must not be read as current implementation instructions.
 
 ## Problem And Evidence
 

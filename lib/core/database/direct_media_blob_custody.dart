@@ -5,15 +5,36 @@ import '../media/direct_media_blob_custody.dart'
         kDirectMediaBlobCustodyContract,
         kDirectMediaBlobCustodyKind,
         kDirectMediaBlobTransportMime;
+import '../media/group_media_blob_artifact_store.dart'
+    show kGroupMediaBlobArtifactRootDirectory;
+import '../media/group_media_blob_custody.dart' show kGroupMediaBlobCustodyKind;
 
 export '../media/direct_media_blob_custody.dart'
     show
         kDirectMediaBlobCustodyContract,
         kDirectMediaBlobCustodyKind,
         kDirectMediaBlobTransportMime;
+export '../media/group_media_blob_custody.dart' show kGroupMediaBlobCustodyKind;
 
 final RegExp _lowerHex32 = RegExp(r'^[0-9a-f]{32}$');
 final RegExp _lowerSha256 = RegExp(r'^[0-9a-f]{64}$');
+
+enum MediaBlobCustodyOwnerLane {
+  direct('direct'),
+  group('group');
+
+  const MediaBlobCustodyOwnerLane(this.dbValue);
+
+  final String dbValue;
+
+  static MediaBlobCustodyOwnerLane parse(String value) =>
+      MediaBlobCustodyOwnerLane.values.singleWhere(
+        (candidate) => candidate.dbValue == value,
+        orElse: () => throw FormatException(
+          'Unknown media-blob custody owner lane: $value',
+        ),
+      );
+}
 
 enum DirectMediaBlobCustodyDirection {
   outgoing('outgoing'),
@@ -65,24 +86,27 @@ enum DirectMediaBlobCustodyState {
       );
 }
 
-/// One independent v111/v114 authority row for an exact encrypted media blob.
+/// One independent v115 authority row for an exact encrypted media blob.
 ///
 /// The model mirrors the migration's cross-field constraints. Construction and
 /// row parsing fail closed so application owners cannot accidentally publish a
 /// half-proof, mix outgoing and incoming state, or assign an ACK source before
 /// the local commit that moves a row to [DirectMediaBlobCustodyState.incomingAckPending].
 ///
-/// Since DB v114 the natural exact row identity is `(attachmentId, direction,
-/// recipientPeerId)` — one canonical attachment may own one outgoing row per
-/// physical target plus at most one incoming row. A LINKED row additionally
-/// carries the logical [contactAccountPeerId]; an outgoing linked row must
-/// also persist the exact [recipientMlKemPublicKey] its target envelope will
-/// be encrypted with. Historical/single-target rows keep both columns null
-/// and gain no inferred fanout authority.
+/// DB v115 lane-qualifies the v114 natural identity with [ownerLane],
+/// [groupId], and [custodyBlobId]. Direct construction defaults preserve the
+/// old API (`direct`, null, `attachmentId`). One canonical attachment may own
+/// one outgoing row per physical target plus at most one incoming row. A
+/// LINKED direct row additionally carries the logical [contactAccountPeerId];
+/// an outgoing linked row must also persist the exact
+/// [recipientMlKemPublicKey] its target envelope will be encrypted with.
 class DirectMediaBlobCustodyRow {
   factory DirectMediaBlobCustodyRow({
     required String attachmentId,
     required String messageId,
+    MediaBlobCustodyOwnerLane ownerLane = MediaBlobCustodyOwnerLane.direct,
+    String? groupId,
+    String? custodyBlobId,
     required DirectMediaBlobCustodyDirection direction,
     required DirectMediaBlobCustodyState state,
     required String? inboxCustodyIncarnationId,
@@ -106,6 +130,9 @@ class DirectMediaBlobCustodyRow {
     final row = DirectMediaBlobCustodyRow._(
       attachmentId: attachmentId,
       messageId: messageId,
+      ownerLane: ownerLane,
+      groupId: groupId,
+      custodyBlobId: custodyBlobId ?? attachmentId,
       direction: direction,
       state: state,
       inboxCustodyIncarnationId: inboxCustodyIncarnationId,
@@ -134,6 +161,9 @@ class DirectMediaBlobCustodyRow {
   const DirectMediaBlobCustodyRow._({
     required this.attachmentId,
     required this.messageId,
+    required this.ownerLane,
+    required this.groupId,
+    required this.custodyBlobId,
     required this.direction,
     required this.state,
     required this.inboxCustodyIncarnationId,
@@ -160,6 +190,13 @@ class DirectMediaBlobCustodyRow {
       return DirectMediaBlobCustodyRow(
         attachmentId: map['attachment_id'] as String,
         messageId: map['message_id'] as String,
+        ownerLane: MediaBlobCustodyOwnerLane.parse(
+          map['owner_lane'] as String? ??
+              MediaBlobCustodyOwnerLane.direct.dbValue,
+        ),
+        groupId: map['group_id'] as String?,
+        custodyBlobId:
+            map['custody_blob_id'] as String? ?? map['attachment_id'] as String,
         direction: DirectMediaBlobCustodyDirection.parse(
           map['direction'] as String,
         ),
@@ -190,6 +227,9 @@ class DirectMediaBlobCustodyRow {
 
   final String attachmentId;
   final String messageId;
+  final MediaBlobCustodyOwnerLane ownerLane;
+  final String? groupId;
+  final String custodyBlobId;
   final DirectMediaBlobCustodyDirection direction;
   final DirectMediaBlobCustodyState state;
   final String? inboxCustodyIncarnationId;
@@ -211,11 +251,16 @@ class DirectMediaBlobCustodyRow {
   final String updatedAt;
 
   /// True only for a row authored by the Plan-362 linked fanout adopter.
-  bool get isLinkedFanoutRow => contactAccountPeerId != null;
+  bool get isLinkedFanoutRow =>
+      ownerLane == MediaBlobCustodyOwnerLane.direct &&
+      contactAccountPeerId != null;
 
   Map<String, Object?> toMap() => <String, Object?>{
     'attachment_id': attachmentId,
     'message_id': messageId,
+    'owner_lane': ownerLane.dbValue,
+    'group_id': groupId,
+    'custody_blob_id': custodyBlobId,
     'direction': direction.dbValue,
     'state': state.dbValue,
     'inbox_custody_incarnation_id': inboxCustodyIncarnationId,
@@ -238,14 +283,16 @@ class DirectMediaBlobCustodyRow {
   };
 
   String? get validationError {
-    if (_isBlank(attachmentId) || _isBlank(messageId)) {
-      return 'attachmentId and messageId must be non-blank';
+    if (_isBlank(attachmentId) ||
+        _isBlank(messageId) ||
+        _isBlank(custodyBlobId) ||
+        custodyBlobId != custodyBlobId.trim()) {
+      return 'attachmentId, messageId and custodyBlobId must be non-blank';
     }
     if (state.direction != direction) {
       return 'state does not belong to direction';
     }
-    if (custodyKind != kDirectMediaBlobCustodyKind ||
-        custodyContract != kDirectMediaBlobCustodyContract ||
+    if (custodyContract != kDirectMediaBlobCustodyContract ||
         transportMime != kDirectMediaBlobTransportMime ||
         !_lowerSha256.hasMatch(contentHash) ||
         ciphertextSize <= 0 ||
@@ -272,10 +319,29 @@ class DirectMediaBlobCustodyRow {
         recipientMlKemPublicKey != recipientMlKemPublicKey?.trim()) {
       return 'linked fanout columns must be null or non-blank trimmed';
     }
+    switch (ownerLane) {
+      case MediaBlobCustodyOwnerLane.direct:
+        if (groupId != null ||
+            custodyBlobId != attachmentId ||
+            custodyKind != kDirectMediaBlobCustodyKind) {
+          return 'direct custody requires direct identity and kind';
+        }
+      case MediaBlobCustodyOwnerLane.group:
+        if (_isBlank(groupId) ||
+            groupId != groupId?.trim() ||
+            custodyKind != kGroupMediaBlobCustodyKind ||
+            contactAccountPeerId != null ||
+            recipientMlKemPublicKey != null) {
+          return 'group custody requires exact group ownership and kind';
+        }
+    }
 
     if (direction == DirectMediaBlobCustodyDirection.outgoing) {
       if (_isBlank(recipientPeerId) ||
-          !isValidDirectMediaBlobCustodyRelativePath(ciphertextRelativePath) ||
+          !isValidMediaBlobCustodyRelativePath(
+            ciphertextRelativePath,
+            ownerLane: ownerLane,
+          ) ||
           retryCount != 0 ||
           lastAttemptAt != null ||
           nextAttemptAt != null) {
@@ -371,7 +437,15 @@ class DirectMediaBlobCustodyRow {
             next.inboxCustodyIncarnationId == inboxCustodyIncarnationId ||
             (inboxCustodyIncarnationId == null &&
                 next.inboxCustodyIncarnationId != null);
-        return bindingPreservedOrAdded && _sameMutableProof(next);
+        if (!bindingPreservedOrAdded) return false;
+        final groupProofRefreshBeforeBinding =
+            ownerLane == MediaBlobCustodyOwnerLane.group &&
+            inboxCustodyIncarnationId == null &&
+            next.inboxCustodyIncarnationId == null &&
+            next.retryCount == retryCount &&
+            next.lastAttemptAt == lastAttemptAt &&
+            next.nextAttemptAt == nextAttemptAt;
+        return groupProofRefreshBeforeBinding || _sameMutableProof(next);
       case (
         DirectMediaBlobCustodyState.outgoingStored,
         DirectMediaBlobCustodyState.outgoingCleanupPending,
@@ -422,6 +496,9 @@ class DirectMediaBlobCustodyRow {
   }) => DirectMediaBlobCustodyRow(
     attachmentId: attachmentId,
     messageId: messageId,
+    ownerLane: ownerLane,
+    groupId: groupId,
+    custodyBlobId: custodyBlobId,
     direction: direction,
     state: state ?? this.state,
     inboxCustodyIncarnationId: identical(inboxCustodyIncarnationId, _unset)
@@ -456,6 +533,9 @@ class DirectMediaBlobCustodyRow {
   bool _sameImmutableIdentity(DirectMediaBlobCustodyRow other) =>
       attachmentId == other.attachmentId &&
       messageId == other.messageId &&
+      ownerLane == other.ownerLane &&
+      groupId == other.groupId &&
+      custodyBlobId == other.custodyBlobId &&
       direction == other.direction &&
       recipientPeerId == other.recipientPeerId &&
       contactAccountPeerId == other.contactAccountPeerId &&
@@ -479,6 +559,23 @@ class DirectMediaBlobCustodyRow {
 /// Validates the DB-owned root and at least one identity-scope segment without
 /// resolving a caller-controlled path against the filesystem.
 bool isValidDirectMediaBlobCustodyRelativePath(String? value) {
+  return isValidMediaBlobCustodyRelativePath(
+    value,
+    ownerLane: MediaBlobCustodyOwnerLane.direct,
+  );
+}
+
+bool isValidGroupMediaBlobCustodyRelativePath(String? value) {
+  return isValidMediaBlobCustodyRelativePath(
+    value,
+    ownerLane: MediaBlobCustodyOwnerLane.group,
+  );
+}
+
+bool isValidMediaBlobCustodyRelativePath(
+  String? value, {
+  required MediaBlobCustodyOwnerLane ownerLane,
+}) {
   if (value == null || value.isEmpty || value != value.trim()) return false;
   if (value.contains('\u0000') ||
       value.contains(r'\') ||
@@ -488,8 +585,12 @@ bool isValidDirectMediaBlobCustodyRelativePath(String? value) {
     return false;
   }
   final segments = value.split('/');
-  if (segments.length < 3 ||
-      segments.first != kDirectMediaBlobArtifactRootDirectory) {
+  final expectedRoot = switch (ownerLane) {
+    MediaBlobCustodyOwnerLane.direct => kDirectMediaBlobArtifactRootDirectory,
+    MediaBlobCustodyOwnerLane.group => kGroupMediaBlobArtifactRootDirectory,
+  };
+  final minimumSegments = ownerLane == MediaBlobCustodyOwnerLane.direct ? 3 : 4;
+  if (segments.length < minimumSegments || segments.first != expectedRoot) {
     return false;
   }
   return segments.every(

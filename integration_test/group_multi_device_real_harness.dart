@@ -31,9 +31,11 @@ import 'package:flutter_app/features/p2p/application/start_node_use_case.dart';
 import 'package:flutter_app/features/qr_code/application/direct_linked_device_qr.dart';
 import 'package:flutter_app/core/database/helpers/contacts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_exit_intents_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_keys_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_invite_delivery_attempts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_members_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/group_message_local_deletions_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/group_messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_group_broadcasts_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/pending_sibling_devices_db_helpers.dart';
@@ -47,11 +49,14 @@ import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.d
 import 'package:flutter_app/core/database/helpers/media_library_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/messages_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/reactions_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_content_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/protected_group_reaction_target_db_helpers.dart';
 import 'package:flutter_app/core/database/outgoing_transport_mutation.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/direct_media_custody_intent.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/secure_storage/secure_key_store.dart';
@@ -88,11 +93,21 @@ import 'package:flutter_app/features/groups/application/group_pending_broadcast_
 import 'package:flutter_app/features/groups/application/group_pending_broadcast_runner.dart';
 import 'package:flutter_app/features/groups/application/linked_group_bootstrap_service.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
+import 'package:flutter_app/features/groups/application/protected_group_authority_history.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_authoring_resolver.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_reconciliation.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_receive.dart';
 import 'package:flutter_app/features/groups/application/protected_group_envelope.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
+import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/rejoin_group_topics_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/signed_group_transition_audit.dart';
+import 'package:flutter_app/features/groups/application/strict_group_media_blob_download_ack_owner.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 import 'package:flutter_app/features/groups/application/decline_pending_group_invite_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_invite_listener.dart';
@@ -102,7 +117,9 @@ import 'package:flutter_app/features/groups/application/revoke_pending_group_inv
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_message_repository_impl.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_exit_intent_repository.dart';
 import 'package:flutter_app/features/groups/data/repositories/group_exit_intent_repository_impl.dart';
@@ -164,6 +181,10 @@ const configuredScenario = String.fromEnvironment(
 const configuredMode = String.fromEnvironment(
   'MD004_MODE',
   defaultValue: 'baseline',
+);
+const configuredB1bPlan365GroupMedia = bool.fromEnvironment(
+  'B1B_ENABLE_PLAN365_GROUP_MEDIA',
+  defaultValue: false,
 );
 const configuredKeyRotationGracePeriodMs = int.fromEnvironment(
   'MKNOON_KEY_ROTATION_GRACE_PERIOD_MS',
@@ -947,6 +968,10 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           required updatedSelfMember,
           required pendingDevice,
           required pendingBroadcast,
+          required authorityGenesisSourcePeerId,
+          required authorityGenesisSourceEventId,
+          required authorityGenesisSourceTimestamp,
+          required authorityGenesisPayload,
         }) => dbCommitLinkedGroupBootstrapAuthoring(
           db,
           expectedGroup: expectedGroup,
@@ -957,6 +982,10 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           updatedSelfMember: updatedSelfMember,
           pendingDevice: pendingDevice,
           pendingBroadcast: pendingBroadcast,
+          authorityGenesisSourcePeerId: authorityGenesisSourcePeerId,
+          authorityGenesisSourceEventId: authorityGenesisSourceEventId,
+          authorityGenesisSourceTimestamp: authorityGenesisSourceTimestamp,
+          authorityGenesisPayload: authorityGenesisPayload,
         ),
     dbCompleteLinkedGroupBootstrapCustodyFn:
         ({required expectedDevice, required expectedBroadcast}) =>
@@ -966,13 +995,24 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               expectedBroadcast: expectedBroadcast,
             ),
     dbCommitLinkedGroupBootstrapMaterializationFn:
-        ({required groupRow, required memberRows, required keyRow}) =>
-            dbCommitLinkedGroupBootstrapMaterialization(
-              db,
-              groupRow: groupRow,
-              memberRows: memberRows,
-              keyRow: keyRow,
-            ),
+        ({
+          required groupRow,
+          required memberRows,
+          required keyRow,
+          required authorityGenesisSourcePeerId,
+          required authorityGenesisSourceEventId,
+          required authorityGenesisSourceTimestamp,
+          required authorityGenesisPayload,
+        }) => dbCommitLinkedGroupBootstrapMaterialization(
+          db,
+          groupRow: groupRow,
+          memberRows: memberRows,
+          keyRow: keyRow,
+          authorityGenesisSourcePeerId: authorityGenesisSourcePeerId,
+          authorityGenesisSourceEventId: authorityGenesisSourceEventId,
+          authorityGenesisSourceTimestamp: authorityGenesisSourceTimestamp,
+          authorityGenesisPayload: authorityGenesisPayload,
+        ),
     dbHasLinkedGroupBootstrapIntentFn:
         ({required groupId, required transportPeerId}) =>
             dbHasLinkedGroupBootstrapIntent(
@@ -981,6 +1021,23 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
               transportPeerId: transportPeerId,
             ),
     groupKeyStore: secureKeyStore,
+    dbCommitProtectedDissolvedGroup:
+        ({
+          required groupRow,
+          required expectedBroadcastRows,
+          required authorityCompleteSourcePeerId,
+          required authorityCompleteSourceEventId,
+          required authorityCompleteSourceTimestamp,
+          required authorityCompletePayload,
+        }) => dbCommitProtectedDissolvedGroup(
+          db,
+          groupRow: groupRow,
+          expectedBroadcastRows: expectedBroadcastRows,
+          authorityCompleteSourcePeerId: authorityCompleteSourcePeerId,
+          authorityCompleteSourceEventId: authorityCompleteSourceEventId,
+          authorityCompleteSourceTimestamp: authorityCompleteSourceTimestamp,
+          authorityCompletePayload: authorityCompletePayload,
+        ),
     dbHasGroupExitCleanupPending: (groupId) async {
       final row = await dbLoadGroupExitIntentForGroup(db, groupId);
       return row?['state'] == 'cleanup_pending';
@@ -1035,14 +1092,97 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           dbLoadFailedOutgoingGroupMessages(executor),
       dbRecoverStuckSendingGroupMessagesFn: ({olderThan}) =>
           dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
-      dbLoadGroupMessagesWithFailedInboxStore: ({limit = 20}) =>
-          dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
+      dbLoadGroupMessagesWithFailedInboxStore:
+          ({limit = 20, strictContentOnly = false, offset = 0}) =>
+              dbLoadGroupMessagesWithFailedInboxStore(
+                executor,
+                limit: limit,
+                strictContentOnly: strictContentOnly,
+                offset: offset,
+              ),
       dbUpdateGroupMessageInboxStoredFn: (id, {required stored}) =>
           dbUpdateGroupMessageInboxStored(executor, id, stored: stored),
       dbUpdateGroupMessageInboxRetryPayloadFn: (id, payload) =>
           dbUpdateGroupMessageInboxRetryPayload(executor, id, payload),
       dbUpdateGroupMessageWireEnvelopeFn: (id, envelope) =>
           dbUpdateGroupMessageWireEnvelope(executor, id, envelope),
+      dbCompleteGroupContentInboxStoreRetryIfExactFn:
+          ({
+            required expected,
+            required sourcePeerId,
+            required sourceEventId,
+            required sourceTimestamp,
+            required eventPayload,
+          }) => dbCompleteGroupContentInboxStoreRetryIfExact(
+            db,
+            expected: expected,
+            sourcePeerId: sourcePeerId,
+            sourceEventId: sourceEventId,
+            sourceTimestamp: sourceTimestamp,
+            eventPayload: eventPayload,
+          ),
+      dbStageAndCompleteLocalGroupContentMessageFn: identical(executor, db)
+          ? ({
+              required expected,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required eventPayload,
+            }) => dbStageAndCompleteLocalGroupContentMessage(
+              db,
+              expected: expected,
+              sourcePeerId: sourcePeerId,
+              sourceEventId: sourceEventId,
+              sourceTimestamp: sourceTimestamp,
+              eventPayload: eventPayload,
+            )
+          : null,
+      dbStagePreparedLocalGroupContentMessageFn: identical(executor, db)
+          ? ({
+              required expected,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required preparedEventPayload,
+            }) => dbStagePreparedLocalGroupContentMessage(
+              db,
+              expected: expected,
+              sourcePeerId: sourcePeerId,
+              sourceEventId: sourceEventId,
+              sourceTimestamp: sourceTimestamp,
+              preparedEventPayload: preparedEventPayload,
+            )
+          : null,
+      dbTerminalizePreparedLocalGroupContentMessageIfExactFn:
+          identical(executor, db)
+          ? ({
+              required expected,
+              required preparedEventPayload,
+              required terminalSourcePeerId,
+              required terminalSourceEventId,
+              required terminalSourceTimestamp,
+              required terminalEventPayload,
+            }) => dbTerminalizePreparedLocalGroupContentMessageIfExact(
+              db,
+              expected: expected,
+              preparedEventPayload: preparedEventPayload,
+              terminalSourcePeerId: terminalSourcePeerId,
+              terminalSourceEventId: terminalSourceEventId,
+              terminalSourceTimestamp: terminalSourceTimestamp,
+              terminalEventPayload: terminalEventPayload,
+            )
+          : null,
+      dbHasExactPreparedLocalGroupContentMessageFn:
+          ({required expected, required eventPayload}) =>
+              dbHasExactPreparedLocalGroupContentMessage(
+                executor,
+                expected: expected,
+                eventPayload: eventPayload,
+              ),
+      dbIsStrictGroupReactionTargetEligibleFn: (expected) =>
+          dbIsStrictGroupReactionTargetEligible(executor, expected),
+      dbReplaceGroupInboxRetryPayloadIfExactFn: (expected, replacement) =>
+          dbReplaceGroupInboxRetryPayloadIfExact(db, expected, replacement),
       dbLoadGroupInboxCursorFn: (groupId) async {
         final row = await dbLoadGroupInboxCursor(executor, groupId);
         return row?['cursor'] as String?;
@@ -1147,8 +1287,23 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
   );
   final groupPendingBroadcastRepo = GroupPendingBroadcastRepositoryImpl(
     dbInsert: (row) => dbInsertPendingGroupBroadcast(db, row),
-    dbInsertProtectedBatch: (rows) =>
-        dbInsertPendingGroupBroadcastsAtomically(db, rows),
+    dbInsertProtectedBatch:
+        ({
+          required groupId,
+          required rows,
+          required authorityPreparedSourcePeerId,
+          required authorityPreparedSourceEventId,
+          required authorityPreparedSourceTimestamp,
+          required authorityPreparedPayload,
+        }) => dbInsertPendingGroupBroadcastsWithAuthorityPreparedAtomically(
+          db,
+          groupId: groupId,
+          rows: rows,
+          authorityPreparedSourcePeerId: authorityPreparedSourcePeerId,
+          authorityPreparedSourceEventId: authorityPreparedSourceEventId,
+          authorityPreparedSourceTimestamp: authorityPreparedSourceTimestamp,
+          authorityPreparedPayload: authorityPreparedPayload,
+        ),
     dbLoadForGroup: (groupId) =>
         dbLoadPendingGroupBroadcastsForGroup(db, groupId),
     dbLoadAll: () => dbLoadAllPendingGroupBroadcasts(db),
@@ -1333,6 +1488,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           required custodyRows,
           required contactAccountPeerId,
           required expectedSnapshot,
+          allowFreshParent = false,
+          authorizedForwardDedupKey,
         }) => dbStageOutgoingDirectLinkedMediaBlobFanoutGeneration(
           db,
           expectedParentRow: expectedParentRow,
@@ -1341,6 +1498,8 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           custodyRows: custodyRows,
           contactAccountPeerId: contactAccountPeerId,
           expectedSnapshot: expectedSnapshot,
+          allowFreshParent: allowFreshParent,
+          authorizedForwardDedupKey: authorizedForwardDedupKey,
         ),
     dbStageOutgoingDirectMediaFanoutInboxCustody:
         ({
@@ -1375,6 +1534,104 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
                   ),
                 );
             }),
+    dbStageFreshOutgoingGroupMediaBlobGeneration:
+        ({
+          required parentRow,
+          required attachmentRows,
+          required custodyRows,
+          required custodyBlobIdsByAttachmentId,
+        }) => dbStageFreshOutgoingGroupMediaBlobGeneration(
+          db,
+          parentRow: parentRow,
+          attachmentRows: attachmentRows,
+          custodyRows: custodyRows,
+          custodyBlobIdsByAttachmentId: custodyBlobIdsByAttachmentId,
+        ),
+    dbLoadGroupMediaBlobCustodyForMessage:
+        ({required groupId, required messageId}) =>
+            dbLoadGroupMediaBlobCustodyForMessage(
+              db,
+              groupId: groupId,
+              messageId: messageId,
+            ),
+    dbLoadGroupMediaBlobCustodyByStates: ({required states, int limit = 50}) =>
+        dbLoadGroupMediaBlobCustodyByStates(db, states: states, limit: limit),
+    dbLoadGroupMediaBlobCustodyForTarget:
+        ({
+          required groupId,
+          required attachmentId,
+          required custodyBlobId,
+          required direction,
+          recipientPeerId,
+        }) => dbLoadGroupMediaBlobCustodyForTarget(
+          db,
+          groupId: groupId,
+          attachmentId: attachmentId,
+          custodyBlobId: custodyBlobId,
+          direction: direction,
+          recipientPeerId: recipientPeerId,
+        ),
+    dbTransitionGroupMediaBlobCustodyIfExact:
+        ({required expected, required next}) =>
+            dbTransitionGroupMediaBlobCustodyIfExact(
+              db,
+              expected: expected,
+              next: next,
+            ),
+    dbDeleteGroupMediaBlobCleanupPendingIfExact: ({required expected}) =>
+        dbDeleteGroupMediaBlobCleanupPendingIfExact(db, expected: expected),
+    dbCommitIncomingGroupMediaBlobLocalPath:
+        ({
+          required expectedAttachmentRow,
+          required expectedCustody,
+          required localPath,
+          required sourceRelayPeerId,
+          required updatedAt,
+          required nowMs,
+        }) => dbCommitIncomingGroupMediaBlobLocalPath(
+          db,
+          expectedAttachmentRow: expectedAttachmentRow,
+          expectedCustody: expectedCustody,
+          localPath: localPath,
+          sourceRelayPeerId: sourceRelayPeerId,
+          updatedAt: updatedAt,
+          nowMs: nowMs,
+        ),
+    dbTerminalizeIncomingGroupMediaBlobForLocalDeletion:
+        ({
+          required expectedAttachmentRow,
+          required expectedCustody,
+          required sourceRelayPeerId,
+          required updatedAt,
+        }) => dbTerminalizeIncomingGroupMediaBlobForLocalDeletion(
+          db,
+          expectedAttachmentRow: expectedAttachmentRow,
+          expectedCustody: expectedCustody,
+          sourceRelayPeerId: sourceRelayPeerId,
+          updatedAt: updatedAt,
+        ),
+    dbDeleteIncomingGroupMediaBlobAckPendingIfExact: ({required expected}) =>
+        dbDeleteIncomingGroupMediaBlobAckPendingIfExact(db, expected: expected),
+    dbDeleteIncomingGroupMediaBlobIfExpired:
+        ({required expected, required nowMs}) =>
+            dbDeleteIncomingGroupMediaBlobIfExpired(
+              db,
+              expected: expected,
+              nowMs: nowMs,
+            ),
+    dbCountOtherGroupMediaBlobCustodyRowsReferencingArtifact:
+        ({
+          required ciphertextRelativePath,
+          required contentHash,
+          required ciphertextSize,
+          required excluding,
+        }) => dbCountOtherGroupMediaBlobCustodyRowsReferencingArtifact(
+          db,
+          ciphertextRelativePath: ciphertextRelativePath,
+          contentHash: contentHash,
+          ciphertextSize: ciphertextSize,
+          excluding: excluding,
+        ),
     dbLoadDirectMediaBlobCustodyRowsForAttachment: ({required attachmentId}) =>
         dbLoadDirectMediaBlobCustodyRowsForAttachment(
           db,
@@ -1594,8 +1851,14 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           messageId: messageId,
           senderPeerId: senderPeerId,
         ),
-    dbLoadRetryableGroupReactionReplayOutboxEntries: ({int limit = 20}) =>
-        dbLoadRetryableGroupReactionReplayOutboxEntries(db, limit: limit),
+    dbLoadRetryableGroupReactionReplayOutboxEntries:
+        ({int limit = 20, bool strictContentOnly = false, int offset = 0}) =>
+            dbLoadRetryableGroupReactionReplayOutboxEntries(
+              db,
+              limit: limit,
+              strictContentOnly: strictContentOnly,
+              offset: offset,
+            ),
     dbUpdateGroupReactionReplayOutboxEntryStatus:
         (
           reactionId, {
@@ -1620,6 +1883,37 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
           expected: expected,
           deliveryStatus: deliveryStatus,
           lastError: lastError,
+          updatedAt: updatedAt,
+        ),
+    dbReplaceGroupReactionReplayOutboxPayloadIfExact:
+        ({required expected, required replacement, required updatedAt}) =>
+            dbReplaceGroupReactionReplayOutboxPayloadIfExact(
+              db,
+              expected: expected,
+              replacement: replacement,
+              updatedAt: updatedAt,
+            ),
+    dbCompleteGroupReactionContentIfExact:
+        ({
+          required expected,
+          required reactionRow,
+          required action,
+          required transitionId,
+          required sourcePeerId,
+          required sourceEventId,
+          required sourceTimestamp,
+          required eventPayload,
+          required updatedAt,
+        }) => dbCompleteGroupReactionContentIfExact(
+          db,
+          expected: expected,
+          reactionRow: reactionRow,
+          action: action,
+          transitionId: transitionId,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
           updatedAt: updatedAt,
         ),
     dbDeleteGroupReactionReplayOutboxEntry: (reactionId) =>
@@ -1781,6 +2075,12 @@ Future<GroupMultiDeviceTestStack> setupGroupMultiDeviceStack({
     bridge: bridge,
     inboxStagingRepository: InMemoryInboxStagingRepository(),
     keyRotationGracePeriodOverride: configuredKeyRotationGracePeriod(),
+    requiredTransportPeerId: restrictedLinkedRuntime && setupAsLinkedSecondary
+        ? () => transportPeerId
+        : null,
+    logicalAccountPeerId: restrictedLinkedRuntime && setupAsLinkedSecondary
+        ? () => updatedIdentity.peerId
+        : null,
   );
   final started = await p2pService.startNode(
     transportPrivateKey,
@@ -3680,6 +3980,11 @@ Future<void> _runInviteSendLatencySibling() async {
 // QR. The emulator `sibling` is the ordinary account-primary which creates one
 // group, scans that QR, and owns protected bootstrap/authority custody.
 
+var _b1bContentIngressAuthorityGateInvocations = 0;
+var _b1bAuthorityReconcileInvocations = 0;
+var _b1bLocalAuthorityReconcileInvocations = 0;
+var _b1bPlan365RestrictedFixedPointInvocations = 0;
+
 ProtectedGroupReplayOutcome _b1bReplayOutcome(
   ProtectedGroupReplayDisposition disposition,
   String reasonCode,
@@ -3691,6 +3996,249 @@ Future<LinkedInstallationAuthoritySnapshot> _b1bLinkedAuthority(
   return LinkedInstallationAuthority(
     secureKeyStore: stack.secureKeyStore,
   ).load(expectedAccountPeerId: stack.identity.peerId);
+}
+
+Future<ProtectedGroupContentAuthority?> _b1bLoadContentAuthority(
+  GroupMultiDeviceTestStack stack,
+  String groupId,
+  GroupContentAuthorityVersion version,
+) {
+  return loadProtectedGroupContentAuthorityFromHistory(
+    groupId: groupId,
+    version: version,
+    loadExact: ({required groupId, required phase, required eventId}) =>
+        loadAuthenticatedGroupAuthorityProofFromEventLog(
+          loadRow: ({required groupId, required sourceEventId}) =>
+              dbLoadGroupEventLogEntryExact(
+                stack.db,
+                groupId: groupId,
+                sourceEventId: sourceEventId,
+              ),
+          groupId: groupId,
+          phase: phase,
+          verify: ({required publicKey, required data, required signature}) =>
+              callVerifyPayload(
+                bridge: stack.bridge,
+                publicKey: publicKey,
+                data: data,
+                signature: signature,
+              ),
+          eventId: eventId,
+        ),
+    loadCompleteRows:
+        ({
+          required groupId,
+          required eventType,
+          afterSourceTimestamp,
+          afterSourceEventId,
+          throughSourceTimestamp,
+          required limit,
+        }) => dbLoadGroupEventLogTypePage(
+          stack.db,
+          groupId: groupId,
+          eventType: eventType,
+          afterSourceTimestamp: afterSourceTimestamp,
+          afterSourceEventId: afterSourceEventId,
+          throughSourceTimestamp: throughSourceTimestamp,
+          newestFirst: true,
+          limit: limit,
+        ),
+    loadGenesisRows:
+        ({
+          required groupId,
+          required eventType,
+          afterSourceTimestamp,
+          afterSourceEventId,
+          throughSourceTimestamp,
+          required limit,
+        }) => dbLoadGroupEventLogTypePage(
+          stack.db,
+          groupId: groupId,
+          eventType: eventType,
+          afterSourceTimestamp: afterSourceTimestamp,
+          afterSourceEventId: afterSourceEventId,
+          throughSourceTimestamp: throughSourceTimestamp,
+          newestFirst: true,
+          limit: limit,
+        ),
+    verify: ({required publicKey, required data, required signature}) =>
+        callVerifyPayload(
+          bridge: stack.bridge,
+          publicKey: publicKey,
+          data: data,
+          signature: signature,
+        ),
+  );
+}
+
+Future<bool> _b1bHasPendingContentAuthority(
+  GroupMultiDeviceTestStack stack,
+  String groupId,
+) => hasPendingProtectedGroupContentAuthority(
+  groupId: groupId,
+  loadPreparedPage:
+      ({afterSourceTimestamp, afterSourceEventId, required limit}) =>
+          loadAuthenticatedGroupAuthorityProofPage(
+            loadRows:
+                ({
+                  required groupId,
+                  required eventType,
+                  afterSourceTimestamp,
+                  afterSourceEventId,
+                  throughSourceTimestamp,
+                  required limit,
+                }) => dbLoadGroupEventLogTypePage(
+                  stack.db,
+                  groupId: groupId,
+                  eventType: eventType,
+                  afterSourceTimestamp: afterSourceTimestamp,
+                  afterSourceEventId: afterSourceEventId,
+                  throughSourceTimestamp: throughSourceTimestamp,
+                  newestFirst: true,
+                  limit: limit,
+                ),
+            groupId: groupId,
+            phase: AuthenticatedGroupAuthorityPhase.prepared,
+            verify: ({required publicKey, required data, required signature}) =>
+                callVerifyPayload(
+                  bridge: stack.bridge,
+                  publicKey: publicKey,
+                  data: data,
+                  signature: signature,
+                ),
+            afterSourceTimestamp: afterSourceTimestamp,
+            afterSourceEventId: afterSourceEventId,
+            limit: limit,
+          ),
+  loadExactPhase: ({required phase, required eventId}) =>
+      loadAuthenticatedGroupAuthorityProofFromEventLog(
+        loadRow: ({required groupId, required sourceEventId}) =>
+            dbLoadGroupEventLogEntryExact(
+              stack.db,
+              groupId: groupId,
+              sourceEventId: sourceEventId,
+            ),
+        groupId: groupId,
+        phase: phase,
+        eventId: eventId,
+        verify: ({required publicKey, required data, required signature}) =>
+            callVerifyPayload(
+              bridge: stack.bridge,
+              publicKey: publicKey,
+              data: data,
+              signature: signature,
+            ),
+      ),
+  loadReconciliationRow: (authorityEventId) => dbLoadGroupEventLogEntryExact(
+    stack.db,
+    groupId: groupId,
+    sourceEventId: protectedGroupContentReconciliationCompleteSourceEventId(
+      authorityEventId,
+    ),
+  ),
+);
+
+Future<AuthenticatedGroupAuthorityProof?> _b1bLatestSettledContentAuthority(
+  GroupMultiDeviceTestStack stack,
+  String groupId,
+) async {
+  if (await _b1bHasPendingContentAuthority(stack, groupId)) return null;
+  Future<AuthenticatedGroupAuthorityProof?> latest(
+    AuthenticatedGroupAuthorityPhase phase,
+  ) async {
+    final page = await loadAuthenticatedGroupAuthorityProofPage(
+      loadRows:
+          ({
+            required groupId,
+            required eventType,
+            afterSourceTimestamp,
+            afterSourceEventId,
+            throughSourceTimestamp,
+            required limit,
+          }) => dbLoadGroupEventLogTypePage(
+            stack.db,
+            groupId: groupId,
+            eventType: eventType,
+            afterSourceTimestamp: afterSourceTimestamp,
+            afterSourceEventId: afterSourceEventId,
+            throughSourceTimestamp: throughSourceTimestamp,
+            newestFirst: true,
+            limit: limit,
+          ),
+      groupId: groupId,
+      phase: phase,
+      verify: ({required publicKey, required data, required signature}) =>
+          callVerifyPayload(
+            bridge: stack.bridge,
+            publicKey: publicKey,
+            data: data,
+            signature: signature,
+          ),
+      limit: 1,
+    );
+    return page.isEmpty ? null : page.single;
+  }
+
+  final complete = await latest(AuthenticatedGroupAuthorityPhase.complete);
+  final genesis = await latest(AuthenticatedGroupAuthorityPhase.genesis);
+  var selected = complete;
+  if (selected == null ||
+      (genesis != null &&
+          (genesis.eventAt.isAfter(selected.eventAt) ||
+              (genesis.eventAt == selected.eventAt &&
+                  genesis.eventId.compareTo(selected.eventId) > 0)))) {
+    selected = genesis;
+  }
+  if (selected == null) return null;
+  if (complete != null && identical(selected, complete)) {
+    final row = await dbLoadGroupEventLogEntryExact(
+      stack.db,
+      groupId: groupId,
+      sourceEventId: protectedGroupContentReconciliationCompleteSourceEventId(
+        selected.eventId,
+      ),
+    );
+    if (!isProtectedGroupContentReconciliationCompleteRow(
+      row,
+      authority: selected,
+    )) {
+      return null;
+    }
+  }
+  final key = await stack.groupRepo.getLatestKey(groupId);
+  return key?.keyGeneration == selected.keyEpoch ? selected : null;
+}
+
+ResolveGroupContentAuthoring _b1bProductionContentAuthoringResolver(
+  GroupMultiDeviceTestStack stack, {
+  required void Function() onResolved,
+}) => buildProtectedGroupContentAuthoringResolver(
+  loadIdentity: () async {
+    final identity = await stack.identityRepo.loadIdentity();
+    return identity == null
+        ? null
+        : (peerId: identity.peerId, publicKey: identity.publicKey);
+  },
+  loadMember: stack.groupRepo.getMember,
+  loadInstallationAuthority: (expectedAccountPeerId) =>
+      LinkedInstallationAuthority(
+        secureKeyStore: stack.secureKeyStore,
+      ).load(expectedAccountPeerId: expectedAccountPeerId),
+  loadLatestSettledAuthority: (groupId) =>
+      _b1bLatestSettledContentAuthority(stack, groupId),
+  readCurrentTransportPeerId: () => stack.p2pService.currentState.peerId,
+  inboxStore: stack.p2pService,
+  directLinkedDeviceSelector: const DirectLinkedDeviceSelector.enabled(),
+  multiDeviceSyncEnabled: true,
+  onResolved: onResolved,
+);
+
+int _b1bBridgeCommandCount(GroupMultiDeviceTestStack stack, String command) {
+  final bridge = stack.bridge;
+  if (bridge is! RecordingGoBridgeClient) {
+    throw StateError('B1b requires exact native command recording');
+  }
+  return bridge.commandCount(command);
 }
 
 void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
@@ -3706,6 +4254,209 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
         ProtectedGroupReplayDisposition.prerequisiteWaiting,
         'identity_unavailable',
       );
+    }
+    Map<String, dynamic>? contentOuter;
+    try {
+      final decoded = jsonDecode(message.content);
+      if (decoded is Map) {
+        contentOuter = Map<String, dynamic>.from(decoded);
+      }
+    } catch (_) {
+      contentOuter = null;
+    }
+    if (contentOuter?['custodyKind'] == groupContentCustodyKind) {
+      _b1bContentIngressAuthorityGateInvocations++;
+      final contentGroupId = contentOuter?['groupId'];
+      if (contentGroupId is String &&
+          contentGroupId.isNotEmpty &&
+          await _b1bHasPendingContentAuthority(stack, contentGroupId)) {
+        return _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.prerequisiteWaiting,
+          'authority_reconciliation_pending',
+        );
+      }
+      final localTransportPeerId = authority.isActiveLinkedSecondary
+          ? authority.credential!.transportPeerId
+          : identity.peerId;
+      final result = await handleProtectedGroupContentReplay(
+        bridge: stack.bridge,
+        groupRepository: stack.groupRepo,
+        message: message,
+        localLogicalPeerId: identity.peerId,
+        localTransportPeerId: localTransportPeerId,
+        loadAuthority: (groupId, version) =>
+            _b1bLoadContentAuthority(stack, groupId, version),
+        hasPendingAuthority: (groupId) async {
+          _b1bContentIngressAuthorityGateInvocations++;
+          return _b1bHasPendingContentAuthority(stack, groupId);
+        },
+        hasTerminal:
+            ({
+              required groupId,
+              required payloadType,
+              required contentEventId,
+            }) => hasProtectedGroupContentTerminalEvidence(
+              groupId: groupId,
+              payloadType: payloadType,
+              contentEventId: contentEventId,
+              loadRows:
+                  ({
+                    required groupId,
+                    required eventType,
+                    afterSourceTimestamp,
+                    afterSourceEventId,
+                    throughSourceTimestamp,
+                    required limit,
+                  }) => dbLoadGroupEventLogTypePage(
+                    stack.db,
+                    groupId: groupId,
+                    eventType: eventType,
+                    afterSourceTimestamp: afterSourceTimestamp,
+                    afterSourceEventId: afterSourceEventId,
+                    throughSourceTimestamp: throughSourceTimestamp,
+                    newestFirst: true,
+                    limit: limit,
+                  ),
+            ),
+        commitMessage:
+            ({
+              required groupId,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required eventPayload,
+              required messageRow,
+              required mediaAttachmentRows,
+              required incomingMediaCustodyRows,
+              readyDisplayOutboxRow,
+            }) => dbCommitProtectedGroupMessage(
+              stack.db,
+              groupId: groupId,
+              sourcePeerId: sourcePeerId,
+              sourceEventId: sourceEventId,
+              sourceTimestamp: sourceTimestamp,
+              eventPayload: eventPayload,
+              messageRow: messageRow,
+              mediaAttachmentRows: mediaAttachmentRows,
+              incomingMediaCustodyRows: incomingMediaCustodyRows,
+              readyDisplayOutboxRow: readyDisplayOutboxRow,
+            ),
+        commitReaction:
+            ({
+              required groupId,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required eventPayload,
+              required reactionRow,
+              required transitionId,
+              required action,
+              readyDisplayOutboxRow,
+            }) => dbCommitProtectedGroupReaction(
+              stack.db,
+              groupId: groupId,
+              sourcePeerId: sourcePeerId,
+              sourceEventId: sourceEventId,
+              sourceTimestamp: sourceTimestamp,
+              eventPayload: eventPayload,
+              reactionRow: reactionRow,
+              transitionId: transitionId,
+              action: action,
+              readyDisplayOutboxRow: readyDisplayOutboxRow,
+            ),
+        commitTerminal:
+            ({
+              required groupId,
+              required sourcePeerId,
+              required sourceEventId,
+              required sourceTimestamp,
+              required eventPayload,
+            }) => dbCommitProtectedGroupContentTerminal(
+              stack.db,
+              groupId: groupId,
+              sourcePeerId: sourcePeerId,
+              sourceEventId: sourceEventId,
+              sourceTimestamp: sourceTimestamp,
+              eventPayload: eventPayload,
+            ),
+        resolveReactionTarget: (groupId, messageId) async {
+          final target = await dbClassifyProtectedGroupReactionTarget(
+            stack.db,
+            groupId: groupId,
+            messageId: messageId,
+          );
+          if (target !=
+              ProtectedGroupReactionTargetDisposition.prerequisiteWaiting) {
+            return target;
+          }
+          final deletion = await dbLoadGroupMessageLocalDeletion(
+            stack.db,
+            messageId,
+          );
+          if (deletion?['group_id'] == groupId) {
+            return ProtectedGroupReactionTargetDisposition.terminal;
+          }
+          final terminalRows = await dbLoadGroupEventLogTypePage(
+            stack.db,
+            groupId: groupId,
+            eventType: protectedGroupContentTerminalEventType,
+            newestFirst: true,
+            limit: 200,
+          );
+          for (final terminal in terminalRows) {
+            final raw = terminal['canonical_payload'];
+            if (raw is! String) continue;
+            try {
+              final decoded = jsonDecode(raw);
+              if (decoded is Map &&
+                  decoded['payloadType'] ==
+                      groupOfflineReplayPayloadTypeMessage &&
+                  decoded['contentEventId'] == messageId) {
+                return ProtectedGroupReactionTargetDisposition.terminal;
+              }
+            } catch (_) {}
+          }
+          return ProtectedGroupReactionTargetDisposition.prerequisiteWaiting;
+        },
+        buildMessageDisplayRow:
+            stack.groupListener.buildProtectedMessageDisplayReadyRow,
+        buildReactionDisplayRow:
+            stack.groupListener.buildProtectedReactionDisplayReadyRow,
+        publishMessage: stack.groupListener.publishProtectedGroupMessage,
+        publishReaction:
+            stack.groupListener.publishProtectedGroupReactionChange,
+      );
+      return switch (result.disposition) {
+        ProtectedGroupContentApplyDisposition.applied => _b1bReplayOutcome(
+          ProtectedGroupReplayDisposition.applied,
+          result.reasonCode,
+        ),
+        ProtectedGroupContentApplyDisposition.exactDuplicate =>
+          _b1bReplayOutcome(
+            ProtectedGroupReplayDisposition.duplicate,
+            result.reasonCode,
+          ),
+        ProtectedGroupContentApplyDisposition.terminalReject =>
+          _b1bReplayOutcome(
+            ProtectedGroupReplayDisposition.terminalRejected,
+            result.reasonCode,
+          ),
+        ProtectedGroupContentApplyDisposition.unverifiedReject =>
+          _b1bReplayOutcome(
+            ProtectedGroupReplayDisposition.unverifiedRejected,
+            result.reasonCode,
+          ),
+        ProtectedGroupContentApplyDisposition.prerequisiteWaiting =>
+          _b1bReplayOutcome(
+            ProtectedGroupReplayDisposition.prerequisiteWaiting,
+            result.reasonCode,
+          ),
+        ProtectedGroupContentApplyDisposition.retryableFailure =>
+          _b1bReplayOutcome(
+            ProtectedGroupReplayDisposition.retryable,
+            result.reasonCode,
+          ),
+      };
     }
     final outer = ProtectedGroupEnvelope.tryParse(message.content);
     if (outer?.type == linkedGroupBootstrapEnvelopeType) {
@@ -3788,7 +4539,42 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
             data: data,
             signature: signature,
           ),
-      applyReplay: (control, replayData) async {
+      loadAuthorityProof:
+          ({required groupId, required phase, required eventId}) =>
+              loadAuthenticatedGroupAuthorityProofFromEventLog(
+                loadRow: ({required groupId, required sourceEventId}) =>
+                    dbLoadGroupEventLogEntryExact(
+                      stack.db,
+                      groupId: groupId,
+                      sourceEventId: sourceEventId,
+                    ),
+                groupId: groupId,
+                phase: phase,
+                eventId: eventId,
+                verify:
+                    ({required publicKey, required data, required signature}) =>
+                        callVerifyPayload(
+                          bridge: stack.bridge,
+                          publicKey: publicKey,
+                          data: data,
+                          signature: signature,
+                        ),
+              ),
+      appendAuthorityProof: ({required phase, required proof}) async {
+        await dbAppendGroupEventLogEntry(
+          stack.db,
+          groupId: proof.groupId,
+          eventType: phase.eventType,
+          sourcePeerId: proof.actorAccountPeerId,
+          sourceEventId: authenticatedGroupAuthoritySourceEventId(
+            phase,
+            proof.eventId,
+          ),
+          sourceTimestamp: fixedGroupAuthorityUtc(proof.eventAt),
+          payload: authenticatedGroupAuthorityFactPayload(proof),
+        );
+      },
+      applyReplay: (control, replayData, _) async {
         if (control != ProtectedGroupAuthorityControl.groupDissolve) {
           return ProtectedGroupAuthorityApplyResult.rejected;
         }
@@ -3821,6 +4607,100 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
         );
         return ProtectedGroupAuthorityApplyResult.applied;
       },
+      reconcileContent: (control, replayData, verifiedAuthority) async {
+        if (control != verifiedAuthority.control || replayData.isEmpty) {
+          return false;
+        }
+        _b1bAuthorityReconcileInvocations++;
+        return reconcileProtectedGroupContentForAuthority(
+          db: stack.db,
+          groupRepository: stack.groupRepo,
+          authority: verifiedAuthority.proof,
+          terminalizePreparedContent:
+              ({
+                required txn,
+                required groupId,
+                required payloadType,
+                required contentEventId,
+                required ownerKind,
+                required ownerId,
+                required eventPayload,
+                required terminalSourcePeerId,
+                required terminalSourceEventId,
+                required terminalSourceTimestamp,
+                required terminalEventPayload,
+              }) async {
+                if (ownerId != contentEventId) return false;
+                if (payloadType == groupOfflineReplayPayloadTypeMessage &&
+                    ownerKind == 'group_message') {
+                  final rows = await txn.query(
+                    'group_messages',
+                    where: 'id = ? AND group_id = ?',
+                    whereArgs: <Object?>[ownerId, groupId],
+                    limit: 1,
+                  );
+                  return rows.isNotEmpty &&
+                      await dbTerminalizePreparedLocalGroupContentMessageIfExactInTransaction(
+                        txn,
+                        expected: rows.single,
+                        preparedEventPayload: eventPayload,
+                        terminalSourcePeerId: terminalSourcePeerId,
+                        terminalSourceEventId: terminalSourceEventId,
+                        terminalSourceTimestamp: terminalSourceTimestamp,
+                        terminalEventPayload: terminalEventPayload,
+                      );
+                }
+                if (payloadType == groupOfflineReplayPayloadTypeReaction &&
+                    ownerKind == 'group_reaction') {
+                  final rows = await txn.query(
+                    'group_reaction_replay_outbox',
+                    where: 'reaction_id = ? AND group_id = ?',
+                    whereArgs: <Object?>[ownerId, groupId],
+                    limit: 1,
+                  );
+                  return rows.isNotEmpty &&
+                      await dbTerminalizePreparedLocalGroupReactionIfExactInTransaction(
+                        txn,
+                        expected: rows.single,
+                        preparedEventPayload: eventPayload,
+                        terminalSourcePeerId: terminalSourcePeerId,
+                        terminalSourceEventId: terminalSourceEventId,
+                        terminalSourceTimestamp: terminalSourceTimestamp,
+                        terminalEventPayload: terminalEventPayload,
+                      );
+                }
+                return false;
+              },
+          validateHistoricalAuthority:
+              ({
+                required groupId,
+                required payloadType,
+                required contentEventId,
+                required eventAt,
+                required authorityVersion,
+                required logicalSenderPeerId,
+                required senderDeviceId,
+                required senderTransportPeerId,
+                required senderPublicKey,
+              }) async {
+                final historical = await _b1bLoadContentAuthority(
+                  stack,
+                  groupId,
+                  authorityVersion,
+                );
+                return historical?.authorizesHistoricalContent(
+                      payloadType: payloadType,
+                      contentEventId: contentEventId,
+                      eventAt: eventAt,
+                      logicalSenderPeerId: logicalSenderPeerId,
+                      senderDeviceId: senderDeviceId,
+                      senderTransportPeerId: senderTransportPeerId,
+                      senderPublicKey: senderPublicKey,
+                    ) ==
+                    true;
+              },
+        );
+      },
     );
     return switch (result) {
       ProtectedGroupAuthorityHandleResult.applied => _b1bReplayOutcome(
@@ -3850,13 +4730,392 @@ void _installB1bProtectedReplayHandler(GroupMultiDeviceTestStack stack) {
 
 GroupPendingBroadcastRunner _b1bProtectedRunner(
   GroupMultiDeviceTestStack stack,
-) => GroupPendingBroadcastRunner(
-  repository: stack.groupPendingBroadcastRepo,
-  rePush: (_) async => false,
-  protectedInboxStore: stack.p2pService,
-  pendingSiblingDeviceRepository: stack.groupRepo,
-  linkedGroupBootstrapRepository: stack.groupRepo,
-);
+) {
+  setReconcileCompletedProtectedGroupAuthority(stack.groupRepo, (
+    authority,
+  ) async {
+    _b1bLocalAuthorityReconcileInvocations++;
+    return reconcileProtectedGroupContentForAuthority(
+      db: stack.db,
+      groupRepository: stack.groupRepo,
+      authority: authority,
+      validateHistoricalAuthority:
+          ({
+            required groupId,
+            required payloadType,
+            required contentEventId,
+            required eventAt,
+            required authorityVersion,
+            required logicalSenderPeerId,
+            required senderDeviceId,
+            required senderTransportPeerId,
+            required senderPublicKey,
+          }) async {
+            final historical = await _b1bLoadContentAuthority(
+              stack,
+              groupId,
+              authorityVersion,
+            );
+            return historical?.authorizesHistoricalContent(
+                  payloadType: payloadType,
+                  contentEventId: contentEventId,
+                  eventAt: eventAt,
+                  logicalSenderPeerId: logicalSenderPeerId,
+                  senderDeviceId: senderDeviceId,
+                  senderTransportPeerId: senderTransportPeerId,
+                  senderPublicKey: senderPublicKey,
+                ) ==
+                true;
+          },
+    );
+  });
+  return GroupPendingBroadcastRunner(
+    repository: stack.groupPendingBroadcastRepo,
+    rePush: (_) async => false,
+    protectedInboxStore: stack.p2pService,
+    pendingSiblingDeviceRepository: stack.groupRepo,
+    linkedGroupBootstrapRepository: stack.groupRepo,
+    finalizeProtectedDissolve: (broadcast) {
+      final identity = parseProtectedGroupAuthorityDeliveryId(
+        broadcast.sourceMessageId ?? '',
+      );
+      if (identity == null ||
+          identity.control != ProtectedGroupAuthorityControl.groupDissolve) {
+        return Future<bool>.value(false);
+      }
+      return recoverPreparedProtectedGroupDissolve(
+        groupId: broadcast.groupId,
+        eventId: identity.transitionId,
+        groupRepository: stack.groupRepo,
+        pendingRepository: stack.groupPendingBroadcastRepo,
+        protectedInboxStore: stack.p2pService,
+        pendingSiblingDeviceRepository: stack.groupRepo,
+        loadAuthorityProof:
+            ({required groupId, required phase, required eventId}) =>
+                loadAuthenticatedGroupAuthorityProofFromEventLog(
+                  loadRow: ({required groupId, required sourceEventId}) =>
+                      dbLoadGroupEventLogEntryExact(
+                        stack.db,
+                        groupId: groupId,
+                        sourceEventId: sourceEventId,
+                      ),
+                  groupId: groupId,
+                  phase: phase,
+                  eventId: eventId,
+                  verify:
+                      ({
+                        required publicKey,
+                        required data,
+                        required signature,
+                      }) => callVerifyPayload(
+                        bridge: stack.bridge,
+                        publicKey: publicKey,
+                        data: data,
+                        signature: signature,
+                      ),
+                ),
+      );
+    },
+  );
+}
+
+List<int> _b1bPlan365JpegBytes() => <int>[
+  0xff,
+  0xd8,
+  0xff,
+  0xe0,
+  0x00,
+  0x10,
+  ...List<int>.generate(58, (index) => (index * 17) & 0xff),
+];
+
+List<int> _b1bPlan365VoiceBytes() => <int>[
+  0x00,
+  0x00,
+  0x00,
+  0x18,
+  0x66,
+  0x74,
+  0x79,
+  0x70,
+  0x6d,
+  0x70,
+  0x34,
+  0x32,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  ...List<int>.generate(48, (index) => (0xa5 + index) & 0xff),
+];
+
+int _b1bGroupMediaBridgeCommandCount(
+  GroupMultiDeviceTestStack stack,
+  String command, {
+  required bool strict,
+}) {
+  final bridge = stack.bridge;
+  if (bridge is! RecordingGoBridgeClient) {
+    throw StateError('B1b requires exact native command recording');
+  }
+  var count = 0;
+  for (final raw in bridge.sentMessages) {
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map || decoded['cmd'] != command) continue;
+      final payload = decoded['payload'];
+      if (payload is! Map) continue;
+      final isStrict =
+          payload['custodyKind'] == groupMediaBlobCustodyKind &&
+          payload['custodyContract'] == groupMediaBlobCustodyContract;
+      final isLegacy = payload.containsKey('allowedPeers');
+      if ((strict && isStrict) || (!strict && isLegacy)) count++;
+    } catch (_) {}
+  }
+  return count;
+}
+
+Future<Map<String, dynamic>> _b1bAuthorPlan365MediaAndVoice({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+}) async {
+  final idScope = sha256
+      .convert(utf8.encode(configuredRunId))
+      .toString()
+      .substring(0, 12);
+  final coordinator = PreparedGroupMediaBlobCustodyCoordinator(
+    artifactStore: GroupMediaBlobArtifactStore(),
+  );
+  final strictUploadsBefore = _b1bGroupMediaBridgeCommandCount(
+    stack,
+    'media:upload',
+    strict: true,
+  );
+  final legacyUploadsBefore = _b1bGroupMediaBridgeCommandCount(
+    stack,
+    'media:upload',
+    strict: false,
+  );
+
+  Future<Map<String, dynamic>> author({
+    required String modality,
+    required String mime,
+    required List<int> bytes,
+    required String text,
+    int? durationMs,
+    List<double>? waveform,
+  }) async {
+    final messageId = 'b1b-365-$idScope-$modality';
+    final attachmentId = 'b1b-365-$idScope-$modality-blob';
+    final source = File(
+      '${Directory.systemTemp.path}/b1b-365-$idScope-$modality.source',
+    );
+    await source.writeAsBytes(bytes, flush: true);
+    final storedPath = await stack.mediaFileManager.copyToDurableStorage(
+      sourceFilePath: source.path,
+      messageId: messageId,
+      attachmentId: attachmentId,
+      mime: mime,
+    );
+    final plaintextPath = await stack.mediaFileManager.resolveStoredPath(
+      storedPath,
+    );
+    final authoredAt = DateTime.now().toUtc();
+    final parent = GroupMessage(
+      id: messageId,
+      groupId: groupId,
+      senderPeerId: stack.identity.peerId,
+      senderUsername: stack.identity.username,
+      text: text,
+      timestamp: authoredAt,
+      status: GroupMessage.statusQueuedOffline,
+      isIncoming: false,
+      createdAt: authoredAt,
+    );
+    final attachment = MediaAttachment(
+      id: attachmentId,
+      messageId: messageId,
+      mime: mime,
+      size: bytes.length,
+      mediaType: modality == 'voice' ? 'audio' : 'image',
+      width: modality == 'image' ? 8 : null,
+      height: modality == 'image' ? 8 : null,
+      durationMs: durationMs,
+      waveform: waveform,
+      localPath: storedPath,
+      downloadStatus: 'upload_pending',
+      createdAt: authoredAt.toIso8601String(),
+      ownerLane: MediaOwnerLane.group,
+    );
+    final result = await coordinator.prepareAndSend(
+      bridge: stack.bridge,
+      groupRepository: stack.groupRepo,
+      messageRepository: stack.groupMsgRepo,
+      mediaAttachmentRepository: stack.mediaAttachmentRepo,
+      identityPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      senderDeviceId: stack.identity.peerId,
+      senderTransportPeerId: stack.identity.peerId,
+      parent: parent,
+      sources: <PreparedGroupMediaBlobSource>[
+        PreparedGroupMediaBlobSource(
+          attachment: attachment,
+          plaintextPath: plaintextPath,
+        ),
+      ],
+      inviteDeliveryAttemptRepository: stack.groupInviteDeliveryAttemptRepo,
+    );
+    expect(result.preparation.isComplete, isTrue, reason: modality);
+    expect(result.sendResult, SendGroupMessageResult.success, reason: modality);
+    expect(result.message?.status, 'sent', reason: modality);
+    final completed = result.preparation.attachments.single;
+    expect(completed.groupMediaBlobCustodyFingerprint, isNotNull);
+    expect(completed.downloadStatus, 'done');
+    return <String, dynamic>{
+      'messageId': messageId,
+      'attachmentId': attachmentId,
+      'mime': mime,
+      'plaintextSha256': sha256.convert(bytes).toString(),
+      'plaintextSize': bytes.length,
+    };
+  }
+
+  final image = await author(
+    modality: 'image',
+    mime: 'image/jpeg',
+    bytes: _b1bPlan365JpegBytes(),
+    text: 'B1b Plan 365 deterministic image',
+  );
+  final voice = await author(
+    modality: 'voice',
+    mime: 'audio/mp4',
+    bytes: _b1bPlan365VoiceBytes(),
+    text: '',
+    durationMs: 960,
+    waveform: const <double>[0.0, 0.5, 1.0, 0.5, 0.0],
+  );
+  final strictUploadActions =
+      _b1bGroupMediaBridgeCommandCount(stack, 'media:upload', strict: true) -
+      strictUploadsBefore;
+  final legacyUploadActions =
+      _b1bGroupMediaBridgeCommandCount(stack, 'media:upload', strict: false) -
+      legacyUploadsBefore;
+  expect(strictUploadActions, 2);
+  expect(legacyUploadActions, 0);
+  return <String, dynamic>{
+    'groupId': groupId,
+    'image': image,
+    'voice': voice,
+    'productionPreparedCoordinatorInvoked': true,
+    'strictUploadActionsObserved': strictUploadActions == 2,
+    'zeroLegacyAllowedPeersUploads': legacyUploadActions == 0,
+  };
+}
+
+Future<Map<String, dynamic>> _b1bRecoverPlan365MediaAndVoice({
+  required GroupMultiDeviceTestStack stack,
+  required String groupId,
+  required Map<String, dynamic> fixture,
+}) async {
+  final descriptors = <Map<String, dynamic>>[
+    Map<String, dynamic>.from(fixture['image'] as Map),
+    Map<String, dynamic>.from(fixture['voice'] as Map),
+  ];
+  await waitForCondition(() async {
+    _b1bPlan365RestrictedFixedPointInvocations++;
+    await stack.p2pService.drainProtectedGroupContentFixedPoint();
+    for (final descriptor in descriptors) {
+      final messageId = descriptor['messageId'] as String;
+      final message = await stack.groupMsgRepo.getMessage(messageId);
+      final attachments = await stack.mediaAttachmentRepo
+          .getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group);
+      if (message == null || attachments.length != 1) return false;
+      final attachment = attachments.single;
+      if (attachment.id != descriptor['attachmentId'] ||
+          attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty != true ||
+          attachment.downloadStatus != 'pending') {
+        return false;
+      }
+    }
+    return true;
+  }, timeout: const Duration(minutes: 3));
+
+  final owner = StrictGroupMediaBlobDownloadAckOwner(
+    bridge: stack.bridge,
+    mediaAttachmentRepository: stack.mediaAttachmentRepo,
+    mediaFileManager: stack.mediaFileManager,
+  );
+  final downloadBefore = _b1bGroupMediaBridgeCommandCount(
+    stack,
+    'media:download',
+    strict: true,
+  );
+  final deleteBefore = _b1bGroupMediaBridgeCommandCount(
+    stack,
+    'media:delete',
+    strict: true,
+  );
+  for (final descriptor in descriptors) {
+    final messageId = descriptor['messageId'] as String;
+    final attachment =
+        (await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+          messageId,
+          owner: MediaOwnerLane.group,
+        )).single;
+    final downloaded = await owner.downloadAndAcknowledge(
+      attachment: attachment,
+      groupId: groupId,
+    );
+    expect(downloaded, isNotNull);
+    expect(downloaded!.downloadStatus, 'done');
+    expect(downloaded.groupMediaBlobCustodyFingerprint, isNotNull);
+    final localPath = await stack.mediaFileManager.resolveStoredPath(
+      downloaded.localPath!,
+    );
+    final localBytes = await File(localPath).readAsBytes();
+    expect(localBytes.length, descriptor['plaintextSize']);
+    expect(
+      sha256.convert(localBytes).toString(),
+      descriptor['plaintextSha256'],
+    );
+  }
+  await waitForCondition(() async {
+    await owner.retryPendingAcknowledgements();
+    for (final descriptor in descriptors) {
+      final rows = await stack.mediaAttachmentRepo
+          .loadGroupMediaBlobCustodyForMessage(
+            groupId: groupId,
+            messageId: descriptor['messageId'] as String,
+          );
+      if (rows.isNotEmpty) return false;
+    }
+    return true;
+  }, timeout: const Duration(minutes: 2));
+
+  final strictDownloads =
+      _b1bGroupMediaBridgeCommandCount(stack, 'media:download', strict: true) -
+      downloadBefore;
+  final strictDeletes =
+      _b1bGroupMediaBridgeCommandCount(stack, 'media:delete', strict: true) -
+      deleteBefore;
+  expect(strictDownloads, 2);
+  expect(strictDeletes, greaterThanOrEqualTo(2));
+  return <String, dynamic>{
+    'groupId': groupId,
+    'imageMessageId': (fixture['image'] as Map)['messageId'],
+    'voiceMessageId': (fixture['voice'] as Map)['messageId'],
+    'fingerprintedDescriptorsVerified': true,
+    'localPlaintextBytesVerified': true,
+    'strictBlobAckConverged': true,
+    'productionDownloadOwnerInvoked': true,
+    'restrictedFixedPointInvoked':
+        _b1bPlan365RestrictedFixedPointInvocations > 0,
+    'strictDownloadActionsObserved': strictDownloads == 2,
+    'strictDeleteActionsObserved': strictDeletes >= 2,
+  };
+}
 
 Future<void> _runB1bConvergencePrimary() async {
   final dbName = _dbNameForRole();
@@ -3868,6 +5127,7 @@ Future<void> _runB1bConvergencePrimary() async {
     restrictedLinkedRuntime: true,
   );
   var deleteStorage = true;
+  Map<String, dynamic>? plan365LinkedProof;
   try {
     expect(await stack.groupRepo.getAllGroups(), isEmpty);
     await _waitForDirectRelayReady(stack);
@@ -3936,6 +5196,169 @@ Future<void> _runB1bConvergencePrimary() async {
     _installB1bProtectedReplayHandler(stack);
     writeSharedText(_signalName('linked_reopened'), 'ok');
 
+    // Keep the linked physical recipient offline for every strict custody
+    // authoring step. The ordinary emulator never gets a topic/pubsub escape
+    // hatch: each accepted relay row is drained through the protected content
+    // fixed point before the existing terminal authority is authored.
+    expect(await stack.p2pService.stopNode(), isTrue);
+    writeSharedText(_signalName('content_recipient_offline'), 'ok');
+    final contentFixture = await waitForSharedJson(
+      _signalName('content_message_custody_stored.json'),
+      timeout: const Duration(minutes: 5),
+    );
+    final contentMessageId = contentFixture['messageId'] as String;
+    final contentText = contentFixture['text'] as String;
+    expect(
+      await stack.p2pService.startNode(
+        reopenedAuthority.credential!.transportPrivateKey,
+        stableTransport,
+      ),
+      isTrue,
+    );
+    await _waitForDirectRelayReady(stack);
+    await waitForCondition(() async {
+      await stack.p2pService.drainProtectedGroupContentFixedPoint();
+      return await stack.groupMsgRepo.getMessage(contentMessageId) != null;
+    }, timeout: const Duration(minutes: 3));
+    final receivedContent = await stack.groupMsgRepo.getMessage(
+      contentMessageId,
+    );
+    expect(receivedContent, isNotNull);
+    expect(receivedContent!.groupId, groupId);
+    expect(receivedContent.senderPeerId, stack.identity.peerId);
+    expect(receivedContent.transportPeerId, isNot(stableTransport));
+    expect(receivedContent.text, contentText);
+    expect(receivedContent.media, isEmpty);
+    expect(receivedContent.quotedMessageId, isNull);
+    expect(receivedContent.isForwarded, isFalse);
+    expect(receivedContent.privateMediaPolicy.isOrdinary, isTrue);
+    expect(
+      await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+        contentMessageId,
+        owner: MediaOwnerLane.group,
+      ),
+      isEmpty,
+    );
+    final contentEvent = await dbLoadGroupEventLogEntryExact(
+      stack.db,
+      groupId: groupId,
+      sourceEventId: protectedGroupMessageSourceEventId(contentMessageId),
+    );
+    expect(contentEvent?['event_type'], protectedGroupMessageEventType);
+    writeSharedText(_signalName('content_message_applied'), 'ok');
+
+    expect(await stack.p2pService.stopNode(), isTrue);
+    writeSharedText(_signalName('reaction_add_recipient_offline'), 'ok');
+    final addFixture = await waitForSharedJson(
+      _signalName('reaction_add_custody_stored.json'),
+      timeout: const Duration(minutes: 5),
+    );
+    final addTransitionId = addFixture['transitionId'] as String;
+    expect(GroupReactionTransitionOrder.tryParse(addTransitionId), isNotNull);
+    expect(
+      await stack.p2pService.startNode(
+        reopenedAuthority.credential!.transportPrivateKey,
+        stableTransport,
+      ),
+      isTrue,
+    );
+    await _waitForDirectRelayReady(stack);
+    await waitForCondition(() async {
+      await stack.p2pService.drainProtectedGroupContentFixedPoint();
+      final reaction = await stack.reactionRepo
+          .getReactionForSenderIncludingRemoved(
+            messageId: contentMessageId,
+            senderPeerId: stack.identity.peerId,
+          );
+      return reaction != null && !reaction.isRemoved;
+    }, timeout: const Duration(minutes: 3));
+    final added = await stack.reactionRepo.getReactionForSenderIncludingRemoved(
+      messageId: contentMessageId,
+      senderPeerId: stack.identity.peerId,
+    );
+    expect(added, isNotNull);
+    expect(added!.emoji, addFixture['emoji']);
+    expect(added.isRemoved, isFalse);
+    final addEvent = await dbLoadGroupEventLogEntryExact(
+      stack.db,
+      groupId: groupId,
+      sourceEventId: protectedGroupReactionSourceEventId(addTransitionId),
+    );
+    expect(addEvent?['event_type'], protectedGroupReactionEventType);
+    writeSharedText(_signalName('reaction_add_applied'), 'ok');
+
+    expect(await stack.p2pService.stopNode(), isTrue);
+    writeSharedText(_signalName('reaction_remove_recipient_offline'), 'ok');
+    final removeFixture = await waitForSharedJson(
+      _signalName('reaction_remove_custody_stored.json'),
+      timeout: const Duration(minutes: 5),
+    );
+    final removeTransitionId = removeFixture['transitionId'] as String;
+    expect(
+      GroupReactionTransitionOrder.tryParse(removeTransitionId),
+      isNotNull,
+    );
+    expect(removeTransitionId, isNot(addTransitionId));
+    expect(
+      await stack.p2pService.startNode(
+        reopenedAuthority.credential!.transportPrivateKey,
+        stableTransport,
+      ),
+      isTrue,
+    );
+    await _waitForDirectRelayReady(stack);
+    await waitForCondition(() async {
+      await stack.p2pService.drainProtectedGroupContentFixedPoint();
+      final reaction = await stack.reactionRepo
+          .getReactionForSenderIncludingRemoved(
+            messageId: contentMessageId,
+            senderPeerId: stack.identity.peerId,
+          );
+      return reaction?.isRemoved == true;
+    }, timeout: const Duration(minutes: 3));
+    final removed = await stack.reactionRepo
+        .getReactionForSenderIncludingRemoved(
+          messageId: contentMessageId,
+          senderPeerId: stack.identity.peerId,
+        );
+    expect(removed, isNotNull);
+    expect(removed!.id, added.id);
+    expect(removed.isRemoved, isTrue);
+    final removeEvent = await dbLoadGroupEventLogEntryExact(
+      stack.db,
+      groupId: groupId,
+      sourceEventId: protectedGroupReactionSourceEventId(removeTransitionId),
+    );
+    expect(removeEvent?['event_type'], protectedGroupReactionEventType);
+    writeSharedText(_signalName('reaction_remove_applied'), 'ok');
+
+    if (configuredB1bPlan365GroupMedia) {
+      expect(await stack.p2pService.stopNode(), isTrue);
+      writeSharedText(_signalName('plan365_media_recipient_offline'), 'ok');
+      final mediaFixture = await waitForSharedJson(
+        _signalName('plan365_media_custody_stored.json'),
+        timeout: const Duration(minutes: 8),
+      );
+      expect(mediaFixture['groupId'], groupId);
+      expect(
+        await stack.p2pService.startNode(
+          reopenedAuthority.credential!.transportPrivateKey,
+          stableTransport,
+        ),
+        isTrue,
+      );
+      await _waitForDirectRelayReady(stack);
+      plan365LinkedProof = await _b1bRecoverPlan365MediaAndVoice(
+        stack: stack,
+        groupId: groupId,
+        fixture: mediaFixture,
+      );
+      writeSharedJson(
+        _signalName('plan365_media_applied.json'),
+        plan365LinkedProof,
+      );
+    }
+
     await waitForSharedSignal(
       _signalName('dissolve_stored'),
       timeout: const Duration(minutes: 5),
@@ -3950,13 +5373,63 @@ Future<void> _runB1bConvergencePrimary() async {
     expect(terminal, isNotNull);
     expect(terminal!.isDissolved, isTrue);
     expect(await stack.groupRepo.getLatestKey(groupId), isNotNull);
+    expect(_b1bContentIngressAuthorityGateInvocations, greaterThan(0));
+    expect(_b1bAuthorityReconcileInvocations, greaterThan(0));
+    final terminalAuthority = await _b1bLatestSettledContentAuthority(
+      stack,
+      groupId,
+    );
+    expect(terminalAuthority, isNotNull);
+    final dissolveReconciliation = await dbLoadGroupEventLogEntryExact(
+      stack.db,
+      groupId: groupId,
+      sourceEventId: protectedGroupContentReconciliationCompleteSourceEventId(
+        terminalAuthority!.eventId,
+      ),
+    );
+    expect(
+      isProtectedGroupContentReconciliationCompleteRow(
+        dissolveReconciliation,
+        authority: terminalAuthority,
+      ),
+      isTrue,
+    );
     writeSharedJson(_signalName('linked_verdict.json'), {
       'groupId': groupId,
       'linkedTransportPeerId': stableTransport,
       'emptyRepositoryBeforeBootstrap': true,
       'bootstrapMaterialized': true,
       'preservedStorageReopened': true,
+      'offlineBlobFreeDiscussionApplied': true,
+      'strictReactionAddApplied': true,
+      'strictReactionRemoveApplied': true,
+      'productionContentIngressGateInvoked':
+          _b1bContentIngressAuthorityGateInvocations > 0,
+      'productionAuthorityReconcileInvoked':
+          _b1bAuthorityReconcileInvocations > 0,
+      'contentMessageId': contentMessageId,
+      'reactionAddTransitionId': addTransitionId,
+      'reactionRemoveTransitionId': removeTransitionId,
       'terminalReadOnlyDissolve': true,
+      if (configuredB1bPlan365GroupMedia) ...<String, dynamic>{
+        'plan365MediaAndVoiceApplied': plan365LinkedProof != null,
+        'plan365FingerprintDescriptorsVerified':
+            plan365LinkedProof?['fingerprintedDescriptorsVerified'] == true,
+        'plan365LocalPlaintextVerified':
+            plan365LinkedProof?['localPlaintextBytesVerified'] == true,
+        'plan365StrictBlobAckConverged':
+            plan365LinkedProof?['strictBlobAckConverged'] == true,
+        'plan365ProductionDownloadOwnerInvoked':
+            plan365LinkedProof?['productionDownloadOwnerInvoked'] == true,
+        'plan365RestrictedFixedPointInvoked':
+            plan365LinkedProof?['restrictedFixedPointInvoked'] == true,
+        'plan365StrictDownloadActionsObserved':
+            plan365LinkedProof?['strictDownloadActionsObserved'] == true,
+        'plan365StrictDeleteActionsObserved':
+            plan365LinkedProof?['strictDeleteActionsObserved'] == true,
+        'plan365ImageMessageId': plan365LinkedProof?['imageMessageId'],
+        'plan365VoiceMessageId': plan365LinkedProof?['voiceMessageId'],
+      },
     });
     writeSharedText(_signalName('linked_complete'), 'ok');
   } finally {
@@ -3983,6 +5456,7 @@ Future<void> _runB1bConvergenceSibling() async {
     cliPeerFixture: null,
     restoreMnemonic: mnemonic,
   );
+  Map<String, dynamic>? plan365OrdinaryProof;
   try {
     await _waitForDirectRelayReady(stack);
     expect(stack.identity.peerId, fixture['accountPeerId']);
@@ -4060,6 +5534,209 @@ Future<void> _runB1bConvergenceSibling() async {
       timeout: const Duration(minutes: 5),
     );
 
+    var authoringResolverInvocations = 0;
+    setGroupContentAuthoringResolver(
+      stack.groupRepo,
+      _b1bProductionContentAuthoringResolver(
+        stack,
+        onResolved: () => authoringResolverInvocations++,
+      ),
+    );
+    final contentMessageId = 'b1b-content-$configuredRunId';
+    const contentText = 'B1b offline blob-free discussion';
+    final publishBefore = _b1bBridgeCommandCount(stack, 'group:publish');
+    final reliableBefore = _b1bBridgeCommandCount(stack, 'group:sendReliable');
+    final reactionPublishBefore = _b1bBridgeCommandCount(
+      stack,
+      'group:publishReaction',
+    );
+    await waitForSharedSignal(
+      _signalName('content_recipient_offline'),
+      timeout: const Duration(minutes: 5),
+    );
+    final (contentResult, authoredContent) = await sendGroupMessage(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      groupId: group.id,
+      text: contentText,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      senderUsername: stack.identity.username,
+      senderDeviceId: stack.identity.peerId,
+      senderTransportPeerId: stack.identity.peerId,
+      messageId: contentMessageId,
+      logicalDeliveryId: contentMessageId,
+      timestamp: DateTime.now().toUtc(),
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+    );
+    expect(contentResult, SendGroupMessageResult.success);
+    expect(authoredContent, isNotNull);
+    expect(authoredContent!.id, contentMessageId);
+    expect(authoredContent.status, 'sent');
+    expect(authoredContent.inboxStored, isTrue);
+    expect(authoredContent.inboxRetryPayload, isNull);
+    expect(authoredContent.media, isEmpty);
+    expect(
+      await stack.mediaAttachmentRepo.getAttachmentsForMessage(
+        contentMessageId,
+        owner: MediaOwnerLane.group,
+      ),
+      isEmpty,
+    );
+    writeSharedJson(_signalName('content_message_custody_stored.json'), {
+      'messageId': contentMessageId,
+      'text': contentText,
+      'custodyKind': groupContentCustodyKind,
+    });
+    await waitForSharedSignal(
+      _signalName('content_message_applied'),
+      timeout: const Duration(minutes: 5),
+    );
+
+    const reactionEmoji = '👍';
+    await waitForSharedSignal(
+      _signalName('reaction_add_recipient_offline'),
+      timeout: const Duration(minutes: 5),
+    );
+    final (addResult, localAdd) = await sendGroupReaction(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      msgRepo: stack.groupMsgRepo,
+      reactionRepo: stack.reactionRepo,
+      reactionReplayOutboxRepo: stack.reactionReplayOutboxRepo,
+      groupId: group.id,
+      messageId: contentMessageId,
+      emoji: reactionEmoji,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+      authoredAt: DateTime.now().toUtc(),
+    );
+    expect(addResult, SendGroupReactionResult.success);
+    expect(localAdd, isNotNull);
+    expect(localAdd!.isRemoved, isFalse);
+    final addEntry = await stack.reactionReplayOutboxRepo
+        .getLatestEntryForTarget(
+          groupId: group.id,
+          messageId: contentMessageId,
+          senderPeerId: stack.identity.peerId,
+        );
+    expect(addEntry, isNotNull);
+    expect(addEntry!.action, 'add');
+    expect(addEntry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+    expect(
+      GroupReactionTransitionOrder.tryParse(addEntry.reactionId),
+      isNotNull,
+    );
+    writeSharedJson(_signalName('reaction_add_custody_stored.json'), {
+      'messageId': contentMessageId,
+      'emoji': reactionEmoji,
+      'transitionId': addEntry.reactionId,
+      'custodyKind': groupContentCustodyKind,
+    });
+    await waitForSharedSignal(
+      _signalName('reaction_add_applied'),
+      timeout: const Duration(minutes: 5),
+    );
+
+    await waitForSharedSignal(
+      _signalName('reaction_remove_recipient_offline'),
+      timeout: const Duration(minutes: 5),
+    );
+    final targetMessage = await stack.groupMsgRepo.getMessage(contentMessageId);
+    expect(targetMessage, isNotNull);
+    final removeResult = await removeGroupReaction(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      reactionRepo: stack.reactionRepo,
+      reactionReplayOutboxRepo: stack.reactionReplayOutboxRepo,
+      groupId: group.id,
+      messageId: contentMessageId,
+      emoji: reactionEmoji,
+      senderPeerId: stack.identity.peerId,
+      senderPublicKey: stack.identity.publicKey,
+      senderPrivateKey: stack.identity.privateKey,
+      inviteDeliveryAttemptRepo: stack.groupInviteDeliveryAttemptRepo,
+      targetMessage: targetMessage,
+      authoredAt: DateTime.now().toUtc(),
+    );
+    expect(removeResult, RemoveGroupReactionResult.success);
+    final localRemove = await stack.reactionRepo
+        .getReactionForSenderIncludingRemoved(
+          messageId: contentMessageId,
+          senderPeerId: stack.identity.peerId,
+        );
+    expect(localRemove, isNotNull);
+    expect(localRemove!.id, localAdd.id);
+    expect(localRemove.isRemoved, isTrue);
+    final removeEntry = await stack.reactionReplayOutboxRepo
+        .getLatestEntryForTarget(
+          groupId: group.id,
+          messageId: contentMessageId,
+          senderPeerId: stack.identity.peerId,
+        );
+    expect(removeEntry, isNotNull);
+    expect(removeEntry!.action, 'remove');
+    expect(removeEntry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+    expect(removeEntry.reactionId, isNot(addEntry.reactionId));
+    expect(
+      GroupReactionTransitionOrder.tryParse(removeEntry.reactionId),
+      isNotNull,
+    );
+    writeSharedJson(_signalName('reaction_remove_custody_stored.json'), {
+      'messageId': contentMessageId,
+      'emoji': reactionEmoji,
+      'transitionId': removeEntry.reactionId,
+      'custodyKind': groupContentCustodyKind,
+    });
+    await waitForSharedSignal(
+      _signalName('reaction_remove_applied'),
+      timeout: const Duration(minutes: 5),
+    );
+    expect(_b1bBridgeCommandCount(stack, 'group:publish'), publishBefore);
+    expect(_b1bBridgeCommandCount(stack, 'group:sendReliable'), reliableBefore);
+    expect(
+      _b1bBridgeCommandCount(stack, 'group:publishReaction'),
+      reactionPublishBefore,
+    );
+    expect(
+      authoringResolverInvocations,
+      greaterThanOrEqualTo(3),
+      reason: 'message, ADD and REMOVE must use the production resolver',
+    );
+
+    if (configuredB1bPlan365GroupMedia) {
+      await waitForSharedSignal(
+        _signalName('plan365_media_recipient_offline'),
+        timeout: const Duration(minutes: 5),
+      );
+      final mediaFixture = await _b1bAuthorPlan365MediaAndVoice(
+        stack: stack,
+        groupId: group.id,
+      );
+      writeSharedJson(
+        _signalName('plan365_media_custody_stored.json'),
+        mediaFixture,
+      );
+      final linkedProof = await waitForSharedJson(
+        _signalName('plan365_media_applied.json'),
+        timeout: const Duration(minutes: 8),
+      );
+      expect(linkedProof['groupId'], group.id);
+      expect(linkedProof['fingerprintedDescriptorsVerified'], isTrue);
+      expect(linkedProof['localPlaintextBytesVerified'], isTrue);
+      expect(linkedProof['strictBlobAckConverged'], isTrue);
+      plan365OrdinaryProof = <String, dynamic>{
+        ...mediaFixture,
+        'imageMessageId': (mediaFixture['image'] as Map)['messageId'],
+        'voiceMessageId': (mediaFixture['voice'] as Map)['messageId'],
+        'linkedRecoveryVerified': true,
+      };
+    }
+
     final currentGroup = await stack.groupRepo.getGroup(group.id);
     final selfMember = await stack.groupRepo.getMember(
       group.id,
@@ -4075,15 +5752,50 @@ Future<void> _runB1bConvergenceSibling() async {
     final frozenRecipients = selfMember.activeDevicesWithLegacyFallback();
     final dissolvedAt = DateTime.now().toUtc();
     final transitionId = 'b1b-dissolve-${dissolvedAt.microsecondsSinceEpoch}';
-    final rows = await buildProtectedGroupAuthorityRows(
+    final preTransitionStateHash = await buildGroupTransitionStateHash(
+      stack.groupRepo,
+      group.id,
+    );
+    final signedDissolve = await signGroupSystemTransitionPayload(
+      bridge: stack.bridge,
+      groupRepo: stack.groupRepo,
+      groupId: group.id,
+      transitionType: 'group_dissolved',
+      sourceEventId: transitionId,
+      eventAt: dissolvedAt,
+      actorPeerId: stack.identity.peerId,
+      actorUsername: stack.identity.username,
+      actorSigningPublicKey: stack.identity.publicKey,
+      actorPrivateKey: stack.identity.privateKey,
+      actorDeviceId: senderDevice.deviceId,
+      actorTransportPeerId: senderDevice.transportPeerId,
+      actorKeyPackageId: senderDevice.keyPackageId,
+      preTransitionStateHash: preTransitionStateHash,
+      systemPayload: <String, dynamic>{
+        '__sys': 'group_dissolved',
+        'dissolvedAt': dissolvedAt.toIso8601String(),
+        'dissolvedBy': stack.identity.peerId,
+      },
+    );
+    final latestKey = await stack.groupRepo.getLatestKey(group.id);
+    expect(latestKey, isNotNull);
+    final preparation = await buildProtectedGroupAuthorityRows(
       groupId: group.id,
       transitionId: transitionId,
       control: ProtectedGroupAuthorityControl.groupDissolve,
       replayData: <String, dynamic>{
         'groupId': group.id,
+        'senderId': stack.identity.peerId,
+        'senderUsername': stack.identity.username,
+        'senderDeviceId': senderDevice.deviceId,
+        'transportPeerId': senderDevice.transportPeerId,
+        'text': jsonEncode(signedDissolve),
+        'timestamp': dissolvedAt.toIso8601String(),
+        'messageId': transitionId,
         'dissolvedAt': dissolvedAt.toIso8601String(),
         'dissolvedBy': stack.identity.peerId,
       },
+      keyEpoch: latestKey!.keyGeneration,
       actorAccountPeerId: stack.identity.peerId,
       actorAccountPublicKey: stack.identity.publicKey,
       actorAccountPrivateKey: stack.identity.privateKey,
@@ -4102,11 +5814,12 @@ Future<void> _runB1bConvergenceSibling() async {
           ),
       now: () => dissolvedAt,
     );
-    expect(rows, hasLength(1));
+    expect(preparation.rows, hasLength(1));
+    expect(preparation.hasAuthenticatedAuthority, isTrue);
     expect(
       await persistPreparedProtectedGroupAuthority(
         repository: stack.groupPendingBroadcastRepo,
-        rows: rows,
+        preparation: preparation,
       ),
       isTrue,
     );
@@ -4114,13 +5827,25 @@ Future<void> _runB1bConvergenceSibling() async {
       await runner.drainForGroup(group.id);
       return (await stack.groupPendingBroadcastRepo.forGroup(group.id)).isEmpty;
     }, timeout: const Duration(minutes: 3));
-    await stack.groupRepo.saveGroup(
-      currentGroup!.copyWith(
-        isDissolved: true,
-        dissolvedAt: dissolvedAt,
-        dissolvedBy: stack.identity.peerId,
-        lastMembershipEventAt: dissolvedAt,
+    final ordinaryTerminal = await stack.groupRepo.getGroup(group.id);
+    expect(ordinaryTerminal, isNotNull);
+    expect(ordinaryTerminal!.isDissolved, isTrue);
+    expect(ordinaryTerminal.dissolvedAt?.toUtc(), dissolvedAt);
+    expect(_b1bLocalAuthorityReconcileInvocations, greaterThan(0));
+    final localAuthority = preparation.authorityProof!;
+    expect(
+      isProtectedGroupContentReconciliationCompleteRow(
+        await dbLoadGroupEventLogEntryExact(
+          stack.db,
+          groupId: group.id,
+          sourceEventId:
+              protectedGroupContentReconciliationCompleteSourceEventId(
+                localAuthority.eventId,
+              ),
+        ),
+        authority: localAuthority,
       ),
+      isTrue,
     );
     writeSharedText(_signalName('dissolve_stored'), 'ok');
     await waitForSharedSignal(
@@ -4131,9 +5856,33 @@ Future<void> _runB1bConvergenceSibling() async {
       'groupId': group.id,
       'linkedTransportPeerId': verifiedTarget.transportPeerId,
       'bootstrapCustodyAccepted': true,
+      'offlineBlobFreeDiscussionCustodyAccepted': true,
+      'strictReactionAddCustodyAccepted': true,
+      'strictReactionRemoveCustodyAccepted': true,
+      'zeroGroupPubsubForStrictContent': true,
+      'productionAuthoringResolverInvoked': authoringResolverInvocations > 0,
+      'localAuthorityReconcileInvoked':
+          _b1bLocalAuthorityReconcileInvocations > 0,
+      'contentMessageId': contentMessageId,
+      'reactionAddTransitionId': addEntry.reactionId,
+      'reactionRemoveTransitionId': removeEntry.reactionId,
       'dissolveCustodyAcceptedBeforeTerminalCommit': true,
+      if (configuredB1bPlan365GroupMedia) ...<String, dynamic>{
+        'plan365MediaAndVoiceCustodyAccepted':
+            plan365OrdinaryProof?['linkedRecoveryVerified'] == true,
+        'plan365ProductionPreparedCoordinatorInvoked':
+            plan365OrdinaryProof?['productionPreparedCoordinatorInvoked'] ==
+            true,
+        'plan365StrictUploadActionsObserved':
+            plan365OrdinaryProof?['strictUploadActionsObserved'] == true,
+        'plan365ZeroLegacyAllowedPeersUploads':
+            plan365OrdinaryProof?['zeroLegacyAllowedPeersUploads'] == true,
+        'plan365ImageMessageId': plan365OrdinaryProof?['imageMessageId'],
+        'plan365VoiceMessageId': plan365OrdinaryProof?['voiceMessageId'],
+      },
     });
   } finally {
+    setGroupContentAuthoringResolver(stack.groupRepo, null);
     await stack.teardown();
   }
 }

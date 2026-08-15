@@ -126,6 +126,10 @@ func newControlPlaneStores(
 		}
 
 		pushBackend := newRedisPushTokenBackend(client, cfg.RedisPrefix)
+		if err := pushBackend.ValidateStartup(); err != nil {
+			_ = client.Close()
+			return nil, fmt.Errorf("validate push token vault state: %w", err)
+		}
 		push := newPushServiceWithTokenBackend(ctx, serviceAccountPath, pushBackend)
 		rzBackend := newRedisRendezvousBackend(client, cfg.RedisPrefix)
 		inboxBackend := newRedisInboxBackend(

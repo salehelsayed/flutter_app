@@ -885,6 +885,7 @@ void main() {
                 String? timestamp,
                 String? blobId,
                 preparedArtifact,
+                mediaAdmission,
               }) async {
                 operationLog.add('sendVoiceMessageFn');
                 return (SendVoiceMessageResult.success, null);
@@ -941,6 +942,7 @@ void main() {
               String? timestamp,
               String? blobId,
               preparedArtifact,
+              mediaAdmission,
             }) async {
               operationLog.add('sendVoiceMessageFn');
               return (SendVoiceMessageResult.uploadFailed, null);
@@ -991,6 +993,7 @@ void main() {
                 String? timestamp,
                 String? blobId,
                 preparedArtifact,
+                mediaAdmission,
               }) async {
                 operationLog.add('sendVoiceMessageFn');
                 final ts =

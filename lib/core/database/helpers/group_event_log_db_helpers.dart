@@ -144,7 +144,7 @@ Future<Map<String, Object?>?> dbLoadGroupEventLogEntryExact(
 /// [afterSourceTimestamp]/[afterSourceEventId] always mean after the cursor in
 /// the selected order, so descending callers page toward older rows.
 Future<List<Map<String, Object?>>> dbLoadGroupEventLogTypePage(
-  Database db, {
+  DatabaseExecutor db, {
   required String groupId,
   required String eventType,
   String? afterSourceTimestamp,

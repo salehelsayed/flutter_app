@@ -35,6 +35,7 @@ import 'package:flutter_app/features/conversation/application/send_chat_message_
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_inbox_custody_outbox_entry.dart';
+import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_payload.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/direct_private_media_lifecycle_repository.dart';
@@ -449,6 +450,49 @@ Future<bool> _retryFailedMessageCandidate({
   MediaUploadLease? uploadLease;
   _DirectPrivateManualRetryCustody? privateCustody;
   try {
+    // 356: an exact mutation outbox owner is stronger than the older v108
+    // direct-event owner. Resolve the list-loaded event first so an ownerless
+    // deletion refuses without any weaker lookup, while a surviving edit gets
+    // its committed retry authority before relay or reconstruction work.
+    final loadedMutationOwner = await _retryOwnedDirectMutationIfPresent(
+      message: msg,
+      messageRepo: messageRepo,
+      storeExactCustody: storeExactCustody,
+      attemptOwnedCustody: retryDirectInboxCustody,
+    );
+    if (loadedMutationOwner.handled) {
+      return loadedMutationOwner.success;
+    }
+
+    // 366 survivor-first boundary: private linked generations deliberately
+    // have no v110 intent. Discover their persisted v114 authority before the
+    // historical singular-v108 lookup, marker guard, source checks, or any
+    // contact/roster resolution. Once a linked row exists, every malformed or
+    // partial shape is owned fail-closed and may never fall through.
+    DirectMediaBlobCustodyRepository? privateFanoutBlobRepository;
+    var privateFanoutRows = const <DirectMediaBlobCustodyRow>[];
+    var hasPrivateFanoutSurvivor = false;
+    if (_isOutgoingOneMoreLookPrivate(msg) &&
+        msg.directMediaCustodyIntentId == null &&
+        msg.directEventFanoutGenerationId == msg.id &&
+        mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
+      final candidate = mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+      if (candidate.supportsDirectMediaBlobCustody) {
+        try {
+          privateFanoutRows = await candidate
+              .loadDirectMediaBlobCustodyForMessage(msg.id);
+          hasPrivateFanoutSurvivor = privateFanoutRows.any(
+            (row) => row.isLinkedFanoutRow,
+          );
+          if (hasPrivateFanoutSurvivor) {
+            privateFanoutBlobRepository = candidate;
+          }
+        } catch (_) {
+          return false;
+        }
+      }
+    }
+
     // A v108 immutable custody row is the sole retry authority for its initial
     // direct event. Resolve it from the list-loaded identity before re-reading
     // the weaker parent: settlement or physical deletion may win between list
@@ -457,7 +501,8 @@ Future<bool> _retryFailedMessageCandidate({
     // drain recognizes the retained row and stops. Neither path may fall
     // through to upload, cached-envelope, or re-encryption work.
     final loadedMessageId = msg.id;
-    if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+    if (!hasPrivateFanoutSurvivor &&
+        messageRepo is OutgoingDirectTextInboxCustodyRepository) {
       final custodyRepository =
           messageRepo as OutgoingDirectTextInboxCustodyRepository;
       DirectInboxCustodyOutboxEntry? owner;
@@ -553,7 +598,8 @@ Future<bool> _retryFailedMessageCandidate({
     // includes completed rows and retry-ceiling failures; `upload_pending` is
     // only one possible historical state. Exact linked v114 survivors are the
     // sole exemption and keep their persisted per-target retry authority.
-    if (mediaAttachmentRepo != null &&
+    if (!hasPrivateFanoutSurvivor &&
+        mediaAttachmentRepo != null &&
         await _refuseUnownedFailedDirectMediaRetry(
           message: msg,
           mediaAttachmentRepository: mediaAttachmentRepo,
@@ -561,7 +607,8 @@ Future<bool> _retryFailedMessageCandidate({
       return false;
     }
 
-    if (fresh.directEventFanoutGenerationId != null &&
+    if (!hasPrivateFanoutSurvivor &&
+        fresh.directEventFanoutGenerationId != null &&
         fresh.directMediaCustodyIntentId == null) {
       // 361: zero surviving siblings with a nonnull generation marker is a
       // terminal no-remint fact. Re-encrypting or re-sending here would
@@ -587,6 +634,130 @@ Future<bool> _retryFailedMessageCandidate({
     final directMediaIntent = msg.directMediaCustodyIntentId;
     _RetryAttachmentResolution? strictBlobResolution;
     DirectLinkedMediaFanoutContext? linkedMediaFanout;
+    DirectPrivateMediaFanoutContext? privateMediaFanout;
+    if (hasPrivateFanoutSurvivor) {
+      final blobRepository = privateFanoutBlobRepository!;
+      final cleanupRuntime =
+          mediaAttachmentRepo is DirectPrivateMediaCleanupRuntime
+          ? mediaAttachmentRepo as DirectPrivateMediaCleanupRuntime
+          : null;
+      final mutationRepository =
+          mediaAttachmentRepo is OutgoingDirectPrivateMutationRepository
+          ? mediaAttachmentRepo as OutgoingDirectPrivateMutationRepository
+          : null;
+      final envelopeRepository =
+          messageRepo is OutgoingDirectPrivateEnvelopeCustodyRepository
+          ? messageRepo as OutgoingDirectPrivateEnvelopeCustodyRepository
+          : null;
+      final lifecycleRepository =
+          messageRepo is DirectPrivateMediaLifecycleRepository
+          ? messageRepo as DirectPrivateMediaLifecycleRepository
+          : null;
+      if (!_isOutgoingOneMoreLookPrivate(msg) ||
+          msg.directMediaCustodyIntentId != null ||
+          msg.directEventFanoutGenerationId != msg.id ||
+          mediaAttachmentRepo == null ||
+          mediaFileManager == null ||
+          cleanupRuntime == null ||
+          mutationRepository == null ||
+          envelopeRepository == null ||
+          lifecycleRepository == null ||
+          !identical(
+            mutationRepository
+                .outgoingDirectPrivateMutationCoordinator
+                .lifecycleLock,
+            cleanupRuntime.directPrivateMediaLifecycleLock,
+          )) {
+        return false;
+      }
+      try {
+        final currentAttachments = await mediaAttachmentRepo
+            .getAttachmentsForMessage(msg.id, owner: MediaOwnerLane.direct);
+        final pending = currentAttachments.length == 1
+            ? currentAttachments.single
+            : null;
+        final pendingPath = pending?.localPath?.trim();
+        if (pending == null ||
+            pending.downloadStatus != 'upload_pending' ||
+            pendingPath == null ||
+            pendingPath.isEmpty ||
+            privateFanoutRows.isEmpty ||
+            privateFanoutRows.any(
+              (row) =>
+                  !row.isLinkedFanoutRow ||
+                  row.messageId != msg.id ||
+                  row.attachmentId != pending.id ||
+                  row.contactAccountPeerId != msg.contactPeerId,
+            )) {
+          return false;
+        }
+        privateCustody = await _claimDirectPrivateManualRetryCustody(
+          messageId: msg.id,
+          attachments: <MediaAttachment>[pending],
+          cleanupRuntime: cleanupRuntime,
+          lifecycleRepository: lifecycleRepository,
+          envelopeRepository: envelopeRepository,
+          mediaAttachmentRepository: mediaAttachmentRepo,
+          mediaFileManager: mediaFileManager,
+        );
+        if (privateCustody == null) return false;
+        final coordinator =
+            directMediaBlobCustodyCoordinator ??
+            PreparedDirectMediaBlobCustodyCoordinator(
+              repository: blobRepository,
+              artifactStore:
+                  directMediaBlobArtifactStore ??
+                  DirectMediaBlobArtifactStore(),
+            );
+        final strictResult = await coordinator.reopenAndUploadPrivateFanout(
+          bridge: bridge,
+          identityPeerId: identity.peerId,
+          contactAccountPeerId: msg.contactPeerId,
+          expectedParent: msg,
+          expectedAttachment: pending,
+        );
+        if (!strictResult.isComplete || strictResult.attachments.length != 1) {
+          return false;
+        }
+        privateMediaFanout =
+            DirectPrivateMediaFanoutContext.fromPersistedV114Survivors(
+              contactAccountPeerId: msg.contactPeerId,
+              targetRows: strictResult.targetRows,
+            );
+        if (privateMediaFanout == null) return false;
+        final canonical = await canonicalizeStrictPrivateRetryCompletion(
+          mediaFileManager: mediaFileManager,
+          contactPeerId: msg.contactPeerId,
+          messageId: msg.id,
+          pendingLocalPath: pendingPath,
+          strict: strictResult.attachments.single,
+        );
+        if (canonical == null) return false;
+        final mutation = await mutationRepository
+            .outgoingDirectPrivateMutationCoordinator
+            .commitCompletion(
+              attachment: canonical,
+              expectedPendingLocalPath: pendingPath,
+            );
+        if (!mutation.authorizesTransportHandoff) return false;
+        strictBlobResolution = _RetryAttachmentResolution(
+          attachments: <MediaAttachment>[canonical],
+          skipReason: _RetryFailedMessageSkipReason.none,
+          didUpload: true,
+          privateCustody: privateCustody,
+        );
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_PRIVATE_FANOUT_REOPENED',
+          details: {
+            'id': _messageIdPreview(msg.id),
+            'targets': strictResult.targetRows.length,
+          },
+        );
+      } catch (_) {
+        return false;
+      }
+    }
     if (directMediaIntent != null) {
       if (mediaAttachmentRepo == null) return false;
       try {
@@ -987,7 +1158,7 @@ Future<bool> _retryFailedMessageCandidate({
     // A linked survivor retry is already addressed by persisted v114 facts;
     // resolving the live logical contact here would let roster drift revoke a
     // committed obligation before v108 binding.
-    final mlKemPk = linkedMediaFanout == null
+    final mlKemPk = linkedMediaFanout == null && privateMediaFanout == null
         ? (await contactRepo.getContact(msg.contactPeerId))?.mlKemPublicKey
         : null;
 
@@ -1020,6 +1191,7 @@ Future<bool> _retryFailedMessageCandidate({
       mediaAttachmentRepo: mediaAttachmentRepo,
       emitTimingEvent: false,
       directLinkedMediaFanout: linkedMediaFanout,
+      directPrivateMediaFanout: privateMediaFanout,
     );
 
     if (result == SendChatMessageResult.success) {
@@ -1173,6 +1345,58 @@ Future<({bool handled, bool success})> _retryOwnedDirectMutationIfPresent({
       lifecycleCapability?.supportsDirectMutationInboxCustodyLifecycle == true
       ? lifecycleCapability
       : null;
+
+  // 366: a v113 mutation generation is plural authority. Load every surviving
+  // physical sibling by event id before attempting the historical logical
+  // contact lookup; attachment cleanup and roster drift are irrelevant to
+  // these already-authored immutable rows.
+  final fanoutCapability = messageRepo is OutgoingDirectEventFanoutRepository
+      ? messageRepo as OutgoingDirectEventFanoutRepository
+      : null;
+  if (repository != null &&
+      fanoutCapability?.supportsDirectEventFanout == true &&
+      message.directEventFanoutGenerationId == classified.eventId) {
+    final siblings = await fanoutCapability!.loadDirectEventFanoutSiblings(
+      classified.eventId,
+    );
+    if (siblings.isNotEmpty) {
+      final exactRows = siblings.where(
+        (row) =>
+            row['contact_account_peer_id'] == message.contactPeerId &&
+            row['parent_message_id'] == message.id,
+      );
+      if (exactRows.length != siblings.length) {
+        return (handled: true, success: false);
+      }
+      if (!attemptOwnedCustody) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_FAILED_DIRECT_MUTATION_FANOUT_SKIPPED_AFTER_DRAIN',
+          details: {'id': _messageIdPreview(message.id)},
+        );
+        return (handled: true, success: false);
+      }
+      var allCompleted = true;
+      for (final row in siblings) {
+        final completed = await drainOwnedDirectMutationInboxCustodyOutboxEntry(
+          entry: DirectReactionInboxCustodyOutboxEntry.fromMap(row),
+          custodyRepository: repository,
+          storeInAckCustodyInboxDetailed: storeExactCustody,
+        );
+        allCompleted = allCompleted && completed;
+      }
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'RETRY_FAILED_DIRECT_MUTATION_FANOUT_OWNED',
+        details: <String, Object?>{
+          'id': _messageIdPreview(message.id),
+          'siblings': siblings.length,
+          'completed': allCompleted,
+        },
+      );
+      return (handled: true, success: allCompleted);
+    }
+  }
   final owner = repository == null
       ? null
       : await repository.loadDirectTextMutationInboxCustodyForEvent(

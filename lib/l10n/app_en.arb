@@ -1696,6 +1696,27 @@
   "sibling_device_verify_prompt": "A new device wants to join this account. Verify its safety number matches the new device before approving.",
   "sibling_device_reject": "Reject",
   "sibling_device_verify_approve": "Verify & approve",
+  "contact_profile_linked_devices": "Linked devices",
+  "contact_profile_linked_device_revoke": "Revoke",
+  "contact_profile_linked_device_verify": "Verify",
+  "linked_device_setup_title": "Link this device",
+  "linked_device_setup_recovery_phrase_instruction": "Enter the 12-word recovery phrase of the account you want this phone to join as an additional device.",
+  "linked_group_status_title": "Groups (read only)",
+  "linked_group_status_refresh": "Refresh group status",
+  "linked_group_status_waiting": "Waiting for a group bootstrap from your primary device.",
+  "group_info_link_device_action": "Link this group to another device",
+  "linked_group_confirm_title": "Link this group?",
+  "linked_group_confirm_body": "Share “{groupName}” with the scanned linked device. No other groups or conversations will be shared.",
+  "@linked_group_confirm_body": {
+    "placeholders": {
+      "groupName": {
+        "type": "String"
+      }
+    }
+  },
+  "linked_group_confirm_action": "Link group",
+  "linked_device_media_unavailable": "Media is not available on this linked device yet",
+  "linked_device_voice_unavailable": "Voice messages are not available on this linked device yet",
   "transport_diagnostics_title": "TRANSPORT DIAGNOSTICS (SESSION)",
   "transport_diagnostics_census": "Session-scoped, aggregate-only transport census. No identifiers leave the device.",
   "transport_diagnostics_lan_discovery": "discovery",

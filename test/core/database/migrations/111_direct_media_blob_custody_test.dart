@@ -72,8 +72,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 114);
-      expect(await _userVersion(db), 114);
+      expect(currentIdentityDatabaseVersion, 115);
+      expect(await _userVersion(db), 115);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -124,7 +124,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 114);
+      expect(await _userVersion(db), 115);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,
@@ -154,7 +154,7 @@ void main() {
           onDowngrade: onDatabaseVersionChangeError,
         ),
       );
-      expect(await _userVersion(db), 114);
+      expect(await _userVersion(db), 115);
       expect(
         await db.query(kDirectMediaBlobCustodyTable, orderBy: 'attachment_id'),
         snapshotBeforeReopen,
@@ -167,8 +167,9 @@ Future<void> _expectExactSchema(Database db) async {
   final columns = await db.rawQuery(
     'PRAGMA table_info(direct_media_blob_custody)',
   );
-  // 362: the v114 rebuild appends the two nullable linked columns after
-  // recipient_peer_id; everything else keeps its v111 declaration order.
+  // 362/365: v114 appended the linked columns after recipient_peer_id and
+  // v115 appends the lane-generalized ownership columns. The v111 projection
+  // otherwise keeps its declaration order.
   expect(columns.map((column) => column['name']), const <String>[
     'attachment_id',
     'message_id',
@@ -191,6 +192,9 @@ Future<void> _expectExactSchema(Database db) async {
     'next_attempt_at',
     'created_at',
     'updated_at',
+    'owner_lane',
+    'group_id',
+    'custody_blob_id',
   ]);
   expect(
     await db.rawQuery('PRAGMA foreign_key_list(direct_media_blob_custody)'),
@@ -524,6 +528,9 @@ Map<String, Object?> _outgoingPreparedMap(
 }) => <String, Object?>{
   'attachment_id': id,
   'message_id': id.startsWith('typed') ? 'typed-message' : 'schema-message',
+  'owner_lane': 'direct',
+  'group_id': null,
+  'custody_blob_id': id,
   'direction': 'outgoing',
   'state': 'outgoing_prepared',
   'inbox_custody_incarnation_id': null,
@@ -571,6 +578,9 @@ Map<String, Object?> _incomingCommittedMap(String id) => <String, Object?>{
   'message_id': id.startsWith('typed')
       ? 'typed-incoming-message'
       : 'schema-incoming-message',
+  'owner_lane': 'direct',
+  'group_id': null,
+  'custody_blob_id': id,
   'direction': 'incoming',
   'state': 'incoming_committed',
   'inbox_custody_incarnation_id': null,

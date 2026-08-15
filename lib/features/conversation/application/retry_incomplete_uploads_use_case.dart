@@ -523,7 +523,64 @@ Future<int> retryIncompleteUploads({
         continue;
       }
 
-      if (messageRepo is OutgoingDirectTextInboxCustodyRepository) {
+      // Load ALL attachments for this message (including already-done ones)
+      // so we can combine them with newly-uploaded ones for the send call.
+      final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.direct,
+      );
+      final directMediaIntent = msg.directMediaCustodyIntentId;
+      final isOutgoingPrivateOneMoreLook =
+          !msg.isIncoming &&
+          msg.privateMediaPolicy.version == 1 &&
+          (msg.privateMediaMode == PrivateMediaMode.protected ||
+              msg.privateMediaMode == PrivateMediaMode.viewOnce);
+      DirectMediaBlobCustodyRepository? directMediaBlobRepository;
+      var directMediaBlobRows = const <DirectMediaBlobCustodyRow>[];
+      var hasDirectMediaBlobGeneration = false;
+      // 366 survivor-first boundary: private linked generations carry no v110
+      // intent. Probe v114 before v108, marker, source, or roster logic so a
+      // restart can only replay the exact persisted physical target set.
+      if (mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
+        final candidateRepository =
+            mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
+        if (candidateRepository.supportsDirectMediaBlobCustody) {
+          directMediaBlobRepository = candidateRepository;
+          directMediaBlobRows = await candidateRepository
+              .loadDirectMediaBlobCustodyForMessage(messageId);
+          hasDirectMediaBlobGeneration = directMediaBlobRows.isNotEmpty;
+        }
+      }
+      // 362: a linked (fanout) generation is owned by its exact persisted
+      // sibling rows. A durable fanout marker WITHOUT linked rows is terminal
+      // (or an unreadable/unlinked contradiction) — skip silently, never
+      // remint and never fall through to the single-target lanes.
+      final hasLinkedFanoutRows = directMediaBlobRows.any(
+        (row) => row.isLinkedFanoutRow,
+      );
+      final hasPrivateLinkedFanoutSurvivor =
+          isOutgoingPrivateOneMoreLook &&
+          directMediaIntent == null &&
+          msg.directEventFanoutGenerationId == msg.id &&
+          hasLinkedFanoutRows;
+      if (msg.directEventFanoutGenerationId == msg.id && !hasLinkedFanoutRows) {
+        emitFlowEvent(
+          layer: 'FL',
+          event: 'RETRY_INCOMPLETE_UPLOAD_SKIPPED_FANOUT_GENERATION',
+          details: {
+            'messageId': messageId.length > 8
+                ? messageId.substring(0, 8)
+                : messageId,
+          },
+        );
+        continue;
+      }
+
+      // A plural private Barrier-B replay must never be collapsed through the
+      // historical singular-owner lookup. It reconstructs every v108 sibling
+      // from v114 after all blob targets are stored below.
+      if (!hasPrivateLinkedFanoutSurvivor &&
+          messageRepo is OutgoingDirectTextInboxCustodyRepository) {
         try {
           final owned =
               await (messageRepo as OutgoingDirectTextInboxCustodyRepository)
@@ -548,47 +605,6 @@ Future<int> retryIncompleteUploads({
           continue;
         }
       }
-
-      // Load ALL attachments for this message (including already-done ones)
-      // so we can combine them with newly-uploaded ones for the send call.
-      final allAttachments = await mediaAttachmentRepo.getAttachmentsForMessage(
-        messageId,
-        owner: MediaOwnerLane.direct,
-      );
-      final directMediaIntent = msg.directMediaCustodyIntentId;
-      DirectMediaBlobCustodyRepository? directMediaBlobRepository;
-      var directMediaBlobRows = const <DirectMediaBlobCustodyRow>[];
-      var hasDirectMediaBlobGeneration = false;
-      if (directMediaIntent != null &&
-          mediaAttachmentRepo is DirectMediaBlobCustodyRepository) {
-        final candidateRepository =
-            mediaAttachmentRepo as DirectMediaBlobCustodyRepository;
-        if (candidateRepository.supportsDirectMediaBlobCustody) {
-          directMediaBlobRepository = candidateRepository;
-          directMediaBlobRows = await candidateRepository
-              .loadDirectMediaBlobCustodyForMessage(messageId);
-          hasDirectMediaBlobGeneration = directMediaBlobRows.isNotEmpty;
-        }
-      }
-      // 362: a linked (fanout) generation is owned by its exact persisted
-      // sibling rows. A durable fanout marker WITHOUT linked rows is terminal
-      // (or an unreadable/unlinked contradiction) — skip silently, never
-      // remint and never fall through to the single-target lanes.
-      final hasLinkedFanoutRows = directMediaBlobRows.any(
-        (row) => row.isLinkedFanoutRow,
-      );
-      if (msg.directEventFanoutGenerationId == msg.id && !hasLinkedFanoutRows) {
-        emitFlowEvent(
-          layer: 'FL',
-          event: 'RETRY_INCOMPLETE_UPLOAD_SKIPPED_FANOUT_GENERATION',
-          details: {
-            'messageId': messageId.length > 8
-                ? messageId.substring(0, 8)
-                : messageId,
-          },
-        );
-        continue;
-      }
       var retryPendingAttachments = pendingAttsForMessage;
       if (directMediaIntent != null) {
         if (!isExactDirectMediaCustodyRetryProjection(
@@ -610,11 +626,6 @@ Future<int> retryIncompleteUploads({
             )
             .toList(growable: false);
       }
-      final isOutgoingPrivateOneMoreLook =
-          !msg.isIncoming &&
-          msg.privateMediaPolicy.version == 1 &&
-          (msg.privateMediaMode == PrivateMediaMode.protected ||
-              msg.privateMediaMode == PrivateMediaMode.viewOnce);
       // 362 RETRY ADMISSION BOUNDARY. A NEVER-PUBLISHED generation is not a
       // survivor: nothing is committed to any target yet, so the roster
       // question is still open and the same rule the composer applies must
@@ -793,6 +804,7 @@ Future<int> retryIncompleteUploads({
       final carriedDirectMediaCustodyCompletions = <String, MediaAttachment>{};
       var directMediaPreparationRefused = false;
       DirectLinkedMediaFanoutContext? linkedMediaFanout;
+      DirectPrivateMediaFanoutContext? privateMediaFanout;
 
       if (directMediaIntent != null &&
           directMediaBlobRepository != null &&
@@ -904,11 +916,15 @@ Future<int> retryIncompleteUploads({
               ? retryPendingAttachments.single
               : null;
           final pendingPath = pending?.localPath;
-          if (privateRows.length != 1 ||
+          final exactRowCardinality = hasPrivateLinkedFanoutSurvivor
+              ? privateRows.isNotEmpty &&
+                    privateRows.every((row) => row.attachmentId == pending?.id)
+              : privateRows.length == 1 &&
+                    privateRows.single.attachmentId == pending?.id;
+          if (!exactRowCardinality ||
               pending == null ||
               pendingPath == null ||
-              pendingPath.isEmpty ||
-              privateRows.single.attachmentId != pending.id) {
+              pendingPath.isEmpty) {
             emitFlowEvent(
               layer: 'FL',
               event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_RETAINED',
@@ -928,15 +944,33 @@ Future<int> retryIncompleteUploads({
                     directMediaBlobArtifactStore ??
                     DirectMediaBlobArtifactStore(),
               );
-          final strictResult = await coordinator.reopenAndUploadPrivate(
-            bridge: bridge,
-            identityPeerId: identity.peerId,
-            recipientPeerId: msg.contactPeerId,
-            expectedParent: msg,
-            expectedAttachment: pending,
-          );
-          if (!strictResult.isComplete ||
-              strictResult.attachments.length != 1) {
+          final strictResult = hasPrivateLinkedFanoutSurvivor
+              ? await coordinator.reopenAndUploadPrivateFanout(
+                  bridge: bridge,
+                  identityPeerId: identity.peerId,
+                  contactAccountPeerId: msg.contactPeerId,
+                  expectedParent: msg,
+                  expectedAttachment: pending,
+                )
+              : null;
+          final scalarStrictResult = hasPrivateLinkedFanoutSurvivor
+              ? null
+              : await coordinator.reopenAndUploadPrivate(
+                  bridge: bridge,
+                  identityPeerId: identity.peerId,
+                  recipientPeerId: msg.contactPeerId,
+                  expectedParent: msg,
+                  expectedAttachment: pending,
+                );
+          final strictAttachments =
+              strictResult?.attachments ?? scalarStrictResult?.attachments;
+          final strictComplete =
+              strictResult?.isComplete ??
+              scalarStrictResult?.isComplete ??
+              false;
+          if (!strictComplete ||
+              strictAttachments == null ||
+              strictAttachments.length != 1) {
             emitFlowEvent(
               layer: 'FL',
               event: 'RETRY_INCOMPLETE_PRIVATE_STRICT_RETAINED',
@@ -948,12 +982,31 @@ Future<int> retryIncompleteUploads({
             );
             continue;
           }
+          if (strictResult != null) {
+            privateMediaFanout =
+                DirectPrivateMediaFanoutContext.fromPersistedV114Survivors(
+                  contactAccountPeerId: msg.contactPeerId,
+                  targetRows: strictResult.targetRows,
+                );
+            if (privateMediaFanout == null) {
+              emitFlowEvent(
+                layer: 'FL',
+                event: 'RETRY_INCOMPLETE_PRIVATE_FANOUT_RETAINED',
+                details: {'messageId': messageId, 'reason': 'survivor_shape'},
+              );
+              await _releaseIncompletePrivateTransferClaims(
+                runtime: privateCleanupRuntime!,
+                tokens: privateTransferTokens,
+              );
+              continue;
+            }
+          }
           final canonical = await canonicalizeStrictPrivateRetryCompletion(
             mediaFileManager: mediaFileManager,
             contactPeerId: msg.contactPeerId,
             messageId: messageId,
             pendingLocalPath: pendingPath,
-            strict: strictResult.attachments.single,
+            strict: strictAttachments.single,
           );
           if (canonical == null) {
             emitFlowEvent(
@@ -986,6 +1039,7 @@ Future<int> retryIncompleteUploads({
             continue;
           }
           carriedPrivateCompletions[canonical.id] = canonical;
+          authorizedPrivatePendingSources[canonical.id] = pendingPath;
           retryPendingAttachments = const <MediaAttachment>[];
           privateStrictReopened = true;
         }
@@ -1412,7 +1466,8 @@ Future<int> retryIncompleteUploads({
           .toList(growable: false);
 
       final sendMessage = refreshedMsg!;
-      final recipientMlKemPublicKey = linkedMediaFanout == null
+      final recipientMlKemPublicKey =
+          linkedMediaFanout == null && privateMediaFanout == null
           ? (await contactRepo.getContact(
               sendMessage.contactPeerId,
             ))?.mlKemPublicKey
@@ -1436,6 +1491,7 @@ Future<int> retryIncompleteUploads({
         mediaAttachmentRepo: mediaAttachmentRepo,
         emitTimingEvent: false,
         directLinkedMediaFanout: linkedMediaFanout,
+        directPrivateMediaFanout: privateMediaFanout,
       );
 
       if (result == SendChatMessageResult.success) {

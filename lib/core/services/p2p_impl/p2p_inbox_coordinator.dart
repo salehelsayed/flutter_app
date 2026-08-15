@@ -1,16 +1,5 @@
 part of '../p2p_service_impl.dart';
 
-bool _sameProtectedRelayEntry(
-  InboxStagingEntry left,
-  InboxStagingEntry right,
-) =>
-    left.entryId == right.entryId &&
-    left.ownerPeerId == right.ownerPeerId &&
-    left.senderPeerId == right.senderPeerId &&
-    left.messageType == right.messageType &&
-    left.relayTimestamp == right.relayTimestamp &&
-    left.envelope == right.envelope;
-
 class _P2PInboxPort {
   final NodeState Function() readNodeState;
   final Stream<NodeState> nodeStateStream;
@@ -73,6 +62,26 @@ class _P2PInboxPort {
 }
 
 class _P2PInboxCoordinator {
+  static bool _sameProtectedRelayEntry(
+    InboxStagingEntry left,
+    InboxStagingEntry right,
+  ) =>
+      left.entryId == right.entryId &&
+      left.ownerPeerId == right.ownerPeerId &&
+      left.senderPeerId == right.senderPeerId &&
+      left.messageType == right.messageType &&
+      left.relayTimestamp == right.relayTimestamp &&
+      left.envelope == right.envelope;
+
+  static bool _isProtectedGroupEnvelopeType(String? messageType) =>
+      messageType == _linkedGroupBootstrapInboxEnvelopeType ||
+      messageType == _protectedGroupAuthorityInboxEnvelopeType ||
+      _isProtectedGroupContentEnvelopeType(messageType);
+
+  static bool _isProtectedGroupContentEnvelopeType(String? messageType) =>
+      messageType == _protectedGroupContentInboxEnvelopeType ||
+      messageType == _unverifiedProtectedGroupContentInboxEnvelopeType;
+
   final _P2PInboxPort _port;
   final ReceivedWakeTokenStore? _receivedWakeTokenStore;
   final AcceptedInboxWakeTokenHashObserver? _acceptedInboxWakeTokenHashObserver;
@@ -99,6 +108,8 @@ class _P2PInboxCoordinator {
   Future<DirectInboxDrainOutcome>? _backgroundDrainInProgress;
   bool _pendingStartupDrain = false;
   bool _pendingStartupDrainWaitForAllPages = false;
+  bool _protectedGroupContentAdmissionPaused = false;
+  Future<void>? _protectedGroupContentReplayInFlight;
 
   _P2PInboxCoordinator({
     required _P2PInboxPort port,
@@ -148,6 +159,52 @@ class _P2PInboxCoordinator {
     _replayRecoveredProtectedGroupEnvelope = handler;
   }
 
+  void resumeProtectedGroupContentAdmission() {
+    _protectedGroupContentAdmissionPaused = false;
+  }
+
+  Future<void> pauseProtectedGroupContentAdmission() async {
+    _protectedGroupContentAdmissionPaused = true;
+    final inFlight = _protectedGroupContentReplayInFlight;
+    if (inFlight != null) await inFlight;
+  }
+
+  Future<int> drainProtectedGroupContentFixedPoint({int maxPasses = 8}) async {
+    if (maxPasses < 1) return 0;
+    var passes = 0;
+    for (; passes < maxPasses; passes++) {
+      final before = await _recoverableProtectedGroupFingerprint();
+      final outcome = await _drainOfflineInbox(waitForAllPages: true);
+      final after = await _recoverableProtectedGroupFingerprint();
+      if (outcome.isSuccessful && !outcome.hasMore) return passes + 1;
+      // A prerequisite commit removes or changes at least one recoverable row.
+      // An unchanged durable fingerprint means another immediate pass would
+      // only spin on relay-owned bytes.
+      if (before == after) return passes + 1;
+    }
+    return passes;
+  }
+
+  Future<String> _recoverableProtectedGroupFingerprint() async {
+    final rows = await _inboxStagingRepository.getRecoverableEntries(
+      limit: _maxRecoverableInboxReplayEntries,
+    );
+    final protected =
+        rows
+            .where((entry) => _isProtectedGroupEnvelopeType(entry.messageType))
+            .map(
+              (entry) => <String?>[
+                entry.entryId,
+                entry.messageType,
+                entry.status,
+                entry.rejectReasonCode,
+              ].join('\u0000'),
+            )
+            .toList(growable: false)
+          ..sort();
+    return protected.join('\u0001');
+  }
+
   String _normalizeInboxTimestamp(dynamic ts) {
     if (ts is int) {
       return DateTime.fromMillisecondsSinceEpoch(
@@ -162,9 +219,20 @@ class _P2PInboxCoordinator {
   }
 
   String? _messageTypeFromEnvelope(String envelope) {
+    final contentClassification = classifyProtectedGroupContentWire(envelope);
+    if (contentClassification ==
+        ProtectedGroupContentWireClassification.signedContent) {
+      return _protectedGroupContentInboxEnvelopeType;
+    }
+    if (contentClassification ==
+        ProtectedGroupContentWireClassification.unverifiedCandidate) {
+      return _unverifiedProtectedGroupContentInboxEnvelopeType;
+    }
     try {
       final decoded = jsonDecode(envelope) as Map<String, dynamic>;
-      return decoded['type']?.toString();
+      final type = decoded['type']?.toString();
+      if (type != null && type.isNotEmpty) return type;
+      return null;
     } catch (_) {
       return null;
     }
@@ -600,8 +668,16 @@ class _P2PInboxCoordinator {
       final entryStopwatch = Stopwatch()..start();
       final message = entry.toChatMessage();
       try {
-        if (entry.messageType == _linkedGroupBootstrapInboxEnvelopeType ||
-            entry.messageType == _protectedGroupAuthorityInboxEnvelopeType) {
+        if (_isProtectedGroupEnvelopeType(entry.messageType)) {
+          if (_isProtectedGroupContentEnvelopeType(entry.messageType) &&
+              _protectedGroupContentAdmissionPaused) {
+            await _markProtectedGroupPrerequisiteWaiting(
+              repo,
+              entry,
+              reasonCode: 'protected_group_content_admission_paused',
+            );
+            continue;
+          }
           final replay = _replayRecoveredProtectedGroupEnvelope;
           if (replay == null) {
             await _markProtectedGroupPrerequisiteWaiting(
@@ -611,7 +687,21 @@ class _P2PInboxCoordinator {
             );
             continue;
           }
-          final outcome = await replay(message);
+          final replayFuture = replay(message);
+          if (_isProtectedGroupContentEnvelopeType(entry.messageType)) {
+            _protectedGroupContentReplayInFlight = replayFuture.then<void>(
+              (_) {},
+              onError: (_) {},
+            );
+          }
+          late final ProtectedGroupReplayOutcome outcome;
+          try {
+            outcome = await replayFuture;
+          } finally {
+            if (_isProtectedGroupContentEnvelopeType(entry.messageType)) {
+              _protectedGroupContentReplayInFlight = null;
+            }
+          }
           switch (outcome.disposition) {
             case ProtectedGroupReplayDisposition.applied:
             case ProtectedGroupReplayDisposition.duplicate:
@@ -622,6 +712,16 @@ class _P2PInboxCoordinator {
               await _markProtectedGroupAckPending(repo, entry.entryId);
               protectedRelayAckableEntryIds?.add(entry.entryId);
               replayed++;
+              break;
+            case ProtectedGroupReplayDisposition.unverifiedRejected:
+              // No authenticated terminal fact exists, so the relay must
+              // retain its copy and this exact staged envelope must never
+              // enter the ACK set. Quarantine is a terminal local keep-state.
+              await repo.markQuarantined(
+                entry.entryId,
+                reasonCode: outcome.reasonCode,
+                reasonDetail: outcome.reasonDetail,
+              );
               break;
             case ProtectedGroupReplayDisposition.retryable:
               await repo.markRetryable(
@@ -1181,8 +1281,7 @@ class _P2PInboxCoordinator {
     final protectedRelayAckableEntryIds = <String>{};
     for (final entry in entries) {
       if (ackableEntryIds.contains(entry.entryId) ||
-          (entry.messageType != _linkedGroupBootstrapInboxEnvelopeType &&
-              entry.messageType != _protectedGroupAuthorityInboxEnvelopeType)) {
+          !_isProtectedGroupEnvelopeType(entry.messageType)) {
         continue;
       }
       final existing = await repo.getEntry(entry.entryId);
@@ -1227,9 +1326,7 @@ class _P2PInboxCoordinator {
           final entry = entries
               .where((value) => value.entryId == entryId)
               .first;
-          final protected =
-              entry.messageType == _linkedGroupBootstrapInboxEnvelopeType ||
-              entry.messageType == _protectedGroupAuthorityInboxEnvelopeType;
+          final protected = _isProtectedGroupEnvelopeType(entry.messageType);
           return !protected || protectedRelayAckableEntryIds.contains(entryId);
         })
         .toList(growable: false);
@@ -1294,9 +1391,7 @@ class _P2PInboxCoordinator {
 
     var protectedPending = false;
     for (final entry in entries) {
-      final isProtected =
-          entry.messageType == _linkedGroupBootstrapInboxEnvelopeType ||
-          entry.messageType == _protectedGroupAuthorityInboxEnvelopeType;
+      final isProtected = _isProtectedGroupEnvelopeType(entry.messageType);
       if (isProtected &&
           !relayAckableEntryIds.contains(entry.entryId) &&
           await repo.getEntry(entry.entryId) != null) {
@@ -1889,6 +1984,19 @@ class _P2PInboxCoordinator {
     custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
   );
 
+  Future<InboxStoreOutcome> storeInGroupContentExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) => _storeInInboxDetailed(
+    toPeerId,
+    message,
+    timeoutMs: timeoutMs,
+    custodyKind: AckCustodyKind.groupContentV1,
+    custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+  );
+
   Future<InboxStoreOutcome> _storeInInboxDetailed(
     String toPeerId,
     String message, {
@@ -1897,13 +2005,14 @@ class _P2PInboxCoordinator {
     int? custodyExpiresAtOrBeforeMs,
   }) async {
     if (custodyExpiresAtOrBeforeMs != null &&
-        (custodyKind != AckCustodyKind.directTextV108 ||
-            custodyExpiresAtOrBeforeMs <= 0)) {
+        (custodyExpiresAtOrBeforeMs <= 0 ||
+            (custodyKind != AckCustodyKind.directTextV108 &&
+                custodyKind != AckCustodyKind.groupContentV1))) {
       return const InboxStoreOutcome(
         status: InboxStoreStatus.failed,
         errorCode: 'CUSTODY_INELIGIBLE',
         errorMessage:
-            'Media expiry custody requires direct_text_v108 and a positive ceiling',
+            'Expiry-bounded custody requires an eligible kind and positive ceiling',
       );
     }
     if (!await _port.allowsAccountNetworkSideEffects('p2p_store_inbox')) {

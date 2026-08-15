@@ -16,6 +16,7 @@ import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
 import 'package:flutter_app/core/media/upload_media_outcome.dart';
 import 'package:flutter_app/core/media/upload_retry_projection.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 
 import '../models/media_attachment.dart';
 import '../models/conversation_message.dart';
@@ -165,6 +166,92 @@ abstract interface class DirectMediaBlobCustodyRepository {
   );
 }
 
+enum GroupMediaBlobCustodyStageOutcome { applied, idempotent, refused }
+
+/// Lane-isolated storage authority for per-physical-target group blobs.
+///
+/// This stays separate from [DirectMediaBlobCustodyRepository] even though DB
+/// v115 deliberately reuses its physical ledger. A direct drain therefore has
+/// no API by which it can accidentally load, transition or retire group rows.
+abstract interface class GroupMediaBlobCustodyRepository {
+  bool get supportsGroupMediaBlobCustody;
+
+  Future<T> runGroupMediaBlobCustodyLifecycle<T>(Future<T> Function() action);
+
+  Future<GroupMediaBlobCustodyStageOutcome>
+  stageFreshOutgoingGroupMediaBlobGeneration({
+    required GroupMessage parent,
+    required List<MediaAttachment> attachments,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required Map<String, String> custodyBlobIdsByAttachmentId,
+  });
+
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyForMessage({
+    required String groupId,
+    required String messageId,
+  });
+
+  Future<List<DirectMediaBlobCustodyRow>> loadGroupMediaBlobCustodyByStates(
+    Set<DirectMediaBlobCustodyState> states, {
+    int limit = 50,
+  });
+
+  Future<DirectMediaBlobCustodyRow?> loadGroupMediaBlobCustodyForTarget({
+    required String groupId,
+    required String attachmentId,
+    required String custodyBlobId,
+    required DirectMediaBlobCustodyDirection direction,
+    String? recipientPeerId,
+  });
+
+  Future<bool> transitionGroupMediaBlobCustodyIfExact({
+    required DirectMediaBlobCustodyRow expected,
+    required DirectMediaBlobCustodyRow next,
+  });
+
+  Future<bool> deleteGroupMediaBlobCleanupPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  );
+
+  Future<bool> commitIncomingGroupMediaBlobLocalPath({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String localPath,
+    required String sourceRelayPeerId,
+    required String updatedAt,
+    required int nowMs,
+  });
+
+  Future<bool> terminalizeIncomingGroupMediaBlobForLocalDeletion({
+    required MediaAttachment expectedAttachment,
+    required DirectMediaBlobCustodyRow expectedCustody,
+    required String sourceRelayPeerId,
+    required String updatedAt,
+  });
+
+  Future<bool> deleteIncomingGroupMediaBlobAckPendingIfExact(
+    DirectMediaBlobCustodyRow expected,
+  );
+
+  Future<bool> deleteIncomingGroupMediaBlobIfExpired({
+    required DirectMediaBlobCustodyRow expected,
+    required int nowMs,
+  });
+
+  Future<int> countOtherGroupMediaBlobCustodyRowsReferencingArtifact(
+    DirectMediaBlobCustodyRow expected,
+  );
+}
+
+/// Optional production inventory for crash-orphan reconciliation.
+///
+/// Custody rows remain the sole ownership ledger. The artifact owner uses this
+/// read-only projection only to remove files that have no surviving group-lane
+/// row after a process stopped between rename and SQL staging.
+abstract interface class GroupMediaBlobArtifactReferenceInventoryRepository {
+  Future<Set<String>> loadGroupMediaBlobArtifactRelativePaths();
+}
+
 /// Optional absent-parent entry into the existing direct-media v111 owner.
 ///
 /// This capability is intentionally independent from
@@ -235,6 +322,28 @@ abstract interface class OutgoingDirectPrivateMediaBlobGenerationRepository {
     required MediaAttachment expectedAttachment,
     required MediaAttachment preparedAttachment,
     required DirectMediaBlobCustodyRow custodyRow,
+  });
+}
+
+/// Plural private-media generation authority for an initialized linked roster.
+///
+/// This is intentionally separate from the scalar Plan-354 capability: an
+/// uninitialized private conversation keeps its exact one-row behavior and
+/// existing fakes do not silently acquire fanout authority. One supported
+/// private attachment owns one encrypted artifact and one v114 addressing row
+/// per physical target, all committed under the incumbent private lifecycle
+/// lock without minting a v110 intent.
+abstract interface class OutgoingDirectPrivateMediaBlobFanoutGenerationRepository {
+  bool get supportsOutgoingDirectPrivateMediaBlobFanoutGeneration;
+
+  Future<DirectMediaBlobGenerationStageResult>
+  stageOutgoingDirectPrivateMediaBlobFanoutGeneration({
+    required ConversationMessage expectedParent,
+    required MediaAttachment expectedAttachment,
+    required MediaAttachment preparedAttachment,
+    required List<DirectMediaBlobCustodyRow> custodyRows,
+    required String contactAccountPeerId,
+    required DirectContactFanoutSnapshot expectedSnapshot,
   });
 }
 
@@ -577,6 +686,8 @@ abstract interface class OutgoingDirectLinkedMediaBlobFanoutRepository {
     required List<DirectMediaBlobCustodyRow> custodyRows,
     required String contactAccountPeerId,
     required DirectContactFanoutSnapshot expectedSnapshot,
+    bool allowFreshParent = false,
+    String? authorizedForwardDedupKey,
   });
 
   /// Atomically binds the complete per-target v108 batch: one distinct

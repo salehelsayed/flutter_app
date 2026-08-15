@@ -1,4 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/pending_message_retrier.dart';
 import 'package:flutter_app/features/conversation/application/send_chat_message_use_case.dart';
 import 'package:flutter_app/features/p2p/domain/models/node_state.dart';
@@ -44,7 +45,7 @@ void main() {
     test(
       '1. both inbox and direct fail -> message persists as failed and pause does not duplicate rows',
       () async {
-        final p2pService = FakeP2PService(
+        final p2pService = _AckCustodyFakeP2PService(
           initialState: onlineState,
           storeInInboxResult: false,
           sendMessageWithReplyResult: const SendMessageResult(sent: false),
@@ -87,7 +88,7 @@ void main() {
         // Unknown presence starts one concurrent durable attempt. When that
         // attempt fails, the bounded sequential fallback retries once; both
         // failures must still converge on the same persisted message row.
-        expect(p2pService.storeInInboxCallCount, 2);
+        expect(p2pService.ackCustodyStoreCallCount, 2);
 
         p2pService.dispose();
       },
@@ -96,7 +97,7 @@ void main() {
     test(
       '1b. active send fails during transport loss, then online transition retrier heals the same row once',
       () async {
-        final p2pService = FakeP2PService(
+        final p2pService = _AckCustodyFakeP2PService(
           initialState: onlineState,
           storeInInboxResult: false,
           sendMessageWithReplyResult: const SendMessageResult(sent: false),
@@ -157,7 +158,7 @@ void main() {
         expect(recoveredRows.single.status, 'inboxed');
         expect(recoveredRows.single.transport, 'inbox');
         expect(
-          p2pService.storeInInboxCallCount,
+          p2pService.ackCustodyStoreCallCount,
           3,
           reason: 'Two failed initial inbox attempts plus one successful retry',
         );
@@ -294,4 +295,38 @@ void main() {
       timeout: const Timeout(Duration(seconds: 15)),
     );
   });
+}
+
+final class _AckCustodyFakeP2PService extends FakeP2PService
+    implements AckOrExpiryInboxStore {
+  _AckCustodyFakeP2PService({
+    required super.initialState,
+    required super.storeInInboxResult,
+    required super.sendMessageWithReplyResult,
+    super.discoverPeerResult,
+  });
+
+  int ackCustodyStoreCallCount = 0;
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    ackCustodyStoreCallCount++;
+    if (!storeInInboxResult) {
+      return const InboxStoreOutcome(
+        status: InboxStoreStatus.failed,
+        errorCode: 'TEST_RELAY_DOWN',
+      );
+    }
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      expiresAtMs: 4102444800000,
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
 }

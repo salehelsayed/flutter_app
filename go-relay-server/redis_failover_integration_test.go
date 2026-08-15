@@ -15,42 +15,53 @@ import (
 )
 
 type redisHelperRequest struct {
-	Op                         string   `json:"op"`
-	RedisURL                   string   `json:"redisUrl"`
-	RedisPrefix                string   `json:"redisPrefix"`
-	Namespace                  string   `json:"namespace,omitempty"`
-	Requester                  string   `json:"requester,omitempty"`
-	PeerID                     string   `json:"peerId,omitempty"`
-	From                       string   `json:"from,omitempty"`
-	Record                     string   `json:"record,omitempty"`
-	GroupID                    string   `json:"groupId,omitempty"`
-	Cursor                     string   `json:"cursor,omitempty"`
-	Token                      string   `json:"token,omitempty"`
-	Platform                   string   `json:"platform,omitempty"`
-	Limit                      int      `json:"limit,omitempty"`
-	TTL                        uint64   `json:"ttl,omitempty"`
-	Messages                   []string `json:"messages,omitempty"`
-	EntryIDs                   []string `json:"entryIds,omitempty"`
-	CustodyKind                string   `json:"custodyKind,omitempty"`
-	Admission                  bool     `json:"admission,omitempty"`
-	CustodyExpiresAtOrBeforeMs int64    `json:"custodyExpiresAtOrBeforeMs,omitempty"`
-	NowMs                      int64    `json:"nowMs,omitempty"`
+	Op                         string             `json:"op"`
+	RedisURL                   string             `json:"redisUrl"`
+	RedisPrefix                string             `json:"redisPrefix"`
+	Namespace                  string             `json:"namespace,omitempty"`
+	Requester                  string             `json:"requester,omitempty"`
+	PeerID                     string             `json:"peerId,omitempty"`
+	From                       string             `json:"from,omitempty"`
+	Record                     string             `json:"record,omitempty"`
+	GroupID                    string             `json:"groupId,omitempty"`
+	Cursor                     string             `json:"cursor,omitempty"`
+	Token                      string             `json:"token,omitempty"`
+	Platform                   string             `json:"platform,omitempty"`
+	Capabilities               []string           `json:"capabilities,omitempty"`
+	Route                      *redisPushRouteDTO `json:"route,omitempty"`
+	PushTokenKeyringFile       string             `json:"pushTokenKeyringFile,omitempty"`
+	PushTokenActiveKeyID       string             `json:"pushTokenActiveKeyId,omitempty"`
+	PushProviderEnvironment    string             `json:"pushProviderEnvironment,omitempty"`
+	FleetReceiptSHA256         string             `json:"fleetReceiptSha256,omitempty"`
+	Limit                      int                `json:"limit,omitempty"`
+	TTL                        uint64             `json:"ttl,omitempty"`
+	Messages                   []string           `json:"messages,omitempty"`
+	EntryIDs                   []string           `json:"entryIds,omitempty"`
+	CustodyKind                string             `json:"custodyKind,omitempty"`
+	Admission                  bool               `json:"admission,omitempty"`
+	CustodyExpiresAtOrBeforeMs int64              `json:"custodyExpiresAtOrBeforeMs,omitempty"`
+	NowMs                      int64              `json:"nowMs,omitempty"`
 }
 
 type redisHelperResponse struct {
-	Records     []string `json:"records,omitempty"`
-	Messages    []string `json:"messages,omitempty"`
-	HasMore     bool     `json:"hasMore,omitempty"`
-	NextCursor  string   `json:"nextCursor,omitempty"`
-	Token       string   `json:"token,omitempty"`
-	Platform    string   `json:"platform,omitempty"`
-	StoreStatus string   `json:"storeStatus,omitempty"`
-	EntryIDs    []string `json:"entryIds,omitempty"`
-	Timestamps  []int64  `json:"timestamps,omitempty"`
-	ExpiresAtMs []int64  `json:"expiresAtMs,omitempty"`
-	Acked       int      `json:"acked,omitempty"`
-	Count       int      `json:"count,omitempty"`
-	Peers       int      `json:"peers,omitempty"`
+	Records        []string           `json:"records,omitempty"`
+	Messages       []string           `json:"messages,omitempty"`
+	HasMore        bool               `json:"hasMore,omitempty"`
+	NextCursor     string             `json:"nextCursor,omitempty"`
+	Token          string             `json:"token,omitempty"`
+	Platform       string             `json:"platform,omitempty"`
+	Capabilities   []string           `json:"capabilities,omitempty"`
+	Route          *redisPushRouteDTO `json:"route,omitempty"`
+	Revoked        bool               `json:"revoked,omitempty"`
+	State          string             `json:"state,omitempty"`
+	PlatformCounts map[string]int     `json:"platformCounts,omitempty"`
+	StoreStatus    string             `json:"storeStatus,omitempty"`
+	EntryIDs       []string           `json:"entryIds,omitempty"`
+	Timestamps     []int64            `json:"timestamps,omitempty"`
+	ExpiresAtMs    []int64            `json:"expiresAtMs,omitempty"`
+	Acked          int                `json:"acked,omitempty"`
+	Count          int                `json:"count,omitempty"`
+	Peers          int                `json:"peers,omitempty"`
 }
 
 func TestRedisAckCustodySurvivesRelayProcessHandoffKillSwitchAndLegacyNamespace(t *testing.T) {
@@ -351,12 +362,17 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 		t.Fatalf("decode helper request: %v", err)
 	}
 
-	stores, err := newControlPlaneStores(context.Background(), backendConfig{
-		Kind:                       backendKindRedis,
-		RedisURL:                   req.RedisURL,
-		RedisPrefix:                req.RedisPrefix,
-		AckCustodyAdmissionEnabled: req.Admission,
-	}, DefaultServerLimits(), "/path/that/does/not/exist.json")
+	config := loadBackendConfigFromEnv()
+	config.Kind = backendKindRedis
+	config.RedisURL = req.RedisURL
+	config.RedisPrefix = req.RedisPrefix
+	config.AckCustodyAdmissionEnabled = req.Admission
+	stores, err := newControlPlaneStores(
+		context.Background(),
+		config,
+		DefaultServerLimits(),
+		"/path/that/does/not/exist.json",
+	)
 	if err != nil {
 		t.Fatalf("newControlPlaneStores() error: %v", err)
 	}
@@ -440,14 +456,84 @@ func TestRedisBackendHelperProcess(t *testing.T) {
 			t.Fatalf("AckAckCustody: %v", err)
 		}
 		resp.Acked = acked
-	case "register_push":
-		stores.Push.RegisterToken(req.PeerID, req.Token, req.Platform)
-	case "lookup_push":
-		entry := stores.Push.tokenBackend.LookupToken(req.PeerID)
-		if entry != nil {
-			resp.Token = entry.Token
-			resp.Platform = entry.Platform
+	case "migrate_push_vault":
+		backend, ok := stores.PushTokenBackend.(*redisPushTokenBackend)
+		if !ok {
+			t.Fatalf("migrate_push_vault backend = %T, want Redis", stores.PushTokenBackend)
 		}
+		if err := backend.Migrate(req.FleetReceiptSHA256); err != nil {
+			t.Fatalf("redisPushTokenBackend.Migrate: %v", err)
+		}
+		marker, err := backend.readState(backend.client)
+		if err != nil {
+			t.Fatalf("redisPushTokenBackend.readState: %v", err)
+		}
+		resp.State = string(marker.State)
+	case "register_push":
+		if err := stores.Push.RegisterToken(req.PeerID, req.Token, req.Platform); err != nil {
+			t.Fatalf("Push.RegisterToken: %v", err)
+		}
+	case "lookup_push":
+		route, err := stores.PushTokenBackend.LookupRoute(req.PeerID)
+		if err != nil {
+			t.Fatalf("PushTokenBackend.LookupRoute: %v", err)
+		}
+		if route != nil {
+			target, err := stores.PushTokenBackend.ResolveRoute(*route)
+			if err != nil {
+				t.Fatalf("PushTokenBackend.ResolveRoute: %v", err)
+			}
+			resp.Token = target.Token
+			resp.Platform = target.Platform
+		}
+	case "register_push_route":
+		if err := stores.PushTokenBackend.RegisterToken(
+			req.PeerID,
+			req.Token,
+			req.Platform,
+			req.Capabilities...,
+		); err != nil {
+			t.Fatalf("PushTokenBackend.RegisterToken: %v", err)
+		}
+		route, err := stores.PushTokenBackend.LookupRoute(req.PeerID)
+		if err != nil {
+			t.Fatalf("PushTokenBackend.LookupRoute after register: %v", err)
+		}
+		if route == nil {
+			t.Fatal("PushTokenBackend.LookupRoute after register returned nil")
+		}
+		resp.Route = redisPushRouteDTOFromLease(route)
+	case "lookup_resolve_push_route":
+		route, err := stores.PushTokenBackend.LookupRoute(req.PeerID)
+		if err != nil {
+			t.Fatalf("PushTokenBackend.LookupRoute: %v", err)
+		}
+		if route == nil {
+			t.Fatal("PushTokenBackend.LookupRoute returned nil")
+		}
+		target, err := stores.PushTokenBackend.ResolveRoute(*route)
+		if err != nil {
+			t.Fatalf("PushTokenBackend.ResolveRoute: %v", err)
+		}
+		if target == nil {
+			t.Fatal("PushTokenBackend.ResolveRoute returned nil")
+		}
+		resp.Route = redisPushRouteDTOFromLease(&target.Route)
+		resp.Token = target.Token
+		resp.Platform = target.Platform
+		resp.Capabilities = append([]string(nil), target.Route.Capabilities...)
+	case "revoke_push_route":
+		if req.Route == nil {
+			t.Fatal("revoke_push_route requires an exact route DTO")
+		}
+		revoked, err := stores.PushTokenBackend.RevokeIfCurrent(req.Route.lease())
+		if err != nil {
+			t.Fatalf("PushTokenBackend.RevokeIfCurrent: %v", err)
+		}
+		resp.Revoked = revoked
+	case "push_route_stats":
+		resp.Count = stores.PushTokenBackend.TokenCount()
+		resp.PlatformCounts = stores.PushTokenBackend.PlatformCounts()
 	case "store_group_batch":
 		for _, message := range req.Messages {
 			if err := stores.GroupInbox.Store(req.GroupID, req.From, message); err != nil {
@@ -492,6 +578,9 @@ func runRedisHelper(t *testing.T, req redisHelperRequest) redisHelperResponse {
 	cmd.Env = append(os.Environ(),
 		"GO_WANT_REDIS_HELPER=1",
 		"REDIS_HELPER_REQUEST="+string(payload),
+		"PUSH_TOKEN_KEYRING_FILE="+req.PushTokenKeyringFile,
+		"PUSH_TOKEN_ACTIVE_KEY_ID="+req.PushTokenActiveKeyID,
+		"PUSH_PROVIDER_ENVIRONMENT="+req.PushProviderEnvironment,
 	)
 
 	var stdout bytes.Buffer

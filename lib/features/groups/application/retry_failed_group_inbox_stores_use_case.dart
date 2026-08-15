@@ -1,8 +1,13 @@
 import 'dart:convert';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_reconciliation.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_receive.dart';
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
@@ -14,9 +19,39 @@ import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/identity/domain/repositories/identity_repository.dart';
+
+typedef ClassifyStrictGroupContentReactionTarget =
+    Future<ProtectedGroupReactionTargetDisposition> Function({
+      required String groupId,
+      required String messageId,
+    });
+
+/// One-bit fair owner cursor for the incumbent bounded retry scheduler.
+/// It is deliberately not a queue or second scheduler: it is consulted only
+/// when a one-slot pass observes both existing durable owners.
+class GroupInboxRetryFairnessCursor {
+  bool _reactionTurn = false;
+
+  bool takeReactionTurn() {
+    final result = _reactionTurn;
+    _reactionTurn = !_reactionTurn;
+    return result;
+  }
+}
+
+final Expando<GroupInboxRetryFairnessCursor>
+_defaultGroupInboxRetryFairnessCursors = Expando<GroupInboxRetryFairnessCursor>(
+  'groupInboxRetryFairnessCursor',
+);
+
+GroupInboxRetryFairnessCursor _fairnessCursorFor(
+  GroupMessageRepository repository,
+) => _defaultGroupInboxRetryFairnessCursors[repository] ??=
+    GroupInboxRetryFairnessCursor();
 
 List<String>? _privateRetryRecipientPeerIds(String retryPayload) {
   try {
@@ -128,8 +163,14 @@ Future<int> retryFailedGroupInboxStores({
   GroupPrivateMediaAvailability privateMediaAvailability =
       productionGroupPrivateMediaAvailability,
   GroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
+  AckOrExpiryInboxStore? groupContentInboxStore,
   int limit = 20,
   int Function()? privateMediaNowMs,
+  bool strictContentOnly = false,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  ClassifyProtectedGroupContentRetryAuthority? classifyStrictContentAuthority,
+  ClassifyStrictGroupContentReactionTarget? classifyStrictReactionTarget,
+  GroupInboxRetryFairnessCursor? fairnessCursor,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -156,14 +197,50 @@ Future<int> retryFailedGroupInboxStores({
     details: {'limit': limit},
   );
 
-  final messages = await msgRepo.getMessagesWithFailedInboxStore(limit: limit);
-  final remainingReactionSlots = limit - messages.length;
-  final reactionEntries =
-      reactionReplayOutboxRepo == null || remainingReactionSlots <= 0
+  // Reserve one slot for reactions only when that owner actually has work.
+  // When a one-slot pass sees both owners, alternate the selected owner across
+  // calls without exceeding the caller's limit.
+  final reactionProbe = reactionReplayOutboxRepo == null || limit <= 0
       ? const <GroupReactionReplayOutboxEntry>[]
-      : await reactionReplayOutboxRepo.loadRetryableEntries(
-          limit: remainingReactionSlots,
-        );
+      : strictContentOnly
+      ? await _loadDeclaredStrictReactions(reactionReplayOutboxRepo, limit: 1)
+      : await reactionReplayOutboxRepo.loadRetryableEntries(limit: 1);
+  final messageProbe = limit == 1 && reactionProbe.isNotEmpty
+      ? strictContentOnly
+            ? await _loadDeclaredStrictMessages(msgRepo, limit: 1)
+            : await msgRepo.getMessagesWithFailedInboxStore(limit: 1)
+      : const <GroupMessage>[];
+  late List<GroupMessage> messages;
+  late List<GroupReactionReplayOutboxEntry> reactionEntries;
+  if (limit == 1 && reactionProbe.isNotEmpty && messageProbe.isNotEmpty) {
+    final reactionTurn = (fairnessCursor ?? _fairnessCursorFor(msgRepo))
+        .takeReactionTurn();
+    messages = reactionTurn ? const <GroupMessage>[] : messageProbe;
+    reactionEntries = reactionTurn
+        ? reactionProbe
+        : const <GroupReactionReplayOutboxEntry>[];
+  } else {
+    final messageLimit = limit - (reactionProbe.isEmpty ? 0 : 1);
+    messages = messageLimit <= 0
+        ? const <GroupMessage>[]
+        : strictContentOnly
+        ? await _loadDeclaredStrictMessages(msgRepo, limit: messageLimit)
+        : await msgRepo.getMessagesWithFailedInboxStore(limit: messageLimit);
+    final remainingReactionSlots = limit - messages.length;
+    reactionEntries =
+        reactionReplayOutboxRepo == null || remainingReactionSlots <= 0
+        ? const <GroupReactionReplayOutboxEntry>[]
+        : remainingReactionSlots == 1 && reactionProbe.isNotEmpty
+        ? reactionProbe
+        : strictContentOnly
+        ? await _loadDeclaredStrictReactions(
+            reactionReplayOutboxRepo,
+            limit: remainingReactionSlots,
+          )
+        : await reactionReplayOutboxRepo.loadRetryableEntries(
+            limit: remainingReactionSlots,
+          );
+  }
 
   if (messages.isEmpty && reactionEntries.isEmpty) {
     emitFlowEvent(
@@ -185,9 +262,17 @@ Future<int> retryFailedGroupInboxStores({
       identityRepo: identityRepo,
       privateMediaAvailability: privateMediaAvailability,
       privateMediaNowMs: privateMediaNowMs,
+      groupContentInboxStore: groupContentInboxStore,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      classifyStrictContentAuthority: classifyStrictContentAuthority,
       expected: msg,
     );
-    final retried = groupRepo == null
+    final declaredStrict = declaresGroupContentRetryPayload(
+      msg.inboxRetryPayload,
+    );
+    final retried = declaredStrict
+        ? await retryCandidate()
+        : groupRepo == null
         ? await retryCandidate()
         : (await runSelfRemovedGroupLifecycleLeaf<bool>(
                 groupRepo: groupRepo,
@@ -206,8 +291,17 @@ Future<int> retryFailedGroupInboxStores({
       groupRepo: groupRepo,
       msgRepo: msgRepo,
       identityRepo: identityRepo,
+      groupContentInboxStore: groupContentInboxStore,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      classifyStrictContentAuthority: classifyStrictContentAuthority,
+      classifyStrictReactionTarget: classifyStrictReactionTarget,
     );
-    final retried = groupRepo == null
+    final declaredStrict = declaresGroupContentRetryPayload(
+      entry.inboxRetryPayload,
+    );
+    final retried = declaredStrict
+        ? await retryCandidate()
+        : groupRepo == null
         ? await retryCandidate()
         : (await runSelfRemovedGroupLifecycleLeaf<bool>(
                 groupRepo: groupRepo,
@@ -237,6 +331,58 @@ Future<int> retryFailedGroupInboxStores({
   return retriedCount;
 }
 
+Future<List<GroupMessage>> _loadDeclaredStrictMessages(
+  GroupMessageRepository repository, {
+  required int limit,
+}) async {
+  if (limit <= 0) return const <GroupMessage>[];
+  final result = <GroupMessage>[];
+  var offset = 0;
+  final pageSize = limit < 20 ? 20 : limit;
+  while (result.length < limit) {
+    final page = await repository.getMessagesWithFailedInboxStore(
+      limit: pageSize,
+      strictContentOnly: true,
+      offset: offset,
+    );
+    for (final candidate in page) {
+      if (declaresGroupContentRetryPayload(candidate.inboxRetryPayload)) {
+        result.add(candidate);
+        if (result.length == limit) break;
+      }
+    }
+    offset += page.length;
+    if (page.length < pageSize) break;
+  }
+  return result;
+}
+
+Future<List<GroupReactionReplayOutboxEntry>> _loadDeclaredStrictReactions(
+  GroupReactionReplayOutboxRepository repository, {
+  required int limit,
+}) async {
+  if (limit <= 0) return const <GroupReactionReplayOutboxEntry>[];
+  final result = <GroupReactionReplayOutboxEntry>[];
+  var offset = 0;
+  final pageSize = limit < 20 ? 20 : limit;
+  while (result.length < limit) {
+    final page = await repository.loadRetryableEntries(
+      limit: pageSize,
+      strictContentOnly: true,
+      offset: offset,
+    );
+    for (final candidate in page) {
+      if (declaresGroupContentRetryPayload(candidate.inboxRetryPayload)) {
+        result.add(candidate);
+        if (result.length == limit) break;
+      }
+    }
+    offset += page.length;
+    if (page.length < pageSize) break;
+  }
+  return result;
+}
+
 Future<bool> _retryFailedGroupInboxMessageCandidate({
   required Bridge bridge,
   required GroupMessageRepository msgRepo,
@@ -244,6 +390,10 @@ Future<bool> _retryFailedGroupInboxMessageCandidate({
   required IdentityRepository? identityRepo,
   required GroupPrivateMediaAvailability privateMediaAvailability,
   required int Function()? privateMediaNowMs,
+  required AckOrExpiryInboxStore? groupContentInboxStore,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required ClassifyProtectedGroupContentRetryAuthority?
+  classifyStrictContentAuthority,
   required GroupMessage expected,
 }) async {
   try {
@@ -251,6 +401,18 @@ Future<bool> _retryFailedGroupInboxMessageCandidate({
     if (current == null ||
         !sameExactGroupPrivateMediaDispatchParent(current, expected)) {
       return false;
+    }
+
+    if (declaresGroupContentRetryPayload(current.inboxRetryPayload)) {
+      return await _retryStrictGroupContentMessage(
+        repository: msgRepo,
+        store: groupContentInboxStore,
+        expected: current,
+        groupRepo: groupRepo,
+        identityRepo: identityRepo,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        classifyStrictContentAuthority: classifyStrictContentAuthority,
+      );
     }
 
     GroupPrivateMediaLifecycleRepository? privateLifecycleRepository;
@@ -385,6 +547,148 @@ Future<bool> _completeLegacyInboxStoreRetry(
   return true;
 }
 
+Future<bool> _retryStrictGroupContentMessage({
+  required GroupMessageRepository repository,
+  required AckOrExpiryInboxStore? store,
+  required GroupMessage expected,
+  required GroupRepository? groupRepo,
+  required IdentityRepository? identityRepo,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required ClassifyProtectedGroupContentRetryAuthority?
+  classifyStrictContentAuthority,
+}) async {
+  if (store == null ||
+      groupRepo == null ||
+      (classifyStrictContentAuthority == null && identityRepo == null) ||
+      repository is! GroupMessageStrictContentCompletionRepository ||
+      repository is! GroupInboxStoreRetryPayloadCasRepository ||
+      repository is! GroupMessageStrictPreparedTerminalRepository) {
+    return false;
+  }
+  final exactRepository =
+      repository as GroupMessageStrictContentCompletionRepository;
+  final casRepository = repository as GroupInboxStoreRetryPayloadCasRepository;
+  final preparedRepository =
+      repository as GroupMessageStrictPreparedTerminalRepository;
+  final initial = GroupContentRetryPayload.decode(
+    expected.inboxRetryPayload ?? '',
+  );
+  final plaintext = _decodeStrictContentMap(expected.wireEnvelope);
+  final sourceTimestamp = plaintext['timestamp'];
+  if (plaintext['messageId'] != initial.contentEventId ||
+      sourceTimestamp is! String ||
+      parseFixedGroupContentUtc(sourceTimestamp) == null) {
+    return false;
+  }
+  final eventPayload = buildLocalProtectedGroupContentEventPayload(
+    replayEnvelope: initial.message,
+    payload: plaintext,
+  );
+  String? identityPublicKey;
+  if (classifyStrictContentAuthority == null) {
+    final identity = await identityRepo!.loadIdentity();
+    if (identity == null || identity.peerId != initial.logicalSenderPeerId) {
+      return false;
+    }
+    identityPublicKey = identity.publicKey;
+  }
+  Future<_StrictRetryDisposition> preflight(GroupMessage candidate) =>
+      _preflightStrictMessageRetry(
+        preparedRepository: preparedRepository,
+        groupRepo: groupRepo,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        identityPublicKey: identityPublicKey,
+        expected: candidate,
+        initial: initial,
+        eventPayload: eventPayload,
+        contentAt: parseFixedGroupContentUtc(sourceTimestamp)!,
+        classifyStrictContentAuthority: classifyStrictContentAuthority,
+      );
+  for (final recipient in initial.pendingRecipientPeerIds) {
+    var current = await repository.getMessage(expected.id);
+    if (current == null || current.inboxRetryPayload == null) return false;
+    final decoded = GroupContentRetryPayload.decode(current.inboxRetryPayload!);
+    if (decoded.contentEventId != initial.contentEventId ||
+        decoded.message != initial.message ||
+        decoded.groupId != expected.groupId) {
+      return false;
+    }
+    if (!decoded.pendingRecipientPeerIds.contains(recipient)) continue;
+    final before = await runGroupAuthorityPhase(
+      groupId: expected.groupId,
+      action: () => preflight(current!),
+    );
+    if (before == _StrictRetryDisposition.stale) {
+      await runGroupAuthorityPhase(
+        groupId: expected.groupId,
+        action: () => _terminalizeStrictMessageRetry(
+          repository: preparedRepository,
+          expected: current!,
+          decoded: decoded,
+          eventPayload: eventPayload,
+        ),
+      );
+      return false;
+    }
+    if (before != _StrictRetryDisposition.eligible) return false;
+    try {
+      await storeGroupContentRetryRecipient(
+        store: store,
+        inboxRetryPayload: current.inboxRetryPayload!,
+        recipientPeerId: recipient,
+      );
+    } catch (_) {
+      continue;
+    }
+    final terminalReceipt = decoded.pendingRecipientPeerIds.length == 1;
+    final applied = await runGroupAuthorityPhase(
+      groupId: expected.groupId,
+      action: () async {
+        current = await repository.getMessage(expected.id);
+        if (current == null || current!.inboxRetryPayload == null) return false;
+        final nowDecoded = GroupContentRetryPayload.decode(
+          current!.inboxRetryPayload!,
+        );
+        final disposition = await preflight(current!);
+        if (disposition == _StrictRetryDisposition.stale) {
+          await _terminalizeStrictMessageRetry(
+            repository: preparedRepository,
+            expected: current!,
+            decoded: nowDecoded,
+            eventPayload: eventPayload,
+          );
+          return false;
+        }
+        if (disposition != _StrictRetryDisposition.eligible ||
+            !nowDecoded.pendingRecipientPeerIds.contains(recipient)) {
+          return false;
+        }
+        if (nowDecoded.pendingRecipientPeerIds.length == 1) {
+          return exactRepository.completeStrictContentIfExact(
+            current!,
+            sourcePeerId: current!.senderPeerId,
+            sourceEventId: localProtectedGroupMessageSourceEventId(
+              initial.contentEventId,
+            ),
+            sourceTimestamp: sourceTimestamp,
+            eventPayload: eventPayload,
+          );
+        }
+        final survivors = nowDecoded.pendingRecipientPeerIds
+            .where((peerId) => peerId != recipient)
+            .toList(growable: false);
+        return casRepository.replaceInboxRetryPayloadIfExact(
+          current!,
+          nowDecoded.encodeWithPending(survivors),
+        );
+      },
+    );
+    if (!applied) return false;
+    if (terminalReceipt) return true;
+  }
+  return false;
+}
+
 bool _sameReactionReplayCandidate(
   GroupReactionReplayOutboxEntry current,
   GroupReactionReplayOutboxEntry expected,
@@ -401,6 +705,454 @@ bool _sameReactionReplayCandidate(
     current.createdAt == expected.createdAt &&
     current.updatedAt == expected.updatedAt;
 
+Future<bool> _retryStrictGroupContentReaction({
+  required GroupReactionReplayOutboxRepository repository,
+  required AckOrExpiryInboxStore? store,
+  required GroupReactionReplayOutboxEntry expected,
+  required GroupRepository? groupRepo,
+  required GroupMessageRepository? messageRepository,
+  required IdentityRepository? identityRepo,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required ClassifyProtectedGroupContentRetryAuthority?
+  classifyStrictContentAuthority,
+  required ClassifyStrictGroupContentReactionTarget?
+  classifyStrictReactionTarget,
+}) async {
+  if (store == null ||
+      groupRepo == null ||
+      messageRepository == null ||
+      (classifyStrictContentAuthority == null && identityRepo == null)) {
+    return false;
+  }
+  if (repository is! GroupReactionReplayPayloadCasRepository ||
+      repository is! GroupReactionStrictContentCompletionRepository ||
+      repository is! GroupReactionStrictPreparedTerminalRepository) {
+    return false;
+  }
+  final casRepository = repository as GroupReactionReplayPayloadCasRepository;
+  final completionRepository =
+      repository as GroupReactionStrictContentCompletionRepository;
+  final preparedRepository =
+      repository as GroupReactionStrictPreparedTerminalRepository;
+  final initial = GroupContentRetryPayload.decode(expected.inboxRetryPayload);
+  final reactionRow = _strictReactionRow(expected);
+  final sourceTimestamp = reactionRow['timestamp'] as String;
+  final plaintext = <String, Object?>{
+    'id': reactionRow['id'],
+    'messageId': expected.messageId,
+    'emoji': expected.emoji,
+    'action': expected.action,
+    'senderPeerId': expected.senderPeerId,
+    'timestamp': sourceTimestamp,
+    'eventId': expected.reactionId,
+  };
+  final eventPayload = buildLocalProtectedGroupContentEventPayload(
+    replayEnvelope: initial.message,
+    payload: plaintext,
+  );
+  String? identityPublicKey;
+  if (classifyStrictContentAuthority == null) {
+    final identity = await identityRepo!.loadIdentity();
+    if (identity == null || identity.peerId != initial.logicalSenderPeerId) {
+      return false;
+    }
+    identityPublicKey = identity.publicKey;
+  }
+  Future<_StrictRetryDisposition> preflight(
+    GroupReactionReplayOutboxEntry candidate,
+  ) => _preflightStrictReactionRetry(
+    preparedRepository: preparedRepository,
+    groupRepo: groupRepo,
+    messageRepository: messageRepository,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    identityPublicKey: identityPublicKey,
+    expected: candidate,
+    initial: initial,
+    eventPayload: eventPayload,
+    contentAt: parseFixedGroupContentUtc(sourceTimestamp)!,
+    classifyStrictContentAuthority: classifyStrictContentAuthority,
+    classifyStrictReactionTarget: classifyStrictReactionTarget,
+  );
+  for (final recipient in initial.pendingRecipientPeerIds) {
+    var current = await repository.getEntry(expected.reactionId);
+    if (current == null) return false;
+    final decoded = GroupContentRetryPayload.decode(current.inboxRetryPayload);
+    if (decoded.contentEventId != initial.contentEventId ||
+        decoded.message != initial.message ||
+        decoded.groupId != expected.groupId) {
+      return false;
+    }
+    if (!decoded.pendingRecipientPeerIds.contains(recipient)) continue;
+    final before = await runGroupAuthorityPhase(
+      groupId: expected.groupId,
+      action: () => preflight(current!),
+    );
+    if (before == _StrictRetryDisposition.stale) {
+      await runGroupAuthorityPhase(
+        groupId: expected.groupId,
+        action: () => _terminalizeStrictReactionRetry(
+          repository: preparedRepository,
+          expected: current!,
+          decoded: decoded,
+          eventPayload: eventPayload,
+        ),
+      );
+      return false;
+    }
+    if (before != _StrictRetryDisposition.eligible) return false;
+    try {
+      await storeGroupContentRetryRecipient(
+        store: store,
+        inboxRetryPayload: current.inboxRetryPayload,
+        recipientPeerId: recipient,
+      );
+    } catch (_) {
+      continue;
+    }
+    final terminalReceipt = decoded.pendingRecipientPeerIds.length == 1;
+    final applied = await runGroupAuthorityPhase(
+      groupId: expected.groupId,
+      action: () async {
+        current = await repository.getEntry(expected.reactionId);
+        if (current == null) return false;
+        final nowDecoded = GroupContentRetryPayload.decode(
+          current!.inboxRetryPayload,
+        );
+        final disposition = await preflight(current!);
+        if (disposition == _StrictRetryDisposition.stale) {
+          await _terminalizeStrictReactionRetry(
+            repository: preparedRepository,
+            expected: current!,
+            decoded: nowDecoded,
+            eventPayload: eventPayload,
+          );
+          return false;
+        }
+        if (disposition != _StrictRetryDisposition.eligible ||
+            !nowDecoded.pendingRecipientPeerIds.contains(recipient)) {
+          return false;
+        }
+        if (nowDecoded.pendingRecipientPeerIds.length == 1) {
+          return completionRepository.completeStrictContentIfExact(
+            current!,
+            reactionRow: reactionRow,
+            action: current!.action,
+            transitionId: current!.reactionId,
+            sourcePeerId: current!.senderPeerId,
+            sourceEventId: localProtectedGroupReactionSourceEventId(
+              current!.reactionId,
+            ),
+            sourceTimestamp: sourceTimestamp,
+            eventPayload: eventPayload,
+          );
+        }
+        final survivors = nowDecoded.pendingRecipientPeerIds
+            .where((peerId) => peerId != recipient)
+            .toList(growable: false);
+        return casRepository.replaceInboxRetryPayloadIfExact(
+          current!,
+          nowDecoded.encodeWithPending(survivors),
+        );
+      },
+    );
+    if (!applied) return false;
+    if (terminalReceipt) return true;
+  }
+  return false;
+}
+
+Map<String, Object?> _decodeStrictContentMap(String? raw) {
+  if (raw == null || raw.isEmpty) {
+    throw const FormatException('missing strict content plaintext');
+  }
+  final decoded = jsonDecode(raw);
+  if (decoded is! Map) {
+    throw const FormatException('invalid strict content plaintext');
+  }
+  return decoded.map(
+    (key, value) => MapEntry(key.toString(), value as Object?),
+  );
+}
+
+Map<String, Object?> _strictReactionRow(GroupReactionReplayOutboxEntry entry) {
+  final transition = GroupReactionTransitionOrder.tryParse(entry.reactionId);
+  if (transition == null) {
+    throw const FormatException('strict reaction outbox id is not gr1');
+  }
+  final timestamp = fixedGroupContentUtc(
+    DateTime.fromMicrosecondsSinceEpoch(
+      transition.epochMicros.toInt(),
+      isUtc: true,
+    ),
+  );
+  final stateId = deterministicGroupReactionStateId(
+    groupId: entry.groupId,
+    messageId: entry.messageId,
+    logicalActorPeerId: entry.senderPeerId,
+  );
+  return <String, Object?>{
+    'id': stateId,
+    'message_id': entry.messageId,
+    'emoji': entry.emoji,
+    'sender_peer_id': entry.senderPeerId,
+    'timestamp': timestamp,
+    'created_at': timestamp,
+    'removed_at': entry.action == GroupReactionPayload.actionRemove
+        ? timestamp
+        : null,
+  };
+}
+
+enum _StrictRetryDisposition { eligible, stale, prerequisiteWaiting, malformed }
+
+Future<_StrictRetryDisposition> _preflightStrictMessageRetry({
+  required GroupMessageStrictPreparedTerminalRepository preparedRepository,
+  required GroupRepository groupRepo,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required String? identityPublicKey,
+  required GroupMessage expected,
+  required GroupContentRetryPayload initial,
+  required Map<String, Object?> eventPayload,
+  required DateTime contentAt,
+  required ClassifyProtectedGroupContentRetryAuthority?
+  classifyStrictContentAuthority,
+}) async {
+  if (expected.inboxRetryPayload == null ||
+      !await preparedRepository.hasExactStrictContentPrepared(
+        expected,
+        eventPayload: eventPayload,
+      ) ||
+      !validGroupContentAuthoringOrder(
+        authority: initial.authorityVersion,
+        contentAt: contentAt,
+        contentEventId: initial.contentEventId,
+      )) {
+    return _StrictRetryDisposition.malformed;
+  }
+  final authorityDisposition = classifyStrictContentAuthority == null
+      ? ProtectedGroupContentRetryAuthorityDisposition.eligible
+      : await classifyStrictContentAuthority(
+          groupId: initial.groupId,
+          observedAuthority: initial.authorityVersion,
+          contentAt: contentAt,
+          contentEventId: initial.contentEventId,
+        );
+  switch (authorityDisposition) {
+    case ProtectedGroupContentRetryAuthorityDisposition.stale:
+      return _StrictRetryDisposition.stale;
+    case ProtectedGroupContentRetryAuthorityDisposition.prerequisiteWaiting:
+      return _StrictRetryDisposition.prerequisiteWaiting;
+    case ProtectedGroupContentRetryAuthorityDisposition.failClosed:
+      return _StrictRetryDisposition.malformed;
+    case ProtectedGroupContentRetryAuthorityDisposition.eligible:
+      break;
+  }
+  // The authenticated history classifier is the complete authority decision
+  // for already-staged bytes. A later current roster/key/selector may sort
+  // after this content and must not retroactively invalidate its frozen proof.
+  if (classifyStrictContentAuthority != null) {
+    return _StrictRetryDisposition.eligible;
+  }
+  if (identityPublicKey == null) return _StrictRetryDisposition.malformed;
+  final group = await groupRepo.getGroup(initial.groupId);
+  final key = await groupRepo.getLatestKey(initial.groupId);
+  final sender = await groupRepo.getMember(
+    initial.groupId,
+    initial.logicalSenderPeerId,
+  );
+  final senderDevice = sender?.findDeviceById(initial.senderDeviceId);
+  if (group == null ||
+      group.selfRemovedAt != null ||
+      group.isDissolved ||
+      key?.keyGeneration != initial.authorityVersion.keyEpoch ||
+      sender == null ||
+      senderDevice == null ||
+      senderDevice.transportPeerId != initial.senderTransportPeerId ||
+      senderDevice.deviceSigningPublicKey != initial.senderPublicKey ||
+      (group.type.name == 'announcement' &&
+          (group.myRole.name != 'admin' || sender.role.name != 'admin'))) {
+    return _StrictRetryDisposition.stale;
+  }
+  final matches = await strictGroupContentAuthorityMatchesAssumingPhase(
+    groupRepo: groupRepo,
+    groupId: initial.groupId,
+    senderPeerId: initial.logicalSenderPeerId,
+    senderAccountPublicKey: identityPublicKey,
+    expectedSenderPublicKey: initial.senderPublicKey,
+    senderDeviceId: initial.senderDeviceId,
+    senderTransportPeerId: initial.senderTransportPeerId,
+    expectedRecipientPeerIds: initial.fullRecipientPeerIds,
+    expectedAuthority: initial.authorityVersion,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+  );
+  return matches
+      ? _StrictRetryDisposition.eligible
+      : _StrictRetryDisposition.stale;
+}
+
+Future<_StrictRetryDisposition> _preflightStrictReactionRetry({
+  required GroupReactionStrictPreparedTerminalRepository preparedRepository,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository messageRepository,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required String? identityPublicKey,
+  required GroupReactionReplayOutboxEntry expected,
+  required GroupContentRetryPayload initial,
+  required Map<String, Object?> eventPayload,
+  required DateTime contentAt,
+  required ClassifyProtectedGroupContentRetryAuthority?
+  classifyStrictContentAuthority,
+  required ClassifyStrictGroupContentReactionTarget?
+  classifyStrictReactionTarget,
+}) async {
+  if (!await preparedRepository.hasExactStrictContentPrepared(
+        expected,
+        eventPayload: eventPayload,
+      ) ||
+      !validGroupContentAuthoringOrder(
+        authority: initial.authorityVersion,
+        contentAt: contentAt,
+        contentEventId: initial.contentEventId,
+      )) {
+    return _StrictRetryDisposition.malformed;
+  }
+  final authorityDisposition = classifyStrictContentAuthority == null
+      ? ProtectedGroupContentRetryAuthorityDisposition.eligible
+      : await classifyStrictContentAuthority(
+          groupId: initial.groupId,
+          observedAuthority: initial.authorityVersion,
+          contentAt: contentAt,
+          contentEventId: initial.contentEventId,
+        );
+  switch (authorityDisposition) {
+    case ProtectedGroupContentRetryAuthorityDisposition.stale:
+      return _StrictRetryDisposition.stale;
+    case ProtectedGroupContentRetryAuthorityDisposition.prerequisiteWaiting:
+      return _StrictRetryDisposition.prerequisiteWaiting;
+    case ProtectedGroupContentRetryAuthorityDisposition.failClosed:
+      return _StrictRetryDisposition.malformed;
+    case ProtectedGroupContentRetryAuthorityDisposition.eligible:
+      break;
+  }
+  if (classifyStrictContentAuthority != null) {
+    if (classifyStrictReactionTarget == null) {
+      return _StrictRetryDisposition.malformed;
+    }
+    switch (await classifyStrictReactionTarget(
+      groupId: initial.groupId,
+      messageId: expected.messageId,
+    )) {
+      case ProtectedGroupReactionTargetDisposition.available:
+        return _StrictRetryDisposition.eligible;
+      case ProtectedGroupReactionTargetDisposition.prerequisiteWaiting:
+        return _StrictRetryDisposition.prerequisiteWaiting;
+      case ProtectedGroupReactionTargetDisposition.terminal:
+        return _StrictRetryDisposition.stale;
+    }
+  }
+  if (identityPublicKey == null) return _StrictRetryDisposition.malformed;
+  final group = await groupRepo.getGroup(initial.groupId);
+  final key = await groupRepo.getLatestKey(initial.groupId);
+  final sender = await groupRepo.getMember(
+    initial.groupId,
+    initial.logicalSenderPeerId,
+  );
+  final senderDevice = sender?.findDeviceById(initial.senderDeviceId);
+  final target = await messageRepository.getMessage(expected.messageId);
+  if (group == null ||
+      group.selfRemovedAt != null ||
+      group.isDissolved ||
+      key?.keyGeneration != initial.authorityVersion.keyEpoch ||
+      sender == null ||
+      senderDevice == null ||
+      senderDevice.transportPeerId != initial.senderTransportPeerId ||
+      senderDevice.deviceSigningPublicKey != initial.senderPublicKey ||
+      target == null ||
+      target.groupId != initial.groupId) {
+    return _StrictRetryDisposition.stale;
+  }
+  final matches = await strictGroupReactionAuthorityMatchesAssumingPhase(
+    groupRepo: groupRepo,
+    messageRepository: messageRepository,
+    groupId: initial.groupId,
+    messageId: expected.messageId,
+    logicalSenderPeerId: initial.logicalSenderPeerId,
+    senderAccountPublicKey: identityPublicKey,
+    senderDeviceId: initial.senderDeviceId,
+    senderTransportPeerId: initial.senderTransportPeerId,
+    senderDevicePublicKey: initial.senderPublicKey,
+    expectedRecipientPeerIds: initial.fullRecipientPeerIds,
+    expectedAuthority: initial.authorityVersion,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+  );
+  return matches
+      ? _StrictRetryDisposition.eligible
+      : _StrictRetryDisposition.stale;
+}
+
+Map<String, Object?> _strictRetryTerminalEventPayload({
+  required GroupContentRetryPayload decoded,
+  required String reason,
+}) => <String, Object?>{
+  'reasonCode': reason,
+  'payloadType': decoded.payloadType,
+  'contentEventId': decoded.contentEventId,
+  'envelopeDigest': sha256.convert(utf8.encode(decoded.message)).toString(),
+  'authorityEventId': decoded.authorityVersion.eventId,
+};
+
+Future<bool> _terminalizeStrictMessageRetry({
+  required GroupMessageStrictPreparedTerminalRepository repository,
+  required GroupMessage expected,
+  required GroupContentRetryPayload decoded,
+  required Map<String, Object?> eventPayload,
+}) {
+  const reason = 'protected_content_sender_authority_stale';
+  return repository.terminalizeStrictContentPreparedIfExact(
+    expected,
+    preparedEventPayload: eventPayload,
+    terminalSourcePeerId: decoded.logicalSenderPeerId,
+    terminalSourceEventId: localProtectedGroupContentTerminalSourceEventId(
+      payloadType: decoded.payloadType,
+      contentEventId: decoded.contentEventId,
+      reason: reason,
+    ),
+    terminalSourceTimestamp: fixedGroupContentUtc(
+      decoded.authorityVersion.eventAt,
+    ),
+    terminalEventPayload: _strictRetryTerminalEventPayload(
+      decoded: decoded,
+      reason: reason,
+    ),
+  );
+}
+
+Future<bool> _terminalizeStrictReactionRetry({
+  required GroupReactionStrictPreparedTerminalRepository repository,
+  required GroupReactionReplayOutboxEntry expected,
+  required GroupContentRetryPayload decoded,
+  required Map<String, Object?> eventPayload,
+}) {
+  const reason = 'protected_content_sender_authority_stale';
+  return repository.terminalizeStrictContentPreparedIfExact(
+    expected,
+    preparedEventPayload: eventPayload,
+    terminalSourcePeerId: decoded.logicalSenderPeerId,
+    terminalSourceEventId: localProtectedGroupContentTerminalSourceEventId(
+      payloadType: decoded.payloadType,
+      contentEventId: decoded.contentEventId,
+      reason: reason,
+    ),
+    terminalSourceTimestamp: fixedGroupContentUtc(
+      decoded.authorityVersion.eventAt,
+    ),
+    terminalEventPayload: _strictRetryTerminalEventPayload(
+      decoded: decoded,
+      reason: reason,
+    ),
+  );
+}
+
 Future<bool> _retryGroupReactionReplayCandidate({
   required Bridge bridge,
   required GroupReactionReplayOutboxRepository repository,
@@ -408,10 +1160,33 @@ Future<bool> _retryGroupReactionReplayCandidate({
   GroupRepository? groupRepo,
   GroupMessageRepository? msgRepo,
   IdentityRepository? identityRepo,
+  AckOrExpiryInboxStore? groupContentInboxStore,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  ClassifyProtectedGroupContentRetryAuthority? classifyStrictContentAuthority,
+  ClassifyStrictGroupContentReactionTarget? classifyStrictReactionTarget,
 }) async {
   var current = await repository.getEntry(expected.reactionId);
   if (current == null || !_sameReactionReplayCandidate(current, expected)) {
     return false;
+  }
+  if (declaresGroupContentRetryPayload(current.inboxRetryPayload)) {
+    try {
+      return await _retryStrictGroupContentReaction(
+        repository: repository,
+        store: groupContentInboxStore,
+        expected: current,
+        groupRepo: groupRepo,
+        messageRepository: msgRepo,
+        identityRepo: identityRepo,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        classifyStrictContentAuthority: classifyStrictContentAuthority,
+        classifyStrictReactionTarget: classifyStrictReactionTarget,
+      );
+    } catch (_) {
+      // A row that declares protected content may never fall through to the
+      // legacy rebuild/remint lane, even when its staged bytes are malformed.
+      return false;
+    }
   }
   // Plan 319: a needs_build row (or any row left with the sentinel-empty
   // payload by a rolled-back build) carries identity but no envelope — rebuild
@@ -512,7 +1287,6 @@ Future<bool> _retryGroupReactionReplayCandidate({
     return false;
   }
 }
-
 
 /// Plan 319: rebuild an abandoned reaction's replay envelope from its durable
 /// outbox identity. Fail-soft — any missing dependency leaves the row in

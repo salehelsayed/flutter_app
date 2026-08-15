@@ -29,6 +29,8 @@ abstract class GroupReactionReplayOutboxRepository {
 
   Future<List<GroupReactionReplayOutboxEntry>> loadRetryableEntries({
     int limit = 20,
+    bool strictContentOnly = false,
+    int offset = 0,
   });
 
   Future<void> updateEntryStatus(
@@ -47,4 +49,66 @@ abstract class GroupReactionReplayOutboxRepository {
   }) async => false;
 
   Future<void> deleteEntry(String reactionId);
+}
+
+abstract interface class GroupReactionReplayPayloadCasRepository {
+  Future<bool> replaceInboxRetryPayloadIfExact(
+    GroupReactionReplayOutboxEntry expected,
+    String replacement,
+  );
+}
+
+abstract interface class GroupReactionStrictContentCompletionRepository {
+  Future<bool> completeStrictContentIfExact(
+    GroupReactionReplayOutboxEntry expected, {
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String transitionId,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  });
+}
+
+/// Atomic zero-target strict reaction authoring. The durable outbox owner,
+/// protected event, LWW projection, and terminal stored state commit together.
+abstract interface class GroupReactionStrictLocalTerminalRepository {
+  Future<bool> stageAndCompleteStrictLocalContent(
+    GroupReactionReplayOutboxEntry entry, {
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String transitionId,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  });
+}
+
+/// Atomic nonempty-ACL reaction owner preparation before relay custody.
+abstract interface class GroupReactionStrictPreparedRepository {
+  Future<bool> stageStrictContentPrepared(
+    GroupReactionReplayOutboxEntry entry, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  });
+}
+
+abstract interface class GroupReactionStrictPreparedTerminalRepository {
+  Future<bool> hasExactStrictContentPrepared(
+    GroupReactionReplayOutboxEntry expected, {
+    required Map<String, Object?> eventPayload,
+  });
+
+  Future<bool> terminalizeStrictContentPreparedIfExact(
+    GroupReactionReplayOutboxEntry expected, {
+    required Map<String, Object?> preparedEventPayload,
+    required String terminalSourcePeerId,
+    required String terminalSourceEventId,
+    required String terminalSourceTimestamp,
+    required Map<String, Object?> terminalEventPayload,
+  });
 }

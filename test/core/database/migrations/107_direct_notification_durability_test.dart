@@ -118,8 +118,8 @@ void main() {
         if (db.isOpen) await db.close();
       });
 
-      expect(currentIdentityDatabaseVersion, 114);
-      expect(await _userVersion(db), 114);
+      expect(currentIdentityDatabaseVersion, 115);
+      expect(await _userVersion(db), 115);
       for (final registry in <List<ProductionMigrationEntry>>[
         productionCreateMigrations,
         productionUpgradeMigrations,
@@ -131,12 +131,9 @@ void main() {
           entries.single.run,
           same(runDirectNotificationDurabilityMigration),
         );
-        expect(registry.last.version, 114);
-        expect(
-          registry.last.name,
-          '114_direct_linked_device_media_blob_fanout',
-        );
-        expect(registry[registry.length - 3].version, 112);
+        expect(registry.last.version, 115);
+        expect(registry.last.name, '115_group_media_blob_custody');
+        expect(registry[registry.length - 4].version, 112);
       }
 
       expect(await _columns(db, 'direct_notification_display_outbox'), <String>[
@@ -478,7 +475,7 @@ void main() {
       addTearDown(() async {
         if (db.isOpen) await db.close();
       });
-      expect(await _userVersion(db), 114);
+      expect(await _userVersion(db), 115);
       expect(
         await dbLoadDirectNotificationReactionTerminalEvent(
           db,

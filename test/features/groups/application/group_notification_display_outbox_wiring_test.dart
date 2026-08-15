@@ -12,12 +12,15 @@ import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
+import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
 import 'package:flutter_app/features/groups/application/group_notification_display_retry_coordinator.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
+import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_notification_display_outbox_repository.dart';
 
@@ -25,6 +28,7 @@ import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
+import '../../../shared/fakes/in_memory_group_pending_reaction_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _groupId = 'group-outbox';
@@ -457,6 +461,7 @@ Future<_Fixture> _buildFixture({
   GroupModel? group,
   InMemoryGroupMessageRepository? messageRepo,
   FakeReactionRepository? reactionRepo,
+  InMemoryGroupPendingReactionRepository? pendingReactionRepo,
   _MemoryNotificationDisplayOutbox? outbox,
   _FaultingNotificationService? notifications,
   InMemoryMediaAttachmentRepository? mediaRepo,
@@ -495,6 +500,7 @@ Future<_Fixture> _buildFixture({
     msgRepo: messages,
     mediaAttachmentRepo: media,
     reactionRepo: reactions,
+    pendingReactionRepo: pendingReactionRepo,
     getSelfPeerId: getSelfPeerId ?? () async => _selfPeerId,
     notificationService: notificationService,
     groupConversationTracker: ActiveConversationTracker(),
@@ -515,7 +521,240 @@ Future<_Fixture> _buildFixture({
   );
 }
 
+Future<void> _seedPendingReaction({
+  required InMemoryGroupPendingReactionRepository repository,
+  required String messageId,
+  required String reactionId,
+  required String eventId,
+  required DateTime timestamp,
+}) async {
+  final payload = GroupReactionPayload(
+    id: reactionId,
+    messageId: messageId,
+    emoji: '👍',
+    action: GroupReactionPayload.actionAdd,
+    senderPeerId: _senderPeerId,
+    timestamp: timestamp.toUtc().toIso8601String(),
+    eventId: eventId,
+  );
+  await repository.savePendingReaction(
+    GroupPendingReaction(
+      id: reactionId,
+      groupId: _groupId,
+      messageId: messageId,
+      senderPeerId: _senderPeerId,
+      reactionJson: payload.toInnerJson(),
+      receivedAt: timestamp.toUtc(),
+      createdAt: timestamp.toUtc(),
+      updatedAt: timestamp.toUtc(),
+    ),
+  );
+}
+
 void main() {
+  test(
+    'TC-366-04a history repair cannot stage or reconcile a display claim',
+    () async {
+      final fixture = await _buildFixture();
+      addTearDown(fixture.listener.dispose);
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': 'tc366-wiring-history-fresh',
+        'text': 'Fresh repaired history',
+        'timestamp': '2026-08-14T10:00:00.000Z',
+      }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+
+      expect(
+        (await fixture.messageRepo.getMessage(
+          'tc366-wiring-history-fresh',
+        ))?.readAt,
+        isNotNull,
+      );
+      expect(fixture.outbox.operations, isEmpty);
+      expect(fixture.notifications.showAttempts, 0);
+
+      final canonicalReadAt = DateTime.utc(2026, 8, 14, 10, 2);
+      final canonical = GroupMessage(
+        id: 'tc366-wiring-canonical',
+        groupId: _groupId,
+        senderPeerId: _senderPeerId,
+        senderUsername: 'Sender',
+        text: 'Canonical history duplicate',
+        timestamp: DateTime.utc(2026, 8, 14, 10, 1),
+        logicalDeliveryId: 'tc366-wiring-logical',
+        isIncoming: true,
+        readAt: canonicalReadAt,
+        createdAt: DateTime.utc(2026, 8, 14, 10, 1),
+      );
+      await fixture.messageRepo.saveMessage(canonical);
+      fixture.outbox.entries[canonical.id] = _readyMessageEntry(
+        canonical,
+      ).copyWith(readiness: GroupNotificationDisplayOutboxReadiness.notReady);
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': 'tc366-wiring-alias',
+        'logicalDeliveryId': canonical.logicalDeliveryId,
+        'text': canonical.text,
+        'timestamp': canonical.timestamp.toIso8601String(),
+      }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+
+      expect(
+        (await fixture.messageRepo.getMessage(canonical.id))?.readAt,
+        canonicalReadAt,
+      );
+      expect(
+        await fixture.messageRepo.getMessage('tc366-wiring-alias'),
+        isNull,
+      );
+      expect(fixture.outbox.operations, isEmpty);
+      expect(fixture.outbox.entries[canonical.id]?.isReady, isFalse);
+      expect(fixture.notifications.showAttempts, 0);
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _senderPeerId,
+        'senderUsername': 'Sender',
+        'keyEpoch': 0,
+        'messageId': 'tc366-wiring-ordinary',
+        'text': 'Ordinary replay display control',
+        'timestamp': '2026-08-14T10:03:00.000Z',
+      });
+
+      expect(
+        (await fixture.messageRepo.getMessage('tc366-wiring-ordinary'))?.readAt,
+        isNull,
+      );
+      expect(
+        fixture.outbox.operations,
+        containsAllInOrder([
+          'stage:tc366-wiring-ordinary:not_ready',
+          'promote:tc366-wiring-ordinary:1',
+          'complete:tc366-wiring-ordinary:2',
+        ]),
+      );
+      expect(fixture.notifications.showAttempts, 1);
+      expect(fixture.notifications.shown, hasLength(1));
+    },
+  );
+
+  test(
+    'TC-366-04a history repair flushes pending reaction notification-inert',
+    () async {
+      final pendingReactions = InMemoryGroupPendingReactionRepository();
+      final fixture = await _buildFixture(
+        pendingReactionRepo: pendingReactions,
+      );
+      addTearDown(fixture.listener.dispose);
+      final changes = <ReactionChange>[];
+      final changesSubscription = fixture.listener.groupReactionChangeStream
+          .listen(changes.add);
+      addTearDown(changesSubscription.cancel);
+      final retainedReady = _incomingMessage(
+        id: 'tc366-history-unrelated-ready',
+      );
+      await fixture.messageRepo.saveMessage(retainedReady);
+      fixture.outbox.seedReady(_readyMessageEntry(retainedReady));
+      await _seedPendingReaction(
+        repository: pendingReactions,
+        messageId: 'tc366-history-reaction-target',
+        reactionId: 'tc366-history-reaction-state',
+        eventId: 'tc366-history-reaction-event',
+        timestamp: DateTime.utc(2026, 8, 14, 10, 5),
+      );
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _selfPeerId,
+        'senderUsername': 'Me',
+        'keyEpoch': 0,
+        'messageId': 'tc366-history-reaction-target',
+        'text': 'Repaired local-account target',
+        'timestamp': '2026-08-14T10:04:00.000Z',
+      }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+
+      expect(pendingReactions.reactions, isEmpty);
+      expect(
+        await fixture.reactionRepo.getReactionsForMessage(
+          'tc366-history-reaction-target',
+        ),
+        hasLength(1),
+      );
+      expect(changes, hasLength(1));
+      expect(changes.single.messageId, 'tc366-history-reaction-target');
+      expect(changes.single.type, ReactionChangeType.upserted);
+      expect(
+        fixture.outbox.entries,
+        containsPair(
+          retainedReady.id,
+          isA<GroupNotificationDisplayOutboxEntry>(),
+        ),
+      );
+      expect(fixture.outbox.entries[retainedReady.id]?.isReady, isTrue);
+      expect(fixture.outbox.operations, isEmpty);
+      expect(fixture.notifications.showAttempts, 0);
+      expect(fixture.notifications.shown, isEmpty);
+    },
+  );
+
+  test(
+    'ordinary replay pending reaction retains display custody and notification',
+    () async {
+      final pendingReactions = InMemoryGroupPendingReactionRepository();
+      final fixture = await _buildFixture(
+        pendingReactionRepo: pendingReactions,
+      );
+      addTearDown(fixture.listener.dispose);
+      final changes = <ReactionChange>[];
+      final changesSubscription = fixture.listener.groupReactionChangeStream
+          .listen(changes.add);
+      addTearDown(changesSubscription.cancel);
+      await _seedPendingReaction(
+        repository: pendingReactions,
+        messageId: 'ordinary-reaction-target',
+        reactionId: 'ordinary-reaction-state',
+        eventId: 'ordinary-reaction-event',
+        timestamp: DateTime.utc(2026, 8, 14, 10, 7),
+      );
+
+      await fixture.listener.handleReplayEnvelope({
+        'groupId': _groupId,
+        'senderId': _selfPeerId,
+        'senderUsername': 'Me',
+        'keyEpoch': 0,
+        'messageId': 'ordinary-reaction-target',
+        'text': 'Ordinary local-account target',
+        'timestamp': '2026-08-14T10:06:00.000Z',
+      });
+
+      expect(pendingReactions.reactions, isEmpty);
+      expect(
+        await fixture.reactionRepo.getReactionsForMessage(
+          'ordinary-reaction-target',
+        ),
+        hasLength(1),
+      );
+      expect(changes, hasLength(1));
+      expect(
+        fixture.outbox.operations,
+        containsAllInOrder([
+          'stage:ordinary-reaction-event:not_ready',
+          'promote:ordinary-reaction-event:1',
+          'complete:ordinary-reaction-event:2',
+        ]),
+      );
+      expect(fixture.notifications.showAttempts, 1);
+      expect(fixture.notifications.shown, hasLength(1));
+    },
+  );
+
   test(
     'canonical reaction acknowledged after ADD suppresses its loaded retry',
     () async {

@@ -632,6 +632,145 @@ void main() {
       );
     },
   );
+
+  test('TC-365-03a strict group blob ACK recovery is source pinned', () async {
+    final strictCandidate = _candidate(
+      index: 1,
+      id: 'tc365-strict-voice',
+      mediaType: 'audio',
+    );
+    final ordinaryCandidate = _candidate(index: 2, id: 'tc365-ordinary-image');
+    final attachments = <String, MediaAttachment>{
+      strictCandidate.attachment.id: strictCandidate.attachment.copyWith(
+        groupMediaBlobCustodyFingerprint: _validHash,
+      ),
+      ordinaryCandidate.attachment.id: ordinaryCandidate.attachment,
+    };
+    final parents = <String, GroupMessage>{
+      strictCandidate.attachment.messageId: _parent(strictCandidate),
+      ordinaryCandidate.attachment.messageId: _parent(ordinaryCandidate),
+    };
+    final groups = <String, GroupModel>{
+      strictCandidate.groupId: _group(
+        strictCandidate.groupId,
+        type: GroupType.chat,
+      ),
+      ordinaryCandidate.groupId: _group(
+        ordinaryCandidate.groupId,
+        type: GroupType.chat,
+      ),
+    };
+    final strictAckSources = <String>[];
+    final legacyTransfers = <String>[];
+    var strictAttempt = 0;
+    var ackDrainCalls = 0;
+    var ackDrainProgress = 0;
+    final recovery = RetryIncompleteGroupDownloadsUseCase(
+      pageSize: 2,
+      scanLimit: 2,
+      transferLimit: 2,
+      loadPage: ({required after, required limit}) async {
+        final candidates = <RecoverableGroupDownloadCandidate>[
+          RecoverableGroupDownloadCandidate(
+            attachment: attachments[strictCandidate.attachment.id]!,
+            groupId: strictCandidate.groupId,
+          ),
+          RecoverableGroupDownloadCandidate(
+            attachment: attachments[ordinaryCandidate.attachment.id]!,
+            groupId: ordinaryCandidate.groupId,
+          ),
+        ];
+        return candidates
+            .where(
+              (candidate) =>
+                  after == null || candidate.cursor.compareTo(after) > 0,
+            )
+            .take(limit)
+            .toList(growable: false);
+      },
+      loadCurrentAttachment: (id) async => attachments[id],
+      loadCurrentParent: (id) async => parents[id],
+      loadCurrentGroup: (id) async => groups[id],
+      autoDownloadDecider: _RecordingDecider(<String>[]),
+      retryPendingStrictAcknowledgements: () async {
+        ackDrainCalls++;
+        return ackDrainProgress;
+      },
+      transfer: ({required attachment, required parent, required group}) async {
+        expect(
+          attachment.groupMediaBlobCustodyFingerprint,
+          isNull,
+          reason: 'fingerprinted rows never enter the legacy transfer',
+        );
+        legacyTransfers.add(attachment.id);
+        final done = attachment.copyWith(
+          localPath: 'group_media/${attachment.id}',
+          downloadStatus: kMediaDownloadStatusDone,
+        );
+        attachments[attachment.id] = done;
+        return done;
+      },
+      strictTransfer:
+          ({required attachment, required parent, required group}) async {
+            expect(attachment.groupMediaBlobCustodyFingerprint, _validHash);
+            // The strict owner reloads this durable relay source on restart;
+            // no roster, proof-less delete or alternate relay is consulted.
+            strictAckSources.add('relay-source-tc365');
+            strictAttempt++;
+            if (strictAttempt == 1) return null;
+            final done = attachment.copyWith(
+              localPath: 'group_media/${attachment.id}',
+              downloadStatus: kMediaDownloadStatusDone,
+            );
+            attachments[attachment.id] = done;
+            return done;
+          },
+    );
+
+    expect(await recovery(), 1);
+    expect(
+      legacyTransfers,
+      <String>[ordinaryCandidate.attachment.id],
+      reason: 'an ACK failure must not starve the next bounded candidate',
+    );
+    expect(
+      await recovery(),
+      0,
+      reason: 'the persisted cursor first proves the prior page is exhausted',
+    );
+    expect(await recovery(), 1);
+    expect(strictAckSources, <String>[
+      'relay-source-tc365',
+      'relay-source-tc365',
+    ]);
+    expect(ackDrainCalls, 3);
+    expect(
+      legacyTransfers,
+      <String>[ordinaryCandidate.attachment.id],
+      reason: 'restart recovery retries strict ownership, never legacy',
+    );
+
+    attachments[strictCandidate.attachment.id] = strictCandidate.attachment
+        .copyWith(groupMediaBlobCustodyFingerprint: _validHash);
+    attachments[ordinaryCandidate.attachment.id] = ordinaryCandidate.attachment;
+    ackDrainProgress = 1;
+    expect(
+      await recovery.callStrictGroupMediaCustodyOnly(),
+      2,
+      reason: 'one ACK_PENDING retirement plus one strict voice download',
+    );
+    expect(ackDrainCalls, 4);
+    expect(strictAckSources, <String>[
+      'relay-source-tc365',
+      'relay-source-tc365',
+      'relay-source-tc365',
+    ]);
+    expect(
+      legacyTransfers,
+      <String>[ordinaryCandidate.attachment.id],
+      reason: 'the restricted drain never invokes the legacy transfer owner',
+    );
+  });
 }
 
 class _RecordingDecider implements MediaAutoDownloadDecider {

@@ -1,15 +1,23 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:flutter_app/core/database/app_database_version.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/database/direct_event_fanout_contract.dart';
+import 'package:flutter_app/core/database/direct_inbox_custody_outbox_contract.dart';
+import 'package:flutter_app/core/database/helpers/direct_contact_device_bindings_db_helpers.dart';
+import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_media_blob_custody_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/direct_notification_display_outbox_db_helpers.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/database/production_migration_registry.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
+import 'package:flutter_app/core/media/outgoing_direct_private_mutation_coordinator.dart';
+import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/conversation/domain/models/direct_notification_display_outbox_entry.dart';
 import 'package:flutter_app/core/database/migrations/001_identity_table.dart';
 import 'package:flutter_app/core/database/migrations/002_messages_table.dart';
@@ -2756,6 +2764,311 @@ void main() {
         expect(reopened['text'], '');
       }
     });
+  });
+
+  group('TC-366-01b plural private Barrier B', () {
+    const nowMs = 1900000000000;
+    const t0 = '2030-03-17T17:46:40.000Z';
+    const messageId = 'tc366-private-barrier-b';
+    const attachmentId = '$messageId-attachment';
+    const contactAccountPeerId = 'tc366-private-contact';
+    const contactSigningKey = 'tc366-private-contact-signing-key';
+    const senderTransportPeerId = 'tc366-local-transport';
+    const contentHash =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+    late Directory tempDirectory;
+    late Database current;
+
+    setUp(() async {
+      tempDirectory = await Directory.systemTemp.createTemp(
+        'tc366_private_barrier_b_',
+      );
+      current = await _openCurrentSchema('${tempDirectory.path}/identity.db');
+    });
+
+    tearDown(() async {
+      if (current.isOpen) await current.close();
+      if (await tempDirectory.exists()) {
+        await tempDirectory.delete(recursive: true);
+      }
+    });
+
+    test(
+      'TC-366-01b private Barrier B binds N v114 rows to N v108 siblings atomically',
+      () async {
+        await current.insert('contacts', const <String, Object?>{
+          'peer_id': contactAccountPeerId,
+          'public_key': contactSigningKey,
+          'rendezvous': '/dns4/relay.example.com/tcp/443/wss/p2p/relay-id',
+          'username': 'TC366 Private Contact',
+          'signature': 'sig-base64',
+          'scanned_at': t0,
+          'ml_kem_public_key': 'mlkem-tc366-legacy',
+        });
+        await current.insert(
+          'direct_contact_device_roster_metadata',
+          const <String, Object?>{
+            'contact_account_peer_id': contactAccountPeerId,
+            'roster_initialized': 1,
+            'legacy_target_state': 'active',
+            'initialized_at': t0,
+            'legacy_revoked_at': null,
+            'updated_at': t0,
+          },
+        );
+        await current
+            .insert('direct_contact_device_bindings', const <String, Object?>{
+              'contact_account_peer_id': contactAccountPeerId,
+              'device_id': 'tc366-device-b',
+              'verified_account_signing_public_key': contactSigningKey,
+              'transport_peer_id': 'tc366-private-transport-b',
+              'transport_public_key': 'tc366-private-transport-key-b',
+              'device_ml_kem_public_key': 'mlkem-tc366-device-b',
+              'binding_fingerprint':
+                  '366b366b366b366b366b366b366b366b'
+                  '366b366b366b366b366b366b366b366b',
+              'state': 'active',
+              'staged_at': t0,
+              'decided_at': t0,
+            });
+        final snapshot = await dbReadDirectContactFanoutSnapshot(
+          current,
+          contactAccountPeerId: contactAccountPeerId,
+        );
+        expect(snapshot, isNotNull);
+        expect(snapshot!.targets.map((target) => target.peerId), const <String>[
+          contactAccountPeerId,
+          'tc366-private-transport-b',
+        ]);
+
+        final canonicalPath = MediaFilePathConvention.relativePathForAttachment(
+          contactPeerId: contactAccountPeerId,
+          blobId: attachmentId,
+          mime: 'image/jpeg',
+        );
+        final pendingPath =
+            MediaFilePathConvention.relativePathForPendingUpload(
+              messageId: messageId,
+              attachmentId: attachmentId,
+              mime: 'image/jpeg',
+            );
+        await current.insert('messages', const <String, Object?>{
+          'id': messageId,
+          'contact_peer_id': contactAccountPeerId,
+          'sender_peer_id': 'tc366-local-account',
+          'text': '',
+          'timestamp': t0,
+          'status': 'sending',
+          'is_incoming': 0,
+          'created_at': t0,
+          'wire_envelope': null,
+          'direct_media_custody_intent_id': null,
+          'direct_event_fanout_generation_id': messageId,
+          'private_media_policy_version': 1,
+          'private_media_mode': 'protected',
+          'private_media_duration_seconds': null,
+          'private_media_state': 'available',
+        });
+        final completion = <String, Object?>{
+          'id': attachmentId,
+          'message_id': messageId,
+          'owner_lane': MediaOwnerLane.direct.dbValue,
+          'mime': 'image/jpeg',
+          'size': 42,
+          'media_type': 'image',
+          'local_path': canonicalPath,
+          'download_status': 'done',
+          'created_at': t0,
+          'content_hash': contentHash,
+          'thumbnail_hash': null,
+          'encryption_key_base64': secureStoreReferenceForKey(
+            mediaAttachmentEncryptionKeyStoreName(attachmentId),
+          ),
+          'encryption_nonce': 'tc366-private-nonce',
+          'encryption_scheme': 'blob_aes_256_gcm_v1',
+        };
+        await current.insert('media_attachments', completion);
+
+        final bindings = <DirectPrivateMediaFanoutTargetBinding>[];
+        for (final (index, target) in snapshot.targets.indexed) {
+          final expiresAtMs = nowMs + 60000 + (index * 1000);
+          final blob = DirectMediaBlobCustodyRow(
+            attachmentId: attachmentId,
+            messageId: messageId,
+            direction: DirectMediaBlobCustodyDirection.outgoing,
+            state: DirectMediaBlobCustodyState.outgoingStored,
+            inboxCustodyIncarnationId: null,
+            recipientPeerId: target.peerId,
+            contactAccountPeerId: contactAccountPeerId,
+            recipientMlKemPublicKey: target.mlKemPublicKey,
+            ciphertextRelativePath:
+                'direct_media_blob_custody_v1/$contentHash/$attachmentId.blob',
+            contentHash: contentHash,
+            ciphertextSize: 64,
+            expiresAtMs: expiresAtMs,
+            custodyRelayPeerId: 'tc366-relay-$index',
+            lastAttemptAt: null,
+            nextAttemptAt: null,
+            createdAt: t0,
+            updatedAt: t0,
+          );
+          await current.insert(kDirectMediaBlobCustodyTable, blob.toMap());
+          final manifest = <DirectMediaBlobManifestProjection>[
+            DirectMediaBlobManifestProjection(
+              attachmentId: attachmentId,
+              commitment: DirectMediaBlobCustodyCommitment(
+                contentHash: contentHash,
+                ciphertextSize: 64,
+                expiresAtMs: expiresAtMs,
+              ),
+            ),
+          ];
+          bindings.add(
+            DirectPrivateMediaFanoutTargetBinding(
+              recipientPeerId: target.peerId,
+              recipientMlKemPublicKey: target.mlKemPublicKey,
+              wireEnvelope: jsonEncode(<String, Object?>{
+                'type': 'chat_message',
+                'version': '2',
+                'id': messageId,
+                'senderPeerId': senderTransportPeerId,
+                'encrypted': <String, String>{
+                  'kem': 'tc366-kem-$index',
+                  'ciphertext': 'tc366-ciphertext-$index',
+                  'nonce': 'tc366-nonce-$index',
+                },
+              }),
+              wireMediaBlobManifestHash: computeDirectMediaBlobManifestHash(
+                manifest,
+              ),
+              wireMediaBlobExpiresAtMs: expiresAtMs,
+            ),
+          );
+        }
+
+        final committed =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
+              current,
+              completion,
+              expectedPendingLocalPath: pendingPath,
+              hasOwnedPendingCompletion: false,
+              senderTransportPeerId: senderTransportPeerId,
+              contactAccountPeerId: contactAccountPeerId,
+              authority:
+                  DirectPrivateMediaFanoutStageAuthority.currentRosterSnapshot,
+              expectedSnapshot: snapshot,
+              targetBindings: bindings,
+              nowMs: nowMs,
+            );
+        expect(
+          committed.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.committed,
+        );
+        expect(committed.custodyRows, hasLength(2));
+        final durableParent = (await current.query(
+          'messages',
+          where: 'id = ?',
+          whereArgs: const <Object?>[messageId],
+        )).single;
+        expect(durableParent['wire_envelope'], bindings.first.wireEnvelope);
+        expect(durableParent['direct_media_custody_intent_id'], isNull);
+        expect(durableParent['direct_event_fanout_generation_id'], messageId);
+        final v108 = await current.query(
+          'direct_inbox_custody_outbox',
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageId],
+          orderBy: 'recipient_peer_id ASC',
+        );
+        expect(v108, hasLength(2));
+        final blobs = await current.query(
+          kDirectMediaBlobCustodyTable,
+          where: 'message_id = ?',
+          whereArgs: const <Object?>[messageId],
+          orderBy: 'recipient_peer_id ASC',
+        );
+        expect(blobs, hasLength(2));
+        for (final binding in bindings) {
+          final expectedIncarnation = computeDirectEventFanoutIncarnation(
+            messageId: messageId,
+            recipientPeerId: binding.recipientPeerId,
+          );
+          final sibling = v108.singleWhere(
+            (row) => row['recipient_peer_id'] == binding.recipientPeerId,
+          );
+          expect(sibling['contact_account_peer_id'], contactAccountPeerId);
+          expect(sibling['incarnation_id'], expectedIncarnation);
+          expect(sibling['wire_envelope'], binding.wireEnvelope);
+          expect(
+            sibling['media_blob_manifest_hash'],
+            binding.wireMediaBlobManifestHash,
+          );
+          final blob = blobs.singleWhere(
+            (row) => row['recipient_peer_id'] == binding.recipientPeerId,
+          );
+          expect(blob['inbox_custody_incarnation_id'], expectedIncarnation);
+          expect(
+            blob['recipient_ml_kem_public_key'],
+            binding.recipientMlKemPublicKey,
+          );
+        }
+
+        // Exact target A retires independently. B plus its bound v114 row is
+        // then the entire roster-free retry authority, even though the parent
+        // retains A's canonical correlation witness.
+        final first = bindings.first;
+        final firstSibling = v108.singleWhere(
+          (row) => row['recipient_peer_id'] == first.recipientPeerId,
+        );
+        expect(
+          await dbCompleteAcceptedDirectInboxCustodyIfExact(
+            current,
+            recipientPeerId: first.recipientPeerId,
+            messageId: messageId,
+            expectedIncarnationId: firstSibling['incarnation_id']! as String,
+            expectedWireEnvelope: first.wireEnvelope,
+            relayExpiresAt: first.wireMediaBlobExpiresAtMs,
+          ),
+          isNot(DirectInboxCustodyCompletionOutcome.stale),
+        );
+        final remainingBinding = bindings.last;
+        final survivor =
+            await dbCommitOutgoingDirectPrivateWireEnvelopeFanoutWithInboxCustody(
+              current,
+              completion,
+              expectedPendingLocalPath: pendingPath,
+              hasOwnedPendingCompletion: false,
+              senderTransportPeerId: senderTransportPeerId,
+              contactAccountPeerId: contactAccountPeerId,
+              authority:
+                  DirectPrivateMediaFanoutStageAuthority.persistedV114Survivors,
+              expectedSnapshot: null,
+              targetBindings: <DirectPrivateMediaFanoutTargetBinding>[
+                remainingBinding,
+              ],
+              capacity: 0,
+              nowMs: nowMs,
+            );
+        expect(
+          survivor.outcome,
+          OutgoingDirectPrivateEnvelopeHandoffOutcome.idempotent,
+          reason: 'survivor adoption precedes roster and capacity',
+        );
+        expect(survivor.custodyRows, hasLength(1));
+        expect(
+          survivor.custodyRows.single['recipient_peer_id'],
+          remainingBinding.recipientPeerId,
+        );
+        expect(
+          (await current.query(
+            'messages',
+            where: 'id = ?',
+            whereArgs: const <Object?>[messageId],
+          )).single['wire_envelope'],
+          first.wireEnvelope,
+        );
+      },
+    );
   });
 
   group('TC-361-01b fanout generation marker protection', () {

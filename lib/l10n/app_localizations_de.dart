@@ -3224,6 +3224,55 @@ class AppLocalizationsDe extends AppLocalizations {
   String get sibling_device_verify_approve => 'Überprüfen & genehmigen';
 
   @override
+  String get contact_profile_linked_devices => 'Verknüpfte Geräte';
+
+  @override
+  String get contact_profile_linked_device_revoke => 'Widerrufen';
+
+  @override
+  String get contact_profile_linked_device_verify => 'Überprüfen';
+
+  @override
+  String get linked_device_setup_title => 'Dieses Gerät verknüpfen';
+
+  @override
+  String get linked_device_setup_recovery_phrase_instruction =>
+      'Gib die aus 12 Wörtern bestehende Wiederherstellungsphrase des Kontos ein, dem dieses Smartphone als zusätzliches Gerät beitreten soll.';
+
+  @override
+  String get linked_group_status_title => 'Gruppen (schreibgeschützt)';
+
+  @override
+  String get linked_group_status_refresh => 'Gruppenstatus aktualisieren';
+
+  @override
+  String get linked_group_status_waiting =>
+      'Warten auf eine Gruppeneinrichtung von deinem primären Gerät.';
+
+  @override
+  String get group_info_link_device_action =>
+      'Diese Gruppe mit einem anderen Gerät verknüpfen';
+
+  @override
+  String get linked_group_confirm_title => 'Diese Gruppe verknüpfen?';
+
+  @override
+  String linked_group_confirm_body(String groupName) {
+    return '„$groupName“ mit dem gescannten verknüpften Gerät teilen. Keine anderen Gruppen oder Unterhaltungen werden geteilt.';
+  }
+
+  @override
+  String get linked_group_confirm_action => 'Gruppe verknüpfen';
+
+  @override
+  String get linked_device_media_unavailable =>
+      'Medien sind auf diesem verknüpften Gerät noch nicht verfügbar';
+
+  @override
+  String get linked_device_voice_unavailable =>
+      'Sprachnachrichten sind auf diesem verknüpften Gerät noch nicht verfügbar';
+
+  @override
   String get transport_diagnostics_title => 'TRANSPORT-DIAGNOSE (SITZUNG)';
 
   @override

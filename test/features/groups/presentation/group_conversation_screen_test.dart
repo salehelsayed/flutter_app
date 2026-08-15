@@ -109,6 +109,10 @@ void main() {
     onRetryUnavailableMedia,
     Set<String> retryingFailedMessageIds = const {},
     void Function(String messageId, int index)? onMediaTap,
+    VoidCallback? onAttach,
+    VoidCallback? onRecordStart,
+    VoidCallback? onRecordStop,
+    VoidCallback? onRecordCancel,
     ValueChanged<String>? onOpenPrivateMedia,
     bool privateMediaEnabled = false,
     void Function(String messageId, String attachmentId)? onMediaSave,
@@ -157,6 +161,10 @@ void main() {
           onRetryUnavailableMedia: onRetryUnavailableMedia,
           retryingFailedMessageIds: retryingFailedMessageIds,
           onMediaTap: onMediaTap,
+          onAttach: onAttach,
+          onRecordStart: onRecordStart,
+          onRecordStop: onRecordStop,
+          onRecordCancel: onRecordCancel,
           onOpenPrivateMedia: onOpenPrivateMedia,
           privateMediaEnabled: privateMediaEnabled,
           onMediaSave: onMediaSave,
@@ -175,6 +183,67 @@ void main() {
       ),
     );
   }
+
+  testWidgets('TC-365-04a linked group exposes only ordinary media and voice', (
+    tester,
+  ) async {
+    var attachCalls = 0;
+    var recordStartCalls = 0;
+    var recordStopCalls = 0;
+    var recordCancelCalls = 0;
+    final opened = <(String, int)>[];
+    final retried = <String>[];
+
+    await tester.pumpWidget(
+      buildTestWidget(
+        messages: testMessages,
+        initialLoadDone: true,
+        onAttach: () => attachCalls += 1,
+        onRecordStart: () => recordStartCalls += 1,
+        onRecordStop: () => recordStopCalls += 1,
+        onRecordCancel: () => recordCancelCalls += 1,
+        onMediaTap: (messageId, index) => opened.add((messageId, index)),
+        onRetryFailedMedia: retried.add,
+      ),
+    );
+    await tester.pump();
+
+    final screen = tester.widget<GroupConversationScreen>(
+      find.byType(GroupConversationScreen),
+    );
+    screen.onAttach!();
+    screen.onRecordStart!();
+    screen.onRecordStop!();
+    screen.onRecordCancel!();
+    screen.onMediaTap!('msg-1', 0);
+    screen.onRetryFailedMedia!('msg-1');
+
+    expect(attachCalls, 1);
+    expect(recordStartCalls, 1);
+    expect(recordStopCalls, 1);
+    expect(recordCancelCalls, 1);
+    expect(opened, <(String, int)>[('msg-1', 0)]);
+    expect(retried, <String>['msg-1']);
+
+    // This pure screen is the capability envelope reused by the linked
+    // owner. Every broad or private mutation port stays absent: no header
+    // info/settings/history route, private open, share/forward, quote,
+    // media metadata/delete, failed-row deletion or edit/DFE surface.
+    expect(screen.onInfo, isNull);
+    expect(screen.onOpenPrivateMedia, isNull);
+    expect(screen.privateMediaEnabled, isFalse);
+    expect(screen.onMediaSave, isNull);
+    expect(screen.onMediaShare, isNull);
+    expect(screen.onMediaInfo, isNull);
+    expect(screen.onMediaDeleteForMe, isNull);
+    expect(screen.isMessageSenderEligible, isNull);
+    expect(screen.onMessageSenderTap, isNull);
+    expect(screen.onQuoteReply, isNull);
+    expect(screen.onDeleteFailedMedia, isNull);
+    expect(screen.onDeleteFailedTerminalMessage, isNull);
+    expect(screen.historyGapRepairNotice, isNull);
+    expect(screen.backlogRetentionNotice, isNull);
+  });
 
   // 158 (critic-2): the group conversation surface suppresses the idle ambient
   // glow so the always-mounted chrome BackdropFilters become cacheable at rest.

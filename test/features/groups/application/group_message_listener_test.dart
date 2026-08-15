@@ -29,6 +29,7 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/delete_self_removed_group_shell_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/handle_incoming_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_distribution_service.dart';
 import 'package:flutter_app/features/groups/application/group_pending_key_repair_service.dart';
 import 'package:flutter_app/features/groups/application/protected_group_authority.dart';
@@ -40,12 +41,14 @@ import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/models/group_notification_display_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_membership_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_key_repair.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_notification_display_outbox_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 
@@ -899,6 +902,25 @@ class _FailOnceReactionRepository extends FakeReactionRepository {
   }
 }
 
+class _GateableDeleteGroupPendingReactionRepository
+    extends InMemoryGroupPendingReactionRepository {
+  final deleteStarted = Completer<void>();
+  final _releaseDelete = Completer<void>();
+
+  void releaseDelete() {
+    if (!_releaseDelete.isCompleted) _releaseDelete.complete();
+  }
+
+  @override
+  Future<int> deletePendingReaction(String id) async {
+    // The notification claim is committed before pending custody is released.
+    // Keep that valid ordering observable even when this test runs alone.
+    if (!deleteStarted.isCompleted) deleteStarted.complete();
+    await _releaseDelete.future;
+    return super.deletePendingReaction(id);
+  }
+}
+
 /// Records the completion order of [saveReaction], optionally delaying a
 /// specific message's save. Used to prove the live reaction pipeline is
 /// serialized: if the slow save completes before the fast one starts, the two
@@ -918,6 +940,114 @@ class _OrderRecordingReactionRepository extends FakeReactionRepository {
     await super.saveReaction(reaction);
     saveCompletionOrder.add(reaction.messageId);
   }
+}
+
+final class _HistoryRepairDisplayOutboxSpy
+    implements GroupNotificationDisplayOutboxRepository {
+  final entries = <String, GroupNotificationDisplayOutboxEntry>{};
+  int stageCalls = 0;
+  int promoteCalls = 0;
+  int reconcileCalls = 0;
+  int loadReadyCalls = 0;
+
+  @override
+  Future<void> stage(GroupNotificationDisplayOutboxEntry entry) async {
+    stageCalls++;
+    entries.putIfAbsent(entry.eventId, () => entry);
+  }
+
+  @override
+  Future<GroupNotificationDisplayOutboxEntry?> loadByEventId(
+    String eventId,
+  ) async => entries[eventId];
+
+  @override
+  Future<bool> promoteReadyIfExact({
+    required String eventId,
+    required int expectedRevision,
+  }) async {
+    promoteCalls++;
+    final current = entries[eventId];
+    if (current == null || current.revision != expectedRevision) return false;
+    entries[eventId] = current.copyWith(
+      readiness: GroupNotificationDisplayOutboxReadiness.ready,
+      revision: current.revision + 1,
+    );
+    return true;
+  }
+
+  @override
+  Future<List<GroupNotificationDisplayOutboxEntry>> loadReady({
+    int limit = 20,
+  }) async {
+    loadReadyCalls++;
+    return entries.values
+        .where((entry) => entry.isReady)
+        .take(limit)
+        .toList(growable: false);
+  }
+
+  @override
+  Future<DateTime?> loadEarliestNextAttemptAt() async => null;
+
+  @override
+  Future<bool> recordRetryIfExact({
+    required String eventId,
+    required int expectedRevision,
+    required String lastErrorCode,
+    required DateTime nextAttemptAt,
+  }) async => false;
+
+  @override
+  Future<bool> completeIfExact(
+    GroupNotificationDisplayOutboxEntry expected,
+  ) async {
+    final current = entries[expected.eventId];
+    if (current == null || current.revision != expected.revision) return false;
+    entries.remove(expected.eventId);
+    return true;
+  }
+
+  @override
+  Future<bool> reconcileMessageAliasReady({
+    required String aliasEventId,
+    required GroupMessage canonicalMessage,
+  }) async {
+    reconcileCalls++;
+    final current =
+        entries.remove(aliasEventId) ?? entries[canonicalMessage.id];
+    if (current == null) return false;
+    entries[canonicalMessage.id] = current.copyWith(
+      eventId: canonicalMessage.id,
+      messageId: canonicalMessage.id,
+      readiness: GroupNotificationDisplayOutboxReadiness.ready,
+      revision: current.revision + 1,
+    );
+    return true;
+  }
+
+  @override
+  Future<int> deleteForGroup(String groupId) async => 0;
+
+  @override
+  Future<int> deleteForMessage({
+    required String groupId,
+    required String messageId,
+  }) async => 0;
+
+  @override
+  Future<int> deleteForReaction({
+    required String groupId,
+    required String messageId,
+    required String reactionId,
+  }) async => 0;
+
+  @override
+  Future<int> deleteForReactionActor({
+    required String groupId,
+    required String messageId,
+    required String actorPeerId,
+  }) async => 0;
 }
 
 const Object _absentMarker = Object();
@@ -1239,6 +1369,17 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     fail('notification claim did not commit: ${claim.path}');
+  }
+
+  Future<void> expectPendingReactionCustodyReleased(
+    InMemoryGroupPendingReactionRepository repository,
+  ) async {
+    final deadline = DateTime.now().add(const Duration(seconds: 10));
+    while (repository.reactions.isNotEmpty &&
+        DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(const Duration(milliseconds: 5));
+    }
+    expect(repository.reactions, isEmpty);
   }
 
   Future<void> expectPendingMembershipMessageCount(
@@ -14837,6 +14978,153 @@ void main() {
   // ---------------------------------------------------------------------------
   group('group notifications', () {
     test(
+      'TC-366-04a history repair gates display alias retry and compatibility presentation',
+      () async {
+        await saveSelfMember();
+        final outbox = _HistoryRepairDisplayOutboxSpy();
+        final outboxNotifications = FakeNotificationService();
+        final outboxListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: outboxNotifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          getAppLifecycleState: () => AppLifecycleState.paused,
+          notificationDisplayOutbox: outbox,
+        );
+        addTearDown(outboxListener.dispose);
+
+        await outboxListener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'tc366-listener-history-fresh',
+          'text': 'Fresh repaired history',
+          'timestamp': DateTime.utc(2026, 8, 14, 9).toIso8601String(),
+        }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+
+        expect(
+          (await msgRepo.getMessage('tc366-listener-history-fresh'))?.readAt,
+          isNotNull,
+        );
+        expect(outbox.stageCalls, 0);
+        expect(outbox.promoteCalls, 0);
+        expect(outbox.loadReadyCalls, 0);
+        expect(outboxNotifications.shown, isEmpty);
+
+        final canonicalReadAt = DateTime.utc(2026, 8, 14, 9, 2);
+        final canonicalSentAt = DateTime.utc(2026, 8, 14, 9, 1);
+        final canonical = GroupMessage(
+          id: 'tc366-listener-history-canonical',
+          groupId: 'group-1',
+          senderPeerId: 'peer-sender',
+          senderUsername: 'Sender',
+          text: 'Canonical logical delivery',
+          timestamp: canonicalSentAt,
+          logicalDeliveryId: 'tc366-listener-history-logical',
+          isIncoming: true,
+          readAt: canonicalReadAt,
+          createdAt: canonicalSentAt,
+        );
+        await msgRepo.saveMessage(canonical);
+        final outboxCreatedAt = canonicalSentAt.toIso8601String();
+        outbox.entries[canonical.id] =
+            GroupNotificationDisplayOutboxEntry.message(
+              eventId: canonical.id,
+              groupId: canonical.groupId,
+              messageId: canonical.id,
+              actorPeerId: canonical.senderPeerId,
+              eventTimestamp: canonical.timestamp.toIso8601String(),
+              readiness: GroupNotificationDisplayOutboxReadiness.notReady,
+              createdAt: outboxCreatedAt,
+              updatedAt: outboxCreatedAt,
+            );
+
+        await outboxListener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'tc366-listener-history-alias',
+          'logicalDeliveryId': canonical.logicalDeliveryId,
+          'text': canonical.text,
+          'timestamp': canonicalSentAt.toIso8601String(),
+        }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+
+        expect(
+          (await msgRepo.getMessage(canonical.id))?.readAt,
+          canonicalReadAt,
+        );
+        expect(
+          await msgRepo.getMessage('tc366-listener-history-alias'),
+          isNull,
+        );
+        expect(outbox.stageCalls, 0);
+        expect(outbox.reconcileCalls, 0);
+        expect(outbox.loadReadyCalls, 0);
+        expect(outbox.entries[canonical.id]?.isReady, isFalse);
+
+        await outboxListener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'tc366-listener-ordinary-control',
+          'text': 'Ordinary replay stays display eligible',
+          'timestamp': DateTime.utc(2026, 8, 14, 9, 3).toIso8601String(),
+        });
+        expect(
+          (await msgRepo.getMessage('tc366-listener-ordinary-control'))?.readAt,
+          isNull,
+        );
+        expect(outbox.stageCalls, 1);
+        expect(outbox.promoteCalls, 1);
+        expect(outbox.loadReadyCalls, greaterThan(0));
+
+        final compatibilityNotifications = FakeNotificationService();
+        final fixedToneTime = DateTime.utc(2026, 8, 14, 9, 10);
+        final compatibilityListener = GroupMessageListener(
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          bridge: bridge,
+          getSelfPeerId: () async => 'peer-self',
+          notificationService: compatibilityNotifications,
+          groupConversationTracker: ActiveConversationTracker(),
+          notificationToneTracker: NotificationToneTracker(
+            clock: () => fixedToneTime,
+          ),
+          getAppLifecycleState: () => AppLifecycleState.paused,
+        );
+        addTearDown(compatibilityListener.dispose);
+
+        await compatibilityListener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'tc366-listener-compat-history',
+          'text': 'Compatibility history repair',
+          'timestamp': DateTime.utc(2026, 8, 14, 9, 4).toIso8601String(),
+        }, deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair);
+        expect(compatibilityNotifications.shown, isEmpty);
+
+        await compatibilityListener.handleReplayEnvelope({
+          'groupId': 'group-1',
+          'senderId': 'peer-sender',
+          'senderUsername': 'Sender',
+          'keyEpoch': 0,
+          'messageId': 'tc366-listener-compat-ordinary',
+          'text': 'Compatibility ordinary replay',
+          'timestamp': DateTime.utc(2026, 8, 14, 9, 5).toIso8601String(),
+        });
+        expect(compatibilityNotifications.shown, hasLength(1));
+        expect(compatibilityNotifications.shown.single.silent, isFalse);
+      },
+    );
+
+    test(
       'TC-330-08 read commit wiring cancels the exact group conversation card',
       () async {
         final notificationService = _CancellableGroupNotificationService();
@@ -17221,7 +17509,9 @@ void main() {
       'reaction before locally authored target stays unclaimed then notifies once after target sync',
       () async {
         await saveSelfMember();
-        final pendingReactionRepo = InMemoryGroupPendingReactionRepository();
+        final pendingReactionRepo =
+            _GateableDeleteGroupPendingReactionRepository();
+        addTearDown(pendingReactionRepo.releaseDelete);
         final notifications = FakeNotificationService();
         final claimDirectory = await Directory.systemTemp.createTemp(
           'group-reaction-buffered-claim-',
@@ -17284,7 +17574,12 @@ void main() {
         });
         await expectCommittedNotificationClaim(claimFile);
 
-        expect(pendingReactionRepo.reactions, isEmpty);
+        await pendingReactionRepo.deleteStarted.future.timeout(
+          const Duration(seconds: 10),
+        );
+        expect(pendingReactionRepo.reactions, hasLength(1));
+        pendingReactionRepo.releaseDelete();
+        await expectPendingReactionCustodyReleased(pendingReactionRepo);
         expect(claimFile.existsSync(), isTrue);
         expect(notifications.shown, hasLength(1));
         expect(
@@ -19592,6 +19887,63 @@ void main() {
         expect(await groupRepo.getMember('group-1', 'peer-charlie'), isNotNull);
         expect(drainCalls.map((call) => call.peerId), contains('peer-charlie'));
         expect(drainCalls.every((call) => call.groupId == 'group-1'), isTrue);
+      },
+    );
+
+    test(
+      'member_added releases membership phases before its deferred-key drain',
+      () async {
+        final keyedCharlie = GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-charlie',
+          username: 'Charlie',
+          role: MemberRole.writer,
+          publicKey: 'pk-charlie',
+          mlKemPublicKey: 'mlkem-charlie',
+          joinedAt: initialMemberJoinedAt,
+        );
+        var drainReenteredMembershipMutation = false;
+        setDeferredDistributionDrainSink(({
+          required String groupId,
+          required String peerId,
+        }) async {
+          expect(isGroupAuthorityPhaseHeld(groupId), isFalse);
+          expect(isGroupMembershipActionPhaseHeld(groupId), isFalse);
+          expect(
+            await groupRepo.getMember(groupId, peerId),
+            isNotNull,
+            reason: 'the membership commit must precede its latency follow-up',
+          );
+          await runGroupMembershipMutationLocked<void>(
+            groupId: groupId,
+            action: () async {
+              drainReenteredMembershipMutation = true;
+            },
+          );
+        });
+
+        await listener
+            .handleReplayEnvelope({
+              'groupId': 'group-1',
+              'senderId': 'peer-admin',
+              'senderUsername': 'Admin',
+              'keyEpoch': 1,
+              'text': jsonEncode({
+                '__sys': 'member_added',
+                'eventAt': initialMemberJoinedAt.toIso8601String(),
+                'member': keyedCharlie.toConfigJson(),
+                'groupConfig': buildGroupConfigPayload(testGroup, [
+                  adminMember(),
+                  senderMember(),
+                  keyedCharlie,
+                ]),
+              }),
+              'timestamp': DateTime.utc(2026, 6, 6, 5, 21).toIso8601String(),
+              'messageId': 'ga-member-added-postcommit-drain',
+            })
+            .timeout(const Duration(seconds: 1));
+
+        expect(drainReenteredMembershipMutation, isTrue);
       },
     );
 

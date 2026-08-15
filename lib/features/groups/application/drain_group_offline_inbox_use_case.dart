@@ -1894,26 +1894,30 @@ Future<List<String>> _applyRepairedHistoryMessages({
     }
 
     if (groupMessageListener != null) {
-      await groupMessageListener.handleReplayEnvelope({
-        'groupId': resolvedGroupId,
-        'senderId': senderId,
-        'senderUsername': senderUsername,
-        'keyEpoch': keyEpoch,
-        'text': text,
-        'timestamp': timestamp,
-        if (effectiveTransportPeerId.isNotEmpty)
-          'transportPeerId': effectiveTransportPeerId,
-        if (senderDeviceId != null && senderDeviceId.isNotEmpty)
-          'senderDeviceId': senderDeviceId,
-        'messageId': messageId,
-        if (payload['logicalDeliveryId'] is String)
-          'logicalDeliveryId': payload['logicalDeliveryId'],
-        if (payload['quotedMessageId'] is String)
-          'quotedMessageId': payload['quotedMessageId'],
-        if (payload['isForwarded'] == true) 'isForwarded': true,
-        ..._presentGroupPrivateMediaPolicyFields(payload),
-        'media': ?media,
-      }, msgRepoOverride: msgRepo);
+      await groupMessageListener.handleReplayEnvelope(
+        {
+          'groupId': resolvedGroupId,
+          'senderId': senderId,
+          'senderUsername': senderUsername,
+          'keyEpoch': keyEpoch,
+          'text': text,
+          'timestamp': timestamp,
+          if (effectiveTransportPeerId.isNotEmpty)
+            'transportPeerId': effectiveTransportPeerId,
+          if (senderDeviceId != null && senderDeviceId.isNotEmpty)
+            'senderDeviceId': senderDeviceId,
+          'messageId': messageId,
+          if (payload['logicalDeliveryId'] is String)
+            'logicalDeliveryId': payload['logicalDeliveryId'],
+          if (payload['quotedMessageId'] is String)
+            'quotedMessageId': payload['quotedMessageId'],
+          if (payload['isForwarded'] == true) 'isForwarded': true,
+          ..._presentGroupPrivateMediaPolicyFields(payload),
+          'media': ?media,
+        },
+        msgRepoOverride: msgRepo,
+        deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair,
+      );
     } else {
       await handleIncomingGroupMessage(
         groupRepo: groupRepo,
@@ -1937,7 +1941,8 @@ Future<List<String>> _applyRepairedHistoryMessages({
         media: media,
         mediaAttachmentRepo: mediaAttachmentRepo,
         enforceSelfJoinedAtLowerBound: true,
-        deliverySource: 'replay',
+        deliverySource: 'historyRepair',
+        deliveryDisposition: GroupMessageDeliveryDisposition.historyRepair,
       );
     }
 

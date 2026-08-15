@@ -1,6 +1,6 @@
 # 364 - GAP-N01 Linked-Group Blob-Free Content Custody
 
-Status: EXECUTION_READY / host-development-unblocked / live-acceptance-blocked / independently reviewed / default-off / not release-eligible
+Status: IMPLEMENTATION_COMPLETE / HOST_VERIFIED / LIVE-ACCEPTANCE-BLOCKED / ADMISSION-DEFAULT-OFF / NOT RELEASE-ELIGIBLE
 Type: Modification
 Planning baseline: `591303dba6e510c1ffbb98504d328802f8317add` (clean final Plan-363 same-epoch reopen-generation post-execution audit closure; Graphify `07f6a2a42e17060c`, 73,230 nodes / 107,176 edges with 15,555 named tests; DB v114; canonical `GROUP_TESTS` 244/244 unique paths)
 Spec: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` A-18 and OQ-04; GAP-N01 / WP-01 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`; successor to Plan 363's linked-group bootstrap and authority foundation
@@ -44,6 +44,12 @@ Closure tier: five causal host IDs across four focused concurrent Flutter bundle
 | 2026-08-13 | Final Plan-363 prerequisite closure | Clean Plan-363 repair/audit commit `2478134be117f0c3de5f5937f7443c12c1ba7c38`; current anchored review `e11b29f71210cad3`; exact ABORTED, membership/metadata/native, atomic fresh-key, row-owned key restart, dissolve-phase, discovery and identity verification | `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`. The literal preflight and hygiene baseline now use this closure. Final causal c4 `+76`, preservation c4 `+19`, DTR c4 `+7`, changed-Dart analyzer/format/diff hygiene and 244/244 inventory are green; no Plan-364 RED or production code has started. |
 | 2026-08-13 | Same-epoch Plan-363 prerequisite re-block | Exact terminal-row reopen, deferred transition identity, signed ACL comparison and production restart behavior at `2478134be117f0c3de5f5937f7443c12c1ba7c38` | The prior closure remains valid history but does not satisfy same-epoch sibling growth or intentional reannounce. Stop before RED; repair and post-execution-audit Plan 363 first. Production admission remains default-off and orthogonal. |
 | 2026-08-13 | Same-epoch Plan-363 prerequisite closure | Clean Plan-363 repair/audit commit `591303dba6e510c1ffbb98504d328802f8317add`; current anchored review `07f6a2a42e17060c`; exact durable reopen generation, canonical device-set digest, signed identity/data and protected partial-custody restart verification | `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`. The literal preflight, hygiene baseline, prerequisite checkbox and handoff now use this closure. Focused concurrent affected bundle `+101`, DTR `+7`, changed-Dart analyzer/diff hygiene and 244/244 inventory are green; final independent audit clear; no Plan-364 RED or production code has started. |
+| 2026-08-14 | Plan-364 implementation | Existing message/reaction retry owners, protected P2P custody, event log, authority history, restricted linked runtime and pure conversation screen | Implemented signed self-describing `group_content_v1`, physical signer/recipient snapshots, persist-before-egress exact bytes, survivor CAS, typed transactional receive/terminal evidence, deterministic reaction ordering, narrow text/reaction UI, exact read/notification custody and selector-independent recovery. DB remains v114; no new action, backend, table, ACK ledger or scheduler. |
+| 2026-08-14 | Mutation proof | Four serial production mutations against the accepted GREEN tree | M1 logical-only recipients re-red `TC-364-01a` at the sibling/remote physical target assertion; M2 removed survivor CAS re-red `TC-364-01b` with the full two-recipient set retained instead of `[transport-b]`; M3 timestamp-only reaction ordering re-red `TC-364-02a` at the equal-time nonzero comparator assertion; M4 ACKing prerequisite wait re-red `TC-364-03a` with one ACK instead of zero. Each mutation was reverted before the next; final source and diff checks are clean. |
+| 2026-08-14 | Final host proof | Exact 32-file structured Flutter selector; exact bridge/node/relay Go tests; DTR, rollout, runtime-root and curated groups gates | Structured proof: `49 passed, 0 skipped`, exactly one each of `TC-364-01a`/`01b`/`02a`/`03a`/`04a`, all seven preservation sentinels present. Exact Go discovery and tests passed. DTR-18 `+7`, relay rollout PASS, runtime-roots `20/20` with `trustworthy: true` / `drift: false`, and the accepted curated `groups` pass closed `+4161` plus bridge/node/relay tails. |
+| 2026-08-14 | Curated-lane repair audit | First full groups attempt exposed eight deterministic preservation failures in simulated-process lock scoping, resume/key-repair ordering and static contracts | Repaired the host fixture's per-process lock scope, restored A->X fencing for rejoin/key/B3 transitions, moved recursive drains/flushes after commit, deferred key repair until authority COMPLETE, and updated exact static helper/digest contracts. Focused counterexamples, full listener `+226`, key/repair `+54`, role/exit and final independent lock audits are green; the later accepted groups pass is the closure receipt. |
+| 2026-08-14 | Hygiene and graph closure | Full analyzer; changed/untracked Dart and Go format census; baseline/unstaged/staged diff checks; inventory; one incremental Graphify refresh and anchored review | `flutter analyze` reports no issues; 72 Dart and 7 Go paths are format-clean; all three diff checks pass; `GROUP_TESTS` is 244/244 unique/existing. Graphify is current at `c0612027dd4e9cc3` with 74,429 nodes / 108,677 edges and 15,576 named tests. |
+| 2026-08-14 | Availability-bounded live disposition | Live matrix: Pixel 6 `21071FDF600CSC` (Android 16/API 36) plus `emulator-5554` (Android 17/API 37) | **BLOCKED, not N/A.** The required topology is available, but production ACK-custody admission remains default-off and the Plan-363 B1b prerequisite has not passed. The Plan-364 live leg was not authorized or run; activation and release remain blocked. |
 
 ## Problem And Source-Backed Evidence
 
@@ -189,12 +195,12 @@ Do not count parser syntax errors, test-only mutations or paired `or` alternativ
 ## Implementation Order
 
 1. **Complete:** pin and revalidate the clean Plan-363 audit SHA, committed Graphify snapshot, DB floor, authority history/serializer, protected apply/ACK contract, linked credential resolver, runtime callbacks and `groups` inventory. No listed host-boundary incompatibility remains.
-2. Author the four Flutter RED bundles and both exact Go REDs. Record compile-clean RED for all five host IDs before production wiring.
-3. Add the one protected content kind and shared recipient-aware parser in node/relay, including stored-row Redis reparse and kind-separated dedupe.
-4. Add the strict retry-wrapper discriminator, physical author resolver, exact target snapshot, persist-before-network sender branches and state-driven survivor retry/fairness.
-5. Add typed protected receive, fixed-point prerequisite replay, exact event-log/canonical readback, deterministic reaction ordering and durable terminal/ACK evidence under the shared authority phase.
-6. Add the restricted runtime phase and narrow linked conversation surface; keep voluntary self-removal unavailable and deferred.
-7. Reach GREEN, run the four mutations serially, then run the one final focused c4 proof, exact Go proof, mandatory affected gates, one B1b pair if available, hygiene and one incremental Graphify refresh.
+2. **Complete:** authored the four Flutter RED bundles and both exact Go REDs; all five host IDs are non-vacuous.
+3. **Complete:** added the protected content kind and shared recipient-aware node/relay parser, including stored-row reparse and kind-separated dedupe.
+4. **Complete:** added strict wrapper discrimination, physical author resolution, exact frozen targets, persist-before-network sender branches and survivor-first retry/fairness.
+5. **Complete:** added typed protected receive, fixed-point prerequisite replay, exact canonical evidence, deterministic reaction ordering and durable terminal/ACK decisions under the shared authority phase.
+6. **Complete:** added the restricted runtime phase and narrow linked conversation; voluntary self-removal remains unavailable and deferred.
+7. **Host complete / live blocked:** GREEN, four mutations, final focused/Go/affected/curated gates, hygiene and Graphify are complete. B1b remains blocked by default-off production admission and the unmet Plan-363 live prerequisite.
 
 ## Commands And Gate Cadence
 
@@ -306,12 +312,12 @@ rm -f "$plan364_go_log"
 trap - EXIT
 ```
 
-After all four mutations re-red and are reverted, run one deduplicated final focused invocation. Require all five host IDs and reject skipped Plan-364 rows:
+After all four mutations re-red and are reverted, run one deduplicated final focused invocation. Require all five host IDs and reject skipped Plan-364 rows. Use the structured reporter because the concurrent expanded reporter can repeat whichever test is active when another suite advances while omitting a short-lived test name, so grep cardinality is not a valid concurrency-4 proof:
 
 ```bash
 plan364_flutter_log="$(mktemp)"
 trap 'rm -f "$plan364_flutter_log"' EXIT
-if ! (set -o pipefail; flutter test --concurrency=4 --reporter expanded \
+if ! (set -o pipefail; flutter test --concurrency=4 --reporter json \
   test/features/groups/application/send_group_message_use_case_test.dart \
   test/features/groups/application/send_group_message_recipient_eligibility_test.dart \
   test/features/groups/application/group_offline_replay_envelope_test.dart \
@@ -348,18 +354,57 @@ if ! (set -o pipefail; flutter test --concurrency=4 --reporter expanded \
   tee "$plan364_flutter_log"); then
   exit 1
 fi
-for plan364_new_id in \
-  TC-364-01a TC-364-01b TC-364-02a TC-364-03a TC-364-04a; do
-  test "$(grep -Fc -- "$plan364_new_id" "$plan364_flutter_log")" -eq 1 || exit 1
-done
-for plan364_id in TC-364-01a TC-364-01b TC-364-02a TC-364-03a TC-364-04a \
-  TC-363-01b TC-363-02a TC-363-03a GI-004 IR-006 \
-  'EK004 retry preserves signed group offline replay envelope fields' TC-361-03b; do
-  grep -Fq -- "$plan364_id" "$plan364_flutter_log" || exit 1
-done
-if grep -E \
-  '~[0-9]+:.*(TC-364-|TC-363-01b|TC-363-02a|TC-363-03a|GI-004|IR-006|EK004 retry preserves signed group offline replay envelope fields|TC-361-03b)' \
-  "$plan364_flutter_log" >/dev/null; then exit 1; fi
+python3 - "$plan364_flutter_log" <<'PY'
+import json
+import sys
+from pathlib import Path
+
+events = [
+    json.loads(line)
+    for line in Path(sys.argv[1]).read_text().splitlines()
+    if line.strip()
+]
+tests = {
+    event['test']['id']: event['test']['name']
+    for event in events
+    if event.get('type') == 'testStart'
+}
+done = {
+    event['testID']: event
+    for event in events
+    if event.get('type') == 'testDone' and event['testID'] in tests
+}
+assert len(done) == len(tests), (len(done), len(tests))
+assert all(
+    event['result'] == 'success' and not event.get('skipped', False)
+    for event in done.values()
+)
+new_ids = (
+    'TC-364-01a',
+    'TC-364-01b',
+    'TC-364-02a',
+    'TC-364-03a',
+    'TC-364-04a',
+)
+preservation_ids = (
+    'TC-363-01b',
+    'TC-363-02a',
+    'TC-363-03a',
+    'GI-004',
+    'IR-006',
+    'EK004 retry preserves signed group offline replay envelope fields',
+    'TC-361-03b',
+)
+for test_id in new_ids:
+    matches = [name for name in tests.values() if test_id in name]
+    assert len(matches) == 1, (test_id, matches)
+for test_id in preservation_ids:
+    assert any(test_id in name for name in tests.values()), test_id
+print(
+    f'Plan 364 focused proof: {len(done)} passed, 0 skipped; '
+    'five causal IDs exact; preservation sentinels present'
+)
+PY
 rm -f "$plan364_flutter_log"
 trap - EXIT
 ```
@@ -456,17 +501,17 @@ Do not run a migration/SQLCipher leg, standalone group-media suite, `1to1`, core
 ## Done Criteria
 
 - [x] Plan 363 is cleanly implemented and post-execution audited at `591303dba6e510c1ffbb98504d328802f8317add`; its committed Graphify `07f6a2a42e17060c`, DB v114, durable PREPARED/COMPLETE/ABORTED authority history, strict membership/metadata native recovery, stable common fresh authority, durable per-reopen generations, generation- and canonical-device-set-bound deferred sender/A/B authority, atomic all-target and row-owned/zero-target restart recovery, restart-safe two-phase dissolve, credential/protected-runtime APIs and 244/244 `groups` inventory are pinned and revalidated before RED.
-- [ ] Eligible discussion/admin-announcement/reaction authoring resolves logical actor plus exact physical signer, freezes all eligible physical targets including same-account siblings, persists exact bytes before egress, converges every strict receipt and makes zero pubsub calls for marked content.
-- [ ] Existing message/reaction owners retain immutable full signed authority plus an exact-CAS mutable pending-recipient subset across partial success, relay ACK/delete, crash and selector rollback without a new table/ledger, roster/key/crypto rebuild, singular/aggregate demotion or starvation.
-- [ ] One additive content kind/parser binds sender, recipient, ACL, group, event, payload and epoch consistently in admission and stored-row/Redis reparse; the signed replay body carries a self-contained exact inner `group_content_v1` discriminator that retrieval validates independently of the non-retained outer request kind; missing/crossed discriminators reject and bootstrap/authority namespaces remain separate.
-- [ ] Typed receive, fixed-point prerequisite recovery, one-transaction event-log/projection/attention commit and durable ACK evidence converge message/reaction replay exactly once without attempt burn, duplicate UI/unread/notification effects or content-to-authority mutation.
-- [ ] Announcement demotion, member/device removal/re-add, dissolve and key-update races converge under the accepted signed authority order in both arrival orders; later authority transactionally reconciles any invalid earlier projection and the bounded-clock trust limit is recorded honestly.
-- [ ] The narrow linked surface exposes no voluntary-leave control; voluntary self-removal remains explicitly assigned to later protected control-plane work and cannot enter the content kind.
-- [ ] The linked runtime starts only exact protected content recovery/retry after bootstrap+authority, and the narrow conversation exposes only eligible text and reactions with live authority requalification.
-- [ ] Exactly four mutations re-red independently and are reverted. All independent multi-file Flutter commands run with concurrency 4 wherever supported to speed feedback; the final focused proof is non-vacuous and has zero Plan-364 skips.
-- [ ] Both exact Go tests, DTR c4, the rollout contract, runtime roots and one curated `groups` gate pass once; the discovery contract runs only if dispatcher/discovery registration changes. No unjustified migration/SQLCipher/family/full-host gate is run.
-- [ ] The accepted B1b Android pair adds one offline discussion and reaction round trip, or records availability-policy N/A without substituting unavailable hardware.
-- [ ] Analyzer, changed-Dart and Go formatting, three diff checks and one post-change Graphify refresh/review are clean; index/status/GAP coverage record actual evidence while media/history/activation/GAP-N01/release remain open.
+- [x] Eligible discussion/admin-announcement/reaction authoring resolves logical actor plus exact physical signer, freezes all eligible physical targets including same-account siblings, persists exact bytes before egress, converges every strict receipt and makes zero pubsub calls for marked content.
+- [x] Existing message/reaction owners retain immutable full signed authority plus an exact-CAS mutable pending-recipient subset across partial success, relay ACK/delete, crash and selector rollback without a new table/ledger, roster/key/crypto rebuild, singular/aggregate demotion or starvation.
+- [x] One additive content kind/parser binds sender, recipient, ACL, group, event, payload and epoch consistently in admission and stored-row/Redis reparse; the signed replay body carries a self-contained exact inner `group_content_v1` discriminator that retrieval validates independently of the non-retained outer request kind; missing/crossed discriminators reject and bootstrap/authority namespaces remain separate.
+- [x] Typed receive, fixed-point prerequisite recovery, one-transaction event-log/projection/attention commit and durable ACK evidence converge message/reaction replay exactly once without attempt burn, duplicate UI/unread/notification effects or content-to-authority mutation.
+- [x] Announcement demotion, member/device removal/re-add, dissolve and key-update races converge under the accepted signed authority order in both arrival orders; later authority transactionally reconciles any invalid earlier projection and the bounded-clock trust limit is recorded honestly.
+- [x] The narrow linked surface exposes no voluntary-leave control; voluntary self-removal remains explicitly assigned to later protected control-plane work and cannot enter the content kind.
+- [x] The linked runtime starts only exact protected content recovery/retry after bootstrap+authority, and the narrow conversation exposes only eligible text and reactions with live authority requalification.
+- [x] Exactly four mutations re-red independently and are reverted. All independent multi-file Flutter commands run with concurrency 4 wherever supported to speed feedback; the final focused proof is non-vacuous and has zero Plan-364 skips.
+- [x] Both exact Go tests, DTR c4, the rollout contract, runtime roots and one curated `groups` gate pass once; the discovery contract runs only if dispatcher/discovery registration changes. No unjustified migration/SQLCipher/family/full-host gate is run.
+- [ ] The accepted B1b Android pair adds one offline discussion and reaction round trip. **BLOCKED, not N/A:** the physical Android pair is available, but production ACK-custody admission is default-off and Plan 363's B1b prerequisite has not passed, so this leg was not authorized or run.
+- [x] Analyzer, changed-Dart and Go formatting, three diff checks and one post-change Graphify refresh/review are clean; index/status/GAP coverage record actual evidence while media/history/activation/GAP-N01/release remain open.
 
 ## Reviewer Findings
 
@@ -494,20 +539,11 @@ Do not run a migration/SQLCipher leg, standalone group-media suite, `1to1`, core
 
 ## Arbiter Decision
 
-`EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED.` The proposed Plan 364 boundary is one
-protected blob-free content kind over Plan 363's authority foundation, with
-existing message/reaction/event-log owners, a typed receive decision and one
-narrow linked conversation. `$tdd-review` finds the contract coherent,
-sufficient and necessary-only after the recorded amendments. Plan-363's final
-clean audit closure `591303dba6e510c1ffbb98504d328802f8317add` satisfies the
-host-development prerequisite; default-off
-production ACK-custody admission and B1b remain separate blockers for device
-acceptance, activation and release only.
+`IMPLEMENTATION_COMPLETE / HOST_VERIFIED / LIVE-ACCEPTANCE-BLOCKED / ADMISSION-DEFAULT-OFF / NOT RELEASE-ELIGIBLE.` The bounded one-kind blob-free group-content adopter is implemented and host-verified over Plan 363's authority foundation. Exact physical custody, immutable replay authority with survivor CAS, typed transactional receive/ACK evidence, deterministic reactions, and the restricted linked runtime/UI are closed by causal, mutation, Go, affected, curated, hygiene and Graphify evidence. This is not a post-execution-audit closure and makes no activation, GAP-N01 or release claim. Production ACK-custody admission and the prerequisite Plan-363 B1b remain separate blockers for the available Android pair.
 
 ## Handoff
 
-- Current state: `EXECUTION_READY / HOST-DEVELOPMENT-UNBLOCKED / LIVE-ACCEPTANCE-BLOCKED`; Plan 363 is pinned at `591303dba6e510c1ffbb98504d328802f8317add`, Graphify `07f6a2a42e17060c`, DB v114 and `GROUP_TESTS` 244/244. Exact ABORTED history, strict membership/metadata repair, atomic common-key owners, durable same-epoch reopen generations, generation/device-set-bound deferred authority, row-owned/zero-target restart recovery and dissolve survivor progress are closed. The signed self-contained inner `group_content_v1` discriminator remains mandatory. No Plan-364 RED or production implementation has started.
+- Current state: `IMPLEMENTATION_COMPLETE / HOST_VERIFIED / LIVE-ACCEPTANCE-BLOCKED / ADMISSION-DEFAULT-OFF / NOT RELEASE-ELIGIBLE`; Plan 364 is host-complete over Plan 363 baseline `591303dba6e510c1ffbb98504d328802f8317add`, DB v114 and `GROUP_TESTS` 244/244. Current Graphify is `c0612027dd4e9cc3` (74,429 nodes / 108,677 edges; 15,576 named tests).
 - Live-acceptance action: obtain separate S2 production-admission authorization/operations evidence, enable ACK custody only for Plan-363 B1b on the already deployed Redis-backed relay, and restore it to off immediately afterward. Persistent admission requires a separately authorized rollout decision; B1b still precedes Plan-364 device acceptance, activation or release. Do not downgrade to aggregate storage while admission is pending.
-- First execution action: run the literal preflight, then author `TC-364-01a`, `01b`, `02a`, `03a`, `04a` and both exact Go REDs before production wiring.
-- Runtime economy: run independent Flutter files concurrently with `--concurrency=4` whenever supported to speed feedback; keep mutations, curated gates and the device pair serial.
+- Audit action: create a clean Plan-364 post-execution audit/closure SHA before releasing the successor. Plan 365 remains prerequisite-blocked until that audit pins the final signed content manifest, transaction/retry/runtime/UI interfaces and committed Graphify snapshot.
 - Successor work: Plan 365 owns group media/blob/voice and per-final-recipient blob lifetime. Later work owns group history/no-intent, activation, mixed-version rollout, legacy retirement and final GAP-N01/release closure.

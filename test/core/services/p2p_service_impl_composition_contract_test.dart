@@ -23,6 +23,7 @@ const _implements = <String>[
   'DetailedInboxStore',
   'AckOrExpiryInboxStore',
   'MediaExpiryBoundedInboxStore',
+  'GroupContentExpiryBoundedInboxStore',
   'ReadinessProofRecorder',
   'P2PFullInboxDrain',
   'DurableLanSender',
@@ -52,6 +53,8 @@ const _constructorParameters = <String>[
       'replayRecoveredInboxContactRequest',
   'ReplayRecoveredInboxChatMessage? replayRecoveredInboxReaction',
   'ReplayRecoveredInboxChatMessage? replayRecoveredInboxMessageDeletion',
+  'ReplayRecoveredProtectedGroupEnvelope? '
+      'replayRecoveredProtectedGroupEnvelope',
   'Future<String?> Function(ChatMessage message)? predecryptInboxChatEntry',
   'TransportMetrics? transportMetrics',
   'Duration? keyRotationGracePeriodOverride',
@@ -81,6 +84,7 @@ const _publicFields = <String>{
 };
 
 const _publicMethods = <String>{
+  'setProtectedGroupReplayHandler',
   'currentState',
   'stateStream',
   'messageStream',
@@ -107,6 +111,7 @@ const _publicMethods = <String>{
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
   'storeInMediaExpiryBoundedInboxDetailed',
+  'storeInGroupContentExpiryBoundedInboxDetailed',
   'retrieveInbox',
   'registerPushToken',
   'lastRecoveryMethod',
@@ -114,6 +119,9 @@ const _publicMethods = <String>{
   'performImmediateHealthCheck',
   'drainOfflineInbox',
   'drainOfflineInboxFully',
+  'pauseProtectedGroupContentAdmission',
+  'resumeProtectedGroupContentAdmission',
+  'drainProtectedGroupContentFixedPoint',
   'probeRelay',
   'lookupRelayPresence',
   'setPresence',
@@ -154,14 +162,18 @@ const _inboxFields = <String>{
   '_replayRecoveredInboxContactRequest',
   '_replayRecoveredInboxReaction',
   '_replayRecoveredInboxMessageDeletion',
+  '_replayRecoveredProtectedGroupEnvelope',
   '_predecryptInboxChatEntry',
   '_drainInProgress',
   '_drainInProgressWaitsAllPages',
   '_pendingStartupDrain',
   '_pendingStartupDrainWaitForAllPages',
+  '_protectedGroupContentAdmissionPaused',
+  '_protectedGroupContentReplayInFlight',
 };
 
 const _inboxMethods = <String>{
+  'setProtectedGroupReplayHandler',
   '_normalizeInboxTimestamp',
   '_messageTypeFromEnvelope',
   '_stagingEntryFromRawInboxMessage',
@@ -186,24 +198,33 @@ const _inboxMethods = <String>{
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
   'storeInMediaExpiryBoundedInboxDetailed',
+  'storeInGroupContentExpiryBoundedInboxDetailed',
   '_waitForNodeStart',
   '_inboxStoreReadinessFailure',
   'retrieveInbox',
   'drainOfflineInbox',
   'drainOfflineInboxFully',
+  'pauseProtectedGroupContentAdmission',
+  'resumeProtectedGroupContentAdmission',
+  'drainProtectedGroupContentFixedPoint',
   '_scheduleStartupDrain',
   'countNeedsAttentionInboxEntries',
   'onNodeStateTransition',
 };
 
 const _inboxDelegates = <String>{
+  'setProtectedGroupReplayHandler',
   'storeInInbox',
   'storeInInboxDetailed',
   'storeInAckCustodyInboxDetailed',
   'storeInMediaExpiryBoundedInboxDetailed',
+  'storeInGroupContentExpiryBoundedInboxDetailed',
   'retrieveInbox',
   'drainOfflineInbox',
   'drainOfflineInboxFully',
+  'pauseProtectedGroupContentAdmission',
+  'resumeProtectedGroupContentAdmission',
+  'drainProtectedGroupContentFixedPoint',
   'countNeedsAttentionInboxEntries',
 };
 
@@ -600,11 +621,12 @@ String _publicApiFingerprint(ClassDeclaration facade) {
 // Token/AST fingerprint of the complete public/static facade declaration. It
 // excludes bodies, so moving decisions behind coordinators does not change it.
 //
-// 360: repinned for exactly two added optional constructor parameters,
-// `requiredTransportPeerId` and (in the bounded repair) `logicalAccountPeerId`. No public field or method was added, removed, or
-// re-signed; the linked-transport qualification lives entirely in a private
-// method on the existing `startNode` path.
-const _expectedFacadeApiFingerprint = 'f517cea8';
+// 365: repinned for the intentional protected group-content surface: one
+// optional replay-handler constructor parameter, its setter, one exact-expiry
+// inbox-store delegate, and the pause/resume/fixed-point lifecycle delegates.
+// These additions keep durable replay and admission ordering behind the
+// existing private inbox coordinator; no unrelated public API changed.
+const _expectedFacadeApiFingerprint = '51eb4ecb';
 
 void _expectCallbackOwnership(ClassDeclaration facade, String facadeSource) {
   final constructorBody = _compact(
@@ -848,7 +870,7 @@ void main() {
             .toList(growable: false),
         _constructorParameters,
       );
-      expect(constructor.parameters.parameters, hasLength(22));
+      expect(constructor.parameters.parameters, hasLength(23));
       expect(
         _fieldNames(facade).where((name) => !name.startsWith('_')).toSet(),
         _publicFields,

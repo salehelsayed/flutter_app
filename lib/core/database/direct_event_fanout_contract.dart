@@ -104,6 +104,37 @@ class DirectEventFanoutTargetCandidate {
   final String wireEnvelope;
 }
 
+/// Authority carried into the private-media v114/v108 fanout transactions.
+///
+/// Fresh authoring must requalify the exact roster snapshot captured before
+/// encryption. Restart/retry deliberately treats the complete persisted v114
+/// survivor set as the sole authority and therefore performs no roster read.
+enum DirectPrivateMediaFanoutStageAuthority {
+  currentRosterSnapshot,
+  persistedV114Survivors,
+}
+
+/// One exact private-media target at Barrier B.
+///
+/// These neutral fields live outside either SQL helper so the message helper
+/// can bind v108 siblings without importing the media-attachment helper (which
+/// already depends on the message helper).
+final class DirectPrivateMediaFanoutTargetBinding {
+  const DirectPrivateMediaFanoutTargetBinding({
+    required this.recipientPeerId,
+    required this.recipientMlKemPublicKey,
+    required this.wireEnvelope,
+    required this.wireMediaBlobManifestHash,
+    required this.wireMediaBlobExpiresAtMs,
+  });
+
+  final String recipientPeerId;
+  final String recipientMlKemPublicKey;
+  final String wireEnvelope;
+  final String wireMediaBlobManifestHash;
+  final int wireMediaBlobExpiresAtMs;
+}
+
 /// Outcome of one atomic all-target fanout stage.
 enum DirectEventFanoutStageOutcome {
   /// The canonical transition plus EVERY sibling row committed atomically.

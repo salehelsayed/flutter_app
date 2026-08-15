@@ -4,6 +4,8 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -16,19 +18,288 @@ import 'package:flutter_app/features/groups/application/group_config_payload.dar
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_lifecycle.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/models/group_private_media_policy.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 
 typedef GroupMessageIdFactory = String Function();
+
+/// Explicit activation authority for the Plan-364 strict content branch.
+/// Existing callers that omit it stay on the byte-compatible legacy path.
+class GroupContentAuthoringContext {
+  const GroupContentAuthoringContext({
+    required this.directLinkedDeviceSelector,
+    required this.multiDeviceSyncEnabled,
+    required this.authorityVersion,
+    required this.inboxStore,
+    this.linkedTransportCredential,
+    this.requireLinkedTransportCredential = false,
+    this.authoringDeviceId,
+    this.authoringTransportPeerId,
+    this.authoringPublicKey,
+  });
+
+  final DirectLinkedDeviceSelector directLinkedDeviceSelector;
+  final bool multiDeviceSyncEnabled;
+  final GroupContentAuthorityVersion? authorityVersion;
+  final AckOrExpiryInboxStore? inboxStore;
+  final LinkedTransportCredential? linkedTransportCredential;
+  final bool requireLinkedTransportCredential;
+
+  /// Exact runtime sender binding chosen by the production resolver. These
+  /// fields travel together; explicit unit contexts may omit all three.
+  final String? authoringDeviceId;
+  final String? authoringTransportPeerId;
+  final String? authoringPublicKey;
+}
+
+enum GroupContentAuthoringResolutionKind { legacyUninitialized, strict, refuse }
+
+typedef GroupContentAuthoringResolution = ({
+  GroupContentAuthoringResolutionKind kind,
+  GroupContentAuthoringContext? context,
+});
+
+typedef ResolveGroupContentAuthoring =
+    Future<GroupContentAuthoringResolution> Function({
+      required String groupId,
+      required String senderPeerId,
+      required String senderPublicKey,
+      String? senderDeviceId,
+      String? senderTransportPeerId,
+    });
+
+final class StrictGroupContentAuthoringSnapshot {
+  const StrictGroupContentAuthoringSnapshot({
+    required this.group,
+    required this.key,
+    required this.members,
+    required this.senderMember,
+    required this.context,
+    required this.senderDeviceId,
+    required this.senderTransportPeerId,
+    required this.senderPublicKey,
+    required this.recipientPeerIds,
+  });
+
+  final GroupModel group;
+  final GroupKeyInfo key;
+  final List<GroupMember> members;
+  final GroupMember senderMember;
+  final GroupContentAuthoringContext context;
+  final String senderDeviceId;
+  final String senderTransportPeerId;
+  final String senderPublicKey;
+  final List<String> recipientPeerIds;
+}
+
+typedef GroupContentAuthoringAdmission = ({
+  GroupContentAuthoringResolutionKind kind,
+  StrictGroupContentAuthoringSnapshot? snapshot,
+});
+
+final Expando<ResolveGroupContentAuthoring> _groupContentAuthoringResolvers =
+    Expando<ResolveGroupContentAuthoring>('group_content_authoring_resolver');
+
+/// Installs the production authoring decision at the use-case choke point.
+///
+/// A nullable context is deliberately not the contract: once a member has a
+/// device roster, failure to resolve strict authority must refuse instead of
+/// silently falling through to the legacy pubsub lane.
+void setGroupContentAuthoringResolver(
+  GroupRepository owner,
+  ResolveGroupContentAuthoring? resolver,
+) {
+  _groupContentAuthoringResolvers[owner] = resolver;
+}
+
+/// True only for incumbent/test compositions that have no production
+/// authoring resolver and did not explicitly select the strict unit seam.
+///
+/// Message and reaction entry/recheck paths share this predicate so an
+/// initialized production resolver can never return legacy without being
+/// rejected, while pre-364 resolver-less owners retain their behavior.
+bool isResolverAbsentLegacyGroupContentAuthoring({
+  required GroupRepository owner,
+  required GroupContentAuthoringContext? explicitContext,
+}) => _groupContentAuthoringResolvers[owner] == null && explicitContext == null;
+
+Future<GroupContentAuthoringResolution> resolveGroupContentAuthoring({
+  required GroupRepository resolverOwner,
+  required String groupId,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required GroupMember senderMember,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  GroupContentAuthoringContext? explicitContext,
+}) async {
+  final resolver = _groupContentAuthoringResolvers[resolverOwner];
+  // Production always gets the first decision, including for an empty member
+  // device roster. An active linked installation may temporarily observe that
+  // shape while its group projection catches up; it must refuse rather than
+  // fall through to the ordinary-primary legacy transport.
+  if (resolver != null) {
+    final resolution = await resolver(
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+    );
+    if (resolution.kind == GroupContentAuthoringResolutionKind.strict &&
+        resolution.context != null) {
+      return resolution;
+    }
+    if (resolution.kind ==
+            GroupContentAuthoringResolutionKind.legacyUninitialized &&
+        resolution.context == null) {
+      return resolution;
+    }
+    return (kind: GroupContentAuthoringResolutionKind.refuse, context: null);
+  }
+  // Resolver absence is the incumbent/test composition seam. Production
+  // installs its resolver before exposing any group authoring surface, so an
+  // initialized production roster still reaches the fail-closed decision
+  // above. Keeping the resolver-less owner legacy preserves pre-364 callers
+  // that have no installation-authority composition at all.
+  if (explicitContext == null) {
+    return (
+      kind: GroupContentAuthoringResolutionKind.legacyUninitialized,
+      context: null,
+    );
+  }
+  if (senderMember.devices.isEmpty) {
+    return (
+      kind: GroupContentAuthoringResolutionKind.legacyUninitialized,
+      context: null,
+    );
+  }
+  // An explicit context remains a unit seam only. A production owner has a
+  // resolver installed above, so caller-carried context can never bypass the
+  // current installation-role decision.
+  return (
+    kind: GroupContentAuthoringResolutionKind.strict,
+    context: explicitContext,
+  );
+}
+
+Future<GroupContentAuthoringResolution?> _classifyGroupContentAuthoringEntry({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String? senderDeviceId,
+  required String? senderTransportPeerId,
+  required DateTime? timestamp,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required GroupContentAuthoringContext? explicitContext,
+}) async {
+  final group = await groupRepo.getGroup(groupId);
+  if (group == null || group.selfRemovedAt != null || group.isDissolved) {
+    return null;
+  }
+  final membershipCutoff =
+      timestamp != null && !timestamp.toUtc().isBefore(group.createdAt.toUtc())
+      ? timestamp
+      : null;
+  final membership = await _loadGroupSendMembership(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    membershipCutoff: membershipCutoff,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+  );
+  GroupMember? sender;
+  for (final candidate in membership.members) {
+    if (candidate.peerId == senderPeerId) sender = candidate;
+  }
+  if (sender == null) return null;
+  return resolveGroupContentAuthoring(
+    resolverOwner: groupRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderPublicKey,
+    senderMember: sender,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+    explicitContext: explicitContext,
+  );
+}
+
+/// Revalidates a persisted strict-content authority and frozen physical ACL.
+/// Callers must invoke this inside [runGroupAuthorityPhase].
+Future<bool> strictGroupContentAuthorityMatchesAssumingPhase({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderPeerId,
+  required String senderAccountPublicKey,
+  required String expectedSenderPublicKey,
+  required String senderDeviceId,
+  required String senderTransportPeerId,
+  required List<String> expectedRecipientPeerIds,
+  required GroupContentAuthorityVersion expectedAuthority,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+}) async {
+  final group = await groupRepo.getGroup(groupId);
+  final key = await groupRepo.getLatestKey(groupId);
+  final membership = await _loadGroupSendMembership(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+  );
+  GroupMember? sender;
+  for (final member in membership.members) {
+    if (member.peerId == senderPeerId) sender = member;
+  }
+  if (group == null ||
+      group.selfRemovedAt != null ||
+      group.isDissolved ||
+      sender == null ||
+      (group.type == GroupType.announcement &&
+          (group.myRole != GroupRole.admin ||
+              sender.role != MemberRole.admin)) ||
+      key?.keyGeneration != expectedAuthority.keyEpoch) {
+    return false;
+  }
+  final resolution = await resolveGroupContentAuthoring(
+    resolverOwner: groupRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderAccountPublicKey,
+    senderMember: sender,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+  );
+  final context = resolution.context;
+  return resolution.kind == GroupContentAuthoringResolutionKind.strict &&
+      context != null &&
+      sameGroupContentAuthorityVersion(
+        expectedAuthority,
+        context.authorityVersion,
+      ) &&
+      _sameStrictPhysicalAuthority(
+        after: membership.members,
+        eligibleLogicalPeerIds: membership.recipientPeerIds,
+        senderPeerId: senderPeerId,
+        senderTransportPeerId: senderTransportPeerId,
+        expectedRecipients: expectedRecipientPeerIds,
+        senderDeviceId: senderDeviceId,
+        senderPublicKey: expectedSenderPublicKey,
+      );
+}
 
 /// Final read-only authority check run inside the same per-group membership
 /// phase as message persistence and native delivery.
@@ -117,7 +388,7 @@ _loadGroupSendMembership({
                 !member.joinedAt.toUtc().isAfter(normalizedCutoff)) &&
             hasDeliverableGroupMemberIdentity(member) &&
             peerId != normalizedSenderPeerId &&
-            !_isPersistedNonJoinedInviteStatus(inviteStatuses[peerId]);
+            !isPersistedNonJoinedGroupInviteStatus(inviteStatuses[peerId]);
       })
       .map((member) => member.peerId.trim())
       .toSet()
@@ -150,6 +421,166 @@ List<String> _durableGroupRecipientPeerIds({
   return recipients;
 }
 
+List<String> _strictPhysicalGroupRecipientPeerIds({
+  required List<GroupMember> members,
+  required Iterable<String> eligibleLogicalPeerIds,
+  required String senderPeerId,
+  required String senderTransportPeerId,
+}) {
+  final eligible = <String>{...eligibleLogicalPeerIds, senderPeerId};
+  final transportClaims = <String, int>{};
+  for (final member in members) {
+    if (!eligible.contains(member.peerId)) continue;
+    for (final device in member.activeDevicesWithLegacyFallback()) {
+      final transport = device.transportPeerId.trim();
+      if (transport.isNotEmpty && transport != senderTransportPeerId) {
+        transportClaims.update(
+          transport,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      }
+    }
+  }
+  return transportClaims.entries
+      .where((entry) => entry.value == 1)
+      .map((entry) => entry.key)
+      .toList()
+    ..sort();
+}
+
+bool hasUniqueStrictGroupContentAuthorBinding({
+  required List<GroupMember> members,
+  required String senderPeerId,
+  required String senderDeviceId,
+  required String senderTransportPeerId,
+  required String senderPublicKey,
+}) {
+  GroupMember? sender;
+  for (final member in members) {
+    if (member.peerId == senderPeerId) sender = member;
+  }
+  final exactClaims = sender?.activeDevices
+      .where(
+        (candidate) =>
+            candidate.deviceId == senderDeviceId &&
+            candidate.transportPeerId == senderTransportPeerId &&
+            candidate.deviceSigningPublicKey == senderPublicKey,
+      )
+      .length;
+  final transportClaims = members
+      .expand((member) => member.activeDevicesWithLegacyFallback())
+      .where((candidate) => candidate.transportPeerId == senderTransportPeerId)
+      .length;
+  return exactClaims == 1 && transportClaims == 1;
+}
+
+bool _sameStrictPhysicalAuthority({
+  required List<GroupMember> after,
+  required Iterable<String> eligibleLogicalPeerIds,
+  required String senderPeerId,
+  required String senderTransportPeerId,
+  required List<String> expectedRecipients,
+  required String senderDeviceId,
+  required String senderPublicKey,
+}) {
+  final currentRecipients = _strictPhysicalGroupRecipientPeerIds(
+    members: after,
+    eligibleLogicalPeerIds: eligibleLogicalPeerIds,
+    senderPeerId: senderPeerId,
+    senderTransportPeerId: senderTransportPeerId,
+  );
+  if (!sameGroupPrivateMediaRecipientPeerIds(
+    expectedRecipients,
+    currentRecipients,
+  )) {
+    return false;
+  }
+  return hasUniqueStrictGroupContentAuthorBinding(
+    members: after,
+    senderPeerId: senderPeerId,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+    senderPublicKey: senderPublicKey,
+  );
+}
+
+bool sameGroupContentAuthorityVersion(
+  GroupContentAuthorityVersion? left,
+  GroupContentAuthorityVersion? right,
+) =>
+    left != null &&
+    right != null &&
+    left.eventAt.toUtc() == right.eventAt.toUtc() &&
+    left.eventId == right.eventId &&
+    left.keyEpoch == right.keyEpoch;
+
+bool _sameLinkedTransportCredential(
+  LinkedTransportCredential? left,
+  LinkedTransportCredential? right,
+) =>
+    (left == null && right == null) ||
+    (left != null &&
+        right != null &&
+        left.state == right.state &&
+        left.accountPeerId == right.accountPeerId &&
+        left.accountPublicKey == right.accountPublicKey &&
+        left.deviceId == right.deviceId &&
+        left.transportPeerId == right.transportPeerId &&
+        left.transportPublicKey == right.transportPublicKey &&
+        left.transportPrivateKey == right.transportPrivateKey);
+
+bool sameGroupContentAuthoringContext(
+  GroupContentAuthoringContext expected,
+  GroupContentAuthoringContext current,
+) =>
+    expected.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring ==
+        current.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring &&
+    expected.multiDeviceSyncEnabled == current.multiDeviceSyncEnabled &&
+    expected.requireLinkedTransportCredential ==
+        current.requireLinkedTransportCredential &&
+    _sameOptionalString(
+      expected.authoringDeviceId,
+      current.authoringDeviceId,
+    ) &&
+    _sameOptionalString(
+      expected.authoringTransportPeerId,
+      current.authoringTransportPeerId,
+    ) &&
+    _sameOptionalString(
+      expected.authoringPublicKey,
+      current.authoringPublicKey,
+    ) &&
+    current.inboxStore != null &&
+    sameGroupContentAuthorityVersion(
+      expected.authorityVersion,
+      current.authorityVersion,
+    ) &&
+    _sameLinkedTransportCredential(
+      expected.linkedTransportCredential,
+      current.linkedTransportCredential,
+    );
+
+const groupContentAuthoringFutureSkew = Duration(minutes: 5);
+
+bool validGroupContentAuthoringOrder({
+  required GroupContentAuthorityVersion authority,
+  required DateTime contentAt,
+  required String contentEventId,
+  DateTime? nowUtc,
+}) {
+  final at = contentAt.toUtc();
+  if (at.isAfter(
+    (nowUtc ?? DateTime.now()).toUtc().add(groupContentAuthoringFutureSkew),
+  )) {
+    return false;
+  }
+  final authorityAt = authority.eventAt.toUtc();
+  final time = authorityAt.compareTo(at);
+  return time < 0 ||
+      (time == 0 && authority.eventId.compareTo(contentEventId) <= 0);
+}
+
 /// Exact set equality for a private-media relay recipient snapshot.
 ///
 /// Empty/duplicate entries fail closed so a malformed persisted re-drive list
@@ -176,7 +607,6 @@ bool sameGroupPrivateMediaRecipientPeerIds(
       normalizedLeft.containsAll(normalizedRight);
 }
 
-
 /// Exclusion by affirmative local evidence only (plan 318): a roster member is
 /// dropped from the recipient set iff THIS device holds a persisted invite row
 /// in a non-joined state for them. The add-member flow writes rows at stage
@@ -192,7 +622,7 @@ bool sameGroupPrivateMediaRecipientPeerIds(
 /// conservatively excluded. Creator and joiner inclusion (REG-119/REG-119b)
 /// are structural now: no inference arm exists to except them from. Do NOT
 /// re-introduce a null-status inference here.
-bool _isPersistedNonJoinedInviteStatus(GroupInviteDeliveryStatus? status) {
+bool isPersistedNonJoinedGroupInviteStatus(GroupInviteDeliveryStatus? status) {
   return status == GroupInviteDeliveryStatus.sent ||
       status == GroupInviteDeliveryStatus.queued ||
       status == GroupInviteDeliveryStatus.needsResend ||
@@ -342,6 +772,152 @@ GroupMemberDeviceIdentity? _resolveOutgoingSenderDevice({
   return null;
 }
 
+/// Read-only admission used by media/voice/share producers before they create
+/// any group-owned row, artifact, background task or network effect.
+///
+/// The returned strict snapshot freezes the same physical ACL and signer tuple
+/// that [sendGroupMessage] revalidates before arming protected content. A
+/// legacy result authorizes only the incumbent uninitialized-primary route;
+/// every ambiguous or incomplete initialized shape is a refusal.
+Future<GroupContentAuthoringAdmission> prepareGroupContentAuthoringAdmission({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderPeerId,
+  required String senderPublicKey,
+  String? senderDeviceId,
+  String? senderTransportPeerId,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  GroupContentAuthoringContext? explicitContext,
+}) => runGroupAuthorityPhase(
+  groupId: groupId,
+  action: () async {
+    final group = await groupRepo.getGroup(groupId);
+    final key = await groupRepo.getLatestKey(groupId);
+    final membership = await _loadGroupSendMembership(
+      groupRepo: groupRepo,
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    );
+    GroupMember? sender;
+    for (final candidate in membership.members) {
+      if (candidate.peerId == senderPeerId) sender = candidate;
+    }
+    if (group == null ||
+        group.selfRemovedAt != null ||
+        group.isDissolved ||
+        key == null ||
+        sender == null ||
+        (group.type == GroupType.announcement &&
+            (group.myRole != GroupRole.admin ||
+                sender.role != MemberRole.admin))) {
+      return const (
+        kind: GroupContentAuthoringResolutionKind.refuse,
+        snapshot: null,
+      );
+    }
+    final resolution = await resolveGroupContentAuthoring(
+      resolverOwner: groupRepo,
+      groupId: groupId,
+      senderPeerId: senderPeerId,
+      senderPublicKey: senderPublicKey,
+      senderMember: sender,
+      senderDeviceId: senderDeviceId,
+      senderTransportPeerId: senderTransportPeerId,
+      explicitContext: explicitContext,
+    );
+    if (resolution.kind != GroupContentAuthoringResolutionKind.strict ||
+        resolution.context == null) {
+      return (kind: resolution.kind, snapshot: null);
+    }
+    final context = resolution.context!;
+    final authority = context.authorityVersion;
+    if (!context.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring ||
+        !context.multiDeviceSyncEnabled ||
+        authority == null ||
+        context.inboxStore == null ||
+        authority.keyEpoch != key.keyGeneration) {
+      return const (
+        kind: GroupContentAuthoringResolutionKind.refuse,
+        snapshot: null,
+      );
+    }
+    final credential = context.linkedTransportCredential;
+    final validCredential =
+        credential != null &&
+        credential.state == LinkedTransportCredentialState.active &&
+        credential.accountPeerId == senderPeerId;
+    if (context.requireLinkedTransportCredential && !validCredential) {
+      return const (
+        kind: GroupContentAuthoringResolutionKind.refuse,
+        snapshot: null,
+      );
+    }
+    final requestedPublicKey = validCredential
+        ? credential.transportPublicKey
+        : context.authoringPublicKey ?? senderPublicKey;
+    final requestedDeviceId = validCredential
+        ? credential.deviceId
+        : context.authoringDeviceId ?? senderDeviceId;
+    final requestedTransportPeerId = validCredential
+        ? credential.transportPeerId
+        : context.authoringTransportPeerId ?? senderTransportPeerId;
+    final device = _resolveOutgoingSenderDevice(
+      senderMember: sender,
+      senderPublicKey: requestedPublicKey,
+      requestedDeviceId: requestedDeviceId,
+      requestedTransportPeerId: requestedTransportPeerId,
+    );
+    if (sender.devices.isNotEmpty && device == null) {
+      return const (
+        kind: GroupContentAuthoringResolutionKind.refuse,
+        snapshot: null,
+      );
+    }
+    final resolvedDeviceId = requestedDeviceId?.trim().isNotEmpty == true
+        ? requestedDeviceId!.trim()
+        : device?.deviceId ?? senderPeerId;
+    final resolvedTransportPeerId =
+        requestedTransportPeerId?.trim().isNotEmpty == true
+        ? requestedTransportPeerId!.trim()
+        : device?.transportPeerId ?? resolvedDeviceId;
+    final resolvedPublicKey =
+        device?.deviceSigningPublicKey ?? requestedPublicKey;
+    if (!hasUniqueStrictGroupContentAuthorBinding(
+      members: membership.members,
+      senderPeerId: senderPeerId,
+      senderDeviceId: resolvedDeviceId,
+      senderTransportPeerId: resolvedTransportPeerId,
+      senderPublicKey: resolvedPublicKey,
+    )) {
+      return const (
+        kind: GroupContentAuthoringResolutionKind.refuse,
+        snapshot: null,
+      );
+    }
+    final recipients = _strictPhysicalGroupRecipientPeerIds(
+      members: membership.members,
+      eligibleLogicalPeerIds: membership.recipientPeerIds,
+      senderPeerId: senderPeerId,
+      senderTransportPeerId: resolvedTransportPeerId,
+    );
+    return (
+      kind: GroupContentAuthoringResolutionKind.strict,
+      snapshot: StrictGroupContentAuthoringSnapshot(
+        group: group,
+        key: key,
+        members: List<GroupMember>.unmodifiable(membership.members),
+        senderMember: sender,
+        context: context,
+        senderDeviceId: resolvedDeviceId,
+        senderTransportPeerId: resolvedTransportPeerId,
+        senderPublicKey: resolvedPublicKey,
+        recipientPeerIds: List<String>.unmodifiable(recipients),
+      ),
+    );
+  },
+);
+
 bool _sameOptionalString(String? left, String? right) =>
     (left == null || left.isEmpty ? null : left) ==
     (right == null || right.isEmpty ? null : right);
@@ -473,6 +1049,73 @@ Future<bool> _tryInboxStore({
   }
 }
 
+Future<bool> _driveStrictGroupMessageCustody({
+  required GroupMessageRepository repository,
+  required AckOrExpiryInboxStore store,
+  required GroupMessage expected,
+  required String sourcePeerId,
+  required String sourceEventId,
+  required String sourceTimestamp,
+  required Map<String, Object?> eventPayload,
+  required Future<bool> Function() currentAuthorityMatches,
+  required Future<bool> Function(Future<bool> Function() mutation)
+  commitIfAuthorityMatches,
+}) async {
+  if (repository is! GroupMessageStrictContentCompletionRepository ||
+      repository is! GroupInboxStoreRetryPayloadCasRepository ||
+      expected.inboxRetryPayload == null) {
+    return false;
+  }
+  final exact = repository as GroupMessageStrictContentCompletionRepository;
+  final cas = repository as GroupInboxStoreRetryPayloadCasRepository;
+  final initial = GroupContentRetryPayload.decode(expected.inboxRetryPayload!);
+  for (final recipient in initial.pendingRecipientPeerIds) {
+    if (!await currentAuthorityMatches()) return false;
+    final current = await repository.getMessage(expected.id);
+    if (current?.inboxRetryPayload == null) return false;
+    final decoded = GroupContentRetryPayload.decode(
+      current!.inboxRetryPayload!,
+    );
+    if (decoded.message != initial.message ||
+        decoded.contentEventId != initial.contentEventId ||
+        !decoded.pendingRecipientPeerIds.contains(recipient)) {
+      return false;
+    }
+    try {
+      await storeGroupContentRetryRecipient(
+        store: store,
+        inboxRetryPayload: current.inboxRetryPayload!,
+        recipientPeerId: recipient,
+      );
+    } catch (_) {
+      continue;
+    }
+    if (decoded.pendingRecipientPeerIds.length == 1) {
+      return commitIfAuthorityMatches(
+        () => exact.completeStrictContentIfExact(
+          current,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
+        ),
+      );
+    }
+    final survivors = decoded.pendingRecipientPeerIds
+        .where((candidate) => candidate != recipient)
+        .toList(growable: false);
+    if (!await commitIfAuthorityMatches(
+      () => cas.replaceInboxRetryPayloadIfExact(
+        current,
+        decoded.encodeWithPending(survivors),
+      ),
+    )) {
+      return false;
+    }
+  }
+  return false;
+}
+
 Future<void> _persistOutgoingMedia({
   required MediaAttachmentRepository? mediaAttachmentRepo,
   required List<MediaAttachment>? attachments,
@@ -550,7 +1193,9 @@ bool _isExpectedDurablePrePersistMessage(
     durable.senderUsername == expected.senderUsername &&
     durable.text == expected.text &&
     durable.timestamp.toUtc() == expected.timestamp.toUtc() &&
-    (durable.status == 'sending' || durable.status == 'failed') &&
+    (durable.status == 'sending' ||
+        durable.status == 'failed' ||
+        durable.status == GroupMessage.statusQueuedOffline) &&
     !durable.isIncoming &&
     durable.lastSendAttemptAt?.toUtc() == expected.lastSendAttemptAt?.toUtc() &&
     durable.quotedMessageId == expected.quotedMessageId &&
@@ -753,6 +1398,43 @@ List<MediaAttachment>? _sanitizeGroupMediaAttachments(
     return null;
   }
   return sanitized;
+}
+
+bool _preparedGroupMediaManifestMatchesAttachments({
+  required ProtectedGroupMediaManifest manifest,
+  required List<MediaAttachment> attachments,
+  required String caption,
+}) {
+  if (manifest.attachments.length != attachments.length) return false;
+  final expectedCaption = caption.trim().isEmpty ? null : caption;
+  for (var index = 0; index < manifest.attachments.length; index++) {
+    if (manifest.attachments[index].caption !=
+        (index == 0 ? expectedCaption : null)) {
+      return false;
+    }
+  }
+  final byId = <String, MediaAttachment>{
+    for (final attachment in attachments) attachment.id: attachment,
+  };
+  if (byId.length != attachments.length) return false;
+  for (final commitment in manifest.attachments) {
+    final attachment = byId[commitment.attachmentId];
+    if (attachment == null ||
+        attachment.ownerLane != MediaOwnerLane.group ||
+        attachment.mime != commitment.mime ||
+        attachment.mediaType != commitment.mediaType ||
+        attachment.width != commitment.width ||
+        attachment.height != commitment.height ||
+        attachment.durationMs != commitment.durationMs ||
+        attachment.contentHash != commitment.ciphertextSha256 ||
+        attachment.encryptionKeyBase64 != commitment.encryptionKeyBase64 ||
+        attachment.encryptionNonce != commitment.encryptionNonce ||
+        attachment.encryptionScheme != commitment.encryptionScheme ||
+        !_sameWaveform(attachment.waveform, commitment.waveform)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 GroupPrivateMediaAttachmentKind _groupPrivateAttachmentKind(
@@ -1052,45 +1734,119 @@ Future<(SendGroupMessageResult, GroupMessage?)> sendGroupMessage({
   int Function()? privateMediaNowMs,
   GroupMessage? expectedRetryParentBeforeDispatch,
   CurrentGroupSendAuthorityCheck? currentAuthorityCheck,
-}) {
-  return runGroupMembershipMutationLocked(
+  GroupContentAuthoringContext? groupContentAuthoring,
+  PreparedGroupMediaManifestAuthority? preparedGroupMediaManifest,
+}) async {
+  Future<(SendGroupMessageResult, GroupMessage?)> runSend({
+    required bool legacyMembershipActionPhaseHeld,
+    GroupContentAuthoringResolution? entryAuthoringResolution,
+  }) => _sendGroupMessageWithAuthorityRecheck(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
     groupId: groupId,
-    action: () => _sendGroupMessageAssumingMembershipPhaseHeld(
-      bridge: bridge,
-      groupRepo: groupRepo,
-      msgRepo: msgRepo,
+    text: text,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    senderUsername: senderUsername,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+    messageId: messageId,
+    logicalDeliveryId: logicalDeliveryId,
+    messageIdFactory: messageIdFactory,
+    timestamp: timestamp,
+    quotedMessageId: quotedMessageId,
+    isForwarded: isForwarded,
+    privateMediaPolicy: privateMediaPolicy,
+    privateMediaAvailability: privateMediaAvailability,
+    expectedPrivateParentBeforeDispatch: expectedPrivateParentBeforeDispatch,
+    expectedRetryParentBeforeDispatch: expectedRetryParentBeforeDispatch,
+    mediaAttachments: mediaAttachments,
+    mediaAttachmentRepo: mediaAttachmentRepo,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    emitTimingEvent: emitTimingEvent,
+    includeSenderPeerIdInDurableRecipients:
+        includeSenderPeerIdInDurableRecipients,
+    privateMediaNowMs: privateMediaNowMs,
+    currentAuthorityCheck: currentAuthorityCheck,
+    groupContentAuthoring: groupContentAuthoring,
+    preparedGroupMediaManifest: preparedGroupMediaManifest,
+    legacyMembershipActionPhaseHeld: legacyMembershipActionPhaseHeld,
+    entryAuthoringResolution: entryAuthoringResolution,
+  );
+
+  // An explicit context is a strict-only unit seam. It can never select the
+  // uninitialized legacy transport, so enter the normal short snapshot phase
+  // directly and avoid an extra roster read before the in-lock drift check.
+  if (groupContentAuthoring != null) {
+    return runSend(legacyMembershipActionPhaseHeld: false);
+  }
+
+  // With no production resolver installed, this is an incumbent/test
+  // composition. Finish its legacy operation inside the original whole-send
+  // membership phase. Production installs the resolver before authoring, so
+  // initialized production authority cannot enter this seam.
+  if (_groupContentAuthoringResolvers[groupRepo] == null) {
+    return runGroupMembershipActionIfNeeded(
       groupId: groupId,
-      text: text,
-      senderPeerId: senderPeerId,
-      senderPublicKey: senderPublicKey,
-      senderPrivateKey: senderPrivateKey,
-      senderUsername: senderUsername,
-      senderDeviceId: senderDeviceId,
-      senderTransportPeerId: senderTransportPeerId,
-      messageId: messageId,
-      logicalDeliveryId: logicalDeliveryId,
-      messageIdFactory: messageIdFactory,
-      timestamp: timestamp,
-      quotedMessageId: quotedMessageId,
-      isForwarded: isForwarded,
-      privateMediaPolicy: privateMediaPolicy,
-      privateMediaAvailability: privateMediaAvailability,
-      expectedPrivateParentBeforeDispatch: expectedPrivateParentBeforeDispatch,
-      expectedRetryParentBeforeDispatch: expectedRetryParentBeforeDispatch,
-      mediaAttachments: mediaAttachments,
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
-      emitTimingEvent: emitTimingEvent,
-      includeSenderPeerIdInDurableRecipients:
-          includeSenderPeerIdInDurableRecipients,
-      privateMediaNowMs: privateMediaNowMs,
-      currentAuthorityCheck: currentAuthorityCheck,
-    ),
+      membershipActionPhaseHeld: isGroupMembershipActionPhaseHeld(groupId),
+      action: () => runSend(legacyMembershipActionPhaseHeld: true),
+    );
+  }
+
+  // Classify under the shared queue. The uninitialized ordinary-primary keeps
+  // its incumbent whole-operation PGC-010 phase, while strict/refused content
+  // releases this short classification phase before candidate crypto and
+  // protected recipient delivery.
+  var legacySelected = false;
+  GroupContentAuthoringResolution? entryRefusal;
+  (SendGroupMessageResult, GroupMessage?)? legacyResult;
+  await runGroupMembershipActionIfNeeded<void>(
+    groupId: groupId,
+    membershipActionPhaseHeld: isGroupMembershipActionPhaseHeld(groupId),
+    action: () async {
+      final entryAuthoringResolution =
+          await _classifyGroupContentAuthoringEntry(
+            groupRepo: groupRepo,
+            groupId: groupId,
+            senderPeerId: senderPeerId,
+            senderPublicKey: senderPublicKey,
+            senderDeviceId: senderDeviceId,
+            senderTransportPeerId: senderTransportPeerId,
+            timestamp: timestamp,
+            inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+            explicitContext: groupContentAuthoring,
+          );
+      legacySelected =
+          entryAuthoringResolution?.kind ==
+          GroupContentAuthoringResolutionKind.legacyUninitialized;
+      if (entryAuthoringResolution?.kind ==
+          GroupContentAuthoringResolutionKind.refuse) {
+        entryRefusal = entryAuthoringResolution;
+      }
+      if (legacySelected) {
+        // Resolve once more inside the complete legacy action. Authority
+        // initialization that races classification therefore refuses before
+        // persistence or network dispatch.
+        legacyResult = await runSend(legacyMembershipActionPhaseHeld: true);
+      }
+    },
+  );
+  if (legacySelected) return legacyResult!;
+
+  // The action-phase classification above is only a branch hint. Strict and
+  // refused attempts take an authoritative snapshot under the shared
+  // protected phase. A fail-closed refusal may be carried forward because a
+  // stale refusal can only reject; it can never authorize persistence.
+  return runSend(
+    legacyMembershipActionPhaseHeld: false,
+    entryAuthoringResolution: entryRefusal,
   );
 }
 
 Future<(SendGroupMessageResult, GroupMessage?)>
-_sendGroupMessageAssumingMembershipPhaseHeld({
+_sendGroupMessageWithAuthorityRecheck({
   required Bridge bridge,
   required GroupRepository groupRepo,
   required GroupMessageRepository msgRepo,
@@ -1121,6 +1877,10 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
   int Function()? privateMediaNowMs,
   GroupMessage? expectedRetryParentBeforeDispatch,
   CurrentGroupSendAuthorityCheck? currentAuthorityCheck,
+  GroupContentAuthoringContext? groupContentAuthoring,
+  PreparedGroupMediaManifestAuthority? preparedGroupMediaManifest,
+  bool legacyMembershipActionPhaseHeld = false,
+  GroupContentAuthoringResolution? entryAuthoringResolution,
 }) async {
   int currentPrivateMediaNowMs() =>
       privateMediaNowMs?.call() ??
@@ -1227,14 +1987,6 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     return (SendGroupMessageResult.unauthorized, null);
   }
 
-  if (currentAuthorityCheck != null && !await currentAuthorityCheck()) {
-    emitGroupSendTiming(
-      outcome: 'unauthorized',
-      details: {'reason': 'expected_authority_drifted'},
-    );
-    return (SendGroupMessageResult.unauthorized, null);
-  }
-
   // 2b. Reject empty messages (no text and no media)
   if (sanitizedText.trim().isEmpty && !hasMedia) {
     emitFlowEvent(
@@ -1250,6 +2002,10 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     mediaAttachments,
   );
   if (hasMedia && groupMediaAttachments == null) {
+    emitGroupSendTiming(outcome: 'invalid_media');
+    return (SendGroupMessageResult.error, null);
+  }
+  if (preparedGroupMediaManifest != null && !hasMedia) {
     emitGroupSendTiming(outcome: 'invalid_media');
     return (SendGroupMessageResult.error, null);
   }
@@ -1282,18 +2038,74 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
       timestamp != null && !timestamp.toUtc().isBefore(group.createdAt.toUtc())
       ? timestamp
       : null;
-  final latestKeyFuture = groupRepo.getLatestKey(groupId);
-  final sendMembershipFuture = _loadGroupSendMembership(
-    groupRepo: groupRepo,
-    groupId: groupId,
-    senderPeerId: senderPeerId,
-    membershipCutoff: membershipCutoff,
-    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
-  );
-  late final ({List<GroupMember> members, List<String> recipientPeerIds})
-  sendMembership;
+  late final ({
+    GroupKeyInfo? key,
+    ({List<GroupMember> members, List<String> recipientPeerIds}) membership,
+    GroupMember? senderMember,
+    GroupContentAuthoringResolution authoring,
+  })
+  authoritySnapshot;
   try {
-    sendMembership = await sendMembershipFuture;
+    Future<
+      ({
+        GroupKeyInfo? key,
+        ({List<GroupMember> members, List<String> recipientPeerIds}) membership,
+        GroupMember? senderMember,
+        GroupContentAuthoringResolution authoring,
+      })
+    >
+    loadSnapshot() async {
+      final membershipFuture = _loadGroupSendMembership(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        senderPeerId: senderPeerId,
+        membershipCutoff: membershipCutoff,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      );
+      final keyFuture = groupRepo.getLatestKey(groupId);
+      final membership = await membershipFuture;
+      GroupMember? snapshotSender;
+      for (final member in membership.members) {
+        if (member.peerId == senderPeerId) snapshotSender = member;
+      }
+      final authoring =
+          entryAuthoringResolution ??
+          (snapshotSender == null
+              ? (_groupContentAuthoringResolvers[groupRepo] == null &&
+                        groupContentAuthoring == null
+                    ? const (
+                        kind: GroupContentAuthoringResolutionKind
+                            .legacyUninitialized,
+                        context: null,
+                      )
+                    : const (
+                        kind: GroupContentAuthoringResolutionKind.refuse,
+                        context: null,
+                      ))
+              : await resolveGroupContentAuthoring(
+                  resolverOwner: groupRepo,
+                  groupId: groupId,
+                  senderPeerId: senderPeerId,
+                  senderPublicKey: senderPublicKey,
+                  senderMember: snapshotSender,
+                  senderDeviceId: senderDeviceId,
+                  senderTransportPeerId: senderTransportPeerId,
+                  explicitContext: groupContentAuthoring,
+                ));
+      return (
+        key: await keyFuture,
+        membership: membership,
+        senderMember: snapshotSender,
+        authoring: authoring,
+      );
+    }
+
+    authoritySnapshot = await runGroupAuthorityPhaseIfNeeded(
+      groupId: groupId,
+      authorityPhaseHeld:
+          legacyMembershipActionPhaseHeld || isGroupAuthorityPhaseHeld(groupId),
+      action: loadSnapshot,
+    );
   } catch (_) {
     if (privateMediaPolicy.isPrivate) {
       emitGroupSendTiming(
@@ -1304,17 +2116,81 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     }
     rethrow;
   }
+  final entryAuthoringKind = authoritySnapshot.authoring.kind;
+  if (!legacyMembershipActionPhaseHeld &&
+      entryAuthoringKind ==
+          GroupContentAuthoringResolutionKind.legacyUninitialized) {
+    // Preserve the incumbent PGC-010 contract for the uninitialized ordinary
+    // primary: its complete persistence + network action stays serialized
+    // against membership mutations. Strict Plan-364 content deliberately does
+    // not take this path because candidate crypto and recipient delivery must
+    // not monopolize the authority queue.
+    return runGroupMembershipActionIfNeeded(
+      groupId: groupId,
+      membershipActionPhaseHeld: isGroupMembershipActionPhaseHeld(groupId),
+      action: () => _sendGroupMessageWithAuthorityRecheck(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        groupId: groupId,
+        text: text,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderPrivateKey: senderPrivateKey,
+        senderUsername: senderUsername,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderTransportPeerId,
+        messageId: messageId,
+        logicalDeliveryId: logicalDeliveryId,
+        messageIdFactory: messageIdFactory,
+        timestamp: timestamp,
+        quotedMessageId: quotedMessageId,
+        isForwarded: isForwarded,
+        privateMediaPolicy: privateMediaPolicy,
+        privateMediaAvailability: privateMediaAvailability,
+        expectedPrivateParentBeforeDispatch:
+            expectedPrivateParentBeforeDispatch,
+        mediaAttachments: mediaAttachments,
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        emitTimingEvent: emitTimingEvent,
+        includeSenderPeerIdInDurableRecipients:
+            includeSenderPeerIdInDurableRecipients,
+        privateMediaNowMs: privateMediaNowMs,
+        expectedRetryParentBeforeDispatch: expectedRetryParentBeforeDispatch,
+        currentAuthorityCheck: currentAuthorityCheck,
+        groupContentAuthoring: groupContentAuthoring,
+        preparedGroupMediaManifest: preparedGroupMediaManifest,
+        legacyMembershipActionPhaseHeld: true,
+        entryAuthoringResolution: entryAuthoringResolution,
+      ),
+    );
+  }
+  if (legacyMembershipActionPhaseHeld &&
+      entryAuthoringKind !=
+          GroupContentAuthoringResolutionKind.legacyUninitialized) {
+    // Authority initialized between the pre-lock snapshot and lock
+    // acquisition. Refuse this stale legacy attempt; a new invocation can
+    // enter the strict short-phase branch with a fresh credential and ACL.
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'legacy_authority_initialized_during_entry'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  if (currentAuthorityCheck != null && !await currentAuthorityCheck()) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'expected_authority_drifted'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final sendMembership = authoritySnapshot.membership;
   final members = sendMembership.members;
   final senderConfigured = members.any(
     (member) => member.peerId == senderPeerId,
   );
-  GroupMember? currentSenderMember;
-  for (final member in members) {
-    if (member.peerId == senderPeerId) {
-      currentSenderMember = member;
-      break;
-    }
-  }
+  final currentSenderMember = authoritySnapshot.senderMember;
   if (privateMediaPolicy.isPrivate &&
       (currentSenderMember == null ||
           !privateMediaAvailability.canCurrentMemberAuthorPrivateMedia(
@@ -1341,7 +2217,7 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     );
     return (SendGroupMessageResult.unauthorized, null);
   }
-  final latestKey = await latestKeyFuture;
+  final latestKey = authoritySnapshot.key;
   if (!senderConfigured && latestKey == null) {
     emitFlowEvent(
       layer: 'FL',
@@ -1471,11 +2347,100 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
       _normalizeLogicalDeliveryId(logicalDeliveryId) ?? resolvedMessageId;
   final keyEpoch = latestKey.keyGeneration;
   final senderMember = currentSenderMember;
+  final initializedDeviceAuthority = senderMember?.devices.isNotEmpty == true;
+  final authoringResolution = authoritySnapshot.authoring;
+  final resolverAbsentLegacy =
+      legacyMembershipActionPhaseHeld &&
+      isResolverAbsentLegacyGroupContentAuthoring(
+        owner: groupRepo,
+        explicitContext: groupContentAuthoring,
+      );
+  if (authoringResolution.kind == GroupContentAuthoringResolutionKind.refuse ||
+      (initializedDeviceAuthority &&
+          !resolverAbsentLegacy &&
+          authoringResolution.kind !=
+              GroupContentAuthoringResolutionKind.strict)) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_content_authority_unavailable'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final strictContext = authoringResolution.context;
+  final strictSelected = strictContext != null;
+  final hasQuote = quotedMessageId?.isNotEmpty == true;
+  final eligibleForwardedMedia =
+      isForwarded &&
+      hasMedia &&
+      !hasQuote &&
+      (groupMediaAttachments ?? const <MediaAttachment>[]).every(
+        (attachment) =>
+            attachment.mediaType == 'image' || attachment.mediaType == 'video',
+      );
+  if (strictSelected &&
+      (!strictContext.directLinkedDeviceSelector.allowsLinkedDeviceAuthoring ||
+          !strictContext.multiDeviceSyncEnabled ||
+          strictContext.authorityVersion == null ||
+          strictContext.inboxStore == null ||
+          (hasMedia && preparedGroupMediaManifest == null) ||
+          (!hasMedia && preparedGroupMediaManifest != null) ||
+          (isForwarded && !eligibleForwardedMedia) ||
+          !privateMediaPolicy.isOrdinary ||
+          (!hasMedia && sanitizedText.trim().isEmpty) ||
+          sanitizedText.trimLeft().startsWith(r'{"__sys":') ||
+          (group.type == GroupType.announcement &&
+              senderMember?.role != MemberRole.admin))) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_content_not_qualified'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  if (strictSelected &&
+      !validGroupContentAuthoringOrder(
+        authority: strictContext.authorityVersion!,
+        contentAt: now,
+        contentEventId: resolvedMessageId,
+      )) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_content_order_invalid'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final linkedCredential = strictSelected
+      ? strictContext.linkedTransportCredential
+      : null;
+  final validLinkedCredential =
+      linkedCredential != null &&
+      linkedCredential.state == LinkedTransportCredentialState.active &&
+      linkedCredential.accountPeerId == senderPeerId;
+  if (strictSelected &&
+      strictContext.requireLinkedTransportCredential &&
+      !validLinkedCredential) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_content_missing_credential'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final requestedSigningPublicKey = validLinkedCredential
+      ? linkedCredential.transportPublicKey
+      : strictContext?.authoringPublicKey ?? senderPublicKey;
+  final requestedSigningPrivateKey = validLinkedCredential
+      ? linkedCredential.transportPrivateKey
+      : senderPrivateKey;
+  final requestedSigningDeviceId = validLinkedCredential
+      ? linkedCredential.deviceId
+      : strictContext?.authoringDeviceId ?? senderDeviceId;
+  final requestedSigningTransportPeerId = validLinkedCredential
+      ? linkedCredential.transportPeerId
+      : strictContext?.authoringTransportPeerId ?? senderTransportPeerId;
   final resolvedSenderDevice = _resolveOutgoingSenderDevice(
     senderMember: senderMember,
-    senderPublicKey: senderPublicKey,
-    requestedDeviceId: senderDeviceId,
-    requestedTransportPeerId: senderTransportPeerId,
+    senderPublicKey: requestedSigningPublicKey,
+    requestedDeviceId: requestedSigningDeviceId,
+    requestedTransportPeerId: requestedSigningTransportPeerId,
   );
   if (senderMember?.devices.isNotEmpty == true &&
       resolvedSenderDevice == null) {
@@ -1490,22 +2455,68 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     );
     return (SendGroupMessageResult.unauthorized, null);
   }
-  final resolvedSenderDeviceId = senderDeviceId?.trim().isNotEmpty == true
-      ? senderDeviceId!.trim()
+  final resolvedSenderDeviceId =
+      requestedSigningDeviceId?.trim().isNotEmpty == true
+      ? requestedSigningDeviceId!.trim()
       : resolvedSenderDevice?.deviceId ?? senderPeerId;
   final resolvedSenderTransportPeerId =
-      senderTransportPeerId?.trim().isNotEmpty == true
-      ? senderTransportPeerId!.trim()
+      requestedSigningTransportPeerId?.trim().isNotEmpty == true
+      ? requestedSigningTransportPeerId!.trim()
       : resolvedSenderDevice?.transportPeerId ?? resolvedSenderDeviceId;
   final resolvedSenderDevicePublicKey =
-      resolvedSenderDevice?.deviceSigningPublicKey ?? senderPublicKey;
+      resolvedSenderDevice?.deviceSigningPublicKey ?? requestedSigningPublicKey;
+  if (strictSelected &&
+      !hasUniqueStrictGroupContentAuthorBinding(
+        members: members,
+        senderPeerId: senderPeerId,
+        senderDeviceId: resolvedSenderDeviceId,
+        senderTransportPeerId: resolvedSenderTransportPeerId,
+        senderPublicKey: resolvedSenderDevicePublicKey,
+      )) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_content_ambiguous_sender_binding'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
 
-  final mediaJson = groupMediaAttachments?.map((a) => a.toJson()).toList();
-  final recipientPeerIds = _durableGroupRecipientPeerIds(
-    remoteRecipientPeerIds: sendMembership.recipientPeerIds,
-    senderPeerId: senderPeerId,
-    includeSenderPeerId: includeSenderPeerIdInDurableRecipients,
-  );
+  final recipientPeerIds = strictSelected
+      ? _strictPhysicalGroupRecipientPeerIds(
+          members: members,
+          eligibleLogicalPeerIds: sendMembership.recipientPeerIds,
+          senderPeerId: senderPeerId,
+          senderTransportPeerId: resolvedSenderTransportPeerId,
+        )
+      : _durableGroupRecipientPeerIds(
+          remoteRecipientPeerIds: sendMembership.recipientPeerIds,
+          senderPeerId: senderPeerId,
+          includeSenderPeerId: includeSenderPeerIdInDurableRecipients,
+        );
+  final strictMediaManifest = strictSelected
+      ? preparedGroupMediaManifest?.manifest
+      : null;
+  if (strictSelected &&
+      strictMediaManifest != null &&
+      (!strictMediaManifest.matchesAuthority(
+            expectedGroupId: groupId,
+            expectedMessageId: resolvedMessageId,
+            expectedRecipientPeerIds: recipientPeerIds,
+          ) ||
+          !_preparedGroupMediaManifestMatchesAttachments(
+            manifest: strictMediaManifest,
+            attachments: groupMediaAttachments ?? const <MediaAttachment>[],
+            caption: sanitizedText,
+          ))) {
+    emitGroupSendTiming(
+      outcome: 'unauthorized',
+      details: {'reason': 'strict_group_media_manifest_mismatch'},
+    );
+    return (SendGroupMessageResult.unauthorized, null);
+  }
+  final mediaJson = strictSelected
+      ? null
+      : groupMediaAttachments?.map((a) => a.toJson()).toList();
+  final strictMediaManifestJson = strictMediaManifest?.encode();
   final expectedRecipientCount = recipientPeerIds.length;
   final resolvedGroupName = group.name.trim();
   // 3b. Build wireEnvelope (plaintext publish params for retry - NO senderPrivateKey)
@@ -1515,13 +2526,18 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     'senderPeerId': senderPeerId,
     'senderDeviceId': resolvedSenderDeviceId,
     'transportPeerId': resolvedSenderTransportPeerId,
-    'senderPublicKey': senderPublicKey,
+    'senderPublicKey': strictSelected
+        ? resolvedSenderDevicePublicKey
+        : senderPublicKey,
     'senderUsername': senderUsername,
     'messageId': resolvedMessageId,
     'logicalDeliveryId': resolvedLogicalDeliveryId,
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
+    'mediaManifest': ?strictMediaManifestJson,
+    if (strictMediaManifest != null)
+      'mediaManifestHash': strictMediaManifest.fingerprintSha256,
     if (isForwarded) 'isForwarded': true,
     ...?privateMediaPolicy.toWireExtras(),
   });
@@ -1536,12 +2552,17 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     'senderUsername': senderUsername,
     'keyEpoch': keyEpoch,
     'text': sanitizedText,
-    'timestamp': now.toIso8601String(),
+    'timestamp': strictSelected
+        ? fixedGroupContentUtc(now)
+        : now.toIso8601String(),
     'messageId': resolvedMessageId,
     'logicalDeliveryId': resolvedLogicalDeliveryId,
     if (quotedMessageId != null && quotedMessageId.isNotEmpty)
       'quotedMessageId': quotedMessageId,
     if (mediaJson != null && mediaJson.isNotEmpty) 'media': mediaJson,
+    'mediaManifest': ?strictMediaManifestJson,
+    if (strictMediaManifest != null)
+      'mediaManifestHash': strictMediaManifest.fingerprintSha256,
     if (isForwarded) 'isForwarded': true,
     ...?privateMediaPolicy.toWireExtras(),
   });
@@ -1556,19 +2577,34 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
       plaintext: inboxPayload,
       senderPeerId: senderPeerId,
       senderPublicKey: resolvedSenderDevicePublicKey,
-      senderPrivateKey: senderPrivateKey,
+      senderPrivateKey: requestedSigningPrivateKey,
       keyInfo: latestKey,
       messageId: resolvedMessageId,
       senderDeviceId: resolvedSenderDeviceId,
       senderTransportPeerId: resolvedSenderTransportPeerId,
       senderKeyPackageId: resolvedSenderDevice?.keyPackageId,
       recipientPeerIds: recipientPeerIds,
+      contentAuthorityVersion: strictSelected
+          ? strictContext.authorityVersion
+          : null,
+      contentEventId: strictSelected ? resolvedMessageId : null,
+      mediaManifest: strictMediaManifest,
     );
-    inboxRetryPayload = jsonEncode({
-      'groupId': groupId,
-      'message': replayEnvelope,
-      'recipientPeerIds': recipientPeerIds,
-    });
+    inboxRetryPayload = strictSelected && recipientPeerIds.isNotEmpty
+        ? jsonEncode(<String, Object?>{
+            'groupId': groupId,
+            'message': replayEnvelope,
+            'custodyContract': ackOrExpiryInboxCustodyContract,
+            'custodyKind': groupContentCustodyKind,
+            'recipientPeerIds': recipientPeerIds,
+          })
+        : strictSelected
+        ? null
+        : jsonEncode({
+            'groupId': groupId,
+            'message': replayEnvelope,
+            'recipientPeerIds': recipientPeerIds,
+          });
   } catch (e) {
     emitFlowEvent(
       layer: 'FL',
@@ -1578,6 +2614,13 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
         'error': e.toString(),
       },
     );
+    if (strictSelected) {
+      emitGroupSendTiming(
+        outcome: 'unauthorized',
+        details: {'reason': 'strict_group_content_crypto_failed'},
+      );
+      return (SendGroupMessageResult.unauthorized, null);
+    }
   }
 
   // 4. Pre-persist outgoing row with status 'sending' BEFORE bridge call
@@ -1595,13 +2638,27 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     keyGeneration: keyEpoch,
     isForwarded: isForwarded,
     privateMediaPolicy: privateMediaPolicy,
-    status: 'sending',
+    status: strictSelected ? GroupMessage.statusQueuedOffline : 'sending',
     isIncoming: false,
     createdAt: now,
-    wireEnvelope: wireEnvelope,
+    wireEnvelope: strictSelected ? inboxPayload : wireEnvelope,
     inboxStored: false,
     inboxRetryPayload: inboxRetryPayload,
   );
+  final strictEventPayload = strictSelected
+      ? buildLocalProtectedGroupContentEventPayload(
+          replayEnvelope: replayEnvelope!,
+          payload: Map<String, Object?>.from(
+            jsonDecode(inboxPayload) as Map<String, dynamic>,
+          ),
+        )
+      : null;
+  final strictSourceEventId = strictSelected
+      ? localProtectedGroupMessageSourceEventId(resolvedMessageId)
+      : null;
+  final strictSourceTimestamp = strictSelected
+      ? fixedGroupContentUtc(now)
+      : null;
 
   final stampedGroupMediaAttachments =
       groupMediaAttachments
@@ -1611,6 +2668,7 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
           .toList(growable: false) ??
       const <MediaAttachment>[];
   final preExistingMessage = await msgRepo.getMessage(resolvedMessageId);
+  var strictDurableOwnerCommitted = false;
   if (expectedDispatchParent != null &&
       (preExistingMessage == null ||
           !sameExactGroupPrivateMediaDispatchParent(
@@ -1624,47 +2682,200 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
     return (SendGroupMessageResult.unauthorized, preExistingMessage);
   }
   try {
-    await _persistOutgoingMedia(
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      attachments: stampedGroupMediaAttachments,
-    );
-    final mediaWereDurableBeforeParent = await _areExpectedOutgoingMediaDurable(
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      messageId: resolvedMessageId,
-      expected: stampedGroupMediaAttachments,
-    );
-    if (!mediaWereDurableBeforeParent) {
-      throw StateError('outgoing group media pre-persist was rejected');
-    }
-    if (expectedDispatchParent != null) {
-      final currentParent = await msgRepo.getMessage(resolvedMessageId);
-      if (currentParent == null ||
-          !sameExactGroupPrivateMediaDispatchParent(
-            currentParent,
-            expectedDispatchParent,
-          )) {
-        emitGroupSendTiming(
-          outcome: 'unauthorized',
-          details: {'reason': 'private_expected_parent_drifted_during_persist'},
+    Future<void> persistCandidate() async {
+      if (!strictSelected) {
+        if (!legacyMembershipActionPhaseHeld ||
+            !isGroupMembershipActionPhaseHeld(groupId)) {
+          throw StateError(
+            'legacy group send membership action phase was not held',
+          );
+        }
+      } else {
+        final recheckedGroup = await groupRepo.getGroup(groupId);
+        final recheckedKey = await groupRepo.getLatestKey(groupId);
+        final recheckedMembership = await _loadGroupSendMembership(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          senderPeerId: senderPeerId,
+          membershipCutoff: membershipCutoff,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
         );
-        return (SendGroupMessageResult.unauthorized, currentParent);
+        GroupMember? recheckedSender;
+        for (final candidate in recheckedMembership.members) {
+          if (candidate.peerId == senderPeerId) recheckedSender = candidate;
+        }
+        final currentResolution = recheckedSender == null
+            ? const (
+                kind: GroupContentAuthoringResolutionKind.refuse,
+                context: null,
+              )
+            : await resolveGroupContentAuthoring(
+                resolverOwner: groupRepo,
+                groupId: groupId,
+                senderPeerId: senderPeerId,
+                senderPublicKey: senderPublicKey,
+                senderMember: recheckedSender,
+                senderDeviceId: senderDeviceId,
+                senderTransportPeerId: senderTransportPeerId,
+                explicitContext: groupContentAuthoring,
+              );
+        final authorityShapeMatches =
+            currentResolution.kind ==
+                GroupContentAuthoringResolutionKind.strict &&
+            currentResolution.context != null &&
+            sameGroupContentAuthoringContext(
+              strictContext,
+              currentResolution.context!,
+            );
+        final senderRoleMatches =
+            recheckedSender != null &&
+            (recheckedGroup?.type != GroupType.announcement ||
+                (recheckedGroup?.myRole == GroupRole.admin &&
+                    recheckedSender.role == MemberRole.admin));
+        if (recheckedGroup == null ||
+            recheckedGroup.selfRemovedAt != null ||
+            recheckedGroup.isDissolved ||
+            recheckedKey?.keyGeneration != keyEpoch ||
+            !senderRoleMatches ||
+            !authorityShapeMatches ||
+            (currentAuthorityCheck != null && !await currentAuthorityCheck()) ||
+            !_sameStrictPhysicalAuthority(
+              after: recheckedMembership.members,
+              eligibleLogicalPeerIds: recheckedMembership.recipientPeerIds,
+              senderPeerId: senderPeerId,
+              senderTransportPeerId: resolvedSenderTransportPeerId,
+              expectedRecipients: recipientPeerIds,
+              senderDeviceId: resolvedSenderDeviceId,
+              senderPublicKey: resolvedSenderDevicePublicKey,
+            )) {
+          throw StateError('group content authority drifted');
+        }
+        if (strictMediaManifest != null &&
+            !await preparedGroupMediaManifest!.claimAndVerify(
+              groupId: groupId,
+              messageId: resolvedMessageId!,
+              recipientPeerIds: recipientPeerIds,
+            )) {
+          throw StateError('group media manifest durable authority refused');
+        }
+      }
+
+      if (strictSelected && recipientPeerIds.isEmpty) {
+        if (msgRepo is! GroupMessageStrictLocalTerminalRepository ||
+            !await (msgRepo as GroupMessageStrictLocalTerminalRepository)
+                .stageAndCompleteStrictLocalContent(
+                  prePersistMessage,
+                  sourcePeerId: senderPeerId,
+                  sourceEventId: strictSourceEventId!,
+                  sourceTimestamp: strictSourceTimestamp!,
+                  eventPayload: strictEventPayload!,
+                )) {
+          throw StateError('strict local message terminal commit rejected');
+        }
+        strictDurableOwnerCommitted = true;
+        final terminal = await msgRepo.getMessage(prePersistMessage.id);
+        if (terminal == null ||
+            terminal.status != 'sent' ||
+            !terminal.inboxStored ||
+            terminal.inboxRetryPayload != null) {
+          throw StateError('strict local message terminal readback rejected');
+        }
+        return;
+      }
+      if (strictSelected) {
+        if (msgRepo is! GroupMessageStrictPreparedRepository ||
+            !await (msgRepo as GroupMessageStrictPreparedRepository)
+                .stageStrictContentPrepared(
+                  prePersistMessage,
+                  sourcePeerId: senderPeerId,
+                  sourceEventId:
+                      localPreparedProtectedGroupMessageSourceEventId(
+                        resolvedMessageId!,
+                      ),
+                  sourceTimestamp: strictSourceTimestamp!,
+                  preparedEventPayload:
+                      buildLocalProtectedGroupContentPreparedEventPayload(
+                        eventPayload: strictEventPayload!,
+                        ownerKind: 'group_message',
+                        ownerId: resolvedMessageId,
+                        ownerStatus: prePersistMessage.status,
+                        inboxRetryPayload: inboxRetryPayload!,
+                      ),
+                )) {
+          throw StateError('strict message prepared commit rejected');
+        }
+        strictDurableOwnerCommitted = true;
+        final prepared = await msgRepo.getMessage(prePersistMessage.id);
+        if (!_isExpectedDurablePrePersistMessage(prepared, prePersistMessage)) {
+          throw StateError('strict message prepared readback rejected');
+        }
+        return;
+      }
+
+      await _persistOutgoingMedia(
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        attachments: stampedGroupMediaAttachments,
+      );
+      final mediaWereDurableBeforeParent =
+          await _areExpectedOutgoingMediaDurable(
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            messageId: prePersistMessage.id,
+            expected: stampedGroupMediaAttachments,
+          );
+      if (!mediaWereDurableBeforeParent) {
+        throw StateError('outgoing group media pre-persist was rejected');
+      }
+      if (expectedDispatchParent != null) {
+        final currentParent = await msgRepo.getMessage(prePersistMessage.id);
+        if (currentParent == null ||
+            !sameExactGroupPrivateMediaDispatchParent(
+              currentParent,
+              expectedDispatchParent,
+            )) {
+          throw StateError(
+            'private expected parent drifted during persistence',
+          );
+        }
+      }
+      await msgRepo.saveMessage(prePersistMessage);
+      final durableMessage = await msgRepo.getMessage(prePersistMessage.id);
+      final mediaAreDurable = await _areExpectedOutgoingMediaDurable(
+        mediaAttachmentRepo: mediaAttachmentRepo,
+        messageId: prePersistMessage.id,
+        expected: stampedGroupMediaAttachments,
+      );
+      if (!_isExpectedDurablePrePersistMessage(
+            durableMessage,
+            prePersistMessage,
+          ) ||
+          !mediaAreDurable) {
+        throw StateError(
+          'outgoing group parent/media pre-persist was rejected',
+        );
       }
     }
-    await msgRepo.saveMessage(prePersistMessage);
-    final durableMessage = await msgRepo.getMessage(resolvedMessageId);
-    final mediaAreDurable = await _areExpectedOutgoingMediaDurable(
-      mediaAttachmentRepo: mediaAttachmentRepo,
-      messageId: resolvedMessageId,
-      expected: stampedGroupMediaAttachments,
+
+    await runGroupAuthorityPhaseIfNeeded(
+      groupId: groupId,
+      authorityPhaseHeld:
+          legacyMembershipActionPhaseHeld || isGroupAuthorityPhaseHeld(groupId),
+      action: persistCandidate,
     );
-    if (!_isExpectedDurablePrePersistMessage(
-          durableMessage,
-          prePersistMessage,
-        ) ||
-        !mediaAreDurable) {
-      throw StateError('outgoing group parent/media pre-persist was rejected');
-    }
   } catch (error) {
+    if (strictDurableOwnerCommitted) {
+      prepareStopwatch.stop();
+      prepareMs = prepareStopwatch.elapsedMilliseconds;
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'GROUP_SEND_MSG_STRICT_DURABLE_HANDOFF_RETAINED',
+        details: {
+          'messageId': _diagnosticPrefix(resolvedMessageId),
+          'error': error.toString(),
+        },
+      );
+      emitGroupSendTiming(outcome: 'strict_durable_handoff_retained');
+      return (SendGroupMessageResult.queuedOffline, prePersistMessage);
+    }
     try {
       await _rollbackRejectedOutgoingParent(
         msgRepo: msgRepo,
@@ -1738,6 +2949,107 @@ _sendGroupMessageAssumingMembershipPhaseHeld({
       );
       return (SendGroupMessageResult.unauthorized, failedPrivateMessage);
     }
+  }
+
+  if (strictSelected) {
+    Future<bool> strictAuthorityMatchesAssumingPhase() async {
+      final currentGroup = await groupRepo.getGroup(groupId);
+      final currentKey = await groupRepo.getLatestKey(groupId);
+      final currentMembership = await _loadGroupSendMembership(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        senderPeerId: senderPeerId,
+        membershipCutoff: membershipCutoff,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      );
+      GroupMember? currentSender;
+      for (final candidate in currentMembership.members) {
+        if (candidate.peerId == senderPeerId) currentSender = candidate;
+      }
+      if (currentGroup == null ||
+          currentGroup.selfRemovedAt != null ||
+          currentGroup.isDissolved ||
+          currentKey?.keyGeneration != keyEpoch ||
+          currentSender == null ||
+          (currentGroup.type == GroupType.announcement &&
+              (currentGroup.myRole != GroupRole.admin ||
+                  currentSender.role != MemberRole.admin))) {
+        return false;
+      }
+      final resolution = await resolveGroupContentAuthoring(
+        resolverOwner: groupRepo,
+        groupId: groupId,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderMember: currentSender,
+        senderDeviceId: senderDeviceId,
+        senderTransportPeerId: senderTransportPeerId,
+        explicitContext: groupContentAuthoring,
+      );
+      return resolution.kind == GroupContentAuthoringResolutionKind.strict &&
+          resolution.context != null &&
+          sameGroupContentAuthoringContext(
+            strictContext,
+            resolution.context!,
+          ) &&
+          _sameStrictPhysicalAuthority(
+            after: currentMembership.members,
+            eligibleLogicalPeerIds: currentMembership.recipientPeerIds,
+            senderPeerId: senderPeerId,
+            senderTransportPeerId: resolvedSenderTransportPeerId,
+            expectedRecipients: recipientPeerIds,
+            senderDeviceId: resolvedSenderDeviceId,
+            senderPublicKey: resolvedSenderDevicePublicKey,
+          ) &&
+          (currentAuthorityCheck == null || await currentAuthorityCheck());
+    }
+
+    Future<bool> currentStrictAuthorityMatches() => runGroupAuthorityPhase(
+      groupId: groupId,
+      action: strictAuthorityMatchesAssumingPhase,
+    );
+    Future<bool> commitIfStrictAuthorityMatches(
+      Future<bool> Function() mutation,
+    ) => runGroupAuthorityPhase(
+      groupId: groupId,
+      action: () async {
+        if (!await strictAuthorityMatchesAssumingPhase()) return false;
+        return mutation();
+      },
+    );
+    if (recipientPeerIds.isEmpty) {
+      final terminal = await msgRepo.getMessage(resolvedMessageId);
+      if (terminal == null ||
+          terminal.status != 'sent' ||
+          !terminal.inboxStored ||
+          terminal.inboxRetryPayload != null) {
+        emitGroupSendTiming(outcome: 'strict_local_terminal_pending');
+        return (SendGroupMessageResult.queuedOffline, prePersistMessage);
+      }
+      emitGroupSendTiming(outcome: 'strict_local_terminal');
+      return (SendGroupMessageResult.success, terminal);
+    }
+    final completed = await _driveStrictGroupMessageCustody(
+      repository: msgRepo,
+      store: strictContext.inboxStore!,
+      expected: prePersistMessage,
+      sourcePeerId: senderPeerId,
+      sourceEventId: strictSourceEventId!,
+      sourceTimestamp: strictSourceTimestamp!,
+      eventPayload: strictEventPayload!,
+      currentAuthorityMatches: currentStrictAuthorityMatches,
+      commitIfAuthorityMatches: commitIfStrictAuthorityMatches,
+    );
+    final current = await msgRepo.getMessage(resolvedMessageId);
+    emitGroupSendTiming(
+      outcome: completed ? 'strict_custody_complete' : 'strict_custody_pending',
+    );
+    return (
+      completed
+          ? SendGroupMessageResult.success
+          : SendGroupMessageResult.queuedOffline,
+      current ?? prePersistMessage,
+    );
   }
 
   final reliableStopwatch = Stopwatch()..start();

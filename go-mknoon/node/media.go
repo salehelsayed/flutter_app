@@ -51,6 +51,9 @@ type mediaResponse struct {
 const (
 	// CustodyKindDirectMediaBlobV1 is the protected encrypted-byte media lane.
 	CustodyKindDirectMediaBlobV1 = "direct_media_blob_v1"
+	// CustodyKindGroupMediaBlobV1 reuses the same strict relay action/backend
+	// while remaining an exact, non-interchangeable custody identity.
+	CustodyKindGroupMediaBlobV1 = "group_media_blob_v1"
 
 	mediaUploadCustodyAction = "upload_custody_v1"
 	mediaAckCustodyAction    = "ack_custody_v1"
@@ -644,7 +647,8 @@ const (
 )
 
 func validateMediaCustodyContract(kind, contract string) error {
-	if kind != CustodyKindDirectMediaBlobV1 || contract != AckOrExpiryCustodyContract {
+	if (kind != CustodyKindDirectMediaBlobV1 && kind != CustodyKindGroupMediaBlobV1) ||
+		contract != AckOrExpiryCustodyContract {
 		return fmt.Errorf("%w: contract=%q kind=%q", ErrMediaCustodyIneligible, contract, kind)
 	}
 	return nil

@@ -13,6 +13,7 @@ import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
 import 'package:flutter_app/core/permissions/mic_permission_gateway.dart';
@@ -46,6 +47,7 @@ import 'package:flutter_app/features/conversation/presentation/widgets/compose_a
 import 'package:flutter_app/features/conversation/application/chat_message_listener.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/message_repository.dart';
 import 'package:flutter_app/features/groups/application/group_media_delete_for_me_coordinator.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/groups/application/foreground_group_media_upload.dart';
 import 'package:flutter_app/features/groups/application/announcement_private_reply_policy.dart';
 import 'package:flutter_app/features/groups/application/announcement_private_reply_request.dart';
@@ -272,6 +274,7 @@ final class _GroupConversationSendLane {
     required this.senderPublicKey,
     required this.senderPrivateKey,
     required this.senderDeviceId,
+    required this.preparedGroupMediaBlobCustodyCoordinator,
   });
 
   final String groupId;
@@ -291,6 +294,8 @@ final class _GroupConversationSendLane {
   final String senderPublicKey;
   final String senderPrivateKey;
   final String? senderDeviceId;
+  final PreparedGroupMediaBlobCustodyCoordinator
+  preparedGroupMediaBlobCustodyCoordinator;
 }
 
 class GroupConversationWired extends StatefulWidget {
@@ -386,6 +391,14 @@ class GroupConversationWired extends StatefulWidget {
   /// null the Delete-for-me action is not offered.
   final GroupMediaDeleteForMeCoordinator? mediaDeleteForMeCoordinator;
 
+  /// Plan-365's sole initialized-authority group media/voice producer.
+  ///
+  /// Production lazily constructs the app-owned coordinator. Tests may inject
+  /// an exact artifact root and strict bridge seam without changing the
+  /// incumbent uninitialized `allowedPeers` branch.
+  final PreparedGroupMediaBlobCustodyCoordinator?
+  preparedGroupMediaBlobCustodyCoordinator;
+
   /// 236: bounded launcher for one ACCEPTED received-media Forward. Tests
   /// inject a recorder; production leaves it null and falls back to pushing
   /// the share target picker in forward mode via
@@ -442,6 +455,7 @@ class GroupConversationWired extends StatefulWidget {
     this.mediaRenderedSemanticsLabels = const <String, String>{},
     this.mediaActionsController,
     this.mediaDeleteForMeCoordinator,
+    this.preparedGroupMediaBlobCustodyCoordinator,
     this.groupMediaForwardLauncher,
     this.forwardMessageRepository,
     this.forwardChatMessageListener,
@@ -636,8 +650,17 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
   bool _allowPopDuringActiveUpload = false;
   _RestoredGroupMediaContinuation? _restoredMediaContinuation;
   _RestoredGroupVoiceContinuation? _restoredVoiceContinuation;
+  PreparedGroupMediaBlobCustodyCoordinator? _defaultPreparedGroupMediaOwner;
 
   MediaPicker get _mediaPicker => widget.mediaPicker ?? _defaultMediaPicker;
+
+  PreparedGroupMediaBlobCustodyCoordinator
+  get _preparedGroupMediaBlobCustodyCoordinator =>
+      widget.preparedGroupMediaBlobCustodyCoordinator ??
+      (_defaultPreparedGroupMediaOwner ??=
+          PreparedGroupMediaBlobCustodyCoordinator(
+            artifactStore: GroupMediaBlobArtifactStore(),
+          ));
 
   String? get _currentSenderDeviceId {
     final peerId = widget.p2pService.currentState.peerId?.trim();
@@ -667,6 +690,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       senderPublicKey: _senderPublicKey,
       senderPrivateKey: _senderPrivateKey,
       senderDeviceId: _currentSenderDeviceId,
+      preparedGroupMediaBlobCustodyCoordinator:
+          _preparedGroupMediaBlobCustodyCoordinator,
     );
   }
 
@@ -2713,16 +2738,34 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (!_validatePendingGroupMediaDescriptors(mediaToUpload)) {
       return;
     }
+    GroupContentAuthoringAdmission? groupMediaAdmission;
     if (hasAttachments) {
-      final preflightMembers = await sendLane.groupRepository.getMembers(
-        sendGroupId,
+      groupMediaAdmission = await prepareGroupContentAuthoringAdmission(
+        groupRepo: sendLane.groupRepository,
+        groupId: sendGroupId,
+        senderPeerId: sendLane.senderPeerId,
+        senderPublicKey: sendLane.senderPublicKey,
+        senderDeviceId: sendLane.senderDeviceId,
+        senderTransportPeerId: sendLane.senderDeviceId,
+        inviteDeliveryAttemptRepo: sendLane.inviteDeliveryAttemptRepository,
       );
       if (!_isCurrentSendLane(sendLane)) return;
-      if (!_passesGroupMediaAclPreflight(
-        preflightMembers,
-        surface: 'ordinary',
-      )) {
+      if (groupMediaAdmission.kind ==
+          GroupContentAuthoringResolutionKind.refuse) {
         return;
+      }
+      if (groupMediaAdmission.kind ==
+          GroupContentAuthoringResolutionKind.legacyUninitialized) {
+        final preflightMembers = await sendLane.groupRepository.getMembers(
+          sendGroupId,
+        );
+        if (!_isCurrentSendLane(sendLane)) return;
+        if (!_passesGroupMediaAclPreflight(
+          preflightMembers,
+          surface: 'ordinary',
+        )) {
+          return;
+        }
       }
     }
     if (!_tryBeginSendFlow()) return;
@@ -2837,144 +2880,127 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
       }
       // 5. Upload attachments (if any)
       List<MediaAttachment>? uploadedAttachments;
+      PreparedGroupMediaSendResult? strictMediaSend;
       if (mediaToUpload.isNotEmpty) {
         final exactAttachmentOperation = attachmentOperation!;
-        final members = await sendLane.groupRepository.getMembers(sendGroupId);
-        if (!_canContinueSendOperation(sendLane, exactAttachmentOperation)) {
-          return;
-        }
-        final allowedPeers = groupMediaAllowedPeersForMembers(members);
-
-        try {
-          if (sendLane.mediaAttachmentRepository != null &&
-              sendLane.mediaFileManager != null) {
-            final preparedUploads = await _prepareDurableGroupMediaUploads(
-              lane: sendLane,
-              operation: exactAttachmentOperation,
-              messageId: messageId,
-              mediaToUpload: mediaToUpload,
-              attachmentIds: optimisticMedia!
-                  .map((attachment) => attachment.id)
-                  .toList(growable: false),
-            );
-            if (!_canContinueSendOperation(
-              sendLane,
-              exactAttachmentOperation,
-            )) {
-              return;
-            }
-            await sendLane.messageRepository.saveMessage(optimisticMessage);
-            if (!_canContinueSendOperation(
-              sendLane,
-              exactAttachmentOperation,
-            )) {
-              return;
-            }
-            optimisticMedia = preparedUploads
-                .map(
-                  (plan) => plan.pendingAttachment.copyWith(
-                    localPath: plan.absoluteDurablePath,
-                    downloadStatus: 'done',
-                  ),
-                )
-                .toList(growable: false);
-            showOptimisticMessage();
-            await Future<void>.delayed(Duration.zero);
-            var initialUploadQualified = false;
-            uploadedAttachments =
-                await runQualifiedPrivateGroupMediaInitialUpload<
-                  List<MediaAttachment>
-                >(
-                  groupRepo: sendLane.groupRepository,
-                  msgRepo: sendLane.messageRepository,
-                  expectedParent: optimisticMessage,
-                  senderPeerId: sendLane.senderPeerId,
-                  privateMediaAvailability: sendLane.privateMediaAvailability,
-                  expectedAllowedPeerIds: allowedPeers,
-                  upload: () {
-                    initialUploadQualified = true;
-                    return _uploadPreparedGroupMediaUploads(
-                      lane: sendLane,
-                      expectedParent: optimisticMessage,
-                      preparedUploads: preparedUploads,
-                      replaceExistingAttachments: restoredContinuation != null,
-                      operation: exactAttachmentOperation,
-                    );
-                  },
-                );
-            if (!_canContinueSendOperation(
-              sendLane,
-              exactAttachmentOperation,
-            )) {
-              return;
-            }
-            if (!initialUploadQualified) {
+        if (groupMediaAdmission?.kind ==
+            GroupContentAuthoringResolutionKind.strict) {
+          try {
+            final mediaRepository = sendLane.mediaAttachmentRepository;
+            if (mediaRepository == null) {
               await _restoreComposerSnapshotWithoutFailure(
                 composerSnapshot,
                 messageId,
               );
               return;
             }
-            if (await _cancelActiveAttachmentUploadIfRequested(
-              exactAttachmentOperation,
-            )) {
-              return;
-            }
-            if (uploadedAttachments == null) {
-              if (sendLane.uploadRetryProjectionRepository != null) {
-                await _applyProjectedGroupUploadFailureUi(
-                  composerSnapshot,
-                  messageId: messageId,
-                  terminal: _lastUploadProjectionTerminal,
-                );
-              } else {
-                await _restoreComposerSnapshot(composerSnapshot, messageId);
-              }
-              return;
-            }
-          } else {
-            final optimistic = optimisticMedia!;
-            optimisticMedia = optimistic;
-            showOptimisticMessage();
-
-            uploadedAttachments = [];
-            var relayTrackingStarted = false;
+            final sources = <PreparedGroupMediaBlobSource>[];
             for (var index = 0; index < mediaToUpload.length; index++) {
-              if (await _cancelActiveAttachmentUploadIfRequested(
+              final pending = mediaToUpload[index];
+              final sourcePath = pending.file.path;
+              final sourceSize = await File(sourcePath).length();
+              if (!_canContinueSendOperation(
+                sendLane,
                 exactAttachmentOperation,
               )) {
                 return;
               }
-              final pending = mediaToUpload[index];
-              final mime = _mimeFromPath(pending.file.path);
-              final attachmentId = optimisticMedia[index].id;
-              final fileSize = File(pending.file.path).lengthSync();
-              if (!relayTrackingStarted) {
-                final remainingBytes = mediaToUpload
-                    .skip(index)
-                    .fold<int>(
-                      0,
-                      (sum, item) => sum + File(item.file.path).lengthSync(),
-                    );
-                await _startRelayUploadTracking(
-                  remainingBytes,
-                  operation: exactAttachmentOperation,
+              sources.add(
+                PreparedGroupMediaBlobSource(
+                  attachment: optimisticMedia![index].copyWith(
+                    size: sourceSize,
+                    localPath: sourcePath,
+                    downloadStatus: 'upload_pending',
+                    ownerLane: MediaOwnerLane.group,
+                  ),
+                  plaintextPath: sourcePath,
+                ),
+              );
+            }
+            final strictResult = await sendLane
+                .preparedGroupMediaBlobCustodyCoordinator
+                .prepareAndSend(
+                  bridge: sendLane.bridge,
+                  groupRepository: sendLane.groupRepository,
+                  messageRepository: sendLane.messageRepository,
+                  mediaAttachmentRepository: mediaRepository,
+                  identityPeerId: sendLane.senderPeerId,
+                  senderPublicKey: sendLane.senderPublicKey,
+                  senderPrivateKey: sendLane.senderPrivateKey,
+                  senderUsername: sendLane.senderUsername,
+                  senderDeviceId: sendLane.senderDeviceId,
+                  senderTransportPeerId: sendLane.senderDeviceId,
+                  inviteDeliveryAttemptRepository:
+                      sendLane.inviteDeliveryAttemptRepository,
+                  parent: optimisticMessage.copyWith(
+                    status: GroupMessage.statusQueuedOffline,
+                  ),
+                  sources: sources,
                 );
-                relayTrackingStarted = true;
+            if (!_canContinueSendOperation(
+              sendLane,
+              exactAttachmentOperation,
+            )) {
+              return;
+            }
+            if (!strictResult.preparation.isComplete) {
+              if (strictResult.preparation.hasDurableAuthority) {
+                optimisticMedia = await mediaRepository
+                    .getAttachmentsForMessage(
+                      messageId,
+                      owner: MediaOwnerLane.group,
+                    );
+                showOptimisticMessage();
+                await _markOutgoingMessageQueuedOffline(messageId);
+                _showOfflineQueuedSnackBar();
+              } else {
+                await _restoreComposerSnapshotWithoutFailure(
+                  composerSnapshot,
+                  messageId,
+                );
               }
-              _markRelayUploadStarted(exactAttachmentOperation, attachmentId);
-              final uploadOutcome = await runUploadMedia(
-                uploadMediaFn: sendLane.uploadMedia,
-                bridge: sendLane.bridge,
-                localFilePath: pending.file.path,
-                mime: mime,
-                recipientPeerId: sendGroupId,
-                mediaFileManager: sendLane.mediaFileManager,
-                width: pending.width,
-                height: pending.height,
-                durationMs: pending.durationMs,
-                allowedPeers: allowedPeers,
-                blobId: attachmentId,
+              return;
+            }
+            final strictSendResult = strictResult.sendResult;
+            if (strictSendResult == null) {
+              await _markOutgoingMessageQueuedOffline(messageId);
+              return;
+            }
+            if (strictSendResult != SendGroupMessageResult.success &&
+                strictSendResult != SendGroupMessageResult.successNoPeers &&
+                strictSendResult != SendGroupMessageResult.queuedOffline) {
+              optimisticMedia = strictResult.preparation.attachments;
+              showOptimisticMessage();
+              await _markOutgoingMessageQueuedOffline(messageId);
+              return;
+            }
+            strictMediaSend = strictResult;
+            uploadedAttachments = strictResult.preparation.attachments;
+            optimisticMedia = uploadedAttachments;
+            showOptimisticMessage();
+          } finally {
+            await _clearActiveAttachmentUpload(exactAttachmentOperation);
+          }
+        } else {
+          final members = await sendLane.groupRepository.getMembers(
+            sendGroupId,
+          );
+          if (!_canContinueSendOperation(sendLane, exactAttachmentOperation)) {
+            return;
+          }
+          final allowedPeers = groupMediaAllowedPeersForMembers(members);
+
+          try {
+            if (sendLane.mediaAttachmentRepository != null &&
+                sendLane.mediaFileManager != null) {
+              final preparedUploads = await _prepareDurableGroupMediaUploads(
+                lane: sendLane,
+                operation: exactAttachmentOperation,
+                messageId: messageId,
+                mediaToUpload: mediaToUpload,
+                attachmentIds: optimisticMedia!
+                    .map((attachment) => attachment.id)
+                    .toList(growable: false),
               );
               if (!_canContinueSendOperation(
                 sendLane,
@@ -2982,50 +3008,56 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               )) {
                 return;
               }
-              final result = uploadOutcome.attachmentOrNull;
-              if (result != null) {
-                _markRelayUploadCompleted(exactAttachmentOperation, fileSize);
-                final contentHash =
-                    result.contentHash ??
-                    await GroupMediaIntegrityPolicy.computeFileSha256Hex(
-                      pending.file.path,
-                    );
-                if (!_canContinueSendOperation(
-                  sendLane,
-                  exactAttachmentOperation,
-                )) {
-                  return;
-                }
-                uploadedAttachments.add(
-                  result.copyWith(
-                    id: attachmentId,
-                    messageId: messageId,
-                    downloadStatus: 'done',
-                    contentHash: contentHash,
-                  ),
-                );
-              } else {
-                await _stopRelayUploadTracking(exactAttachmentOperation);
-                final projection = sendLane.uploadRetryProjectionRepository;
-                if (projection == null) {
-                  await _restoreComposerSnapshot(composerSnapshot, messageId);
-                  return;
-                }
-                final projected = await projection.projectUploadFailure(
-                  messageId: messageId,
-                  attachmentId: attachmentId,
-                  failure: uploadOutcome as UploadMediaFailed,
-                );
-                if (!_canContinueSendOperation(
-                  sendLane,
-                  exactAttachmentOperation,
-                )) {
-                  return;
-                }
-                await _applyProjectedGroupUploadFailureUi(
+              await sendLane.messageRepository.saveMessage(optimisticMessage);
+              if (!_canContinueSendOperation(
+                sendLane,
+                exactAttachmentOperation,
+              )) {
+                return;
+              }
+              optimisticMedia = preparedUploads
+                  .map(
+                    (plan) => plan.pendingAttachment.copyWith(
+                      localPath: plan.absoluteDurablePath,
+                      downloadStatus: 'done',
+                    ),
+                  )
+                  .toList(growable: false);
+              showOptimisticMessage();
+              await Future<void>.delayed(Duration.zero);
+              var initialUploadQualified = false;
+              uploadedAttachments =
+                  await runQualifiedPrivateGroupMediaInitialUpload<
+                    List<MediaAttachment>
+                  >(
+                    groupRepo: sendLane.groupRepository,
+                    msgRepo: sendLane.messageRepository,
+                    expectedParent: optimisticMessage,
+                    senderPeerId: sendLane.senderPeerId,
+                    privateMediaAvailability: sendLane.privateMediaAvailability,
+                    expectedAllowedPeerIds: allowedPeers,
+                    upload: () {
+                      initialUploadQualified = true;
+                      return _uploadPreparedGroupMediaUploads(
+                        lane: sendLane,
+                        expectedParent: optimisticMessage,
+                        preparedUploads: preparedUploads,
+                        replaceExistingAttachments:
+                            restoredContinuation != null,
+                        operation: exactAttachmentOperation,
+                      );
+                    },
+                  );
+              if (!_canContinueSendOperation(
+                sendLane,
+                exactAttachmentOperation,
+              )) {
+                return;
+              }
+              if (!initialUploadQualified) {
+                await _restoreComposerSnapshotWithoutFailure(
                   composerSnapshot,
-                  messageId: messageId,
-                  terminal: projected.isTerminal,
+                  messageId,
                 );
                 return;
               }
@@ -3034,22 +3066,137 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
               )) {
                 return;
               }
-            }
-            if (await _cancelActiveAttachmentUploadIfRequested(
-              exactAttachmentOperation,
-            )) {
-              return;
-            }
-            await _stopRelayUploadTracking(exactAttachmentOperation);
-            if (_uploadActivityController.isCurrentOperation(
+              if (uploadedAttachments == null) {
+                if (sendLane.uploadRetryProjectionRepository != null) {
+                  await _applyProjectedGroupUploadFailureUi(
+                    composerSnapshot,
+                    messageId: messageId,
+                    terminal: _lastUploadProjectionTerminal,
+                  );
+                } else {
+                  await _restoreComposerSnapshot(composerSnapshot, messageId);
+                }
+                return;
+              }
+            } else {
+              final optimistic = optimisticMedia!;
+              optimisticMedia = optimistic;
+              showOptimisticMessage();
+
+              uploadedAttachments = [];
+              var relayTrackingStarted = false;
+              for (var index = 0; index < mediaToUpload.length; index++) {
+                if (await _cancelActiveAttachmentUploadIfRequested(
                   exactAttachmentOperation,
-                ) &&
-                mounted) {
-              _updateComposerState(isUploading: false);
+                )) {
+                  return;
+                }
+                final pending = mediaToUpload[index];
+                final mime = _mimeFromPath(pending.file.path);
+                final attachmentId = optimisticMedia[index].id;
+                final fileSize = File(pending.file.path).lengthSync();
+                if (!relayTrackingStarted) {
+                  final remainingBytes = mediaToUpload
+                      .skip(index)
+                      .fold<int>(
+                        0,
+                        (sum, item) => sum + File(item.file.path).lengthSync(),
+                      );
+                  await _startRelayUploadTracking(
+                    remainingBytes,
+                    operation: exactAttachmentOperation,
+                  );
+                  relayTrackingStarted = true;
+                }
+                _markRelayUploadStarted(exactAttachmentOperation, attachmentId);
+                final uploadOutcome = await runUploadMedia(
+                  uploadMediaFn: sendLane.uploadMedia,
+                  bridge: sendLane.bridge,
+                  localFilePath: pending.file.path,
+                  mime: mime,
+                  recipientPeerId: sendGroupId,
+                  mediaFileManager: sendLane.mediaFileManager,
+                  width: pending.width,
+                  height: pending.height,
+                  durationMs: pending.durationMs,
+                  allowedPeers: allowedPeers,
+                  blobId: attachmentId,
+                );
+                if (!_canContinueSendOperation(
+                  sendLane,
+                  exactAttachmentOperation,
+                )) {
+                  return;
+                }
+                final result = uploadOutcome.attachmentOrNull;
+                if (result != null) {
+                  _markRelayUploadCompleted(exactAttachmentOperation, fileSize);
+                  final contentHash =
+                      result.contentHash ??
+                      await GroupMediaIntegrityPolicy.computeFileSha256Hex(
+                        pending.file.path,
+                      );
+                  if (!_canContinueSendOperation(
+                    sendLane,
+                    exactAttachmentOperation,
+                  )) {
+                    return;
+                  }
+                  uploadedAttachments.add(
+                    result.copyWith(
+                      id: attachmentId,
+                      messageId: messageId,
+                      downloadStatus: 'done',
+                      contentHash: contentHash,
+                    ),
+                  );
+                } else {
+                  await _stopRelayUploadTracking(exactAttachmentOperation);
+                  final projection = sendLane.uploadRetryProjectionRepository;
+                  if (projection == null) {
+                    await _restoreComposerSnapshot(composerSnapshot, messageId);
+                    return;
+                  }
+                  final projected = await projection.projectUploadFailure(
+                    messageId: messageId,
+                    attachmentId: attachmentId,
+                    failure: uploadOutcome as UploadMediaFailed,
+                  );
+                  if (!_canContinueSendOperation(
+                    sendLane,
+                    exactAttachmentOperation,
+                  )) {
+                    return;
+                  }
+                  await _applyProjectedGroupUploadFailureUi(
+                    composerSnapshot,
+                    messageId: messageId,
+                    terminal: projected.isTerminal,
+                  );
+                  return;
+                }
+                if (await _cancelActiveAttachmentUploadIfRequested(
+                  exactAttachmentOperation,
+                )) {
+                  return;
+                }
+              }
+              if (await _cancelActiveAttachmentUploadIfRequested(
+                exactAttachmentOperation,
+              )) {
+                return;
+              }
+              await _stopRelayUploadTracking(exactAttachmentOperation);
+              if (_uploadActivityController.isCurrentOperation(
+                    exactAttachmentOperation,
+                  ) &&
+                  mounted) {
+                _updateComposerState(isUploading: false);
+              }
             }
+          } finally {
+            await _clearActiveAttachmentUpload(exactAttachmentOperation);
           }
-        } finally {
-          await _clearActiveAttachmentUpload(exactAttachmentOperation);
         }
       } else {
         showOptimisticMessage();
@@ -3065,27 +3212,36 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         return;
       }
 
-      final (result, message) = await sendGroupMessage(
-        bridge: sendLane.bridge,
-        groupRepo: sendLane.groupRepository,
-        msgRepo: sendLane.messageRepository,
-        groupId: sendGroupId,
-        text: text,
-        senderPeerId: sendLane.senderPeerId,
-        senderPublicKey: sendLane.senderPublicKey,
-        senderPrivateKey: sendLane.senderPrivateKey,
-        senderUsername: sendLane.senderUsername,
-        messageId: messageId,
-        timestamp: now,
-        quotedMessageId: quotedMessageId,
-        privateMediaPolicy: privateMediaPolicy,
-        privateMediaAvailability: sendLane.privateMediaAvailability,
-        senderDeviceId: sendLane.senderDeviceId,
-        senderTransportPeerId: sendLane.senderDeviceId,
-        mediaAttachments: uploadedAttachments,
-        mediaAttachmentRepo: sendLane.mediaAttachmentRepository,
-        inviteDeliveryAttemptRepo: sendLane.inviteDeliveryAttemptRepository,
-      );
+      late final SendGroupMessageResult result;
+      final GroupMessage? message;
+      if (strictMediaSend != null) {
+        result = strictMediaSend.sendResult!;
+        message = strictMediaSend.message;
+      } else {
+        final legacySend = await sendGroupMessage(
+          bridge: sendLane.bridge,
+          groupRepo: sendLane.groupRepository,
+          msgRepo: sendLane.messageRepository,
+          groupId: sendGroupId,
+          text: text,
+          senderPeerId: sendLane.senderPeerId,
+          senderPublicKey: sendLane.senderPublicKey,
+          senderPrivateKey: sendLane.senderPrivateKey,
+          senderUsername: sendLane.senderUsername,
+          messageId: messageId,
+          timestamp: now,
+          quotedMessageId: quotedMessageId,
+          privateMediaPolicy: privateMediaPolicy,
+          privateMediaAvailability: sendLane.privateMediaAvailability,
+          senderDeviceId: sendLane.senderDeviceId,
+          senderTransportPeerId: sendLane.senderDeviceId,
+          mediaAttachments: uploadedAttachments,
+          mediaAttachmentRepo: sendLane.mediaAttachmentRepository,
+          inviteDeliveryAttemptRepo: sendLane.inviteDeliveryAttemptRepository,
+        );
+        result = legacySend.$1;
+        message = legacySend.$2;
+      }
       if (!_isCurrentSendLane(sendLane)) return;
 
       if ((result == SendGroupMessageResult.success ||
@@ -3108,7 +3264,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
         if (mounted) {
           setState(() {
-            _upsertMessage(message);
+            _upsertMessage(message!);
             if (displayMedia != null && displayMedia.isNotEmpty) {
               _updateMediaForMessage(messageId, displayMedia);
             }
@@ -4927,6 +5083,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     }
     if (!_tryBeginSendFlow()) return;
     MediaUploadLease? voiceUploadLease;
+    GroupContentAuthoringAdmission? voiceMediaAdmission;
 
     try {
       final quotedMessageId = _activeQuoteMessageId;
@@ -4950,18 +5107,6 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           voiceLane == null ||
           !_isCurrentVoiceSendLane(voiceLane, outcome)) {
         return;
-      }
-
-      final preflightMembers = await voiceLane.groupRepository.getMembers(
-        voiceLane.groupId,
-      );
-      if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
-      if (!_passesGroupMediaAclPreflight(preflightMembers, surface: 'voice')) {
-        return;
-      }
-
-      if (quotedMessageId != null && mounted) {
-        setState(() => _activeQuoteMessageId = null);
       }
 
       final voiceContinuation =
@@ -5032,6 +5177,37 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           );
           throw const _RejectedPendingGroupMediaException();
         }
+        voiceMediaAdmission = await prepareGroupContentAuthoringAdmission(
+          groupRepo: voiceLane.groupRepository,
+          groupId: voiceLane.groupId,
+          senderPeerId: voiceLane.senderPeerId,
+          senderPublicKey: voiceLane.senderPublicKey,
+          senderDeviceId: voiceLane.senderDeviceId,
+          senderTransportPeerId: voiceLane.senderDeviceId,
+          inviteDeliveryAttemptRepo: voiceLane.inviteDeliveryAttemptRepository,
+        );
+        if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
+        if (voiceMediaAdmission.kind ==
+            GroupContentAuthoringResolutionKind.refuse) {
+          _restoreActiveQuoteIfNeeded(quotedMessageId);
+          return;
+        }
+        if (voiceMediaAdmission.kind ==
+            GroupContentAuthoringResolutionKind.legacyUninitialized) {
+          final preflightMembers = await voiceLane.groupRepository.getMembers(
+            voiceLane.groupId,
+          );
+          if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
+          if (!_passesGroupMediaAclPreflight(
+            preflightMembers,
+            surface: 'voice',
+          )) {
+            return;
+          }
+        }
+        if (quotedMessageId != null && mounted) {
+          setState(() => _activeQuoteMessageId = null);
+        }
         durableRelativePath = await mediaFileManager.copyToDurableStorage(
           sourceFilePath: recording.filePath,
           messageId: messageId,
@@ -5083,10 +5259,13 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           contentHash: contentHash,
           ownerLane: MediaOwnerLane.group,
         );
-        // Attachment persistence and restored-row replacement are owned by the
-        // bounded upload leaf below. The exact parent must exist first.
-        await voiceLane.messageRepository.saveMessage(optimisticMessage);
-        if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
+        if (voiceMediaAdmission.kind !=
+            GroupContentAuthoringResolutionKind.strict) {
+          // The incumbent leaf needs the parent first. Strict Plan-365 stages
+          // parent, descriptor and every physical-target row atomically.
+          await voiceLane.messageRepository.saveMessage(optimisticMessage);
+          if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
+        }
       } catch (e) {
         emitFlowEvent(
           layer: 'FL',
@@ -5137,33 +5316,69 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         voiceOperation = await _startRelayUploadTracking(recording.sizeBytes);
         _markRelayUploadStarted(voiceOperation, attachmentId);
         ForegroundGroupUploadLeafResult? voiceUpload;
+        PreparedGroupMediaSendResult? strictVoiceSend;
+        MediaAttachment? stableVoiceAttachment;
         try {
-          voiceUpload = await _runForegroundGroupUploadLeaf(
-            lane: voiceLane,
-            expectedParent: optimisticMessage,
-            expectedAttachment: durablePendingAttachment,
-            upload: (allowedPeers) => runUploadMedia(
-              uploadMediaFn: voiceLane.uploadMedia,
-              bridge: voiceLane.bridge,
-              localFilePath: durableAbsolutePath,
-              mime: recording.mime,
-              recipientPeerId: voiceLane.groupId,
-              mediaFileManager: mediaFileManager,
-              durationMs: recording.durationMs,
-              waveform: waveform,
-              allowedPeers: allowedPeers,
-              blobId: attachmentId,
-            ),
-            buildCompleted: (uploaded) => _buildStableVoiceAttachment(
+          if (voiceMediaAdmission.kind ==
+              GroupContentAuthoringResolutionKind.strict) {
+            strictVoiceSend = await voiceLane
+                .preparedGroupMediaBlobCustodyCoordinator
+                .prepareAndSend(
+                  bridge: voiceLane.bridge,
+                  groupRepository: voiceLane.groupRepository,
+                  messageRepository: voiceLane.messageRepository,
+                  mediaAttachmentRepository: mediaAttachmentRepo,
+                  identityPeerId: voiceLane.senderPeerId,
+                  senderPublicKey: voiceLane.senderPublicKey,
+                  senderPrivateKey: voiceLane.senderPrivateKey,
+                  senderUsername: voiceLane.senderUsername,
+                  senderDeviceId: voiceLane.senderDeviceId,
+                  senderTransportPeerId: voiceLane.senderDeviceId,
+                  inviteDeliveryAttemptRepository:
+                      voiceLane.inviteDeliveryAttemptRepository,
+                  parent: optimisticMessage.copyWith(
+                    status: GroupMessage.statusQueuedOffline,
+                  ),
+                  sources: <PreparedGroupMediaBlobSource>[
+                    PreparedGroupMediaBlobSource(
+                      attachment: durablePendingAttachment,
+                      plaintextPath: durableAbsolutePath,
+                    ),
+                  ],
+                );
+            if (strictVoiceSend.preparation.isComplete) {
+              stableVoiceAttachment =
+                  strictVoiceSend.preparation.attachments.single;
+            }
+          } else {
+            voiceUpload = await _runForegroundGroupUploadLeaf(
               lane: voiceLane,
-              pendingAttachment: durablePendingAttachment,
-              uploaded: uploaded,
-              absoluteDurablePath: durableAbsolutePath,
-              waveform: waveform,
-            ),
-            replaceExistingAttachments: voiceContinuation != null,
-          );
-          if (voiceUpload?.completedAttachment != null) {
+              expectedParent: optimisticMessage,
+              expectedAttachment: durablePendingAttachment,
+              upload: (allowedPeers) => runUploadMedia(
+                uploadMediaFn: voiceLane.uploadMedia,
+                bridge: voiceLane.bridge,
+                localFilePath: durableAbsolutePath,
+                mime: recording.mime,
+                recipientPeerId: voiceLane.groupId,
+                mediaFileManager: mediaFileManager,
+                durationMs: recording.durationMs,
+                waveform: waveform,
+                allowedPeers: allowedPeers,
+                blobId: attachmentId,
+              ),
+              buildCompleted: (uploaded) => _buildStableVoiceAttachment(
+                lane: voiceLane,
+                pendingAttachment: durablePendingAttachment,
+                uploaded: uploaded,
+                absoluteDurablePath: durableAbsolutePath,
+                waveform: waveform,
+              ),
+              replaceExistingAttachments: voiceContinuation != null,
+            );
+            stableVoiceAttachment = voiceUpload?.completedAttachment;
+          }
+          if (stableVoiceAttachment != null) {
             _markRelayUploadCompleted(voiceOperation, recording.sizeBytes);
           }
         } finally {
@@ -5171,7 +5386,25 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         }
         if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
 
-        if (voiceUpload == null) {
+        if (strictVoiceSend != null &&
+            !strictVoiceSend.preparation.isComplete) {
+          if (strictVoiceSend.preparation.hasDurableAuthority) {
+            await _markOutgoingMessageQueuedOffline(messageId);
+            _showOfflineQueuedSnackBar();
+          } else {
+            await _cleanupUnsentVoiceArtifacts(
+              messageId: messageId,
+              mediaAttachmentRepo: mediaAttachmentRepo,
+              mediaFileManager: mediaFileManager,
+              messageRepository: voiceLane.messageRepository,
+            );
+            _restoreActiveQuoteIfNeeded(quotedMessageId);
+          }
+          if (mounted) _updateComposerState(isUploading: false);
+          return;
+        }
+
+        if (strictVoiceSend == null && voiceUpload == null) {
           if (mounted) {
             _updateComposerState(isUploading: false);
           }
@@ -5179,9 +5412,8 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           return;
         }
 
-        final stableVoiceAttachment = voiceUpload.completedAttachment;
         if (stableVoiceAttachment == null) {
-          final projected = voiceUpload.failureProjection;
+          final projected = voiceUpload?.failureProjection;
           if (projected != null) {
             if (mounted) {
               _updateComposerState(isUploading: false);
@@ -5217,25 +5449,43 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           _updateComposerState(isUploading: false);
         }
 
-        final (result, message) = await sendGroupMessage(
-          bridge: voiceLane.bridge,
-          groupRepo: voiceLane.groupRepository,
-          msgRepo: voiceLane.messageRepository,
-          groupId: voiceLane.groupId,
-          text: '',
-          senderPeerId: voiceLane.senderPeerId,
-          senderPublicKey: voiceLane.senderPublicKey,
-          senderPrivateKey: voiceLane.senderPrivateKey,
-          senderUsername: voiceLane.senderUsername,
-          messageId: messageId,
-          timestamp: now,
-          quotedMessageId: quotedMessageId,
-          senderDeviceId: voiceLane.senderDeviceId,
-          senderTransportPeerId: voiceLane.senderDeviceId,
-          mediaAttachments: [stableVoiceAttachment],
-          mediaAttachmentRepo: mediaAttachmentRepo,
-          inviteDeliveryAttemptRepo: voiceLane.inviteDeliveryAttemptRepository,
-        );
+        late final SendGroupMessageResult result;
+        final GroupMessage? message;
+        if (strictVoiceSend != null) {
+          final strictResult = strictVoiceSend.sendResult;
+          if (strictResult == null ||
+              (strictResult != SendGroupMessageResult.success &&
+                  strictResult != SendGroupMessageResult.successNoPeers &&
+                  strictResult != SendGroupMessageResult.queuedOffline)) {
+            await _markOutgoingMessageQueuedOffline(messageId);
+            return;
+          }
+          result = strictResult;
+          message = strictVoiceSend.message;
+        } else {
+          final legacySend = await sendGroupMessage(
+            bridge: voiceLane.bridge,
+            groupRepo: voiceLane.groupRepository,
+            msgRepo: voiceLane.messageRepository,
+            groupId: voiceLane.groupId,
+            text: '',
+            senderPeerId: voiceLane.senderPeerId,
+            senderPublicKey: voiceLane.senderPublicKey,
+            senderPrivateKey: voiceLane.senderPrivateKey,
+            senderUsername: voiceLane.senderUsername,
+            messageId: messageId,
+            timestamp: now,
+            quotedMessageId: quotedMessageId,
+            senderDeviceId: voiceLane.senderDeviceId,
+            senderTransportPeerId: voiceLane.senderDeviceId,
+            mediaAttachments: [stableVoiceAttachment],
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            inviteDeliveryAttemptRepo:
+                voiceLane.inviteDeliveryAttemptRepository,
+          );
+          result = legacySend.$1;
+          message = legacySend.$2;
+        }
         if (!_isCurrentVoiceSendLane(voiceLane, outcome)) return;
 
         try {
@@ -5258,7 +5508,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
             }
             if (mounted) {
               setState(() {
-                _upsertMessage(message);
+                _upsertMessage(message!);
                 if (displayMedia != null && displayMedia.isNotEmpty) {
                   _updateMediaForMessage(messageId, displayMedia);
                 }
@@ -7380,6 +7630,14 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
     if (_ownPeerId == null) return;
     final bindingGeneration = _reactionBindingGeneration;
     final groupId = widget.group.id;
+    GroupMessage? targetMessage;
+    for (final message in _messages) {
+      if (message.id == messageId) {
+        targetMessage = message;
+        break;
+      }
+    }
+    if (targetMessage == null) return;
 
     final previousReactions = List<MessageReaction>.from(
       _reactionProjectionController.reactionsFor(messageId),
@@ -7409,6 +7667,9 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           senderPeerId: _ownPeerId!,
           senderPublicKey: _senderPublicKey,
           senderPrivateKey: _senderPrivateKey,
+          msgRepo: widget.msgRepo,
+          inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
+          targetMessage: targetMessage,
         );
       } catch (_) {
         if (_isCurrentReactionBinding(bindingGeneration, groupId)) {
@@ -7468,6 +7729,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         senderPeerId: _ownPeerId!,
         senderPublicKey: _senderPublicKey,
         senderPrivateKey: _senderPrivateKey,
+        inviteDeliveryAttemptRepo: widget.inviteDeliveryAttemptRepo,
       );
       result = sendResult.$1;
       reaction = sendResult.$2;

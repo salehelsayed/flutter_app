@@ -16,7 +16,11 @@ enum AckCustodyKind {
   groupBootstrapV1('group_bootstrap_v1'),
 
   /// Per-physical-recipient group membership/config/key authority.
-  groupAuthorityV1('group_authority_v1');
+  groupAuthorityV1('group_authority_v1'),
+
+  /// Blob-free group message/reaction content bound to authenticated group
+  /// authority and retained independently for every physical recipient.
+  groupContentV1('group_content_v1');
 
   const AckCustodyKind(this.wireValue);
 
@@ -193,6 +197,30 @@ typedef StoreInMediaExpiryBoundedInboxDetailedFn =
 /// [AckOrExpiryInboxStore] signature intentionally remains unchanged.
 abstract class MediaExpiryBoundedInboxStore {
   Future<InboxStoreOutcome> storeInMediaExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  });
+}
+
+typedef StoreInGroupContentExpiryBoundedInboxDetailedFn =
+    Future<InboxStoreOutcome> Function(
+      String toPeerId,
+      String message, {
+      required int custodyExpiresAtOrBeforeMs,
+      int? timeoutMs,
+    });
+
+/// Group-content sibling capability whose relay lifetime is pinned to the
+/// earliest blob expiry committed for the exact physical recipient.
+///
+/// Keeping this capability distinct from [MediaExpiryBoundedInboxStore]
+/// prevents a direct-text caller from crossing the `group_content_v1` relay
+/// admission (and vice versa). Implementations must reject an accepted-looking
+/// response unless the relay echoes the exact requested ceiling.
+abstract class GroupContentExpiryBoundedInboxStore {
+  Future<InboxStoreOutcome> storeInGroupContentExpiryBoundedInboxDetailed(
     String toPeerId,
     String message, {
     required int custodyExpiresAtOrBeforeMs,

@@ -260,13 +260,14 @@ void main() {
       );
 
       final onSendBody = source.substring(onSendStart, onSendEnd);
+      final compactOnSendBody = onSendBody.replaceAll(RegExp(r'\s+'), ' ');
       expect(
         onSendBody,
         isNot(contains('_clearPersistedMediaForRestoredContinuation(')),
         reason: 'restored rows must never be cleared before the B3 leaf',
       );
       expect(
-        onSendBody,
+        compactOnSendBody,
         contains('replaceExistingAttachments: restoredContinuation != null'),
       );
     },

@@ -55,6 +55,37 @@ void main() {
     },
   );
 
+  test(
+    'simulated independent processes overlap without weakening same-process locks',
+    () async {
+      final firstEntered = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final secondEntered = Completer<void>();
+      final independentProcess =
+          forkIndependentGroupMembershipProcessZoneForTest();
+
+      final first = runGroupMembershipMutationLocked<void>(
+        groupId: 'group-independent-process-scope',
+        action: () async {
+          firstEntered.complete();
+          await releaseFirst.future;
+        },
+      );
+      await firstEntered.future;
+
+      final second = independentProcess.run(
+        () => runGroupMembershipMutationLocked<void>(
+          groupId: 'group-independent-process-scope',
+          action: () async => secondEntered.complete(),
+        ),
+      );
+      await secondEntered.future.timeout(const Duration(seconds: 1));
+
+      releaseFirst.complete();
+      await Future.wait(<Future<void>>[first, second]);
+    },
+  );
+
   group('nextMembershipEventAt', () {
     final last = DateTime.utc(2026, 6, 16, 12);
 

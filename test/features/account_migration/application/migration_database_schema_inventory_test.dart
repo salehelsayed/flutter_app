@@ -88,7 +88,7 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 114);
+        expect(currentIdentityDatabaseVersion, 115);
         expect(
           inventory.tableNames,
           containsAll(<String>[
@@ -169,8 +169,9 @@ void main() {
           db!,
         );
 
-        expect(currentIdentityDatabaseVersion, 114);
+        expect(currentIdentityDatabaseVersion, 115);
         // 362: v114 adds the two nullable linked-fanout columns.
+        // 365: v115 adds blob identity, group scope, and explicit owner lane.
         expect(inventory.tables['direct_media_blob_custody'], <String>[
           'attachment_id',
           'ciphertext_relative_path',
@@ -178,15 +179,18 @@ void main() {
           'contact_account_peer_id',
           'content_hash',
           'created_at',
+          'custody_blob_id',
           'custody_contract',
           'custody_kind',
           'custody_relay_peer_id',
           'direction',
           'expires_at_ms',
+          'group_id',
           'inbox_custody_incarnation_id',
           'last_attempt_at',
           'message_id',
           'next_attempt_at',
+          'owner_lane',
           'recipient_ml_kem_public_key',
           'recipient_peer_id',
           'retry_count',

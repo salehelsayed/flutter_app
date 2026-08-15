@@ -309,8 +309,11 @@ dbCompleteAcceptedDirectInboxCustodyIfExact(
       // incarnations and are never selected or transitioned here.
       final rawMessageBlobRows = await txn.query(
         kDirectMediaBlobCustodyTable,
-        where: 'message_id = ? AND direction = ? AND recipient_peer_id = ?',
+        where:
+            'owner_lane = ? AND message_id = ? AND direction = ? '
+            'AND recipient_peer_id = ?',
         whereArgs: <Object?>[
+          MediaBlobCustodyOwnerLane.direct.dbValue,
           messageId,
           DirectMediaBlobCustodyDirection.outgoing.dbValue,
           recipientPeerId,

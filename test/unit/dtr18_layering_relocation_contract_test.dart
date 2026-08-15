@@ -178,9 +178,14 @@ const _privacySha256 =
 // MyApp's existing cold/resume hook; this is the same app-owned runtime seam,
 // not a restored core dependency.
 // Plan 363 adds only the restricted protected-group recovery callbacks and
-// their linked-role lifecycle ordering on that same application root.
+// their linked-role lifecycle ordering on that same application root. Plan
+// 364 extends the same linked lifecycle owner with protected blob-free content
+// retry quiescence and a generation-bound pause lease; nothing relocates.
+// Plan 365 adds the two strict group-media progress callbacks and runs the
+// existing protected-content owner to a bounded fixed point on linked resume;
+// this remains app-owned lifecycle composition and relocates nothing.
 const _applicationRootNormalizedSha256 =
-    '879793d04a235b00651d3012b871a4c5123a9e8d185300ea89988683d237a7eb';
+    'c9c8f7e174f1a1989b089e25ed9d675e09134986a5d2787d13dbee40d66f7a8a';
 // Plan 358 forwards the strict local-path commit's `nowMs` sample through the
 // same already-wired delegate and relocates nothing. Plan 360 additionally
 // constructs the role-aware deferred-runtime-start owner over the SAME
@@ -223,8 +228,18 @@ const _applicationRootNormalizedSha256 =
 // The final same-epoch sibling rearm closure keeps that composition in this
 // root while exposing the exact persisted-PREPARED survivor matcher for a
 // production-path regression; no ownership boundary moved.
+// Plan 364 composes the owner-keyed authoring resolver, protected content
+// ingress/reconciliation, strict retry quiescence, and the linked narrow
+// surface on those same repositories and runtime owners. Its final repair
+// defers pending-key replay until protected authority is COMPLETE. No adapter
+// moved.
 const _productionBootstrapNormalizedSha256 =
-    '76be1b304ba1f40af75ef7b3bf76d84b9997a4c701c76d0909d15786ff98b885';
+    // Plan 365 wires the existing strict group-media lifecycle owner into the
+    // local cold-start cleanup sequence; no bootstrap responsibility moves.
+    // Plan 366 adds the plural direct-private media generation and Barrier-B
+    // delegates plus fresh-share authorization pass-throughs on the same
+    // repository constructions; composition remains app-owned.
+    'f0a72c2bbe53cf3128a7012557794b8dbd38d9bc9104057f49747681403725c3';
 
 const _reviewedResumeExceptionTargets = <String>{
   'lib/features/account_migration/application/'

@@ -1,5 +1,7 @@
 package main
 
+import "errors"
+
 type InboxStoreResult string
 
 const (
@@ -36,18 +38,55 @@ type InboxBackend interface {
 	Stats() (totalPeers int, totalMessages int)
 }
 
-// PushTokenBackend abstracts push token storage so tokens survive server restarts.
+var ErrPushRouteStale = errors.New("push route lease is stale")
+
+// pushRouteLease is the only token-routing value exposed to message-specific
+// code. Provider material remains private to PushService's resolution gateway.
+type pushRouteLease struct {
+	Handle       string
+	Generation   uint64
+	Capabilities []string
+
+	lookupKey    string
+	legacyDigest [32]byte
+}
+
+func (route pushRouteLease) hasCapability(capability string) bool {
+	for _, candidate := range route.Capabilities {
+		if candidate == capability {
+			return true
+		}
+	}
+	return false
+}
+
+type resolvedPushTarget struct {
+	Route    pushRouteLease
+	Token    string
+	Platform string
+}
+
+// PushTokenBackend abstracts push routing and private provider-token custody so
+// registrations survive server restarts without exposing tokens to event code.
 type PushTokenBackend interface {
 	// RegisterToken stores or updates a push token for a peer.
 	// Success means the backend has confirmed the write; implementations must
 	// return storage failures instead of logging and acknowledging them.
 	RegisterToken(peerId string, token string, platform string, capabilities ...string) error
 
-	// UnregisterToken removes the push token for a peer.
-	UnregisterToken(peerId string)
+	// UnregisterToken durably removes the authenticated peer's current route.
+	UnregisterToken(peerId string) error
 
-	// LookupToken returns the token entry for a peer, or nil if not found.
-	LookupToken(peerId string) *tokenEntry
+	// LookupRoute returns an opaque route snapshot, or nil when no registration
+	// exists. Storage and integrity failures are returned explicitly.
+	LookupRoute(peerId string) (*pushRouteLease, error)
+
+	// ResolveRoute is private provider-gateway materialization. Implementations
+	// return ErrPushRouteStale when the exact snapshot is no longer current.
+	ResolveRoute(route pushRouteLease) (*resolvedPushTarget, error)
+
+	// RevokeIfCurrent conditionally removes only the exact resolved lease.
+	RevokeIfCurrent(route pushRouteLease) (bool, error)
 
 	// TokenCount returns the number of registered tokens.
 	TokenCount() int

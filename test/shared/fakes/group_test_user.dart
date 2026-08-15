@@ -14,6 +14,7 @@ import 'package:flutter_app/features/groups/application/send_group_message_use_c
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart'
     as group_react;
 import 'package:flutter_app/features/groups/application/group_message_listener.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_avatar_storage.dart';
 import 'package:flutter_app/features/groups/application/group_config_payload.dart';
 import 'package:flutter_app/features/groups/application/group_membership_timeline_message.dart';
@@ -69,6 +70,7 @@ class GroupTestUser {
   final ReactionRepository? reactionRepo;
   final GroupReactionReplayOutboxRepository reactionReplayOutboxRepo;
   final FakeGroupPubSubNetwork _network;
+  final Zone _membershipProcessZone;
   final StreamController<Map<String, dynamic>> _incomingController;
   final StreamController<Map<String, dynamic>> _incomingReactionController;
   final DownloadGroupAvatarFn? _downloadGroupAvatarFn;
@@ -93,10 +95,12 @@ class GroupTestUser {
     required this.reactionRepo,
     required this.reactionReplayOutboxRepo,
     required FakeGroupPubSubNetwork network,
+    required Zone membershipProcessZone,
     required StreamController<Map<String, dynamic>> incomingController,
     required StreamController<Map<String, dynamic>> incomingReactionController,
     DownloadGroupAvatarFn? downloadGroupAvatarFn,
   }) : _network = network,
+       _membershipProcessZone = membershipProcessZone,
        _incomingController = incomingController,
        _incomingReactionController = incomingReactionController,
        _downloadGroupAvatarFn = downloadGroupAvatarFn;
@@ -147,6 +151,8 @@ class GroupTestUser {
     final resolvedKeyPackagePublicMaterial =
         keyPackagePublicMaterial ?? 'key-package-public-$resolvedDeviceId';
     final effectiveBridge = bridge ?? FakeBridge();
+    final membershipProcessZone =
+        forkIndependentGroupMembershipProcessZoneForTest();
     final groupRepo = InMemoryGroupRepository();
     final effectiveMsgRepo = msgRepo ?? InMemoryGroupMessageRepository();
     final mediaAttachmentRepo = InMemoryMediaAttachmentRepository();
@@ -198,6 +204,7 @@ class GroupTestUser {
       reactionReplayOutboxRepo:
           reactionReplayOutboxRepo ?? FakeGroupReactionReplayOutboxRepository(),
       network: network,
+      membershipProcessZone: membershipProcessZone,
       incomingController: controller,
       incomingReactionController: reactionController,
       downloadGroupAvatarFn: downloadGroupAvatarFn,
@@ -211,11 +218,19 @@ class GroupTestUser {
 
   /// Starts the listener (subscribes to the incoming stream from FakeGroupPubSubNetwork).
   void start() {
-    groupMessageListener.start(
-      _incomingController.stream,
-      incomingGroupReactions: _incomingReactionController.stream,
+    _membershipProcessZone.run(
+      () => groupMessageListener.start(
+        _incomingController.stream,
+        incomingGroupReactions: _incomingReactionController.stream,
+      ),
     );
   }
+
+  /// Runs one simulated-device mutation in the same process scope as its
+  /// listener. Production has one real process scope; multi-user host tests
+  /// need an independent scope per fake device.
+  T runInMembershipProcess<T>(T Function() action) =>
+      _membershipProcessZone.run(action);
 
   void subscribeToGroup(String groupId) {
     _network.subscribe(groupId, deviceId);
@@ -997,6 +1012,7 @@ class GroupTestUser {
       reactionRepo: reactionRepo,
       reactionReplayOutboxRepo: persistedReactionReplayOutboxRepo,
       network: network,
+      membershipProcessZone: _membershipProcessZone,
       incomingController: controller,
       incomingReactionController: reactionController,
     );

@@ -1036,6 +1036,22 @@ dbStageOutgoingDirectTextMutationFanoutInboxCustody(
   final isDeletion =
       kind == OutgoingOrdinaryAttemptKind.tombstoneInitial ||
       kind == OutgoingOrdinaryAttemptKind.tombstoneRetry;
+  final exactOrdinaryPolicy =
+      _isStrictOrdinaryTextPolicy(expectedRow ?? const <String, Object?>{}) &&
+      _isStrictOrdinaryTextPolicy(stagedRow);
+  final exactPrivateDeletionPolicy =
+      isDeletion &&
+      expectedRow != null &&
+      isExactOutgoingDirectPrivateDeleteTombstoneShape(
+        expectedRow: expectedRow,
+        tombstoneRow: stagedRow,
+      );
+  final exactDisappearingDeletionPolicy =
+      isDeletion &&
+      expectedRow != null &&
+      isStrictDisappearingOutgoingDirectPolicy(expectedRow) &&
+      isStrictDisappearingOutgoingDirectPolicy(stagedRow) &&
+      sameOutgoingDirectMediaDeletionModality(expectedRow, stagedRow);
   bool exactCandidate(DirectEventFanoutTargetCandidate candidate) {
     final classified = classifyDirectInboxEventEnvelope(candidate.wireEnvelope);
     if (classified == null ||
@@ -1069,8 +1085,11 @@ dbStageOutgoingDirectTextMutationFanoutInboxCustody(
       _isNonBlank(createdAt) &&
       DateTime.tryParse(createdAt) != null &&
       candidates.every(exactCandidate) &&
-      _isStrictOrdinaryTextPolicy(expectedRow) &&
-      _isStrictOrdinaryTextPolicy(stagedRow) &&
+      (isEdit
+          ? exactOrdinaryPolicy
+          : exactOrdinaryPolicy ||
+                exactPrivateDeletionPolicy ||
+                exactDisappearingDeletionPolicy) &&
       (isEdit || _isExactOutgoingDeletionProjection(stagedRow));
   if (!valid) {
     return Future<DbDirectEventFanoutStageResult>.value(
@@ -1147,14 +1166,63 @@ dbStageOutgoingDirectTextMutationFanoutInboxCustody(
       hasDirectMediaParent = directMedia.isNotEmpty;
     }
 
-    final messageOutcome =
-        await dbStageOutgoingOrdinaryAttemptWithinTransaction(
-          txn,
-          expectedRow: expectedRow,
-          stagedRow: stagedRow,
-          kind: kind,
-          allowDirectAttachments: hasDirectMediaParent,
-        );
+    // Freeze and validate every v114 row before mutating the parent. Returning
+    // `refused` after a tombstone update would otherwise commit a partial
+    // transaction when a malformed blob row is encountered.
+    var unboundActiveBlobRows = const <DirectMediaBlobCustodyRow>[];
+    if (isDeletion && hasDirectMediaParent) {
+      final rawBlobRows = await txn.query(
+        kDirectMediaBlobCustodyTable,
+        where: 'owner_lane = ? AND message_id = ? AND direction = ?',
+        whereArgs: <Object?>[
+          MediaBlobCustodyOwnerLane.direct.dbValue,
+          parentMessageId,
+          'outgoing',
+        ],
+        orderBy: 'attachment_id ASC, recipient_peer_id ASC',
+      );
+      try {
+        unboundActiveBlobRows = rawBlobRows
+            .map(DirectMediaBlobCustodyRow.fromMap)
+            .where(
+              (row) =>
+                  row.inboxCustodyIncarnationId == null &&
+                  (row.state == DirectMediaBlobCustodyState.outgoingPrepared ||
+                      row.state == DirectMediaBlobCustodyState.outgoingStored),
+            )
+            .toList(growable: false);
+      } on FormatException {
+        return const DbDirectEventFanoutStageResult.refused();
+      }
+    }
+
+    // Protected/View-Once uses its incumbent update-only private tombstone
+    // commit; ordinary and disappearing continue through the incumbent
+    // ordinary mutation CAS. Every private fanout is necessarily media-shaped.
+    if ((exactPrivateDeletionPolicy || exactDisappearingDeletionPolicy) &&
+        !hasDirectMediaParent) {
+      return const DbDirectEventFanoutStageResult.refused();
+    }
+    final OutgoingOrdinaryMutationOutcome messageOutcome;
+    if (exactPrivateDeletionPolicy) {
+      final committed =
+          await dbCommitOutgoingDirectPrivateDeleteForEveryoneTombstoneWithinTransaction(
+            txn,
+            expectedRow: expectedRow,
+            tombstoneRow: stagedRow,
+          );
+      messageOutcome = committed
+          ? OutgoingOrdinaryMutationOutcome.applied
+          : OutgoingOrdinaryMutationOutcome.refused;
+    } else {
+      messageOutcome = await dbStageOutgoingOrdinaryAttemptWithinTransaction(
+        txn,
+        expectedRow: expectedRow,
+        stagedRow: stagedRow,
+        kind: kind,
+        allowDirectAttachments: hasDirectMediaParent,
+      );
+    }
     if (messageOutcome != OutgoingOrdinaryMutationOutcome.applied) {
       return const DbDirectEventFanoutStageResult.refused();
     }
@@ -1164,47 +1232,23 @@ dbStageOutgoingDirectTextMutationFanoutInboxCustody(
     // retire target A and stage only surviving B. Rows already bound to an
     // exact v108 sibling keep converging through their own drains, and the
     // durable generation marker survives as the no-remint fact.
-    if (isDeletion && hasDirectMediaParent) {
-      final rawBlobRows = await txn.query(
-        kDirectMediaBlobCustodyTable,
-        where: 'message_id = ? AND direction = ?',
-        whereArgs: <Object?>[parentMessageId, 'outgoing'],
-        orderBy: 'attachment_id ASC, recipient_peer_id ASC',
-      );
-      if (rawBlobRows.isNotEmpty) {
-        List<DirectMediaBlobCustodyRow> blobRows;
-        try {
-          blobRows = rawBlobRows
-              .map(DirectMediaBlobCustodyRow.fromMap)
-              .toList(growable: false);
-        } on FormatException {
-          return const DbDirectEventFanoutStageResult.refused();
-        }
-        final unboundActive = blobRows
-            .where(
-              (row) =>
-                  row.inboxCustodyIncarnationId == null &&
-                  (row.state == DirectMediaBlobCustodyState.outgoingPrepared ||
-                      row.state == DirectMediaBlobCustodyState.outgoingStored),
-            )
-            .toList(growable: false);
-        final terminalizedAt = createdAt;
-        for (final row in unboundActive) {
-          final cleanup = row.copyWith(
-            state: DirectMediaBlobCustodyState.outgoingCleanupPending,
-            updatedAt: terminalizedAt,
-          );
-          final changed =
-              await dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
-                txn,
-                expected: row,
-                next: cleanup,
-              );
-          if (!changed) {
-            throw StateError(
-              'media deletion fanout lost its unbound v114 terminalization',
+    if (isDeletion && unboundActiveBlobRows.isNotEmpty) {
+      final terminalizedAt = createdAt;
+      for (final row in unboundActiveBlobRows) {
+        final cleanup = row.copyWith(
+          state: DirectMediaBlobCustodyState.outgoingCleanupPending,
+          updatedAt: terminalizedAt,
+        );
+        final changed =
+            await dbTransitionDirectMediaBlobCustodyIfExactWithinTransaction(
+              txn,
+              expected: row,
+              next: cleanup,
             );
-          }
+        if (!changed) {
+          throw StateError(
+            'media deletion fanout lost its unbound v114 terminalization',
+          );
         }
       }
     }

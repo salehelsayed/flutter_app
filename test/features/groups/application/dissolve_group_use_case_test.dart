@@ -156,6 +156,10 @@ void main() {
     bridge = FakeBridge();
     groupRepo = _DissolveCleanupTrackingGroupRepository();
     msgRepo = InMemoryGroupMessageRepository();
+    setReconcileCompletedProtectedGroupAuthority(groupRepo, (_) async => true);
+    addTearDown(
+      () => setReconcileCompletedProtectedGroupAuthority(groupRepo, null),
+    );
 
     await groupRepo.saveGroup(baseGroup);
     await groupRepo.saveKey(

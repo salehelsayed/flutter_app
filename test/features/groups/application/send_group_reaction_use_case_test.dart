@@ -1,15 +1,24 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/remove_group_reaction_use_case.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_authoring_resolver.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/send_group_reaction_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/fake_group_reaction_replay_outbox_repository.dart';
@@ -74,6 +83,192 @@ Future<T> _captureFlowEvents<T>(
   }
 }
 
+class _StrictReactionOutbox extends FakeGroupReactionReplayOutboxRepository
+    implements
+        GroupReactionReplayPayloadCasRepository,
+        GroupReactionStrictContentCompletionRepository,
+        GroupReactionStrictLocalTerminalRepository,
+        GroupReactionStrictPreparedRepository {
+  final List<Map<String, Object?>> completedRows = <Map<String, Object?>>[];
+
+  bool _same(
+    GroupReactionReplayOutboxEntry current,
+    GroupReactionReplayOutboxEntry expected,
+  ) =>
+      current.reactionId == expected.reactionId &&
+      current.groupId == expected.groupId &&
+      current.messageId == expected.messageId &&
+      current.senderPeerId == expected.senderPeerId &&
+      current.emoji == expected.emoji &&
+      current.action == expected.action &&
+      current.inboxRetryPayload == expected.inboxRetryPayload &&
+      current.deliveryStatus == expected.deliveryStatus &&
+      current.createdAt == expected.createdAt &&
+      current.updatedAt == expected.updatedAt;
+
+  @override
+  Future<bool> replaceInboxRetryPayloadIfExact(
+    GroupReactionReplayOutboxEntry expected,
+    String replacement,
+  ) async {
+    final current = await getEntry(expected.reactionId);
+    if (current == null || !_same(current, expected)) return false;
+    return saveEntry(
+      current.copyWith(
+        inboxRetryPayload: replacement,
+        updatedAt: current.updatedAt,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> completeStrictContentIfExact(
+    GroupReactionReplayOutboxEntry expected, {
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String transitionId,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final current = await getEntry(expected.reactionId);
+    if (current == null ||
+        !_same(current, expected) ||
+        current.action != action) {
+      return false;
+    }
+    completedRows.add(
+      Map<String, Object?>.unmodifiable(<String, Object?>{
+        ...reactionRow,
+        'transition_id': transitionId,
+        'source_peer_id': sourcePeerId,
+        'source_event_id': sourceEventId,
+        'source_timestamp': sourceTimestamp,
+        'event_payload': eventPayload,
+      }),
+    );
+    return saveEntry(
+      current.copyWith(
+        deliveryStatus: GroupReactionReplayOutboxStatus.stored,
+        lastError: null,
+        updatedAt: current.updatedAt,
+      ),
+    );
+  }
+
+  @override
+  Future<bool> stageAndCompleteStrictLocalContent(
+    GroupReactionReplayOutboxEntry entry, {
+    required Map<String, Object?> reactionRow,
+    required String action,
+    required String transitionId,
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    if (await getEntry(entry.reactionId) != null) return false;
+    completedRows.add(
+      Map<String, Object?>.unmodifiable(<String, Object?>{
+        ...reactionRow,
+        'transition_id': transitionId,
+        'source_peer_id': sourcePeerId,
+        'source_event_id': sourceEventId,
+        'source_timestamp': sourceTimestamp,
+        'event_payload': eventPayload,
+      }),
+    );
+    return saveEntry(entry);
+  }
+
+  @override
+  Future<bool> stageStrictContentPrepared(
+    GroupReactionReplayOutboxEntry entry, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  }) async {
+    if (await getEntry(entry.reactionId) != null) return false;
+    completedRows.add(<String, Object?>{
+      'source_peer_id': sourcePeerId,
+      'source_event_id': sourceEventId,
+      'source_timestamp': sourceTimestamp,
+      'event_payload': preparedEventPayload,
+    });
+    return saveEntry(entry);
+  }
+}
+
+class _PersistAwareStrictReactionStore implements AckOrExpiryInboxStore {
+  _PersistAwareStrictReactionStore(this.repository);
+
+  final _StrictReactionOutbox repository;
+  final List<String> recipients = <String>[];
+  bool everyStoreObservedDurableRow = true;
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    expect(custodyKind, AckCustodyKind.groupContentV1);
+    everyStoreObservedDurableRow =
+        everyStoreObservedDurableRow && repository.entries.isNotEmpty;
+    recipients.add(toPeerId);
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
+
+class _ThrowingStrictReactionStore implements AckOrExpiryInboxStore {
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    throw StateError('injected strict custody outage');
+  }
+}
+
+class _TerminalizingStrictReactionStore implements AckOrExpiryInboxStore {
+  _TerminalizingStrictReactionStore(this.repository);
+
+  final _StrictReactionOutbox repository;
+  bool terminalized = false;
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    final current = repository.entries.single;
+    await repository.saveEntry(
+      current.copyWith(
+        inboxRetryPayload: '',
+        deliveryStatus: GroupReactionReplayOutboxStatus.stored,
+        lastError: 'protected_content_sender_authority_stale',
+      ),
+    );
+    terminalized = true;
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
+
 void main() {
   late FakeBridge bridge;
   late InMemoryGroupRepository groupRepo;
@@ -135,11 +330,736 @@ void main() {
     bridge.responses['group:publishReaction'] = {'ok': true};
   });
 
+  tearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+
+  test(
+    'TC-364-02a strict ADD REMOVE use stable state and deterministic gr1 custody',
+    () async {
+      final strictOutbox = _StrictReactionOutbox();
+      final strictStore = _PersistAwareStrictReactionStore(strictOutbox);
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'account-pk',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-key-alias',
+              transportPeerId: 'transport-key-alias',
+              deviceSigningPublicKey: 'linked-pk',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-current',
+              transportPeerId: 'transport-current',
+              deviceSigningPublicKey: 'linked-pk',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-sibling',
+              transportPeerId: 'transport-sibling',
+              deviceSigningPublicKey: 'sibling-pk',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-revoked',
+              transportPeerId: 'transport-revoked',
+              deviceSigningPublicKey: 'revoked-pk',
+              status: GroupMemberDeviceStatus.revoked,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          username: 'Bob',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-remote',
+              transportPeerId: 'transport-remote',
+              deviceSigningPublicKey: 'remote-pk',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-3',
+          username: 'Mallory',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-remote-collision',
+              transportPeerId: 'transport-remote',
+              deviceSigningPublicKey: 'remote-collision-pk',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      final credential = LinkedTransportCredential(
+        state: LinkedTransportCredentialState.active,
+        accountPeerId: 'peer-1',
+        accountPublicKey: 'account-pk',
+        deviceId: 'device-current',
+        transportPeerId: 'transport-current',
+        transportPublicKey: 'linked-pk',
+        transportPrivateKey: 'linked-sk',
+        createdAt: '2026-08-13T10:00:00.000Z',
+        activatedAt: '2026-08-13T10:00:01.000Z',
+      );
+      final context = GroupContentAuthoringContext(
+        directLinkedDeviceSelector: const DirectLinkedDeviceSelector.enabled(),
+        multiDeviceSyncEnabled: true,
+        authorityVersion: GroupContentAuthorityVersion(
+          eventAt: DateTime.utc(2026, 8, 13, 11),
+          eventId: 'authority.tc364.02a',
+          keyEpoch: 0,
+        ),
+        inboxStore: strictStore,
+        linkedTransportCredential: credential,
+        requireLinkedTransportCredential: true,
+      );
+      final authoredAt = DateTime.utc(2026, 8, 13, 12, 0, 0, 0, 1);
+
+      final add = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: strictOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        groupContentAuthoring: context,
+        authoredAt: authoredAt,
+      );
+      expect(add.$1, SendGroupReactionResult.success);
+      expect(add.$2, isNotNull);
+      final addEntry = strictOutbox.entries.single;
+      final addOrder = GroupReactionTransitionOrder.tryParse(
+        addEntry.reactionId,
+      );
+      expect(addOrder, isNotNull);
+      final addRetry = GroupContentRetryPayload.decode(
+        addEntry.inboxRetryPayload,
+      );
+      expect(addRetry.fullRecipientPeerIds, <String>[
+        'transport-key-alias',
+        'transport-sibling',
+      ]);
+      final addEnvelope = _replayEnvelopeFromRetryPayload(
+        addEntry.inboxRetryPayload,
+      );
+      expect(addEnvelope['senderDeviceId'], 'device-current');
+      expect(addEnvelope['senderTransportPeerId'], 'transport-current');
+      expect(addEnvelope['senderPublicKey'], 'linked-pk');
+      expect(addEnvelope['messageId'], addEntry.reactionId);
+      expect(addEnvelope['contentEventId'], addEntry.reactionId);
+      final addPlaintext =
+          jsonDecode(addEnvelope['ciphertext'] as String)
+              as Map<String, dynamic>;
+
+      strictStore.recipients.clear();
+      final remove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: strictOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        groupContentAuthoring: context,
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+        authoredAt: authoredAt,
+      );
+      expect(remove, RemoveGroupReactionResult.success);
+      final removeEntry = strictOutbox.entries.last;
+      final removeOrder = GroupReactionTransitionOrder.tryParse(
+        removeEntry.reactionId,
+      );
+      expect(removeOrder, isNotNull);
+      expect(removeEntry.reactionId, isNot(addEntry.reactionId));
+      final addVsRemove = compareGroupReactionTransitionIds(
+        addEntry.reactionId,
+        removeEntry.reactionId,
+      );
+      expect(
+        addVsRemove,
+        isNot(0),
+        reason:
+            'equal-time strict transitions require the deterministic ID tie-break',
+      );
+      expect(
+        addVsRemove,
+        -compareGroupReactionTransitionIds(
+          removeEntry.reactionId,
+          addEntry.reactionId,
+        ),
+      );
+      final expectedWinner = addVsRemove > 0
+          ? addEntry.reactionId
+          : removeEntry.reactionId;
+      String converge(Iterable<String> arrivalOrder) {
+        var incumbent = arrivalOrder.first;
+        for (final candidate in arrivalOrder.skip(1)) {
+          if (compareGroupReactionTransitionIds(candidate, incumbent) > 0) {
+            incumbent = candidate;
+          }
+        }
+        return incumbent;
+      }
+
+      final forwardProjection = converge(<String>[
+        addEntry.reactionId,
+        removeEntry.reactionId,
+      ]);
+      final reverseProjection = converge(<String>[
+        removeEntry.reactionId,
+        addEntry.reactionId,
+      ]);
+      expect(forwardProjection, expectedWinner);
+      expect(reverseProjection, expectedWinner);
+      expect(
+        converge(<String>[
+          forwardProjection,
+          addEntry.reactionId,
+          removeEntry.reactionId,
+        ]),
+        expectedWinner,
+        reason: 'a restarted reducer must retain the same equal-time winner',
+      );
+      final removeEnvelope = _replayEnvelopeFromRetryPayload(
+        removeEntry.inboxRetryPayload,
+      );
+      final removePlaintext =
+          jsonDecode(removeEnvelope['ciphertext'] as String)
+              as Map<String, dynamic>;
+      expect(removePlaintext['id'], addPlaintext['id']);
+      expect(removePlaintext['eventId'], removeEntry.reactionId);
+      expect(strictStore.recipients, <String>[
+        'transport-key-alias',
+        'transport-sibling',
+      ]);
+      expect(removeEnvelope['senderDeviceId'], 'device-current');
+      expect(removeEnvelope['senderTransportPeerId'], 'transport-current');
+      expect(removeEnvelope['senderPublicKey'], 'linked-pk');
+      expect(strictStore.everyStoreObservedDurableRow, isTrue);
+      expect(
+        strictOutbox.completedRows.where(
+          (row) =>
+              row['source_event_id'] ==
+                  localProtectedGroupReactionSourceEventId(
+                    addEntry.reactionId,
+                  ) ||
+              row['source_event_id'] ==
+                  localProtectedGroupReactionSourceEventId(
+                    removeEntry.reactionId,
+                  ),
+        ),
+        hasLength(2),
+      );
+      expect(
+        bridge.commandLog.where(
+          (command) =>
+              command == 'group:publishReaction' ||
+              command == 'group:publish' ||
+              command == 'group:sendReliable',
+        ),
+        isEmpty,
+      );
+
+      final unbound = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: strictOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: context.authorityVersion,
+          inboxStore: strictStore,
+          linkedTransportCredential: LinkedTransportCredential(
+            state: LinkedTransportCredentialState.active,
+            accountPeerId: 'other-account',
+            accountPublicKey: 'other-pk',
+            deviceId: 'device-current',
+            transportPeerId: 'transport-current',
+            transportPublicKey: 'linked-pk',
+            transportPrivateKey: 'linked-sk',
+            createdAt: credential.createdAt,
+            activatedAt: credential.activatedAt,
+          ),
+          requireLinkedTransportCredential: true,
+        ),
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+        authoredAt: authoredAt.add(const Duration(microseconds: 1)),
+      );
+      expect(unbound, RemoveGroupReactionResult.notMember);
+
+      // Only an exact pending PREPARED owner is a truthful queued result. A
+      // terminalized owner is a nonqueued refusal so the wired UI can revert.
+      final pendingOutbox = _StrictReactionOutbox();
+      final pendingRemove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: pendingOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: context.authorityVersion,
+          inboxStore: _ThrowingStrictReactionStore(),
+          linkedTransportCredential: credential,
+          requireLinkedTransportCredential: true,
+        ),
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+        authoredAt: authoredAt.add(const Duration(seconds: 2)),
+      );
+      expect(pendingRemove, RemoveGroupReactionResult.queuedForRetry);
+      expect(
+        pendingOutbox.entries.single.deliveryStatus,
+        GroupReactionReplayOutboxStatus.pending,
+      );
+
+      final terminalOutbox = _StrictReactionOutbox();
+      final terminalStore = _TerminalizingStrictReactionStore(terminalOutbox);
+      final terminalRemove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: terminalOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: context.authorityVersion,
+          inboxStore: terminalStore,
+          linkedTransportCredential: credential,
+          requireLinkedTransportCredential: true,
+        ),
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+        authoredAt: authoredAt.add(const Duration(seconds: 3)),
+      );
+      expect(terminalStore.terminalized, isTrue);
+      expect(terminalRemove, RemoveGroupReactionResult.notMember);
+      expect(
+        terminalOutbox.entries.single.deliveryStatus,
+        GroupReactionReplayOutboxStatus.stored,
+      );
+
+      // Authority drift before PREPARED creates no durable owner and is a
+      // nonqueued refusal.
+      var driftResolutionCalls = 0;
+      setGroupContentAuthoringResolver(groupRepo, ({
+        required groupId,
+        required senderPeerId,
+        required senderPublicKey,
+        senderDeviceId,
+        senderTransportPeerId,
+      }) async {
+        driftResolutionCalls++;
+        return driftResolutionCalls == 1
+            ? (
+                kind: GroupContentAuthoringResolutionKind.strict,
+                context: context,
+              )
+            : const (
+                kind: GroupContentAuthoringResolutionKind.refuse,
+                context: null,
+              );
+      });
+      final driftOutbox = _StrictReactionOutbox();
+      final preStageDrift = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: driftOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        groupContentAuthoring: context,
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+        authoredAt: authoredAt.add(const Duration(seconds: 4)),
+      );
+      expect(preStageDrift, RemoveGroupReactionResult.notMember);
+      expect(driftOutbox.entries, isEmpty);
+      setGroupContentAuthoringResolver(groupRepo, null);
+
+      // An installed active-linked decision is consulted even with an empty
+      // device projection. Both ADD and REMOVE refuse with zero legacy effects.
+      final emptyLinkedRepo = InMemoryGroupRepository();
+      await emptyLinkedRepo.saveGroup(testGroup);
+      await emptyLinkedRepo.saveMember(testMember);
+      await emptyLinkedRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 0,
+          encryptedKey: 'group-key-0',
+          createdAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      final emptyLinkedMessages = InMemoryGroupMessageRepository();
+      await emptyLinkedMessages.saveMessage(testMessage);
+      final emptyLinkedOutbox = _StrictReactionOutbox();
+      final emptyLinkedBridge = FakeBridge();
+      var emptyLinkedResolutions = 0;
+      setGroupContentAuthoringResolver(
+        emptyLinkedRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'pk-1'),
+          loadMember: emptyLinkedRepo.getMember,
+          loadInstallationAuthority: (_) async {
+            emptyLinkedResolutions++;
+            return LinkedInstallationAuthoritySnapshot(
+              disposition: LinkedInstallationDisposition.active,
+              credential: LinkedTransportCredential(
+                state: LinkedTransportCredentialState.active,
+                accountPeerId: 'peer-1',
+                accountPublicKey: 'pk-1',
+                deviceId: 'device-linked',
+                transportPeerId: 'transport-linked',
+                transportPublicKey: 'linked-pk',
+                transportPrivateKey: 'linked-sk',
+                createdAt: '2026-08-13T10:00:00.000Z',
+                activatedAt: '2026-08-13T10:00:01.000Z',
+              ),
+              failClosedReason: null,
+            );
+          },
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => 'transport-linked',
+          inboxStore: _ThrowingStrictReactionStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+      final emptyLinkedAdd = await sendGroupReaction(
+        bridge: emptyLinkedBridge,
+        groupRepo: emptyLinkedRepo,
+        msgRepo: emptyLinkedMessages,
+        reactionRepo: FakeReactionRepository(),
+        reactionReplayOutboxRepo: emptyLinkedOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '❌',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      final emptyLinkedRemove = await removeGroupReaction(
+        bridge: emptyLinkedBridge,
+        groupRepo: emptyLinkedRepo,
+        reactionRepo: FakeReactionRepository(),
+        reactionReplayOutboxRepo: emptyLinkedOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '❌',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        msgRepo: emptyLinkedMessages,
+        targetMessage: testMessage,
+      );
+      expect(emptyLinkedAdd.$1, SendGroupReactionResult.unauthorizedSenderKey);
+      expect(emptyLinkedRemove, RemoveGroupReactionResult.notMember);
+      expect(emptyLinkedResolutions, 2);
+      expect(emptyLinkedBridge.commandLog, isEmpty);
+      expect(emptyLinkedOutbox.entries, isEmpty);
+      setGroupContentAuthoringResolver(emptyLinkedRepo, null);
+
+      // Without installed role authority, the same empty roster is preserved
+      // as the ordinary-primary legacy lane.
+      final primaryRepo = InMemoryGroupRepository();
+      await primaryRepo.saveGroup(testGroup);
+      await primaryRepo.saveMember(testMember);
+      await primaryRepo.saveKey(
+        GroupKeyInfo(
+          groupId: 'group-1',
+          keyGeneration: 0,
+          encryptedKey: 'group-key-0',
+          createdAt: DateTime.utc(2026, 8, 13),
+        ),
+      );
+      final primaryMessages = InMemoryGroupMessageRepository();
+      await primaryMessages.saveMessage(testMessage);
+      final primaryBridge = FakeBridge();
+      primaryBridge.responses['group:publishReaction'] = {'ok': true};
+      final primaryOutbox = FakeGroupReactionReplayOutboxRepository();
+      final primaryReactions = FakeReactionRepository();
+      var primaryInstallationLoads = 0;
+      setGroupContentAuthoringResolver(
+        primaryRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'pk-1'),
+          loadMember: primaryRepo.getMember,
+          loadInstallationAuthority: (_) async {
+            primaryInstallationLoads++;
+            return const LinkedInstallationAuthoritySnapshot(
+              disposition: LinkedInstallationDisposition.primary,
+              credential: null,
+              failClosedReason: null,
+            );
+          },
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => null,
+          inboxStore: _ThrowingStrictReactionStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+      final primaryAdd = await sendGroupReaction(
+        bridge: primaryBridge,
+        groupRepo: primaryRepo,
+        msgRepo: primaryMessages,
+        reactionRepo: primaryReactions,
+        reactionReplayOutboxRepo: primaryOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '✅',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      final primaryRemove = await removeGroupReaction(
+        bridge: primaryBridge,
+        groupRepo: primaryRepo,
+        reactionRepo: primaryReactions,
+        reactionReplayOutboxRepo: primaryOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '✅',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        msgRepo: primaryMessages,
+        targetMessage: testMessage,
+      );
+      expect(primaryAdd.$1, SendGroupReactionResult.success);
+      expect(primaryRemove, RemoveGroupReactionResult.success);
+      expect(primaryInstallationLoads, greaterThanOrEqualTo(4));
+      expect(
+        primaryBridge.commandLog.where(
+          (command) => command == 'group:publishReaction',
+        ),
+        hasLength(2),
+      );
+      setGroupContentAuthoringResolver(primaryRepo, null);
+
+      final resolverEntered = Completer<void>();
+      final releaseResolver = Completer<void>();
+      setGroupContentAuthoringResolver(groupRepo, ({
+        required groupId,
+        required senderPeerId,
+        required senderPublicKey,
+        senderDeviceId,
+        senderTransportPeerId,
+      }) async {
+        if (!resolverEntered.isCompleted) resolverEntered.complete();
+        await releaseResolver.future;
+        return (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: context,
+        );
+      });
+      final autoResolved = sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: strictOutbox,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '✅',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        authoredAt: authoredAt.add(const Duration(seconds: 1)),
+      );
+      await resolverEntered.future;
+      var competingAuthorityEntered = false;
+      final competingAuthority = runGroupAuthorityPhase(
+        groupId: 'group-1',
+        action: () async {
+          competingAuthorityEntered = true;
+        },
+      );
+      await Future<void>.delayed(Duration.zero);
+      expect(
+        competingAuthorityEntered,
+        isFalse,
+        reason: 'resolution and strict commit share the keyed authority phase',
+      );
+      releaseResolver.complete();
+      expect((await autoResolved).$1, SendGroupReactionResult.success);
+      await competingAuthority;
+      expect(competingAuthorityEntered, isTrue);
+    },
+  );
+
+  test(
+    'resolver-absent initialized roster preserves legacy ADD REMOVE while installed refusal is all-zero',
+    () async {
+      await groupRepo.saveMember(
+        testMember.copyWith(
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-primary',
+              transportPeerId: 'transport-primary',
+              deviceSigningPublicKey: 'pk-1',
+            ),
+          ],
+        ),
+      );
+
+      final add = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'legacy-initialized-add',
+      );
+      final remove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '👍',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        transitionIdFactory: () => 'legacy-initialized-remove',
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+      );
+
+      expect(add.$1, SendGroupReactionResult.success);
+      expect(remove, RemoveGroupReactionResult.success);
+      expect(
+        bridge.commandLog.where(
+          (command) => command == 'group:publishReaction',
+        ),
+        hasLength(2),
+      );
+      expect(reactionReplayOutboxRepo.entries, hasLength(2));
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.refuse,
+          context: null,
+        ),
+      );
+      final commandCountBeforeRefusal = bridge.commandLog.length;
+      final outboxCountBeforeRefusal = reactionReplayOutboxRepo.entries.length;
+
+      final refusedAdd = await sendGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: msgRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '❌',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+      );
+      final refusedRemove = await removeGroupReaction(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        reactionRepo: reactionRepo,
+        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        groupId: 'group-1',
+        messageId: 'msg-1',
+        emoji: '❌',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        msgRepo: msgRepo,
+        targetMessage: testMessage,
+      );
+
+      expect(refusedAdd.$1, SendGroupReactionResult.unauthorizedSenderKey);
+      expect(refusedAdd.$2, isNull);
+      expect(refusedRemove, RemoveGroupReactionResult.notMember);
+      expect(bridge.commandLog, hasLength(commandCountBeforeRefusal));
+      expect(
+        reactionReplayOutboxRepo.entries,
+        hasLength(outboxCountBeforeRefusal),
+      );
+      expect(await reactionRepo.getReactionsForMessage('msg-1'), isEmpty);
+    },
+  );
+
   test('build failure stages a rescuable needs-build row', () async {
     // Plan 319 TC-319-02: a throw inside the offline-replay envelope build
     // (bridge encrypt failure) must still leave a durable, rescuable outbox
     // row — on HEAD the stage catch swallows the throw and returns rowless.
-    bridge.responses['group.encrypt'] = {'ok': false, 'error': 'NOT_INITIALIZED'};
+    bridge.responses['group.encrypt'] = {
+      'ok': false,
+      'error': 'NOT_INITIALIZED',
+    };
 
     await sendGroupReaction(
       bridge: bridge,
@@ -204,7 +1124,8 @@ void main() {
     expect(
       row,
       isNotNull,
-      reason: 'the needs-build row must be staged before the first throwing step',
+      reason:
+          'the needs-build row must be staged before the first throwing step',
     );
   });
 
@@ -424,7 +1345,7 @@ void main() {
   );
 
   test(
-    'PL-011 re-added member with current key publishes reaction and stores once',
+    'PL-011 re-added initialized member uses strict custody and stores once',
     () async {
       final now = DateTime.now().toUtc();
       const charliePeerId = 'peer-charlie';
@@ -483,18 +1404,31 @@ void main() {
         ),
       );
 
+      final strictOutbox = _StrictReactionOutbox();
+      final strictStore = _PersistAwareStrictReactionStore(strictOutbox);
       final (result, reaction) = await sendGroupReaction(
         bridge: bridge,
         groupRepo: groupRepo,
         msgRepo: msgRepo,
         reactionRepo: reactionRepo,
-        reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+        reactionReplayOutboxRepo: strictOutbox,
         groupId: 'group-1',
         messageId: 'pl011-target',
         emoji: '✅',
         senderPeerId: charliePeerId,
         senderPublicKey: 'pk-charlie-current',
         senderPrivateKey: 'sk-charlie-current',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.pl011-readd',
+            keyEpoch: 1,
+          ),
+          inboxStore: strictStore,
+        ),
       );
 
       expect(result, SendGroupReactionResult.success);
@@ -503,37 +1437,27 @@ void main() {
       expect(reaction.senderPeerId, charliePeerId);
       expect(reaction.emoji, '✅');
 
-      final publishCommands = bridge.sentMessages
-          .map((raw) => jsonDecode(raw) as Map<String, dynamic>)
-          .where((message) => message['cmd'] == 'group:publishReaction')
-          .toList(growable: false);
-      expect(publishCommands, hasLength(1));
-      final payload = publishCommands.single['payload'] as Map<String, dynamic>;
-      expect(payload['groupId'], 'group-1');
-      expect(payload['senderPeerId'], charliePeerId);
-      expect(payload['senderDeviceId'], 'device-charlie-current');
-      expect(payload['senderTransportPeerId'], 'transport-charlie-current');
-      expect(payload['senderDevicePublicKey'], 'pk-charlie-current');
-      expect(payload['senderKeyPackageId'], 'kp-charlie-current');
-      final reactionPayload =
-          jsonDecode(payload['reactionPayload'] as String)
-              as Map<String, dynamic>;
-      expect(reactionPayload['messageId'], 'pl011-target');
-      expect(reactionPayload['senderPeerId'], charliePeerId);
-      expect(reactionPayload['emoji'], '✅');
-      expect(reactionPayload['action'], 'add');
+      expect(strictStore.recipients, <String>['peer-1']);
+      expect(
+        strictOutbox.completedRows.where(
+          (row) =>
+              row['source_event_id'] ==
+              localProtectedGroupReactionSourceEventId(
+                strictOutbox.entries.single.reactionId,
+              ),
+        ),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog.where(
+          (command) => command == 'group:publishReaction',
+        ),
+        isEmpty,
+      );
+      expect(reactionRepo.saveReactionCallCount, 0);
 
-      final stored = await reactionRepo.getReactionsForMessage('pl011-target');
-      expect(stored, hasLength(1));
-      expect(stored.single.id, reaction.id);
-      expect(stored.single.senderPeerId, charliePeerId);
-      expect(stored.single.emoji, '✅');
-      expect(reactionRepo.saveReactionCallCount, 1);
-
-      await pumpEventQueue();
-      final entry = await reactionReplayOutboxRepo.getEntry(reaction.id);
-      expect(entry, isNotNull);
-      expect(entry!.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
+      final entry = strictOutbox.entries.single;
+      expect(entry.deliveryStatus, GroupReactionReplayOutboxStatus.stored);
       final envelope = _replayEnvelopeFromRetryPayload(entry.inboxRetryPayload);
       expect(envelope['payloadType'], 'group_reaction');
       expect(envelope['keyEpoch'], 1);
@@ -1246,12 +2170,14 @@ void main() {
       ),
     );
 
-    await sendGroupReaction(
+    final strictOutbox = _StrictReactionOutbox();
+    final strictStore = _PersistAwareStrictReactionStore(strictOutbox);
+    final result = await sendGroupReaction(
       bridge: bridge,
       groupRepo: groupRepo,
       msgRepo: msgRepo,
       reactionRepo: reactionRepo,
-      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      reactionReplayOutboxRepo: strictOutbox,
       groupId: 'group-1',
       messageId: 'msg-1',
       emoji: '👍',
@@ -1259,11 +2185,21 @@ void main() {
       senderPublicKey: 'pk-1',
       senderPrivateKey: 'sk-1',
       transitionIdFactory: () => 'transition-self-reaction',
+      groupContentAuthoring: GroupContentAuthoringContext(
+        directLinkedDeviceSelector: const DirectLinkedDeviceSelector.enabled(),
+        multiDeviceSyncEnabled: true,
+        authorityVersion: GroupContentAuthorityVersion(
+          eventAt: DateTime.utc(2026, 8, 13, 11),
+          eventId: 'authority.self-reaction',
+          keyEpoch: 0,
+        ),
+        inboxStore: strictStore,
+      ),
     );
-    await pumpEventQueue();
+    expect(result.$1, SendGroupReactionResult.success);
 
     final envelope = _replayEnvelopeFromRetryPayload(
-      reactionReplayOutboxRepo.entries.single.inboxRetryPayload,
+      strictOutbox.entries.single.inboxRetryPayload,
     );
     expect(envelope['recipientPeerIds'], <String>[
       'peer-bystander',

@@ -225,7 +225,7 @@ class GroupInfoScreen extends StatelessWidget {
                 key: const ValueKey('group-link-device-button'),
                 onPressed: onLinkDeviceToGroup,
                 icon: const Icon(Icons.phonelink_ring_outlined, size: 18),
-                label: const Text('Link this group to another device'),
+                label: Text(l10n.group_info_link_device_action),
                 style: TextButton.styleFrom(foregroundColor: actionBlue),
               ),
             ),

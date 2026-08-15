@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"os"
 	"sort"
 	"strings"
@@ -42,6 +43,12 @@ func normalizeCapabilities(capabilities []string) []string {
 		normalized = append(normalized, capability)
 	}
 	return normalized
+}
+
+func canonicalPushCapabilities(capabilities []string) []string {
+	canonical := normalizeCapabilities(capabilities)
+	sort.Strings(canonical)
+	return canonical
 }
 
 func (entry *tokenEntry) hasCapability(capability string) bool {
@@ -152,8 +159,8 @@ func extractGroupReactionPushMetadata(
 	recognized bool,
 	valid bool,
 ) {
-	var envelope map[string]interface{}
-	if err := json.Unmarshal([]byte(message), &envelope); err != nil {
+	envelope, ok := decodeJSONObjectPreservingNumbers(message)
+	if !ok {
 		return groupReactionPushMetadata{}, false, false
 	}
 	payloadType := trimmedString(envelope["payloadType"])
@@ -307,14 +314,44 @@ func hasExactGroupReactionExtensionKeys(extension map[string]interface{}) bool {
 	return true
 }
 
+// decodeJSONObjectPreservingNumbers keeps JSON number tokens distinguishable.
+// Dart's strict Plan-364 decoders require integer runtime values, so Go must not
+// let encoding/json collapse decimal or exponent spellings such as 1.0 or 1e0
+// into the same float64 value as the integer token 1.
+func decodeJSONObjectPreservingNumbers(raw string) (map[string]interface{}, bool) {
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.UseNumber()
+	var value map[string]interface{}
+	if err := decoder.Decode(&value); err != nil {
+		return nil, false
+	}
+	var trailing interface{}
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return nil, false
+	}
+	return value, true
+}
+
 func exactJSONInteger(raw interface{}, expected int64) bool {
-	value, ok := raw.(float64)
-	return ok && value == float64(expected)
+	value, ok := exactJSONIntegerLexemeValue(raw)
+	return ok && value == expected
 }
 
 func exactJSONIntegerValue(raw interface{}) bool {
-	value, ok := raw.(float64)
-	return ok && value >= 0 && value == float64(int64(value))
+	_, ok := exactJSONIntegerLexemeValue(raw)
+	return ok
+}
+
+func exactJSONIntegerLexemeValue(raw interface{}) (int64, bool) {
+	value, ok := raw.(json.Number)
+	if !ok {
+		return 0, false
+	}
+	parsed, err := value.Int64()
+	if err != nil || parsed < 0 {
+		return 0, false
+	}
+	return parsed, true
 }
 
 func canonicalGroupReactionPeerIDs(peerIDs []string) []string {
@@ -412,7 +449,7 @@ func buildGroupReactionPushMessage(
 	message string,
 	metadata groupReactionPushMetadata,
 ) *messaging.Message {
-	if token == "" || groupID == "" || metadata.Action != "add" || metadata.TransitionID == "" {
+	if groupID == "" || metadata.Action != "add" || metadata.TransitionID == "" {
 		return nil
 	}
 	data := map[string]string{

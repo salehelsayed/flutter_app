@@ -6,11 +6,23 @@ void main() {
   test(
     'private iOS provider adapter passes its no-network black-box suite',
     () {
-      final result = Process.runSync('python3', const <String>[
-        '-m',
-        'unittest',
-        'scripts.test.ios_notification_provider_adapter_test',
-      ]);
+      final pythonCacheDirectory = Directory.systemTemp.createTempSync(
+        'ios-notification-provider-python-cache-',
+      );
+      addTearDown(() {
+        if (pythonCacheDirectory.existsSync()) {
+          pythonCacheDirectory.deleteSync(recursive: true);
+        }
+      });
+      final result = Process.runSync(
+        'python3',
+        const <String>[
+          '-m',
+          'unittest',
+          'scripts.test.ios_notification_provider_adapter_test',
+        ],
+        environment: {'PYTHONPYCACHEPREFIX': pythonCacheDirectory.path},
+      );
       expect(result.exitCode, 0, reason: '${result.stdout}\n${result.stderr}');
     },
   );

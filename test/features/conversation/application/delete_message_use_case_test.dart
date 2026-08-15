@@ -11,6 +11,7 @@ import 'package:flutter_app/core/database/helpers/direct_inbox_custody_outbox_db
 import 'package:flutter_app/features/conversation/domain/models/direct_reaction_inbox_custody_outbox_entry.dart';
 import 'package:flutter_app/core/database/helpers/media_attachments_db_helpers.dart';
 import 'package:flutter_app/core/media/direct_media_blob_custody.dart';
+import 'package:flutter_app/core/media/media_attachment_lifecycle_lock.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
@@ -150,6 +151,138 @@ class _ControlledDeleteP2PService extends FakeP2PService {
     return sendGate?.future ?? sendResult;
   }
 }
+
+class _LifecycleOrderedDeleteP2PService extends FakeP2PService {
+  _LifecycleOrderedDeleteP2PService({
+    required super.peerId,
+    required super.network,
+    required this.events,
+    required this.competingLeaseAcquired,
+  });
+
+  final List<String> events;
+  final Future<void> competingLeaseAcquired;
+  final Completer<void> firstSendEntered = Completer<void>();
+
+  @override
+  Future<bool> sendMessage(String targetPeerId, String message) async {
+    // If the deletion starts transport before releasing its stage+cleanup
+    // lease, the independently queued exclusive waiter can never complete and
+    // this proof times out.
+    await competingLeaseAcquired;
+    events.add('network:$targetPeerId');
+    if (!firstSendEntered.isCompleted) firstSendEntered.complete();
+    return true;
+  }
+}
+
+DirectEventFanoutAuthoring _lifecycleDeletionFanoutAuthoring({
+  required List<String> events,
+  required void Function({
+    required OutgoingOrdinaryAttemptKind kind,
+    required String eventId,
+    required String parentMessageId,
+    required List<DirectEventFanoutTargetCandidate> candidates,
+  })
+  onStageMutation,
+}) => DirectEventFanoutAuthoring(
+  selector: const DirectLinkedEventFanoutSelector.enabled(),
+  linkedOrigin: false,
+  senderTransportPeerId: 'peer-alice',
+  readSnapshot: (contact) async {
+    events.add('resolve');
+    return DirectContactFanoutSnapshot(
+      contactAccountPeerId: contact,
+      contactAccountSigningPublicKey: 'signing-key',
+      rosterInitialized: true,
+      targets: const <DirectContactFanoutTargetFact>[
+        DirectContactFanoutTargetFact(
+          peerId: 'peer-device-a',
+          mlKemPublicKey: 'mlkem-a',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff',
+          deviceId: 'device-a',
+        ),
+        DirectContactFanoutTargetFact(
+          peerId: 'peer-device-b',
+          mlKemPublicKey: 'mlkem-b',
+          isLegacyAccountTarget: false,
+          fingerprint:
+              'eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee',
+          deviceId: 'device-b',
+        ),
+      ],
+    );
+  },
+  encrypt: ({required recipientMlKemPublicKey, required plaintext}) async {
+    events.add('encrypt:$recipientMlKemPublicKey');
+    return (
+      kem: 'kem-$recipientMlKemPublicKey',
+      ciphertext: 'cipher-$recipientMlKemPublicKey',
+      nonce: 'nonce-$recipientMlKemPublicKey',
+    );
+  },
+  loadTextSiblings: (_) async => const [],
+  stageTextFanout:
+      ({
+        required stagedRow,
+        required messageId,
+        required contactAccountPeerId,
+        required senderTransportPeerId,
+        required expectedSnapshot,
+        required candidates,
+      }) async => throw StateError('deletion never stages fresh text'),
+  loadEventSiblings: (_) async => const [],
+  stageMutationFanout:
+      ({
+        required expectedRow,
+        required stagedRow,
+        required kind,
+        required eventId,
+        required parentMessageId,
+        required contactAccountPeerId,
+        required senderTransportPeerId,
+        required expectedSnapshot,
+        required candidates,
+      }) async {
+        events.add('stage:${kind.name}');
+        onStageMutation(
+          kind: kind,
+          eventId: eventId,
+          parentMessageId: parentMessageId,
+          candidates: candidates,
+        );
+        return DbDirectEventFanoutStageResult(
+          outcome: DirectEventFanoutStageOutcome.applied,
+          rows: <Map<String, Object?>>[
+            for (final candidate in candidates)
+              <String, Object?>{
+                'recipient_peer_id': candidate.recipientPeerId,
+                'event_id': eventId,
+                'wire_envelope': candidate.wireEnvelope,
+                'retry_count': 0,
+                'last_attempt_at': null,
+                'last_error_code': null,
+                'contact_account_peer_id': contactAccountPeerId,
+                'parent_message_id': parentMessageId,
+                'created_at': '2026-08-14T12:00:00.000Z',
+                'updated_at': '2026-08-14T12:00:00.000Z',
+              },
+          ],
+        );
+      },
+  stageReactionFanout:
+      ({
+        required reactionRow,
+        required action,
+        required parentMessageId,
+        required contactAccountPeerId,
+        required senderTransportPeerId,
+        required expectedSnapshot,
+        required candidates,
+      }) async => throw StateError('deletion never stages reactions'),
+);
 
 class _R3DeleteDeadlineP2PService extends FakeP2PService {
   _R3DeleteDeadlineP2PService({
@@ -2344,6 +2477,119 @@ void main() {
       expect(envelope['type'], 'message_deletion');
       expect(envelope['eventId'], custody.single['event_id']);
     });
+
+    test(
+      'TC-366-02b media DFE stages all targets inside the lifecycle lease before cleanup',
+      () async {
+        final lifecycleLock = MediaAttachmentLifecycleLock();
+        final fixture = await MediaRepositoryRealDbFixture.create(
+          lifecycleLock: lifecycleLock,
+        );
+        addTearDown(fixture.dispose);
+        final original = await seedStrictMediaParent(
+          fixture,
+          'tc366-02b-media-dfe',
+        );
+        final events = <String>[];
+        final competingLeaseAcquired = Completer<void>();
+        final releaseCompetingLease = Completer<void>();
+        Future<void>? competingLease;
+        List<DirectEventFanoutTargetCandidate>? stagedTargets;
+
+        final manager = _ObservingDeleteMediaFileManager(
+          onFirstDelete: () async {
+            events.add('cleanup');
+            expect(stagedTargets, hasLength(2));
+            expect(
+              competingLeaseAcquired.isCompleted,
+              isFalse,
+              reason:
+                  'cleanup remains inside the incumbent exclusive lease that '
+                  'already staged every physical target',
+            );
+          },
+        );
+        final network = FakeP2PNetwork();
+        final service = _LifecycleOrderedDeleteP2PService(
+          peerId: sender,
+          network: network,
+          events: events,
+          competingLeaseAcquired: competingLeaseAcquired.future,
+        );
+        addTearDown(service.dispose);
+        addTearDown(() {
+          if (!releaseCompetingLease.isCompleted) {
+            releaseCompetingLease.complete();
+          }
+        });
+
+        final authoring = _lifecycleDeletionFanoutAuthoring(
+          events: events,
+          onStageMutation:
+              ({
+                required kind,
+                required eventId,
+                required parentMessageId,
+                required candidates,
+              }) {
+                expect(kind, OutgoingOrdinaryAttemptKind.tombstoneInitial);
+                expect(parentMessageId, original.id);
+                stagedTargets = List<DirectEventFanoutTargetCandidate>.of(
+                  candidates,
+                );
+                // Run outside the inherited lock Zone. It can enter only
+                // after the use case releases its stage+cleanup lease.
+                competingLease = Zone.root.run(
+                  () => lifecycleLock.synchronizedAll(() async {
+                    events.add('competing-lease');
+                    if (!competingLeaseAcquired.isCompleted) {
+                      competingLeaseAcquired.complete();
+                    }
+                    await releaseCompetingLease.future;
+                  }),
+                );
+              },
+        );
+
+        final (result, _) = await deleteMessageForEveryone(
+          p2pService: service,
+          messageRepo: fixture.messageRepo,
+          originalMessage: original,
+          reactionRepo: reactionRepo,
+          mediaAttachmentRepo: fixture.repo,
+          mediaFileManager: manager,
+          directEventFanout: authoring,
+          // A plural route owns per-target encryption and must not require the
+          // legacy single-recipient bridge/key pair.
+        );
+
+        expect(result, SendChatMessageResult.success);
+        expect(stagedTargets, hasLength(2));
+        await service.firstSendEntered.future.timeout(
+          const Duration(seconds: 5),
+        );
+        expect(
+          events.indexOf('stage:tombstoneInitial'),
+          greaterThanOrEqualTo(0),
+        );
+        expect(
+          events.indexOf('cleanup'),
+          greaterThan(events.indexOf('stage:tombstoneInitial')),
+        );
+        expect(
+          events.indexOf('competing-lease'),
+          greaterThan(events.indexOf('cleanup')),
+        );
+        expect(
+          events.indexWhere((event) => event.startsWith('network:')),
+          greaterThan(events.indexOf('competing-lease')),
+          reason: 'all network begins after the incumbent lease is released',
+        );
+
+        releaseCompetingLease.complete();
+        await competingLease;
+      },
+    );
   });
 
   group('Plan 354 private local hide and strict handoff', () {

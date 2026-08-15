@@ -101,8 +101,14 @@ void main() {
           dbTransitionGroupSendingToFailed(executor, olderThan: olderThan),
       // 210b: wire the real repush-candidate query so the queued_offline
       // selection predicate is pinned against the actual SQL.
-      dbLoadGroupMessagesWithFailedInboxStore: ({int limit = 50}) =>
-          dbLoadGroupMessagesWithFailedInboxStore(executor, limit: limit),
+      dbLoadGroupMessagesWithFailedInboxStore:
+          ({int limit = 50, bool strictContentOnly = false, int offset = 0}) =>
+              dbLoadGroupMessagesWithFailedInboxStore(
+                executor,
+                limit: limit,
+                strictContentOnly: strictContentOnly,
+                offset: offset,
+              ),
       dbLoadGroupInboxCursorFn: (groupId) async {
         final row = await dbLoadGroupInboxCursor(executor, groupId);
         return row?['cursor'] as String?;

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
@@ -13,6 +14,47 @@ import '../bridge/fake_bridge.dart';
 import '../services/fake_p2p_service.dart';
 
 void main() {
+  test(
+    'TC-365-04a linked resume routes strict group downloads before refresh without a generic owner',
+    () {
+      final production = File(
+        'lib/app/bootstrap/production_application_bootstrap.dart',
+      ).readAsStringSync();
+      final restrictedOwner = File(
+        'lib/app/bootstrap/direct_blob_free_linked_services.dart',
+      ).readAsStringSync();
+      final callbackStart = production.indexOf(
+        'Future<int> drainLinkedGroupIncomingMediaCustody()',
+      );
+      final callbackEnd = production.indexOf('// 360:', callbackStart);
+      expect(callbackStart, greaterThanOrEqualTo(0));
+      expect(callbackEnd, greaterThan(callbackStart));
+      final linkedCallback = production.substring(callbackStart, callbackEnd);
+
+      expect(
+        linkedCallback,
+        contains(
+          'action: groupMediaDownloadCoordinator.callStrictGroupMediaCustodyOnly',
+        ),
+      );
+      expect(
+        linkedCallback,
+        isNot(contains('action: groupMediaDownloadCoordinator.call,')),
+        reason: 'the linked callback must never start the generic group lane',
+      );
+      final incoming = restrictedOwner.indexOf(
+        'drainIncomingMedia: drainLinkedGroupIncomingMedia',
+      );
+      final notification = restrictedOwner.indexOf(
+        'drainLinkedGroupNotificationDisplayCustody?.call()',
+      );
+      final refresh = restrictedOwner.indexOf('refreshLinkedGroupList?.call()');
+      expect(incoming, greaterThanOrEqualTo(0));
+      expect(notification, greaterThan(incoming));
+      expect(refresh, greaterThan(notification));
+    },
+  );
+
   test(
     'P269 resume runs group media recovery after first group inbox drain',
     () async {

@@ -21,6 +21,10 @@ readonly RELAY_README="go-relay-server/README.md"
 readonly DASHBOARD="go-relay-server/grafana-relay-dashboard.json"
 readonly METRICS_SOURCE="go-relay-server/metrics.go"
 readonly GATE_SCRIPT="scripts/run_test_gates.sh"
+readonly GROUP_MEDIA_MANIFEST_SOURCE="lib/features/groups/application/protected_group_media_manifest.dart"
+readonly GROUP_MEDIA_MANIFEST_TEST="test/features/conversation/application/upload_media_use_case_test.dart"
+readonly ACK_CUSTODY_SOURCE="go-relay-server/ack_custody.go"
+readonly ACK_CUSTODY_PROTOCOL_TEST="go-relay-server/ack_custody_protocol_test.go"
 
 for token in \
   DIRECT_MEDIA_BLOB_CUSTODY_ADMISSION_ENABLED \
@@ -82,13 +86,15 @@ for parent_gate in 1to1 all; do
     fail "media-custody Go gate must run exactly once under $parent_gate"
 done
 
-# Plan 347 has exactly two production owners of strict media network calls: the
+# Plans 347 and 365 have exactly two production owners per custody lane: the
 # prepared sender coordinator and the source-pinned receiver download/ACK
 # owner. Schema, transaction, lifecycle, and debug composition may understand
-# the typed commitment, but may not bypass either network owner.
+# the typed commitment, but may not bypass those four network owners.
 readonly STRICT_NETWORK_OWNERS=(
   lib/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart
   lib/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart
+  lib/features/groups/application/prepared_group_media_blob_custody_coordinator.dart
+  lib/features/groups/application/strict_group_media_blob_download_ack_owner.dart
 )
 
 # Literal-token scanning alone can miss a caller that forwards strict values
@@ -122,6 +128,7 @@ fi
 readonly STRICT_SCHEMA_OWNERS=(
   lib/core/bridge/p2p_bridge_client.dart
   lib/core/database/direct_media_blob_custody.dart
+  lib/core/database/helpers/direct_media_blob_custody_db_helpers.dart
   lib/core/database/helpers/media_attachments_db_helpers.dart
   # Plan 354 Barrier B validates the stored proof's relay identity inside the
   # same private envelope+v108+v111 transaction. It is a typed schema reader,
@@ -132,12 +139,21 @@ readonly STRICT_SCHEMA_OWNERS=(
   # CHECK tokens the v111 migration already owns; it is schema DDL, not a
   # network owner.
   lib/core/database/migrations/114_direct_linked_device_media_blob_fanout.dart
+  # Plan 365 generalizes the same table under an owner-lane-qualified v115
+  # migration; its group receive transaction is a schema consumer, not a
+  # network owner.
+  lib/core/database/helpers/protected_group_content_db_helpers.dart
+  lib/core/database/migrations/115_group_media_blob_custody.dart
   lib/debug/android_direct_media_blob_custody_e2e.dart
   lib/core/media/direct_media_blob_custody.dart
   lib/core/services/inbox_store_outcome.dart
   lib/features/conversation/application/handle_incoming_chat_message_use_case.dart
   lib/features/conversation/application/prepared_direct_media_blob_custody_coordinator.dart
   lib/features/conversation/application/strict_direct_media_blob_download_ack_owner.dart
+  lib/features/groups/application/prepared_group_media_blob_custody_coordinator.dart
+  lib/features/groups/application/protected_group_content_receive.dart
+  lib/features/groups/application/protected_group_media_manifest.dart
+  lib/features/groups/application/strict_group_media_blob_download_ack_owner.dart
 )
 schema_token_owners="$(
   rg -l -g '*.dart' \
@@ -154,16 +170,15 @@ if [[ "$schema_token_owners" != "$expected_schema_token_owners" ]]; then
   fail 'strict relay-media custody schema owner allowlist changed'
 fi
 
-# Plan 348 permits the external-share coordinator to adopt the prepared sender
-# owner, but feature producers still may not inline strict wire/schema tokens.
-# Keeping this literal-token guard over share/groups/posts allows the reviewed
-# coordinator call while continuing to reject a raw strict helper/schema fork.
+# Plans 348 and 365 permit external share to adopt the prepared sender owners,
+# but share/post producers still may not inline strict wire/schema tokens. The
+# global exact schema-owner allowlist above now pins the reviewed group owners.
 if rg -n -g '*.dart' \
   'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId|blobCustody' \
-  lib/features/share lib/features/groups lib/features/posts >/dev/null; then
+  lib/features/share lib/features/posts >/dev/null; then
   rg -n -g '*.dart' \
     'direct_media_blob_v1|ack_or_expiry_v1|custodyRelayPeerId|blobCustody' \
-    lib/features/share lib/features/groups lib/features/posts >&2 || true
+    lib/features/share lib/features/posts >&2 || true
   fail 'feature producer inlined strict blob custody wire/schema ownership'
 fi
 
@@ -194,6 +209,26 @@ require_fixed 'custodyRelayPeerId' \
   go-mknoon/bridge/bridge.go lib/core/bridge/p2p_bridge_client.dart
 require_fixed 'MEDIA_CUSTODY_COMMIT_INDETERMINATE' go-mknoon/node/media.go
 
+# TC-366-00a canonical group-media scheme parity: Dart owns the manifest
+# literal, the relay accepts that exact value, and the former relay-only alias
+# survives only as an explicit negative fixture.
+require_fixed \
+  "const String groupMediaBlobEncryptionScheme = 'blob_aes_256_gcm_v1';" \
+  "$GROUP_MEDIA_MANIFEST_SOURCE"
+require_fixed \
+  "'TC-366-00a Dart group manifest scheme matches the relay validator'" \
+  "$GROUP_MEDIA_MANIFEST_TEST"
+require_fixed 'encryptionScheme != "blob_aes_256_gcm_v1"' \
+  "$ACK_CUSTODY_SOURCE"
+if rg -Fq 'encryptionScheme != "blob_aes_gcm_v1"' "$ACK_CUSTODY_SOURCE"; then
+  fail 'obsolete relay-only group-media scheme remains accepted'
+fi
+require_fixed 't.Run("Dart_AES-256-GCM_scheme"' \
+  "$ACK_CUSTODY_PROTOCOL_TEST"
+require_fixed 't.Run("obsolete_relay-only_AES-GCM_alias"' \
+  "$ACK_CUSTODY_PROTOCOL_TEST"
+require_fixed '"blob_aes_gcm_v1"' "$ACK_CUSTODY_PROTOCOL_TEST"
+
 jq empty "$DASHBOARD"
 
-printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347/348/350 adopter contract\n'
+printf 'PASS: relay media ACK-or-expiry custody rollout and bounded Plan 347/348/350/365/366 adopter contract\n'

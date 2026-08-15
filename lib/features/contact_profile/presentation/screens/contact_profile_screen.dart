@@ -281,7 +281,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
                             ),
                           ),
                         ],
-                        if (_buildLinkedDevicesCard(readable)
+                        if (_buildLinkedDevicesCard(readable, l10n)
                             case final card?) ...[
                           const SizedBox(height: 14),
                           _reveal(start: 0.54, end: 0.92, child: card),
@@ -514,7 +514,10 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
   ///
   /// Rendering nothing in that case is deliberate: a contact nobody has ever
   /// linked a device for should look exactly as it did before Plan 360.
-  Widget? _buildLinkedDevicesCard(BackgroundReadableColors readable) {
+  Widget? _buildLinkedDevicesCard(
+    BackgroundReadableColors readable,
+    AppLocalizations l10n,
+  ) {
     final roster = _roster;
     if (roster == null ||
         (roster.bindings.isEmpty && !roster.metadata.rosterInitialized)) {
@@ -531,7 +534,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
         children: [
           _CardLabel(
             icon: Icons.devices_rounded,
-            label: 'Linked devices',
+            label: l10n.contact_profile_linked_devices,
             accent: _accent,
           ),
           const SizedBox(height: 10),
@@ -554,7 +557,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
               action: roster.metadata.legacyTargetRevoked
                   ? null
                   : _LinkedDeviceAction(
-                      label: 'Revoke',
+                      label: l10n.contact_profile_linked_device_revoke,
                       enabled: !_decisionInFlight,
                       onPressed: () => _runDecision(
                         () => widget.directDeviceTrust.revokeLegacyTarget(
@@ -574,7 +577,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
               secondary: binding.transportPeerId,
               action: switch (binding.state) {
                 DirectContactDeviceBindingState.pending => _LinkedDeviceAction(
-                  label: 'Verify',
+                  label: l10n.contact_profile_linked_device_verify,
                   enabled: !_decisionInFlight,
                   onPressed: () => _runDecision(
                     () => widget.directDeviceTrust.verifyDevice(
@@ -595,7 +598,7 @@ class _ContactProfileScreenState extends State<ContactProfileScreen>
                   ),
                 ),
                 DirectContactDeviceBindingState.active => _LinkedDeviceAction(
-                  label: 'Revoke',
+                  label: l10n.contact_profile_linked_device_revoke,
                   enabled: !_decisionInFlight,
                   onPressed: () => _runDecision(
                     () => widget.directDeviceTrust.revokeDevice(

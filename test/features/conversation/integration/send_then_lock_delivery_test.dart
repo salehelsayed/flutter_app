@@ -1107,6 +1107,7 @@ void main() {
                 timestamp,
                 blobId,
                 preparedArtifact,
+                mediaAdmission,
               }) async => (SendVoiceMessageResult.uploadFailed, null),
         );
         bobHarness.clearNotifications();

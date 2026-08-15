@@ -101,6 +101,7 @@ final class _GroupReactionIngressProcessor {
   Future<void> _flushPendingReactionsForMessage(
     GroupMessage message, {
     bool membershipPhaseHeld = false,
+    bool notificationInert = false,
   }) async {
     final repo = _pendingReactionRepo;
     final reactionRepo = _reactionRepo;
@@ -132,6 +133,7 @@ final class _GroupReactionIngressProcessor {
           loaded: pending,
           repo: repo,
           reactionRepo: reactionRepo,
+          notificationInert: notificationInert,
         );
       } else {
         await runSelfRemovedGroupLifecycleLeaf<void>(
@@ -142,6 +144,7 @@ final class _GroupReactionIngressProcessor {
             loaded: pending,
             repo: repo,
             reactionRepo: reactionRepo,
+            notificationInert: notificationInert,
           ),
         );
       }
@@ -153,6 +156,7 @@ final class _GroupReactionIngressProcessor {
     required GroupPendingReaction loaded,
     required GroupPendingReactionRepository repo,
     required ReactionRepository reactionRepo,
+    required bool notificationInert,
   }) async {
     final currentRows = await repo.getPendingReactionsForMessage(
       groupId: loaded.groupId,
@@ -188,18 +192,19 @@ final class _GroupReactionIngressProcessor {
         senderPublicKey: pending.senderPublicKey,
         reactionJson: pending.reactionJson,
         stageNotificationDisplayCustody:
-            _stageNotificationDisplayCustody == null
+            notificationInert || _stageNotificationDisplayCustody == null
             ? null
             : (payload) =>
                   _stageNotificationDisplayCustody(payload, pendingGroupId),
         markNotificationDisplayCustodyReady:
-            _reconcileNotificationDisplayCustody == null
+            notificationInert || _reconcileNotificationDisplayCustody == null
             ? null
             : (payload) => _reconcileNotificationDisplayCustody(
                 _notificationEventId(payload),
               ),
       );
-      if (result == HandleGroupReactionResult.success &&
+      if (!notificationInert &&
+          result == HandleGroupReactionResult.success &&
           wireReaction != null &&
           wireReaction.action == GroupReactionPayload.actionAdd &&
           _reconcileNotificationDisplayCustody != null) {
@@ -217,7 +222,7 @@ final class _GroupReactionIngressProcessor {
         );
         if (targetMessage != null) {
           _emitReactionChange(change);
-          if (_stageNotificationDisplayCustody == null) {
+          if (!notificationInert && _stageNotificationDisplayCustody == null) {
             await _maybeNotifyGroupReaction(
               groupId: pending.groupId,
               reactorPeerId: pending.senderPeerId,
@@ -230,7 +235,7 @@ final class _GroupReactionIngressProcessor {
           }
         }
       }
-      if (result == HandleGroupReactionResult.success) {
+      if (!notificationInert && result == HandleGroupReactionResult.success) {
         await _retryNotificationDisplays?.call();
       }
       await repo.deletePendingReaction(pending.id);

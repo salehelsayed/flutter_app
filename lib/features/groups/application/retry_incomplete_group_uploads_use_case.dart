@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/constants/retry_constants.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_upload_completion_authority.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
@@ -14,6 +15,7 @@ import 'package:flutter_app/core/media/upload_retry_projection.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/groups/application/group_media_allowed_peers.dart';
+import 'package:flutter_app/features/groups/application/prepared_group_media_blob_custody_coordinator.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/application/self_removed_group_lifecycle_guard.dart';
@@ -41,6 +43,13 @@ class _PreparedGroupRetryUpload {
 const Duration kFreshGroupUploadRetrySendingThreshold = Duration(minutes: 2);
 
 bool _retryIncompleteGroupUploadsInFlight = false;
+
+/// Strict blob custody may refresh survivors only before protected group
+/// content binds their exact proofs. A non-null wire/retry projection marks
+/// that irreversible ownership handoff even when the persisted bytes are
+/// malformed: only the protected-content retry/terminal owner may converge it.
+bool _hasBoundStrictGroupContentAuthority(GroupMessage message) =>
+    message.wireEnvelope != null || message.inboxRetryPayload != null;
 
 /// Re-uploads any group attachment rows with downloadStatus='upload_pending',
 /// grouped by messageId, then re-sends the full message once per group message.
@@ -71,6 +80,9 @@ Future<int> retryIncompleteGroupUploads({
   TryClaimMediaUploadLeaseForSource? tryClaimUploadLease,
   ReleaseMediaUploadLease? releaseUploadLease,
   bool manualRetry = false,
+  PreparedGroupMediaBlobCustodyCoordinator?
+  preparedGroupMediaBlobCustodyCoordinator,
+  bool strictGroupCustodyOnly = false,
 }) async {
   final retryStopwatch = Stopwatch()..start();
   void emitRetryTiming({
@@ -158,6 +170,49 @@ Future<int> retryIncompleteGroupUploads({
         messageId,
         owner: MediaOwnerLane.group,
       );
+      final hasStrictGroupCustody = allAttachments.any(
+        (attachment) =>
+            attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty == true,
+      );
+      if (hasStrictGroupCustody) {
+        if (allAttachments.any(
+          (attachment) =>
+              attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty != true,
+        )) {
+          emitRetryTiming(
+            outcome: 'manual_crossed_strict_generation',
+            attachmentCount: allAttachments.length,
+            messageCount: 1,
+            succeeded: 0,
+          );
+          return 0;
+        }
+        // Strict group custody owns its own immutable survivor rows. Re-enter
+        // the automatic drain without resetting retry state or source paths.
+        return retryIncompleteGroupUploads(
+          groupRepo: groupRepo,
+          groupMsgRepo: groupMsgRepo,
+          mediaAttachmentRepo: mediaAttachmentRepo,
+          bridge: bridge,
+          p2pService: p2pService,
+          identityRepo: identityRepo,
+          uploadMediaFn: uploadMediaFn,
+          mediaFileManager: mediaFileManager,
+          messageId: messageId,
+          privateMediaAvailability: privateMediaAvailability,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+          requireOsConnectivity: requireOsConnectivity,
+          connectivityProbe: connectivityProbe,
+          uploadRetryProjectionRepo: uploadRetryProjectionRepo,
+          uploadRetryRearmRepo: uploadRetryRearmRepo,
+          tryClaimUploadLease: tryClaimUploadLease,
+          releaseUploadLease: releaseUploadLease,
+          manualRetry: false,
+          preparedGroupMediaBlobCustodyCoordinator:
+              preparedGroupMediaBlobCustodyCoordinator,
+          strictGroupCustodyOnly: true,
+        );
+      }
       final unfinished = allAttachments
           .where((attachment) => attachment.downloadStatus != 'done')
           .toList(growable: false);
@@ -324,11 +379,46 @@ Future<int> retryIncompleteGroupUploads({
 
     final allPendingAttachments = await mediaAttachmentRepo
         .getUploadPendingAttachments(owner: MediaOwnerLane.group);
-    final pendingAttachments = messageId == null
-        ? allPendingAttachments
-        : allPendingAttachments
-              .where((attachment) => attachment.messageId == messageId)
-              .toList(growable: false);
+    final pendingAttachments = allPendingAttachments
+        .where(
+          (attachment) =>
+              (messageId == null || attachment.messageId == messageId) &&
+              (!strictGroupCustodyOnly ||
+                  attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty ==
+                      true),
+        )
+        .toList(growable: false);
+    PreparedGroupMediaBlobCustodyCoordinator? strictCustodyOwner;
+    final hasGroupCustodyCapability =
+        mediaAttachmentRepo is GroupMediaBlobCustodyRepository &&
+        (mediaAttachmentRepo as GroupMediaBlobCustodyRepository)
+            .supportsGroupMediaBlobCustody;
+    final shouldDrainStrictCleanup = !manualRetry && hasGroupCustodyCapability;
+    final strictIdentity = strictGroupCustodyOnly || shouldDrainStrictCleanup
+        ? await identityRepo.loadIdentity()
+        : null;
+    var strictCleanupProgress = 0;
+    if (strictGroupCustodyOnly && strictIdentity == null) {
+      emitRetryTiming(
+        outcome: 'no_identity',
+        attachmentCount: pendingAttachments.length,
+        messageCount: 0,
+        succeeded: 0,
+      );
+      return 0;
+    }
+    if (shouldDrainStrictCleanup && strictIdentity != null) {
+      strictCustodyOwner =
+          preparedGroupMediaBlobCustodyCoordinator ??
+          PreparedGroupMediaBlobCustodyCoordinator(
+            artifactStore: GroupMediaBlobArtifactStore(),
+          );
+      strictCleanupProgress = await strictCustodyOwner
+          .drainOutgoingCleanupAndOrphans(
+            mediaAttachmentRepository: mediaAttachmentRepo,
+            identityPeerId: strictIdentity.peerId,
+          );
+    }
     if (pendingAttachments.isEmpty) {
       emitFlowEvent(
         layer: 'FL',
@@ -339,12 +429,12 @@ Future<int> retryIncompleteGroupUploads({
         outcome: 'none',
         attachmentCount: 0,
         messageCount: 0,
-        succeeded: 0,
+        succeeded: strictCleanupProgress,
       );
-      return 0;
+      return strictCleanupProgress;
     }
 
-    final identity = await identityRepo.loadIdentity();
+    final identity = strictIdentity ?? await identityRepo.loadIdentity();
     if (identity == null) {
       emitFlowEvent(
         layer: 'FL',
@@ -361,7 +451,17 @@ Future<int> retryIncompleteGroupUploads({
     }
 
     final byMessageId = <String, List<MediaAttachment>>{};
-    for (final attachment in pendingAttachments) {
+    final strictFirstAttachments = <MediaAttachment>[
+      ...pendingAttachments.where(
+        (attachment) =>
+            attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty == true,
+      ),
+      ...pendingAttachments.where(
+        (attachment) =>
+            attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty != true,
+      ),
+    ];
+    for (final attachment in strictFirstAttachments) {
       byMessageId.putIfAbsent(attachment.messageId, () => []).add(attachment);
     }
 
@@ -374,7 +474,7 @@ Future<int> retryIncompleteGroupUploads({
       },
     );
 
-    var successCount = 0;
+    var successCount = strictCleanupProgress;
 
     for (final entry in byMessageId.entries) {
       final messageId = entry.key;
@@ -432,6 +532,128 @@ Future<int> retryIncompleteGroupUploads({
             layer: 'FL',
             event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_SKIP_STATUS',
             details: {'status': parentMessage.status},
+          );
+          continue;
+        }
+
+        final hasStrictGroupCustody = pendingAttachmentsForMessage.any(
+          (attachment) =>
+              attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty == true,
+        );
+        if (hasStrictGroupCustody) {
+          final groupCustodyRepository =
+              mediaAttachmentRepo is GroupMediaBlobCustodyRepository
+              ? mediaAttachmentRepo as GroupMediaBlobCustodyRepository
+              : null;
+          if (pendingAttachmentsForMessage.any(
+                (attachment) =>
+                    attachment.groupMediaBlobCustodyFingerprint?.isNotEmpty !=
+                    true,
+              ) ||
+              groupCustodyRepository == null ||
+              !groupCustodyRepository.supportsGroupMediaBlobCustody) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_STRICT_CROSSED',
+              details: {'messageId': _shortGroupRetryId(messageId)},
+            );
+            continue;
+          }
+          if (_hasBoundStrictGroupContentAuthority(parentMessage)) {
+            emitFlowEvent(
+              layer: 'FL',
+              event:
+                  'RETRY_INCOMPLETE_GROUP_UPLOAD_STRICT_CONTENT_ALREADY_BOUND',
+              details: {'messageId': _shortGroupRetryId(messageId)},
+            );
+            continue;
+          }
+          final strictOwner =
+              strictCustodyOwner ??
+              preparedGroupMediaBlobCustodyCoordinator ??
+              PreparedGroupMediaBlobCustodyCoordinator(
+                artifactStore: GroupMediaBlobArtifactStore(),
+              );
+          final prepared = await strictOwner.retryPersistedGeneration(
+            bridge: bridge,
+            mediaAttachmentRepository: mediaAttachmentRepo,
+            identityPeerId: identity.peerId,
+            expectedParent: parentMessage,
+          );
+          if (!prepared.isComplete) {
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_STRICT_RETAINED',
+              details: {'messageId': _shortGroupRetryId(messageId)},
+            );
+            continue;
+          }
+          final senderTransport = p2pService.currentState.peerId?.trim();
+          final currentSenderTransport =
+              senderTransport == null || senderTransport.isEmpty
+              ? null
+              : senderTransport;
+          final strictSend = await sendGroupMessage(
+            bridge: bridge,
+            groupRepo: groupRepo,
+            msgRepo: groupMsgRepo,
+            groupId: parentMessage.groupId,
+            text: parentMessage.text,
+            senderPeerId: identity.peerId,
+            senderPublicKey: identity.publicKey,
+            senderPrivateKey: identity.privateKey,
+            senderUsername: identity.username,
+            messageId: parentMessage.id,
+            logicalDeliveryId:
+                parentMessage.logicalDeliveryId ?? parentMessage.id,
+            timestamp: parentMessage.timestamp,
+            quotedMessageId: parentMessage.quotedMessageId,
+            isForwarded: parentMessage.isForwarded,
+            senderDeviceId: currentSenderTransport,
+            senderTransportPeerId: currentSenderTransport,
+            mediaAttachments: prepared.attachments,
+            mediaAttachmentRepo: mediaAttachmentRepo,
+            inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+            preparedGroupMediaManifest: prepared.preparedManifest,
+            emitTimingEvent: false,
+          );
+          if (strictSend.$1 == SendGroupMessageResult.success ||
+              strictSend.$1 == SendGroupMessageResult.successNoPeers ||
+              strictSend.$1 == SendGroupMessageResult.queuedOffline) {
+            successCount++;
+            emitFlowEvent(
+              layer: 'FL',
+              event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_SUCCESS',
+              details: {
+                'messageId': _shortGroupRetryId(messageId),
+                'attachmentCount': prepared.attachments.length,
+                'strictGroupCustody': true,
+              },
+            );
+          }
+          continue;
+        }
+
+        final senderTransport = p2pService.currentState.peerId?.trim();
+        final currentSenderTransport =
+            senderTransport == null || senderTransport.isEmpty
+            ? null
+            : senderTransport;
+        final legacyAdmission = await prepareGroupContentAuthoringAdmission(
+          groupRepo: groupRepo,
+          groupId: parentMessage.groupId,
+          senderPeerId: identity.peerId,
+          senderPublicKey: identity.publicKey,
+          senderDeviceId: currentSenderTransport,
+          senderTransportPeerId: currentSenderTransport,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        );
+        if (legacyAdmission.kind !=
+            GroupContentAuthoringResolutionKind.legacyUninitialized) {
+          emitFlowEvent(
+            layer: 'FL',
+            event: 'RETRY_INCOMPLETE_GROUP_UPLOAD_NO_STRICT_INTENT',
+            details: {'messageId': _shortGroupRetryId(messageId)},
           );
           continue;
         }

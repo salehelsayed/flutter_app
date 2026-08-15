@@ -6,16 +6,23 @@ import 'package:uuid/uuid.dart';
 
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/bridge_group_helpers.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
+import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
+import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_member.dart';
+import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
+import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/models/group_reaction_replay_outbox_entry.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_reaction_replay_outbox_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 
 /// Result of sending an emoji reaction to a group message.
 enum SendGroupReactionResult {
@@ -59,6 +66,147 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
   required String senderPublicKey,
   required String senderPrivateKey,
   String Function()? transitionIdFactory,
+  GroupContentAuthoringContext? groupContentAuthoring,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  DateTime? authoredAt,
+}) async {
+  final snapshot = await runGroupAuthorityPhase(
+    groupId: groupId,
+    action: () async {
+      final group = await groupRepo.getGroup(groupId);
+      final member = await groupRepo.getMember(groupId, senderPeerId);
+      final resolution = member == null
+          ? const (
+              kind: GroupContentAuthoringResolutionKind.refuse,
+              context: null,
+            )
+          : await resolveGroupContentAuthoring(
+              resolverOwner: groupRepo,
+              groupId: groupId,
+              senderPeerId: senderPeerId,
+              senderPublicKey: senderPublicKey,
+              senderMember: member,
+              explicitContext: groupContentAuthoring,
+            );
+      final strictDevice =
+          resolution.kind == GroupContentAuthoringResolutionKind.strict &&
+              member != null
+          ? resolveStrictGroupReactionSenderDevice(
+              member: member,
+              senderPublicKey: senderPublicKey,
+              context: resolution.context!,
+            )
+          : null;
+      final strictMembers = strictDevice == null
+          ? null
+          : await groupRepo.getMembers(groupId);
+      final recipients = strictDevice == null
+          ? const <String>[]
+          : await loadStrictGroupReactionRecipientPeerIds(
+              groupRepo: groupRepo,
+              groupId: groupId,
+              senderTransportPeerId: strictDevice.transportPeerId,
+              inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+              members: strictMembers,
+            );
+      final authorBindingUnique =
+          resolution.kind != GroupContentAuthoringResolutionKind.strict ||
+          (strictDevice != null &&
+              hasUniqueStrictGroupContentAuthorBinding(
+                members: strictMembers!,
+                senderPeerId: senderPeerId,
+                senderDeviceId: strictDevice.deviceId,
+                senderTransportPeerId: strictDevice.transportPeerId,
+                senderPublicKey: strictDevice.deviceSigningPublicKey,
+              ));
+      final target = await msgRepo.getMessage(messageId);
+      final targetEligible =
+          target != null &&
+          msgRepo is GroupMessageStrictReactionTargetRepository &&
+          await (msgRepo as GroupMessageStrictReactionTargetRepository)
+              .isStrictReactionTargetEligible(target);
+      return (
+        group: group,
+        member: member,
+        resolution: resolution,
+        recipients: recipients,
+        targetEligible: targetEligible,
+        authorBindingUnique: authorBindingUnique,
+      );
+    },
+  );
+  // Preserve the incumbent validation result ordering. A missing group/member
+  // is not a signer-authority failure, and both conditions are terminal before
+  // any crypto, local projection, or network effect.
+  if (snapshot.group == null) {
+    return (SendGroupReactionResult.groupNotFound, null);
+  }
+  if (snapshot.group!.isDissolved) {
+    return (SendGroupReactionResult.groupDissolved, null);
+  }
+  if (snapshot.member == null) {
+    return (SendGroupReactionResult.notMember, null);
+  }
+  final resolverAbsentLegacy = isResolverAbsentLegacyGroupContentAuthoring(
+    owner: groupRepo,
+    explicitContext: groupContentAuthoring,
+  );
+  if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.refuse ||
+      (snapshot.member?.devices.isNotEmpty == true &&
+          !resolverAbsentLegacy &&
+          snapshot.resolution.kind !=
+              GroupContentAuthoringResolutionKind.strict)) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.strict &&
+      !snapshot.authorBindingUnique) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  if (snapshot.resolution.kind == GroupContentAuthoringResolutionKind.strict &&
+      !snapshot.targetEligible) {
+    return (SendGroupReactionResult.messageNotFound, null);
+  }
+  return _sendGroupReaction(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    msgRepo: msgRepo,
+    reactionRepo: reactionRepo,
+    reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+    groupId: groupId,
+    messageId: messageId,
+    emoji: emoji,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    transitionIdFactory: transitionIdFactory,
+    groupContentAuthoring: snapshot.resolution.context,
+    authoringKind: snapshot.resolution.kind,
+    frozenRecipientPeerIds: snapshot.recipients,
+    explicitGroupContentAuthoring: groupContentAuthoring,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    authoredAt: authoredAt,
+  );
+}
+
+Future<(SendGroupReactionResult, MessageReaction?)> _sendGroupReaction({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupMessageRepository msgRepo,
+  required ReactionRepository reactionRepo,
+  required GroupReactionReplayOutboxRepository reactionReplayOutboxRepo,
+  required String groupId,
+  required String messageId,
+  required String emoji,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required String senderPrivateKey,
+  String Function()? transitionIdFactory,
+  GroupContentAuthoringContext? groupContentAuthoring,
+  required GroupContentAuthoringResolutionKind authoringKind,
+  required List<String> frozenRecipientPeerIds,
+  GroupContentAuthoringContext? explicitGroupContentAuthoring,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  DateTime? authoredAt,
 }) async {
   emitFlowEvent(
     layer: 'FL',
@@ -104,10 +252,44 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
     );
     return (SendGroupReactionResult.notMember, null);
   }
-  final senderDevice = member.firstActiveDeviceForSigningKey(
-    senderPublicKey,
-    allowLegacyFallback: true,
-  );
+  final strictContext = groupContentAuthoring;
+  final strictSelected =
+      authoringKind == GroupContentAuthoringResolutionKind.strict;
+  if (strictSelected && strictContext == null) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  final selectedStrictContext = strictSelected ? strictContext! : null;
+  final linkedCredential = strictSelected
+      ? selectedStrictContext!.linkedTransportCredential
+      : null;
+  final validLinkedCredential =
+      linkedCredential != null &&
+      linkedCredential.state == LinkedTransportCredentialState.active &&
+      linkedCredential.accountPeerId == senderPeerId;
+  if (strictSelected &&
+      (!selectedStrictContext!
+              .directLinkedDeviceSelector
+              .allowsLinkedDeviceAuthoring ||
+          !selectedStrictContext.multiDeviceSyncEnabled ||
+          selectedStrictContext.authorityVersion == null ||
+          selectedStrictContext.inboxStore == null ||
+          (selectedStrictContext.requireLinkedTransportCredential &&
+              !validLinkedCredential))) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  final signingPrivateKey = validLinkedCredential
+      ? linkedCredential.transportPrivateKey
+      : senderPrivateKey;
+  final senderDevice = strictSelected
+      ? resolveStrictGroupReactionSenderDevice(
+          member: member,
+          senderPublicKey: senderPublicKey,
+          context: selectedStrictContext!,
+        )
+      : member.firstActiveDeviceForSigningKey(
+          senderPublicKey,
+          allowLegacyFallback: true,
+        );
   if (senderDevice == null) {
     emitFlowEvent(
       layer: 'FL',
@@ -137,6 +319,49 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
       },
     );
     return (SendGroupReactionResult.messageNotFound, null);
+  }
+
+  if (strictSelected) {
+    if (message.privateMediaPolicy.isPrivate ||
+        message.media.isNotEmpty ||
+        message.isForwarded ||
+        message.quotedMessageId?.isNotEmpty == true ||
+        message.text.trimLeft().startsWith(r'{"__sys":')) {
+      return (SendGroupReactionResult.messageNotFound, null);
+    }
+    return sendStrictGroupReactionContent(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      reactionReplayOutboxRepo: reactionReplayOutboxRepo,
+      groupId: groupId,
+      message: message,
+      emoji: emoji,
+      senderPeerId: senderPeerId,
+      senderDevice: senderDevice,
+      senderPrivateKey: signingPrivateKey,
+      context: selectedStrictContext!,
+      explicitContext: explicitGroupContentAuthoring,
+      senderAccountPublicKey: senderPublicKey,
+      messageRepository: msgRepo,
+      frozenRecipientPeerIds: frozenRecipientPeerIds,
+      inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      authoredAt: authoredAt ?? DateTime.now().toUtc(),
+      action: GroupReactionPayload.actionAdd,
+    );
+  }
+
+  if (authoringKind !=
+          GroupContentAuthoringResolutionKind.legacyUninitialized ||
+      !await _legacyReactionAuthorityStillUninitialized(
+        groupRepo: groupRepo,
+        groupId: groupId,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        expectedMessage: message,
+        messageRepository: msgRepo,
+        explicitContext: explicitGroupContentAuthoring,
+      )) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
   }
 
   // 4. Build reaction payload
@@ -271,6 +496,647 @@ Future<(SendGroupReactionResult, MessageReaction?)> sendGroupReaction({
         : SendGroupReactionResult.queuedForRetry,
     reaction,
   );
+}
+
+Future<(SendGroupReactionResult, MessageReaction?)>
+sendStrictGroupReactionContent({
+  required Bridge bridge,
+  required GroupRepository groupRepo,
+  required GroupReactionReplayOutboxRepository reactionReplayOutboxRepo,
+  required String groupId,
+  required GroupMessage message,
+  required String emoji,
+  required String senderPeerId,
+  required GroupMemberDeviceIdentity senderDevice,
+  required String senderPrivateKey,
+  required GroupContentAuthoringContext context,
+  GroupContentAuthoringContext? explicitContext,
+  required String senderAccountPublicKey,
+  GroupMessageRepository? messageRepository,
+  List<String>? frozenRecipientPeerIds,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  required DateTime authoredAt,
+  required String action,
+}) async {
+  if (action != GroupReactionPayload.actionAdd &&
+      action != GroupReactionPayload.actionRemove) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  final authority = context.authorityVersion;
+  if (authority == null ||
+      !validGroupContentAuthoringOrder(
+        authority: authority,
+        contentAt: authoredAt,
+        contentEventId: buildGroupReactionTransitionId(
+          groupId: groupId,
+          messageId: message.id,
+          logicalActorPeerId: senderPeerId,
+          action: action,
+          emoji: emoji,
+          timestamp: authoredAt,
+        ),
+      )) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  final timestamp = fixedGroupContentUtc(authoredAt);
+  final transitionId = buildGroupReactionTransitionId(
+    groupId: groupId,
+    messageId: message.id,
+    logicalActorPeerId: senderPeerId,
+    action: action,
+    emoji: emoji,
+    timestamp: authoredAt,
+  );
+  final reactionId = deterministicGroupReactionStateId(
+    groupId: groupId,
+    messageId: message.id,
+    logicalActorPeerId: senderPeerId,
+  );
+  final payload = GroupReactionPayload(
+    id: reactionId,
+    messageId: message.id,
+    emoji: emoji,
+    action: action,
+    senderPeerId: senderPeerId,
+    timestamp: timestamp,
+    eventId: transitionId,
+  );
+  final recipients = frozenRecipientPeerIds == null
+      ? await loadStrictGroupReactionRecipientPeerIds(
+          groupRepo: groupRepo,
+          groupId: groupId,
+          senderTransportPeerId: senderDevice.transportPeerId,
+          inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+        )
+      : List<String>.unmodifiable(frozenRecipientPeerIds);
+  final replayEnvelope = await buildGroupOfflineReplayEnvelope(
+    bridge: bridge,
+    groupRepo: groupRepo,
+    groupId: groupId,
+    payloadType: groupOfflineReplayPayloadTypeReaction,
+    plaintext: payload.toInnerJson(),
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderDevice.deviceSigningPublicKey,
+    senderPrivateKey: senderPrivateKey,
+    messageId: transitionId,
+    senderDeviceId: senderDevice.deviceId,
+    senderTransportPeerId: senderDevice.transportPeerId,
+    senderKeyPackageId: senderDevice.keyPackageId,
+    recipientPeerIds: recipients,
+    contentAuthorityVersion: context.authorityVersion!,
+    contentEventId: transitionId,
+    reactionNotificationExtension: GroupReactionNotificationExtensionInput(
+      transitionId: transitionId,
+      action: action,
+      targetMessageId: message.id,
+      reactorPeerId: senderPeerId,
+      reactorTransportPeerId: senderDevice.transportPeerId,
+      notificationRecipientTransportPeerIds: const <String>[],
+    ),
+  );
+  final retryPayload = recipients.isEmpty
+      ? null
+      : jsonEncode(<String, Object?>{
+          'groupId': groupId,
+          'message': replayEnvelope,
+          'custodyContract': ackOrExpiryInboxCustodyContract,
+          'custodyKind': groupContentCustodyKind,
+          'recipientPeerIds': recipients,
+        });
+  final stagedAt = timestamp;
+  final staged = GroupReactionReplayOutboxEntry(
+    reactionId: transitionId,
+    groupId: groupId,
+    messageId: message.id,
+    senderPeerId: senderPeerId,
+    emoji: emoji,
+    action: action,
+    inboxRetryPayload: retryPayload ?? '',
+    deliveryStatus: recipients.isEmpty
+        ? GroupReactionReplayOutboxStatus.stored
+        : GroupReactionReplayOutboxStatus.pending,
+    createdAt: stagedAt,
+    updatedAt: stagedAt,
+  );
+  final reaction = MessageReaction(
+    id: payload.id,
+    messageId: payload.messageId,
+    emoji: payload.emoji,
+    senderPeerId: payload.senderPeerId,
+    timestamp: timestamp,
+    createdAt: timestamp,
+    removedAt: action == GroupReactionPayload.actionRemove ? timestamp : null,
+  );
+  final eventPayload = buildLocalProtectedGroupContentEventPayload(
+    replayEnvelope: replayEnvelope,
+    payload: Map<String, Object?>.from(
+      jsonDecode(payload.toInnerJson()) as Map<String, dynamic>,
+    ),
+  );
+  final sourceEventId = localProtectedGroupReactionSourceEventId(transitionId);
+  Future<bool> authorityMatchesAssumingPhase() =>
+      _strictReactionAuthorityMatchesAssumingPhase(
+        groupRepo: groupRepo,
+        messageRepository: messageRepository,
+        groupId: groupId,
+        message: message,
+        senderPeerId: senderPeerId,
+        senderAccountPublicKey: senderAccountPublicKey,
+        senderDevice: senderDevice,
+        expectedRecipients: recipients,
+        expectedContext: context,
+        explicitContext: explicitContext,
+        inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+      );
+  Future<bool> currentAuthorityMatches() => runGroupAuthorityPhase(
+    groupId: groupId,
+    action: authorityMatchesAssumingPhase,
+  );
+  Future<bool> commitIfAuthorityMatches(Future<bool> Function() mutation) =>
+      runGroupAuthorityPhase(
+        groupId: groupId,
+        action: () async {
+          if (!await authorityMatchesAssumingPhase()) return false;
+          return mutation();
+        },
+      );
+  final stagedUnderCurrentAuthority = await runGroupAuthorityPhase(
+    groupId: groupId,
+    action: () async {
+      if (!await authorityMatchesAssumingPhase()) {
+        return false;
+      }
+      if (recipients.isEmpty) {
+        if (reactionReplayOutboxRepo
+            is! GroupReactionStrictLocalTerminalRepository) {
+          return false;
+        }
+        return (reactionReplayOutboxRepo
+                as GroupReactionStrictLocalTerminalRepository)
+            .stageAndCompleteStrictLocalContent(
+              staged,
+              reactionRow: reaction.toMap(),
+              action: payload.action,
+              transitionId: transitionId,
+              sourcePeerId: senderPeerId,
+              sourceEventId: sourceEventId,
+              sourceTimestamp: timestamp,
+              eventPayload: eventPayload,
+            );
+      }
+      if (reactionReplayOutboxRepo is! GroupReactionStrictPreparedRepository) {
+        return false;
+      }
+      return (reactionReplayOutboxRepo as GroupReactionStrictPreparedRepository)
+          .stageStrictContentPrepared(
+            staged,
+            sourcePeerId: senderPeerId,
+            sourceEventId: localPreparedProtectedGroupReactionSourceEventId(
+              transitionId,
+            ),
+            sourceTimestamp: timestamp,
+            preparedEventPayload:
+                buildLocalProtectedGroupContentPreparedEventPayload(
+                  eventPayload: eventPayload,
+                  ownerKind: 'group_reaction',
+                  ownerId: transitionId,
+                  ownerStatus: staged.deliveryStatus,
+                  inboxRetryPayload: staged.inboxRetryPayload,
+                ),
+          );
+    },
+  );
+  if (!stagedUnderCurrentAuthority) {
+    return (SendGroupReactionResult.unauthorizedSenderKey, null);
+  }
+  if (recipients.isEmpty) {
+    return (SendGroupReactionResult.success, reaction);
+  }
+  final completed = await _driveStrictReactionCustody(
+    repository: reactionReplayOutboxRepo,
+    store: context.inboxStore!,
+    expected: staged,
+    reaction: reaction,
+    transitionId: transitionId,
+    sourcePeerId: senderPeerId,
+    sourceEventId: sourceEventId,
+    sourceTimestamp: timestamp,
+    eventPayload: eventPayload,
+    currentAuthorityMatches: currentAuthorityMatches,
+    commitIfAuthorityMatches: commitIfAuthorityMatches,
+  );
+  if (completed) {
+    return (SendGroupReactionResult.success, reaction);
+  }
+  final exactPendingOwner = await _hasExactPendingStrictReactionOwner(
+    repository: reactionReplayOutboxRepo,
+    expected: staged,
+  );
+  return (
+    exactPendingOwner
+        ? SendGroupReactionResult.queuedForRetry
+        : SendGroupReactionResult.unauthorizedSenderKey,
+    null,
+  );
+}
+
+Future<bool> _hasExactPendingStrictReactionOwner({
+  required GroupReactionReplayOutboxRepository repository,
+  required GroupReactionReplayOutboxEntry expected,
+}) async {
+  try {
+    final current = await repository.getEntry(expected.reactionId);
+    if (current == null ||
+        current.reactionId != expected.reactionId ||
+        current.groupId != expected.groupId ||
+        current.messageId != expected.messageId ||
+        current.senderPeerId != expected.senderPeerId ||
+        current.emoji != expected.emoji ||
+        current.action != expected.action ||
+        current.createdAt != expected.createdAt ||
+        current.deliveryStatus != GroupReactionReplayOutboxStatus.pending ||
+        current.lastError != null) {
+      return false;
+    }
+    final initial = GroupContentRetryPayload.decode(expected.inboxRetryPayload);
+    final pending = GroupContentRetryPayload.decode(current.inboxRetryPayload);
+    return pending.groupId == initial.groupId &&
+        pending.message == initial.message &&
+        pending.contentEventId == expected.reactionId &&
+        pending.logicalSenderPeerId == expected.senderPeerId &&
+        _sameExactStrings(
+          pending.fullRecipientPeerIds,
+          initial.fullRecipientPeerIds,
+        ) &&
+        pending.pendingRecipientPeerIds.isNotEmpty;
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _strictReactionAuthorityMatchesAssumingPhase({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository? messageRepository,
+  required String groupId,
+  required GroupMessage message,
+  required String senderPeerId,
+  required String senderAccountPublicKey,
+  required GroupMemberDeviceIdentity senderDevice,
+  required List<String> expectedRecipients,
+  required GroupContentAuthoringContext expectedContext,
+  required GroupContentAuthoringContext? explicitContext,
+  required GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+}) async {
+  final group = await groupRepo.getGroup(groupId);
+  final sender = await groupRepo.getMember(groupId, senderPeerId);
+  final target = messageRepository == null
+      ? message
+      : await messageRepository.getMessage(message.id);
+  final key = await groupRepo.getLatestKey(groupId);
+  if (group == null ||
+      group.selfRemovedAt != null ||
+      group.isDissolved ||
+      sender == null ||
+      target == null ||
+      target.groupId != groupId ||
+      target.privateMediaPolicy.isPrivate ||
+      target.media.isNotEmpty ||
+      target.isForwarded ||
+      target.quotedMessageId?.isNotEmpty == true ||
+      target.text.trimLeft().startsWith(r'{"__sys":') ||
+      (messageRepository != null &&
+          (messageRepository is! GroupMessageStrictReactionTargetRepository ||
+              !await (messageRepository
+                      as GroupMessageStrictReactionTargetRepository)
+                  .isStrictReactionTargetEligible(target))) ||
+      key?.keyGeneration != expectedContext.authorityVersion?.keyEpoch) {
+    return false;
+  }
+  final resolution = await resolveGroupContentAuthoring(
+    resolverOwner: groupRepo,
+    groupId: groupId,
+    senderPeerId: senderPeerId,
+    senderPublicKey: senderAccountPublicKey,
+    senderMember: sender,
+    senderDeviceId: senderDevice.deviceId,
+    senderTransportPeerId: senderDevice.transportPeerId,
+    explicitContext: explicitContext,
+  );
+  if (resolution.kind != GroupContentAuthoringResolutionKind.strict ||
+      resolution.context == null ||
+      !sameGroupContentAuthoringContext(expectedContext, resolution.context!)) {
+    return false;
+  }
+  final currentDevice = sender.findDeviceById(senderDevice.deviceId);
+  if (currentDevice == null ||
+      currentDevice.transportPeerId != senderDevice.transportPeerId ||
+      currentDevice.deviceSigningPublicKey !=
+          senderDevice.deviceSigningPublicKey) {
+    return false;
+  }
+  final currentMembers = await groupRepo.getMembers(groupId);
+  if (!hasUniqueStrictGroupContentAuthorBinding(
+    members: currentMembers,
+    senderPeerId: senderPeerId,
+    senderDeviceId: senderDevice.deviceId,
+    senderTransportPeerId: senderDevice.transportPeerId,
+    senderPublicKey: senderDevice.deviceSigningPublicKey,
+  )) {
+    return false;
+  }
+  final currentRecipients = await loadStrictGroupReactionRecipientPeerIds(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    senderTransportPeerId: senderDevice.transportPeerId,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    members: currentMembers,
+  );
+  return _sameExactStrings(expectedRecipients, currentRecipients);
+}
+
+/// Revalidates a persisted strict reaction before retrying relay custody.
+/// Callers must hold the keyed group authority phase.
+Future<bool> strictGroupReactionAuthorityMatchesAssumingPhase({
+  required GroupRepository groupRepo,
+  required GroupMessageRepository messageRepository,
+  required String groupId,
+  required String messageId,
+  required String logicalSenderPeerId,
+  required String senderAccountPublicKey,
+  required String senderDeviceId,
+  required String senderTransportPeerId,
+  required String senderDevicePublicKey,
+  required List<String> expectedRecipientPeerIds,
+  required GroupContentAuthorityVersion expectedAuthority,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+}) async {
+  final group = await groupRepo.getGroup(groupId);
+  final sender = await groupRepo.getMember(groupId, logicalSenderPeerId);
+  final target = await messageRepository.getMessage(messageId);
+  final key = await groupRepo.getLatestKey(groupId);
+  if (group == null ||
+      group.selfRemovedAt != null ||
+      group.isDissolved ||
+      sender == null ||
+      target == null ||
+      target.groupId != groupId ||
+      key?.keyGeneration != expectedAuthority.keyEpoch ||
+      messageRepository is! GroupMessageStrictReactionTargetRepository ||
+      !await (messageRepository as GroupMessageStrictReactionTargetRepository)
+          .isStrictReactionTargetEligible(target)) {
+    return false;
+  }
+  final resolution = await resolveGroupContentAuthoring(
+    resolverOwner: groupRepo,
+    groupId: groupId,
+    senderPeerId: logicalSenderPeerId,
+    senderPublicKey: senderAccountPublicKey,
+    senderMember: sender,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+  );
+  final device = sender.findDeviceById(senderDeviceId);
+  if (resolution.kind != GroupContentAuthoringResolutionKind.strict ||
+      resolution.context == null ||
+      !sameGroupContentAuthorityVersion(
+        expectedAuthority,
+        resolution.context!.authorityVersion,
+      ) ||
+      device == null ||
+      device.transportPeerId != senderTransportPeerId ||
+      device.deviceSigningPublicKey != senderDevicePublicKey) {
+    return false;
+  }
+  final currentMembers = await groupRepo.getMembers(groupId);
+  if (!hasUniqueStrictGroupContentAuthorBinding(
+    members: currentMembers,
+    senderPeerId: logicalSenderPeerId,
+    senderDeviceId: senderDeviceId,
+    senderTransportPeerId: senderTransportPeerId,
+    senderPublicKey: senderDevicePublicKey,
+  )) {
+    return false;
+  }
+  final recipients = await loadStrictGroupReactionRecipientPeerIds(
+    groupRepo: groupRepo,
+    groupId: groupId,
+    senderTransportPeerId: senderTransportPeerId,
+    inviteDeliveryAttemptRepo: inviteDeliveryAttemptRepo,
+    members: currentMembers,
+  );
+  return _sameExactStrings(expectedRecipientPeerIds, recipients);
+}
+
+bool _sameExactStrings(List<String> left, List<String> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
+}
+
+Future<List<String>> loadStrictGroupReactionRecipientPeerIds({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderTransportPeerId,
+  GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
+  List<GroupMember>? members,
+}) async {
+  final inviteStatuses = inviteDeliveryAttemptRepo == null
+      ? const <String, GroupInviteDeliveryStatus>{}
+      : await inviteDeliveryAttemptRepo.getStatusesForGroupMembers(groupId);
+  final result = <String>{};
+  final transportClaims = <String, int>{};
+  for (final member in members ?? await groupRepo.getMembers(groupId)) {
+    if (member.peerId.trim().isEmpty ||
+        isPersistedNonJoinedGroupInviteStatus(
+          inviteStatuses[member.peerId.trim()],
+        )) {
+      continue;
+    }
+    for (final device in member.activeDevicesWithLegacyFallback()) {
+      final deviceId = device.deviceId.trim();
+      final transport = device.transportPeerId.trim();
+      final signingKey = device.deviceSigningPublicKey.trim();
+      // Content replay is already group-encrypted, so a physical recipient
+      // needs an active transport/signing identity but not key-package/ML-KEM
+      // material. Requiring the latter drops otherwise eligible same-account
+      // siblings from the frozen custody ACL.
+      if (deviceId.isNotEmpty &&
+          transport.isNotEmpty &&
+          signingKey.isNotEmpty &&
+          transport != senderTransportPeerId) {
+        transportClaims.update(
+          transport,
+          (count) => count + 1,
+          ifAbsent: () => 1,
+        );
+      }
+    }
+  }
+  result.addAll(
+    transportClaims.entries
+        .where((entry) => entry.value == 1)
+        .map((entry) => entry.key),
+  );
+  return result.toList()..sort();
+}
+
+GroupMemberDeviceIdentity? resolveStrictGroupReactionSenderDevice({
+  required GroupMember member,
+  required String senderPublicKey,
+  required GroupContentAuthoringContext context,
+}) {
+  final linked = context.linkedTransportCredential;
+  final validLinked =
+      linked != null &&
+      linked.state == LinkedTransportCredentialState.active &&
+      linked.accountPeerId == member.peerId;
+  if (validLinked) {
+    final exact = member.findDeviceById(linked.deviceId);
+    return exact != null &&
+            exact.transportPeerId == linked.transportPeerId &&
+            exact.deviceSigningPublicKey == linked.transportPublicKey
+        ? exact
+        : null;
+  }
+  final boundDeviceId = context.authoringDeviceId?.trim();
+  final boundTransportPeerId = context.authoringTransportPeerId?.trim();
+  final boundPublicKey = context.authoringPublicKey?.trim();
+  final hasAnyProductionBinding =
+      boundDeviceId?.isNotEmpty == true ||
+      boundTransportPeerId?.isNotEmpty == true ||
+      boundPublicKey?.isNotEmpty == true;
+  if (hasAnyProductionBinding) {
+    if (boundDeviceId == null ||
+        boundDeviceId.isEmpty ||
+        boundTransportPeerId == null ||
+        boundTransportPeerId.isEmpty ||
+        boundPublicKey == null ||
+        boundPublicKey.isEmpty) {
+      return null;
+    }
+    final exact = member.findDeviceById(boundDeviceId);
+    return exact != null &&
+            exact.transportPeerId == boundTransportPeerId &&
+            exact.deviceSigningPublicKey == boundPublicKey &&
+            boundPublicKey == senderPublicKey
+        ? exact
+        : null;
+  }
+  return member.firstActiveDeviceForSigningKey(
+    senderPublicKey,
+    allowLegacyFallback: true,
+  );
+}
+
+Future<bool> _legacyReactionAuthorityStillUninitialized({
+  required GroupRepository groupRepo,
+  required String groupId,
+  required String senderPeerId,
+  required String senderPublicKey,
+  required GroupMessage expectedMessage,
+  required GroupMessageRepository messageRepository,
+  required GroupContentAuthoringContext? explicitContext,
+}) {
+  return runGroupAuthorityPhase(
+    groupId: groupId,
+    action: () async {
+      final group = await groupRepo.getGroup(groupId);
+      final sender = await groupRepo.getMember(groupId, senderPeerId);
+      final message = await messageRepository.getMessage(expectedMessage.id);
+      final resolverAbsentLegacy = isResolverAbsentLegacyGroupContentAuthoring(
+        owner: groupRepo,
+        explicitContext: explicitContext,
+      );
+      if (group == null ||
+          group.selfRemovedAt != null ||
+          group.isDissolved ||
+          sender == null ||
+          (sender.devices.isNotEmpty && !resolverAbsentLegacy) ||
+          message == null ||
+          message.groupId != groupId ||
+          message.senderPeerId != expectedMessage.senderPeerId ||
+          message.timestamp.toUtc() != expectedMessage.timestamp.toUtc()) {
+        return false;
+      }
+      final resolution = await resolveGroupContentAuthoring(
+        resolverOwner: groupRepo,
+        groupId: groupId,
+        senderPeerId: senderPeerId,
+        senderPublicKey: senderPublicKey,
+        senderMember: sender,
+        explicitContext: explicitContext,
+      );
+      return resolution.kind ==
+          GroupContentAuthoringResolutionKind.legacyUninitialized;
+    },
+  );
+}
+
+Future<bool> _driveStrictReactionCustody({
+  required GroupReactionReplayOutboxRepository repository,
+  required AckOrExpiryInboxStore store,
+  required GroupReactionReplayOutboxEntry expected,
+  required MessageReaction reaction,
+  required String transitionId,
+  required String sourcePeerId,
+  required String sourceEventId,
+  required String sourceTimestamp,
+  required Map<String, Object?> eventPayload,
+  required Future<bool> Function() currentAuthorityMatches,
+  required Future<bool> Function(Future<bool> Function() mutation)
+  commitIfAuthorityMatches,
+}) async {
+  if (repository is! GroupReactionReplayPayloadCasRepository ||
+      repository is! GroupReactionStrictContentCompletionRepository) {
+    return false;
+  }
+  final casRepository = repository as GroupReactionReplayPayloadCasRepository;
+  final completionRepository =
+      repository as GroupReactionStrictContentCompletionRepository;
+  final initial = GroupContentRetryPayload.decode(expected.inboxRetryPayload);
+  for (final recipient in initial.pendingRecipientPeerIds) {
+    if (!await currentAuthorityMatches()) return false;
+    final current = await repository.getEntry(expected.reactionId);
+    if (current == null) return false;
+    final decoded = GroupContentRetryPayload.decode(current.inboxRetryPayload);
+    try {
+      await storeGroupContentRetryRecipient(
+        store: store,
+        inboxRetryPayload: current.inboxRetryPayload,
+        recipientPeerId: recipient,
+      );
+    } catch (_) {
+      continue;
+    }
+    if (decoded.pendingRecipientPeerIds.length == 1) {
+      return commitIfAuthorityMatches(
+        () => completionRepository.completeStrictContentIfExact(
+          current,
+          reactionRow: reaction.toMap(),
+          action: current.action,
+          transitionId: transitionId,
+          sourcePeerId: sourcePeerId,
+          sourceEventId: sourceEventId,
+          sourceTimestamp: sourceTimestamp,
+          eventPayload: eventPayload,
+        ),
+      );
+    }
+    final survivors = decoded.pendingRecipientPeerIds
+        .where((candidate) => candidate != recipient)
+        .toList(growable: false);
+    if (!await commitIfAuthorityMatches(
+      () => casRepository.replaceInboxRetryPayloadIfExact(
+        current,
+        decoded.encodeWithPending(survivors),
+      ),
+    )) {
+      return false;
+    }
+  }
+  return false;
 }
 
 String deterministicGroupAddReactionId({

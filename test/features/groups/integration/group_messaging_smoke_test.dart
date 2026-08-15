@@ -4029,397 +4029,385 @@ void main() {
       },
     );
 
-    test(
-      'GE-015 admin restart during add/remove repairs fanout honestly',
-      () async {
-        var alice = GroupTestUser.create(
-          peerId: 'ge015-alice-peer',
-          username: 'Alice',
-          network: network,
-        );
-        final bob = GroupTestUser.create(
-          peerId: 'ge015-bob-peer',
-          username: 'Bob',
-          network: network,
-        );
-        final charlie = GroupTestUser.create(
-          peerId: 'ge015-charlie-peer',
-          username: 'Charlie',
-          network: network,
-        );
-        final inviteStatusRepo =
-            _InMemoryGroupInviteDeliveryAttemptRepository();
-        addTearDown(() {
-          alice.dispose();
-          bob.dispose();
-          charlie.dispose();
-        });
+    test('GE-015 admin restart during add/remove repairs fanout honestly', () async {
+      var alice = GroupTestUser.create(
+        peerId: 'ge015-alice-peer',
+        username: 'Alice',
+        network: network,
+      );
+      final bob = GroupTestUser.create(
+        peerId: 'ge015-bob-peer',
+        username: 'Bob',
+        network: network,
+      );
+      final charlie = GroupTestUser.create(
+        peerId: 'ge015-charlie-peer',
+        username: 'Charlie',
+        network: network,
+      );
+      final inviteStatusRepo = _InMemoryGroupInviteDeliveryAttemptRepository();
+      addTearDown(() {
+        alice.dispose();
+        bob.dispose();
+        charlie.dispose();
+      });
 
-        const groupId = 'group-ge015-admin-restart-during-mutation';
-        const initialKeyEpoch = 1;
-        const removedKeyEpoch = 2;
-        // Promote-then-defer: the interrupted remove already promotes epoch 2
-        // (boundary enforced, Bob deferred). The post-restart admin re-rotation
-        // therefore advances to epoch 3 when it converges Bob, and the re-add
-        // rotation advances to epoch 4.
-        const repairedKeyEpoch = 3;
-        const readdKeyEpoch = 4;
-        const initialEncryptedKey = 'ge015-initial-key';
-        const removedEncryptedKey = 'ge015-removed-key';
-        const repairedEncryptedKey = 'ge015-repaired-key';
-        const readdEncryptedKey = 'ge015-readd-key';
-        const aliceRemovedWindowId = 'ge015-alice-removed-window';
-        const bobAfterRepairId = 'ge015-bob-after-remove-repair';
-        const charlieAfterRepairId = 'ge015-charlie-after-add-repair';
-        final createdAt = DateTime.utc(2026, 5, 13, 12);
-        final removedAt = createdAt.add(const Duration(minutes: 1));
-        final readdAt = removedAt.add(const Duration(minutes: 1));
+      const groupId = 'group-ge015-admin-restart-during-mutation';
+      const initialKeyEpoch = 1;
+      const removedKeyEpoch = 2;
+      // Promote-then-defer: the interrupted remove already promotes epoch 2
+      // (boundary enforced, Bob deferred). The post-restart admin re-rotation
+      // therefore advances to epoch 3 when it converges Bob, and the re-add
+      // rotation advances to epoch 4.
+      const repairedKeyEpoch = 3;
+      const readdKeyEpoch = 4;
+      const initialEncryptedKey = 'ge015-initial-key';
+      const removedEncryptedKey = 'ge015-removed-key';
+      const repairedEncryptedKey = 'ge015-repaired-key';
+      const readdEncryptedKey = 'ge015-readd-key';
+      const aliceRemovedWindowId = 'ge015-alice-removed-window';
+      const bobAfterRepairId = 'ge015-bob-after-remove-repair';
+      const charlieAfterRepairId = 'ge015-charlie-after-add-repair';
+      final createdAt = DateTime.utc(2026, 5, 13, 12);
+      final removedAt = createdAt.add(const Duration(minutes: 1));
+      final readdAt = removedAt.add(const Duration(minutes: 1));
 
-        await alice.createGroup(
-          groupId: groupId,
-          name: 'GE-015 Admin Restart',
-          createdAt: createdAt,
-        );
-        await alice.addMember(
-          groupId: groupId,
-          invitee: bob,
-          joinedAt: createdAt.add(const Duration(seconds: 1)),
-        );
-        await alice.addMember(
-          groupId: groupId,
-          invitee: charlie,
-          joinedAt: createdAt.add(const Duration(seconds: 2)),
-        );
+      await alice.createGroup(
+        groupId: groupId,
+        name: 'GE-015 Admin Restart',
+        createdAt: createdAt,
+      );
+      await alice.addMember(
+        groupId: groupId,
+        invitee: bob,
+        joinedAt: createdAt.add(const Duration(seconds: 1)),
+      );
+      await alice.addMember(
+        groupId: groupId,
+        invitee: charlie,
+        joinedAt: createdAt.add(const Duration(seconds: 2)),
+      );
 
-        Future<void> saveKey(
-          GroupTestUser user,
-          int epoch,
-          String encryptedKey,
-          DateTime created,
-        ) {
-          return user.groupRepo.saveKey(
-            GroupKeyInfo(
-              groupId: groupId,
-              keyGeneration: epoch,
-              encryptedKey: encryptedKey,
-              createdAt: created,
-            ),
-          );
-        }
-
-        Map<String, dynamic> latestInboxPayloadForMessage(
-          GroupTestUser sender,
-          String messageId,
-        ) {
-          for (final raw in sender.bridge.sentMessages.reversed) {
-            final parsed = jsonDecode(raw) as Map<String, dynamic>;
-            if (parsed['cmd'] != 'group:inboxStore') continue;
-            final payload = parsed['payload'] as Map<String, dynamic>;
-            final replayEnvelope =
-                jsonDecode(payload['message'] as String)
-                    as Map<String, dynamic>;
-            if (replayEnvelope['messageId'] == messageId) {
-              return payload;
-            }
-          }
-          fail('missing group:inboxStore for $messageId');
-        }
-
-        Set<String> recipientPeerIdsForMessage(
-          GroupTestUser sender,
-          String messageId,
-        ) {
-          return ((latestInboxPayloadForMessage(
-                        sender,
-                        messageId,
-                      )['recipientPeerIds']
-                      as List<dynamic>? ??
-                  const <dynamic>[]))
-              .cast<String>()
-              .toSet();
-        }
-
-        Future<List<GroupMessage>> loadGe015Messages(GroupTestUser user) async {
-          return (await user.msgRepo.getMessagesPage(
-            groupId,
-            limit: 100,
-          )).where((message) => message.id.startsWith('ge015-')).toList();
-        }
-
-        Future<void> expectMembers(
-          GroupTestUser user,
-          Set<String> expectedPeerIds,
-        ) async {
-          expect(
-            (await user.groupRepo.getMembers(
-              groupId,
-            )).map((member) => member.peerId).toSet(),
-            expectedPeerIds,
-            reason: '${user.username} membership',
-          );
-        }
-
-        await Future.wait([
-          saveKey(alice, initialKeyEpoch, initialEncryptedKey, createdAt),
-          saveKey(bob, initialKeyEpoch, initialEncryptedKey, createdAt),
-          saveKey(charlie, initialKeyEpoch, initialEncryptedKey, createdAt),
-        ]);
-
-        alice.start();
-        bob.start();
-        charlie.start();
-
-        await alice.removeMember(
-          groupId: groupId,
-          memberPeerId: charlie.peerId,
-          memberUsername: charlie.username,
-          removedAt: removedAt,
-        );
-        await waitUntil(() async {
-          return await bob.groupRepo.getMember(groupId, charlie.peerId) == null;
-        });
-
-        alice.bridge.responses['group:generateNextKey'] = {
-          'ok': true,
-          'groupKey': removedEncryptedKey,
-          'keyEpoch': removedKeyEpoch,
-        };
-        final interruptedRemoveTargets = <String>[];
-        final interruptedRemoveRepair = await rotateAndDistributeGroupKey(
-          bridge: alice.bridge,
-          groupRepo: alice.groupRepo,
-          groupId: groupId,
-          selfPeerId: alice.peerId,
-          senderPublicKey: alice.publicKey,
-          senderPrivateKey: alice.privateKey,
-          senderUsername: alice.username,
-          sourceDeviceId: alice.deviceId,
-          sendP2PMessage: (peerId, message) async {
-            interruptedRemoveTargets.add(peerId);
-            return false;
-          },
-          distributionAttemptCount: 1,
-          distributionRetryDelay: Duration.zero,
-          perRecipientTimeout: const Duration(milliseconds: 10),
-          distributionTimeout: const Duration(milliseconds: 50),
-        );
-        // Promote-then-defer: the failed fanout no longer aborts. The new epoch
-        // is promoted (so removed Charlie loses the live key unconditionally),
-        // but Bob — the only remaining member, whose every send failed — is
-        // recorded as deferred and is NOT counted as distributed. The honest
-        // invariant is "the boundary is enforced but distribution is incomplete",
-        // not "nothing happened".
-        expect(interruptedRemoveRepair.rotated, isTrue);
-        expect(interruptedRemoveRepair.key!.keyGeneration, removedKeyEpoch);
-        expect(interruptedRemoveRepair.distributedDeviceCount, 0);
-        expect(interruptedRemoveRepair.fullyDistributed, isFalse);
-        expect(interruptedRemoveRepair.deferredPeerIds, [bob.peerId]);
-        expect(interruptedRemoveTargets.toSet(), {bob.peerId});
-        expect(
-          _bridgeCommandIndex(
-            alice.bridge,
-            'group:updateKey',
-            keyEpoch: removedKeyEpoch,
+      Future<void> saveKey(
+        GroupTestUser user,
+        int epoch,
+        String encryptedKey,
+        DateTime created,
+      ) {
+        return user.groupRepo.saveKey(
+          GroupKeyInfo(
+            groupId: groupId,
+            keyGeneration: epoch,
+            encryptedKey: encryptedKey,
+            createdAt: created,
           ),
-          isNot(-1),
-          reason:
-              'promote-then-defer commits the new epoch even when fanout failed',
         );
-        expect(
-          (await alice.groupRepo.getLatestKey(groupId))?.keyGeneration,
-          removedKeyEpoch,
-          reason: 'interrupted remove fanout still promotes Alice to the new epoch',
-        );
+      }
 
-        alice = alice.restartWithPersistedState();
-        alice.bridge.responses['group:generateNextKey'] = {
-          'ok': true,
-          'groupKey': repairedEncryptedKey,
-          'keyEpoch': repairedKeyEpoch,
-        };
-        alice.start();
-        alice.subscribeToGroup(groupId);
-
-        // After restart the admin re-rotates with a live transport. Bob — the
-        // member deferred by the interrupted attempt — is now reachable, so this
-        // rotation fully distributes the new epoch (3) and never targets removed
-        // Charlie. Because epoch 2 was already promoted, convergence advances the
-        // boundary to epoch 3.
-        final repairedRemoveTargets = <String>[];
-        final repairedRemoveKey = await rotateAndDistributeGroupKey(
-          bridge: alice.bridge,
-          groupRepo: alice.groupRepo,
-          groupId: groupId,
-          selfPeerId: alice.peerId,
-          senderPublicKey: alice.publicKey,
-          senderPrivateKey: alice.privateKey,
-          senderUsername: alice.username,
-          sourceDeviceId: alice.deviceId,
-          sendP2PMessage: (peerId, message) async {
-            repairedRemoveTargets.add(peerId);
-            return true;
-          },
-          distributionAttemptCount: 1,
-          distributionRetryDelay: Duration.zero,
-        );
-        expect(repairedRemoveKey.rotated, isTrue);
-        expect(repairedRemoveKey.key!.keyGeneration, repairedKeyEpoch);
-        expect(repairedRemoveKey.fullyDistributed, isTrue);
-        expect(repairedRemoveKey.deferredPeerIds, isEmpty);
-        expect(repairedRemoveTargets.toSet(), {bob.peerId});
-        expect(repairedRemoveTargets, isNot(contains(charlie.peerId)));
-        await saveKey(bob, repairedKeyEpoch, repairedEncryptedKey, removedAt);
-
-        final (removedWindowResult, removedWindowMessage) = await alice
-            .sendGroupMessageViaBridge(
-              groupId: groupId,
-              text: 'GE-015 removed-window after admin repair',
-              messageId: aliceRemovedWindowId,
-              timestamp: removedAt.add(const Duration(seconds: 1)),
-            );
-        expect(removedWindowResult.name, 'success');
-        expect(removedWindowMessage, isNotNull);
-        expect(removedWindowMessage!.keyGeneration, repairedKeyEpoch);
-        expect(recipientPeerIdsForMessage(alice, aliceRemovedWindowId), {
-          bob.peerId,
-        });
-
-        final (bobAfterRepairResult, bobAfterRepairMessage) = await bob
-            .sendGroupMessageViaBridge(
-              groupId: groupId,
-              text: 'GE-015 Bob after remove repair',
-              messageId: bobAfterRepairId,
-              timestamp: removedAt.add(const Duration(seconds: 2)),
-            );
-        expect(bobAfterRepairResult.name, 'success');
-        expect(bobAfterRepairMessage, isNotNull);
-        expect(bobAfterRepairMessage!.keyGeneration, repairedKeyEpoch);
-        expect(recipientPeerIdsForMessage(bob, bobAfterRepairId), {
-          alice.peerId,
-        });
-        await waitUntil(() async {
-          final aliceMessages = await alice.loadGroupMessages(groupId);
-          final bobMessages = await bob.loadGroupMessages(groupId);
-          return aliceMessages.any(
-                (message) => message.id == bobAfterRepairId,
-              ) &&
-              bobMessages.any((message) => message.id == aliceRemovedWindowId);
-        });
-        expect(
-          (await loadGe015Messages(
-            charlie,
-          )).where((message) => message.id == aliceRemovedWindowId),
-          isEmpty,
-          reason: 'removed Charlie must not receive post-removal plaintext',
-        );
-        await expectMembers(alice, {alice.peerId, bob.peerId});
-        await expectMembers(bob, {alice.peerId, bob.peerId});
-
-        final remainingMembers = await alice.groupRepo.getMembers(groupId);
-        final readdedCharlie = GroupMember(
-          groupId: groupId,
-          peerId: charlie.peerId,
-          username: charlie.username,
-          role: MemberRole.writer,
-          permissions: GroupMemberPermissions.empty,
-          publicKey: charlie.publicKey,
-          mlKemPublicKey: 'mlkem-${charlie.peerId}',
-          devices: [charlie.deviceIdentity],
-          joinedAt: readdAt,
-        );
-        await Future.wait([
-          alice.groupRepo.saveMember(readdedCharlie),
-          bob.groupRepo.saveMember(readdedCharlie),
-        ]);
-        await recordPendingGroupInviteFanoutAttempts(
-          inviteDeliveryAttemptRepo: inviteStatusRepo,
-          groupId: groupId,
-          members: [readdedCharlie],
-          now: readdAt,
-        );
-
-        alice = alice.restartWithPersistedState();
-        alice.start();
-        alice.subscribeToGroup(groupId);
-
-        final pendingInvite = await inviteStatusRepo.getAttempt(
-          groupId: groupId,
-          peerId: charlie.peerId,
-        );
-        expect(pendingInvite, isNotNull);
-        expect(pendingInvite!.status, GroupInviteDeliveryStatus.needsResend);
-        expect(
-          pendingInvite.lastError,
-          'invite_fanout_pending_after_membership_update',
-          reason: 'admin restart retains honest invite fanout status',
-        );
-
-        await recordGroupInviteDeliveryBatch(
-          inviteDeliveryAttemptRepo: inviteStatusRepo,
-          groupId: groupId,
-          attempts: [
-            GroupInviteAttempt(
-              peerId: charlie.peerId,
-              username: charlie.username,
-              result: SendGroupInviteResult.success,
-            ),
-          ],
-          now: readdAt.add(const Duration(seconds: 1)),
-        );
-        final repairedInvite = await inviteStatusRepo.getAttempt(
-          groupId: groupId,
-          peerId: charlie.peerId,
-        );
-        expect(repairedInvite?.status, GroupInviteDeliveryStatus.sent);
-
-        final group = (await alice.groupRepo.getGroup(groupId))!;
-        await charlie.groupRepo.saveGroup(
-          group.copyWith(myRole: GroupRole.member),
-        );
-        for (final member in [...remainingMembers, readdedCharlie]) {
-          await charlie.groupRepo.saveMember(member);
+      Map<String, dynamic> latestInboxPayloadForMessage(
+        GroupTestUser sender,
+        String messageId,
+      ) {
+        for (final raw in sender.bridge.sentMessages.reversed) {
+          final parsed = jsonDecode(raw) as Map<String, dynamic>;
+          if (parsed['cmd'] != 'group:inboxStore') continue;
+          final payload = parsed['payload'] as Map<String, dynamic>;
+          final replayEnvelope =
+              jsonDecode(payload['message'] as String) as Map<String, dynamic>;
+          if (replayEnvelope['messageId'] == messageId) {
+            return payload;
+          }
         }
-        await Future.wait([
-          saveKey(alice, readdKeyEpoch, readdEncryptedKey, readdAt),
-          saveKey(bob, readdKeyEpoch, readdEncryptedKey, readdAt),
-          saveKey(charlie, readdKeyEpoch, readdEncryptedKey, readdAt),
-        ]);
-        charlie.subscribeToGroup(groupId);
+        fail('missing group:inboxStore for $messageId');
+      }
 
-        final (
-          charlieAfterRepairResult,
-          charlieAfterRepairMessage,
-        ) = await charlie.sendGroupMessageViaBridge(
-          groupId: groupId,
-          text: 'GE-015 Charlie after repaired invite fanout',
-          messageId: charlieAfterRepairId,
-          timestamp: readdAt.add(const Duration(seconds: 2)),
+      Set<String> recipientPeerIdsForMessage(
+        GroupTestUser sender,
+        String messageId,
+      ) {
+        return ((latestInboxPayloadForMessage(
+                      sender,
+                      messageId,
+                    )['recipientPeerIds']
+                    as List<dynamic>? ??
+                const <dynamic>[]))
+            .cast<String>()
+            .toSet();
+      }
+
+      Future<List<GroupMessage>> loadGe015Messages(GroupTestUser user) async {
+        return (await user.msgRepo.getMessagesPage(
+          groupId,
+          limit: 100,
+        )).where((message) => message.id.startsWith('ge015-')).toList();
+      }
+
+      Future<void> expectMembers(
+        GroupTestUser user,
+        Set<String> expectedPeerIds,
+      ) async {
+        expect(
+          (await user.groupRepo.getMembers(
+            groupId,
+          )).map((member) => member.peerId).toSet(),
+          expectedPeerIds,
+          reason: '${user.username} membership',
         );
-        expect(charlieAfterRepairResult.name, 'success');
-        expect(charlieAfterRepairMessage, isNotNull);
-        expect(charlieAfterRepairMessage!.keyGeneration, readdKeyEpoch);
-        expect(recipientPeerIdsForMessage(charlie, charlieAfterRepairId), {
-          alice.peerId,
-          bob.peerId,
-        });
-        await waitUntil(() async {
-          final aliceMessages = await alice.loadGroupMessages(groupId);
-          final bobMessages = await bob.loadGroupMessages(groupId);
-          return aliceMessages.any(
-                (message) => message.id == charlieAfterRepairId,
-              ) &&
-              bobMessages.any((message) => message.id == charlieAfterRepairId);
-        });
+      }
 
-        await expectMembers(alice, {alice.peerId, bob.peerId, charlie.peerId});
-        await expectMembers(bob, {alice.peerId, bob.peerId, charlie.peerId});
-        await expectMembers(charlie, {
-          alice.peerId,
-          bob.peerId,
-          charlie.peerId,
-        });
-      },
-    );
+      await Future.wait([
+        saveKey(alice, initialKeyEpoch, initialEncryptedKey, createdAt),
+        saveKey(bob, initialKeyEpoch, initialEncryptedKey, createdAt),
+        saveKey(charlie, initialKeyEpoch, initialEncryptedKey, createdAt),
+      ]);
+
+      alice.start();
+      bob.start();
+      charlie.start();
+
+      await alice.removeMember(
+        groupId: groupId,
+        memberPeerId: charlie.peerId,
+        memberUsername: charlie.username,
+        removedAt: removedAt,
+      );
+      await waitUntil(() async {
+        return await bob.groupRepo.getMember(groupId, charlie.peerId) == null;
+      });
+
+      alice.bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': removedEncryptedKey,
+        'keyEpoch': removedKeyEpoch,
+      };
+      final interruptedRemoveTargets = <String>[];
+      final interruptedRemoveRepair = await rotateAndDistributeGroupKey(
+        bridge: alice.bridge,
+        groupRepo: alice.groupRepo,
+        groupId: groupId,
+        selfPeerId: alice.peerId,
+        senderPublicKey: alice.publicKey,
+        senderPrivateKey: alice.privateKey,
+        senderUsername: alice.username,
+        sourceDeviceId: alice.deviceId,
+        sendP2PMessage: (peerId, message) async {
+          interruptedRemoveTargets.add(peerId);
+          return false;
+        },
+        distributionAttemptCount: 1,
+        distributionRetryDelay: Duration.zero,
+        perRecipientTimeout: const Duration(milliseconds: 10),
+        distributionTimeout: const Duration(milliseconds: 50),
+      );
+      // Promote-then-defer: the failed fanout no longer aborts. The new epoch
+      // is promoted (so removed Charlie loses the live key unconditionally),
+      // but Bob — the only remaining member, whose every send failed — is
+      // recorded as deferred and is NOT counted as distributed. The honest
+      // invariant is "the boundary is enforced but distribution is incomplete",
+      // not "nothing happened".
+      expect(interruptedRemoveRepair.rotated, isTrue);
+      expect(interruptedRemoveRepair.key!.keyGeneration, removedKeyEpoch);
+      expect(interruptedRemoveRepair.distributedDeviceCount, 0);
+      expect(interruptedRemoveRepair.fullyDistributed, isFalse);
+      expect(interruptedRemoveRepair.deferredPeerIds, [bob.peerId]);
+      expect(interruptedRemoveTargets.toSet(), {bob.peerId});
+      expect(
+        _bridgeCommandIndex(
+          alice.bridge,
+          'group:updateKey',
+          keyEpoch: removedKeyEpoch,
+        ),
+        isNot(-1),
+        reason:
+            'promote-then-defer commits the new epoch even when fanout failed',
+      );
+      expect(
+        (await alice.groupRepo.getLatestKey(groupId))?.keyGeneration,
+        removedKeyEpoch,
+        reason:
+            'interrupted remove fanout still promotes Alice to the new epoch',
+      );
+
+      alice = alice.restartWithPersistedState();
+      alice.bridge.responses['group:generateNextKey'] = {
+        'ok': true,
+        'groupKey': repairedEncryptedKey,
+        'keyEpoch': repairedKeyEpoch,
+      };
+      alice.start();
+      alice.subscribeToGroup(groupId);
+
+      // After restart the admin re-rotates with a live transport. Bob — the
+      // member deferred by the interrupted attempt — is now reachable, so this
+      // rotation fully distributes the new epoch (3) and never targets removed
+      // Charlie. Because epoch 2 was already promoted, convergence advances the
+      // boundary to epoch 3.
+      final repairedRemoveTargets = <String>[];
+      final repairedRemoveKey = await rotateAndDistributeGroupKey(
+        bridge: alice.bridge,
+        groupRepo: alice.groupRepo,
+        groupId: groupId,
+        selfPeerId: alice.peerId,
+        senderPublicKey: alice.publicKey,
+        senderPrivateKey: alice.privateKey,
+        senderUsername: alice.username,
+        sourceDeviceId: alice.deviceId,
+        sendP2PMessage: (peerId, message) async {
+          repairedRemoveTargets.add(peerId);
+          return true;
+        },
+        distributionAttemptCount: 1,
+        distributionRetryDelay: Duration.zero,
+      );
+      expect(repairedRemoveKey.rotated, isTrue);
+      expect(repairedRemoveKey.key!.keyGeneration, repairedKeyEpoch);
+      expect(repairedRemoveKey.fullyDistributed, isTrue);
+      expect(repairedRemoveKey.deferredPeerIds, isEmpty);
+      expect(repairedRemoveTargets.toSet(), {bob.peerId});
+      expect(repairedRemoveTargets, isNot(contains(charlie.peerId)));
+      await saveKey(bob, repairedKeyEpoch, repairedEncryptedKey, removedAt);
+
+      final (removedWindowResult, removedWindowMessage) = await alice
+          .sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: 'GE-015 removed-window after admin repair',
+            messageId: aliceRemovedWindowId,
+            timestamp: removedAt.add(const Duration(seconds: 1)),
+          );
+      expect(removedWindowResult.name, 'success');
+      expect(removedWindowMessage, isNotNull);
+      expect(removedWindowMessage!.keyGeneration, repairedKeyEpoch);
+      expect(recipientPeerIdsForMessage(alice, aliceRemovedWindowId), {
+        bob.peerId,
+      });
+
+      final (bobAfterRepairResult, bobAfterRepairMessage) = await bob
+          .sendGroupMessageViaBridge(
+            groupId: groupId,
+            text: 'GE-015 Bob after remove repair',
+            messageId: bobAfterRepairId,
+            timestamp: removedAt.add(const Duration(seconds: 2)),
+          );
+      expect(bobAfterRepairResult.name, 'success');
+      expect(bobAfterRepairMessage, isNotNull);
+      expect(bobAfterRepairMessage!.keyGeneration, repairedKeyEpoch);
+      expect(recipientPeerIdsForMessage(bob, bobAfterRepairId), {alice.peerId});
+      await waitUntil(() async {
+        final aliceMessages = await alice.loadGroupMessages(groupId);
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        return aliceMessages.any((message) => message.id == bobAfterRepairId) &&
+            bobMessages.any((message) => message.id == aliceRemovedWindowId);
+      });
+      expect(
+        (await loadGe015Messages(
+          charlie,
+        )).where((message) => message.id == aliceRemovedWindowId),
+        isEmpty,
+        reason: 'removed Charlie must not receive post-removal plaintext',
+      );
+      await expectMembers(alice, {alice.peerId, bob.peerId});
+      await expectMembers(bob, {alice.peerId, bob.peerId});
+
+      final remainingMembers = await alice.groupRepo.getMembers(groupId);
+      final readdedCharlie = GroupMember(
+        groupId: groupId,
+        peerId: charlie.peerId,
+        username: charlie.username,
+        role: MemberRole.writer,
+        permissions: GroupMemberPermissions.empty,
+        publicKey: charlie.publicKey,
+        mlKemPublicKey: 'mlkem-${charlie.peerId}',
+        devices: [charlie.deviceIdentity],
+        joinedAt: readdAt,
+      );
+      await Future.wait([
+        alice.groupRepo.saveMember(readdedCharlie),
+        bob.groupRepo.saveMember(readdedCharlie),
+      ]);
+      await recordPendingGroupInviteFanoutAttempts(
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
+        groupId: groupId,
+        members: [readdedCharlie],
+        now: readdAt,
+      );
+
+      alice = alice.restartWithPersistedState();
+      alice.start();
+      alice.subscribeToGroup(groupId);
+
+      final pendingInvite = await inviteStatusRepo.getAttempt(
+        groupId: groupId,
+        peerId: charlie.peerId,
+      );
+      expect(pendingInvite, isNotNull);
+      expect(pendingInvite!.status, GroupInviteDeliveryStatus.needsResend);
+      expect(
+        pendingInvite.lastError,
+        'invite_fanout_pending_after_membership_update',
+        reason: 'admin restart retains honest invite fanout status',
+      );
+
+      await recordGroupInviteDeliveryBatch(
+        inviteDeliveryAttemptRepo: inviteStatusRepo,
+        groupId: groupId,
+        attempts: [
+          GroupInviteAttempt(
+            peerId: charlie.peerId,
+            username: charlie.username,
+            result: SendGroupInviteResult.success,
+          ),
+        ],
+        now: readdAt.add(const Duration(seconds: 1)),
+      );
+      final repairedInvite = await inviteStatusRepo.getAttempt(
+        groupId: groupId,
+        peerId: charlie.peerId,
+      );
+      expect(repairedInvite?.status, GroupInviteDeliveryStatus.sent);
+
+      final group = (await alice.groupRepo.getGroup(groupId))!;
+      await charlie.groupRepo.saveGroup(
+        group.copyWith(myRole: GroupRole.member),
+      );
+      for (final member in [...remainingMembers, readdedCharlie]) {
+        await charlie.groupRepo.saveMember(member);
+      }
+      await Future.wait([
+        saveKey(alice, readdKeyEpoch, readdEncryptedKey, readdAt),
+        saveKey(bob, readdKeyEpoch, readdEncryptedKey, readdAt),
+        saveKey(charlie, readdKeyEpoch, readdEncryptedKey, readdAt),
+      ]);
+      charlie.subscribeToGroup(groupId);
+
+      final (
+        charlieAfterRepairResult,
+        charlieAfterRepairMessage,
+      ) = await charlie.sendGroupMessageViaBridge(
+        groupId: groupId,
+        text: 'GE-015 Charlie after repaired invite fanout',
+        messageId: charlieAfterRepairId,
+        timestamp: readdAt.add(const Duration(seconds: 2)),
+      );
+      expect(charlieAfterRepairResult.name, 'success');
+      expect(charlieAfterRepairMessage, isNotNull);
+      expect(charlieAfterRepairMessage!.keyGeneration, readdKeyEpoch);
+      expect(recipientPeerIdsForMessage(charlie, charlieAfterRepairId), {
+        alice.peerId,
+        bob.peerId,
+      });
+      await waitUntil(() async {
+        final aliceMessages = await alice.loadGroupMessages(groupId);
+        final bobMessages = await bob.loadGroupMessages(groupId);
+        return aliceMessages.any(
+              (message) => message.id == charlieAfterRepairId,
+            ) &&
+            bobMessages.any((message) => message.id == charlieAfterRepairId);
+      });
+
+      await expectMembers(alice, {alice.peerId, bob.peerId, charlie.peerId});
+      await expectMembers(bob, {alice.peerId, bob.peerId, charlie.peerId});
+      await expectMembers(charlie, {alice.peerId, bob.peerId, charlie.peerId});
+    });
 
     test(
       'GE-007 remove/re-add while B offline observer catches up entitled messages',
@@ -13469,7 +13457,23 @@ void main() {
               .toSet(),
           {bob.deviceId},
         );
-        await saveKey(bob, rotatedKey.key!.keyGeneration, rotatedKey.key!.encryptedKey);
+        await saveKey(
+          bob,
+          rotatedKey.key!.keyGeneration,
+          rotatedKey.key!.encryptedKey,
+        );
+
+        // IR-006 is the explicit legacy-uninitialized preservation leg. Once
+        // a sender has an initialized device roster Plan 364 requires strict
+        // authority resolution and must not fall through to fake pubsub.
+        final aliceMember = await alice.groupRepo.getMember(
+          groupId,
+          alice.peerId,
+        );
+        expect(aliceMember, isNotNull);
+        await alice.groupRepo.saveMember(
+          aliceMember!.copyWith(devices: const <GroupMemberDeviceIdentity>[]),
+        );
 
         final (sendResult, sentMessage) = await alice.sendGroupMessageViaBridge(
           groupId: groupId,
@@ -14182,10 +14186,7 @@ void main() {
         expect(keyUpdateAttempts[bob.deviceId]!['keyGeneration'], 2);
         expect(keyUpdateAttempts[charlie.deviceId]!['keyGeneration'], 2);
         expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 2);
-        expect(
-          await alice.groupRepo.getKeyByGeneration(groupId, 2),
-          isNotNull,
-        );
+        expect(await alice.groupRepo.getKeyByGeneration(groupId, 2), isNotNull);
         expect(
           alice.bridge.sentMessages.any((raw) {
             final parsed = jsonDecode(raw) as Map<String, dynamic>;
@@ -14205,8 +14206,8 @@ void main() {
           GroupKeyInfo(
             groupId: groupId,
             keyGeneration: 2,
-            encryptedKey: keyUpdateAttempts[bob.deviceId]!['encryptedKey']
-                as String,
+            encryptedKey:
+                keyUpdateAttempts[bob.deviceId]!['encryptedKey'] as String,
             createdAt: createdAt.add(const Duration(minutes: 2, seconds: 30)),
           ),
         );
@@ -14382,7 +14383,11 @@ void main() {
         expect((await alice.groupRepo.getLatestKey(groupId))!.keyGeneration, 3);
         await Future.wait([
           saveKey(bob, finalKey.key!.keyGeneration, finalKey.key!.encryptedKey),
-          saveKey(charlie, finalKey.key!.keyGeneration, finalKey.key!.encryptedKey),
+          saveKey(
+            charlie,
+            finalKey.key!.keyGeneration,
+            finalKey.key!.encryptedKey,
+          ),
         ]);
 
         alice.start();
@@ -16935,7 +16940,11 @@ Future<void> _runGe017Seed(
       },
     );
     expect(rotatedKey, isNotNull, reason: stateContext(op));
-    expect(rotatedKey.key!.keyGeneration, currentEpoch, reason: stateContext(op));
+    expect(
+      rotatedKey.key!.keyGeneration,
+      currentEpoch,
+      reason: stateContext(op),
+    );
     for (final label in active) {
       await user(label).groupRepo.saveKey(rotatedKey.key!);
     }
@@ -17481,7 +17490,11 @@ Future<void> _runGe019Seed(
       },
     );
     expect(rotatedKey, isNotNull, reason: stateContext(op));
-    expect(rotatedKey.key!.keyGeneration, currentEpoch, reason: stateContext(op));
+    expect(
+      rotatedKey.key!.keyGeneration,
+      currentEpoch,
+      reason: stateContext(op),
+    );
     for (final label in active) {
       await user(label).groupRepo.saveKey(rotatedKey.key!);
     }
@@ -17994,7 +18007,11 @@ Future<void> _runGe020Seed(
       },
     );
     expect(rotatedKey, isNotNull, reason: stateContext(op));
-    expect(rotatedKey.key!.keyGeneration, currentEpoch, reason: stateContext(op));
+    expect(
+      rotatedKey.key!.keyGeneration,
+      currentEpoch,
+      reason: stateContext(op),
+    );
     for (final label in active) {
       await user(label).groupRepo.saveKey(rotatedKey.key!);
     }
@@ -18597,7 +18614,8 @@ Future<void> _runGe023MediaReaddEntitlement(
     final messages = await user.loadGroupMessages(groupId);
     final message = messages.singleWhere((message) => message.id == messageId);
     final attachments = await user.mediaAttachmentRepo.getAttachmentsForMessage(
-      messageId, owner: MediaOwnerLane.group,
+      messageId,
+      owner: MediaOwnerLane.group,
     );
     final attachment = attachments.single;
     expect(message.isIncoming, isIncoming);
@@ -18627,7 +18645,10 @@ Future<void> _runGe023MediaReaddEntitlement(
       reason: '${user.username} must not receive removed-window media',
     );
     expect(
-      await user.mediaAttachmentRepo.getAttachmentsForMessage(messageId, owner: MediaOwnerLane.group),
+      await user.mediaAttachmentRepo.getAttachmentsForMessage(
+        messageId,
+        owner: MediaOwnerLane.group,
+      ),
       isEmpty,
       reason: '${user.username} must not persist removed-window media',
     );

@@ -158,6 +158,7 @@ MediaAttachment _makeAttachment({
   required String messageId,
   required String downloadStatus,
   String mime = 'image/jpeg',
+  String? groupMediaBlobCustodyFingerprint,
 }) {
   return MediaAttachment(
     id: id,
@@ -171,6 +172,7 @@ MediaAttachment _makeAttachment({
     encryptionKeyBase64: 'key-$id',
     encryptionNonce: 'nonce-$id',
     encryptionScheme: kMediaAttachmentEncryptionSchemeBlobAesGcmV1,
+    groupMediaBlobCustodyFingerprint: groupMediaBlobCustodyFingerprint,
     createdAt: '2026-01-15T12:00:00.000Z',
   );
 }
@@ -1795,6 +1797,52 @@ void main() {
         );
         expect(count, 1);
         expect((await msgRepo.getMessage('msg-manual'))!.status, 'sent');
+      },
+    );
+
+    test(
+      'TC-365-02b strict queued group media never enters fresh-message retry',
+      () async {
+        identityRepo.seed(_makeIdentity());
+        await saveRetryGroupWithMembers();
+        final base = _makeFailedGroupMessage(
+          id: 'strict-media-manual',
+          text: '',
+          timestampIso: '2026-01-15T12:00:00.000Z',
+          media: const <Map<String, Object?>>[
+            <String, Object?>{'id': 'strict-media-att'},
+          ],
+        );
+        await msgRepo.saveMessage(
+          base.copyWith(
+            status: GroupMessage.statusSendFailed,
+            retryAttemptCount: 12,
+          ),
+        );
+        await mediaRepo.saveAttachment(
+          _makeAttachment(
+            id: 'strict-media-att',
+            messageId: 'strict-media-manual',
+            downloadStatus: 'upload_pending',
+            groupMediaBlobCustodyFingerprint: _validContentHash,
+          ),
+          owner: MediaOwnerLane.group,
+        );
+
+        final count = await retryFailedGroupMessage(
+          messageId: 'strict-media-manual',
+          groupMsgRepo: msgRepo,
+          groupRepo: groupRepo,
+          identityRepo: identityRepo,
+          bridge: bridge,
+          mediaAttachmentRepo: mediaRepo,
+        );
+
+        expect(count, 0);
+        final preserved = await msgRepo.getMessage('strict-media-manual');
+        expect(preserved!.status, GroupMessage.statusSendFailed);
+        expect(preserved.retryAttemptCount, 12);
+        expect(bridge.commandLog, isEmpty);
       },
     );
 

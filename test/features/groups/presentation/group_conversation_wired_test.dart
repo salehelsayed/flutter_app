@@ -46,6 +46,7 @@ import 'package:flutter_app/features/groups/application/group_media_forward_inte
 import 'package:flutter_app/features/groups/application/group_membership_event_watermark.dart';
 import 'package:flutter_app/features/groups/application/group_private_media_availability.dart';
 import 'package:flutter_app/features/groups/application/group_recovery_gate.dart';
+import 'package:flutter_app/features/groups/application/linked_group_status_refresh.dart';
 import 'package:flutter_app/features/groups/application/retry_incomplete_group_downloads_use_case.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_exit_intent.dart';
@@ -60,6 +61,7 @@ import 'package:flutter_app/features/groups/presentation/screens/group_conversat
 import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_repository.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_conversation_wired.dart';
+import 'package:flutter_app/features/groups/presentation/screens/linked_group_conversation_wired.dart';
 import 'package:flutter_app/features/groups/presentation/widgets/group_reaction_details_sheet.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/presentation/screens/group_info_screen.dart';
@@ -9983,6 +9985,766 @@ void main() {
         );
         expect(find.byKey(MessageContextOverlay.replyActionKey), findsNothing);
         expect(find.byKey(MessageContextOverlay.copyActionKey), findsOneWidget);
+      },
+    );
+
+    // TC-364-04a narrow linked-surface regression. Keep the top-level plan ID
+    // unique in the bootstrap contract while proving the UI behavior here.
+    testWidgets(
+      'linked protected announcement readers react while compose and stale authority stay closed',
+      (tester) async {
+        final group = makeAnnouncementGroup(role: GroupRole.member);
+        var message = makeMessage(id: 'linked-announcement', text: 'Update');
+        var currentGroup = group;
+        var authoritySettled = true;
+        var authoringQualified = true;
+        var sendCalls = 0;
+        var markReadCalls = 0;
+        final reactionCalls = <({String messageId, bool remove})>[];
+        final tracker = ActiveConversationTracker();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: (_) async => currentGroup,
+              loadProtectedMessages: (_) async => <GroupMessage>[message],
+              loadProtectedReactions: (_) async => const {},
+              markVisibleMessagesRead: (groupId, messageIds) async {
+                expectSync(groupId, group.id);
+                expectSync(messageIds, <String>[message.id]);
+                markReadCalls += 1;
+                message = message.copyWith(readAt: DateTime.utc(2026, 8, 14));
+              },
+              groupConversationTracker: tracker,
+              isAuthoritySettled: (_) async => authoritySettled,
+              canAuthorProtectedContent: (_) async => authoringQualified,
+              sendProtectedText: (_, _) async {
+                sendCalls += 1;
+                return true;
+              },
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) async {
+                    reactionCalls.add((messageId: message.id, remove: remove));
+                    return true;
+                  },
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 4);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.canWrite, isFalse);
+        expect(find.byType(TextField), findsNothing);
+        expect(screen.onReactionSelected, isNotNull);
+        expect(screen.onReactionTap, isNotNull);
+        expect(markReadCalls, 1);
+        expect(tracker.activePeerId, 'group:${group.id}');
+
+        final staleReactionSelected = screen.onReactionSelected!;
+        staleReactionSelected(message.id, '👍');
+        await pumpFrames(tester, count: 4);
+        expect(reactionCalls, <({String messageId, bool remove})>[
+          (messageId: message.id, remove: false),
+        ]);
+        expect(sendCalls, 0);
+
+        authoringQualified = false;
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 4);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onReactionSelected, isNull);
+        expect(screen.onReactionTap, isNull);
+        expect(screen.canWrite, isFalse);
+        staleReactionSelected(message.id, '👍');
+        await pumpFrames(tester, count: 2);
+        expect(reactionCalls, hasLength(1));
+
+        authoringQualified = true;
+        authoritySettled = false;
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 4);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onReactionSelected, isNull);
+        expect(screen.onReactionTap, isNull);
+        expect(screen.canWrite, isFalse);
+        staleReactionSelected(message.id, '👍');
+        await pumpFrames(tester, count: 2);
+        expect(reactionCalls, hasLength(1));
+        expect(markReadCalls, 1);
+
+        authoritySettled = true;
+        currentGroup = group.copyWith(selfRemovedAt: DateTime.utc(2026, 8, 14));
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 4);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onReactionSelected, isNull);
+        expect(screen.onReactionTap, isNull);
+        staleReactionSelected(message.id, '👍');
+        await pumpFrames(tester, count: 2);
+        expect(reactionCalls, hasLength(1));
+
+        currentGroup = group.copyWith(
+          isDissolved: true,
+          dissolvedAt: DateTime.utc(2026, 8, 14),
+          dissolvedBy: 'peer-admin',
+        );
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 4);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onReactionSelected, isNull);
+        expect(screen.onReactionTap, isNull);
+        staleReactionSelected(message.id, '👍');
+        await pumpFrames(tester, count: 2);
+        expect(reactionCalls, hasLength(1));
+      },
+    );
+
+    testWidgets(
+      'TC-365-04a linked group exposes only ordinary media and voice',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        final mediaMessage = makeMessage(
+          id: 'linked-protected-media',
+          text: '',
+        );
+        final hiddenMessage = makeMessage(id: 'linked-unbound', text: '');
+        final forwarded = makeMessage(
+          id: 'linked-forwarded',
+          text: 'Forwarded',
+        ).copyWith(isForwarded: true);
+        MediaAttachment protectedAttachment({
+          required String id,
+          required String messageId,
+          required String mime,
+          required String mediaType,
+        }) => MediaAttachment(
+          id: id,
+          messageId: messageId,
+          mime: mime,
+          size: 32,
+          mediaType: mediaType,
+          durationMs: mediaType == 'audio' ? 1200 : null,
+          downloadStatus: 'pending',
+          createdAt: '2026-08-14T10:00:00.000Z',
+          groupMediaBlobCustodyFingerprint: 'fingerprint-$id',
+          ownerLane: MediaOwnerLane.group,
+        );
+
+        var authoritySettled = true;
+        var authoringQualified = true;
+        var attachCalls = 0;
+        var recordStartCalls = 0;
+        var recordStopCalls = 0;
+        var recordCancelCalls = 0;
+        final opened = <(String, int)>[];
+        final retried = <String>[];
+        final tracker = ActiveConversationTracker();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: (_) async => group,
+              loadProtectedMessages: (_) async => <GroupMessage>[
+                mediaMessage,
+                hiddenMessage,
+                forwarded,
+              ],
+              loadProtectedMedia: (_) async => <String, List<MediaAttachment>>{
+                mediaMessage.id: <MediaAttachment>[
+                  protectedAttachment(
+                    id: 'linked-image',
+                    messageId: mediaMessage.id,
+                    mime: 'image/png',
+                    mediaType: 'image',
+                  ),
+                  protectedAttachment(
+                    id: 'linked-voice',
+                    messageId: mediaMessage.id,
+                    mime: 'audio/mp4',
+                    mediaType: 'audio',
+                  ),
+                ],
+                hiddenMessage.id: <MediaAttachment>[
+                  MediaAttachment(
+                    id: 'unbound-image',
+                    messageId: hiddenMessage.id,
+                    mime: 'image/png',
+                    size: 32,
+                    mediaType: 'image',
+                    downloadStatus: 'pending',
+                    createdAt: '2026-08-14T10:00:00.000Z',
+                    ownerLane: MediaOwnerLane.group,
+                  ),
+                ],
+              },
+              loadProtectedReactions: (_) async => const {},
+              markVisibleMessagesRead: (_, _) async {},
+              groupConversationTracker: tracker,
+              isAuthoritySettled: (_) async => authoritySettled,
+              canAuthorProtectedContent: (_) async => authoringQualified,
+              sendProtectedText: (_, _) async => true,
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) async => true,
+              attachOrdinaryMedia: (_) async {
+                attachCalls += 1;
+                return true;
+              },
+              startVoiceRecording: (_) async {
+                recordStartCalls += 1;
+                return true;
+              },
+              stopVoiceRecording: (_) async {
+                recordStopCalls += 1;
+                return true;
+              },
+              cancelVoiceRecording: (_) async {
+                recordCancelCalls += 1;
+                return true;
+              },
+              openOrdinaryMedia: (_, messageId, index) async {
+                opened.add((messageId, index));
+              },
+              retryOrdinaryMedia: (_, messageId) async {
+                retried.add(messageId);
+              },
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 5);
+
+        var screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.messages.map((message) => message.id), <String>[
+          mediaMessage.id,
+        ]);
+        expect(screen.mediaMap[mediaMessage.id], hasLength(2));
+        expect(screen.onAttach, isNotNull);
+        expect(screen.onRecordStart, isNotNull);
+        expect(screen.onRecordStop, isNotNull);
+        expect(screen.onRecordCancel, isNotNull);
+        expect(screen.onMediaTap, isNotNull);
+        expect(screen.onRetryFailedMedia, isNotNull);
+        expect(screen.onRetryUnavailableMedia, isNotNull);
+
+        // Broad/full-controller capabilities remain structurally absent.
+        expect(screen.onInfo, isNull);
+        expect(screen.onOpenPrivateMedia, isNull);
+        expect(screen.privateMediaEnabled, isFalse);
+        expect(screen.onMediaSave, isNull);
+        expect(screen.onMediaShare, isNull);
+        expect(screen.onMediaInfo, isNull);
+        expect(screen.onMediaDeleteForMe, isNull);
+        expect(screen.isMessageSenderEligible, isNull);
+        expect(screen.onMessageSenderTap, isNull);
+        expect(screen.onQuoteReply, isNull);
+        expect(screen.onDeleteFailedMedia, isNull);
+        expect(screen.onDeleteFailedTerminalMessage, isNull);
+        expect(screen.historyGapRepairNotice, isNull);
+
+        screen.onAttach!();
+        await pumpFrames(tester, count: 5);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onRecordStart!();
+        await pumpFrames(tester, count: 3);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.isRecording, isTrue);
+        screen.onRecordStop!();
+        await pumpFrames(tester, count: 5);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onRecordStart!();
+        await pumpFrames(tester, count: 3);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onRecordCancel!();
+        await pumpFrames(tester, count: 3);
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onMediaTap!(mediaMessage.id, 0);
+        screen.onRetryFailedMedia!(mediaMessage.id);
+        screen.onRetryUnavailableMedia!(mediaMessage.id, 'linked-image');
+        await pumpFrames(tester, count: 5);
+
+        // Leave one recorder session active so the authority refresh also
+        // proves local capture is cancelled, not merely that new starts close.
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        screen.onRecordStart!();
+        await pumpFrames(tester, count: 3);
+
+        expect(attachCalls, 1);
+        expect(recordStartCalls, 3);
+        expect(recordStopCalls, 1);
+        expect(recordCancelCalls, 1);
+        expect(opened, <(String, int)>[(mediaMessage.id, 0)]);
+        expect(retried, <String>[mediaMessage.id, mediaMessage.id]);
+
+        // Capture callable ports, then drift authority before invoking them.
+        // Each callback re-reads current authority and none reaches its effect.
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        final staleAttach = screen.onAttach!;
+        final staleStart = screen.onRecordStart!;
+        final staleOpen = screen.onMediaTap!;
+        final staleRetry = screen.onRetryFailedMedia!;
+        authoritySettled = false;
+        authoringQualified = false;
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 5);
+        expect(recordCancelCalls, 2);
+        staleAttach();
+        staleStart();
+        staleOpen(mediaMessage.id, 0);
+        staleRetry(mediaMessage.id);
+        await pumpFrames(tester, count: 6);
+
+        expect(attachCalls, 1);
+        expect(recordStartCalls, 3);
+        expect(opened, hasLength(1));
+        expect(retried, hasLength(2));
+        screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.onAttach, isNull);
+        expect(screen.onRecordStart, isNull);
+        expect(screen.onMediaTap, isNull);
+        expect(screen.onRetryFailedMedia, isNull);
+        expect(screen.onRetryUnavailableMedia, isNull);
+      },
+    );
+
+    test(
+      'TC-365-02a composer and voice admit before durable group media effects',
+      () {
+        final source = File(
+          'lib/features/groups/presentation/screens/'
+          'group_conversation_wired.dart',
+        ).readAsStringSync();
+
+        String ownerSlice(String start, String end) {
+          final startIndex = source.indexOf(start);
+          final endIndex = source.indexOf(end, startIndex + start.length);
+          expect(startIndex, greaterThanOrEqualTo(0), reason: start);
+          expect(endIndex, greaterThan(startIndex), reason: end);
+          return source.substring(startIndex, endIndex);
+        }
+
+        final composer = ownerSlice(
+          'Future<void> _onSend(String text) async',
+          'Future<void> _onRetryUnavailableMedia(',
+        );
+        final composerAdmission = composer.indexOf(
+          'await prepareGroupContentAuthoringAdmission(',
+        );
+        final composerBackground = composer.indexOf(
+          'await _beginBackgroundTaskGuarded(',
+        );
+        final composerCoordinator = composer.indexOf(
+          '.prepareAndSend(',
+          composerBackground,
+        );
+        final composerStrict = composer.lastIndexOf(
+          'GroupContentAuthoringResolutionKind.strict',
+          composerCoordinator,
+        );
+        final composerLegacyElse = composer.indexOf(
+          '} else {',
+          composerCoordinator,
+        );
+        final composerAllowedPeers = composer.indexOf(
+          'groupMediaAllowedPeersForMembers(',
+          composerLegacyElse,
+        );
+        expect(composerAdmission, greaterThanOrEqualTo(0));
+        expect(composerBackground, greaterThan(composerAdmission));
+        expect(composerStrict, greaterThan(composerAdmission));
+        expect(composerCoordinator, greaterThan(composerStrict));
+        expect(composerLegacyElse, greaterThan(composerCoordinator));
+        expect(composerAllowedPeers, greaterThan(composerLegacyElse));
+
+        final voice = ownerSlice(
+          'Future<void> _onRecordStop() async',
+          'Future<void> _onRecordCancel() async',
+        );
+        final voiceAdmission = voice.indexOf(
+          'await prepareGroupContentAuthoringAdmission(',
+        );
+        final voiceDurableCopy = voice.indexOf(
+          'await mediaFileManager.copyToDurableStorage(',
+        );
+        final voiceBackground = voice.indexOf(
+          'await _beginBackgroundTaskGuarded(',
+        );
+        final voiceCoordinator = voice.indexOf(
+          '.prepareAndSend(',
+          voiceBackground,
+        );
+        final voiceStrict = voice.lastIndexOf(
+          'GroupContentAuthoringResolutionKind.strict',
+          voiceCoordinator,
+        );
+        final voiceLegacyElse = voice.indexOf('} else {', voiceCoordinator);
+        final voiceAllowedPeers = voice.indexOf(
+          'allowedPeers',
+          voiceLegacyElse,
+        );
+        expect(voiceAdmission, greaterThanOrEqualTo(0));
+        expect(voiceDurableCopy, greaterThan(voiceAdmission));
+        expect(voiceBackground, greaterThan(voiceDurableCopy));
+        expect(voiceStrict, greaterThan(voiceBackground));
+        expect(voiceCoordinator, greaterThan(voiceStrict));
+        expect(voiceLegacyElse, greaterThan(voiceCoordinator));
+        expect(voiceAllowedPeers, greaterThan(voiceLegacyElse));
+      },
+    );
+
+    test('TC-366-03a text and media quote callers reach strict authoring', () {
+      final source = File(
+        'lib/features/groups/presentation/screens/'
+        'group_conversation_wired.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future<void> _onSend(String text) async');
+      final end = source.indexOf(
+        'Future<void> _onRetryUnavailableMedia(',
+        start,
+      );
+      expect(start, greaterThanOrEqualTo(0));
+      expect(end, greaterThan(start));
+      final composer = source.substring(start, end);
+      final admission = composer.indexOf(
+        'await prepareGroupContentAuthoringAdmission(',
+      );
+      final optimisticQuote = composer.indexOf(
+        'quotedMessageId: quotedMessageId,',
+      );
+      final strictOwner = composer.indexOf('.prepareAndSend(');
+      final strictParent = composer.indexOf(
+        'parent: optimisticMessage.copyWith(',
+        strictOwner,
+      );
+      final rawSender = composer.lastIndexOf('await sendGroupMessage(');
+      final rawQuote = composer.indexOf(
+        'quotedMessageId: quotedMessageId,',
+        rawSender,
+      );
+
+      expect(optimisticQuote, greaterThanOrEqualTo(0));
+      expect(admission, greaterThanOrEqualTo(0));
+      expect(admission, greaterThan(optimisticQuote));
+      expect(strictOwner, greaterThan(admission));
+      expect(strictParent, greaterThan(strictOwner));
+      expect(rawSender, greaterThan(strictOwner));
+      expect(rawQuote, greaterThan(rawSender));
+      expect(
+        composer.substring(admission, strictOwner),
+        isNot(contains('quotedMessageId?.isNotEmpty == true')),
+        reason: 'strict media quotes must not stop after admission',
+      );
+    });
+
+    test('TC-366-03a voice quote caller reaches the prepared media owner', () {
+      final source = File(
+        'lib/features/groups/presentation/screens/'
+        'group_conversation_wired.dart',
+      ).readAsStringSync();
+      final start = source.indexOf('Future<void> _onRecordStop() async');
+      final end = source.indexOf('Future<void> _onRecordCancel() async', start);
+      expect(start, greaterThanOrEqualTo(0));
+      expect(end, greaterThan(start));
+      final voice = source.substring(start, end);
+      final admission = voice.indexOf(
+        'await prepareGroupContentAuthoringAdmission(',
+      );
+      final optimisticQuote = voice.indexOf(
+        'quotedMessageId: quotedMessageId,',
+      );
+      final strictOwner = voice.indexOf('.prepareAndSend(');
+      final strictParent = voice.indexOf(
+        'parent: optimisticMessage.copyWith(',
+        strictOwner,
+      );
+
+      expect(admission, greaterThanOrEqualTo(0));
+      expect(optimisticQuote, greaterThanOrEqualTo(0));
+      expect(strictOwner, greaterThan(admission));
+      expect(strictParent, greaterThan(strictOwner));
+      expect(
+        voice.substring(admission, strictOwner),
+        isNot(contains('quotedMessageId?.isNotEmpty == true')),
+        reason: 'voice quotes must reach the same prepared custody owner',
+      );
+    });
+
+    testWidgets(
+      'TC-366-03a linked quote renders a missing-parent fallback without fetch',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        final reply = makeMessage(
+          id: 'linked-missing-parent-reply',
+          text: 'A bounded reply',
+        ).copyWith(quotedMessageId: 'absent-parent-id');
+        var messageLoads = 0;
+        final tracker = ActiveConversationTracker();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: (_) async => group,
+              loadProtectedMessages: (_) async {
+                messageLoads++;
+                return <GroupMessage>[reply];
+              },
+              loadProtectedReactions: (_) async => const {},
+              markVisibleMessagesRead: (_, _) async {},
+              groupConversationTracker: tracker,
+              isAuthoritySettled: (_) async => true,
+              canAuthorProtectedContent: (_) async => true,
+              sendProtectedText: (_, _) async => true,
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) async => true,
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 6);
+
+        expect(find.text('A bounded reply'), findsOneWidget);
+        expect(find.text('Message unavailable'), findsOneWidget);
+        expect(messageLoads, 1);
+        await pumpFrames(tester, count: 4);
+        expect(
+          messageLoads,
+          1,
+          reason: 'a missing quoted parent does not trigger another load',
+        );
+      },
+    );
+
+    testWidgets(
+      'TC-366-03b linked projection presents ordinary forwarded media',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        final forwarded = makeMessage(
+          id: 'linked-forwarded-image',
+          text: 'Forwarded caption',
+        ).copyWith(isForwarded: true);
+        final crossedAudio = makeMessage(
+          id: 'linked-forwarded-audio',
+          text: 'Crossed audio',
+        ).copyWith(isForwarded: true);
+        final privateForward =
+            makeMessage(id: 'linked-forwarded-private', text: '').copyWith(
+              isForwarded: true,
+              privateMediaPolicy: const GroupPrivateMediaPolicy.protected(),
+            );
+        MediaAttachment strictMedia(
+          String id,
+          String messageId,
+          String mime,
+          String mediaType,
+        ) => MediaAttachment(
+          id: id,
+          messageId: messageId,
+          mime: mime,
+          size: 64,
+          mediaType: mediaType,
+          downloadStatus: 'pending',
+          createdAt: '2026-08-14T12:00:00.000Z',
+          groupMediaBlobCustodyFingerprint: 'fingerprint-$id',
+          ownerLane: MediaOwnerLane.group,
+        );
+        final media = <String, List<MediaAttachment>>{
+          forwarded.id: <MediaAttachment>[
+            strictMedia(
+              'forwarded-image-attachment',
+              forwarded.id,
+              'image/jpeg',
+              'image',
+            ),
+          ],
+          crossedAudio.id: <MediaAttachment>[
+            strictMedia(
+              'forwarded-audio-attachment',
+              crossedAudio.id,
+              'audio/mp4',
+              'audio',
+            ),
+          ],
+          privateForward.id: <MediaAttachment>[
+            strictMedia(
+              'forwarded-private-attachment',
+              privateForward.id,
+              'image/jpeg',
+              'image',
+            ),
+          ],
+        };
+        final tracker = ActiveConversationTracker();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: (_) async => group,
+              loadProtectedMessages: (_) async => <GroupMessage>[
+                forwarded,
+                crossedAudio,
+                privateForward,
+              ],
+              loadProtectedMedia: (_) async => media,
+              loadProtectedReactions: (_) async => const {},
+              markVisibleMessagesRead: (_, _) async {},
+              groupConversationTracker: tracker,
+              isAuthoritySettled: (_) async => true,
+              canAuthorProtectedContent: (_) async => true,
+              sendProtectedText: (_, _) async => true,
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) async => true,
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 6);
+
+        final screen = tester.widget<GroupConversationScreen>(
+          find.byType(GroupConversationScreen),
+        );
+        expect(screen.messages.map((message) => message.id), <String>[
+          forwarded.id,
+        ]);
+        expect(screen.mediaMap[forwarded.id], hasLength(1));
+        expect(find.text('Forwarded caption'), findsOneWidget);
+        expect(find.text('Forwarded'), findsOneWidget);
+        expect(find.text('Crossed audio'), findsNothing);
+      },
+    );
+
+    testWidgets(
+      'linked protected read marking requires a visible incoming row and settled authority',
+      (tester) async {
+        final group = makeChatGroup(role: GroupRole.member);
+        var authoritySettled = true;
+        var rows = <GroupMessage>[
+          makeMessage(id: 'linked-self', text: 'Mine', isIncoming: false),
+          makeMessage(id: 'linked-system', text: r'{"__sys":"membership"}'),
+        ];
+        final markedRows = <({String groupId, List<String> messageIds})>[];
+        final tracker = ActiveConversationTracker();
+
+        await tester.pumpWidget(
+          MaterialApp(
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            supportedLocales: AppLocalizations.supportedLocales,
+            home: LinkedGroupConversationWired(
+              group: group,
+              loadCurrentGroup: (_) async => group,
+              loadProtectedMessages: (_) async => rows,
+              loadProtectedReactions: (_) async => const {},
+              markVisibleMessagesRead: (groupId, messageIds) async {
+                expectSync(tracker.isViewing('group:$groupId'), isTrue);
+                markedRows.add((groupId: groupId, messageIds: messageIds));
+              },
+              groupConversationTracker: tracker,
+              isAuthoritySettled: (_) async => authoritySettled,
+              canAuthorProtectedContent: (_) async => true,
+              sendProtectedText: (_, _) async => true,
+              toggleProtectedReaction:
+                  ({
+                    required groupId,
+                    required message,
+                    required emoji,
+                    required remove,
+                  }) async => true,
+            ),
+          ),
+        );
+        await pumpFrames(tester, count: 4);
+        expect(markedRows, isEmpty);
+        expect(tracker.activePeerId, 'group:${group.id}');
+
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        rows = <GroupMessage>[
+          makeMessage(id: 'linked-incoming', text: 'Visible'),
+          makeMessage(id: 'linked-hidden', text: r'{"__sys":"hidden"}'),
+        ];
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 4);
+        expect(markedRows, isEmpty);
+        expect(tracker.activePeerId, isNull);
+
+        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await pumpFrames(tester, count: 4);
+        expect(markedRows, hasLength(1));
+        expect(markedRows.single.groupId, group.id);
+        expect(markedRows.single.messageIds, <String>['linked-incoming']);
+        expect(tracker.activePeerId, 'group:${group.id}');
+
+        authoritySettled = false;
+        rows = <GroupMessage>[
+          makeMessage(id: 'linked-unsettled', text: 'Not visible'),
+        ];
+        await refreshLinkedGroupStatusProjection();
+        await pumpFrames(tester, count: 4);
+        expect(markedRows, hasLength(1));
       },
     );
 

@@ -410,16 +410,37 @@ For each item, record status, exact file/function, current behaviour, risk, requ
 - iOS real-device cases: foreground, inactive, background-running, suspended, terminated, locked, before-first-unlock and force-quit.
 - Android real-device cases: Doze, WorkManager continuation, permission denied, channel disabled, token refresh and OEM restrictions.
 
-## 14. Open questions before story creation
+## 14. Open questions and adopted product decisions
 
-Answer OQ-01 through OQ-05 before turning the affected clauses into final implementation stories. Use exact repository paths, runtime traces and real-device evidence. These questions do not weaken the P0 inbox, privacy, event-identity or deduplication invariants; they determine how the target design should reuse or change components that already exist.
+OQ-02, OQ-03, and OQ-04 were resolved on 15 August 2026 for implementation
+planning. OQ-01 and OQ-05 still require the retained platform evidence described
+below. These decisions do not weaken the P0 inbox, privacy, event-identity, or
+deduplication invariants.
+
+Normative adopted decisions:
+
+- **OQ-02:** exact-conversation activation cleanup is independent from read.
+  Activation updates the exact active-conversation authority synchronously,
+  cancels only the captured notification generation, and a final effect gate
+  prevents stale A without clearing B or a newer A generation.
+- **OQ-03:** local read requires `resumed` lifecycle plus exact-conversation
+  visibility in the active tracker. Null, unknown, paused, mismatched, or absent
+  tracker state is false. The rule does not add viewport, scroll-to-latest, or
+  OS `Mark Read` requirements.
+- **OQ-04:** read state, unread/badge contribution, notification cleanup, and
+  completed outcomes are installation-local. A sibling device remains
+  independent; cross-device clearing requires a separately approved protocol.
+
+Implementation remains with the owning lifecycle/final-effect/read gaps; this
+decision record does not authorize N03 to create a parallel ledger or cleanup
+owner.
 
 | ID | Topic | Investigation and evidence required | Affected PRD parts and required update |
 |---|---|---|---|
 | **OQ-01** | Same-chat sound / haptic | Trace text, media, reaction and mention events while chat A is frontmost on iOS and Android. Identify existing Flutter/native handlers, sound or haptic components, settings, mute/channel interactions, ringer/Focus behavior and throttling. Record current defaults and real-device evidence. | Full PRD: FR-006, FR-018; §§6.1, 7.4, 8.3, 9.4–9.5, 12.1, AC-11, Matrix A and automated tests. Replace all provisional same-chat cue clauses with the approved behavior. Do not add a new haptic or setting without a decision. |
-| **OQ-02** | Chat-open notification cleanup | Trace opening chat A from the chat list, an in-app route and a notification tap. Identify stable notification IDs, pending/delivered stores, cancellation calls, navigation hooks, main-app/NSE/Android ownership and open-during-post races. | Full PRD: FR-021, FR-022, FR-024, FR-025; §§7.4, 8.3, 9.3, 9.5–9.7, 11.4, 12.1–12.3; A-28, A-30; AC-16, AC-18. Define the exact cleanup trigger and which component cancels or updates A without clearing other chats. |
-| **OQ-03** | Local read predicate | Determine what currently marks text, media and reactions read: opening the chat, active lifecycle, reaching the latest item, scroll position, explicit Mark Read or another rule. Identify database fields, UI observers and encrypted read-state messages. | Full PRD: FR-024, FR-025; §§6.1, 9.3–9.7, 11.4, 12.1–12.2; A-29, A-30; AC-11, AC-16, AC-19. Replace generic “explicit read predicate” or “verified read rule” language with the actual rule, keeping notification cleanup separate from read state. |
-| **OQ-04** | Linked-device read and clearing | Determine whether Mknoon has linked-device read/control events, how they are delivered online and offline, whether they are per-device or account-wide, and whether a device can map a remote read to its OS notification, badge and inbox state. Test delayed and out-of-order reads. | Full PRD: FR-004, FR-007, FR-024, FR-025; §§6.1, 9.3, 9.6–9.7, 11.2–11.4, 12, 15.2–15.3; A-18, A-28, A-30; AC-18, AC-19; D-09. Do not require cross-device notification clearing until this question is resolved. |
+| **OQ-02 — adopted** | Chat-open notification cleanup | Preserve stable IDs/generation CAS and implement one exact activation cleanup trigger independent from read, including the final pre-effect race gate. | Update FR-021/022/024/025, §§7.4, 8.3, 9.3, 9.5–9.7, 11.4, 12.1–12.3, A-28/A-30, and AC-16/AC-18 to the normative decision above. |
+| **OQ-03 — adopted** | Local read predicate | Implement `resumed && exact conversation tracked`; all unknown/null/mismatch states fail false. No viewport/latest-row/scroll or OS action is implied. | Update FR-024/025, §§6.1, 9.3–9.7, 11.4, 12.1–12.2, A-29/A-30, and AC-11/16/19 while keeping OQ-02 cleanup independent. |
+| **OQ-04 — adopted** | Linked-device read and clearing | Preserve installation-local read/unread/badge/cleanup/outcome state and sibling independence. | Narrow FR-004/007/024/025, §§6.1, 9.3, 9.6–9.7, 11.2–11.4, 12, 15.2–15.3, A-18/A-28/A-30, AC-18/19, and D-09; remove cross-device clearing as an acceptance requirement. |
 | **OQ-05** | Existing mute behavior | First determine whether mute settings exist. If present, describe the existing UI, data model, storage/sync, per-chat/global scope, native channels and enforcement components. Record whether mute suppresses sound, vibration, banner, badge, reactions and mentions. If absent, state that clearly. | Full PRD: FR-006, FR-012; §§6.1, 7.4, 8.3, 9.2–9.5, 11.4, 14, 15.2–15.3; D-06 and every Mute-action reference. Reuse and document existing components. Do not create a new mute subsystem or setting unless separately approved. |
 
 For each answer, record the current behavior, evidence, recommendation and exact PRD wording to retain, replace, narrow or remove.

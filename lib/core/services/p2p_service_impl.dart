@@ -20,6 +20,7 @@ import '../utils/flow_event_emitter.dart';
 import '../utils/startup_timing.dart';
 import '../utils/cold_start_notif_anchor.dart';
 import '../utils/push_diagnostics_logger.dart';
+import 'protected_group_content_contract.dart';
 import '../../features/account_migration/application/account_migration_runtime_network_gate.dart';
 import '../../features/p2p/domain/models/node_state.dart';
 import '../../features/p2p/domain/models/chat_message.dart';
@@ -35,6 +36,9 @@ part 'p2p_impl/p2p_peer_transport_coordinator.dart';
 const String _linkedGroupBootstrapInboxEnvelopeType =
     'linked_group_bootstrap_v1';
 const String _protectedGroupAuthorityInboxEnvelopeType = 'group_authority_v1';
+const String _protectedGroupContentInboxEnvelopeType = 'group_content_v1';
+const String _unverifiedProtectedGroupContentInboxEnvelopeType =
+    'unverified_group_content_v1';
 
 enum RecoveredInboxChatDisposition {
   committed,
@@ -47,6 +51,7 @@ enum ProtectedGroupReplayDisposition {
   applied,
   duplicate,
   terminalRejected,
+  unverifiedRejected,
   retryable,
   prerequisiteWaiting,
 }
@@ -107,6 +112,7 @@ class P2PServiceImpl
         DetailedInboxStore,
         AckOrExpiryInboxStore,
         MediaExpiryBoundedInboxStore,
+        GroupContentExpiryBoundedInboxStore,
         ReadinessProofRecorder,
         P2PFullInboxDrain,
         DurableLanSender,
@@ -2897,6 +2903,19 @@ class P2PServiceImpl
   );
 
   @override
+  Future<InboxStoreOutcome> storeInGroupContentExpiryBoundedInboxDetailed(
+    String toPeerId,
+    String message, {
+    required int custodyExpiresAtOrBeforeMs,
+    int? timeoutMs,
+  }) => _inboxCoordinator.storeInGroupContentExpiryBoundedInboxDetailed(
+    toPeerId,
+    message,
+    custodyExpiresAtOrBeforeMs: custodyExpiresAtOrBeforeMs,
+    timeoutMs: timeoutMs,
+  );
+
+  @override
   Future<List<Map<String, dynamic>>> retrieveInbox({int? timeoutMs}) =>
       _inboxCoordinator.retrieveInbox(timeoutMs: timeoutMs);
 
@@ -3027,6 +3046,24 @@ class P2PServiceImpl
   @override
   Future<DirectInboxDrainOutcome> drainOfflineInboxFully() =>
       _inboxCoordinator.drainOfflineInboxFully();
+
+  /// Stops new protected group-content applies and waits for the current apply
+  /// callback to leave its durable transaction. Staged and relay-owned bytes
+  /// remain untouched for the next resume pass.
+  Future<void> pauseProtectedGroupContentAdmission() =>
+      _inboxCoordinator.pauseProtectedGroupContentAdmission();
+
+  /// Re-opens protected content replay immediately before the bounded resume
+  /// fixed point begins.
+  void resumeProtectedGroupContentAdmission() =>
+      _inboxCoordinator.resumeProtectedGroupContentAdmission();
+
+  /// Replays protected prerequisites until durable staging stops changing,
+  /// bounded so a hostile relay cannot spin the lifecycle owner forever.
+  Future<int> drainProtectedGroupContentFixedPoint({int maxPasses = 8}) =>
+      _inboxCoordinator.drainProtectedGroupContentFixedPoint(
+        maxPasses: maxPasses,
+      );
 
   @override
   Future<RelayProbeResult> probeRelay(String peerId) =>

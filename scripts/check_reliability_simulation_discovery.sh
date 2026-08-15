@@ -561,7 +561,7 @@ classify_path() {
       return
       ;;
     integration_test/direct_inbox_custody_outbox_sqlcipher_proof_test.dart)
-      record "1to1" "$path" "test" "342/345/347/361/362 TC-342-11 direct-text, TC-345-11 direct-media, TC-347-01 blob custody, TC-361-04a linked event fanout and TC-362-05a linked media fanout Android SQLCipher durability device proofs"
+      record "1to1" "$path" "test" "342/345/347/361/362/365 TC-342-11 direct-text, TC-345-11 direct-media, TC-347-01 blob custody, TC-361-04a linked event fanout, TC-362-05a linked media fanout and TC-365-01a group-media custody Android SQLCipher durability device proofs"
       return
       ;;
     integration_test/direct_reaction_inbox_custody_outbox_sqlcipher_proof_test.dart)

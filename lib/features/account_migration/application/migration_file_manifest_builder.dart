@@ -5,6 +5,8 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_app/core/database/direct_media_blob_custody.dart';
 import 'package:flutter_app/core/media/direct_media_blob_artifact_store.dart'
     show kDirectMediaBlobArtifactRootDirectory;
+import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart'
+    show kGroupMediaBlobArtifactRootDirectory;
 import 'package:flutter_app/core/media/media_file_path_convention.dart';
 import 'package:flutter_app/core/secure_storage/secret_storage_references.dart';
 import 'package:flutter_app/features/account_migration/domain/models/migration_file_manifest.dart';
@@ -162,10 +164,25 @@ class MigrationFileManifestBuilder {
 
     final relativePath = custody.ciphertextRelativePath!;
     final segments = p.posix.split(relativePath);
+    final isDirect =
+        custody.ownerLane == MediaBlobCustodyOwnerLane.direct &&
+        custody.groupId == null;
+    final isGroup =
+        custody.ownerLane == MediaBlobCustodyOwnerLane.group &&
+        custody.groupId != null;
+    final expectedGroupScope = isGroup
+        ? sha256.convert(utf8.encode(custody.groupId!)).toString()
+        : null;
     final isOwnedIdentityPath =
-        isValidDirectMediaBlobCustodyRelativePath(relativePath) &&
-        segments.length >= 3 &&
-        segments.first == kDirectMediaBlobArtifactRootDirectory &&
+        ((isDirect &&
+                isValidDirectMediaBlobCustodyRelativePath(relativePath) &&
+                segments.length >= 3 &&
+                segments.first == kDirectMediaBlobArtifactRootDirectory) ||
+            (isGroup &&
+                isValidGroupMediaBlobCustodyRelativePath(relativePath) &&
+                segments.length >= 4 &&
+                segments.first == kGroupMediaBlobArtifactRootDirectory &&
+                segments[2] == expectedGroupScope)) &&
         allowedIdentityScopes.contains(segments[1]) &&
         relativePath.endsWith('.blob');
     if (!isOwnedIdentityPath) {
@@ -185,7 +202,10 @@ class MigrationFileManifestBuilder {
       // a crossed path or proof is corruption and refuses the bundle.
       final exactSharedArtifact = items.any(
         (item) =>
-            item.kind == MigrationFileManifestItemKind.directMediaBlobCustody &&
+            (item.kind ==
+                    MigrationFileManifestItemKind.directMediaBlobCustody ||
+                item.kind ==
+                    MigrationFileManifestItemKind.groupMediaBlobCustody) &&
             item.relativePath == relativePath &&
             item.sha256 == custody.contentHash &&
             item.sizeBytes == custody.ciphertextSize,
@@ -238,13 +258,15 @@ class MigrationFileManifestBuilder {
     includedPaths.add(relativePath);
     items.add(
       MigrationFileManifestItem(
-        kind: MigrationFileManifestItemKind.directMediaBlobCustody,
+        kind: isGroup
+            ? MigrationFileManifestItemKind.groupMediaBlobCustody
+            : MigrationFileManifestItemKind.directMediaBlobCustody,
         criticality: MigrationFileCriticality.critical,
         relativePath: relativePath,
         sizeBytes: custody.ciphertextSize,
         sha256: custody.contentHash,
         sourceTable: 'direct_media_blob_custody',
-        sourceId: custody.attachmentId,
+        sourceId: custody.custodyBlobId,
       ),
     );
   }

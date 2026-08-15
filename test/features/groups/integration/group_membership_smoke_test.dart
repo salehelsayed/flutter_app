@@ -12207,14 +12207,16 @@ void main() {
           await charlie.groupRepo.getMembers(groupId),
           configVersionOverride: rejoinKeyCreatedAt,
         );
-        final queuedNativeRejoin = runGroupMembershipMutationLocked<void>(
-          groupId: groupId,
-          action: () => callGroupJoinWithConfig(
-            delayedLeaveBridge,
+        final queuedNativeRejoin = charlie.runInMembershipProcess(
+          () => runGroupMembershipMutationLocked<void>(
             groupId: groupId,
-            groupConfig: readdedConfig,
-            groupKey: rejoinKey.key!.encryptedKey,
-            keyEpoch: rejoinKey.key!.keyGeneration,
+            action: () => callGroupJoinWithConfig(
+              delayedLeaveBridge,
+              groupId: groupId,
+              groupConfig: readdedConfig,
+              groupKey: rejoinKey.key!.encryptedKey,
+              keyEpoch: rejoinKey.key!.keyGeneration,
+            ),
           ),
         );
         await Future<void>.delayed(Duration.zero);

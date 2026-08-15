@@ -423,7 +423,7 @@ func TestInboxStore_RegisterTokenVisibleAcrossInstances(t *testing.T) {
 	pushA.RegisterToken("peer-1", "fcm-token-abc", "ios")
 
 	// Verify visible through instance B.
-	entry := pushB.tokenBackend.LookupToken("peer-1")
+	entry := lookupTokenForTest(pushB.tokenBackend, "peer-1")
 	if entry == nil {
 		t.Fatal("expected push B to see token registered by push A")
 	}
@@ -455,7 +455,7 @@ func TestInboxStore_PushTokenSurvivesServerRestart(t *testing.T) {
 	push2 := NewPushServiceWithBackend(pushBackend)
 
 	// Token should survive.
-	entry := push2.tokenBackend.LookupToken("peer-1")
+	entry := lookupTokenForTest(push2.tokenBackend, "peer-1")
 	if entry == nil {
 		t.Fatal("expected token to survive server restart")
 	}

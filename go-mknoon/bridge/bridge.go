@@ -1139,7 +1139,8 @@ func dispatchInboxStoreAckCustodyContract(
 			custodyKind != node.CustodyKindDirectReactionV109 &&
 			custodyKind != node.CustodyKindDirectMutationV109 &&
 			custodyKind != node.CustodyKindGroupBootstrapV1 &&
-			custodyKind != node.CustodyKindGroupAuthorityV1) {
+			custodyKind != node.CustodyKindGroupAuthorityV1 &&
+			custodyKind != node.CustodyKindGroupContentV1) {
 		return node.InboxStoreOutcome{}, fmt.Errorf(
 			"%w: contract=%q kind=%q",
 			errInvalidInboxAckCustodyContract,
@@ -1159,12 +1160,14 @@ func validateInboxStoreMediaExpiryCeiling(
 		return nil
 	}
 	if *ceiling <= 0 || custodyContract != node.AckOrExpiryCustodyContract ||
-		custodyKind != node.CustodyKindDirectTextV108 {
+		(custodyKind != node.CustodyKindDirectTextV108 &&
+			custodyKind != node.CustodyKindGroupContentV1) {
 		return fmt.Errorf(
-			"%w: media expiry ceiling requires contract=%q kind=%q and a positive value",
+			"%w: media expiry ceiling requires contract=%q kind=%q or %q and a positive value",
 			errInvalidInboxAckCustodyContract,
 			node.AckOrExpiryCustodyContract,
 			node.CustodyKindDirectTextV108,
+			node.CustodyKindGroupContentV1,
 		)
 	}
 	return nil
@@ -1679,7 +1682,8 @@ func dispatchMediaCustodyContract[T any](
 		return legacy()
 	}
 	valid := selection.CustodyContract == node.AckOrExpiryCustodyContract &&
-		selection.CustodyKind == node.CustodyKindDirectMediaBlobV1 &&
+		(selection.CustodyKind == node.CustodyKindDirectMediaBlobV1 ||
+			selection.CustodyKind == node.CustodyKindGroupMediaBlobV1) &&
 		selection.ContentHash != ""
 	switch operation {
 	case mediaCustodyBridgeUpload:
@@ -1809,7 +1813,7 @@ func MediaUpload(paramsJSON string) (result string) {
 	}
 	if selection.requested() && len(params.AllowedPeers) != 0 {
 		return invalidMediaCustodyBridgeResponse(fmt.Errorf(
-			"%w: strict direct media custody does not accept allowedPeers",
+			"%w: strict media custody does not accept allowedPeers",
 			errInvalidMediaCustodyContract,
 		))
 	}

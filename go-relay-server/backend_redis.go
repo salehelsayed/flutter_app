@@ -1,13 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"math"
+	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -42,6 +49,20 @@ type redisGroupInboxBackend struct {
 type redisPushTokenBackend struct {
 	client *redis.Client
 	prefix string
+
+	configMu    sync.Mutex
+	vaultConfig *pushTokenVaultConfig
+	entropy     io.Reader
+	now         func() time.Time
+
+	// Test-only interleaving seams. Nil is the production behavior.
+	legacyMutationBeforeCommit         func() error
+	legacyResolveAfterRead             func()
+	encryptedDeleteBeforeCommit        func() error
+	encryptedResolveAfterDirectoryRead func()
+	migrationBeforeCutover             func(revision uint64) error
+	migrationVerificationAfterScans    func()
+	startupValidationBetweenSnapshots  func()
 }
 
 func newRedisClientFromURL(rawURL string) (*redis.Client, error) {
@@ -97,7 +118,12 @@ func newRedisGroupInboxBackend(
 }
 
 func newRedisPushTokenBackend(client *redis.Client, prefix string) *redisPushTokenBackend {
-	return &redisPushTokenBackend{client: client, prefix: prefix}
+	return &redisPushTokenBackend{
+		client:  client,
+		prefix:  prefix,
+		entropy: rand.Reader,
+		now:     time.Now,
+	}
 }
 
 func encodeRedisComponent(value string) string {
@@ -109,6 +135,7 @@ func scanRedisKeys(client *redis.Client, pattern string) ([]string, error) {
 	var (
 		cursor uint64
 		keys   []string
+		seen   = make(map[string]struct{})
 	)
 
 	for {
@@ -116,7 +143,13 @@ func scanRedisKeys(client *redis.Client, pattern string) ([]string, error) {
 		if err != nil {
 			return nil, err
 		}
-		keys = append(keys, batch...)
+		for _, key := range batch {
+			if _, duplicate := seen[key]; duplicate {
+				continue
+			}
+			seen[key] = struct{}{}
+			keys = append(keys, key)
+		}
 		cursor = next
 		if cursor == 0 {
 			sort.Strings(keys)
@@ -1456,7 +1489,221 @@ func (b *redisPushTokenBackend) key(peerId string) string {
 }
 
 func (b *redisPushTokenBackend) allPattern() string {
-	return b.prefix + "push:*"
+	return escapeRedisMatchLiteral(b.prefix+"push:") + "*"
+}
+
+func (b *redisPushTokenBackend) markerKey() string {
+	return b.prefix + "push-token-state"
+}
+
+func (b *redisPushTokenBackend) directoryKey(peerID string) string {
+	return b.prefix + "push-token-directory:" + encodeRedisComponent(peerID)
+}
+
+func (b *redisPushTokenBackend) directoryPattern() string {
+	return escapeRedisMatchLiteral(b.prefix+"push-token-directory:") + "*"
+}
+
+func (b *redisPushTokenBackend) vaultKey(handle string) string {
+	return b.prefix + "push-token-vault:" + handle
+}
+
+func (b *redisPushTokenBackend) vaultPattern() string {
+	return escapeRedisMatchLiteral(b.prefix+"push-token-vault:") + "*"
+}
+
+func escapeRedisMatchLiteral(value string) string {
+	replacer := strings.NewReplacer(
+		`\`, `\\`,
+		`*`, `\*`,
+		`?`, `\?`,
+		`[`, `\[`,
+		`]`, `\]`,
+	)
+	return replacer.Replace(value)
+}
+
+type pushTokenRedisGetter interface {
+	Get(context.Context, string) *redis.StringCmd
+}
+
+var errPushTokenStateChanged = errors.New("push token state changed during operation")
+var errPushTokenRetrySnapshot = errors.New("push token snapshot changed during operation")
+
+func optionalRedisBytes(getter pushTokenRedisGetter, key string) ([]byte, error) {
+	payload, err := getter.Get(context.Background(), key).Bytes()
+	if err == redis.Nil {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return payload, nil
+}
+
+func (b *redisPushTokenBackend) readState(getter pushTokenRedisGetter) (pushTokenStateMarker, error) {
+	payload, err := optionalRedisBytes(getter, b.markerKey())
+	if err != nil {
+		return pushTokenStateMarker{}, fmt.Errorf("read push token state: %w", err)
+	}
+	if payload == nil {
+		return pushTokenStateMarker{State: pushTokenStateAbsent}, nil
+	}
+	marker, err := decodePushTokenStateMarker(payload)
+	if err != nil {
+		return pushTokenStateMarker{}, fmt.Errorf("decode push token state: %w", err)
+	}
+	return marker, nil
+}
+
+func samePushTokenState(left, right pushTokenStateMarker) bool {
+	return left.State == right.State &&
+		left.Revision == right.Revision &&
+		left.FleetReceiptSHA256 == right.FleetReceiptSHA256
+}
+
+func nextPushTokenMarkerRevision(marker pushTokenStateMarker) (pushTokenStateMarker, []byte, error) {
+	if marker.State != pushTokenStateMigrating {
+		return pushTokenStateMarker{}, nil, errors.New("push token revision requires migrating state")
+	}
+	if marker.Revision == math.MaxUint64 {
+		return pushTokenStateMarker{}, nil, errors.New("push token migration revision overflow")
+	}
+	marker.Revision++
+	payload, err := encodePushTokenStateMarker(marker)
+	if err != nil {
+		return pushTokenStateMarker{}, nil, err
+	}
+	return marker, payload, nil
+}
+
+func decodeLegacyPushTokenRecord(payload []byte) (tokenEntry, error) {
+	fields, err := decodePushTokenJSONObject(payload, nil, pushTokenJSONMaxBytes)
+	if err != nil {
+		return tokenEntry{}, errors.New("decode legacy push token record")
+	}
+	for field := range fields {
+		switch field {
+		case "Token", "Platform", "Capabilities", "UpdatedAt":
+		default:
+			return tokenEntry{}, errors.New("decode legacy push token record")
+		}
+	}
+	for _, required := range []string{"Token", "Platform", "UpdatedAt"} {
+		if _, ok := fields[required]; !ok {
+			return tokenEntry{}, errors.New("decode legacy push token record")
+		}
+	}
+	var entry tokenEntry
+	if decodePushTokenJSONField(fields["Token"], &entry.Token) != nil ||
+		decodePushTokenJSONField(fields["Platform"], &entry.Platform) != nil ||
+		decodePushTokenJSONField(fields["UpdatedAt"], &entry.UpdatedAt) != nil {
+		return tokenEntry{}, errors.New("decode legacy push token record")
+	}
+	if capabilities, ok := fields["Capabilities"]; ok {
+		if bytes.Equal(bytes.TrimSpace(capabilities), []byte("null")) ||
+			decodePushTokenJSONField(capabilities, &entry.Capabilities) != nil {
+			return tokenEntry{}, errors.New("decode legacy push token record")
+		}
+	}
+	if entry.Token == "" || entry.Platform == "" {
+		return tokenEntry{}, errors.New("legacy push token record is incomplete")
+	}
+	entry.Capabilities = canonicalPushTokenVaultCapabilities(entry.Capabilities)
+	if err := validateCanonicalPushCapabilities(entry.Capabilities); err != nil {
+		return tokenEntry{}, errors.New("decode legacy push token record")
+	}
+	return entry, nil
+}
+
+func encodeLegacyPushTokenRecord(entry tokenEntry) ([]byte, error) {
+	entry.Capabilities = canonicalPushTokenVaultCapabilities(entry.Capabilities)
+	payload, err := json.Marshal(entry)
+	if err != nil {
+		return nil, fmt.Errorf("encode push token: %w", err)
+	}
+	return payload, nil
+}
+
+func pushRouteLegacyDigestBytes(payload []byte) [32]byte {
+	digest, err := parsePushTokenLegacyDigest(pushTokenLegacyDigest(payload))
+	if err != nil {
+		panic("push token legacy digest invariant")
+	}
+	return digest
+}
+
+func pushRouteLegacyDigestHex(route pushRouteLease) string {
+	return fmt.Sprintf("%x", route.legacyDigest[:])
+}
+
+func (b *redisPushTokenBackend) peerFromLegacyKey(key string) (string, error) {
+	return decodePushTokenPeerComponent(key, b.prefix+"push:")
+}
+
+func (b *redisPushTokenBackend) peerFromDirectoryKey(key string) (string, error) {
+	return decodePushTokenPeerComponent(key, b.prefix+"push-token-directory:")
+}
+
+func decodePushTokenPeerComponent(key, prefix string) (string, error) {
+	if !strings.HasPrefix(key, prefix) {
+		return "", errors.New("push token lookup key is outside its namespace")
+	}
+	component := strings.TrimPrefix(key, prefix)
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(component)
+	if err != nil || len(decoded) == 0 || encodeRedisComponent(string(decoded)) != component {
+		return "", errors.New("push token lookup key has an invalid peer component")
+	}
+	return string(decoded), nil
+}
+
+func (b *redisPushTokenBackend) directoryKeyFromLegacyKey(key string) (string, string, error) {
+	peerID, err := b.peerFromLegacyKey(key)
+	if err != nil {
+		return "", "", err
+	}
+	return b.directoryKey(peerID), peerID, nil
+}
+
+func uniqueRedisKeys(keys ...string) []string {
+	seen := make(map[string]struct{}, len(keys))
+	unique := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key == "" {
+			continue
+		}
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		unique = append(unique, key)
+	}
+	sort.Strings(unique)
+	return unique
+}
+
+func (b *redisPushTokenBackend) ensureVaultConfig() (*pushTokenVaultConfig, error) {
+	b.configMu.Lock()
+	defer b.configMu.Unlock()
+	if b.vaultConfig != nil {
+		if err := b.vaultConfig.validate(); err != nil {
+			return nil, err
+		}
+		return b.vaultConfig, nil
+	}
+	config, err := loadPushTokenVaultConfigFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	b.vaultConfig = config
+	return config, nil
+}
+
+func (b *redisPushTokenBackend) nowTime() time.Time {
+	if b != nil && b.now != nil {
+		return b.now()
+	}
+	return time.Now()
 }
 
 func (b *redisPushTokenBackend) RegisterToken(
@@ -1465,78 +1712,1594 @@ func (b *redisPushTokenBackend) RegisterToken(
 	platform string,
 	capabilities ...string,
 ) error {
+	if peerId == "" || token == "" || platform == "" {
+		return errors.New("push token registration is incomplete")
+	}
 	entry := tokenEntry{
 		Token:        token,
 		Platform:     platform,
-		Capabilities: normalizeCapabilities(capabilities),
-		UpdatedAt:    time.Now(),
+		Capabilities: canonicalPushTokenVaultCapabilities(capabilities),
+		UpdatedAt:    b.nowTime(),
 	}
-
-	payload, err := json.Marshal(entry)
+	payload, err := encodeLegacyPushTokenRecord(entry)
 	if err != nil {
-		return fmt.Errorf("encode push token: %w", err)
+		return err
 	}
 
-	if err := b.client.Set(context.Background(), b.key(peerId), payload, 0).Err(); err != nil {
+	for range redisWatchRetries {
+		marker, err := b.readState(b.client)
+		if err != nil {
+			return fmt.Errorf("store push token: %w", err)
+		}
+		if marker.State == pushTokenStateEncrypted {
+			return b.registerEncrypted(peerId, token, platform, entry.Capabilities)
+		}
+		err = b.registerLegacy(peerId, payload)
+		if errors.Is(err, errPushTokenStateChanged) {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("store push token: %w", redis.TxFailedErr)
+}
+
+func (b *redisPushTokenBackend) registerLegacy(peerID string, payload []byte) error {
+	legacyKey := b.key(peerID)
+	err := withRedisWatchRetryKeys(
+		b.client,
+		[]string{b.markerKey(), legacyKey},
+		func(tx *redis.Tx) error {
+			marker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if marker.State == pushTokenStateEncrypted {
+				return errPushTokenStateChanged
+			}
+			var markerPayload []byte
+			if marker.State == pushTokenStateMigrating {
+				_, markerPayload, err = nextPushTokenMarkerRevision(marker)
+				if err != nil {
+					return err
+				}
+			}
+			if b.legacyMutationBeforeCommit != nil {
+				if err := b.legacyMutationBeforeCommit(); err != nil {
+					return err
+				}
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Set(context.Background(), legacyKey, payload, 0)
+				if markerPayload != nil {
+					pipe.Set(context.Background(), b.markerKey(), markerPayload, 0)
+				}
+				return nil
+			})
+			return err
+		},
+	)
+	if err != nil {
+		if errors.Is(err, errPushTokenStateChanged) {
+			return err
+		}
 		return fmt.Errorf("store push token: %w", err)
 	}
 	return nil
 }
 
-func (b *redisPushTokenBackend) UnregisterToken(peerId string) {
-	if err := b.client.Del(context.Background(), b.key(peerId)).Err(); err != nil {
-		log.Printf("[REDIS][PUSH] unregister failed: %v", err)
+func (b *redisPushTokenBackend) UnregisterToken(peerId string) error {
+	if peerId == "" {
+		return errors.New("push token unregister peer is empty")
 	}
+	for range redisWatchRetries {
+		marker, err := b.readState(b.client)
+		if err != nil {
+			return err
+		}
+		if marker.State == pushTokenStateEncrypted {
+			return b.unregisterEncrypted(peerId)
+		}
+		err = b.unregisterLegacy(peerId)
+		if errors.Is(err, errPushTokenStateChanged) {
+			continue
+		}
+		return err
+	}
+	return fmt.Errorf("delete push token: %w", redis.TxFailedErr)
 }
 
-func (b *redisPushTokenBackend) LookupToken(peerId string) *tokenEntry {
-	payload, err := b.client.Get(context.Background(), b.key(peerId)).Bytes()
-	if err == redis.Nil {
+func (b *redisPushTokenBackend) unregisterLegacy(peerID string) error {
+	legacyKey := b.key(peerID)
+	err := withRedisWatchRetryKeys(
+		b.client,
+		[]string{b.markerKey(), legacyKey},
+		func(tx *redis.Tx) error {
+			marker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if marker.State == pushTokenStateEncrypted {
+				return errPushTokenStateChanged
+			}
+			var markerPayload []byte
+			if marker.State == pushTokenStateMigrating {
+				_, markerPayload, err = nextPushTokenMarkerRevision(marker)
+				if err != nil {
+					return err
+				}
+			}
+			if b.legacyMutationBeforeCommit != nil {
+				if err := b.legacyMutationBeforeCommit(); err != nil {
+					return err
+				}
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Del(context.Background(), legacyKey)
+				if markerPayload != nil {
+					pipe.Set(context.Background(), b.markerKey(), markerPayload, 0)
+				}
+				return nil
+			})
+			return err
+		},
+	)
+	if err != nil {
+		if errors.Is(err, errPushTokenStateChanged) {
+			return err
+		}
+		return fmt.Errorf("delete push token: %w", err)
+	}
+	return nil
+}
+
+func (b *redisPushTokenBackend) LookupRoute(peerId string) (*pushRouteLease, error) {
+	if peerId == "" {
+		return nil, errors.New("push route peer is empty")
+	}
+	for range redisWatchRetries {
+		before, err := b.readState(b.client)
+		if err != nil {
+			return nil, err
+		}
+		var route *pushRouteLease
+		switch before.State {
+		case pushTokenStateAbsent, pushTokenStateMigrating:
+			route, err = b.lookupLegacyRoute(peerId)
+		case pushTokenStateEncrypted:
+			route, err = b.lookupEncryptedRoute(peerId)
+		default:
+			err = errors.New("push token state is invalid")
+		}
+		if err != nil {
+			if errors.Is(err, ErrPushRouteStale) {
+				continue
+			}
+			return nil, err
+		}
+		after, err := b.readState(b.client)
+		if err != nil {
+			return nil, err
+		}
+		if samePushTokenState(before, after) {
+			return route, nil
+		}
+	}
+	return nil, fmt.Errorf("lookup push route: %w", redis.TxFailedErr)
+}
+
+func (b *redisPushTokenBackend) lookupLegacyRoute(peerID string) (*pushRouteLease, error) {
+	legacyKey := b.key(peerID)
+	payload, err := optionalRedisBytes(b.client, legacyKey)
+	if err != nil {
+		return nil, fmt.Errorf("read legacy push route: %w", err)
+	}
+	if payload == nil {
+		return nil, nil
+	}
+	entry, err := decodeLegacyPushTokenRecord(payload)
+	if err != nil {
+		return nil, err
+	}
+	return &pushRouteLease{
+		Capabilities: append([]string(nil), entry.Capabilities...),
+		lookupKey:    legacyKey,
+		legacyDigest: pushRouteLegacyDigestBytes(payload),
+	}, nil
+}
+
+func (b *redisPushTokenBackend) lookupEncryptedRoute(peerID string) (*pushRouteLease, error) {
+	directoryKey := b.directoryKey(peerID)
+	payload, err := optionalRedisBytes(b.client, directoryKey)
+	if err != nil {
+		return nil, fmt.Errorf("read push route directory: %w", err)
+	}
+	if payload == nil {
+		return nil, nil
+	}
+	record, err := decodePushTokenDirectoryRecord(payload)
+	if err != nil {
+		return nil, err
+	}
+	route := &pushRouteLease{
+		Handle:       record.Handle,
+		Generation:   record.Generation,
+		Capabilities: append([]string(nil), record.Capabilities...),
+		lookupKey:    directoryKey,
+	}
+	if _, err := b.resolveEncryptedRoute(*route, directoryKey, peerID); err != nil {
+		return nil, err
+	}
+	return route, nil
+}
+
+func (b *redisPushTokenBackend) ResolveRoute(route pushRouteLease) (*resolvedPushTarget, error) {
+	if route.Generation == 0 {
+		for range redisWatchRetries {
+			before, err := b.readState(b.client)
+			if err != nil {
+				return nil, err
+			}
+			switch before.State {
+			case pushTokenStateEncrypted:
+				directoryKey, peerID, err := b.directoryKeyFromLegacyKey(route.lookupKey)
+				if err != nil {
+					return nil, ErrPushRouteStale
+				}
+				return b.resolveEncryptedRoute(route, directoryKey, peerID)
+			case pushTokenStateAbsent, pushTokenStateMigrating:
+				target, resolveErr := b.resolveLegacyRoute(route)
+				after, stateErr := b.readState(b.client)
+				if stateErr != nil {
+					return nil, stateErr
+				}
+				if samePushTokenState(before, after) {
+					return target, resolveErr
+				}
+			default:
+				return nil, errors.New("push token state is invalid")
+			}
+		}
+		return nil, fmt.Errorf("resolve legacy push route: %w", redis.TxFailedErr)
+	}
+	marker, err := b.readState(b.client)
+	if err != nil {
+		return nil, err
+	}
+	if marker.State != pushTokenStateEncrypted {
+		return nil, ErrPushRouteStale
+	}
+	peerID, err := b.peerFromDirectoryKey(route.lookupKey)
+	if err != nil {
+		return nil, ErrPushRouteStale
+	}
+	return b.resolveEncryptedRoute(route, route.lookupKey, peerID)
+}
+
+func (b *redisPushTokenBackend) resolveLegacyRoute(route pushRouteLease) (*resolvedPushTarget, error) {
+	if route.lookupKey == "" || route.legacyDigest == ([32]byte{}) {
+		return nil, ErrPushRouteStale
+	}
+	if _, err := b.peerFromLegacyKey(route.lookupKey); err != nil {
+		return nil, ErrPushRouteStale
+	}
+	payload, err := optionalRedisBytes(b.client, route.lookupKey)
+	if err != nil {
+		return nil, fmt.Errorf("read legacy push route: %w", err)
+	}
+	if payload == nil || pushRouteLegacyDigestBytes(payload) != route.legacyDigest {
+		return nil, ErrPushRouteStale
+	}
+	if b.legacyResolveAfterRead != nil {
+		b.legacyResolveAfterRead()
+	}
+	entry, err := decodeLegacyPushTokenRecord(payload)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Equal(entry.Capabilities, canonicalPushTokenVaultCapabilities(route.Capabilities)) {
+		return nil, ErrPushRouteStale
+	}
+	return &resolvedPushTarget{
+		Route:    copyPushRouteLease(route),
+		Token:    entry.Token,
+		Platform: entry.Platform,
+	}, nil
+}
+
+func encryptedDirectoryMatchesRoute(record pushTokenDirectoryRecord, route pushRouteLease) bool {
+	capabilities := canonicalPushTokenVaultCapabilities(route.Capabilities)
+	if !slices.Equal(record.Capabilities, capabilities) {
+		return false
+	}
+	if route.Generation == 0 {
+		return record.SourceLegacyDigest != "" &&
+			record.SourceLegacyDigest == pushRouteLegacyDigestHex(route)
+	}
+	return route.Handle != "" && route.Generation > 0 &&
+		record.Handle == route.Handle && record.Generation == route.Generation
+}
+
+func (b *redisPushTokenBackend) resolveEncryptedRoute(
+	route pushRouteLease,
+	directoryKey string,
+	peerID string,
+) (*resolvedPushTarget, error) {
+	config, err := b.ensureVaultConfig()
+	if err != nil {
+		return nil, err
+	}
+	for range redisWatchRetries {
+		directoryPayload, err := optionalRedisBytes(b.client, directoryKey)
+		if err != nil {
+			return nil, fmt.Errorf("read push route directory: %w", err)
+		}
+		if directoryPayload == nil {
+			return nil, ErrPushRouteStale
+		}
+		directory, err := decodePushTokenDirectoryRecord(directoryPayload)
+		if err != nil {
+			return nil, err
+		}
+		if !encryptedDirectoryMatchesRoute(directory, route) {
+			return nil, ErrPushRouteStale
+		}
+		if b.encryptedResolveAfterDirectoryRead != nil {
+			b.encryptedResolveAfterDirectoryRead()
+		}
+		vaultKey := b.vaultKey(directory.Handle)
+		vaultPayload, err := optionalRedisBytes(b.client, vaultKey)
+		if err != nil {
+			return nil, fmt.Errorf("read push token vault: %w", err)
+		}
+		if vaultPayload == nil {
+			currentDirectory, readErr := optionalRedisBytes(b.client, directoryKey)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if !bytes.Equal(currentDirectory, directoryPayload) {
+				continue
+			}
+			return nil, errors.New("push token vault row is missing")
+		}
+		vault, err := decodePushTokenVaultEnvelope(vaultPayload)
+		if err != nil {
+			currentDirectory, readErr := optionalRedisBytes(b.client, directoryKey)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if !bytes.Equal(currentDirectory, directoryPayload) {
+				continue
+			}
+			return nil, err
+		}
+		token, err := config.openPushToken(peerID, directory, vault)
+		if err != nil {
+			currentDirectory, readErr := optionalRedisBytes(b.client, directoryKey)
+			if readErr != nil {
+				return nil, readErr
+			}
+			if !bytes.Equal(currentDirectory, directoryPayload) {
+				continue
+			}
+			return nil, err
+		}
+		currentDirectory, err := optionalRedisBytes(b.client, directoryKey)
+		if err != nil {
+			return nil, err
+		}
+		if !bytes.Equal(currentDirectory, directoryPayload) {
+			continue
+		}
+		if vault.KeyID != config.activeKeyID {
+			if err := b.rewrapEncryptedRoute(
+				config,
+				peerID,
+				directoryKey,
+				directoryPayload,
+				directory,
+				vaultKey,
+				vaultPayload,
+				token,
+			); err != nil {
+				return nil, err
+			}
+		}
+		return &resolvedPushTarget{
+			Route:    copyPushRouteLease(route),
+			Token:    token,
+			Platform: directory.Platform,
+		}, nil
+	}
+	return nil, ErrPushRouteStale
+}
+
+func (b *redisPushTokenBackend) rewrapEncryptedRoute(
+	config *pushTokenVaultConfig,
+	peerID string,
+	directoryKey string,
+	directoryPayload []byte,
+	directory pushTokenDirectoryRecord,
+	vaultKey string,
+	vaultPayload []byte,
+	token string,
+) error {
+	rewrapped, err := config.sealPushToken(peerID, directory, token, b.entropy)
+	if err != nil {
+		return err
+	}
+	rewrappedPayload, err := encodePushTokenVaultEnvelope(rewrapped)
+	if err != nil {
+		return err
+	}
+	return withRedisWatchRetryKeys(
+		b.client,
+		uniqueRedisKeys(b.markerKey(), directoryKey, vaultKey),
+		func(tx *redis.Tx) error {
+			marker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if marker.State != pushTokenStateEncrypted {
+				return ErrPushRouteStale
+			}
+			currentDirectory, err := optionalRedisBytes(tx, directoryKey)
+			if err != nil {
+				return err
+			}
+			currentVault, err := optionalRedisBytes(tx, vaultKey)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(currentDirectory, directoryPayload) ||
+				!bytes.Equal(currentVault, vaultPayload) {
+				return ErrPushRouteStale
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Set(context.Background(), vaultKey, rewrappedPayload, 0)
+				return nil
+			})
+			return err
+		},
+	)
+}
+
+func (b *redisPushTokenBackend) registerEncrypted(
+	peerID string,
+	token string,
+	platform string,
+	capabilities []string,
+) error {
+	config, err := b.ensureVaultConfig()
+	if err != nil {
+		return err
+	}
+	capabilities = canonicalPushTokenVaultCapabilities(capabilities)
+	directoryKey := b.directoryKey(peerID)
+
+	for range redisWatchRetries * 2 {
+		marker, err := b.readState(b.client)
+		if err != nil {
+			return err
+		}
+		if marker.State != pushTokenStateEncrypted {
+			return errPushTokenStateChanged
+		}
+
+		currentDirectoryPayload, err := optionalRedisBytes(b.client, directoryKey)
+		if err != nil {
+			return fmt.Errorf("read current push route directory: %w", err)
+		}
+		var (
+			currentDirectory pushTokenDirectoryRecord
+			currentVaultKey  string
+			currentVaultRaw  []byte
+			rotate           = currentDirectoryPayload == nil
+		)
+		if currentDirectoryPayload != nil {
+			currentDirectory, err = decodePushTokenDirectoryRecord(currentDirectoryPayload)
+			if err != nil {
+				return err
+			}
+			currentVaultKey = b.vaultKey(currentDirectory.Handle)
+			currentVaultRaw, err = optionalRedisBytes(b.client, currentVaultKey)
+			if err != nil {
+				return fmt.Errorf("read current push token vault: %w", err)
+			}
+			if currentDirectory.ProviderEnvironment != config.providerEnvironment {
+				rotate = true
+			} else {
+				if currentVaultRaw == nil {
+					return errors.New("current push token vault row is missing")
+				}
+				currentVault, err := decodePushTokenVaultEnvelope(currentVaultRaw)
+				if err != nil {
+					return err
+				}
+				currentToken, err := config.openPushToken(peerID, currentDirectory, currentVault)
+				if err != nil {
+					return err
+				}
+				rotate = currentToken != token || currentDirectory.Platform != platform
+			}
+		}
+
+		handle := currentDirectory.Handle
+		generation := currentDirectory.Generation
+		if rotate {
+			handle, err = newOpaquePushHandle(b.entropy)
+			if err != nil {
+				return fmt.Errorf("create push route handle: %w", err)
+			}
+			if currentDirectoryPayload == nil {
+				generation = 1
+			} else {
+				if generation == math.MaxUint64 {
+					return errors.New("push route generation overflow")
+				}
+				generation++
+			}
+		}
+		directory := pushTokenDirectoryRecord{
+			Handle:              handle,
+			Generation:          generation,
+			Platform:            platform,
+			Capabilities:        append([]string(nil), capabilities...),
+			ProviderEnvironment: config.providerEnvironment,
+			SourceLegacyDigest:  "",
+		}
+		directoryPayload, err := encodePushTokenDirectoryRecord(directory)
+		if err != nil {
+			return err
+		}
+		vault, err := config.sealPushToken(peerID, directory, token, b.entropy)
+		if err != nil {
+			return err
+		}
+		vaultPayload, err := encodePushTokenVaultEnvelope(vault)
+		if err != nil {
+			return err
+		}
+		newVaultKey := b.vaultKey(directory.Handle)
+
+		err = withRedisWatchRetryKeys(
+			b.client,
+			uniqueRedisKeys(
+				b.markerKey(),
+				directoryKey,
+				currentVaultKey,
+				newVaultKey,
+			),
+			func(tx *redis.Tx) error {
+				actualMarker, err := b.readState(tx)
+				if err != nil {
+					return err
+				}
+				if actualMarker.State != pushTokenStateEncrypted {
+					return errPushTokenStateChanged
+				}
+				actualDirectory, err := optionalRedisBytes(tx, directoryKey)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(actualDirectory, currentDirectoryPayload) {
+					return errPushTokenRetrySnapshot
+				}
+				if currentVaultKey != "" {
+					actualVault, err := optionalRedisBytes(tx, currentVaultKey)
+					if err != nil {
+						return err
+					}
+					if !bytes.Equal(actualVault, currentVaultRaw) {
+						return errPushTokenRetrySnapshot
+					}
+				}
+				if newVaultKey != currentVaultKey {
+					collision, err := optionalRedisBytes(tx, newVaultKey)
+					if err != nil {
+						return err
+					}
+					if collision != nil {
+						return errPushTokenRetrySnapshot
+					}
+				}
+				_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+					pipe.Set(context.Background(), newVaultKey, vaultPayload, 0)
+					pipe.Set(context.Background(), directoryKey, directoryPayload, 0)
+					if currentVaultKey != "" && currentVaultKey != newVaultKey {
+						pipe.Del(context.Background(), currentVaultKey)
+					}
+					return nil
+				})
+				return err
+			},
+		)
+		if errors.Is(err, errPushTokenRetrySnapshot) ||
+			errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("store encrypted push route: %w", err)
+		}
 		return nil
+	}
+	return fmt.Errorf("store encrypted push route: %w", redis.TxFailedErr)
+}
+
+func (b *redisPushTokenBackend) unregisterEncrypted(peerID string) error {
+	directoryKey := b.directoryKey(peerID)
+	for range redisWatchRetries * 2 {
+		marker, err := b.readState(b.client)
+		if err != nil {
+			return err
+		}
+		if marker.State != pushTokenStateEncrypted {
+			return errPushTokenStateChanged
+		}
+		directoryPayload, err := optionalRedisBytes(b.client, directoryKey)
+		if err != nil {
+			return fmt.Errorf("read push route for delete: %w", err)
+		}
+		if directoryPayload == nil {
+			return nil
+		}
+		directory, err := decodePushTokenDirectoryRecord(directoryPayload)
+		if err != nil {
+			return err
+		}
+		vaultKey := b.vaultKey(directory.Handle)
+		err = withRedisWatchRetryKeys(
+			b.client,
+			uniqueRedisKeys(b.markerKey(), directoryKey, vaultKey),
+			func(tx *redis.Tx) error {
+				actualMarker, err := b.readState(tx)
+				if err != nil {
+					return err
+				}
+				if actualMarker.State != pushTokenStateEncrypted {
+					return errPushTokenStateChanged
+				}
+				actualDirectory, err := optionalRedisBytes(tx, directoryKey)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(actualDirectory, directoryPayload) {
+					return errPushTokenRetrySnapshot
+				}
+				if b.encryptedDeleteBeforeCommit != nil {
+					if err := b.encryptedDeleteBeforeCommit(); err != nil {
+						return err
+					}
+				}
+				_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+					pipe.Del(context.Background(), directoryKey, vaultKey)
+					return nil
+				})
+				return err
+			},
+		)
+		if errors.Is(err, errPushTokenRetrySnapshot) || errors.Is(err, redis.TxFailedErr) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("delete encrypted push route: %w", err)
+		}
+		return nil
+	}
+	return fmt.Errorf("delete encrypted push route: %w", redis.TxFailedErr)
+}
+
+func (b *redisPushTokenBackend) revokeEncrypted(route pushRouteLease) (bool, error) {
+	var (
+		directoryKey string
+		peerID       string
+		err          error
+	)
+	if route.Generation == 0 {
+		directoryKey, peerID, err = b.directoryKeyFromLegacyKey(route.lookupKey)
+	} else {
+		directoryKey = route.lookupKey
+		peerID, err = b.peerFromDirectoryKey(directoryKey)
+	}
+	if err != nil || peerID == "" {
+		return false, nil
+	}
+
+	directoryPayload, err := optionalRedisBytes(b.client, directoryKey)
+	if err != nil {
+		return false, fmt.Errorf("read push route for conditional revoke: %w", err)
+	}
+	if directoryPayload == nil {
+		return false, nil
+	}
+	directory, err := decodePushTokenDirectoryRecord(directoryPayload)
+	if err != nil {
+		return false, err
+	}
+	if !encryptedDirectoryMatchesRoute(directory, route) {
+		return false, nil
+	}
+	vaultKey := b.vaultKey(directory.Handle)
+	revoked := false
+	err = withRedisWatchRetryKeys(
+		b.client,
+		uniqueRedisKeys(b.markerKey(), directoryKey, vaultKey),
+		func(tx *redis.Tx) error {
+			revoked = false
+			marker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if marker.State != pushTokenStateEncrypted {
+				return nil
+			}
+			actualPayload, err := optionalRedisBytes(tx, directoryKey)
+			if err != nil {
+				return err
+			}
+			if actualPayload == nil {
+				return nil
+			}
+			actual, err := decodePushTokenDirectoryRecord(actualPayload)
+			if err != nil {
+				return err
+			}
+			if !encryptedDirectoryMatchesRoute(actual, route) {
+				return nil
+			}
+			actualVaultKey := b.vaultKey(actual.Handle)
+			if actualVaultKey != vaultKey {
+				return nil
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Del(context.Background(), directoryKey, vaultKey)
+				return nil
+			})
+			if err == nil {
+				revoked = true
+			}
+			return err
+		},
+	)
+	if err != nil {
+		return false, fmt.Errorf("conditionally revoke encrypted push route: %w", err)
+	}
+	return revoked, nil
+}
+
+func (b *redisPushTokenBackend) RevokeIfCurrent(route pushRouteLease) (bool, error) {
+	marker, err := b.readState(b.client)
+	if err != nil {
+		return false, err
+	}
+	if marker.State == pushTokenStateEncrypted {
+		return b.revokeEncrypted(route)
+	}
+	if route.Generation != 0 {
+		return false, nil
+	}
+	return b.revokeLegacy(route)
+}
+
+func (b *redisPushTokenBackend) revokeLegacy(route pushRouteLease) (bool, error) {
+	if route.lookupKey == "" || route.legacyDigest == ([32]byte{}) {
+		return false, nil
+	}
+	if _, err := b.peerFromLegacyKey(route.lookupKey); err != nil {
+		return false, nil
+	}
+	revoked := false
+	err := withRedisWatchRetryKeys(
+		b.client,
+		[]string{b.markerKey(), route.lookupKey},
+		func(tx *redis.Tx) error {
+			revoked = false
+			marker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if marker.State == pushTokenStateEncrypted {
+				return errPushTokenStateChanged
+			}
+			payload, err := optionalRedisBytes(tx, route.lookupKey)
+			if err != nil {
+				return err
+			}
+			if payload == nil || pushRouteLegacyDigestBytes(payload) != route.legacyDigest {
+				return nil
+			}
+			var markerPayload []byte
+			if marker.State == pushTokenStateMigrating {
+				_, markerPayload, err = nextPushTokenMarkerRevision(marker)
+				if err != nil {
+					return err
+				}
+			}
+			if b.legacyMutationBeforeCommit != nil {
+				if err := b.legacyMutationBeforeCommit(); err != nil {
+					return err
+				}
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Del(context.Background(), route.lookupKey)
+				if markerPayload != nil {
+					pipe.Set(context.Background(), b.markerKey(), markerPayload, 0)
+				}
+				return nil
+			})
+			if err == nil {
+				revoked = true
+			}
+			return err
+		},
+	)
+	if errors.Is(err, errPushTokenStateChanged) {
+		return b.revokeEncrypted(route)
 	}
 	if err != nil {
-		log.Printf("[REDIS][PUSH] lookup failed: %v", err)
-		return nil
+		return false, fmt.Errorf("conditionally revoke legacy push route: %w", err)
 	}
-
-	var entry tokenEntry
-	if err := json.Unmarshal(payload, &entry); err != nil {
-		log.Printf("[REDIS][PUSH] decode failed: %v", err)
-		return nil
-	}
-
-	return &entry
+	return revoked, nil
 }
 
 func (b *redisPushTokenBackend) TokenCount() int {
-	keys, err := scanRedisKeys(b.client, b.allPattern())
+	marker, err := b.readState(b.client)
 	if err != nil {
-		log.Printf("[REDIS][PUSH] count scan failed: %v", err)
+		log.Printf("[REDIS][PUSH] outcome=count_state_read_failed")
 		return 0
 	}
-	return len(keys)
+	pattern := b.allPattern()
+	exactPrefix := b.prefix + "push:"
+	if marker.State == pushTokenStateEncrypted {
+		pattern = b.directoryPattern()
+		exactPrefix = b.prefix + "push-token-directory:"
+	}
+	keys, err := scanRedisKeys(b.client, pattern)
+	if err != nil {
+		log.Printf("[REDIS][PUSH] outcome=count_scan_failed")
+		return 0
+	}
+	count := 0
+	for _, key := range keys {
+		if strings.HasPrefix(key, exactPrefix) && len(key) > len(exactPrefix) {
+			count++
+		}
+	}
+	return count
 }
 
 func (b *redisPushTokenBackend) PlatformCounts() map[string]int {
-	keys, err := scanRedisKeys(b.client, b.allPattern())
+	marker, err := b.readState(b.client)
 	if err != nil {
-		log.Printf("[REDIS][PUSH] platform counts scan failed: %v", err)
+		log.Printf("[REDIS][PUSH] outcome=platform_count_state_read_failed")
+		return nil
+	}
+	pattern := b.allPattern()
+	exactPrefix := b.prefix + "push:"
+	encrypted := false
+	if marker.State == pushTokenStateEncrypted {
+		pattern = b.directoryPattern()
+		exactPrefix = b.prefix + "push-token-directory:"
+		encrypted = true
+	}
+	keys, err := scanRedisKeys(b.client, pattern)
+	if err != nil {
+		log.Printf("[REDIS][PUSH] outcome=platform_count_scan_failed")
 		return nil
 	}
 	counts := make(map[string]int)
-	ctx := context.Background()
 	for _, key := range keys {
-		payload, err := b.client.Get(ctx, key).Bytes()
-		if err != nil {
+		if !strings.HasPrefix(key, exactPrefix) || len(key) <= len(exactPrefix) {
 			continue
 		}
-		var entry tokenEntry
-		if err := json.Unmarshal(payload, &entry); err != nil {
+		payload, err := optionalRedisBytes(b.client, key)
+		if err != nil || payload == nil {
 			continue
 		}
-		counts[entry.Platform]++
+		if encrypted {
+			record, decodeErr := decodePushTokenDirectoryRecord(payload)
+			if decodeErr == nil {
+				counts[record.Platform]++
+			}
+			continue
+		}
+		entry, decodeErr := decodeLegacyPushTokenRecord(payload)
+		if decodeErr == nil {
+			counts[entry.Platform]++
+		}
 	}
 	return counts
+}
+
+func (b *redisPushTokenBackend) Migrate(fleetReceiptSHA256 string) error {
+	if err := validateFleetReceiptSHA256(fleetReceiptSHA256); err != nil {
+		return err
+	}
+	config, err := b.ensureVaultConfig()
+	if err != nil {
+		return err
+	}
+	if err := b.admitPushTokenMigration(fleetReceiptSHA256); err != nil {
+		return err
+	}
+
+	for attempt := 0; attempt < 256; attempt++ {
+		marker, err := b.readState(b.client)
+		if err != nil {
+			return err
+		}
+		if marker.FleetReceiptSHA256 != fleetReceiptSHA256 {
+			return errors.New("push token migration receipt does not match durable state")
+		}
+		if marker.State == pushTokenStateEncrypted {
+			return nil
+		}
+		if marker.State != pushTokenStateMigrating {
+			return errors.New("push token migration state is invalid")
+		}
+
+		if err := b.reconcilePushTokenMigration(marker, config); err != nil {
+			if errors.Is(err, errPushTokenRetrySnapshot) ||
+				errors.Is(err, redis.TxFailedErr) {
+				continue
+			}
+			return err
+		}
+		if err := b.verifyPushTokenMigrationSnapshot(marker, config); err != nil {
+			if errors.Is(err, errPushTokenRetrySnapshot) {
+				continue
+			}
+			return err
+		}
+		if b.migrationBeforeCutover != nil {
+			if err := b.migrationBeforeCutover(marker.Revision); err != nil {
+				return err
+			}
+		}
+		if err := b.cutOverPushTokenMigration(marker); err != nil {
+			if errors.Is(err, errPushTokenRetrySnapshot) ||
+				errors.Is(err, redis.TxFailedErr) {
+				continue
+			}
+			return err
+		}
+		return nil
+	}
+	return errors.New("push token migration did not reach a stable revision")
+}
+
+func (b *redisPushTokenBackend) admitPushTokenMigration(fleetReceiptSHA256 string) error {
+	markerKey := b.markerKey()
+	return withRedisWatchRetryKeys(b.client, []string{markerKey}, func(tx *redis.Tx) error {
+		marker, err := b.readState(tx)
+		if err != nil {
+			return err
+		}
+		switch marker.State {
+		case pushTokenStateAbsent:
+			marker = pushTokenStateMarker{
+				State:              pushTokenStateMigrating,
+				Revision:           0,
+				FleetReceiptSHA256: fleetReceiptSHA256,
+			}
+			payload, err := encodePushTokenStateMarker(marker)
+			if err != nil {
+				return err
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Set(context.Background(), markerKey, payload, 0)
+				return nil
+			})
+			return err
+		case pushTokenStateMigrating, pushTokenStateEncrypted:
+			if marker.FleetReceiptSHA256 != fleetReceiptSHA256 {
+				return errors.New("push token migration receipt does not match durable state")
+			}
+			return nil
+		default:
+			return errors.New("push token migration state is invalid")
+		}
+	})
+}
+
+func (b *redisPushTokenBackend) exactKeys(pattern, exactPrefix string) ([]string, error) {
+	keys, err := scanRedisKeys(b.client, pattern)
+	if err != nil {
+		return nil, err
+	}
+	exact := keys[:0]
+	for _, key := range keys {
+		if strings.HasPrefix(key, exactPrefix) && len(key) > len(exactPrefix) {
+			exact = append(exact, key)
+		}
+	}
+	return exact, nil
+}
+
+func (b *redisPushTokenBackend) reconcilePushTokenMigration(
+	marker pushTokenStateMarker,
+	config *pushTokenVaultConfig,
+) error {
+	legacyKeys, err := b.exactKeys(b.allPattern(), b.prefix+"push:")
+	if err != nil {
+		return fmt.Errorf("scan legacy push token rows: %w", err)
+	}
+	for _, legacyKey := range legacyKeys {
+		payload, err := optionalRedisBytes(b.client, legacyKey)
+		if err != nil {
+			return err
+		}
+		if payload == nil {
+			continue
+		}
+		if err := b.reconcilePushTokenMigrationRow(marker, config, legacyKey, payload); err != nil {
+			return err
+		}
+	}
+
+	directoryKeys, err := b.exactKeys(
+		b.directoryPattern(),
+		b.prefix+"push-token-directory:",
+	)
+	if err != nil {
+		return fmt.Errorf("scan push token directories: %w", err)
+	}
+	for _, directoryKey := range directoryKeys {
+		peerID, err := b.peerFromDirectoryKey(directoryKey)
+		if err != nil {
+			return err
+		}
+		legacyKey := b.key(peerID)
+		legacyPayload, err := optionalRedisBytes(b.client, legacyKey)
+		if err != nil {
+			return err
+		}
+		if legacyPayload != nil {
+			continue
+		}
+		if err := b.deleteMigratingDirectoryIfLegacyAbsent(marker, legacyKey, directoryKey); err != nil {
+			return err
+		}
+	}
+	return b.deleteUnreferencedMigratingVaults(marker)
+}
+
+func (b *redisPushTokenBackend) reconcilePushTokenMigrationRow(
+	marker pushTokenStateMarker,
+	config *pushTokenVaultConfig,
+	legacyKey string,
+	legacyPayload []byte,
+) error {
+	peerID, err := b.peerFromLegacyKey(legacyKey)
+	if err != nil {
+		return err
+	}
+	legacyEntry, err := decodeLegacyPushTokenRecord(legacyPayload)
+	if err != nil {
+		return err
+	}
+	directoryKey := b.directoryKey(peerID)
+	currentDirectoryPayload, err := optionalRedisBytes(b.client, directoryKey)
+	if err != nil {
+		return err
+	}
+	var (
+		currentDirectory pushTokenDirectoryRecord
+		currentVaultKey  string
+		currentVaultRaw  []byte
+		rotate           = currentDirectoryPayload == nil
+	)
+	if currentDirectoryPayload != nil {
+		currentDirectory, err = decodePushTokenDirectoryRecord(currentDirectoryPayload)
+		if err != nil {
+			return err
+		}
+		if currentDirectory.ProviderEnvironment != config.providerEnvironment {
+			return errors.New("migrating push token directory environment does not match configuration")
+		}
+		currentVaultKey = b.vaultKey(currentDirectory.Handle)
+		currentVaultRaw, err = optionalRedisBytes(b.client, currentVaultKey)
+		if err != nil {
+			return err
+		}
+		if currentVaultRaw == nil {
+			return errors.New("migrating push token vault row is missing")
+		}
+		currentVault, err := decodePushTokenVaultEnvelope(currentVaultRaw)
+		if err != nil {
+			return err
+		}
+		currentToken, err := config.openPushToken(peerID, currentDirectory, currentVault)
+		if err != nil {
+			return err
+		}
+		rotate = currentToken != legacyEntry.Token ||
+			currentDirectory.Platform != legacyEntry.Platform
+	}
+
+	handle := currentDirectory.Handle
+	generation := currentDirectory.Generation
+	if rotate {
+		handle, err = newOpaquePushHandle(b.entropy)
+		if err != nil {
+			return err
+		}
+		if currentDirectoryPayload == nil {
+			generation = 1
+		} else {
+			if generation == math.MaxUint64 {
+				return errors.New("push route generation overflow")
+			}
+			generation++
+		}
+	}
+	directory := pushTokenDirectoryRecord{
+		Handle:              handle,
+		Generation:          generation,
+		Platform:            legacyEntry.Platform,
+		Capabilities:        append([]string(nil), legacyEntry.Capabilities...),
+		ProviderEnvironment: config.providerEnvironment,
+		SourceLegacyDigest:  pushTokenLegacyDigest(legacyPayload),
+	}
+	directoryPayload, err := encodePushTokenDirectoryRecord(directory)
+	if err != nil {
+		return err
+	}
+	vault, err := config.sealPushToken(peerID, directory, legacyEntry.Token, b.entropy)
+	if err != nil {
+		return err
+	}
+	vaultPayload, err := encodePushTokenVaultEnvelope(vault)
+	if err != nil {
+		return err
+	}
+	newVaultKey := b.vaultKey(directory.Handle)
+
+	return withRedisWatchRetryKeys(
+		b.client,
+		uniqueRedisKeys(
+			b.markerKey(),
+			legacyKey,
+			directoryKey,
+			currentVaultKey,
+			newVaultKey,
+		),
+		func(tx *redis.Tx) error {
+			actualMarker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if !samePushTokenState(actualMarker, marker) ||
+				actualMarker.State != pushTokenStateMigrating {
+				return errPushTokenRetrySnapshot
+			}
+			actualLegacy, err := optionalRedisBytes(tx, legacyKey)
+			if err != nil {
+				return err
+			}
+			actualDirectory, err := optionalRedisBytes(tx, directoryKey)
+			if err != nil {
+				return err
+			}
+			if !bytes.Equal(actualLegacy, legacyPayload) ||
+				!bytes.Equal(actualDirectory, currentDirectoryPayload) {
+				return errPushTokenRetrySnapshot
+			}
+			if currentVaultKey != "" {
+				actualVault, err := optionalRedisBytes(tx, currentVaultKey)
+				if err != nil {
+					return err
+				}
+				if !bytes.Equal(actualVault, currentVaultRaw) {
+					return errPushTokenRetrySnapshot
+				}
+			}
+			if newVaultKey != currentVaultKey {
+				collision, err := optionalRedisBytes(tx, newVaultKey)
+				if err != nil {
+					return err
+				}
+				if collision != nil {
+					return errPushTokenRetrySnapshot
+				}
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Set(context.Background(), newVaultKey, vaultPayload, 0)
+				pipe.Set(context.Background(), directoryKey, directoryPayload, 0)
+				if currentVaultKey != "" && currentVaultKey != newVaultKey {
+					pipe.Del(context.Background(), currentVaultKey)
+				}
+				return nil
+			})
+			return err
+		},
+	)
+}
+
+func (b *redisPushTokenBackend) deleteMigratingDirectoryIfLegacyAbsent(
+	marker pushTokenStateMarker,
+	legacyKey string,
+	directoryKey string,
+) error {
+	directoryPayload, err := optionalRedisBytes(b.client, directoryKey)
+	if err != nil || directoryPayload == nil {
+		return err
+	}
+	directory, err := decodePushTokenDirectoryRecord(directoryPayload)
+	if err != nil {
+		return err
+	}
+	vaultKey := b.vaultKey(directory.Handle)
+	return withRedisWatchRetryKeys(
+		b.client,
+		uniqueRedisKeys(b.markerKey(), legacyKey, directoryKey, vaultKey),
+		func(tx *redis.Tx) error {
+			actualMarker, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if !samePushTokenState(actualMarker, marker) ||
+				actualMarker.State != pushTokenStateMigrating {
+				return errPushTokenRetrySnapshot
+			}
+			legacyPayload, err := optionalRedisBytes(tx, legacyKey)
+			if err != nil {
+				return err
+			}
+			actualDirectory, err := optionalRedisBytes(tx, directoryKey)
+			if err != nil {
+				return err
+			}
+			if legacyPayload != nil || !bytes.Equal(actualDirectory, directoryPayload) {
+				return errPushTokenRetrySnapshot
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Del(context.Background(), directoryKey, vaultKey)
+				return nil
+			})
+			return err
+		},
+	)
+}
+
+func (b *redisPushTokenBackend) deleteUnreferencedMigratingVaults(
+	marker pushTokenStateMarker,
+) error {
+	directoryKeys, err := b.exactKeys(
+		b.directoryPattern(),
+		b.prefix+"push-token-directory:",
+	)
+	if err != nil {
+		return err
+	}
+	referenced := make(map[string]struct{}, len(directoryKeys))
+	for _, directoryKey := range directoryKeys {
+		payload, err := optionalRedisBytes(b.client, directoryKey)
+		if err != nil || payload == nil {
+			return err
+		}
+		directory, err := decodePushTokenDirectoryRecord(payload)
+		if err != nil {
+			return err
+		}
+		referenced[b.vaultKey(directory.Handle)] = struct{}{}
+	}
+	vaultKeys, err := b.exactKeys(b.vaultPattern(), b.prefix+"push-token-vault:")
+	if err != nil {
+		return err
+	}
+	for _, vaultKey := range vaultKeys {
+		if _, ok := referenced[vaultKey]; ok {
+			continue
+		}
+		if err := withRedisWatchRetryKeys(
+			b.client,
+			[]string{b.markerKey(), vaultKey},
+			func(tx *redis.Tx) error {
+				actualMarker, err := b.readState(tx)
+				if err != nil {
+					return err
+				}
+				if !samePushTokenState(actualMarker, marker) ||
+					actualMarker.State != pushTokenStateMigrating {
+					return errPushTokenRetrySnapshot
+				}
+				_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+					pipe.Del(context.Background(), vaultKey)
+					return nil
+				})
+				return err
+			},
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *redisPushTokenBackend) pushTokenMigrationSnapshotFault(
+	marker pushTokenStateMarker,
+	fault error,
+) error {
+	current, err := b.readState(b.client)
+	if err != nil {
+		return err
+	}
+	if !samePushTokenState(current, marker) {
+		return errPushTokenRetrySnapshot
+	}
+	return fault
+}
+
+func (b *redisPushTokenBackend) verifyPushTokenMigrationSnapshot(
+	marker pushTokenStateMarker,
+	config *pushTokenVaultConfig,
+) error {
+	before, err := b.readState(b.client)
+	if err != nil {
+		return err
+	}
+	if !samePushTokenState(before, marker) || before.State != pushTokenStateMigrating {
+		return errPushTokenRetrySnapshot
+	}
+	legacyKeys, err := b.exactKeys(b.allPattern(), b.prefix+"push:")
+	if err != nil {
+		return err
+	}
+	directoryKeys, err := b.exactKeys(
+		b.directoryPattern(),
+		b.prefix+"push-token-directory:",
+	)
+	if err != nil {
+		return err
+	}
+	vaultKeys, err := b.exactKeys(b.vaultPattern(), b.prefix+"push-token-vault:")
+	if err != nil {
+		return err
+	}
+	if b.migrationVerificationAfterScans != nil {
+		b.migrationVerificationAfterScans()
+	}
+	if len(legacyKeys) != len(directoryKeys) || len(directoryKeys) != len(vaultKeys) {
+		return b.pushTokenMigrationSnapshotFault(
+			marker,
+			errors.New("push token migration rows are not an exact bijection"),
+		)
+	}
+	referencedVaults := make(map[string]struct{}, len(vaultKeys))
+	for _, legacyKey := range legacyKeys {
+		peerID, err := b.peerFromLegacyKey(legacyKey)
+		if err != nil {
+			return b.pushTokenMigrationSnapshotFault(marker, err)
+		}
+		legacyPayload, err := optionalRedisBytes(b.client, legacyKey)
+		if err != nil {
+			return err
+		}
+		if legacyPayload == nil {
+			return b.pushTokenMigrationSnapshotFault(
+				marker,
+				errors.New("push token migration legacy row is missing"),
+			)
+		}
+		legacyEntry, err := decodeLegacyPushTokenRecord(legacyPayload)
+		if err != nil {
+			return b.pushTokenMigrationSnapshotFault(marker, err)
+		}
+		directoryPayload, err := optionalRedisBytes(b.client, b.directoryKey(peerID))
+		if err != nil {
+			return err
+		}
+		if directoryPayload == nil {
+			return b.pushTokenMigrationSnapshotFault(
+				marker,
+				errors.New("push token migration directory row is missing"),
+			)
+		}
+		directory, err := decodePushTokenDirectoryRecord(directoryPayload)
+		if err != nil {
+			return b.pushTokenMigrationSnapshotFault(marker, err)
+		}
+		if directory.SourceLegacyDigest != pushTokenLegacyDigest(legacyPayload) ||
+			directory.ProviderEnvironment != config.providerEnvironment ||
+			directory.Platform != legacyEntry.Platform ||
+			!slices.Equal(directory.Capabilities, legacyEntry.Capabilities) {
+			return b.pushTokenMigrationSnapshotFault(
+				marker,
+				errors.New("push token migration directory does not match legacy authority"),
+			)
+		}
+		vaultKey := b.vaultKey(directory.Handle)
+		vaultPayload, err := optionalRedisBytes(b.client, vaultKey)
+		if err != nil {
+			return err
+		}
+		if vaultPayload == nil {
+			return b.pushTokenMigrationSnapshotFault(
+				marker,
+				errors.New("push token migration vault row is missing"),
+			)
+		}
+		vault, err := decodePushTokenVaultEnvelope(vaultPayload)
+		if err != nil {
+			return b.pushTokenMigrationSnapshotFault(marker, err)
+		}
+		resolved, err := config.openPushToken(peerID, directory, vault)
+		if err != nil || resolved != legacyEntry.Token {
+			return b.pushTokenMigrationSnapshotFault(
+				marker,
+				errors.New("push token migration vault does not match legacy authority"),
+			)
+		}
+		referencedVaults[vaultKey] = struct{}{}
+	}
+	for _, vaultKey := range vaultKeys {
+		if _, ok := referencedVaults[vaultKey]; !ok {
+			return b.pushTokenMigrationSnapshotFault(
+				marker,
+				errors.New("push token migration contains an orphan vault row"),
+			)
+		}
+	}
+	after, err := b.readState(b.client)
+	if err != nil {
+		return err
+	}
+	if !samePushTokenState(after, marker) {
+		return errPushTokenRetrySnapshot
+	}
+	return nil
+}
+
+func (b *redisPushTokenBackend) cutOverPushTokenMigration(marker pushTokenStateMarker) error {
+	return withRedisWatchRetryKeys(
+		b.client,
+		[]string{b.markerKey()},
+		func(tx *redis.Tx) error {
+			actual, err := b.readState(tx)
+			if err != nil {
+				return err
+			}
+			if !samePushTokenState(actual, marker) || actual.State != pushTokenStateMigrating {
+				return errPushTokenRetrySnapshot
+			}
+			encrypted := actual
+			encrypted.State = pushTokenStateEncrypted
+			payload, err := encodePushTokenStateMarker(encrypted)
+			if err != nil {
+				return err
+			}
+			_, err = tx.TxPipelined(context.Background(), func(pipe redis.Pipeliner) error {
+				pipe.Set(context.Background(), b.markerKey(), payload, 0)
+				return nil
+			})
+			return err
+		},
+	)
+}
+
+func (b *redisPushTokenBackend) CleanupLegacy() error {
+	marker, err := b.readState(b.client)
+	if err != nil {
+		return err
+	}
+	if marker.State != pushTokenStateEncrypted {
+		return errors.New("legacy push token cleanup requires encrypted state")
+	}
+	keys, err := b.exactKeys(b.allPattern(), b.prefix+"push:")
+	if err != nil {
+		return fmt.Errorf("scan legacy push token rows for cleanup: %w", err)
+	}
+	if len(keys) == 0 {
+		return nil
+	}
+	arguments := make([]string, len(keys))
+	copy(arguments, keys)
+	if err := b.client.Del(context.Background(), arguments...).Err(); err != nil {
+		return fmt.Errorf("delete legacy push token rows: %w", err)
+	}
+	return nil
+}
+
+type pushTokenStartupSnapshot struct {
+	marker      pushTokenStateMarker
+	directories map[string][]byte
+	vaults      map[string][]byte
+}
+
+func (b *redisPushTokenBackend) collectPushTokenStartupSnapshot() (pushTokenStartupSnapshot, error) {
+	marker, err := b.readState(b.client)
+	if err != nil {
+		return pushTokenStartupSnapshot{}, err
+	}
+	snapshot := pushTokenStartupSnapshot{
+		marker:      marker,
+		directories: make(map[string][]byte),
+		vaults:      make(map[string][]byte),
+	}
+	directoryKeys, err := b.exactKeys(
+		b.directoryPattern(),
+		b.prefix+"push-token-directory:",
+	)
+	if err != nil {
+		return pushTokenStartupSnapshot{}, err
+	}
+	for _, key := range directoryKeys {
+		payload, err := optionalRedisBytes(b.client, key)
+		if err != nil {
+			return pushTokenStartupSnapshot{}, err
+		}
+		snapshot.directories[key] = payload
+	}
+	if b.startupValidationBetweenSnapshots != nil {
+		b.startupValidationBetweenSnapshots()
+	}
+	vaultKeys, err := b.exactKeys(b.vaultPattern(), b.prefix+"push-token-vault:")
+	if err != nil {
+		return pushTokenStartupSnapshot{}, err
+	}
+	for _, key := range vaultKeys {
+		payload, err := optionalRedisBytes(b.client, key)
+		if err != nil {
+			return pushTokenStartupSnapshot{}, err
+		}
+		snapshot.vaults[key] = payload
+	}
+	return snapshot, nil
+}
+func (b *redisPushTokenBackend) validatePushTokenStartupSnapshot(
+	snapshot pushTokenStartupSnapshot,
+	config *pushTokenVaultConfig,
+) error {
+	if snapshot.marker.State == pushTokenStateAbsent {
+		return nil
+	}
+	for directoryKey, directoryPayload := range snapshot.directories {
+		if _, err := b.peerFromDirectoryKey(directoryKey); err != nil {
+			return err
+		}
+		if directoryPayload == nil {
+			continue
+		}
+		if _, err := decodePushTokenDirectoryRecord(directoryPayload); err != nil {
+			return err
+		}
+	}
+	for vaultKey, payload := range snapshot.vaults {
+		handle := strings.TrimPrefix(vaultKey, b.prefix+"push-token-vault:")
+		if validateOpaquePushHandle(handle) != nil {
+			return errors.New("push token vault key contains an invalid handle")
+		}
+		if payload == nil {
+			continue
+		}
+		vault, err := decodePushTokenVaultEnvelope(payload)
+		if err != nil {
+			return err
+		}
+		if _, ok := config.keys[vault.KeyID]; !ok {
+			return errors.New("push token vault references an unretained key")
+		}
+	}
+	return nil
+}
+
+func (b *redisPushTokenBackend) ValidateStartup() error {
+	marker, err := b.readState(b.client)
+	if err != nil {
+		return err
+	}
+	if marker.State == pushTokenStateAbsent {
+		return nil
+	}
+	config, err := b.ensureVaultConfig()
+	if err != nil {
+		return err
+	}
+	snapshot, err := b.collectPushTokenStartupSnapshot()
+	if err != nil {
+		return err
+	}
+	return b.validatePushTokenStartupSnapshot(snapshot, config)
 }
 
 func minInt(a int, b int) int {

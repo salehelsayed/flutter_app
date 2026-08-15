@@ -5,9 +5,12 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
+import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_app/core/media/group_media_size_policy.dart';
+import 'package:flutter_app/core/config/direct_linked_devices_flag.dart';
+import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 
 import 'package:flutter_app/features/groups/application/add_group_member_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -17,7 +20,11 @@ import 'package:flutter_app/features/groups/application/group_membership_event_w
 import 'package:flutter_app/features/groups/application/remove_group_member_use_case.dart';
 import 'package:flutter_app/features/groups/application/rotate_and_distribute_group_key_use_case.dart';
 import 'package:flutter_app/features/groups/application/retry_failed_group_inbox_stores_use_case.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_reconciliation.dart';
+import 'package:flutter_app/features/groups/application/protected_group_content_authoring_resolver.dart';
+import 'package:flutter_app/features/groups/application/protected_group_media_manifest.dart';
 import 'package:flutter_app/features/groups/application/send_group_message_use_case.dart';
+import 'package:flutter_app/features/groups/application/group_offline_replay_envelope.dart';
 import 'package:flutter_app/features/groups/domain/models/group_message.dart';
 import 'package:flutter_app/features/groups/domain/models/group_key_info.dart';
 import 'package:flutter_app/features/groups/domain/models/group_invite_delivery_attempt.dart';
@@ -26,6 +33,8 @@ import 'package:flutter_app/features/groups/domain/models/group_membership_limit
 import 'package:flutter_app/features/groups/domain/models/group_message_receipt.dart';
 import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_invite_delivery_attempt_repository.dart';
+import 'package:flutter_app/features/groups/domain/repositories/group_message_repository.dart';
+import 'package:flutter_app/features/identity/application/linked_installation_authority.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -82,6 +91,39 @@ class _SlowPublishBridge extends FakeBridge {
       await Future<void>.delayed(delay);
     }
 
+    return super.send(message);
+  }
+}
+
+/// Sizes the canonical relay envelope with production wire-length crypto.
+///
+/// Group ciphertext is standard-base64 AES-256-GCM (plaintext plus a 16-byte
+/// tag), the nonce is 12 bytes, and an Ed25519 signature is 64 bytes. The
+/// payload contents are irrelevant to this frame-boundary proof, but their
+/// encoded lengths must not be shortened by the general-purpose fake bridge.
+class _RelayFrameSizingBridge extends FakeBridge {
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    final cmd = parsed['cmd'] as String?;
+    final payload = parsed['payload'] as Map<String, dynamic>?;
+    if (cmd == 'group.encrypt') {
+      final plaintext = payload!['plaintext']! as String;
+      return jsonEncode(<String, Object?>{
+        'ok': true,
+        'ciphertext': base64Encode(<int>[
+          ...utf8.encode(plaintext),
+          ...List<int>.filled(16, 0),
+        ]),
+        'nonce': base64Encode(List<int>.filled(12, 0)),
+      });
+    }
+    if (cmd == 'payload.sign') {
+      return jsonEncode(<String, Object?>{
+        'ok': true,
+        'signature': base64Encode(List<int>.filled(64, 0)),
+      });
+    }
     return super.send(message);
   }
 }
@@ -268,6 +310,21 @@ class _GatedInboxStoreBridge extends FakeBridge {
   }
 }
 
+class _GatedReplayCryptoBridge extends FakeBridge {
+  final Completer<void> cryptoEntered = Completer<void>();
+  final Completer<void> releaseCrypto = Completer<void>();
+
+  @override
+  Future<String> send(String message) async {
+    final parsed = jsonDecode(message) as Map<String, dynamic>;
+    if (parsed['cmd'] == 'group.encrypt') {
+      if (!cryptoEntered.isCompleted) cryptoEntered.complete();
+      await releaseCrypto.future;
+    }
+    return super.send(message);
+  }
+}
+
 class _DelayedGroupRepository extends InMemoryGroupRepository {
   static const _latestKeyDelay = Duration(milliseconds: 100);
   static const _membersDelay = Duration(milliseconds: 100);
@@ -370,6 +427,200 @@ class _SilentSaveGroupMessageRepository extends InMemoryGroupMessageRepository {
 
   @override
   Future<void> saveMessage(GroupMessage message) async {}
+}
+
+class _StrictContentMessageRepository extends InMemoryGroupMessageRepository
+    implements
+        GroupInboxStoreRetryPayloadCasRepository,
+        GroupMessageStrictContentCompletionRepository,
+        GroupMessageStrictLocalTerminalRepository,
+        GroupMessageStrictPreparedRepository {
+  String? initiallyPersistedRetryPayload;
+  final List<Map<String, Object?>> protectedEvidence = [];
+
+  @override
+  Future<void> saveMessage(GroupMessage message) async {
+    initiallyPersistedRetryPayload ??= message.inboxRetryPayload;
+    await super.saveMessage(message);
+  }
+
+  @override
+  Future<bool> replaceInboxRetryPayloadIfExact(
+    GroupMessage expected,
+    String replacement,
+  ) async {
+    final current = await getMessage(expected.id);
+    if (current == null ||
+        current.inboxRetryPayload != expected.inboxRetryPayload ||
+        current.status != expected.status ||
+        current.inboxStored != expected.inboxStored) {
+      return false;
+    }
+    await saveMessage(current.copyWith(inboxRetryPayload: replacement));
+    return true;
+  }
+
+  @override
+  Future<bool> completeStrictContentIfExact(
+    GroupMessage expected, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final current = await getMessage(expected.id);
+    if (current == null ||
+        current.inboxRetryPayload != expected.inboxRetryPayload ||
+        current.status != expected.status ||
+        current.inboxStored != expected.inboxStored) {
+      return false;
+    }
+    protectedEvidence.add(<String, Object?>{
+      'sourcePeerId': sourcePeerId,
+      'sourceEventId': sourceEventId,
+      'sourceTimestamp': sourceTimestamp,
+      'eventPayload': eventPayload,
+    });
+    await saveMessage(
+      current.copyWith(
+        status: 'sent',
+        inboxStored: true,
+        inboxRetryPayload: null,
+        wireEnvelope: null,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> stageAndCompleteStrictLocalContent(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> eventPayload,
+  }) async {
+    if (await getMessage(message.id) != null) return false;
+    protectedEvidence.add(<String, Object?>{
+      'sourcePeerId': sourcePeerId,
+      'sourceEventId': sourceEventId,
+      'sourceTimestamp': sourceTimestamp,
+      'eventPayload': eventPayload,
+    });
+    await saveMessage(
+      message.copyWith(
+        status: 'sent',
+        inboxStored: true,
+        inboxRetryPayload: null,
+        wireEnvelope: null,
+      ),
+    );
+    return true;
+  }
+
+  @override
+  Future<bool> stageStrictContentPrepared(
+    GroupMessage message, {
+    required String sourcePeerId,
+    required String sourceEventId,
+    required String sourceTimestamp,
+    required Map<String, Object?> preparedEventPayload,
+  }) async {
+    if (await getMessage(message.id) != null) return false;
+    protectedEvidence.add(<String, Object?>{
+      'sourcePeerId': sourcePeerId,
+      'sourceEventId': sourceEventId,
+      'sourceTimestamp': sourceTimestamp,
+      'eventPayload': preparedEventPayload,
+    });
+    await saveMessage(message);
+    return true;
+  }
+}
+
+class _PreparedReadbackFailureRepository extends _StrictContentMessageRepository
+    implements GroupMessageStrictPreparedTerminalRepository {
+  bool throwNextReadbackAfterPrepared = true;
+
+  @override
+  Future<GroupMessage?> getMessage(String id) async {
+    if (throwNextReadbackAfterPrepared &&
+        protectedEvidence.any(
+          (row) =>
+              (row['sourceEventId'] as String?)?.startsWith('ppm1:') == true,
+        )) {
+      throwNextReadbackAfterPrepared = false;
+      throw StateError('injected prepared owner readback failure');
+    }
+    return super.getMessage(id);
+  }
+
+  @override
+  Future<bool> hasExactStrictContentPrepared(
+    GroupMessage expected, {
+    required Map<String, Object?> eventPayload,
+  }) async {
+    final current = await getMessage(expected.id);
+    return current != null &&
+        current.inboxRetryPayload == expected.inboxRetryPayload &&
+        protectedEvidence.any(
+          (row) =>
+              (row['sourceEventId'] as String?)?.startsWith('ppm1:') == true,
+        );
+  }
+
+  @override
+  Future<bool> terminalizeStrictContentPreparedIfExact(
+    GroupMessage expected, {
+    required Map<String, Object?> preparedEventPayload,
+    required String terminalSourcePeerId,
+    required String terminalSourceEventId,
+    required String terminalSourceTimestamp,
+    required Map<String, Object?> terminalEventPayload,
+  }) async => false;
+}
+
+class _StrictContentInboxStore implements AckOrExpiryInboxStore {
+  _StrictContentInboxStore({this.durableCheck});
+
+  final Future<bool> Function()? durableCheck;
+  final List<String> recipients = <String>[];
+  bool everyStoreObservedDurableRow = true;
+
+  @override
+  Future<InboxStoreOutcome> storeInAckCustodyInboxDetailed(
+    String toPeerId,
+    String message, {
+    required AckCustodyKind custodyKind,
+    int? timeoutMs,
+  }) async {
+    expect(custodyKind, AckCustodyKind.groupContentV1);
+    final check = durableCheck;
+    if (check != null) {
+      everyStoreObservedDurableRow =
+          everyStoreObservedDurableRow && await check();
+    }
+    recipients.add(toPeerId);
+    return const InboxStoreOutcome(
+      status: InboxStoreStatus.stored,
+      storeStatus: 'stored',
+      custodyContract: ackOrExpiryInboxCustodyContract,
+    );
+  }
+}
+
+class _DriftingStrictGroupRepository extends InMemoryGroupRepository {
+  int memberReads = 0;
+
+  @override
+  Future<List<GroupMember>> getMembers(String groupId) async {
+    final members = await super.getMembers(groupId);
+    memberReads++;
+    if (memberReads < 2) return members;
+    return members
+        .where((member) => member.peerId != 'peer-2')
+        .toList(growable: false);
+  }
 }
 
 class _InMemoryInviteDeliveryAttemptRepository
@@ -762,6 +1013,7 @@ void main() {
 
   tearDown(() {
     groupRecoveryGate.resetForTest();
+    setGroupContentAuthoringResolver(groupRepo, null);
   });
 
   test('sends message successfully', () async {
@@ -783,6 +1035,885 @@ void main() {
     expect(message.isIncoming, false);
     expect(message.status, 'sent');
   });
+
+  test(
+    'TC-364-01a protected blob-free group authoring freezes physical custody with zero pubsub',
+    () async {
+      final strictRepo = _StrictContentMessageRepository();
+      final strictStore = _StrictContentInboxStore(
+        durableCheck: () async {
+          final row = await strictRepo.getMessage('msg-tc364-01a');
+          return row?.status == GroupMessage.statusQueuedOffline &&
+              row?.inboxRetryPayload != null;
+        },
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-current',
+              transportPeerId: 'transport-current',
+              deviceSigningPublicKey: 'pk-current',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-sibling',
+              transportPeerId: 'transport-sibling',
+              deviceSigningPublicKey: 'pk-sibling',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-revoked',
+              transportPeerId: 'transport-revoked',
+              deviceSigningPublicKey: 'pk-revoked',
+              status: GroupMemberDeviceStatus.revoked,
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-2',
+          role: MemberRole.writer,
+          publicKey: 'pk-2',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-remote',
+              transportPeerId: 'transport-remote',
+              deviceSigningPublicKey: 'pk-remote',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+
+      final result = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: strictRepo,
+        groupId: 'group-1',
+        text: 'strict discussion',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-01a',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 0, 0, 0, 1),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.tc364.01a',
+            keyEpoch: 1,
+          ),
+          inboxStore: strictStore,
+        ),
+      );
+
+      expect(result.$1, SendGroupMessageResult.success);
+      expect(strictStore.recipients, <String>[
+        'transport-remote',
+        'transport-sibling',
+      ]);
+      expect(
+        bridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isEmpty,
+      );
+      final frozen = GroupContentRetryPayload.decode(
+        strictRepo.initiallyPersistedRetryPayload!,
+      );
+      expect(frozen.pendingRecipientPeerIds, frozen.fullRecipientPeerIds);
+      expect(frozen.fullRecipientPeerIds, strictStore.recipients);
+      final strictTerminal = await strictRepo.getMessage('msg-tc364-01a');
+      expect(strictTerminal!.status, 'sent');
+      expect(
+        strictTerminal.wireEnvelope,
+        isNull,
+        reason: 'terminal strict content cannot be reminted by generic retry',
+      );
+      expect(strictStore.everyStoreObservedDurableRow, isTrue);
+      final strictFinalEvidence = strictRepo.protectedEvidence
+          .where(
+            (row) =>
+                row['sourceEventId'] ==
+                localProtectedGroupMessageSourceEventId('msg-tc364-01a'),
+          )
+          .toList(growable: false);
+      expect(strictFinalEvidence, hasLength(1));
+      expect(
+        strictFinalEvidence.single['sourceEventId'],
+        localProtectedGroupMessageSourceEventId('msg-tc364-01a'),
+      );
+
+      // A transport claimed by two eligible active devices is ambiguous, not
+      // one deduplicated physical recipient. It is excluded while the unique
+      // sibling transport remains protected.
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-3',
+          username: 'Mallory',
+          role: MemberRole.writer,
+          publicKey: 'pk-3',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-collision',
+              transportPeerId: 'transport-remote',
+              deviceSigningPublicKey: 'pk-collision',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      final ambiguousRepo = _StrictContentMessageRepository();
+      final ambiguousStore = _StrictContentInboxStore();
+      final ambiguous = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: ambiguousRepo,
+        groupId: 'group-1',
+        text: 'exclude ambiguous physical claim',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-ambiguous-transport',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 0, 10),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.tc364.01a.ambiguous',
+            keyEpoch: 1,
+          ),
+          inboxStore: ambiguousStore,
+        ),
+      );
+      expect(ambiguous.$1, SendGroupMessageResult.success);
+      expect(ambiguousStore.recipients, <String>['transport-sibling']);
+      expect(
+        GroupContentRetryPayload.decode(
+          ambiguousRepo.initiallyPersistedRetryPayload!,
+        ).fullRecipientPeerIds,
+        <String>['transport-sibling'],
+      );
+      await groupRepo.removeMember('group-1', 'peer-3');
+
+      // The production-shaped choke point resolves strict custody even when
+      // the composer did not supply an explicit context.
+      final autoRepo = _StrictContentMessageRepository();
+      final autoStore = _StrictContentInboxStore();
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => (
+          kind: GroupContentAuthoringResolutionKind.strict,
+          context: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 8, 13, 11),
+              eventId: 'authority.tc364.01a.production-primary',
+              keyEpoch: 1,
+            ),
+            inboxStore: autoStore,
+          ),
+        ),
+      );
+      final isolatedRuntimeRepo = InMemoryGroupRepository();
+      setGroupContentAuthoringResolver(
+        isolatedRuntimeRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.refuse,
+          context: null,
+        ),
+      );
+      final currentSender = await groupRepo.getMember('group-1', 'peer-1');
+      expect(currentSender, isNotNull);
+      final isolatedResolution = await resolveGroupContentAuthoring(
+        resolverOwner: groupRepo,
+        groupId: 'group-1',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderMember: currentSender!,
+      );
+      expect(
+        isolatedResolution.kind,
+        GroupContentAuthoringResolutionKind.strict,
+        reason: 'a second runtime cannot replace the first runtime resolver',
+      );
+      setGroupContentAuthoringResolver(isolatedRuntimeRepo, null);
+      final beforeAutoCommands = bridge.commandLog.length;
+      final auto = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: autoRepo,
+        groupId: 'group-1',
+        text: 'production primary strict',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-production-primary',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 0, 30),
+      );
+      expect(auto.$1, SendGroupMessageResult.success);
+      expect(autoStore.recipients, <String>[
+        'transport-remote',
+        'transport-sibling',
+      ]);
+      expect(
+        autoRepo.protectedEvidence.where(
+          (row) =>
+              row['sourceEventId'] ==
+              localProtectedGroupMessageSourceEventId(
+                'msg-tc364-production-primary',
+              ),
+        ),
+        hasLength(1),
+      );
+      expect(
+        bridge.commandLog
+            .skip(beforeAutoCommands)
+            .where(
+              (command) =>
+                  command == 'group:publish' || command == 'group:sendReliable',
+            ),
+        isEmpty,
+      );
+
+      // Initialized production authority whose installed resolver cannot
+      // supply a strict context is all-zero. Resolver absence is reserved for
+      // incumbent/test compositions and therefore is not a production-shaped
+      // missing-context proof.
+      setGroupContentAuthoringResolver(
+        groupRepo,
+        ({
+          required groupId,
+          required senderPeerId,
+          required senderPublicKey,
+          senderDeviceId,
+          senderTransportPeerId,
+        }) async => const (
+          kind: GroupContentAuthoringResolutionKind.refuse,
+          context: null,
+        ),
+      );
+      final missingContextBridge = FakeBridge();
+      final missingContextRepo = _StrictContentMessageRepository();
+      final missingContext = await sendGroupMessage(
+        bridge: missingContextBridge,
+        groupRepo: groupRepo,
+        msgRepo: missingContextRepo,
+        groupId: 'group-1',
+        text: 'must refuse missing context',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-missing-context',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 0, 40),
+      );
+      expect(missingContext.$1, SendGroupMessageResult.unauthorized);
+      expect(missingContext.$2, isNull);
+      expect(missingContextBridge.commandLog, isEmpty);
+      expect(
+        await missingContextRepo.getMessage('msg-tc364-missing-context'),
+        isNull,
+      );
+      setGroupContentAuthoringResolver(groupRepo, null);
+
+      // Announcement admins use the same protected lane and physical ACL.
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          type: GroupType.announcement,
+          myRole: GroupRole.admin,
+        ),
+      );
+      final announcementRepo = _StrictContentMessageRepository();
+      final announcementStore = _StrictContentInboxStore(
+        durableCheck: () async =>
+            (await announcementRepo.getMessage(
+              'msg-tc364-announcement',
+            ))?.inboxRetryPayload !=
+            null,
+      );
+      final announcement = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: announcementRepo,
+        groupId: 'group-1',
+        text: 'strict announcement',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-announcement',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 1),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.tc364.01a.announcement',
+            keyEpoch: 1,
+          ),
+          inboxStore: announcementStore,
+        ),
+      );
+      expect(announcement.$1, SendGroupMessageResult.success);
+      expect(announcementStore.recipients, <String>[
+        'transport-remote',
+        'transport-sibling',
+      ]);
+      expect(announcementStore.everyStoreObservedDurableRow, isTrue);
+
+      await groupRepo.saveGroup(
+        testGroup.copyWith(type: GroupType.chat, myRole: GroupRole.admin),
+      );
+
+      Future<void> expectAllZero({
+        required String caseName,
+        required GroupContentAuthoringContext context,
+        bool forwarded = false,
+        DateTime? authoredAt,
+      }) async {
+        final refusalBridge = FakeBridge();
+        final refusalRepo = _StrictContentMessageRepository();
+        final result = await sendGroupMessage(
+          bridge: refusalBridge,
+          groupRepo: groupRepo,
+          msgRepo: refusalRepo,
+          groupId: 'group-1',
+          text: 'refuse $caseName',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-current',
+          senderPrivateKey: 'sk-current',
+          senderUsername: 'Alice',
+          senderDeviceId: 'device-current',
+          senderTransportPeerId: 'transport-current',
+          messageId: 'msg-tc364-$caseName',
+          timestamp: authoredAt ?? DateTime.utc(2026, 8, 13, 12, 2),
+          isForwarded: forwarded,
+          groupContentAuthoring: context,
+        );
+        expect(
+          result.$1,
+          SendGroupMessageResult.unauthorized,
+          reason: caseName,
+        );
+        expect(
+          await refusalRepo.getMessage('msg-tc364-$caseName'),
+          isNull,
+          reason: caseName,
+        );
+        expect(refusalBridge.commandLog, isEmpty, reason: caseName);
+      }
+
+      final enabledAuthority = GroupContentAuthorityVersion(
+        eventAt: DateTime.utc(2026, 8, 13, 11),
+        eventId: 'authority.tc364.01a.refusal',
+        keyEpoch: 1,
+      );
+      await expectAllZero(
+        caseName: 'selector-off',
+        context: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.disabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: _StrictContentInboxStore(),
+        ),
+      );
+      await expectAllZero(
+        caseName: 'missing-credential',
+        context: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: _StrictContentInboxStore(),
+          requireLinkedTransportCredential: true,
+        ),
+      );
+      await expectAllZero(
+        caseName: 'ineligible-forward',
+        context: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: _StrictContentInboxStore(),
+        ),
+        forwarded: true,
+      );
+      await expectAllZero(
+        caseName: 'older-than-authority',
+        context: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: _StrictContentInboxStore(),
+        ),
+        authoredAt: enabledAuthority.eventAt.subtract(
+          const Duration(microseconds: 1),
+        ),
+      );
+      await expectAllZero(
+        caseName: 'future-skew',
+        context: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: _StrictContentInboxStore(),
+        ),
+        authoredAt: DateTime.now().toUtc().add(
+          groupContentAuthoringFutureSkew + const Duration(minutes: 1),
+        ),
+      );
+
+      // Announcement membership and local role must both authorize authoring.
+      await groupRepo.saveGroup(
+        testGroup.copyWith(
+          type: GroupType.announcement,
+          myRole: GroupRole.member,
+        ),
+      );
+      await expectAllZero(
+        caseName: 'announcement-non-admin',
+        context: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: _StrictContentInboxStore(),
+        ),
+      );
+      await groupRepo.saveGroup(testGroup);
+
+      // Candidate crypto is disposable: a second roster read that loses one
+      // physical recipient prevents persistence and all network effects.
+      final driftRepo = _DriftingStrictGroupRepository();
+      await driftRepo.saveGroup(testGroup);
+      for (final member in await groupRepo.getMembers('group-1')) {
+        await driftRepo.saveMember(member);
+      }
+      await _saveGroupKey(driftRepo, 'group-1');
+      final driftMessageRepo = _StrictContentMessageRepository();
+      final driftStore = _StrictContentInboxStore();
+      final driftBridge = FakeBridge();
+      final drift = await sendGroupMessage(
+        bridge: driftBridge,
+        groupRepo: driftRepo,
+        msgRepo: driftMessageRepo,
+        groupId: 'group-1',
+        text: 'discard drifted candidate',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-drift',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 3),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: driftStore,
+        ),
+      );
+      expect(drift.$1, SendGroupMessageResult.error);
+      expect(await driftMessageRepo.getMessage('msg-tc364-drift'), isNull);
+      expect(driftStore.recipients, isEmpty);
+      expect(
+        driftBridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' ||
+              command == 'group:sendReliable' ||
+              command == 'group:inboxStore',
+        ),
+        isEmpty,
+      );
+
+      // Bridge crypto is deliberately outside the keyed phase. A concurrent
+      // authority mutation must enter, and the stale candidate must be thrown
+      // away before either durable owner insertion or protected relay store.
+      final gatedRepo = InMemoryGroupRepository();
+      await gatedRepo.saveGroup(testGroup);
+      for (final member in await groupRepo.getMembers('group-1')) {
+        await gatedRepo.saveMember(member);
+      }
+      await _saveGroupKey(gatedRepo, 'group-1');
+      final gatedMessageRepo = _StrictContentMessageRepository();
+      final gatedStore = _StrictContentInboxStore();
+      final gatedCrypto = _GatedReplayCryptoBridge();
+      final gatedSend = sendGroupMessage(
+        bridge: gatedCrypto,
+        groupRepo: gatedRepo,
+        msgRepo: gatedMessageRepo,
+        groupId: 'group-1',
+        text: 'discard crypto candidate after authority drift',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-crypto-drift',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 3, 1),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: gatedStore,
+        ),
+      );
+      await gatedCrypto.cryptoEntered.future;
+      var mutationEntered = false;
+      await runGroupAuthorityPhase(
+        groupId: 'group-1',
+        action: () async {
+          mutationEntered = true;
+          await gatedRepo.removeMember('group-1', 'peer-2');
+        },
+      );
+      expect(mutationEntered, isTrue);
+      gatedCrypto.releaseCrypto.complete();
+      expect((await gatedSend).$1, SendGroupMessageResult.error);
+      expect(
+        await gatedMessageRepo.getMessage('msg-tc364-crypto-drift'),
+        isNull,
+      );
+      expect(gatedStore.recipients, isEmpty);
+      expect(
+        gatedCrypto.commandLog.where(
+          (command) =>
+              command == 'group:publish' ||
+              command == 'group:sendReliable' ||
+              command == 'group:inboxStore',
+        ),
+        isEmpty,
+      );
+
+      // Once owner+PREPARED commit, a transient repository readback failure
+      // cannot roll the owner back and orphan append-only evidence. A later
+      // retry/restart pass completes those exact frozen bytes.
+      final handoffRepo = _PreparedReadbackFailureRepository();
+      final handoffStore = _StrictContentInboxStore();
+      final handoffBridge = FakeBridge();
+      final handoff = await sendGroupMessage(
+        bridge: handoffBridge,
+        groupRepo: groupRepo,
+        msgRepo: handoffRepo,
+        groupId: 'group-1',
+        text: 'retain prepared owner after readback failure',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc364-prepared-handoff',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 3, 2),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: enabledAuthority,
+          inboxStore: handoffStore,
+        ),
+      );
+      expect(handoff.$1, SendGroupMessageResult.queuedOffline);
+      expect(handoffStore.recipients, isEmpty);
+      final handedOff = await handoffRepo.getMessage(
+        'msg-tc364-prepared-handoff',
+      );
+      expect(handedOff, isNotNull);
+      expect(handedOff!.inboxRetryPayload, isNotNull);
+      expect(
+        handoffRepo.protectedEvidence.where(
+          (row) =>
+              (row['sourceEventId'] as String?)?.startsWith('ppm1:') == true,
+        ),
+        hasLength(1),
+      );
+      expect(
+        await retryFailedGroupInboxStores(
+          bridge: handoffBridge,
+          msgRepo: handoffRepo,
+          groupRepo: groupRepo,
+          groupContentInboxStore: handoffStore,
+          classifyStrictContentAuthority:
+              ({
+                required groupId,
+                required observedAuthority,
+                required contentAt,
+                required contentEventId,
+              }) async =>
+                  ProtectedGroupContentRetryAuthorityDisposition.eligible,
+          strictContentOnly: true,
+        ),
+        1,
+      );
+      expect(
+        (await handoffRepo.getMessage('msg-tc364-prepared-handoff'))!.status,
+        'sent',
+      );
+
+      // An active linked installation owns its authoring role even while its
+      // member-device projection is empty. Production resolution must run
+      // before the ordinary-primary legacy fallback, leaving all network and
+      // durable-owner effects at zero.
+      final emptyLinkedRepo = InMemoryGroupRepository();
+      await emptyLinkedRepo.saveGroup(testGroup);
+      await emptyLinkedRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'account-pk',
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      await _saveGroupKey(emptyLinkedRepo, 'group-1');
+      var linkedInstallationLoads = 0;
+      setGroupContentAuthoringResolver(
+        emptyLinkedRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'account-pk'),
+          loadMember: emptyLinkedRepo.getMember,
+          loadInstallationAuthority: (_) async {
+            linkedInstallationLoads++;
+            return LinkedInstallationAuthoritySnapshot(
+              disposition: LinkedInstallationDisposition.active,
+              credential: LinkedTransportCredential(
+                state: LinkedTransportCredentialState.active,
+                accountPeerId: 'peer-1',
+                accountPublicKey: 'account-pk',
+                deviceId: 'device-linked',
+                transportPeerId: 'transport-linked',
+                transportPublicKey: 'linked-pk',
+                transportPrivateKey: 'linked-sk',
+                createdAt: '2026-08-13T10:00:00.000Z',
+                activatedAt: '2026-08-13T10:00:01.000Z',
+              ),
+              failClosedReason: null,
+            );
+          },
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => 'transport-linked',
+          inboxStore: _StrictContentInboxStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+      final emptyLinkedBridge = FakeBridge();
+      final emptyLinkedMessageRepo = _StrictContentMessageRepository();
+      final emptyLinked = await sendGroupMessage(
+        bridge: emptyLinkedBridge,
+        groupRepo: emptyLinkedRepo,
+        msgRepo: emptyLinkedMessageRepo,
+        groupId: 'group-1',
+        text: 'must not resurrect account transport',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'account-pk',
+        senderPrivateKey: 'account-sk',
+        senderUsername: 'Alice',
+        messageId: 'msg-tc364-empty-linked',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 3, 3),
+      );
+      expect(linkedInstallationLoads, 1);
+      expect(emptyLinked.$1, SendGroupMessageResult.unauthorized);
+      expect(emptyLinked.$2, isNull);
+      expect(emptyLinkedBridge.commandLog, isEmpty);
+      expect(
+        await emptyLinkedMessageRepo.getMessage('msg-tc364-empty-linked'),
+        isNull,
+      );
+      setGroupContentAuthoringResolver(emptyLinkedRepo, null);
+
+      // A genuinely uninitialized ordinary primary keeps the incumbent lane.
+      final primaryRepo = InMemoryGroupRepository();
+      await primaryRepo.saveGroup(testGroup);
+      await primaryRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      await _saveGroupKey(primaryRepo, 'group-1');
+      var primaryInstallationLoads = 0;
+      setGroupContentAuthoringResolver(
+        primaryRepo,
+        buildProtectedGroupContentAuthoringResolver(
+          loadIdentity: () async => (peerId: 'peer-1', publicKey: 'pk-1'),
+          loadMember: primaryRepo.getMember,
+          loadInstallationAuthority: (_) async {
+            primaryInstallationLoads++;
+            return const LinkedInstallationAuthoritySnapshot(
+              disposition: LinkedInstallationDisposition.primary,
+              credential: null,
+              failClosedReason: null,
+            );
+          },
+          loadLatestSettledAuthority: (_) async => null,
+          readCurrentTransportPeerId: () => null,
+          inboxStore: _StrictContentInboxStore(),
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+        ),
+      );
+      final primaryBridge = FakeBridge();
+      primaryBridge.responses['group:publish'] = {
+        'ok': true,
+        'messageId': 'msg-tc364-primary',
+      };
+      final primaryMessageRepo = InMemoryGroupMessageRepository();
+      final primary = await sendGroupMessage(
+        bridge: primaryBridge,
+        groupRepo: primaryRepo,
+        msgRepo: primaryMessageRepo,
+        groupId: 'group-1',
+        text: 'incumbent primary',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-1',
+        senderPrivateKey: 'sk-1',
+        senderUsername: 'Alice',
+        messageId: 'msg-tc364-primary',
+        timestamp: DateTime.utc(2026, 8, 13, 12, 4),
+      );
+      expect(primary.$1, SendGroupMessageResult.success);
+      expect(primary.$2, isNotNull);
+      expect(primaryInstallationLoads, greaterThanOrEqualTo(2));
+      expect(
+        primaryBridge.commandLog.where(
+          (command) =>
+              command == 'group:sendReliable' || command == 'group:publish',
+        ),
+        isNotEmpty,
+      );
+      setGroupContentAuthoringResolver(primaryRepo, null);
+    },
+  );
+
+  test(
+    'TC-366-03a strict ordinary quote preserves typed metadata for text media and voice',
+    () async {
+      await groupRepo.saveMember(
+        GroupMember(
+          groupId: 'group-1',
+          peerId: 'peer-1',
+          username: 'Alice',
+          role: MemberRole.admin,
+          publicKey: 'pk-1',
+          devices: const <GroupMemberDeviceIdentity>[
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-current',
+              transportPeerId: 'transport-current',
+              deviceSigningPublicKey: 'pk-current',
+            ),
+            GroupMemberDeviceIdentity(
+              deviceId: 'device-sibling',
+              transportPeerId: 'transport-sibling',
+              deviceSigningPublicKey: 'pk-sibling',
+            ),
+          ],
+          joinedAt: DateTime.utc(2026, 8, 1),
+        ),
+      );
+      final strictRepo = _StrictContentMessageRepository();
+      final strictStore = _StrictContentInboxStore();
+      final result = await sendGroupMessage(
+        bridge: bridge,
+        groupRepo: groupRepo,
+        msgRepo: strictRepo,
+        groupId: 'group-1',
+        text: 'quoted ordinary text',
+        senderPeerId: 'peer-1',
+        senderPublicKey: 'pk-current',
+        senderPrivateKey: 'sk-current',
+        senderUsername: 'Alice',
+        senderDeviceId: 'device-current',
+        senderTransportPeerId: 'transport-current',
+        messageId: 'msg-tc366-quoted-text',
+        quotedMessageId: 'quoted-parent-text',
+        timestamp: DateTime.utc(2026, 8, 14, 12),
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 14, 11),
+            eventId: 'authority.tc366.03a.text',
+            keyEpoch: 1,
+          ),
+          inboxStore: strictStore,
+        ),
+      );
+
+      expect(result.$1, SendGroupMessageResult.success);
+      expect(result.$2?.quotedMessageId, 'quoted-parent-text');
+      expect(
+        (await strictRepo.getMessage('msg-tc366-quoted-text'))?.quotedMessageId,
+        'quoted-parent-text',
+      );
+      expect(strictStore.recipients, <String>['transport-sibling']);
+      expect(
+        bridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isEmpty,
+      );
+    },
+  );
 
   test(
     'GMF-07 forwarded marker survives reliable fallback wire and replay payloads',
@@ -1211,7 +2342,7 @@ void main() {
   });
 
   test(
-    'production send resolves registered sender device distinct from member peer id',
+    'initialized primary strict send resolves registered device distinct from member peer id',
     () async {
       await groupRepo.saveMember(
         GroupMember(
@@ -1233,11 +2364,12 @@ void main() {
         ),
       );
 
-      final trackingMsgRepo = _SaveTrackingGroupMessageRepository();
+      final strictRepo = _StrictContentMessageRepository();
+      final strictStore = _StrictContentInboxStore();
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
-        msgRepo: trackingMsgRepo,
+        msgRepo: strictRepo,
         groupId: 'group-1',
         text: 'Hello from registered device',
         senderPeerId: 'peer-1',
@@ -1245,38 +2377,43 @@ void main() {
         senderPrivateKey: 'sk-1',
         senderUsername: 'Alice',
         messageId: 'registered-device-send',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.registered-device-send',
+            keyEpoch: 1,
+          ),
+          inboxStore: strictStore,
+        ),
       );
 
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
       expect(message!.transportPeerId, 'peer-1-device-a');
 
-      final publishMessage = bridge.sentMessages.firstWhere((raw) {
-        final parsed = jsonDecode(raw) as Map<String, dynamic>;
-        return parsed['cmd'] == 'group:publish';
-      });
-      final publishPayload =
-          (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
-              as Map<String, dynamic>;
-      expect(publishPayload['senderPeerId'], 'peer-1');
-      expect(publishPayload['senderDeviceId'], 'peer-1-device-a');
-      expect(publishPayload['senderTransportPeerId'], 'peer-1-device-a');
-      expect(publishPayload['senderDevicePublicKey'], 'pk-1');
-
-      final saved = await trackingMsgRepo.getMessage('registered-device-send');
-      expect(saved, isNotNull);
-      final initialSave = trackingMsgRepo.savedMessages.firstWhere(
-        (savedMessage) => savedMessage.id == 'registered-device-send',
+      expect(strictStore.recipients, isEmpty);
+      expect(
+        bridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isEmpty,
       );
-      final wireEnvelope =
-          jsonDecode(initialSave.wireEnvelope!) as Map<String, dynamic>;
-      expect(wireEnvelope['senderDeviceId'], 'peer-1-device-a');
-      expect(wireEnvelope['transportPeerId'], 'peer-1-device-a');
+      final saved = await strictRepo.getMessage('registered-device-send');
+      expect(saved, isNotNull);
+      expect(
+        saved!.wireEnvelope,
+        isNull,
+        reason: 'terminal strict content must not retain remintable wire bytes',
+      );
     },
   );
 
   test(
-    'production send honors requested transport for same-key sibling devices',
+    'initialized primary strict send honors requested same-key sibling transport',
     () async {
       await groupRepo.saveMember(
         GroupMember(
@@ -1305,11 +2442,12 @@ void main() {
         ),
       );
 
-      final trackingMsgRepo = _SaveTrackingGroupMessageRepository();
+      final strictRepo = _StrictContentMessageRepository();
+      final strictStore = _StrictContentInboxStore();
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
-        msgRepo: trackingMsgRepo,
+        msgRepo: strictRepo,
         groupId: 'group-1',
         text: 'Hello from sibling device',
         senderPeerId: 'peer-1',
@@ -1319,39 +2457,43 @@ void main() {
         messageId: 'same-key-sibling-send',
         senderDeviceId: 'peer-1-device-b',
         senderTransportPeerId: 'peer-1-device-b',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.same-key-sibling-send',
+            keyEpoch: 1,
+          ),
+          inboxStore: strictStore,
+        ),
       );
 
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
       expect(message!.transportPeerId, 'peer-1-device-b');
 
-      final publishMessage = bridge.sentMessages.firstWhere((raw) {
-        final parsed = jsonDecode(raw) as Map<String, dynamic>;
-        return parsed['cmd'] == 'group:publish';
-      });
-      final publishPayload =
-          (jsonDecode(publishMessage) as Map<String, dynamic>)['payload']
-              as Map<String, dynamic>;
-      expect(publishPayload['senderPeerId'], 'peer-1');
-      expect(publishPayload['senderDeviceId'], 'peer-1-device-b');
-      expect(publishPayload['senderTransportPeerId'], 'peer-1-device-b');
-      expect(publishPayload['senderDevicePublicKey'], 'pk-1');
-      expect(publishPayload['senderKeyPackageId'], 'kp-peer-1-device-b');
-
-      final saved = await trackingMsgRepo.getMessage('same-key-sibling-send');
-      expect(saved, isNotNull);
-      final initialSave = trackingMsgRepo.savedMessages.firstWhere(
-        (savedMessage) => savedMessage.id == 'same-key-sibling-send',
+      expect(strictStore.recipients, <String>['peer-1-device-a']);
+      expect(
+        bridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isEmpty,
       );
-      final wireEnvelope =
-          jsonDecode(initialSave.wireEnvelope!) as Map<String, dynamic>;
-      expect(wireEnvelope['senderDeviceId'], 'peer-1-device-b');
-      expect(wireEnvelope['transportPeerId'], 'peer-1-device-b');
+      final saved = await strictRepo.getMessage('same-key-sibling-send');
+      expect(saved, isNotNull);
+      expect(
+        saved!.wireEnvelope,
+        isNull,
+        reason: 'terminal strict content must not retain remintable wire bytes',
+      );
     },
   );
 
   test(
-    'production send keeps sender account excluded for ordinary multi-device sends',
+    'initialized primary strict send excludes current transport but retains sibling',
     () async {
       await groupRepo.saveMember(
         GroupMember(
@@ -1389,22 +2531,12 @@ void main() {
           joinedAt: DateTime.utc(2026, 5, 1, 12, 1),
         ),
       );
-      bridge.responses['group:sendReliable'] = {
-        'ok': true,
-        'messageId': 'ordinary-multi-device-send',
-        'publishSucceeded': true,
-        'inboxStored': true,
-        'expectedRecipientCount': 1,
-        'topicPeerCount': 1,
-        'recipientPeerIds': <String>['peer-2'],
-        'deliveryMode': 'live_and_inbox',
-        'envelope': '{"kind":"native-reliable-envelope"}',
-      };
-
+      final strictRepo = _StrictContentMessageRepository();
+      final strictStore = _StrictContentInboxStore();
       final (result, message) = await sendGroupMessage(
         bridge: bridge,
         groupRepo: groupRepo,
-        msgRepo: msgRepo,
+        msgRepo: strictRepo,
         groupId: 'group-1',
         text: 'Hello sibling device',
         senderPeerId: 'peer-1',
@@ -1414,18 +2546,30 @@ void main() {
         messageId: 'ordinary-multi-device-send',
         senderDeviceId: 'peer-1-device-a',
         senderTransportPeerId: 'peer-1-device-a',
+        groupContentAuthoring: GroupContentAuthoringContext(
+          directLinkedDeviceSelector:
+              const DirectLinkedDeviceSelector.enabled(),
+          multiDeviceSyncEnabled: true,
+          authorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 13, 11),
+            eventId: 'authority.ordinary-multi-device-send',
+            keyEpoch: 1,
+          ),
+          inboxStore: strictStore,
+        ),
       );
 
       expect(result, SendGroupMessageResult.success);
       expect(message, isNotNull);
-      final reliablePayload = _groupSendReliablePayloadForMessage(
-        bridge,
-        'ordinary-multi-device-send',
-      );
-      expect(reliablePayload['preserveRecipientPeerIds'], isTrue);
+      expect(strictStore.recipients, <String>['peer-1-device-b', 'peer-2']);
+      expect(strictStore.recipients, isNot(contains('peer-1-device-a')));
+      expect(strictStore.recipients, isNot(contains('peer-1')));
       expect(
-        (reliablePayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        <String>['peer-2'],
+        bridge.commandLog.where(
+          (command) =>
+              command == 'group:publish' || command == 'group:sendReliable',
+        ),
+        isEmpty,
       );
     },
   );
@@ -3256,81 +4400,78 @@ void main() {
     },
   );
 
-  test(
-    'witnessed-join tracker member includes earlier incumbents',
-    () async {
-      // F7 widened class (plan 318 TC-318-03): a NON-admin member whose only
-      // joined row came from witnessing a later join was still a "tracker"
-      // under the legacy predicate and dropped earlier incumbents.
-      final joinedAt = DateTime.utc(2026, 6, 5, 8);
-      const carolPeerId = 'peer-late-carol';
-      const evePeerId = 'peer-earlier-eve';
-      final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
+  test('witnessed-join tracker member includes earlier incumbents', () async {
+    // F7 widened class (plan 318 TC-318-03): a NON-admin member whose only
+    // joined row came from witnessing a later join was still a "tracker"
+    // under the legacy predicate and dropped earlier incumbents.
+    final joinedAt = DateTime.utc(2026, 6, 5, 8);
+    const carolPeerId = 'peer-late-carol';
+    const evePeerId = 'peer-earlier-eve';
+    final attemptRepo = _InMemoryInviteDeliveryAttemptRepository();
 
-      await groupRepo.saveGroup(
-        testGroup.copyWith(
-          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
-          myRole: GroupRole.member,
-        ),
-      );
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: evePeerId,
-          username: 'Eve',
-          role: MemberRole.writer,
-          publicKey: 'pk-eve-earlier',
-          joinedAt: joinedAt,
-        ),
-      );
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: carolPeerId,
-          username: 'Carol',
-          role: MemberRole.writer,
-          publicKey: 'pk-carol-late',
-          joinedAt: joinedAt.add(const Duration(minutes: 1)),
-        ),
-      );
-      await attemptRepo.markJoined(
+    await groupRepo.saveGroup(
+      testGroup.copyWith(
+        createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        myRole: GroupRole.member,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
+        groupId: 'group-1',
+        peerId: evePeerId,
+        username: 'Eve',
+        role: MemberRole.writer,
+        publicKey: 'pk-eve-earlier',
+        joinedAt: joinedAt,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
         groupId: 'group-1',
         peerId: carolPeerId,
         username: 'Carol',
+        role: MemberRole.writer,
+        publicKey: 'pk-carol-late',
         joinedAt: joinedAt.add(const Duration(minutes: 1)),
-      );
+      ),
+    );
+    await attemptRepo.markJoined(
+      groupId: 'group-1',
+      peerId: carolPeerId,
+      username: 'Carol',
+      joinedAt: joinedAt.add(const Duration(minutes: 1)),
+    );
 
-      bridge.responses['group:publish'] = {
-        'ok': true,
-        'messageId': 'f7-witness-arm',
-        'topicPeers': 2,
-      };
+    bridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'f7-witness-arm',
+      'topicPeers': 2,
+    };
 
-      final (result, message) = await sendGroupMessage(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
-        groupId: 'group-1',
-        text: 'witnessing a join must not shrink custody',
-        senderPeerId: 'peer-1',
-        senderPublicKey: 'pk-1',
-        senderPrivateKey: 'sk-1',
-        senderUsername: 'Late Member',
-        messageId: 'f7-witness-arm',
-        timestamp: joinedAt.add(const Duration(minutes: 2)),
-        inviteDeliveryAttemptRepo: attemptRepo,
-      );
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'witnessing a join must not shrink custody',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Late Member',
+      messageId: 'f7-witness-arm',
+      timestamp: joinedAt.add(const Duration(minutes: 2)),
+      inviteDeliveryAttemptRepo: attemptRepo,
+    );
 
-      expect(result, SendGroupMessageResult.success);
-      expect(message, isNotNull);
+    expect(result, SendGroupMessageResult.success);
+    expect(message, isNotNull);
 
-      final inboxPayload = _lastGroupInboxStorePayload(bridge);
-      expect(
-        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        unorderedEquals(<String>[carolPeerId, evePeerId]),
-      );
-    },
-  );
+    final inboxPayload = _lastGroupInboxStorePayload(bridge);
+    expect(
+      (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+      unorderedEquals(<String>[carolPeerId, evePeerId]),
+    );
+  });
 
   test(
     'later-joined announcement admin includes unevidenced incumbents',
@@ -3408,72 +4549,69 @@ void main() {
     },
   );
 
-  test(
-    'later-joined admin without invite rows includes incumbents',
-    () async {
-      // F7 branch 1 (plan 318 TC-318-02): admin sender, EMPTY invite rows —
-      // the legacy admin arm made this device a tracker and its own
-      // sys-member_joined timeline entry supplied the joined-evidence that
-      // dropped every unevidenced incumbent.
-      final joinedAt = DateTime.utc(2026, 6, 5, 8);
-      const evePeerId = 'peer-incumbent-no-rows-eve';
+  test('later-joined admin without invite rows includes incumbents', () async {
+    // F7 branch 1 (plan 318 TC-318-02): admin sender, EMPTY invite rows —
+    // the legacy admin arm made this device a tracker and its own
+    // sys-member_joined timeline entry supplied the joined-evidence that
+    // dropped every unevidenced incumbent.
+    final joinedAt = DateTime.utc(2026, 6, 5, 8);
+    const evePeerId = 'peer-incumbent-no-rows-eve';
 
-      await groupRepo.saveGroup(
-        testGroup.copyWith(
-          createdAt: joinedAt.subtract(const Duration(minutes: 1)),
-          myRole: GroupRole.admin,
-        ),
-      );
-      await groupRepo.saveMember(
-        GroupMember(
-          groupId: 'group-1',
-          peerId: evePeerId,
-          username: 'Eve',
-          role: MemberRole.writer,
-          publicKey: 'pk-eve-no-rows',
-          joinedAt: joinedAt,
-        ),
-      );
-      await msgRepo.saveMessage(
-        buildMemberJoinedTimelineMessage(
-          groupId: 'group-1',
-          joinedPeerId: 'peer-1',
-          joinedUsername: 'Dave',
-          eventAt: joinedAt.add(const Duration(seconds: 30)),
-        ),
-      );
-
-      bridge.responses['group:publish'] = {
-        'ok': true,
-        'messageId': 'f7-admin-no-rows',
-        'topicPeers': 1,
-      };
-
-      final (result, message) = await sendGroupMessage(
-        bridge: bridge,
-        groupRepo: groupRepo,
-        msgRepo: msgRepo,
+    await groupRepo.saveGroup(
+      testGroup.copyWith(
+        createdAt: joinedAt.subtract(const Duration(minutes: 1)),
+        myRole: GroupRole.admin,
+      ),
+    );
+    await groupRepo.saveMember(
+      GroupMember(
         groupId: 'group-1',
-        text: 'no invite rows must not mean no recipients',
-        senderPeerId: 'peer-1',
-        senderPublicKey: 'pk-1',
-        senderPrivateKey: 'sk-1',
-        senderUsername: 'Dave',
-        messageId: 'f7-admin-no-rows',
-        timestamp: joinedAt.add(const Duration(minutes: 2)),
-        inviteDeliveryAttemptRepo: _InMemoryInviteDeliveryAttemptRepository(),
-      );
+        peerId: evePeerId,
+        username: 'Eve',
+        role: MemberRole.writer,
+        publicKey: 'pk-eve-no-rows',
+        joinedAt: joinedAt,
+      ),
+    );
+    await msgRepo.saveMessage(
+      buildMemberJoinedTimelineMessage(
+        groupId: 'group-1',
+        joinedPeerId: 'peer-1',
+        joinedUsername: 'Dave',
+        eventAt: joinedAt.add(const Duration(seconds: 30)),
+      ),
+    );
 
-      expect(result, SendGroupMessageResult.success);
-      expect(message, isNotNull);
+    bridge.responses['group:publish'] = {
+      'ok': true,
+      'messageId': 'f7-admin-no-rows',
+      'topicPeers': 1,
+    };
 
-      final inboxPayload = _lastGroupInboxStorePayload(bridge);
-      expect(
-        (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
-        <String>[evePeerId],
-      );
-    },
-  );
+    final (result, message) = await sendGroupMessage(
+      bridge: bridge,
+      groupRepo: groupRepo,
+      msgRepo: msgRepo,
+      groupId: 'group-1',
+      text: 'no invite rows must not mean no recipients',
+      senderPeerId: 'peer-1',
+      senderPublicKey: 'pk-1',
+      senderPrivateKey: 'sk-1',
+      senderUsername: 'Dave',
+      messageId: 'f7-admin-no-rows',
+      timestamp: joinedAt.add(const Duration(minutes: 2)),
+      inviteDeliveryAttemptRepo: _InMemoryInviteDeliveryAttemptRepository(),
+    );
+
+    expect(result, SendGroupMessageResult.success);
+    expect(message, isNotNull);
+
+    final inboxPayload = _lastGroupInboxStorePayload(bridge);
+    expect(
+      (inboxPayload['recipientPeerIds'] as List<dynamic>).cast<String>(),
+      <String>[evePeerId],
+    );
+  });
 
   test(
     'INV-106 preserves legacy current members when no invite evidence exists',
@@ -4552,6 +5690,76 @@ void main() {
     setUp(() {
       mediaRepo = InMemoryMediaAttachmentRepository();
     });
+
+    test(
+      'TC-365-02a raw sender refuses initialized media without exact prepared manifest',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-1',
+            username: 'Alice',
+            role: MemberRole.admin,
+            publicKey: 'pk-1',
+            devices: const <GroupMemberDeviceIdentity>[
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-current',
+                transportPeerId: 'transport-current',
+                deviceSigningPublicKey: 'pk-current',
+              ),
+              GroupMemberDeviceIdentity(
+                deviceId: 'device-sibling',
+                transportPeerId: 'transport-sibling',
+                deviceSigningPublicKey: 'pk-sibling',
+              ),
+            ],
+            joinedAt: DateTime.utc(2026, 8, 1),
+          ),
+        );
+
+        final (result, message) = await sendGroupMessage(
+          bridge: bridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'strict media',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-current',
+          senderPrivateKey: 'sk-current',
+          senderUsername: 'Alice',
+          senderDeviceId: 'device-current',
+          senderTransportPeerId: 'transport-current',
+          messageId: 'msg-tc365-missing-manifest',
+          mediaAttachments: <MediaAttachment>[testAttachment],
+          mediaAttachmentRepo: mediaRepo,
+          groupContentAuthoring: GroupContentAuthoringContext(
+            directLinkedDeviceSelector:
+                const DirectLinkedDeviceSelector.enabled(),
+            multiDeviceSyncEnabled: true,
+            authorityVersion: GroupContentAuthorityVersion(
+              eventAt: DateTime.utc(2026, 8, 13, 11),
+              eventId: 'authority.tc365.02a',
+              keyEpoch: 1,
+            ),
+            inboxStore: _StrictContentInboxStore(),
+          ),
+        );
+
+        expect(result, SendGroupMessageResult.unauthorized);
+        expect(message, isNull);
+        expect(msgRepo.count, 0);
+        expect(mediaRepo.count, 0);
+        expect(
+          bridge.commandLog.where(
+            (command) =>
+                command == 'group:publish' ||
+                command == 'group:sendReliable' ||
+                command == 'p2p:mediaUpload',
+          ),
+          isEmpty,
+        );
+      },
+    );
 
     test(
       'persists stamped done attachments before the pre-persist row save and publish',
@@ -6696,6 +7904,100 @@ void main() {
         expect(beforeSaved!.keyGeneration, 1);
         expect(duringSaved!.keyGeneration, 1);
         expect(afterSaved!.keyGeneration, 2);
+      },
+    );
+
+    test(
+      'installed legacy resolver lets distribution overlap send but fences epoch promotion',
+      () async {
+        await groupRepo.saveMember(
+          GroupMember(
+            groupId: 'group-1',
+            peerId: 'peer-bob',
+            username: 'Bob',
+            role: MemberRole.writer,
+            publicKey: 'pk-bob',
+            mlKemPublicKey: 'mlkem-bob',
+            joinedAt: DateTime.now().toUtc(),
+          ),
+        );
+        setGroupContentAuthoringResolver(
+          groupRepo,
+          ({
+            required String groupId,
+            required String senderPeerId,
+            required String senderPublicKey,
+            String? senderDeviceId,
+            String? senderTransportPeerId,
+          }) async => const (
+            kind: GroupContentAuthoringResolutionKind.legacyUninitialized,
+            context: null,
+          ),
+        );
+        addTearDown(() => setGroupContentAuthoringResolver(groupRepo, null));
+
+        final gatedBridge = _GatedPublishBridge();
+        gatedBridge.responses['group:generateNextKey'] = {
+          'ok': true,
+          'groupKey': 'test-group-key-2',
+          'keyEpoch': 2,
+        };
+        gatedBridge.responses['group:publish'] = {
+          'ok': true,
+          'messageId': 'resolver-rotation-send',
+          'topicPeers': 1,
+        };
+        final distributionStarted = Completer<void>();
+        final distributionGate = Completer<bool>();
+        final rotationFuture = rotateAndDistributeGroupKey(
+          bridge: gatedBridge,
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          selfPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          sendP2PMessage: (peerId, message) {
+            if (!distributionStarted.isCompleted) {
+              distributionStarted.complete();
+            }
+            return distributionGate.future;
+          },
+        );
+        await distributionStarted.future;
+
+        final sendFuture = sendGroupMessage(
+          bridge: gatedBridge,
+          groupRepo: groupRepo,
+          msgRepo: msgRepo,
+          groupId: 'group-1',
+          text: 'Legacy send during distribution',
+          senderPeerId: 'peer-1',
+          senderPublicKey: 'pk-1',
+          senderPrivateKey: 'sk-1',
+          senderUsername: 'Alice',
+          messageId: 'resolver-rotation-send',
+        );
+        await gatedBridge.publishStarted.future;
+
+        distributionGate.complete(true);
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+        expect(
+          _bridgeCommandIndex(gatedBridge, 'group:updateKey', keyEpoch: 2),
+          -1,
+          reason: 'epoch promotion must wait for the legacy send action',
+        );
+        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 1);
+
+        gatedBridge.publishGate.complete();
+        final (sendResult, sentMessage) = await sendFuture;
+        expect(sendResult, SendGroupMessageResult.success);
+        expect(sentMessage!.keyGeneration, 1);
+
+        final rotated = await rotationFuture;
+        expect(rotated.key, isNotNull);
+        expect(rotated.key!.keyGeneration, 2);
+        expect((await groupRepo.getLatestKey('group-1'))!.keyGeneration, 2);
       },
     );
 
@@ -10689,6 +11991,160 @@ void main() {
             .where((c) => c == 'group:inboxStore')
             .length;
         expect(inboxCalls, 1);
+      },
+    );
+
+    test(
+      'TC-365-02a maximum supported group media manifest fits the relay frame',
+      () async {
+        const activePhysicalDevicesPerMember = 2;
+        const supportedAttachmentMaximum = 10;
+        const base58Alphabet =
+            '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+        final physicalTargetMaximum =
+            groupMembershipLimit * activePhysicalDevicesPerMember - 1;
+        expect(physicalTargetMaximum, protectedGroupMediaMaxPhysicalRecipients);
+        final recipients = List<String>.generate(
+          physicalTargetMaximum,
+          (index) =>
+              '12D3KooW${List<String>.filled(42, '1').join()}'
+              '${base58Alphabet[index ~/ base58Alphabet.length]}'
+              '${base58Alphabet[index % base58Alphabet.length]}',
+        );
+        final targets = List<GroupMediaBlobTargetCommitment>.generate(
+          recipients.length,
+          (index) => GroupMediaBlobTargetCommitment(
+            recipientPeerId: recipients[index],
+            expiresAtMs: 2000000000000 + index,
+          ),
+          growable: false,
+        );
+        final attachments =
+            List<
+              ProtectedGroupMediaAttachmentCommitment
+            >.generate(supportedAttachmentMaximum, (index) {
+              final attachmentId =
+                  '00000000-0000-4000-8000-${index.toString().padLeft(12, '0')}';
+              return ProtectedGroupMediaAttachmentCommitment(
+                attachmentId: attachmentId,
+                custodyBlobId: deterministicGroupMediaCustodyBlobId(
+                  groupId: 'group-1',
+                  messageId: '00000000-0000-4000-8000-000000000001',
+                  attachmentId: attachmentId,
+                ),
+                ciphertextSha256: index.toRadixString(16).padLeft(64, '0'),
+                ciphertextSize:
+                    (kGroupMediaTotalMessageLimitBytes ~/
+                        supportedAttachmentMaximum) +
+                    16,
+                mime: index.isEven ? 'image/jpeg' : 'audio/ogg',
+                mediaType: index.isEven ? 'image' : 'audio',
+                width: index.isEven ? 7680 : null,
+                height: index.isEven ? 4320 : null,
+                durationMs: index.isEven ? null : 1000 + index,
+                waveform: index.isEven
+                    ? const <double>[]
+                    : List<double>.filled(50, 0.999999),
+                encryptionKeyBase64: base64Encode(List<int>.filled(32, index)),
+                encryptionNonce: base64Encode(List<int>.filled(12, index)),
+                caption: index == 0 ? 'maximum supported media' : null,
+                targets: targets,
+              );
+            });
+        final manifest = ProtectedGroupMediaManifest(
+          groupId: 'group-1',
+          messageId: '00000000-0000-4000-8000-000000000001',
+          attachments: attachments,
+        );
+
+        final canonical = manifest.encode();
+        final reparsed = ProtectedGroupMediaManifest.decode(canonical);
+        expect(reparsed.encode(), canonical);
+        expect(reparsed.recipientPeerIds, recipients);
+        expect(
+          reparsed.contentExpiresAtOrBeforeMsFor(recipients.last),
+          2000000000000 + recipients.length - 1,
+        );
+        expect(recipients, hasLength(physicalTargetMaximum));
+        expect(attachments, hasLength(supportedAttachmentMaximum));
+        expect(recipients.every((peerId) => peerId.length == 52), isTrue);
+        final overflow = jsonDecode(canonical) as Map<String, dynamic>;
+        (overflow['recipientPeerIds'] as List).add('zz-over-support-target');
+        for (final attachment in overflow['attachments'] as List) {
+          ((attachment as Map<String, dynamic>)['expiresAtMs'] as List).add(
+            2000000009999,
+          );
+        }
+        expect(
+          () => ProtectedGroupMediaManifest.decode(jsonEncode(overflow)),
+          throwsFormatException,
+          reason: 'oversized physical ACLs fail closed instead of truncating',
+        );
+
+        final envelope = await buildGroupOfflineReplayEnvelope(
+          bridge: _RelayFrameSizingBridge(),
+          groupRepo: groupRepo,
+          groupId: 'group-1',
+          payloadType: groupOfflineReplayPayloadTypeMessage,
+          plaintext: jsonEncode(<String, Object?>{
+            'groupId': 'group-1',
+            'senderId': 'peer-1',
+            'senderDeviceId': 'device-primary',
+            'transportPeerId': 'transport-primary',
+            'messageId': manifest.messageId,
+            'logicalDeliveryId': manifest.messageId,
+            'keyEpoch': 1,
+            'text': 'maximum supported media',
+            'timestamp': '2026-08-14T12:00:00.000000Z',
+          }),
+          senderPeerId: 'peer-1',
+          senderPublicKey: base64Encode(List<int>.filled(32, 1)),
+          senderPrivateKey: base64Encode(List<int>.filled(64, 2)),
+          senderDeviceId: 'device-primary',
+          senderTransportPeerId: 'transport-primary',
+          recipientPeerIds: recipients,
+          messageId: manifest.messageId,
+          contentEventId: manifest.messageId,
+          contentAuthorityVersion: GroupContentAuthorityVersion(
+            eventAt: DateTime.utc(2026, 8, 14, 11),
+            eventId: 'authority-max',
+            keyEpoch: 1,
+          ),
+          mediaManifest: manifest,
+        );
+        final decodedEnvelope = jsonDecode(envelope) as Map<String, dynamic>;
+        expect(jsonEncode(decodedEnvelope), envelope);
+        expect(decodedEnvelope['custodyKind'], groupContentCustodyKind);
+        expect(decodedEnvelope['mediaManifest'], canonical);
+        expect(
+          decodedEnvelope['signedPayload'],
+          canonicalizeGroupEventLogPayload(
+            jsonDecode(decodedEnvelope['signedPayload']! as String)
+                as Map<String, dynamic>,
+          ),
+        );
+        final envelopeBytes = utf8.encode(envelope).length;
+        expect(
+          protectedGroupContentFitsRelayFrame(envelope),
+          isTrue,
+          reason:
+              'full canonical group_content_v1 envelope is $envelopeBytes '
+              'bytes for $physicalTargetMaximum physical targets and '
+              '$supportedAttachmentMaximum attachments; limit is '
+              '$protectedGroupContentMaxFrameBytes bytes',
+        );
+        expect(
+          envelopeBytes,
+          lessThanOrEqualTo(protectedGroupContentMaxFrameBytes),
+        );
+        expect(
+          deterministicGroupMediaCustodyBlobId(
+            groupId: manifest.groupId,
+            messageId: manifest.messageId,
+            attachmentId: attachments.first.attachmentId,
+          ),
+          attachments.first.custodyBlobId,
+        );
       },
     );
   });

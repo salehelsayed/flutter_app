@@ -1,6 +1,7 @@
 enum MigrationFileManifestItemKind {
   chatMedia,
   directMediaBlobCustody,
+  groupMediaBlobCustody,
   postMedia,
   contactAvatar,
   identityAvatar,

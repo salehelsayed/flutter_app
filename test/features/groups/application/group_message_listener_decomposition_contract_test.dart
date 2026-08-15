@@ -43,7 +43,10 @@ const _systemComponent = _ComponentContract(
       'group_message_listener_system_transition_processor.dart',
   className: '_GroupMessageSystemTransitionProcessor',
   facadeField: '_systemTransitionProcessor',
-  helperClasses: <String>{'_SignedTransitionAuditActorBinding'},
+  helperClasses: <String>{
+    '_SignedTransitionAuditActorBinding',
+    '_RemoteMemberRemovalFollowUp',
+  },
   ownedFieldDeclarations: <String, String>{
     '_groupConfigWorkQueue':
         'final Map<String, Future<void>> _groupConfigWorkQueue = {};',
@@ -343,7 +346,8 @@ const _expectedPublicMembers = <String>{
   'method|handleReplayEnvelope|Future<void>|'
       '(Map<String, dynamic> data, {GroupMessageRepository? msgRepoOverride, '
       'bool rethrowOnError = false, bool allowMembershipBuffer = false, '
-      'bool membershipPhaseHeld = false})',
+      'bool membershipPhaseHeld = false, '
+      'GroupMessageDeliveryDisposition? deliveryDisposition})',
   'method|handleReplayReaction|Future<void>|'
       '(Map<String, dynamic> data, {bool rethrowOnError = false})',
   'method|start|void|'
