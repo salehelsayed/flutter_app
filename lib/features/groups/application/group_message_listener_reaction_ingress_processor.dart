@@ -8,8 +8,7 @@ final class _GroupReactionIngressProcessor {
     required MediaAttachmentRepository? mediaAttachmentRepo,
     required GroupPendingReactionRepository? pendingReactionRepo,
     required NotificationService? notificationService,
-    required ActiveConversationTracker? groupConversationTracker,
-    required AppLifecycleState Function()? getAppLifecycleState,
+    required AppVisibilitySuppressionReader? appVisibility,
     required NotificationToneTracker? notificationToneTracker,
     required GroupNotificationPresentationCoordinator?
     notificationPresentationCoordinator,
@@ -35,8 +34,7 @@ final class _GroupReactionIngressProcessor {
        _mediaAttachmentRepo = mediaAttachmentRepo,
        _pendingReactionRepo = pendingReactionRepo,
        _notificationService = notificationService,
-       _groupConversationTracker = groupConversationTracker,
-       _getAppLifecycleState = getAppLifecycleState,
+       _appVisibility = appVisibility,
        _notificationToneTracker = notificationToneTracker,
        _notificationPresentationCoordinator =
            notificationPresentationCoordinator,
@@ -59,8 +57,7 @@ final class _GroupReactionIngressProcessor {
   final MediaAttachmentRepository? _mediaAttachmentRepo;
   final GroupPendingReactionRepository? _pendingReactionRepo;
   final NotificationService? _notificationService;
-  final ActiveConversationTracker? _groupConversationTracker;
-  final AppLifecycleState Function()? _getAppLifecycleState;
+  final AppVisibilitySuppressionReader? _appVisibility;
   final NotificationToneTracker? _notificationToneTracker;
   final GroupNotificationPresentationCoordinator?
   _notificationPresentationCoordinator;
@@ -426,9 +423,8 @@ final class _GroupReactionIngressProcessor {
     if (reaction == null) return;
 
     final notificationService = _notificationService;
-    final tracker = _groupConversationTracker;
-    final lifecycle = _getAppLifecycleState;
-    if (notificationService == null || tracker == null || lifecycle == null) {
+    final visibility = _appVisibility;
+    if (notificationService == null || visibility == null) {
       return;
     }
 
@@ -496,8 +492,7 @@ final class _GroupReactionIngressProcessor {
 
     Future<NotificationPresentationResult> present() => maybeShowNotification(
       notificationService: notificationService,
-      conversationTracker: tracker,
-      getAppLifecycleState: lifecycle,
+      appVisibility: visibility,
       contactPeerId: 'group:$groupId',
       routePayload: NotificationRouteTarget.group(
         groupId,

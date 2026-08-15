@@ -27,6 +27,18 @@ val androidApplicationId = providers.gradleProperty("androidApplicationId")
 val hasGoogleServicesConfig = file("google-services.json").exists()
 val disableGoogleServicesForDisposableProof =
     providers.gradleProperty("disableGoogleServicesForDisposableProof").orNull == "true"
+val enableAppVisibility371Proof =
+    when (
+        val raw = providers.gradleProperty(
+            "enableAppVisibility371Proof"
+        ).orNull
+    ) {
+        null, "false" -> false
+        "true" -> true
+        else -> throw GradleException(
+            "enableAppVisibility371Proof must be exactly true or false."
+        )
+    }
 val enableGroupMedia269DisposableProof =
     when (
         val raw = providers.gradleProperty(
@@ -75,6 +87,23 @@ val enableGroupExitReleaseDiagnosticsProof =
             "enableGroupExitReleaseDiagnosticsProof must be exactly true or false."
         )
     }
+if (
+    enableAppVisibility371Proof &&
+    (
+        androidApplicationId != "com.mknoon.app.visibilityproof" ||
+            !disableGoogleServicesForDisposableProof
+    )
+) {
+    throw GradleException(
+        "The Plan 371 app-visibility proof requires the exact disposable " +
+            "application ID com.mknoon.app.visibilityproof with Google services disabled."
+    )
+}
+if (enableAppVisibility371Proof && enableGroupExitReleaseDiagnosticsProof) {
+    throw GradleException(
+        "The Plan 371 debug proof and PB266 release proof must be built independently."
+    )
+}
 if (
     enableGroupMedia269DisposableProof &&
     (
@@ -185,7 +214,7 @@ android {
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
         versionName = flutter.versionName
-        if (enableGroupExitReleaseDiagnosticsProof) {
+        if (enableGroupExitReleaseDiagnosticsProof || enableAppVisibility371Proof) {
             testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         }
         buildConfigField(
@@ -223,6 +252,14 @@ android {
             getByName("androidTest") {
                 java.srcDir("src/groupExitReleaseDiagnosticsAndroidTest/java")
             }
+        }
+        if (enableAppVisibility371Proof) {
+            getByName("androidTest") {
+                java.srcDir("src/appVisibility371AndroidTest/kotlin")
+            }
+        }
+        getByName("test") {
+            resources.srcDir("../../test/shared/fixtures")
         }
     }
 
@@ -271,6 +308,12 @@ dependencies {
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.robolectric:robolectric:4.13")
     testImplementation("androidx.work:work-testing:2.11.2")
+    if (enableAppVisibility371Proof) {
+        // Flutter's debug integration_test runtime resolves the AndroidX Test
+        // 1.2 line. Keep this independent N04 proof on that consistent graph.
+        androidTestImplementation("androidx.test:runner:1.2.0")
+        androidTestImplementation("androidx.test:rules:1.2.0")
+    }
     if (enableGroupExitReleaseDiagnosticsProof) {
         // `integration_test` is a dev plugin and Flutter intentionally omits
         // dev plugins from releaseApi. The proof property opts this one plugin

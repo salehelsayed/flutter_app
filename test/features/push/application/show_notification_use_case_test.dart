@@ -5,6 +5,8 @@ import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -12,8 +14,112 @@ import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/recent_remote_notification_gate.dart';
 import 'package:flutter_app/core/media/private_media_policy.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
-import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart'
+    hide maybeShowNotification;
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart'
+    as subject
+    show maybeShowNotification;
 import '../../../shared/fakes/fake_notification_service.dart';
+
+// Existing preservation cases keep expressing their pre-N04 tracker/lifecycle
+// setup through a test-only adapter. The production API has no such arguments;
+// TC-371-04 below calls [subject.maybeShowNotification] with explicit snapshot
+// evaluations to lock the new authority semantics directly.
+Future<NotificationPresentationResult> maybeShowNotification({
+  required NotificationService notificationService,
+  required ActiveConversationTracker conversationTracker,
+  required AppLifecycleState Function() getAppLifecycleState,
+  required String contactPeerId,
+  String? routePayload,
+  required String senderUsername,
+  required String messageText,
+  bool suppressNotification = false,
+  String suppressionReason = 'recovery_replay',
+  String? messageId,
+  String? notificationEventIdentity,
+  ConsumeRecentRemoteNotificationAnnouncement?
+  consumeRecentRemoteNotificationAnnouncement,
+  MarkRecentRemoteNotificationAnnouncement?
+  markRecentRemoteNotificationAnnouncement,
+  NotificationToneTracker? toneTracker,
+  ResolveDurableNotificationCoordinator? durableNotificationCoordinatorResolver,
+  LoadConversationNotificationSnapshot? loadConversationNotificationSnapshot,
+  String notificationEventType = 'new_message',
+  Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
+}) => subject.maybeShowNotification(
+  notificationService: notificationService,
+  appVisibility: _TrackerBackedVisibility(
+    tracker: conversationTracker,
+    lifecycle: getAppLifecycleState,
+  ),
+  contactPeerId: contactPeerId,
+  routePayload: routePayload,
+  senderUsername: senderUsername,
+  messageText: messageText,
+  suppressNotification: suppressNotification,
+  suppressionReason: suppressionReason,
+  messageId: messageId,
+  notificationEventIdentity: notificationEventIdentity,
+  consumeRecentRemoteNotificationAnnouncement:
+      consumeRecentRemoteNotificationAnnouncement,
+  markRecentRemoteNotificationAnnouncement:
+      markRecentRemoteNotificationAnnouncement,
+  toneTracker: toneTracker,
+  durableNotificationCoordinatorResolver:
+      durableNotificationCoordinatorResolver,
+  loadConversationNotificationSnapshot: loadConversationNotificationSnapshot,
+  notificationEventType: notificationEventType,
+  backgroundDuplicateGuardDelay: backgroundDuplicateGuardDelay,
+);
+
+final class _TrackerBackedVisibility extends AppVisibilitySuppressionReader {
+  _TrackerBackedVisibility({required this.tracker, required this.lifecycle});
+
+  final ActiveConversationTracker tracker;
+  final AppLifecycleState Function() lifecycle;
+
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async {
+    final isForegroundActive = lifecycle() == AppLifecycleState.resumed;
+    return AppVisibilityEvaluation(
+      isForegroundActive: isForegroundActive,
+      maySuppress:
+          isForegroundActive &&
+          identity != null &&
+          tracker.isViewing(identity.normalizedValue),
+    );
+  }
+}
+
+final class _SnapshotLikeVisibility extends AppVisibilitySuppressionReader {
+  _SnapshotLikeVisibility({
+    this.visible,
+    this.known = true,
+    this.fresh = true,
+    this.foregroundActive = true,
+  });
+
+  final AppVisibilityConversationIdentity? visible;
+  final bool known;
+  final bool fresh;
+  final bool foregroundActive;
+  int evaluations = 0;
+
+  @override
+  Future<AppVisibilityEvaluation> evaluate(
+    AppVisibilityConversationIdentity? identity,
+  ) async {
+    evaluations += 1;
+    if (!known) return AppVisibilityEvaluation.failNotify;
+    return AppVisibilityEvaluation(
+      isForegroundActive: foregroundActive && fresh,
+      maySuppress:
+          foregroundActive && fresh && identity != null && identity == visible,
+    );
+  }
+}
 
 void main() {
   late FakeNotificationService notificationService;
@@ -66,6 +172,108 @@ void main() {
   });
 
   group('maybeShowNotification', () {
+    test(
+      'TC-371-04 one fresh visibility decision gates direct and group presentation without minting outcome',
+      () async {
+        final directA = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.direct,
+          value: 'peer-a',
+        )!;
+        final groupA = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.group,
+          value: 'group:a',
+        )!;
+        final cases =
+            <
+              ({
+                String label,
+                String contactPeerId,
+                _SnapshotLikeVisibility visibility,
+                bool suppressed,
+              })
+            >[
+              (
+                label: 'fresh direct exact A',
+                contactPeerId: 'peer-a',
+                visibility: _SnapshotLikeVisibility(visible: directA),
+                suppressed: true,
+              ),
+              (
+                label: 'fresh group exact A',
+                contactPeerId: 'group:a',
+                visibility: _SnapshotLikeVisibility(visible: groupA),
+                suppressed: true,
+              ),
+              (
+                label: 'fresh direct B',
+                contactPeerId: 'peer-b',
+                visibility: _SnapshotLikeVisibility(visible: directA),
+                suppressed: false,
+              ),
+              (
+                label: 'stale exact A',
+                contactPeerId: 'peer-a',
+                visibility: _SnapshotLikeVisibility(
+                  visible: directA,
+                  fresh: false,
+                ),
+                suppressed: false,
+              ),
+              (
+                label: 'unknown snapshot',
+                contactPeerId: 'peer-a',
+                visibility: _SnapshotLikeVisibility(known: false),
+                suppressed: false,
+              ),
+              (
+                label: 'inactive exact A',
+                contactPeerId: 'peer-a',
+                visibility: _SnapshotLikeVisibility(
+                  visible: directA,
+                  foregroundActive: false,
+                ),
+                suppressed: false,
+              ),
+              (
+                label: 'non-chat identity',
+                contactPeerId: ' ',
+                visibility: _SnapshotLikeVisibility(visible: directA),
+                suppressed: false,
+              ),
+            ];
+
+        for (final testCase in cases) {
+          final service = FakeNotificationService();
+          final result = await subject.maybeShowNotification(
+            notificationService: service,
+            appVisibility: testCase.visibility,
+            contactPeerId: testCase.contactPeerId,
+            senderUsername: 'Alice',
+            messageText: 'Hello',
+            backgroundDuplicateGuardDelay: Duration.zero,
+          );
+
+          expect(testCase.visibility.evaluations, 1, reason: testCase.label);
+          if (testCase.suppressed) {
+            expect(
+              result,
+              NotificationPresentationResult.terminalWithoutOutcome,
+              reason: testCase.label,
+            );
+            expect(result.carriesApprovedOutcome, isFalse);
+            expect(service.shown, isEmpty, reason: testCase.label);
+          } else {
+            expect(
+              result,
+              NotificationPresentationResult.osPosted,
+              reason: testCase.label,
+            );
+            expect(service.shown, hasLength(1), reason: testCase.label);
+          }
+        }
+      },
+    );
+
     test('group message and reaction tag shared-card ownership', () async {
       await maybeShowNotification(
         notificationService: notificationService,

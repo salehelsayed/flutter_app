@@ -1,5 +1,6 @@
 import Flutter
 import FirebaseMessaging
+import CoreFoundation
 import os.log
 import UIKit
 import UserNotifications
@@ -111,6 +112,10 @@ final class IosNotificationForegroundDispositionGate {
   private var iosNotificationRecoveryChannel: FlutterMethodChannel?
   private lazy var iosNotificationRecoveryCoordinator =
     IosNotificationRecoveryCoordinator()
+  private let iosAppVisibilityChannelName = "mknoon/app_visibility"
+  private var iosAppVisibilityChannel: FlutterMethodChannel?
+  private lazy var iosAppVisibilityCoordinator =
+    IosAppVisibilityCoordinator()
   private var pendingIosNotificationOpen: [String: Any]?
   private var iosNotificationOpenBridgeReady = false
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
@@ -147,6 +152,7 @@ final class IosNotificationForegroundDispositionGate {
   private var fcmMessagingPluginDelegate: UNUserNotificationCenterDelegate?
 
   deinit {
+    iosAppVisibilityCoordinator?.stop()
     NotificationCenter.default.removeObserver(self)
   }
 
@@ -154,6 +160,10 @@ final class IosNotificationForegroundDispositionGate {
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    // Install the cold-start invalidation before `super` can expose a Flutter
+    // messenger. Native lifecycle is the durable generation owner; Dart may
+    // publish only after observing the resulting generation.
+    iosAppVisibilityCoordinator?.start()
 #if MKNOON_SIMS_IOS_RECEIVER_BOOTSTRAP
     iosReceiverBootstrapHandoff.prepareContainer()
 #endif
@@ -354,6 +364,7 @@ final class IosNotificationForegroundDispositionGate {
     setupIosReceiverBootstrapBridge(messenger: messenger)
 #endif
     setupIosNotificationRecoveryBridge(messenger: messenger)
+    setupIosAppVisibilityBridge(messenger: messenger)
     setupMigrationKeepAliveBridge(messenger: messenger)
     setupDiskSpaceBridge(messenger: messenger)
     setupAppGroupPathBridge(messenger: messenger)
@@ -821,6 +832,7 @@ final class IosNotificationForegroundDispositionGate {
     }
     setupIosNotificationOpenBridge(messenger: controller.binaryMessenger)
     setupIosNotificationRecoveryBridge(messenger: controller.binaryMessenger)
+    setupIosAppVisibilityBridge(messenger: controller.binaryMessenger)
     setupMigrationKeepAliveBridge(messenger: controller.binaryMessenger)
     setupDiskSpaceBridge(messenger: controller.binaryMessenger)
     setupAppGroupPathBridge(messenger: controller.binaryMessenger)
@@ -1037,6 +1049,91 @@ final class IosNotificationForegroundDispositionGate {
     }
     iosNotificationRecoveryChannel = channel
     NSLog("[PUSH_DIAG] ios_notification_recovery_bridge_setup")
+  }
+
+  private func setupIosAppVisibilityBridge(
+    messenger: FlutterBinaryMessenger
+  ) {
+    if iosAppVisibilityChannel != nil { return }
+    let channel = FlutterMethodChannel(
+      name: iosAppVisibilityChannelName,
+      binaryMessenger: messenger
+    )
+    channel.setMethodCallHandler { [weak self] call, result in
+      self?.handleIosAppVisibilityMethodCall(call, result: result)
+    }
+    iosAppVisibilityChannel = channel
+  }
+
+  private func handleIosAppVisibilityMethodCall(
+    _ call: FlutterMethodCall,
+    result: @escaping FlutterResult
+  ) {
+    switch call.method {
+    case "readSnapshot":
+      guard call.arguments == nil || call.arguments is NSNull else {
+        result(FlutterError(
+          code: "app_visibility_bad_args",
+          message: "readSnapshot accepts null arguments",
+          details: nil
+        ))
+        return
+      }
+      result(iosAppVisibilityCoordinator?.readSnapshot()?.methodChannelMap)
+    case "publishVisibleConversation":
+      guard let arguments = call.arguments as? [String: Any],
+            arguments.keys.contains("visibleConversationDigest"),
+            arguments.keys.contains("lifecycleGeneration"),
+            arguments.count == 2,
+            let lifecycleGeneration = appVisibilityInt64(
+              arguments["lifecycleGeneration"]
+            ),
+            lifecycleGeneration > 0
+      else {
+        result(FlutterError(
+          code: "app_visibility_bad_args",
+          message: "publishVisibleConversation requires the exact visibility CAS arguments",
+          details: nil
+        ))
+        return
+      }
+      let digestValue = arguments["visibleConversationDigest"]
+      let digest: String?
+      if digestValue == nil || digestValue is NSNull {
+        digest = nil
+      } else if let value = digestValue as? String,
+                IosAppVisibilityDigest.isCanonicalDigest(value) {
+        digest = value
+      } else {
+        result(FlutterError(
+          code: "app_visibility_bad_args",
+          message: "visibleConversationDigest must be null or lowercase SHA-256",
+          details: nil
+        ))
+        return
+      }
+      let publication = iosAppVisibilityCoordinator?
+        .publishVisibleConversation(
+          digest: digest,
+          lifecycleGeneration: lifecycleGeneration
+        ) ?? IosAppVisibilityPublishResult(
+          committed: false,
+          snapshot: nil,
+          context: nil
+        )
+      result(publication.methodChannelMap)
+    default:
+      result(FlutterMethodNotImplemented)
+    }
+  }
+
+  private func appVisibilityInt64(_ raw: Any?) -> Int64? {
+    guard let number = raw as? NSNumber,
+          CFGetTypeID(number) != CFBooleanGetTypeID()
+    else {
+      return nil
+    }
+    return Int64(number.stringValue)
   }
 
   private func handleIosNotificationRecoveryMethodCall(

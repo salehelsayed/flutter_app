@@ -19,6 +19,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
@@ -200,6 +201,7 @@ void main() {
         mediaAttachmentRepo: receiveMedia,
         mediaFileManager: FakeMediaFileManager(),
         notificationService: notifications,
+        appVisibility: FixedAppVisibility(),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
         privateMediaAvailability: disabled,

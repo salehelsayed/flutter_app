@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
@@ -39,6 +40,7 @@ import 'package:flutter_app/features/identity/domain/models/identity_model.dart'
 
 import '../../core/bridge/fake_bridge.dart';
 import '../../features/identity/domain/repositories/fake_identity_repository.dart';
+import 'fake_app_visibility.dart';
 import 'fake_group_dissolve_preflight.dart';
 import 'fake_group_reaction_replay_outbox_repository.dart';
 import 'fake_group_pubsub_network.dart';
@@ -132,6 +134,7 @@ class GroupTestUser {
     ReactionRepository? reactionRepo,
     GroupReactionReplayOutboxRepository? reactionReplayOutboxRepo,
     NotificationService? notificationService,
+    AppVisibilitySuppressionReader? appVisibility,
     InMemoryGroupMessageRepository? msgRepo,
     GroupInviteDeliveryAttemptRepository? inviteDeliveryAttemptRepo,
     ActiveConversationTracker? groupConversationTracker,
@@ -174,6 +177,14 @@ class GroupTestUser {
       mediaAttachmentRepo: mediaAttachmentRepo,
       mediaFileManager: mediaFileManager,
       notificationService: notificationService,
+      appVisibility:
+          appVisibility ??
+          (groupConversationTracker != null && getAppLifecycleState != null
+              ? TrackerBackedAppVisibility(
+                  tracker: groupConversationTracker,
+                  lifecycle: getAppLifecycleState,
+                )
+              : FixedAppVisibility()),
       groupConversationTracker: groupConversationTracker,
       getAppLifecycleState: getAppLifecycleState,
       reactionRepo: reactionRepo,

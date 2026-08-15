@@ -15,6 +15,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../core/local_discovery/fake_local_p2p_service.dart';
 import '../../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../../features/conversation/domain/repositories/fake_message_repository.dart';
+import 'fake_app_visibility.dart';
 import 'fake_notification_service.dart';
 import 'in_memory_inbox_staging_repository.dart';
 import 'recording_fake_bridge.dart';
@@ -29,7 +30,7 @@ import 'recording_fake_bridge.dart';
 /// a [FakeContactRepository]/[FakeMessageRepository], a [FakeLocalP2PService]
 /// (so the durable-LAN commit handler is installed), a shared (per-sim)
 /// [RecentRemoteNotificationGate], a real clock-injected [NotificationToneTracker],
-/// a mutable lifecycle (`getAppLifecycleState: () => _lifecycle`), and a settable
+/// a tracker-backed visibility reader over a mutable lifecycle, and a settable
 /// [conversationTracker].
 ///
 /// HEADER NOTE (plan 120 Risk "Simulation drift from main.dart"): this harness
@@ -49,7 +50,7 @@ class OneToOneTestUser {
   final RecentRemoteNotificationGate gate;
 
   /// Mutable so a test can flip the receiver's lifecycle between deliveries
-  /// (`resumed`/`paused`/etc.); read live via `getAppLifecycleState`.
+  /// (`resumed`/`paused`/etc.); read live by the visibility fake.
   AppLifecycleState lifecycle;
 
   /// Settable so a test can mark the user as viewing a peer's conversation
@@ -127,9 +128,11 @@ class OneToOneTestUser {
       messageRepo: user.messageRepo,
       contactRepo: user.contactRepo,
       notificationService: user.notificationService,
-      conversationTracker: user.conversationTracker,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: user.conversationTracker,
+        lifecycle: () => user.lifecycle,
+      ),
       notificationToneTracker: user.toneTracker,
-      getAppLifecycleState: () => user.lifecycle,
       remoteNotificationGate: gate,
       backgroundNotificationDuplicateGuardDelay: Duration.zero,
     );
@@ -141,15 +144,16 @@ class OneToOneTestUser {
       bridge: bridge,
       localP2PService: user.localP2P,
       inboxStagingRepository: user.stagingRepo,
-      replayRecoveredInboxChatMessage: (message, {String? stagedEntryId}) async {
-        user.recoveredReplayCount++;
-        final outcome = await user.listener.processIncomingMessage(
-          message,
-          suppressNotification: true,
-          stagedEntryId: stagedEntryId,
-        );
-        return mapChatReplayOutcomeToDisposition(outcome);
-      },
+      replayRecoveredInboxChatMessage:
+          (message, {String? stagedEntryId}) async {
+            user.recoveredReplayCount++;
+            final outcome = await user.listener.processIncomingMessage(
+              message,
+              suppressNotification: true,
+              stagedEntryId: stagedEntryId,
+            );
+            return mapChatReplayOutcomeToDisposition(outcome);
+          },
       replayLiveLanChatMessage: (message, {String? stagedEntryId}) async {
         user.liveLanTransports.add(message.transport);
         final outcome = await user.listener.processIncomingMessage(
@@ -180,8 +184,7 @@ class OneToOneTestUser {
       ContactModel(
         peerId: other.peerId,
         publicKey: 'pk-${other.peerId}',
-        rendezvous:
-            '/dns4/rendezvous.example.com/tcp/4001/p2p/${other.peerId}',
+        rendezvous: '/dns4/rendezvous.example.com/tcp/4001/p2p/${other.peerId}',
         username: other.username,
         signature: 'sig-${other.peerId}',
         scannedAt: '2026-06-13T12:00:00.000Z',

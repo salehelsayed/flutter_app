@@ -30,6 +30,7 @@ import 'package:flutter_app/l10n/app_localizations.dart';
 import 'package:just_audio_platform_interface/just_audio_platform_interface.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_audio_recorder_service.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_mic_permission_gateway.dart';
@@ -62,8 +63,10 @@ class BobTestHarness {
       mediaAttachmentRepo: bob.mediaAttachmentRepo,
       bridge: bob.bridge,
       notificationService: notificationService,
-      conversationTracker: conversationTracker,
-      getAppLifecycleState: () => lifecycleState,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: conversationTracker,
+        lifecycle: () => lifecycleState,
+      ),
       getOwnMlKemSecretKey: () async => 'test-own-mlkem-sk',
       remoteNotificationGate: RecentRemoteNotificationGate(
         filePath:

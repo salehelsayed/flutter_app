@@ -14,6 +14,7 @@ import 'package:flutter_app/features/groups/domain/models/group_model.dart';
 import 'package:flutter_app/features/push/application/background_message_handler.dart';
 
 import '../shared/fakes/fake_notification_service.dart';
+import '../shared/fakes/fake_app_visibility.dart';
 import '../shared/fakes/in_memory_group_message_repository.dart';
 import '../shared/fakes/in_memory_group_repository.dart';
 
@@ -90,13 +91,19 @@ void main() {
       );
 
       final notificationService = FakeNotificationService();
+      final groupConversationTracker = ActiveConversationTracker();
+      AppLifecycleState getAppLifecycleState() => AppLifecycleState.paused;
       final listener = GroupMessageListener(
         groupRepo: groupRepo,
         msgRepo: InMemoryGroupMessageRepository(),
         getSelfPeerId: () async => 'peer-self',
         notificationService: notificationService,
-        groupConversationTracker: ActiveConversationTracker(),
-        getAppLifecycleState: () => AppLifecycleState.paused,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: groupConversationTracker,
+          lifecycle: getAppLifecycleState,
+        ),
+        groupConversationTracker: groupConversationTracker,
+        getAppLifecycleState: getAppLifecycleState,
         remoteNotificationGate: gate,
       );
 

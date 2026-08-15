@@ -1,6 +1,6 @@
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter/widgets.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
@@ -325,8 +325,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
   ForegroundGroupMessageNotificationResolver? groupMessageNotificationResolver,
   ResolveDurableNotificationCoordinator?
   durableReactionNotificationCoordinatorResolver,
-  ActiveConversationTracker? groupConversationTracker,
-  AppLifecycleState Function()? getAppLifecycleState,
+  AppVisibilitySuppressionReader? appVisibility,
   ResolveDurableNotificationCoordinator?
   durableGroupMessageNotificationCoordinatorResolver,
   GroupNotificationPresentationCoordinator?
@@ -352,10 +351,9 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
       return false;
     }
     final conversationKey = 'group:$groupId';
-    final tracker = groupConversationTracker;
-    final lifecycle = getAppLifecycleState;
+    final visibility = appVisibility;
     final coordinatorResolver = durableReactionNotificationCoordinatorResolver;
-    if (tracker == null || lifecycle == null || coordinatorResolver == null) {
+    if (visibility == null || coordinatorResolver == null) {
       throw StateError(
         'group reaction foreground presentation authority unavailable',
       );
@@ -389,8 +387,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
       }
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: lifecycle,
+        appVisibility: visibility,
         contactPeerId: conversationKey,
         routePayload: resolved.payload,
         senderUsername: resolved.title,
@@ -420,11 +417,10 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
     if (groupId == null) return false;
     final isTypedGroupMessage =
         _trimToNull(message.data['type']) == 'group_message';
-    final tracker = groupConversationTracker;
-    final lifecycle = getAppLifecycleState;
+    final visibility = appVisibility;
     final coordinatorResolver =
         durableGroupMessageNotificationCoordinatorResolver;
-    if (tracker == null || lifecycle == null || coordinatorResolver == null) {
+    if (visibility == null || coordinatorResolver == null) {
       throw StateError(
         'ordinary group foreground fallback presentation authority unavailable',
       );
@@ -491,16 +487,16 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
 
       if (effectiveMessageId == null) {
         final barePayload = NotificationRouteTarget.group(groupId).toPayload();
-        final isViewing =
-            tracker.isViewing(conversationKey) ||
-            tracker.isViewing(barePayload);
-        if (lifecycle() == AppLifecycleState.resumed && isViewing) {
+        final identity = AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.group,
+          value: conversationKey,
+        );
+        if ((await visibility.evaluate(identity)).maySuppress) {
           emitFlowEvent(
             layer: 'FL',
             event: 'PUSH_FOREGROUND_FALLBACK_NOTIFICATION_SUPPRESSED',
-            details: {
-              'reason': 'viewing_conversation_without_canonical_message_id',
-              'payload': barePayload,
+            details: const {
+              'reason': 'fresh_visible_conversation_without_event_identity',
             },
           );
           return false;
@@ -548,8 +544,7 @@ Future<bool> showForegroundPushFallbackNotificationIfNeeded({
       }
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: lifecycle,
+        appVisibility: visibility,
         contactPeerId: conversationKey,
         routePayload: canonicalPayload,
         senderUsername: resolved?.title ?? 'Mknoon',

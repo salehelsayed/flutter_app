@@ -12,6 +12,8 @@ import 'package:flutter_app/core/media/app_owned_media_path_authority.dart';
 import 'package:flutter_app/core/media/audio_recorder_service.dart';
 import 'package:flutter_app/core/media/direct_private_media_path_guard.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/media/group_media_integrity_policy.dart';
 import 'package:flutter_app/core/media/group_media_blob_artifact_store.dart';
 import 'package:flutter_app/core/media/group_media_mime_policy.dart';
@@ -38,6 +40,7 @@ import 'package:flutter_app/core/utils/notification_tap_timing.dart';
 import 'package:flutter_app/features/contacts/domain/models/contact_model.dart';
 import 'package:flutter_app/features/contacts/domain/repositories/contact_repository.dart';
 import 'package:flutter_app/features/conversation/application/download_media_use_case.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/conversation/application/media_viewer_repository_resume_store.dart';
 import 'package:flutter_app/features/conversation/application/upload_media_use_case.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
@@ -7909,7 +7912,7 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
         ? _resolveActiveQuotePreview()
         : (null, false);
 
-    return ValueListenableBuilder<int>(
+    final child = ValueListenableBuilder<int>(
       valueListenable: groupRecoveryGate.activeDepthListenable,
       builder: (context, recoveryDepth, child) {
         return PopScope(
@@ -8045,6 +8048,20 @@ class _GroupConversationWiredState extends State<GroupConversationWired>
           ),
         );
       },
+    );
+    final registry = DirectPrivateMediaRouteObserverScope.maybeRegistryOf(
+      context,
+    );
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:${widget.group.id}',
+    );
+    if (registry == null || identity == null) return child;
+    return AppVisibilityRouteBinding(
+      registry: registry,
+      identity: identity,
+      observer: DirectPrivateMediaRouteObserverScope.maybeOf(context),
+      child: child,
     );
   }
 }

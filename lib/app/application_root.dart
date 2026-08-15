@@ -83,6 +83,8 @@ import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/lifecycle/handle_app_paused.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
@@ -469,6 +471,12 @@ class MyApp extends StatefulWidget {
   final AppShellController appShellController;
   final PendingPostTargetStore pendingPostTargetStore;
   final ActiveConversationTracker conversationTracker;
+
+  /// N04: production supplies the one process-wide native-backed authority and
+  /// route registry. Bare widget pumps may omit them; the state creates one
+  /// fail-notify MethodChannel authority so route topology remains testable.
+  final AppVisibilityAuthority? appVisibilityAuthority;
+  final AppVisibilityRouteRegistry? appVisibilityRouteRegistry;
   final GroupRepositoryImpl groupRepository;
   final GroupMessageRepositoryImpl groupMessageRepository;
   final GroupExitDiagnosticRepository? groupExitDiagnosticRepository;
@@ -611,6 +619,8 @@ class MyApp extends StatefulWidget {
     required this.appShellController,
     required this.pendingPostTargetStore,
     required this.conversationTracker,
+    this.appVisibilityAuthority,
+    this.appVisibilityRouteRegistry,
     required this.groupRepository,
     required this.groupMessageRepository,
     this.groupExitDiagnosticRepository,
@@ -658,6 +668,8 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
+  late final AppVisibilityAuthority _appVisibilityAuthority;
+  late final AppVisibilityRouteRegistry _appVisibilityRouteRegistry;
   // 362: the ONE linked-device authority bundle, threaded to every shell that
   // can push a 1:1 conversation. Before this, the three values below reached
   // only the notification-tap route, so ordinary navigation from Feed, Orbit,
@@ -742,6 +754,19 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   @override
   void initState() {
     super.initState();
+    assert(
+      (widget.appVisibilityAuthority == null) ==
+          (widget.appVisibilityRouteRegistry == null),
+      'app visibility authority and route registry must be supplied together',
+    );
+    _appVisibilityAuthority =
+        widget.appVisibilityAuthority ??
+        AppVisibilityAuthority(
+          platformBridge: MethodChannelAppVisibilityPlatformBridge(),
+        );
+    _appVisibilityRouteRegistry =
+        widget.appVisibilityRouteRegistry ??
+        AppVisibilityRouteRegistry(authority: _appVisibilityAuthority);
     WidgetsBinding.instance.addObserver(this);
     _iosNotificationColdStartRecoveryBoundary =
         IosNotificationColdStartRecoveryBoundary<
@@ -792,7 +817,12 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         }
       },
     );
-    _setPresenceUseCase = SetPresenceUseCase(presenceSetter: widget.p2pService);
+    _setPresenceUseCase = SetPresenceUseCase(
+      presenceSetter: widget.p2pService,
+      refreshAppVisibility: () async {
+        await _appVisibilityAuthority.refreshVisibleConversation();
+      },
+    );
     _keepAliveUseCase = ActivePeerKeepAliveUseCase(
       probe: widget.p2pService,
       activePeerId: () => widget.conversationTracker.activePeerId,
@@ -933,11 +963,18 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
     // resume just re-arms the same timers (`onForegrounded()` cancels first).
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (WidgetsBinding.instance.lifecycleState == AppLifecycleState.resumed) {
+        unawaited(_synchronizeAppVisibility());
         _keepAliveUseCase.onForegrounded();
         unawaited(_setPresenceUseCase.onForegrounded());
       }
     });
     unawaited(_handleInitialLocalNotificationLaunchWhenReady());
+  }
+
+  Future<bool> _synchronizeAppVisibility() async {
+    final synchronized = await _appVisibilityAuthority.synchronize();
+    if (!synchronized) return false;
+    return _appVisibilityRouteRegistry.republishCurrentTopConversation();
   }
 
   Future<void> _ensureRuntimeServicesReady() {
@@ -1666,8 +1703,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           isConversationAlreadyActive: (conversationTarget) =>
               isNotificationRouteTargetAlreadyActive(
                 routeTarget: conversationTarget,
-                groupConversationTracker: widget.groupConversationTracker,
-                conversationTracker: widget.conversationTracker,
+                appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
               ),
           openConversation: (contact, tappedAt) => _openConversationForContact(
             navigator: navigator,
@@ -1736,7 +1772,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         final group = resolution.group!;
         if (isNotificationRouteTargetAlreadyActive(
           routeTarget: routeTarget,
-          groupConversationTracker: widget.groupConversationTracker,
+          appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
         )) {
           emitFlowEvent(
             layer: 'FL',
@@ -1799,11 +1835,10 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         // — the mounted screen re-fetches the new message on resume
         // (conversation_wired.dart didChangeAppLifecycleState). Decided before
         // the contact lookup so suppression is a pure routing decision; when
-        // `isViewing` is true the contact necessarily exists.
+        // the registry is current, the contact necessarily exists.
         if (isNotificationRouteTargetAlreadyActive(
           routeTarget: routeTarget,
-          groupConversationTracker: widget.groupConversationTracker,
-          conversationTracker: widget.conversationTracker,
+          appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
         )) {
           emitFlowEvent(
             layer: 'FL',
@@ -2114,6 +2149,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void dispose() {
+    _appVisibilityAuthority.invalidateSynchronously();
+    _appVisibilityRouteRegistry.dispose();
+    _appVisibilityAuthority.dispose();
     WidgetsBinding.instance.removeObserver(this);
     widget.disposePrivateMediaExpiryScheduler?.call();
 
@@ -2166,6 +2204,9 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    // N04: invalidate before any asynchronous lifecycle continuation can race
+    // a stale route/heartbeat write back into the current Dart generation.
+    _appVisibilityAuthority.invalidateSynchronously();
     if (kDebugMode) {
       debugPrint('[LIFECYCLE] AppLifecycleState changed → ${state.name}');
     }
@@ -2316,6 +2357,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _onResumed() async {
+    await _synchronizeAppVisibility();
     // 361: the restricted linked role resumes ONLY the exact direct blob-free
     // drains — no private-media recovery, no broad retry families, no group,
     // post, upload or push owners. 362 adds only the target-qualified
@@ -2746,9 +2788,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             _resolveForegroundGroupReactionNotification,
         durableReactionNotificationCoordinatorResolver:
             resolveGroupReactionCoordinator,
-        groupConversationTracker: widget.groupConversationTracker,
-        getAppLifecycleState: () =>
-            WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+        appVisibility: _appVisibilityAuthority,
         durableGroupMessageNotificationCoordinatorResolver:
             resolveGroupMessageCoordinator,
         groupNotificationPresentationCoordinator:
@@ -2989,10 +3029,6 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
             target?.privateMediaPolicy.requiresRedaction ?? true,
       ),
     );
-    final routePayload = NotificationRouteTarget.group(
-      groupId,
-      messageId: targetMessageId,
-    ).toPayload();
     if (group == null ||
         !displayEligibility.shouldDisplay ||
         localMember == null ||
@@ -3010,9 +3046,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
           requestedEpoch: keyEpoch,
           selectedEpoch: key.keyGeneration,
           latestEpoch: latestKey.keyGeneration,
-        ) ||
-        widget.groupConversationTracker.isViewing('group:$groupId') ||
-        widget.groupConversationTracker.isViewing(routePayload)) {
+        )) {
       return null;
     }
 
@@ -3080,6 +3114,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
   }
 
   Future<void> _handleAccountMigrationReceiverActivated() async {
+    _appVisibilityAuthority.invalidateSynchronously();
     final iosRecoveryMutationScope =
         await _beginIosNotificationCanonicalMutation(
           source: 'account_migration_receiver_activated',
@@ -3154,6 +3189,7 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
         builder: (context, child) {
           final routedChild = DirectPrivateMediaRouteObserverScope(
             observer: directPrivateMediaRouteObserver,
+            appVisibilityRouteRegistry: _appVisibilityRouteRegistry,
             child: child ?? const SizedBox.shrink(),
           );
           final healthNotifier = widget.pushRegistrationHealthNotifier;
@@ -3247,6 +3283,8 @@ class _MyAppState extends State<MyApp> with WidgetsBindingObserver {
               widget.notificationService.clearDeliveredNotifications,
           clearIosNotificationRecovery:
               widget.iosNotificationRecoveryCoordinator?.clearAccount,
+          invalidateAppVisibility:
+              _appVisibilityAuthority.invalidateSynchronously,
           ingestStagedPushEnvelopes: () => _ingestStagedPushEnvelopes(
             source: 'startup_router_notification_tap',
           ),

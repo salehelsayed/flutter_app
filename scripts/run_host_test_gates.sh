@@ -195,6 +195,15 @@ readonly ONE_TO_ONE_HOST_TESTS=(
   # bounded application-writer census.
   "test/core/database/helpers/outgoing_transport_settlement_test.dart"
   "test/features/conversation/application/outgoing_transport_settlement_writers_test.dart"
+  # Plan 371 (GAP-N04): shared Dart authority/adoption owners are pinned into
+  # the curated 1:1 host inventory as well as auto-discovered core/feature.
+  "test/core/notifications/app_visibility_snapshot_test.dart"
+  "test/core/notifications/app_visibility_authority_test.dart"
+  "test/core/notifications/app_visibility_route_binding_test.dart"
+  "test/core/notifications/app_visibility_snapshot_wiring_test.dart"
+  "test/core/notifications/ios_app_visibility_privacy_manifest_contract_test.dart"
+  "test/core/notifications/app_root_notification_open_test.dart"
+  "test/features/push/application/set_presence_use_case_test.dart"
 )
 
 readonly GO_BRIDGE_CONNECTED_PEER_TEST="go-mknoon/bridge/bridge_test.go"
@@ -264,6 +273,9 @@ readonly GO_RELAY_WAKE_OUTCOME_PROCESS_RUN='^TestRedisWakeOutcomeObligationSurvi
 # synthetic host-all row. The script is intentionally non-executable, so both
 # the printed command and execution dispatch must invoke it through bash.
 readonly GO_RELAY_ALL_SCRIPT="scripts/test/run_relay_all_go_309.sh"
+# Plan 371 (GAP-N04): one synthetic later-wave host item owns the focused
+# Swift/Kotlin/compile/privacy contract and must always be invoked through bash.
+readonly APP_VISIBILITY_NATIVE_371="scripts/test/run_app_visibility_native_371.sh"
 # Exact Android build-boundary proof. Keep it as one synthetic core-host item:
 # the auto-discovered Dart contract stays fast, while this leg performs the
 # profile/release manifest preparation only once per core-host-all invocation.
@@ -280,7 +292,7 @@ Options:
   --batch-flutter            Run the selected Dart paths in one exact-path
                              Flutter invocation; Go legs remain separate.
   --dart-only                Omit non-Dart plan items. For host-all this removes
-                             the thirteen Go/relay tails so a composed gate can run its
+                             the fourteen non-Dart tails so a composed gate can run its
                              full Go lane exactly once.
   --concurrency <N>          Flutter batch process count from 1 through 64
                              (default: 1).
@@ -467,6 +479,7 @@ case "$scope" in
         printf '%s\n' "$GO_RELAY_PUSH_VAULT_PROCESS_TEST"
         printf '%s\n' "$GO_RELAY_WAKE_OUTCOME_PROCESS_TEST"
         printf '%s\n' "$GO_RELAY_ALL_SCRIPT"
+        printf '%s\n' "$APP_VISIBILITY_NATIVE_371"
       fi
     } >"$plan_file"
     ;;
@@ -594,6 +607,10 @@ is_go_relay_all_script() {
   [ "$1" = "$GO_RELAY_ALL_SCRIPT" ]
 }
 
+is_app_visibility_native_371() {
+  [ "$1" = "$APP_VISIBILITY_NATIVE_371" ]
+}
+
 is_android_renderer_manifest_contract() {
   [ "$1" = "$ANDROID_RENDERER_MANIFEST_CONTRACT" ]
 }
@@ -709,6 +726,10 @@ print_command_for_path() {
     printf 'bash %s' "$GO_RELAY_ALL_SCRIPT"
     return
   fi
+  if is_app_visibility_native_371 "$path"; then
+    printf 'bash %s' "$APP_VISIBILITY_NATIVE_371"
+    return
+  fi
   if is_android_renderer_manifest_contract "$path"; then
     print_android_contract_command "$ANDROID_RENDERER_MANIFEST_CONTRACT"
     return
@@ -820,6 +841,10 @@ run_path() {
   fi
   if is_go_relay_all_script "$path"; then
     bash "$GO_RELAY_ALL_SCRIPT"
+    return
+  fi
+  if is_app_visibility_native_371 "$path"; then
+    bash "$APP_VISIBILITY_NATIVE_371"
     return
   fi
   if is_android_renderer_manifest_contract "$path"; then

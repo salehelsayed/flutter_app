@@ -11,12 +11,67 @@ import 'package:flutter_app/core/notifications/group_notification_presentation_c
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart';
+import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart'
+    hide showForegroundPushFallbackNotificationIfNeeded;
+import 'package:flutter_app/features/push/application/background_push_notification_fallback.dart'
+    as subject
+    show showForegroundPushFallbackNotificationIfNeeded;
 import 'package:flutter_app/features/push/application/background_group_notification_post_show_fence.dart';
 import 'package:flutter_app/features/push/application/handle_foreground_remote_message_use_case.dart';
 import 'package:flutter_app/features/push/application/resolve_group_notification_route_target_use_case.dart';
+import 'package:flutter_app/features/push/application/show_notification_use_case.dart'
+    show ResolveDurableNotificationCoordinator;
 
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
+
+Future<bool> showForegroundPushFallbackNotificationIfNeeded({
+  required ForegroundRemoteMessageResult result,
+  required NotificationService notificationService,
+  required RemoteMessage message,
+  GroupMessageNotificationDisplayEligibilityResolver?
+  groupMessageDisplayEligibilityResolver,
+  ForegroundGroupReactionNotificationResolver?
+  groupReactionNotificationResolver,
+  ForegroundGroupMessageNotificationResolver? groupMessageNotificationResolver,
+  ResolveDurableNotificationCoordinator?
+  durableReactionNotificationCoordinatorResolver,
+  ActiveConversationTracker? groupConversationTracker,
+  AppLifecycleState Function()? getAppLifecycleState,
+  ResolveDurableNotificationCoordinator?
+  durableGroupMessageNotificationCoordinatorResolver,
+  GroupNotificationPresentationCoordinator?
+  groupNotificationPresentationCoordinator,
+  ForegroundGroupNotificationReadAcknowledgementResolver?
+  groupNotificationReadAcknowledgementResolver,
+  ForegroundGroupConversationNotificationProjectionResolver?
+  groupConversationNotificationProjectionResolver,
+}) => subject.showForegroundPushFallbackNotificationIfNeeded(
+  result: result,
+  notificationService: notificationService,
+  message: message,
+  groupMessageDisplayEligibilityResolver:
+      groupMessageDisplayEligibilityResolver,
+  groupReactionNotificationResolver: groupReactionNotificationResolver,
+  groupMessageNotificationResolver: groupMessageNotificationResolver,
+  durableReactionNotificationCoordinatorResolver:
+      durableReactionNotificationCoordinatorResolver,
+  appVisibility:
+      groupConversationTracker == null || getAppLifecycleState == null
+      ? null
+      : TrackerBackedAppVisibility(
+          tracker: groupConversationTracker,
+          lifecycle: getAppLifecycleState,
+        ),
+  durableGroupMessageNotificationCoordinatorResolver:
+      durableGroupMessageNotificationCoordinatorResolver,
+  groupNotificationPresentationCoordinator:
+      groupNotificationPresentationCoordinator,
+  groupNotificationReadAcknowledgementResolver:
+      groupNotificationReadAcknowledgementResolver,
+  groupConversationNotificationProjectionResolver:
+      groupConversationNotificationProjectionResolver,
+);
 
 void main() {
   group('background push fallback notifications', () {

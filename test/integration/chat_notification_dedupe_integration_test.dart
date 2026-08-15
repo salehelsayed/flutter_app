@@ -15,6 +15,7 @@ import 'package:flutter_app/features/push/application/background_message_handler
 
 import '../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../features/conversation/domain/repositories/fake_message_repository.dart';
+import '../shared/fakes/fake_app_visibility.dart';
 import '../shared/fakes/fake_notification_service.dart';
 
 void main() {
@@ -68,8 +69,10 @@ void main() {
         messageRepo: messageRepo,
         contactRepo: contactRepo,
         notificationService: notificationService,
-        conversationTracker: ActiveConversationTracker(),
-        getAppLifecycleState: () => AppLifecycleState.paused,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: ActiveConversationTracker(),
+          lifecycle: () => AppLifecycleState.paused,
+        ),
         remoteNotificationGate: gate,
         backgroundNotificationDuplicateGuardDelay: Duration.zero,
       )..start();

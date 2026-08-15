@@ -900,7 +900,7 @@ void main() {
       for (final token in const <String>[
         'final P2PServiceImpl p2pService;',
         'required this.p2pService',
-        'SetPresenceUseCase(presenceSetter: widget.p2pService)',
+        'SetPresenceUseCase( presenceSetter: widget.p2pService, refreshAppVisibility: () async { await _appVisibilityAuthority.refreshVisibleConversation(); }, )',
         'probe: widget.p2pService',
         'onDropReWarm: widget.p2pService.warmPeer',
         'onDropDrain: widget.p2pService.drainOfflineInbox',

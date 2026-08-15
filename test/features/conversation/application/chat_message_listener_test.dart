@@ -29,6 +29,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/p2p/domain/models/connection_state.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fixtures/media_repository_real_db_fixture.dart';
 import '../../../shared/fakes/recording_media_auto_download_decider.dart';
 import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
@@ -1937,11 +1938,13 @@ void main() {
         bridge: bridge,
         getOwnMlKemSecretKey: getOwnMlKemSecretKey,
         notificationService: notificationService,
-        conversationTracker: tracker,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => lifecycleState,
+        ),
         notificationToneTracker: notificationToneTracker,
         durableNotificationCoordinatorResolver:
             durableNotificationCoordinatorResolver,
-        getAppLifecycleState: () => lifecycleState,
         remoteNotificationGate: notificationGate ?? remoteNotificationGate,
         backgroundNotificationDuplicateGuardDelay:
             backgroundNotificationDuplicateGuardDelay,
@@ -2747,7 +2750,6 @@ void main() {
           ),
           getOwnMlKemSecretKey: () async => 'own-secret-key',
           notificationService: notificationService,
-          getAppLifecycleState: () => AppLifecycleState.paused,
           retryNotificationDisplays: () async => displayRetries.add('retry'),
           downloadProfilePictureFn: _noopDownloadProfilePicture,
         );

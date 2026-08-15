@@ -11,6 +11,7 @@ import 'package:flutter_app/features/push/application/private_media_notification
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -121,6 +122,7 @@ _fixture({
     mediaAttachmentRepo: media,
     mediaFileManager: files,
     notificationService: notifications,
+    appVisibility: FixedAppVisibility(),
     groupConversationTracker: ActiveConversationTracker(),
     getAppLifecycleState: () => AppLifecycleState.paused,
     privateMediaAvailability: availability,

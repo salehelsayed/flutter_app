@@ -1,12 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/bridge/p2p_bridge_client.dart';
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -102,13 +101,12 @@ class ChatMessageListener {
   final MediaAttachmentRepository? mediaAttachmentRepo;
   final MediaFileManager? mediaFileManager;
   final NotificationService? notificationService;
-  final ActiveConversationTracker? conversationTracker;
+  final AppVisibilitySuppressionReader? appVisibility;
   // 118 Phase 4: shared per-conversation tone debounce (direct + group keys are
   // disjoint, so one tracker serves both listeners).
   final NotificationToneTracker? notificationToneTracker;
   final Future<DurableNotificationToneLease> Function()
   _durableNotificationCoordinatorResolver;
-  final AppLifecycleState Function()? getAppLifecycleState;
   final DownloadProfilePictureFn? downloadProfilePictureFn;
   final RecentRemoteNotificationGate? remoteNotificationGate;
   final Duration backgroundNotificationDuplicateGuardDelay;
@@ -152,11 +150,10 @@ class ChatMessageListener {
     this.mediaAttachmentRepo,
     this.mediaFileManager,
     this.notificationService,
-    this.conversationTracker,
+    this.appVisibility,
     this.notificationToneTracker,
     Future<DurableNotificationToneLease> Function()?
     durableNotificationCoordinatorResolver,
-    this.getAppLifecycleState,
     this.downloadProfilePictureFn,
     this.remoteNotificationGate,
     this.backgroundNotificationDuplicateGuardDelay = const Duration(seconds: 2),
@@ -738,9 +735,7 @@ class ChatMessageListener {
         // Show local notification (suppressed if viewing this conversation)
         if (retryNotificationDisplays != null) {
           await retryNotificationDisplays!.call();
-        } else if (notificationService != null &&
-            conversationTracker != null &&
-            getAppLifecycleState != null) {
+        } else if (notificationService != null && appVisibility != null) {
           final username =
               senderContact?.username ??
               (updatedContact?.username) ??
@@ -748,8 +743,7 @@ class ChatMessageListener {
           try {
             await maybeShowNotification(
               notificationService: notificationService!,
-              conversationTracker: conversationTracker!,
-              getAppLifecycleState: getAppLifecycleState!,
+              appVisibility: appVisibility!,
               contactPeerId: conversationMessage.contactPeerId,
               senderUsername: username,
               messageText: notificationBodyForMessage(

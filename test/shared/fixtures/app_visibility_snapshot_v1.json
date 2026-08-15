@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "digestDomain": "mknoon/app-visibility/v1",
+  "freshnessWindowMs": 90000,
+  "heartbeatIntervalMs": 60000,
+  "digestVectors": [
+    {
+      "name": "direct_trimmed",
+      "lane": "direct",
+      "input": "  peer-A  ",
+      "normalizedId": "peer-A",
+      "laneByte": 1,
+      "preimageHex": "6d6b6e6f6f6e2f6170702d7669736962696c6974792f7631000100000006706565722d41",
+      "digest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2"
+    },
+    {
+      "name": "group_owner",
+      "lane": "group",
+      "input": "group:team-α",
+      "normalizedId": "group:team-α",
+      "laneByte": 2,
+      "preimageHex": "6d6b6e6f6f6e2f6170702d7669736962696c6974792f763100020000000d67726f75703a7465616d2dceb1",
+      "digest": "5a261310ec3e1dec73e1a910ff7b332efff48ee24208312be30f785b3a9f00d1"
+    },
+    {
+      "name": "group_message_anchor",
+      "lane": "group",
+      "input": "group:team-α|message:message-7",
+      "normalizedId": "group:team-α",
+      "laneByte": 2,
+      "preimageHex": "6d6b6e6f6f6e2f6170702d7669736962696c6974792f763100020000000d67726f75703a7465616d2dceb1",
+      "digest": "5a261310ec3e1dec73e1a910ff7b332efff48ee24208312be30f785b3a9f00d1"
+    },
+    {
+      "name": "unicode_direct",
+      "lane": "direct",
+      "input": "über-東京-🙂",
+      "normalizedId": "über-東京-🙂",
+      "laneByte": 1,
+      "preimageHex": "6d6b6e6f6f6e2f6170702d7669736962696c6974792f7631000100000011c3bc6265722de69db1e4baac2df09f9982",
+      "digest": "688611527881d34f1ed9222774e793fe99725e1500d078849a6a93460267622e"
+    },
+    {
+      "name": "length_framed_delimiter",
+      "lane": "direct",
+      "input": "a|message:b",
+      "normalizedId": "a|message:b",
+      "laneByte": 1,
+      "preimageHex": "6d6b6e6f6f6e2f6170702d7669736962696c6974792f763100010000000b617c6d6573736167653a62",
+      "digest": "4bf3efa31d7e21e3fd07b61a635b18a34ef319e1e9d8a4314816436214aa6f3b"
+    }
+  ],
+  "invalidConversationVectors": [
+    {"name": "empty_direct", "lane": "direct", "input": "   "},
+    {"name": "wrong_direct_lane", "lane": "direct", "input": "group:team-a"},
+    {"name": "wrong_group_lane", "lane": "group", "input": "peer-A"},
+    {"name": "empty_group", "lane": "group", "input": "group:"},
+    {"name": "embedded_group_colon", "lane": "group", "input": "group:team:a"},
+    {"name": "empty_message_anchor", "lane": "group", "input": "group:team-a|message:"},
+    {"name": "ambiguous_group_anchor", "lane": "group", "input": "group:team-a|message:m1|message:m2"},
+    {"name": "c0_control_character", "lane": "direct", "input": "peer\u0000A"},
+    {"name": "c1_control_character", "lane": "direct", "input": "peer\u0085A"}
+  ],
+  "predicateVectors": [
+    {
+      "name": "fresh_exact_89999ms",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 90999,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": true
+    },
+    {
+      "name": "stale_exact_90000ms",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 91000,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    },
+    {
+      "name": "boot_mismatch",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 1001,
+      "currentBootSession": "test:boot-43",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    },
+    {
+      "name": "monotonic_rollback",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 999,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    },
+    {
+      "name": "inactive_exact",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 8,
+        "lifecycleGeneration": 4,
+        "lifecycle": "INACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 2000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 2001,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    },
+    {
+      "name": "background_exact",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 9,
+        "lifecycleGeneration": 5,
+        "lifecycle": "BACKGROUND",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 3000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 3001,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    },
+    {
+      "name": "null_visible_key",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 10,
+        "lifecycleGeneration": 5,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": null,
+        "updatedMonotonicMs": 4000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 4001,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    },
+    {
+      "name": "conversation_mismatch",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 11,
+        "lifecycleGeneration": 5,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "5a261310ec3e1dec73e1a910ff7b332efff48ee24208312be30f785b3a9f00d1",
+        "updatedMonotonicMs": 5000,
+        "bootSession": "test:boot-42"
+      },
+      "currentMonotonicMs": 5001,
+      "currentBootSession": "test:boot-42",
+      "expectedConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+      "maySuppress": false
+    }
+  ],
+  "invalidSnapshotVectors": [
+    {
+      "name": "future_schema",
+      "snapshot": {
+        "schemaVersion": 2,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      }
+    },
+    {
+      "name": "zero_revision",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 0,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      }
+    },
+    {
+      "name": "revision_overflow",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 9223372036854775808,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      }
+    },
+    {
+      "name": "uppercase_digest",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "F763FE7FB5062AFF9FA31DF44C20CD900C3484A4600DE4B941ECD1CA8E940AD2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:boot-42"
+      }
+    },
+    {
+      "name": "boot_session_whitespace",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": " test:boot-42"
+      }
+    },
+    {
+      "name": "boot_session_unavailable_sentinel",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "unavailable"
+      }
+    },
+    {
+      "name": "boot_session_c1_control",
+      "snapshot": {
+        "schemaVersion": 1,
+        "revision": 7,
+        "lifecycleGeneration": 3,
+        "lifecycle": "FOREGROUND_ACTIVE",
+        "visibleConversationDigest": "f763fe7fb5062aff9fa31df44c20cd900c3484a4600de4b941ecd1ca8e940ad2",
+        "updatedMonotonicMs": 1000,
+        "bootSession": "test:\u0085boot-42"
+      }
+    }
+  ]
+}

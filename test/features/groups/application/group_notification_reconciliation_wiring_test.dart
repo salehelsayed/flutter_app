@@ -14,6 +14,7 @@ import 'package:flutter_app/features/groups/domain/models/group_notification_rec
 import 'package:flutter_app/features/groups/domain/repositories/group_notification_reconciliation_outbox_repository.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 
@@ -589,6 +590,7 @@ Future<_Fixture> _buildFixture({
     msgRepo: messages,
     getSelfPeerId: () async => _selfPeerId,
     notificationService: notifications,
+    appVisibility: FixedAppVisibility(isForegroundActive: true),
     notificationPresentationCoordinator:
         GroupNotificationPresentationCoordinator(),
     groupConversationTracker: ActiveConversationTracker(),

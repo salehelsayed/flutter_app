@@ -1,7 +1,8 @@
 import 'package:flutter/foundation.dart'
     show TargetPlatform, defaultTargetPlatform;
 import 'package:flutter/widgets.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -69,8 +70,7 @@ String notificationBodyForMessage(
 ///   - Otherwise -> show notification
 Future<NotificationPresentationResult> maybeShowNotification({
   required NotificationService notificationService,
-  required ActiveConversationTracker conversationTracker,
-  required AppLifecycleState Function() getAppLifecycleState,
+  required AppVisibilitySuppressionReader appVisibility,
   required String contactPeerId,
   String? routePayload,
   required String senderUsername,
@@ -89,40 +89,32 @@ Future<NotificationPresentationResult> maybeShowNotification({
   String notificationEventType = 'new_message',
   Duration backgroundDuplicateGuardDelay = const Duration(seconds: 2),
 }) async {
-  // 118 Phase 4: the per-conversation tone window and the viewing-suppression
-  // gate must use the SAME conversation identity. Normalize once.
-  final conversationKey = ActiveConversationTracker.normalizeActiveKey(
-    contactPeerId,
+  final visibilityIdentity = AppVisibilityConversationIdentity.tryParse(
+    lane: contactPeerId.trim().startsWith('group:')
+        ? AppVisibilityConversationLane.group
+        : AppVisibilityConversationLane.direct,
+    value: contactPeerId,
   );
+  // The tone key and visibility decision share the same canonical identity.
+  // Malformed identities remain notification-eligible and retain a bounded
+  // trimmed debounce key rather than consulting a legacy tracker.
+  final conversationKey =
+      visibilityIdentity?.normalizedValue ?? contactPeerId.trim();
   if (suppressNotification) {
     emitFlowEvent(
       layer: 'FL',
       event: 'NOTIFICATION_SUPPRESSED',
-      details: {
-        'reason': suppressionReason,
-        'contactPeerId': contactPeerId.length > 10
-            ? contactPeerId.substring(0, 10)
-            : contactPeerId,
-      },
+      details: {'reason': suppressionReason},
     );
     return NotificationPresentationResult.terminalWithoutOutcome;
   }
 
-  final lifecycleState = getAppLifecycleState();
-  final isViewingConversation =
-      conversationTracker.isViewing(contactPeerId) ||
-      (routePayload != null && conversationTracker.isViewing(routePayload));
-
-  if (lifecycleState == AppLifecycleState.resumed && isViewingConversation) {
+  final visibility = await appVisibility.evaluate(visibilityIdentity);
+  if (visibility.maySuppress) {
     emitFlowEvent(
       layer: 'FL',
       event: 'NOTIFICATION_SUPPRESSED',
-      details: {
-        'reason': 'viewing_conversation',
-        'contactPeerId': contactPeerId.length > 10
-            ? contactPeerId.substring(0, 10)
-            : contactPeerId,
-      },
+      details: const {'reason': 'fresh_visible_conversation'},
     );
     // N04/N05/N11 own the final same-chat/read effect authority. Until that
     // shared boundary exists this is terminal, but it cannot mint an outcome.
@@ -130,7 +122,7 @@ Future<NotificationPresentationResult> maybeShowNotification({
   }
 
   if (consumeRecentRemoteNotificationAnnouncement != null) {
-    if (lifecycleState != AppLifecycleState.resumed &&
+    if (!visibility.isForegroundActive &&
         backgroundDuplicateGuardDelay > Duration.zero) {
       await Future<void>.delayed(backgroundDuplicateGuardDelay);
     }

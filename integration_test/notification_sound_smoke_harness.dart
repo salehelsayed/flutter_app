@@ -43,6 +43,7 @@ import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/node_readiness.dart';
 import '_support/signal_files.dart';
 import 'group_multi_device_real_harness.dart';
+import '../test/shared/fakes/fake_app_visibility.dart';
 
 // ---------------------------------------------------------------------------
 // Role dispatch
@@ -1043,8 +1044,10 @@ void _runBob() {
       getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
       mediaAttachmentRepo: stack.mediaAttachmentRepo,
       notificationService: notificationService,
-      conversationTracker: chatConversationTracker,
-      getAppLifecycleState: () => currentLifecycle,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: chatConversationTracker,
+        lifecycle: () => currentLifecycle,
+      ),
     );
     chatListener.start();
 

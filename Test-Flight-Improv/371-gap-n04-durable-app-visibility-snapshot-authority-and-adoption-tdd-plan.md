@@ -1,6 +1,6 @@
 # 371 - GAP-N04 Durable App Visibility Snapshot Authority And Adoption
 
-Status: **EXECUTION_READY / INDEPENDENTLY REVIEWED / PREREQUISITES VALIDATED / ONE N04-OWNED SLICE / N04 FOUNDATION ONLY / NOT N03-COMPLETE / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
+Status: **POST_EXECUTION_AUDIT_CLOSED / N04 APP VISIBILITY AUTHORITY FOUNDATION CODE COMPLETE / HOST+NATIVE+AVAILABLE-ANDROID VERIFIED / N04 FOUNDATION ONLY / NOT N03-COMPLETE / NOT LIVE-ACCEPTED / NOT RELEASE-ELIGIBLE**
 Type: Modification
 Spec inputs: `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2.md` §§6 and 8, A-21/A-22/A-23/A-24 and AC-01 through AC-04; §9, A-28 and AC-06/AC-07 are downstream N05 prerequisites, not Plan-371 closure claims; GAP-N04 / WP-03 in `UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md`
 Classification: execution-ready single GAP-N04 authority/current-adopter slice
@@ -11,6 +11,7 @@ Closure tier: host/native plus one availability-bounded Android device lifecycle
 | Time | Role | Files inspected | Decision/blocker | Next action |
 |---|---|---|---|---|
 | 2026-08-15 | Evidence Collector | Plans 369/370 commits and checksum-bound receipts; worktree; N03 capability/admission composition | Plan 370 commit `b90455347f64bd102056bc13d62d89fe5e379cb9` is the clean successor baseline and directly contains Plan 369 commit `ddf4b1459187b074128213e72b8456bd44e39cef`. Both receipts, committed receipt blobs, markers, and frozen trees validate. | Pin one execution baseline plus both receipt identities; never edit the receipts. |
+| 2026-08-15 | Executor | Reviewed Plan-371 planning transaction; clean-worktree requirement | The five allowlisted planning documents were preserved in docs-only commit `9be694a19e4f17973e447f8b98c8167b9881fd74`, whose direct parent is the accepted Plan-370 commit and whose tree has no product/test/native/script drift. | Re-freeze execution at the docs-only commit before authoring RED. |
 | 2026-08-15 | Planner using `$tdd-plan` | Graphify TDD context; `ActiveConversationTracker`; `maybeShowNotification`; root lifecycle/route observer; direct/group/linked routes; native lifecycle/storage seams; gates and device matrix | GAP-N04 has one authority, one rollback/failure policy, and one current Flutter adoption boundary. Splitting by foundation/platform/adopter would create unused or inconsistent state. | Write one bounded Plan 371 and register its shared tests in both affected curated lanes. |
 | 2026-08-15 | Native boundary verifier | `AppDelegate`, `MainActivity`, iOS App Group recovery store, Android manifest/store precedent, Runner/NSE build membership | iOS needs real cross-process atomic storage and a required-reason privacy manifest; Android is one process today and needs one synchronously committed whole-value store. | Prove both codecs/stores natively; do not adopt NSE/FCM rendering in N04. |
 | 2026-08-15 | Independent reviewers using `$tdd-review` | Full draft plus route-open, protected-group replay/SQLite, presence timer, iOS lifecycle/storage/privacy, Android Gradle/instrumentation, registration and availability contracts | Core one-plan bet is sound. The first draft conflated route-stack dedupe with notification suppression, under-proved protected staging, left native boot/failure/duplicate-transition semantics ambiguous, and contained vacuous/static gate commands. | Apply the bounded redlines in place; add no plan, DB, renderer, ledger, or scheduler. |
@@ -65,12 +66,16 @@ Closure tier: host/native plus one availability-bounded Android device lifecycle
 
 ## Dependency Contract
 
-Plan 371 uses one execution baseline:
+Plan 371 uses one docs-only execution baseline over the frozen Plan-370
+implementation predecessor:
 
-- Plan 370 commit / current accepted baseline:
+- Plan 371 reviewed planning commit / current execution baseline:
+  `9be694a19e4f17973e447f8b98c8167b9881fd74`, tree
+  `d31e890195b200444076cf14dfb664f54559cc06`;
+- its direct parent and Plan 370 implementation commit:
   `b90455347f64bd102056bc13d62d89fe5e379cb9`, tree
   `8d386473c747f1318945124f7c94b797843a46e0`;
-- its direct parent and Plan 369 closure commit:
+- Plan 370's direct parent and Plan 369 closure commit:
   `ddf4b1459187b074128213e72b8456bd44e39cef`, tree
   `e24ba92b8c6d65ec24cb40d7ee2b4297075c02f1`;
 - Plan 369 receipt SHA-256
@@ -96,12 +101,16 @@ Plan 371 does not emit `inChat` or `suppressedPolicy`, advertise
 ```bash
 (
   set -euo pipefail
+  p371docs='9be694a19e4f17973e447f8b98c8167b9881fd74'
   p369='ddf4b1459187b074128213e72b8456bd44e39cef'
   p370='b90455347f64bd102056bc13d62d89fe5e379cb9'
   r369='8d4229405b1b39ac26dd2304fa77455322be8b25c1b1f573a4903f0044d4873c'
   r370='14af6bddc18cda365b1bda36bc69d1c0d23b5f7106dc6f9f72e04641eada0b04'
 
-  test "$(git rev-parse HEAD)" = "$p370"
+  test "$(git rev-parse HEAD)" = "$p371docs"
+  test "$(git rev-parse "${p371docs}^")" = "$p370"
+  test "$(git rev-parse "${p371docs}^{tree}")" = \
+    'd31e890195b200444076cf14dfb664f54559cc06'
   test "$(git rev-parse "${p370}^")" = "$p369"
   test "$(git rev-parse "${p369}^")" = \
     '8d86501e46f1a06e724daf8009cd3bf0f807578c'
@@ -109,6 +118,15 @@ Plan 371 does not emit `inChat` or `suppressedPolicy`, advertise
     'e24ba92b8c6d65ec24cb40d7ee2b4297075c02f1'
   test "$(git rev-parse "${p370}^{tree}")" = \
     '8d386473c747f1318945124f7c94b797843a46e0'
+
+  # The clean execution baseline differs from Plan 370 only by the reviewed
+  # planning transaction enumerated below.
+  test "$(git diff --name-only "$p370..$p371docs" | sort)" = "$(printf '%s\n' \
+    STATUS.md \
+    Test-Flight-Improv/00-INDEX.md \
+    Test-Flight-Improv/370-gap-n03-authenticated-bounded-wake-outcome-coordinator-tdd-plan.md \
+    Test-Flight-Improv/371-gap-n04-durable-app-visibility-snapshot-authority-and-adoption-tdd-plan.md \
+    UI-23-notification/Mknoon_Private_Reliable_Notifications_PRD_v1.2_Codebase_Coverage_and_Gaps.md | sort)"
 
   # The accepted execution tree may coexist only with these planning docs.
   # Any product, test, native, fixture, or script drift invalidates the pin.
@@ -833,7 +851,7 @@ while IFS= read -r path; do
 done < <(
   {
     git diff --name-only \
-      b90455347f64bd102056bc13d62d89fe5e379cb9 -- '*.dart'
+      9be694a19e4f17973e447f8b98c8167b9881fd74 -- '*.dart'
     git ls-files --others --exclude-standard -- '*.dart'
   } | sort -u
 )
@@ -866,9 +884,9 @@ not only exit status.
 - Green sentinel: fresh active exact A suppresses; every unsafe state notifies;
   B/non-chat stay isolated; same-chat produces no outcome; N03 admission stays
   off; direct P2P and private-media route behavior remain.
-- Pre-existing dirty tree / known failure: planning begins from clean commit
-  `b904553...`; these plan/index/status/coverage documents may be uncommitted.
-  Record all unrelated dirt before RED and do not absorb it.
+- Pre-existing dirty tree / known failure: execution begins from clean docs-only
+  commit `9be694a19...`, whose direct parent is Plan 370 `b904553...`. Record all
+  unrelated dirt before RED and do not absorb it.
 - Environment blocker: each unavailable target class is `N/A (target
   unavailable by project policy)`, not a product failure. At planning time a
   USB Android, emulator, and iPhone simulators are available. N04 requires no physical
@@ -877,28 +895,28 @@ not only exit status.
   read/cleanup/mute, second observer, or second scheduler change blocks closure
   and requires reassignment/replan.
 
-- [ ] TC-371-00 dependencies, commit ancestry, receipts, markers, trees, and
+- [x] TC-371-00 dependencies, commit ancestry, receipts, markers, trees, and
       three N03 default-off sentinels pass.
-- [ ] Every TC-371-01 through TC-371-09 behavior has the named proof with zero
+- [x] Every TC-371-01 through TC-371-09 behavior has the named proof with zero
       skips and correct discriminator.
-- [ ] One genuine causal RED and all five representative mutation re-reds
+- [x] One genuine causal RED and all five representative mutation re-reds
       are recorded and reverted.
-- [ ] Dart/Swift/Kotlin digest preimages/digests and decoded vector dispositions
+- [x] Dart/Swift/Kotlin digest preimages/digests and decoded vector dispositions
       agree; every unsafe state fails toward notification.
-- [ ] One root lifecycle/route authority is production-composed; all current
+- [x] One root lifecycle/route authority is production-composed; all current
       Flutter notification decisions use it; protected group staging is not
       visibility-filtered.
-- [ ] iOS Runner/NSE atomic-store, membership, generic compile/build, privacy
+- [x] iOS Runner/NSE atomic-store, membership, generic compile/build, privacy
       plists and built-bundle presence pass; focused XCTest passes on an
       available simulator or is recorded policy N/A.
-- [ ] Android unit/compile and real lifecycle instrumentation pass on the
+- [x] Android unit/compile and real lifecycle instrumentation pass on the
       rediscovered USB Android and emulator when available.
-- [ ] Both curated lanes pass; no per-plan core/feature/full host sweep runs.
-- [ ] Exact array/dry-run/discovery checks register every shared/group-only Dart
+- [x] Both curated lanes pass; no per-plan core/feature/full host sweep runs.
+- [x] Exact array/dry-run/discovery checks register every shared/group-only Dart
       owner, the one native host runner, and both expanded device categories.
-- [ ] Analyzer, changed-Dart formatting, `git diff --check`, privacy lint, and
+- [x] Analyzer, changed-Dart formatting, `git diff --check`, privacy lint, and
       incremental Graphify refresh are clean.
-- [ ] No N03 capability/outcome activation, native rendering, N04 PRD/live/
+- [x] No N03 capability/outcome activation, native rendering, N04 PRD/live/
       release acceptance, or downstream-gap completion is claimed.
 
 ## Handoff
@@ -927,10 +945,22 @@ not only exit status.
 - Aggregate gate: one N03-N06 wave `host-all` after N06, then final WP-07.
 - Unresolved evidence: physical-iPhone/NSE and Android FCM/WorkManager consumer
   adoption are explicitly owned by N07/N08/N12, not missing Plan-371 work.
+- Checksum-bound receipt:
+  `Test-Flight-Improv/evidence/371/README.md`, SHA-256
+  `dad09eb0e708629d64c0ddd3b82cb3a051509b0ff2f8750a3a46cc4b1441a11f`,
+  frozen tested tree `75116f8b1c7cc0cec99f2a72d1410713868d0f23`,
+  Graphify `a1554310fab6234f`.
 
 ## Reviewer Findings
 
 Independent `$tdd-review` result: **PASS after bounded in-place corrections**.
+
+Post-execution source/counterexample review also passes. It found one material
+account-replacement invalidation omission; strengthened TC-371-05a captured a
+semantic RED, the root/StartupRouter order was repaired, and the exact runtime,
+whole owner, focused, preservation, both curated, analyzer, Android, hygiene,
+and Graphify gates were green again before the final tree freeze. No other
+release-blocking defect was found.
 
 - Claims and boundaries: PASS. Fresh notification suppression, process-local
   route-open dedupe, N11 compatibility trackers, N05 final-effect races, and
@@ -974,3 +1004,7 @@ Dart/device seams; defer the one full host sweep to the N03-N06 wave boundary.
 | Time | Phase | Files | Last command/result | Current evidence | Decision/blocker | Next |
 |---|---|---|---|---|---|---|
 | 2026-08-15 | not started | planning documents only | Dependency preflight PASS; 8/8 preservation PASS; bash/diff hygiene PASS | Independently reviewed execution contract | No implementation started | Run TC-371-00, then author TC-371-01 assertion RED |
+| 2026-08-15 | clean baseline re-freeze | Plan 371 dependency contract only | Docs-only commit `9be694a19` verified as the direct child of Plan 370 `b90455347`; tree `d31e890195b200444076cf14dfb664f54559cc06`; only the five allowlisted planning paths differ | Clean implementation baseline established without discarding the reviewed handoff | None | Re-run TC-371-00, then author TC-371-01 assertion RED |
+| 2026-08-16 | assertion RED and implementation | Shared fixture; Dart authority/route/adopters; iOS/Android stores and coordinators; focused owners | Exact TC-371-01 selected once and assertion-failed; implementation then reached focused 11/11, native JVM/XCTest/compile/privacy, and five serial mutation REDs | One strict cross-runtime v1 snapshot and one current Flutter presentation authority | None | Run preservation, curated lanes, and available-device proof |
+| 2026-08-16 | preservation and counterexample repair | Current notification adopters plus affected test fixtures and account cutover | Preservation 8/8; deterministic group-fixture omissions repaired; final review found and semantically re-red account invalidation before repair | Account replacement/erase now invalidates before cleanup; no second suppression authority | None | Rerun all affected final-tree gates |
+| 2026-08-16 | post-execution audit closed | 80-path frozen implementation plus checksum receipt | Focused 11/11; StartupRouter 26/26; `1to1` 3,302 + tails; `groups` 4,303 + tails; native host; Pixel 6 + emulator; analyzer/hygiene/Graphify all PASS | Receipt SHA-256 `dad09eb0e708629d64c0ddd3b82cb3a051509b0ff2f8750a3a46cc4b1441a11f`; frozen tree `75116f8b1c7cc0cec99f2a72d1410713868d0f23`; marker `N04_APP_VISIBILITY_AUTHORITY_FOUNDATION_CODE_COMPLETE` | Full GAP-N04/live/PRD/release acceptance remains downstream | Commit Plan 371 only; then validate the next sequential plan against this receipt |

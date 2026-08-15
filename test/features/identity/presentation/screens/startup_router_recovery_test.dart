@@ -227,6 +227,7 @@ void main() {
     Future<void> Function()? groupExitIntentRecovery,
     Future<void> Function()? clearDeliveredNotifications,
     Future<void> Function()? clearIosNotificationRecovery,
+    VoidCallback? invalidateAppVisibility,
     Future<RemoteMessage?> Function()? getInitialRemoteMessage,
     bool Function()? shouldHandleInitialPushOpen,
     Future<IosApnsInitialNotificationOpenDisposition> Function()?
@@ -276,6 +277,7 @@ void main() {
             onAccountMigrationReceiverActivated,
         clearDeliveredNotifications: clearDeliveredNotifications,
         clearIosNotificationRecovery: clearIosNotificationRecovery,
+        invalidateAppVisibility: invalidateAppVisibility,
         getInitialRemoteMessage: getInitialRemoteMessage,
         shouldHandleInitialPushOpen: shouldHandleInitialPushOpen,
         consumeInitialIosApnsNotificationOpen:
@@ -514,10 +516,15 @@ void main() {
       var iosRecoveryClearCount = 0;
       var deliveredClearCount = 0;
       var authorityExistedDuringRecoveryClear = false;
+      final cleanupOrder = <String>[];
 
       await tester.pumpWidget(
         buildRouterApp(
+          invalidateAppVisibility: () {
+            cleanupOrder.add('visibility-invalidated');
+          },
           clearIosNotificationRecovery: () async {
+            cleanupOrder.add('native-recovery-cleared');
             iosRecoveryClearCount += 1;
             authorityExistedDuringRecoveryClear =
                 await SecureKeyStoreAccountMigrationAuthorityRepository(
@@ -542,6 +549,10 @@ void main() {
       await pumpFrames(tester);
 
       expect(iosRecoveryClearCount, 1);
+      expect(cleanupOrder, <String>[
+        'visibility-invalidated',
+        'native-recovery-cleared',
+      ]);
       expect(authorityExistedDuringRecoveryClear, isTrue);
       expect(
         deliveredClearCount,

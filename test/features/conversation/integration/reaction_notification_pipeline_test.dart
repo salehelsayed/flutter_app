@@ -32,6 +32,7 @@ import 'package:flutter_test/flutter_test.dart';
 import '../../../core/bridge/fake_bridge.dart';
 import '../../../core/secure_storage/fake_secure_key_store.dart';
 import '../../../core/services/fake_p2p_service.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
 import '../../../shared/fakes/in_memory_feed_cleared_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
@@ -636,8 +637,10 @@ class _MountedPipelineFixture {
       bridge: bridge,
       ownMlKemSecretKey: 'recipient-secret-key',
       notificationService: notifications,
-      conversationTracker: conversationTracker,
-      getAppLifecycleState: () => AppLifecycleState.resumed,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: conversationTracker,
+        lifecycle: () => AppLifecycleState.resumed,
+      ),
     );
   }
 
@@ -805,8 +808,10 @@ class _PipelineFixture {
       bridge: bridge,
       ownMlKemSecretKey: 'recipient-secret-key',
       notificationService: notifications,
-      conversationTracker: ActiveConversationTracker(),
-      getAppLifecycleState: () => AppLifecycleState.resumed,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: ActiveConversationTracker(),
+        lifecycle: () => AppLifecycleState.resumed,
+      ),
     );
   }
 }

@@ -1,6 +1,5 @@
-import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
@@ -74,8 +73,7 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   // All optional — when absent (e.g. unit tests / callers without the push
   // stack) no notification is attempted. Fired only on a genuine ADD upsert.
   NotificationService? notificationService,
-  ActiveConversationTracker? conversationTracker,
-  AppLifecycleState Function()? getAppLifecycleState,
+  AppVisibilitySuppressionReader? appVisibility,
   NotificationToneTracker? notificationToneTracker,
   ConsumeRecentRemoteNotificationAnnouncement?
   consumeRecentRemoteNotificationAnnouncement,
@@ -433,14 +431,12 @@ Future<(HandleReactionResult, ReactionChange?)> handleIncomingReaction({
   if (retryNotificationDisplays != null) {
     await retryNotificationDisplays();
   } else if (notificationService != null &&
-      conversationTracker != null &&
-      getAppLifecycleState != null &&
+      appVisibility != null &&
       isLocallyAuthoredNotificationTarget) {
     try {
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: conversationTracker,
-        getAppLifecycleState: getAppLifecycleState,
+        appVisibility: appVisibility,
         contactPeerId: payload.senderPeerId,
         senderUsername: contact.username,
         messageText: 'Reacted ${payload.emoji} to your message',

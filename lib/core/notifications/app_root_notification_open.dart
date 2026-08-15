@@ -1,6 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/notification_route_dispatch.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 
@@ -532,20 +533,19 @@ Future<bool> routeAppRootRemoteNotificationOpenWithResult({
 
 bool isNotificationRouteTargetAlreadyActive({
   required NotificationRouteTarget routeTarget,
-  required ActiveConversationTracker groupConversationTracker,
-  ActiveConversationTracker? conversationTracker,
+  required AppVisibilityTopRouteReader appVisibilityRouteRegistry,
 }) {
   switch (routeTarget.kind) {
     case NotificationRouteTargetKind.group:
-      return groupConversationTracker.isViewing(routeTarget.toPayload());
+      return appVisibilityRouteRegistry.isCurrentTopConversationValue(
+        lane: AppVisibilityConversationLane.group,
+        value: routeTarget.toPayload(),
+      );
     case NotificationRouteTargetKind.conversation:
-      // Report 139: mirror the group guard for 1:1. `toPayload()` for the
-      // conversation kind is the bare peerId, and the 1:1
-      // `conversationTracker` is the same instance `ConversationWired` keeps
-      // current via `setActive`/`clearIfActive`, so this is symmetric with the
-      // group branch. A null tracker (no 1:1 screen wired) falls through to
-      // false → push as before.
-      return conversationTracker?.isViewing(routeTarget.toPayload()) ?? false;
+      return appVisibilityRouteRegistry.isCurrentTopConversationValue(
+        lane: AppVisibilityConversationLane.direct,
+        value: routeTarget.toPayload(),
+      );
     case NotificationRouteTargetKind.contactRequest:
     case NotificationRouteTargetKind.intros:
     case NotificationRouteTargetKind.post:

@@ -80,6 +80,7 @@ import '_support/direct_inbox_custody_db_bindings.dart';
 import '_support/node_readiness.dart';
 import '_support/signal_files.dart';
 import 'group_multi_device_real_harness.dart';
+import '../test/shared/fakes/fake_app_visibility.dart';
 
 // ---------------------------------------------------------------------------
 // Config from dart-defines (shared by both roles)
@@ -386,8 +387,9 @@ Future<void> _handleNotificationRouteTarget({
       // so this is the real production decision path, not a stub.
       if (isNotificationRouteTargetAlreadyActive(
         routeTarget: routeTarget,
-        groupConversationTracker: ActiveConversationTracker(),
-        conversationTracker: deps.conversationTracker,
+        appVisibilityRouteRegistry: TrackerBackedTopRouteReader(
+          deps.conversationTracker,
+        ),
       )) {
         trace.add('conversation-already-active:$label');
         return;
@@ -581,8 +583,10 @@ void _runAlice() {
         bridge: stack.bridge,
         getOwnMlKemSecretKey: () async => stack.identity.mlKemSecretKey,
         notificationService: notificationService,
-        conversationTracker: chatConversationTracker,
-        getAppLifecycleState: () => currentLifecycle,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: chatConversationTracker,
+          lifecycle: () => currentLifecycle,
+        ),
       );
       chatListener.start();
 

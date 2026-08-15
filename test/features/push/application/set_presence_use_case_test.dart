@@ -20,9 +20,11 @@ class _FakePresenceSetter implements RelayPresenceSet {
   final List<({String state, int ttlMs})> calls = [];
   PresenceSetResult result = PresenceSetResult.published;
   Completer<void>? gate;
+  void Function()? onCall;
 
   @override
   Future<PresenceSetResult> setPresence(String state, int ttlMs) async {
+    onCall?.call();
     calls.add((state: state, ttlMs: ttlMs));
     if (gate != null) {
       await gate!.future;
@@ -68,27 +70,30 @@ void main() {
   // fire-and-forget: it returns immediately even though the publish HANGS, and
   // the flow event carries bestEffort:true (the discriminator vs TC-09-04).
   // Mutation (await the publish) would make this time out.
-  test('TC-09-05: onBackgrounded background publish is best-effort, non-blocking', () async {
-    final setter = _FakePresenceSetter()..gate = Completer<void>();
-    final useCase = SetPresenceUseCase(presenceSetter: setter);
-    addTearDown(useCase.dispose);
+  test(
+    'TC-09-05: onBackgrounded background publish is best-effort, non-blocking',
+    () async {
+      final setter = _FakePresenceSetter()..gate = Completer<void>();
+      final useCase = SetPresenceUseCase(presenceSetter: setter);
+      addTearDown(useCase.dispose);
 
-    // Hung setPresence must NOT block onBackgrounded.
-    await useCase.onBackgrounded().timeout(
-      const Duration(milliseconds: 200),
-      onTimeout: () => fail('onBackgrounded blocked on the (hung) publish'),
-    );
+      // Hung setPresence must NOT block onBackgrounded.
+      await useCase.onBackgrounded().timeout(
+        const Duration(milliseconds: 200),
+        onTimeout: () => fail('onBackgrounded blocked on the (hung) publish'),
+      );
 
-    expect(setter.calls, hasLength(1));
-    expect(setter.calls.single.state, 'background');
+      expect(setter.calls, hasLength(1));
+      expect(setter.calls.single.state, 'background');
 
-    final pub = eventsNamed('PRESENCE_SELF_PUBLISH');
-    expect(pub, hasLength(1));
-    expect((pub.single['details'] as Map)['state'], 'background');
-    expect((pub.single['details'] as Map)['bestEffort'], isTrue);
+      final pub = eventsNamed('PRESENCE_SELF_PUBLISH');
+      expect(pub, hasLength(1));
+      expect((pub.single['details'] as Map)['state'], 'background');
+      expect((pub.single['details'] as Map)['bestEffort'], isTrue);
 
-    setter.gate!.complete(); // release the hung publish before teardown
-  });
+      setter.gate!.complete(); // release the hung publish before teardown
+    },
+  );
 
   // TC-09-06 — the foreground heartbeat re-publishes per interval and is
   // CANCELLED on background (so it can never fire while suspended).
@@ -130,7 +135,8 @@ void main() {
   // TC-09-08b — when the setter reports `unsupported` (old relay), the use-case
   // emits PRESENCE_SELF_PUBLISH_UNSUPPORTED and does NOT retry/spam.
   test('TC-09-08: unsupported old relay → skip event, no retry', () async {
-    final setter = _FakePresenceSetter()..result = PresenceSetResult.unsupported;
+    final setter = _FakePresenceSetter()
+      ..result = PresenceSetResult.unsupported;
     final useCase = SetPresenceUseCase(presenceSetter: setter);
     addTearDown(useCase.dispose);
 
@@ -190,4 +196,72 @@ void main() {
       expect(setter.calls.where((c) => c.state == 'background'), hasLength(1));
     }
   });
+
+  test(
+    'TC-371-02b foreground cadence refreshes visibility before a hanging failed or unsupported relay call',
+    () {
+      fakeAsync((async) {
+        final order = <String>[];
+        final hangingSetter = _FakePresenceSetter()
+          ..gate = Completer<void>()
+          ..onCall = () => order.add('relay');
+        final useCase = SetPresenceUseCase(
+          presenceSetter: hangingSetter,
+          refreshAppVisibility: () => order.add('local'),
+          heartbeatInterval: const Duration(seconds: 60),
+        );
+
+        unawaited(useCase.onForegrounded());
+        async.flushMicrotasks();
+        expect(order, <String>['local', 'relay']);
+
+        async.elapse(const Duration(seconds: 60));
+        async.flushMicrotasks();
+        expect(order, <String>['local', 'relay', 'local', 'relay']);
+
+        unawaited(useCase.onBackgrounded());
+        async.flushMicrotasks();
+        final refreshesAfterPause = order
+            .where((step) => step == 'local')
+            .length;
+        async.elapse(const Duration(seconds: 180));
+        async.flushMicrotasks();
+        expect(
+          order.where((step) => step == 'local'),
+          hasLength(refreshesAfterPause),
+        );
+        hangingSetter.gate!.complete();
+        useCase.dispose();
+
+        for (final result in <PresenceSetResult>[
+          PresenceSetResult.failed,
+          PresenceSetResult.unsupported,
+        ]) {
+          final degradedOrder = <String>[];
+          final setter = _FakePresenceSetter()
+            ..result = result
+            ..onCall = () => degradedOrder.add('relay');
+          final degraded = SetPresenceUseCase(
+            presenceSetter: setter,
+            refreshAppVisibility: () => degradedOrder.add('local'),
+          );
+          unawaited(degraded.onForegrounded());
+          async.flushMicrotasks();
+          expect(degradedOrder, <String>['local', 'relay']);
+          degraded.dispose();
+        }
+
+        final refreshFailureSetter = _FakePresenceSetter();
+        final refreshFailure = SetPresenceUseCase(
+          presenceSetter: refreshFailureSetter,
+          refreshAppVisibility: () => throw StateError('local write failed'),
+        );
+        unawaited(refreshFailure.onForegrounded());
+        async.flushMicrotasks();
+        expect(refreshFailureSetter.calls, hasLength(1));
+        expect(eventsNamed('APP_VISIBILITY_REFRESH_FAILED'), hasLength(1));
+        refreshFailure.dispose();
+      });
+    },
+  );
 }

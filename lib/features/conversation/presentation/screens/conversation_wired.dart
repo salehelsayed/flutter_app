@@ -42,6 +42,8 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/received_media_egress.dart';
 import 'package:flutter_app/core/media/received_media_egress_service.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/theme/background_readable_colors.dart';
 import 'package:flutter_app/features/settings/application/media_download_policy.dart';
 import 'package:flutter_app/features/settings/domain/models/image_quality_preference.dart';
@@ -74,6 +76,7 @@ import 'package:flutter_app/core/config/direct_linked_media_fanout_flag.dart';
 import 'package:flutter_app/features/conversation/application/direct_event_fanout_coordinator.dart';
 import 'package:flutter_app/features/conversation/application/send_voice_message_use_case.dart';
 import 'package:flutter_app/features/conversation/presentation/screens/direct_conversation_modality_gate.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
 import 'package:flutter_app/features/conversation/domain/models/conversation_message.dart';
 import 'package:flutter_app/features/conversation/domain/utils/message_window_cap.dart';
@@ -7730,7 +7733,7 @@ class _ConversationWiredState extends State<ConversationWired>
     final (activeQuoteText, isActiveQuoteUnavailable) =
         _resolveActiveQuotePreview();
 
-    return PopScope(
+    final child = PopScope(
       canPop: !_uploadActivityController.isTracking,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop || !_uploadActivityController.isTracking) return;
@@ -7867,6 +7870,20 @@ class _ConversationWiredState extends State<ConversationWired>
           highlightedMessageId: _highlightedMessageId,
         ),
       ),
+    );
+    final registry = DirectPrivateMediaRouteObserverScope.maybeRegistryOf(
+      context,
+    );
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.direct,
+      value: _contact.peerId,
+    );
+    if (registry == null || identity == null) return child;
+    return AppVisibilityRouteBinding(
+      registry: registry,
+      identity: identity,
+      observer: DirectPrivateMediaRouteObserverScope.maybeOf(context),
+      child: child,
     );
   }
 }

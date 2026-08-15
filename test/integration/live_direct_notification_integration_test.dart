@@ -18,6 +18,7 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
 import '../features/contacts/domain/repositories/fake_contact_repository.dart';
 import '../features/conversation/domain/repositories/fake_message_repository.dart';
+import '../shared/fakes/fake_app_visibility.dart';
 import '../shared/fakes/fake_notification_service.dart';
 import '../shared/fakes/in_memory_inbox_staging_repository.dart';
 
@@ -101,9 +102,11 @@ void main() {
       messageRepo: messageRepo,
       contactRepo: contactRepo,
       notificationService: notificationService,
-      conversationTracker: conversationTracker,
+      appVisibility: TrackerBackedAppVisibility(
+        tracker: conversationTracker,
+        lifecycle: () => AppLifecycleState.resumed,
+      ),
       notificationToneTracker: toneTracker,
-      getAppLifecycleState: () => AppLifecycleState.resumed,
       remoteNotificationGate: gate,
       backgroundNotificationDuplicateGuardDelay: Duration.zero,
     );

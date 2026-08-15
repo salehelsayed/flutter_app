@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/push/application/show_notification_use_case.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 
 MediaAttachment _attachment(String mediaType, {String? mime}) =>
@@ -230,8 +231,10 @@ void main() {
 
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.paused,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.paused,
+        ),
         contactPeerId: 'peer-alice',
         senderUsername: 'Alice',
         messageText: notificationBodyForMessage('', [_attachment('image')]),
@@ -247,8 +250,10 @@ void main() {
 
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.paused,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.paused,
+        ),
         contactPeerId: 'peer-alice',
         senderUsername: 'Alice',
         messageText: notificationBodyForMessage('', [
@@ -268,8 +273,10 @@ void main() {
 
         await maybeShowNotification(
           notificationService: notificationService,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.paused,
+          appVisibility: TrackerBackedAppVisibility(
+            tracker: tracker,
+            lifecycle: () => AppLifecycleState.paused,
+          ),
           contactPeerId: 'peer-alice',
           senderUsername: 'Alice',
           messageText: notificationBodyForMessage('', [_attachment('audio')]),
@@ -286,8 +293,10 @@ void main() {
 
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.paused,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.paused,
+        ),
         contactPeerId: 'peer-alice',
         senderUsername: 'Alice',
         messageText: notificationBodyForMessage('', [_attachment('video')]),
@@ -303,8 +312,10 @@ void main() {
 
       await maybeShowNotification(
         notificationService: notificationService,
-        conversationTracker: tracker,
-        getAppLifecycleState: () => AppLifecycleState.paused,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.paused,
+        ),
         contactPeerId: 'peer-alice',
         senderUsername: 'Alice',
         messageText: notificationBodyForMessage('Look at this!', [

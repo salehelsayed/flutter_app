@@ -20,6 +20,7 @@ class MainActivity : FlutterActivity() {
         private const val CANONICAL_RUNTIME_SHUTDOWN_TIMEOUT_MS = 5_000L
         private const val CANONICAL_RUNTIME_SHUTDOWN_RETRY_MS = 500L
         private const val CANONICAL_RUNTIME_SHUTDOWN_MAX_ATTEMPTS = 3
+        private const val APP_VISIBILITY_CHANNEL = "mknoon/app_visibility"
         private val privateMediaProtectionRegistry =
             PrivateMediaProtectionHandlerRegistry()
         private var retainedCanonicalRuntimeEngine: FlutterEngine? = null
@@ -34,6 +35,9 @@ class MainActivity : FlutterActivity() {
     private var canonicalRuntimeLeaseBridge: CanonicalRuntimeLeaseBridge? = null
     private var canonicalRuntimeShutdownChannel: MethodChannel? = null
     private var pushNotificationSettingsChannel: MethodChannel? = null
+    private var appVisibilityChannel: MethodChannel? = null
+    private var appVisibilitySnapshotStore: AppVisibilitySnapshotStore? = null
+    private var appVisibilityLifecycleCoordinator: AppVisibilityLifecycleCoordinator? = null
     private var retainEngineForCanonicalShutdown = false
     private var canonicalRuntimeCleanupFinished = false
     private var canonicalRuntimeShutdownAttempts = 0
@@ -41,6 +45,10 @@ class MainActivity : FlutterActivity() {
     private var mdnsResolver: MdnsResolver? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // N04: commit launch invalidation before FlutterActivity can expose a
+        // stale foreground route to Dart. Failure remains fail-notify inside the
+        // one process-scoped store; lifecycle startup itself must stay total.
+        visibilityLifecycleCoordinator().onLaunch()
         CanonicalRuntimeProbeDiagnostics.recordMainActivityLaunch()
         super.onCreate(savedInstanceState)
     }
@@ -110,6 +118,29 @@ class MainActivity : FlutterActivity() {
                     PushNotificationSettingsLauncher.OPEN_METHOD -> result.success(
                         PushNotificationSettingsLauncher.open(applicationContext),
                     )
+                    else -> result.notImplemented()
+                }
+            }
+        }
+        appVisibilityChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            APP_VISIBILITY_CHANNEL,
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "readSnapshot" -> {
+                        if (call.arguments != null) {
+                            result.error(
+                                "bad_args",
+                                "readSnapshot requires null arguments",
+                                null,
+                            )
+                        } else {
+                            result.success(visibilitySnapshotStore().readSnapshot()?.toChannelMap())
+                        }
+                    }
+                    "publishVisibleConversation" ->
+                        handlePublishVisibleConversation(call.arguments, result)
                     else -> result.notImplemented()
                 }
             }
@@ -211,8 +242,22 @@ class MainActivity : FlutterActivity() {
     }
 
     override fun onResume() {
+        // Persist FOREGROUND_ACTIVE + null before super can deliver resume to
+        // Flutter. Dart republishes the top route only against this generation.
+        visibilityLifecycleCoordinator().onResume()
         super.onResume()
         receivedMediaEgressHandler?.onResume()
+    }
+
+    override fun onPause() {
+        // A delayed Dart route write must observe this newer generation and lose.
+        visibilityLifecycleCoordinator().onPause()
+        super.onPause()
+    }
+
+    override fun onStop() {
+        visibilityLifecycleCoordinator().onStop()
+        super.onStop()
     }
 
     override fun cleanUpFlutterEngine(flutterEngine: FlutterEngine) {
@@ -393,6 +438,8 @@ class MainActivity : FlutterActivity() {
         canonicalRuntimeShutdownChannel = null
         pushNotificationSettingsChannel?.setMethodCallHandler(null)
         pushNotificationSettingsChannel = null
+        appVisibilityChannel?.setMethodCallHandler(null)
+        appVisibilityChannel = null
         goBridge?.dispose()
         goBridge = null
         canonicalRuntimeLeaseBridge?.dispose()
@@ -433,5 +480,74 @@ class MainActivity : FlutterActivity() {
     ) {
         if (receivedMediaEgressHandler?.onRequestPermissionsResult(requestCode, grantResults) == true) return
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+    }
+
+    private fun visibilitySnapshotStore(): AppVisibilitySnapshotStore =
+        appVisibilitySnapshotStore ?: AppVisibilitySnapshotStore(applicationContext).also {
+            appVisibilitySnapshotStore = it
+        }
+
+    private fun visibilityLifecycleCoordinator(): AppVisibilityLifecycleCoordinator =
+        appVisibilityLifecycleCoordinator ?: AppVisibilityLifecycleCoordinator(
+            visibilitySnapshotStore(),
+        ).also {
+            appVisibilityLifecycleCoordinator = it
+        }
+
+    private fun handlePublishVisibleConversation(
+        rawArguments: Any?,
+        result: MethodChannel.Result,
+    ) {
+        val arguments = rawArguments as? Map<*, *>
+        if (
+            arguments == null ||
+            !arguments.containsKey("visibleConversationDigest") ||
+            !arguments.containsKey("lifecycleGeneration") ||
+            arguments.keys.any {
+                it != "visibleConversationDigest" && it != "lifecycleGeneration"
+            }
+        ) {
+            result.error(
+                "bad_args",
+                "publishVisibleConversation requires exactly " +
+                    "visibleConversationDigest and lifecycleGeneration",
+                null,
+            )
+            return
+        }
+        val digestValue = arguments["visibleConversationDigest"]
+        val digest = when (digestValue) {
+            null -> null
+            is String -> digestValue
+            else -> {
+                result.error(
+                    "bad_args",
+                    "visibleConversationDigest must be a String or null",
+                    null,
+                )
+                return
+            }
+        }
+        val generation = when (val value = arguments["lifecycleGeneration"]) {
+            is Byte -> value.toLong()
+            is Short -> value.toLong()
+            is Int -> value.toLong()
+            is Long -> value
+            else -> null
+        }
+        if (generation == null || generation <= 0L) {
+            result.error(
+                "bad_args",
+                "lifecycleGeneration must be a positive integer",
+                null,
+            )
+            return
+        }
+        result.success(
+            visibilitySnapshotStore().publishVisibleConversation(
+                visibleConversationDigest = digest,
+                lifecycleGeneration = generation,
+            ).toChannelMap(),
+        )
     }
 }

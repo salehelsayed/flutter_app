@@ -9,6 +9,8 @@ import 'package:flutter_app/core/database/helpers/group_event_log_db_helpers.dar
 import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/deterministic_notification_id.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/group_notification_presentation_coordinator.dart';
@@ -183,7 +185,7 @@ class GroupMessageListener {
   final Future<String?> Function()? _getSelfPeerId;
   final MediaAttachmentRepository? _mediaAttachmentRepo;
   final NotificationService? _notificationService;
-  final ActiveConversationTracker? _groupConversationTracker;
+  final AppVisibilitySuppressionReader? _appVisibility;
   // 118 Phase 4: shared per-conversation tone debounce (the same tracker the
   // direct listener uses; group + direct keys are disjoint).
   final NotificationToneTracker? _notificationToneTracker;
@@ -192,7 +194,6 @@ class GroupMessageListener {
   late final GroupNotificationReadProjector? _notificationReadProjector;
   final Future<DurableNotificationToneLease> Function()
   _durableNotificationCoordinatorResolver;
-  final AppLifecycleState Function()? _getAppLifecycleState;
   final RecentRemoteNotificationGate _remoteNotificationGate;
   final ReactionRepository? _reactionRepo;
   final AppendGroupEventLogEntry? _appendGroupEventLogEntry;
@@ -268,6 +269,9 @@ class GroupMessageListener {
     MediaAttachmentRepository? mediaAttachmentRepo,
     MediaFileManager? mediaFileManager,
     NotificationService? notificationService,
+    AppVisibilitySuppressionReader? appVisibility,
+    // Retained as a source-compatible N11 read/rewarm input for older test
+    // compositions. Notification presentation never consults it.
     ActiveConversationTracker? groupConversationTracker,
     NotificationToneTracker? notificationToneTracker,
     GroupNotificationPresentationCoordinator?
@@ -317,7 +321,7 @@ class GroupMessageListener {
        _getSelfPeerId = getSelfPeerId,
        _mediaAttachmentRepo = mediaAttachmentRepo,
        _notificationService = notificationService,
-       _groupConversationTracker = groupConversationTracker,
+       _appVisibility = appVisibility,
        _notificationToneTracker = notificationToneTracker,
        _notificationPresentationCoordinator =
            notificationPresentationCoordinator ??
@@ -327,7 +331,6 @@ class GroupMessageListener {
        _durableNotificationCoordinatorResolver =
            durableNotificationCoordinatorResolver ??
            DurableNotificationToneLease.openMobileDefault,
-       _getAppLifecycleState = getAppLifecycleState,
        _remoteNotificationGate =
            remoteNotificationGate ?? recentRemoteNotificationGate,
        _reactionRepo = reactionRepo,
@@ -410,8 +413,7 @@ class GroupMessageListener {
             loadLatestUnreadNotificationMessage != null &&
             isActiveGroupNotificationReaction != null &&
             loadLatestActiveNotificationReaction != null &&
-            groupConversationTracker != null &&
-            getAppLifecycleState != null
+            appVisibility != null
         ? GroupNotificationCanonicalReconciler(
             coordinator: _notificationPresentationCoordinator,
             generationCancellation: generationCancellation,
@@ -526,8 +528,7 @@ class GroupMessageListener {
       mediaAttachmentRepo: mediaAttachmentRepo,
       pendingReactionRepo: pendingReactionRepo,
       notificationService: notificationService,
-      groupConversationTracker: groupConversationTracker,
-      getAppLifecycleState: getAppLifecycleState,
+      appVisibility: appVisibility,
       notificationToneTracker: notificationToneTracker,
       notificationPresentationCoordinator: _notificationPresentationCoordinator,
       remoteNotificationGate:
@@ -632,13 +633,14 @@ class GroupMessageListener {
     );
   }
 
-  bool _isViewingGroupConversation(String groupId) {
-    final tracker = _groupConversationTracker;
-    final lifecycle = _getAppLifecycleState;
-    if (tracker == null || lifecycle == null) return false;
-    if (lifecycle() != AppLifecycleState.resumed) return false;
-    return tracker.isViewing('group:$groupId') ||
-        tracker.isViewing(NotificationRouteTarget.group(groupId).toPayload());
+  Future<bool> _maySuppressGroupNotification(String groupId) async {
+    final visibility = _appVisibility;
+    if (visibility == null) return false;
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:$groupId',
+    );
+    return (await visibility.evaluate(identity)).maySuppress;
   }
 
   Future<GroupNotificationCanonicalContentDecision>
@@ -654,7 +656,8 @@ class GroupMessageListener {
       groupId,
       selfPeerId,
     );
-    if (!eligibility.shouldDisplay || _isViewingGroupConversation(groupId)) {
+    if (!eligibility.shouldDisplay ||
+        await _maySuppressGroupNotification(groupId)) {
       return GroupNotificationCanonicalContentDecision.retire;
     }
     final eventIdentity = metadata.eventIdentity?.trim();
@@ -710,7 +713,8 @@ class GroupMessageListener {
       groupId,
       selfPeerId,
     );
-    if (!eligibility.shouldDisplay || _isViewingGroupConversation(groupId)) {
+    if (!eligibility.shouldDisplay ||
+        await _maySuppressGroupNotification(groupId)) {
       return null;
     }
     final group = await _groupRepo.getGroup(groupId);
@@ -1083,8 +1087,7 @@ class GroupMessageListener {
     final outbox = _notificationDisplayOutbox;
     if (outbox == null ||
         _notificationService == null ||
-        _groupConversationTracker == null ||
-        _getAppLifecycleState == null ||
+        _appVisibility == null ||
         !message.isIncoming) {
       return;
     }
@@ -1140,8 +1143,7 @@ class GroupMessageListener {
     if (outbox == null ||
         payload.action != GroupReactionPayload.actionAdd ||
         _notificationService == null ||
-        _groupConversationTracker == null ||
-        _getAppLifecycleState == null) {
+        _appVisibility == null) {
       return;
     }
     final selfPeerId = await _resolveSelfPeerId();
@@ -1246,9 +1248,8 @@ class GroupMessageListener {
       return const GroupNotificationDisplayProjectionResult.completed();
     }
     final service = _notificationService;
-    final tracker = _groupConversationTracker;
-    final lifecycle = _getAppLifecycleState;
-    if (service == null || tracker == null || lifecycle == null) {
+    final visibility = _appVisibility;
+    if (service == null || visibility == null) {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final group = await _groupRepo.getGroup(entry.groupId);
@@ -1271,8 +1272,7 @@ class GroupMessageListener {
     }
     final result = await maybeShowNotification(
       notificationService: service,
-      conversationTracker: tracker,
-      getAppLifecycleState: lifecycle,
+      appVisibility: visibility,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -1379,9 +1379,8 @@ class GroupMessageListener {
       return const GroupNotificationDisplayProjectionResult.completed();
     }
     final service = _notificationService;
-    final tracker = _groupConversationTracker;
-    final lifecycle = _getAppLifecycleState;
-    if (service == null || tracker == null || lifecycle == null) {
+    final visibility = _appVisibility;
+    if (service == null || visibility == null) {
       return const GroupNotificationDisplayProjectionResult.retryLater();
     }
     final group = await _groupRepo.getGroup(entry.groupId);
@@ -1411,8 +1410,7 @@ class GroupMessageListener {
     }
     final result = await maybeShowNotification(
       notificationService: service,
-      conversationTracker: tracker,
-      getAppLifecycleState: lifecycle,
+      appVisibility: visibility,
       contactPeerId: 'group:${entry.groupId}',
       routePayload: NotificationRouteTarget.group(
         entry.groupId,
@@ -2478,8 +2476,7 @@ class GroupMessageListener {
             _notificationDisplayOutbox == null &&
             senderId != selfPeerId &&
             _notificationService != null &&
-            _groupConversationTracker != null &&
-            _getAppLifecycleState != null) {
+            _appVisibility != null) {
           final group = await _groupRepo.getGroup(groupId);
           final groupName = group?.name ?? 'Group';
           final displayEligibility =
@@ -2501,8 +2498,7 @@ class GroupMessageListener {
             Future<NotificationPresentationResult>
             present() => maybeShowNotification(
               notificationService: _notificationService,
-              conversationTracker: _groupConversationTracker,
-              getAppLifecycleState: _getAppLifecycleState,
+              appVisibility: _appVisibility,
               contactPeerId: 'group:$groupId',
               routePayload: NotificationRouteTarget.group(
                 groupId,
@@ -2777,10 +2773,7 @@ extension GroupMessageListenerProtectedContentAdapter on GroupMessageListener {
   ) async {
     if (_notificationDisplayOutbox == null ||
         _notificationService == null ||
-        _groupConversationTracker == null ||
-        _getAppLifecycleState == null ||
-        !message.isIncoming ||
-        _isViewingGroupConversation(message.groupId)) {
+        !message.isIncoming) {
       return null;
     }
     final selfPeerId = await _resolveSelfPeerId();
@@ -2812,10 +2805,7 @@ extension GroupMessageListenerProtectedContentAdapter on GroupMessageListener {
   ) async {
     if (_notificationDisplayOutbox == null ||
         _notificationService == null ||
-        _groupConversationTracker == null ||
-        _getAppLifecycleState == null ||
-        payload.action != GroupReactionPayload.actionAdd ||
-        _isViewingGroupConversation(groupId)) {
+        payload.action != GroupReactionPayload.actionAdd) {
       return null;
     }
     final selfPeerId = await _resolveSelfPeerId();

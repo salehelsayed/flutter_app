@@ -9,6 +9,7 @@ import 'package:flutter_app/core/bridge/bridge.dart';
 import 'package:flutter_app/core/inbox/inbox_staging_entry.dart';
 import 'package:flutter_app/core/local_discovery/lan_ack.dart';
 import 'package:flutter_app/core/local_discovery/local_discovery_service.dart';
+import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/services/inbox_store_outcome.dart';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/services/p2p_service_impl.dart';
@@ -797,6 +798,28 @@ void main() {
           );
           await signal.close();
         });
+      },
+    );
+
+    test(
+      'TC-371-09 group top route never warms direct transport on network change',
+      () async {
+        final signal = StreamController<void>();
+        final compatibilityTracker = ActiveConversationTracker()
+          ..setActive('group:group-a');
+        expect(compatibilityTracker.activePeerId, 'group:group-a');
+        final local = await startWarmService(
+          networkChangeSignal: signal.stream,
+          activePeerId: () => compatibilityTracker.activePeerId,
+        );
+
+        signal.add(null);
+        await settle();
+
+        expect(local.discoverLocalPeerCallCount, 0);
+        expect(dials(), 0);
+        expect(bridge.calledCommands, isNot(contains('peer:dial')));
+        await signal.close();
       },
     );
 

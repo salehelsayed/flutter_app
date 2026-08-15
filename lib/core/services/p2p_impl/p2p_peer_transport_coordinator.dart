@@ -507,8 +507,12 @@ class _P2PPeerTransportCoordinator {
       _emit('P2P_SERVICE_NETWORK_CHANGE_DRAIN_BEGIN', <String, dynamic>{});
       unawaited(_port.drainOfflineInbox().catchError((Object _) {}));
 
-      final peerId = _activePeerId?.call();
-      if (peerId == null || peerId.isEmpty) return;
+      final peerId = _activePeerId?.call()?.trim();
+      // ActiveConversationTracker remains compatibility state for direct P2P
+      // warm/keepalive. Group route keys are never transport peer IDs.
+      if (peerId == null || peerId.isEmpty || peerId.startsWith('group:')) {
+        return;
+      }
 
       _warmAttempts[peerId]?.nextEligibleAt = null;
       final learned = _learnedTransport[peerId];

@@ -178,6 +178,11 @@ classify_path() {
       record "group" "$path" "runner" "iOS notification tap smoke includes group rows"
       return
       ;;
+    scripts/run_app_visibility_android_e2e.sh)
+      record "1to1" "$path" "runner" "Plan 371 app-visibility lifecycle scenario"
+      record "group" "$path" "runner" "Plan 371 app-visibility lifecycle scenario"
+      return
+      ;;
   esac
 
   case "$path" in
@@ -1155,6 +1160,11 @@ expand_record_to_checks() {
       ;;
     scripts/run_ios_notification_tap_ui_smoke.sh)
       expand_ios_notification_tap "$category" "$path"
+      return
+      ;;
+    scripts/run_app_visibility_android_e2e.sh)
+      record_check "$category" "$path" "app_visibility_lifecycle" \
+        "Plan 371 target-pinned Android lifecycle and durable-reopen scenario"
       return
       ;;
     integration_test/scripts/run_notification_sound_smoke.dart)

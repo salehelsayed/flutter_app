@@ -18,6 +18,7 @@ import 'package:flutter_app/features/push/application/handle_foreground_remote_m
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../../shared/fakes/fake_notification_service.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../conversation/domain/repositories/fake_reaction_repository.dart';
@@ -70,8 +71,10 @@ void main() {
             payload: 'group:group-1|message:target-1',
           );
         },
-        groupConversationTracker: ActiveConversationTracker(),
-        getAppLifecycleState: () => AppLifecycleState.resumed,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: ActiveConversationTracker(),
+          lifecycle: () => AppLifecycleState.resumed,
+        ),
         durableReactionNotificationCoordinatorResolver: () async => coordinator,
       );
 
@@ -189,6 +192,10 @@ void main() {
         reactionRepo: reactions,
         getSelfPeerId: () async => localPeerId,
         notificationService: notificationService,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.resumed,
+        ),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.resumed,
         durableNotificationCoordinatorResolver: () async => coordinator,
@@ -221,8 +228,10 @@ void main() {
               payload: 'group:$groupId|message:$targetId',
             );
           },
-          groupConversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.resumed,
+          appVisibility: TrackerBackedAppVisibility(
+            tracker: tracker,
+            lifecycle: () => AppLifecycleState.resumed,
+          ),
           durableReactionNotificationCoordinatorResolver: () async =>
               coordinator,
         );
@@ -391,6 +400,10 @@ void main() {
           reactionRepo: reactions,
           getSelfPeerId: () async => 'peer-local-author',
           notificationService: notifications,
+          appVisibility: TrackerBackedAppVisibility(
+            tracker: ActiveConversationTracker(),
+            lifecycle: () => AppLifecycleState.resumed,
+          ),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
           durableNotificationCoordinatorResolver: () async => coordinator,

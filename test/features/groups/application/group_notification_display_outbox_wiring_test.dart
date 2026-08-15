@@ -31,6 +31,7 @@ import 'package:flutter_app/features/groups/domain/models/group_pending_reaction
 import 'package:flutter_app/features/groups/domain/models/group_reaction_payload.dart';
 import 'package:flutter_app/features/groups/domain/repositories/group_notification_display_outbox_repository.dart';
 
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import '../../../shared/fakes/in_memory_media_attachment_repository.dart';
@@ -537,6 +538,7 @@ Future<_Fixture> _buildFixture({
     pendingReactionRepo: pendingReactionRepo,
     getSelfPeerId: getSelfPeerId ?? () async => _selfPeerId,
     notificationService: notificationService,
+    appVisibility: FixedAppVisibility(isForegroundActive: true),
     groupConversationTracker: ActiveConversationTracker(),
     getAppLifecycleState: () => AppLifecycleState.resumed,
     remoteNotificationGate: _NoopRecentRemoteNotificationGate(),

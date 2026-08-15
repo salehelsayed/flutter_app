@@ -53,6 +53,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/settings/domain/models/media_download_preferences.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/spy_recent_remote_notification_gate.dart';
 import '../../../shared/fakes/fake_media_file_manager.dart';
@@ -67,6 +68,11 @@ import '../../conversation/domain/repositories/fake_reaction_repository.dart';
 
 const _validContentHash =
     'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+
+FixedAppVisibility _fixedAppVisibility(AppLifecycleState lifecycle) =>
+    FixedAppVisibility(
+      isForegroundActive: lifecycle == AppLifecycleState.resumed,
+    );
 
 class _CancellableGroupNotificationService extends FakeNotificationService
     implements ConversationNotificationCancellation {
@@ -2517,6 +2523,7 @@ void main() {
         msgRepo: msgRepo,
         bridge: bridge,
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -2568,6 +2575,7 @@ void main() {
         msgRepo: msgRepo,
         bridge: bridge,
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -3552,6 +3560,7 @@ void main() {
         msgRepo: msgRepo,
         bridge: bridge,
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -14185,6 +14194,7 @@ void main() {
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: FakeMediaFileManager(),
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -14239,6 +14249,7 @@ void main() {
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: FakeMediaFileManager(),
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -14304,6 +14315,7 @@ void main() {
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: FakeMediaFileManager(),
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -14360,6 +14372,7 @@ void main() {
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: FakeMediaFileManager(),
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -14453,6 +14466,7 @@ void main() {
           mediaAttachmentRepo: mediaRepo,
           mediaFileManager: FakeMediaFileManager(),
           notificationService: notificationService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -14624,6 +14638,7 @@ void main() {
           getSelfPeerId: () async => 'peer-self',
           mediaAttachmentRepo: mediaRepo,
           notificationService: notificationService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.paused,
           groupMediaDownloadCoordinator: coordinator,
@@ -15000,6 +15015,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: outboxNotifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.paused,
           notificationDisplayOutbox: outbox,
@@ -15102,6 +15118,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: compatibilityNotifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: ActiveConversationTracker(),
           notificationToneTracker: NotificationToneTracker(
             clock: () => fixedToneTime,
@@ -15227,6 +15244,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         durableNotificationCoordinatorResolver: () async =>
             DurableNotificationToneLease(directory: claimDirectory),
@@ -15278,6 +15296,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -15319,6 +15338,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -15357,6 +15377,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -15401,6 +15422,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           notificationToneTracker: toneTracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
@@ -15455,6 +15477,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           remoteNotificationGate: spyGate,
           getAppLifecycleState: () => AppLifecycleState.paused,
@@ -15512,6 +15535,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: ActiveConversationTracker(),
           durableNotificationCoordinatorResolver: () async =>
               DurableNotificationToneLease(directory: claimDirectory),
@@ -15639,6 +15663,10 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: TrackerBackedAppVisibility(
+            tracker: tracker,
+            lifecycle: () => AppLifecycleState.resumed,
+          ),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -15688,6 +15716,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           accountMigrationNetworkGate: ({peerId, required operation}) async =>
@@ -15741,6 +15770,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           remoteNotificationGate: gate,
@@ -15813,6 +15843,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-admin',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -15901,6 +15932,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-sender',
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -15951,6 +15983,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -16012,6 +16045,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           mediaAttachmentRepo: mediaRepo,
@@ -16101,6 +16135,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           mediaAttachmentRepo: mediaRepo,
@@ -16220,6 +16255,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           remoteNotificationGate: gate,
@@ -16268,6 +16304,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
           remoteNotificationGate: gate,
@@ -16347,6 +16384,10 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.resumed,
+        ),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.resumed,
       );
@@ -16383,6 +16424,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -16423,6 +16465,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -16463,6 +16506,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-admin',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -16502,6 +16546,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-sender',
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -16550,6 +16595,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.paused),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.paused,
         );
@@ -16654,6 +16700,10 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
+        appVisibility: TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.resumed,
+        ),
         groupConversationTracker: tracker,
         getAppLifecycleState: () => AppLifecycleState.resumed,
       );
@@ -16753,6 +16803,7 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -16794,6 +16845,7 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           // resumed + not-viewing: no background-guard delay and no viewing
           // suppression, so a fired notification is observable within the pump.
@@ -16855,6 +16907,7 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -16918,6 +16971,7 @@ void main() {
         reactionRepo: reactionRepo,
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
         groupConversationTracker: ActiveConversationTracker(),
         // resumed + not-viewing: no background-guard delay and no viewing
         // suppression, so a fired notification is observable within the pump.
@@ -16958,6 +17012,7 @@ void main() {
         reactionRepo: reactionRepo,
         getSelfPeerId: () async => 'peer-self',
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
         groupConversationTracker: ActiveConversationTracker(),
         // resumed + not-viewing: no background-guard delay and no viewing
         // suppression, so a fired notification is observable within the pump.
@@ -16996,6 +17051,7 @@ void main() {
         bridge: bridge,
         reactionRepo: reactionRepo,
         notificationService: notifService,
+        appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.resumed,
         // Self == the reactor: a reaction echoing back through the mesh must
@@ -17039,6 +17095,10 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifService,
+          appVisibility: TrackerBackedAppVisibility(
+            tracker: tracker,
+            lifecycle: () => AppLifecycleState.resumed,
+          ),
           groupConversationTracker: tracker,
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -17120,6 +17180,7 @@ void main() {
             reactionRepo: reactions,
             getSelfPeerId: () async => selfPeerId,
             notificationService: notifications,
+            appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
             groupConversationTracker: ActiveConversationTracker(),
             getAppLifecycleState: () => AppLifecycleState.resumed,
           );
@@ -17179,6 +17240,7 @@ void main() {
           bridge: bridge,
           reactionRepo: reactionRepo,
           notificationService: notifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -17235,6 +17297,7 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -17267,6 +17330,7 @@ void main() {
           reactionRepo: readerReactions,
           getSelfPeerId: () async => 'peer-reader',
           notificationService: readerNotifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );
@@ -17544,6 +17608,7 @@ void main() {
           pendingReactionRepo: pendingReactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
           durableNotificationCoordinatorResolver: () async => coordinator,
@@ -17628,6 +17693,7 @@ void main() {
           pendingReactionRepo: pendingReactionRepo,
           getSelfPeerId: () async => 'peer-self',
           notificationService: notifications,
+          appVisibility: _fixedAppVisibility(AppLifecycleState.resumed),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
         );

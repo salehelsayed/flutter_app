@@ -366,6 +366,15 @@ readonly ONE_TO_ONE_TESTS=(
   # bounded application-writer census.
   "test/core/database/helpers/outgoing_transport_settlement_test.dart"
   "test/features/conversation/application/outgoing_transport_settlement_writers_test.dart"
+  # Plan 371 (GAP-N04): one fresh app-visibility authority, route topology,
+  # production census, iOS privacy contract, and incumbent heartbeat adoption.
+  "test/core/notifications/app_visibility_snapshot_test.dart"
+  "test/core/notifications/app_visibility_authority_test.dart"
+  "test/core/notifications/app_visibility_route_binding_test.dart"
+  "test/core/notifications/app_visibility_snapshot_wiring_test.dart"
+  "test/core/notifications/ios_app_visibility_privacy_manifest_contract_test.dart"
+  "test/core/notifications/app_root_notification_open_test.dart"
+  "test/features/push/application/set_presence_use_case_test.dart"
 )
 
 readonly FEED_TESTS=(
@@ -818,6 +827,16 @@ readonly GROUP_TESTS=(
   "test/features/groups/presentation/announcement_media_batch_forward_test.dart"
   "test/features/share/presentation/announcement_batch_forward_target_policy_test.dart"
   "test/features/share/application/announcement_batch_forward_provenance_test.dart"
+  # Plan 371 (GAP-N04): the shared visibility authority belongs to both
+  # messaging lanes; protected replay adds one group-only staging proof.
+  "test/core/notifications/app_visibility_snapshot_test.dart"
+  "test/core/notifications/app_visibility_authority_test.dart"
+  "test/core/notifications/app_visibility_route_binding_test.dart"
+  "test/core/notifications/app_visibility_snapshot_wiring_test.dart"
+  "test/core/notifications/ios_app_visibility_privacy_manifest_contract_test.dart"
+  "test/core/notifications/app_root_notification_open_test.dart"
+  "test/features/push/application/set_presence_use_case_test.dart"
+  "test/features/groups/integration/group_notification_visibility_staging_test.dart"
 )
 
 readonly POSTS_TESTS=(

@@ -300,6 +300,8 @@ import 'package:flutter_app/core/media/media_upload_in_flight_tracker.dart';
 import 'package:flutter_app/core/media/record_audio_recorder_service.dart';
 import 'package:flutter_app/app/lifecycle/handle_app_resumed.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/notifications/durable_notification_tone_lease.dart';
 import 'package:flutter_app/core/notifications/direct_reaction_notification_projection.dart';
@@ -5523,8 +5525,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // reaction-arrival time (long after bootstrap completes).
     ({
       NotificationService service,
-      ActiveConversationTracker tracker,
-      AppLifecycleState Function() lifecycle,
+      AppVisibilitySuppressionReader appVisibility,
       NotificationToneTracker toneTracker,
       DurableNotificationToneLease durableCoordinator,
     })?
@@ -5554,8 +5555,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         // message (no-op until the holder below is populated). The use case fires
         // only on a fresh ADD upsert and respects the standard suppression gates.
         notificationService: notify?.service,
-        conversationTracker: notify?.tracker,
-        getAppLifecycleState: notify?.lifecycle,
+        appVisibility: notify?.appVisibility,
         notificationToneTracker: notify?.toneTracker,
         durableNotificationCoordinatorResolver: notify == null
             ? null
@@ -5637,6 +5637,12 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // conversation's peer. (Moved up from its former site further down this
     // builder — nothing between here and there references it.)
     final conversationTracker = ActiveConversationTracker();
+    final appVisibilityAuthority = AppVisibilityAuthority(
+      platformBridge: MethodChannelAppVisibilityPlatformBridge(),
+    );
+    final appVisibilityRouteRegistry = AppVisibilityRouteRegistry(
+      authority: appVisibilityAuthority,
+    );
 
     // FDC-09 §12 / CV-14 recipient leg (217 §A1): once-per-cycle mint+register with
     // a TOTAL callback wrapper (a throwing/old relay degrades to false, never
@@ -6227,10 +6233,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             }
             return maybeShowNotification(
               notificationService: notificationService,
-              conversationTracker: conversationTracker,
-              getAppLifecycleState: () =>
-                  WidgetsBinding.instance.lifecycleState ??
-                  AppLifecycleState.resumed,
+              appVisibility: appVisibilityAuthority,
               contactPeerId: entry.peerId,
               routePayload: NotificationRouteTarget.conversation(
                 entry.peerId,
@@ -6291,10 +6294,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
             }
             return maybeShowNotification(
               notificationService: notificationService,
-              conversationTracker: conversationTracker,
-              getAppLifecycleState: () =>
-                  WidgetsBinding.instance.lifecycleState ??
-                  AppLifecycleState.resumed,
+              appVisibility: appVisibilityAuthority,
               contactPeerId: entry.peerId,
               routePayload: NotificationRouteTarget.conversation(
                 entry.peerId,
@@ -6353,10 +6353,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       mediaAttachmentRepo: mediaAttachmentRepository,
       mediaFileManager: mediaFileManager,
       notificationService: notificationService,
-      conversationTracker: conversationTracker,
+      appVisibility: appVisibilityAuthority,
       notificationToneTracker: notificationToneTracker,
-      getAppLifecycleState: () =>
-          WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
       sendDeliveryReceipt: sendDeliveryReceiptForPeer,
       stageNotificationDisplayCustody: directNotificationOwner.stageMessage,
       promoteNotificationDisplayCustody:
@@ -6370,9 +6368,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
     // lifecycle getter and tone tracker so suppression/debounce stay consistent.
     reactionNotifyDeps = (
       service: notificationService,
-      tracker: conversationTracker,
-      lifecycle: () =>
-          WidgetsBinding.instance.lifecycleState ?? AppLifecycleState.resumed,
+      appVisibility: appVisibilityAuthority,
       toneTracker: notificationToneTracker,
       durableCoordinator: durableReactionNotificationCoordinator,
     );
@@ -6504,8 +6500,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         if (notify == null) return null;
         return (
           service: notify.service,
-          tracker: notify.tracker,
-          lifecycle: notify.lifecycle,
+          appVisibility: notify.appVisibility,
           toneTracker: notify.toneTracker,
           durableCoordinatorResolver: () async => notify.durableCoordinator,
           consumeRemoteAnnouncement: ({required payload, String? messageId}) =>
@@ -6677,6 +6672,7 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
       mediaFileManager: mediaFileManager,
       groupMediaDownloadCoordinator: groupMediaDownloadCoordinator,
       notificationService: notificationService,
+      appVisibility: appVisibilityAuthority,
       groupConversationTracker: groupConversationTracker,
       notificationToneTracker: notificationToneTracker,
       notificationPresentationCoordinator:
@@ -10458,6 +10454,8 @@ final class ProductionApplicationBootstrap implements ApplicationBootstrap {
         appShellController: appShellController,
         pendingPostTargetStore: pendingPostTargetStore,
         conversationTracker: conversationTracker,
+        appVisibilityAuthority: appVisibilityAuthority,
+        appVisibilityRouteRegistry: appVisibilityRouteRegistry,
         groupRepository: groupRepository,
         groupMessageRepository: groupMessageRepository,
         groupExitDiagnosticRepository: groupExitDiagnosticRepository,

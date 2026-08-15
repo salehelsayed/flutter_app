@@ -1,8 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/widgets.dart';
 import 'package:flutter_app/core/bridge/bridge.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_authority.dart';
 import 'package:flutter_app/core/notifications/notification_service.dart';
 import 'package:flutter_app/core/notifications/notification_tone_tracker.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
@@ -19,8 +18,7 @@ import 'package:flutter_app/features/push/application/show_notification_use_case
 typedef ResolveReactionNotificationDependencies =
     ({
       NotificationService service,
-      ActiveConversationTracker tracker,
-      AppLifecycleState Function() lifecycle,
+      AppVisibilitySuppressionReader appVisibility,
       NotificationToneTracker toneTracker,
       ResolveDurableNotificationCoordinator durableCoordinatorResolver,
       ConsumeRecentRemoteNotificationAnnouncement consumeRemoteAnnouncement,
@@ -176,8 +174,7 @@ class ReactionListener {
         bridge: bridge,
         ownMlKemSecretKey: ownSecretKey,
         notificationService: notify?.service,
-        conversationTracker: notify?.tracker,
-        getAppLifecycleState: notify?.lifecycle,
+        appVisibility: notify?.appVisibility,
         notificationToneTracker: notify?.toneTracker,
         durableNotificationCoordinatorResolver:
             notify?.durableCoordinatorResolver,

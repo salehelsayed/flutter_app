@@ -278,6 +278,7 @@ const _expectedConstructorParameters = <String>[
   'MediaAttachmentRepository? mediaAttachmentRepo',
   'MediaFileManager? mediaFileManager',
   'NotificationService? notificationService',
+  'AppVisibilitySuppressionReader? appVisibility',
   'ActiveConversationTracker? groupConversationTracker',
   'NotificationToneTracker? notificationToneTracker',
   'GroupNotificationPresentationCoordinator? '

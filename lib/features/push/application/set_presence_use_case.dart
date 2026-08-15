@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter_app/core/services/p2p_service.dart';
 import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 
+typedef RefreshAppVisibility = FutureOr<void> Function();
+
 /// FDC-09 §6.3 write side — self-publishes the local peer's foreground/background
 /// presence to the relay (via [RelayPresenceSet.setPresence]) so the read side
 /// (FDC-08 `presence_get`) has a real FOREGROUND signal to key the send emphasis
@@ -24,13 +26,16 @@ import 'package:flutter_app/core/utils/flow_event_emitter.dart';
 class SetPresenceUseCase {
   SetPresenceUseCase({
     required RelayPresenceSet presenceSetter,
+    RefreshAppVisibility? refreshAppVisibility,
     Duration presenceTtl = kPresenceSelfTtl,
     Duration heartbeatInterval = kPresenceForegroundHeartbeat,
   }) : _presenceSetter = presenceSetter,
+       _refreshAppVisibility = refreshAppVisibility,
        _presenceTtl = presenceTtl,
        _heartbeatInterval = heartbeatInterval;
 
   final RelayPresenceSet _presenceSetter;
+  final RefreshAppVisibility? _refreshAppVisibility;
   final Duration _presenceTtl;
   final Duration _heartbeatInterval;
 
@@ -50,7 +55,7 @@ class SetPresenceUseCase {
   /// resume path fires it UNAWAITED so it never adds latency.
   Future<void> onForegrounded() async {
     _startHeartbeat();
-    await _publish('foreground', bestEffort: false);
+    await _refreshThenPublishForeground();
   }
 
   /// Called when the app BACKGROUNDS (pause): cancel the heartbeat (so it can
@@ -87,10 +92,25 @@ class SetPresenceUseCase {
     }
   }
 
+  Future<void> _refreshThenPublishForeground() async {
+    try {
+      await _refreshAppVisibility?.call();
+    } catch (error) {
+      // Visibility is fail-notify and presence is only a hint. A local refresh
+      // failure must not couple or suppress the incumbent relay publication.
+      emitFlowEvent(
+        layer: 'FL',
+        event: 'APP_VISIBILITY_REFRESH_FAILED',
+        details: {'errorType': error.runtimeType.toString()},
+      );
+    }
+    await _publish('foreground', bestEffort: false);
+  }
+
   void _startHeartbeat() {
     _heartbeat?.cancel();
     _heartbeat = Timer.periodic(_heartbeatInterval, (_) {
-      unawaited(_publish('foreground', bestEffort: false));
+      unawaited(_refreshThenPublishForeground());
     });
   }
 

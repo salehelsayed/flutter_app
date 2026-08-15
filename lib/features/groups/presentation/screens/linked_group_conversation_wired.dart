@@ -15,6 +15,9 @@ import 'package:flutter_app/core/media/media_file_manager.dart';
 import 'package:flutter_app/core/media/media_picker.dart';
 import 'package:flutter_app/core/media/media_owner_lane.dart';
 import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
+import 'package:flutter_app/features/conversation/presentation/navigation/direct_private_media_route_observer.dart';
 import 'package:flutter_app/features/conversation/domain/models/media_attachment.dart';
 import 'package:flutter_app/features/conversation/domain/models/message_reaction.dart';
 import 'package:flutter_app/features/conversation/domain/models/audio_recording.dart';
@@ -1301,7 +1304,7 @@ class _LinkedGroupConversationWiredState
 
   @override
   Widget build(BuildContext context) {
-    return GroupConversationScreen(
+    final child = GroupConversationScreen(
       key: const Key('linked-group-conversation-capability'),
       group: _currentGroup,
       messages: _messages,
@@ -1348,6 +1351,20 @@ class _LinkedGroupConversationWiredState
           ? null
           : 'Waiting for protected group authority to settle.',
       backgroundPreference: widget.backgroundPreference,
+    );
+    final registry = DirectPrivateMediaRouteObserverScope.maybeRegistryOf(
+      context,
+    );
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: AppVisibilityConversationLane.group,
+      value: 'group:${widget.group.id}',
+    );
+    if (registry == null || identity == null) return child;
+    return AppVisibilityRouteBinding(
+      registry: registry,
+      identity: identity,
+      observer: DirectPrivateMediaRouteObserverScope.maybeOf(context),
+      child: child,
     );
   }
 }

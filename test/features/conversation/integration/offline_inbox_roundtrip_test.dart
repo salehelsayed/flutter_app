@@ -33,6 +33,7 @@ import 'package:flutter_app/features/conversation/domain/models/reaction_payload
 import 'package:flutter_app/features/conversation/domain/repositories/reaction_repository.dart';
 import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/fake_p2p_network.dart' as shared_fakes;
 import '../../../shared/fakes/in_memory_contact_repository.dart'
@@ -815,6 +816,10 @@ void main() {
         final reactions = _TemporalReactionRepository();
         final notifications = FakeNotificationService();
         final tracker = ActiveConversationTracker();
+        final appVisibility = TrackerBackedAppVisibility(
+          tracker: tracker,
+          lifecycle: () => AppLifecycleState.resumed,
+        );
         final cryptoBridge = PassthroughCryptoBridge();
         var reactionChanges = 0;
 
@@ -888,8 +893,7 @@ void main() {
           bridge: cryptoBridge,
           getOwnMlKemSecretKey: () async => 'bob-mlkem-secret',
           notificationService: notifications,
-          conversationTracker: tracker,
-          getAppLifecycleState: () => AppLifecycleState.resumed,
+          appVisibility: appVisibility,
           backgroundNotificationDuplicateGuardDelay: Duration.zero,
           durableNotificationCoordinatorResolver: () async =>
               throw StateError('durable notification store unavailable'),
@@ -922,8 +926,7 @@ void main() {
             bridge: cryptoBridge,
             ownMlKemSecretKey: 'bob-mlkem-secret',
             notificationService: notifications,
-            conversationTracker: tracker,
-            getAppLifecycleState: () => AppLifecycleState.resumed,
+            appVisibility: appVisibility,
           );
           if (change != null) reactionChanges++;
           return mapReactionReplayResultToDisposition(result);

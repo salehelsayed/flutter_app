@@ -45,6 +45,7 @@ import 'package:flutter_app/features/p2p/domain/models/chat_message.dart';
 import 'package:flutter_app/features/conversation/domain/models/reaction_change.dart';
 
 import '../../../core/bridge/fake_bridge.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/in_memory_group_repository.dart';
 import '../../../shared/fakes/in_memory_group_message_repository.dart';
 import 'package:flutter_app/features/groups/domain/models/group_pending_reaction.dart';
@@ -3739,6 +3740,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-local',
         notificationService: notifications,
+        appVisibility: FixedAppVisibility(),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
         notificationDisplayOutbox: outbox,
@@ -5637,6 +5639,7 @@ void main() {
         msgRepo: msgRepo,
         bridge: bridge,
         notificationService: notifService,
+        appVisibility: FixedAppVisibility(),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
         appendGroupEventLogEntry:
@@ -11416,6 +11419,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-local',
         notificationService: notifService,
+        appVisibility: FixedAppVisibility(),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
       );
@@ -11583,6 +11587,7 @@ void main() {
         bridge: bridge,
         getSelfPeerId: () async => 'peer-local',
         notificationService: notifService,
+        appVisibility: FixedAppVisibility(),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.paused,
         remoteNotificationGate: remoteGate,
@@ -13962,6 +13967,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-local',
           notificationService: notifications,
+          appVisibility: FixedAppVisibility(isForegroundActive: true),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
@@ -14016,6 +14022,7 @@ void main() {
           bridge: bridge,
           getSelfPeerId: () async => 'peer-local',
           notificationService: notifications,
+          appVisibility: FixedAppVisibility(isForegroundActive: true),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
@@ -14095,6 +14102,7 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-local',
           notificationService: notifications,
+          appVisibility: FixedAppVisibility(isForegroundActive: true),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
@@ -14176,6 +14184,7 @@ void main() {
           reactionRepo: reactionRepo,
           getSelfPeerId: () async => 'peer-local',
           notificationService: notifications,
+          appVisibility: FixedAppVisibility(isForegroundActive: true),
           groupConversationTracker: ActiveConversationTracker(),
           getAppLifecycleState: () => AppLifecycleState.resumed,
           remoteNotificationGate: _DrainNoopRemoteNotificationGate(),
@@ -14298,6 +14307,7 @@ void main() {
         reactionRepo: reactionRepo,
         getSelfPeerId: () async => 'peer-local',
         notificationService: notificationService,
+        appVisibility: FixedAppVisibility(isForegroundActive: true),
         groupConversationTracker: ActiveConversationTracker(),
         getAppLifecycleState: () => AppLifecycleState.resumed,
       );

@@ -1,8 +1,9 @@
 import 'dart:async';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/core/notifications/app_root_notification_open.dart';
+import 'package:flutter_app/core/notifications/app_visibility_route_binding.dart';
+import 'package:flutter_app/core/notifications/app_visibility_snapshot.dart';
 import 'package:flutter_app/core/notifications/notification_open_dedupe_gate.dart';
 import 'package:flutter_app/core/notifications/notification_route_target.dart';
 
@@ -898,7 +899,12 @@ void main() {
     });
 
     test('active group notification route can be skipped without stacking', () {
-      final tracker = ActiveConversationTracker()..setActive('group:group-123');
+      final topRoute = _MutableTopRouteReader(
+        AppVisibilityConversationIdentity.tryParse(
+          lane: AppVisibilityConversationLane.group,
+          value: 'group:group-123',
+        ),
+      );
 
       expect(
         isNotificationRouteTargetAlreadyActive(
@@ -906,7 +912,7 @@ void main() {
             'group-123',
             messageId: 'msg-123',
           ),
-          groupConversationTracker: tracker,
+          appVisibilityRouteRegistry: topRoute,
         ),
         isTrue,
       );
@@ -916,14 +922,14 @@ void main() {
             'group-456',
             messageId: 'msg-123',
           ),
-          groupConversationTracker: tracker,
+          appVisibilityRouteRegistry: topRoute,
         ),
         isFalse,
       );
       expect(
         isNotificationRouteTargetAlreadyActive(
           routeTarget: NotificationRouteTarget.conversation('peer-123'),
-          groupConversationTracker: tracker,
+          appVisibilityRouteRegistry: topRoute,
         ),
         isFalse,
       );
@@ -935,13 +941,17 @@ void main() {
     test(
       'active 1:1 conversation route is skipped when its tracker is viewing that peer',
       () {
-        final conv = ActiveConversationTracker()..setActive('peer-123');
+        final topRoute = _MutableTopRouteReader(
+          AppVisibilityConversationIdentity.tryParse(
+            lane: AppVisibilityConversationLane.direct,
+            value: 'peer-123',
+          ),
+        );
 
         expect(
           isNotificationRouteTargetAlreadyActive(
             routeTarget: const NotificationRouteTarget.conversation('peer-123'),
-            groupConversationTracker: ActiveConversationTracker(),
-            conversationTracker: conv,
+            appVisibilityRouteRegistry: topRoute,
           ),
           isTrue,
         );
@@ -951,36 +961,29 @@ void main() {
     test(
       '1:1 conversation route is NOT skipped for a different peer or a null tracker',
       () {
-        final conv = ActiveConversationTracker()..setActive('peer-123');
+        final topRoute = _MutableTopRouteReader(
+          AppVisibilityConversationIdentity.tryParse(
+            lane: AppVisibilityConversationLane.direct,
+            value: 'peer-123',
+          ),
+        );
 
         // Different peer than the one being viewed → still push (non-vacuity:
         // proves the GREEN above is peer-specific, not "always true").
         expect(
           isNotificationRouteTargetAlreadyActive(
             routeTarget: const NotificationRouteTarget.conversation('peer-999'),
-            groupConversationTracker: ActiveConversationTracker(),
-            conversationTracker: conv,
+            appVisibilityRouteRegistry: topRoute,
           ),
           isFalse,
         );
 
-        // Null 1:1 tracker (no conversation open) → push, no crash.
+        // No top conversation → push, no crash.
+        topRoute.current = null;
         expect(
           isNotificationRouteTargetAlreadyActive(
             routeTarget: const NotificationRouteTarget.conversation('peer-123'),
-            groupConversationTracker: ActiveConversationTracker(),
-            conversationTracker: null,
-          ),
-          isFalse,
-        );
-
-        // Backward-compat: the group-only call (no conversationTracker arg,
-        // as the group case at main.dart still uses) treats a conversation
-        // target as not-active. Keeps every existing caller compiling.
-        expect(
-          isNotificationRouteTargetAlreadyActive(
-            routeTarget: const NotificationRouteTarget.conversation('peer-123'),
-            groupConversationTracker: ActiveConversationTracker(),
+            appVisibilityRouteRegistry: topRoute,
           ),
           isFalse,
         );
@@ -990,9 +993,12 @@ void main() {
     test(
       'group already-active guard is unchanged when the 1:1 tracker is also supplied',
       () {
-        final groupTracker = ActiveConversationTracker()
-          ..setActive('group:group-123');
-        final conv = ActiveConversationTracker()..setActive('peer-123');
+        final topRoute = _MutableTopRouteReader(
+          AppVisibilityConversationIdentity.tryParse(
+            lane: AppVisibilityConversationLane.group,
+            value: 'group:group-123',
+          ),
+        );
 
         expect(
           isNotificationRouteTargetAlreadyActive(
@@ -1000,22 +1006,109 @@ void main() {
               'group-123',
               messageId: 'm',
             ),
-            groupConversationTracker: groupTracker,
-            conversationTracker: conv,
+            appVisibilityRouteRegistry: topRoute,
           ),
           isTrue,
         );
         expect(
           isNotificationRouteTargetAlreadyActive(
             routeTarget: const NotificationRouteTarget.group('group-456'),
-            groupConversationTracker: groupTracker,
-            conversationTracker: conv,
+            appVisibilityRouteRegistry: topRoute,
           ),
           isFalse,
         );
       },
     );
+
+    test(
+      'TC-371-03a backgrounded direct or group A tap before republish does not stack A',
+      () {
+        for (final target in const <NotificationRouteTarget>[
+          NotificationRouteTarget.conversation('peer-a'),
+          NotificationRouteTarget.group('group-a', messageId: 'message-a'),
+        ]) {
+          final lane = target.kind == NotificationRouteTargetKind.group
+              ? AppVisibilityConversationLane.group
+              : AppVisibilityConversationLane.direct;
+          final topRoute = _MutableTopRouteReader(
+            AppVisibilityConversationIdentity.tryParse(
+              lane: lane,
+              value: target.toPayload(),
+            ),
+          );
+
+          // This process-local query deliberately has no freshness/lifecycle
+          // input: background invalidation cannot make an already-stacked A
+          // look absent before resume republishes its durable lease.
+          expect(
+            isNotificationRouteTargetAlreadyActive(
+              routeTarget: target,
+              appVisibilityRouteRegistry: topRoute,
+            ),
+            isTrue,
+          );
+        }
+      },
+    );
+
+    test('TC-371-03b covered A is not top route and pop restores A', () {
+      final directA = AppVisibilityConversationIdentity.tryParse(
+        lane: AppVisibilityConversationLane.direct,
+        value: 'peer-a',
+      );
+      final topRoute = _MutableTopRouteReader(directA);
+      const target = NotificationRouteTarget.conversation('peer-a');
+
+      expect(
+        isNotificationRouteTargetAlreadyActive(
+          routeTarget: target,
+          appVisibilityRouteRegistry: topRoute,
+        ),
+        isTrue,
+      );
+      topRoute.current = null; // non-chat cover
+      expect(
+        isNotificationRouteTargetAlreadyActive(
+          routeTarget: target,
+          appVisibilityRouteRegistry: topRoute,
+        ),
+        isFalse,
+      );
+      topRoute.current = directA; // pop restores the underlying route
+      expect(
+        isNotificationRouteTargetAlreadyActive(
+          routeTarget: target,
+          appVisibilityRouteRegistry: topRoute,
+        ),
+        isTrue,
+      );
+    });
   });
+}
+
+final class _MutableTopRouteReader implements AppVisibilityTopRouteReader {
+  _MutableTopRouteReader(this.current);
+
+  AppVisibilityConversationIdentity? current;
+
+  @override
+  AppVisibilityConversationIdentity? get currentTopConversation => current;
+
+  @override
+  bool isCurrentTopConversation(AppVisibilityConversationIdentity identity) =>
+      current == identity;
+
+  @override
+  bool isCurrentTopConversationValue({
+    required AppVisibilityConversationLane lane,
+    required String value,
+  }) {
+    final identity = AppVisibilityConversationIdentity.tryParse(
+      lane: lane,
+      value: value,
+    );
+    return identity != null && isCurrentTopConversation(identity);
+  }
 }
 
 class _ManualTimer implements Timer {

@@ -1,11 +1,9 @@
-
-import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:flutter_app/core/notifications/active_conversation_tracker.dart';
 import 'package:flutter_app/features/groups/application/set_group_muted_use_case.dart';
 
 import '../../../shared/fakes/fake_group_pubsub_network.dart';
+import '../../../shared/fakes/fake_app_visibility.dart';
 import '../../../shared/fakes/fake_notification_service.dart';
 import '../../../shared/fakes/group_test_user.dart';
 
@@ -456,8 +454,7 @@ void main() {
           username: 'Alice',
           network: network,
           notificationService: phoneNotifications,
-          groupConversationTracker: ActiveConversationTracker(),
-          getAppLifecycleState: () => AppLifecycleState.paused,
+          appVisibility: FixedAppVisibility(),
         );
         final tablet = GroupTestUser.create(
           peerId: 'peer-shared',
@@ -465,8 +462,7 @@ void main() {
           username: 'Alice',
           network: network,
           notificationService: tabletNotifications,
-          groupConversationTracker: ActiveConversationTracker(),
-          getAppLifecycleState: () => AppLifecycleState.paused,
+          appVisibility: FixedAppVisibility(),
         );
         final bob = GroupTestUser.create(
           peerId: 'peer-bob',
